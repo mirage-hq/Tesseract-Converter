@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "status": "AUTHORING_REQUESTS_ONLY_UNRUN_UNINSPECTED",
+  "contract": "Each author_jsx receives a precreated 320x180 2s 24fps comp, mediaRoot, and linearKeys(property,times,values). Create a distinct Adobe-native AEP and independently Adobe-rendered full-duration 30fps MP4 for every target. Record actual AEP hash/bytes/composition ID and independently verified long-term MP4 Asset ID/hash/bytes after authoring, not before. These requests and the explicit FX inputs are NOT independent Adobe proof. Font resolution and RGB fidelity remain unmeasured. Never overwrite an existing oracle.",
+  "cases": [
+    {
+      "case_id": "fx-export-panel-text-style-hold",
+      "composition_name": "panel-text-style-hold",
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "author_jsx": "var t=comp.layers.addText('HOLD'); t.name='Hold and Style Text'; t.transform.position.setValue([110,80]); var p=t.property('ADBE Text Properties').property('ADBE Text Document'); function doc(word,points,red){var d=p.value; d.text=word; d.font=red>0.5?'Arial-BoldMT':'ArialMT'; d.fontSize=points; d.applyFill=true; d.fillColor=[red,0.4,0.8]; d.applyStroke=true; d.strokeColor=[1,0.8,0.1]; d.strokeWidth=2; d.strokeOverFill=true; d.tracking=8; d.leading=44; d.baselineShift=1; d.justification=ParagraphJustification.LEFT_JUSTIFY; return d;} p.setValueAtTime(0,doc('HOLD',38,0.2)); p.setValueAtTime(1,doc('STYLE',48,0.8)); p.setInterpolationTypeAtKey(1,KeyframeInterpolationType.HOLD,KeyframeInterpolationType.HOLD); p.setInterpolationTypeAtKey(2,KeyframeInterpolationType.HOLD,KeyframeInterpolationType.HOLD);"
+    },
+    {
+      "case_id": "fx-export-panel-text-animator-controls",
+      "composition_name": "panel-text-animator-controls",
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "author_jsx": "var t=comp.layers.addText('CONTROLS'); t.name='Sixteen Text Controls'; t.transform.position.setValue([90,90]); var p=t.property('ADBE Text Properties').property('ADBE Text Document'); var d=p.value; d.font='ArialMT'; d.fontSize=32; d.applyStroke=true; d.strokeColor=[0.1,0.1,0.1]; d.strokeWidth=1; p.setValue(d); var g=t.property('ADBE Text Properties').property('ADBE Text Animators').addProperty('ADBE Text Animator'); g.name='Sixteen Controls'; var a=g.property('ADBE Text Animator Properties'); var values=[['ADBE Text Anchor Point 3D',[0,0,0],[4,2,0]],['ADBE Text Position 3D',[0,0,0],[0,20,0]],['ADBE Text Scale 3D',[100,100,100],[110,90,100]],['ADBE Text Rotation',0,8],['ADBE Text Skew',0,6],['ADBE Text Skew Axis',0,15],['ADBE Text Tracking Amount',0,4],['ADBE Text Stroke Width',1,2],['ADBE Text Blur',[0,0],[2,2]],['ADBE Text Opacity',100,90],['ADBE Text Fill Color',[0.2,0.4,0.8],[0.7,0.2,0.3]],['ADBE Text Stroke Color',[0.1,0.1,0.1],[0.2,0.6,0.2]],['ADBE Text Line Spacing',[0,0],[0,4]],['ADBE Text Line Anchor',0,2],['ADBE Text Character Offset',0,1],['ADBE Text Character Replace',67,68]]; for(var i=0;i<values.length;i++){var c=a.addProperty(values[i][0]); linearKeys(c,[0,1],[values[i][1],values[i][2]]);} var s=g.property('ADBE Text Selectors').addProperty('ADBE Text Selector'); s.name='Range Selector 1'; s.property('ADBE Text Percent Start').setValue(0); s.property('ADBE Text Percent End').setValue(100);"
+    },
+    {
+      "case_id": "fx-export-panel-text-selectors-more",
+      "composition_name": "panel-text-selectors-more",
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "author_jsx": "var t=comp.layers.addText('SELECTORS'); t.name='Range Wiggly and More'; t.transform.position.setValue([90,90]); var d=t.property('ADBE Text Properties').property('ADBE Text Document').value; d.font='ArialMT'; d.fontSize=32; t.property('ADBE Text Properties').property('ADBE Text Document').setValue(d); var g=t.property('ADBE Text Properties').property('ADBE Text Animators').addProperty('ADBE Text Animator'); g.name='Selector Controls'; g.property('ADBE Text Animator Properties').addProperty('ADBE Text Position 3D').setValue([0,16,0]); var s=g.property('ADBE Text Selectors').addProperty('ADBE Text Selector'); s.name='Range Selector 1'; linearKeys(s.property('ADBE Text Percent Start'),[0,1],[0,25]); linearKeys(s.property('ADBE Text Percent End'),[0,1],[75,100]); linearKeys(s.property('ADBE Text Percent Offset'),[0,1],[0,20]); var a=s.property('ADBE Text Range Advanced'); a.property('ADBE Text Range Units').setValue(1); a.property('ADBE Text Range Type2').setValue(1); a.property('ADBE Text Selector Mode').setValue(1); a.property('ADBE Text Range Shape').setValue(1); linearKeys(a.property('ADBE Text Selector Max Amount'),[0,1],[100,60]); linearKeys(a.property('ADBE Text Levels Max Ease'),[0,1],[0,20]); linearKeys(a.property('ADBE Text Levels Min Ease'),[0,1],[0,-20]); a.property('ADBE Text Randomize Order').setValue(1); linearKeys(a.property('ADBE Text Random Seed'),[0,1],[1,3]); var w=g.property('ADBE Text Selectors').addProperty('ADBE Text Wiggly Selector'); w.name='Wiggly Selector 1'; linearKeys(w.property('ADBE Text Wiggly Max Amount'),[0,1],[20,35]); holdKeys(w.property('ADBE Text Temporal Freq'),[0,1],[1,2]); linearKeys(w.property('ADBE Text Wiggly Random Seed'),[0,1],[2,4]); var more=t.property('ADBE Text Properties').property('ADBE Text More Options'); more.property('ADBE Text Anchor Point Option').setValue(2); linearKeys(more.property('ADBE Text Anchor Point Align'),[0,1],[[0,0],[10,-5]]);"
+    },
+    {
+      "case_id": "fx-export-panel-text-path-controls",
+      "composition_name": "panel-text-path-controls",
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "author_jsx": "var t=comp.layers.addText('PATH OPTIONS'); t.name='Editable Path Controls'; t.transform.position.setValue([0,0]); var p=t.property('ADBE Text Properties').property('ADBE Text Document'); var d=p.value; d.font='ArialMT'; d.fontSize=30; p.setValue(d); var m=t.property('ADBE Mask Parade').addProperty('ADBE Mask Atom'); m.name='Text Guide'; var sh=new Shape(); sh.vertices=[[25,110],[295,110]]; sh.inTangents=[[0,0],[0,0]]; sh.outTangents=[[0,0],[0,0]]; sh.closed=false; m.property('ADBE Mask Shape').setValue(sh); var o=t.property('ADBE Text Properties').property('ADBE Text Path Options'); o.property('ADBE Text Path').setValue(1); o.property('ADBE Text Reverse Path').setValue(true); o.property('ADBE Text Perpendicular To Path').setValue(true); o.property('ADBE Text Force Align Path').setValue(true); linearKeys(o.property('ADBE Text First Margin'),[0,1],[5,20]); linearKeys(o.property('ADBE Text Last Margin'),[0,1],[10,25]);"
+    },
+    {
+      "case_id": "fx-export-panel-text-unsupported-layout",
+      "composition_name": "panel-text-unsupported-layout",
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "author_jsx": "var sibling=comp.layers.addText('SIBLING'); sibling.name='Supported Text Sibling'; sibling.transform.position.setValue([50,145]); var sd=sibling.property('ADBE Text Properties').property('ADBE Text Document').value; sd.font='ArialMT'; sd.fontSize=28; sibling.property('ADBE Text Properties').property('ADBE Text Document').setValue(sd); var t=comp.layers.addText('MIXED STYLE'); t.name='Mixed Runs Native Only'; t.transform.position.setValue([35,75]); var p=t.property('ADBE Text Properties').property('ADBE Text Document'); var d=p.value; d.font='ArialMT'; d.fontSize=32; d.applyFill=true; d.fillColor=[0.9,0.3,0.2]; d.characterRange(0,5).fontSize=48; p.setValue(d); /* FX has no character-run representation. This visible native source is NOT proof of mixed-run export. */"
+    }
+  ]
+}

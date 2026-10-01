@@ -1,0 +1,3 @@
+# The root .gitignore drops every *.png; this transparent still is a pinned
+# conversion fixture (tests/manifest.json: premiere_isolated_still_image).
+!feature_still_transparent.png

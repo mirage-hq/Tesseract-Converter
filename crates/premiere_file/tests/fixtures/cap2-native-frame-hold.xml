@@ -1,0 +1,9 @@
+  <VideoClip ObjectID="404" ClassID="9308dbef-2440-4acb-9ab2-953b9a4e82ec" Version="11">
+    <Clip Version="18">
+      <Source ObjectRef="111"/>
+      <InPoint>879350472000</InPoint>
+      <OutPoint>1091242152000</OutPoint>
+    </Clip>
+    <FrameHold>4</FrameHold>
+    <FrameHoldStart>879350472000</FrameHoldStart>
+  </VideoClip>

@@ -1,0 +1,40 @@
+{
+  "composition_id": 1,
+  "composition_name": "AEP_PROOF_SHAPE_FILL_EXPORT",
+  "layer_id": 16,
+  "background_layer_id": 15,
+  "fps": 24,
+  "frames": 48,
+  "width": 1920,
+  "height": 1080,
+  "rectangle_size": [
+    360,
+    240
+  ],
+  "fill_rgba": [
+    0.125,
+    0.6875,
+    0.875,
+    1
+  ],
+  "source_sha256": "de05f69f81486d25bf899cabcd35b1debfe142f5b0e60ecf5951a4bfb7916077",
+  "source_bytes": 85335,
+  "author": "After Effects JSX DoScriptFile",
+  "ae_version": "26.5x89",
+  "case": "export_shape_fill",
+  "author_jsx_sha256": "5cd2233526cf411f0ebf0a6e8e3654b3244f112083246e2baf86aee02e3858bb",
+  "reference_mp4_sha256": "5d0413b0d44b39b71b136dabcc5ab11ebabe7c7cdf510cc89855840ba7a935ce",
+  "reference_mp4_bytes": 16669,
+  "reference_render_log_sha256": "96dc52098b336f064df191abff3101e073d6f6d71996232c77d480486f71a4c9",
+  "reference_center_luma_by_frame": {
+    "0": 143,
+    "24": 143,
+    "47": 143
+  },
+  "reference_corner_luma_by_frame": {
+    "0": 16,
+    "24": 16,
+    "47": 16
+  },
+  "reference_format": "Independent Adobe H.264/BT.709 YUV420p 1920x1080 24fps frames 0..47, opaque static Shape Fill on black; no alpha/audio"
+}

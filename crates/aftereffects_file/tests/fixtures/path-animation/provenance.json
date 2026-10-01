@@ -1,0 +1,32 @@
+{
+  "upstream": "https://github.com/forticheprod/py-aep",
+  "revision": "e12a451c35bacd3f34a080090265f9370e66162b",
+  "license": "MIT (see ../LICENSE)",
+  "evidence": "Native AEP and upstream AE JSON projection; no Adobe render or UI inspection performed here.",
+  "files": [
+    {
+      "path": "property_path_orientation_pin.aep",
+      "upstream_path": "samples/models/property/property_path_orientation_pin.aep",
+      "sha256": "0f9ec0bf94798c408cfd93863951640ce71aa31016271ba49ab8eae235789ba2",
+      "size": 198511
+    },
+    {
+      "path": "property_path_orientation_ease.aep",
+      "upstream_path": "samples/models/property/property_path_orientation_ease.aep",
+      "sha256": "cf2506e440cdd11cbba6224e6d146f96df390238ead2f641983d4b551ca08d07",
+      "size": 212053
+    },
+    {
+      "path": "property_path_orientation_pin_value_at_time.json.gz",
+      "upstream_path": "samples/models/property/value_at_time/property_path_orientation_pin_value_at_time.json",
+      "sha256": "fafc6472530940564e781fbf188fd6adfb2142d63893f6705c387a8631b673bb",
+      "size": 417508
+    },
+    {
+      "path": "property_path_orientation_ease_value_at_time.json.gz",
+      "upstream_path": "samples/models/property/value_at_time/property_path_orientation_ease_value_at_time.json",
+      "sha256": "8c220ba7b51a1c3c97c657d74ae7302603acb8963f82f332f284c490479503b1",
+      "size": 643073
+    }
+  ]
+}

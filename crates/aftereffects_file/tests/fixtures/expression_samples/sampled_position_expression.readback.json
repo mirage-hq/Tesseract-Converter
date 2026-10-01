@@ -1,0 +1,156 @@
+{
+  "schema": "sampled-position-expression-native-authoring/v1",
+  "native": {
+    "application": "Adobe After Effects",
+    "version": "26.5x89",
+    "build": 89
+  },
+  "composition": {
+    "id": 1,
+    "name": "ExpressionPosition",
+    "width": 320,
+    "height": 180,
+    "pixelAspect": 1,
+    "durationSeconds": 2,
+    "frameRate": 24,
+    "frameDuration": 0.04166666666667,
+    "sourceFrameCount": 48,
+    "displayStartSeconds": 0,
+    "workAreaStartSeconds": 0,
+    "workAreaDurationSeconds": 2
+  },
+  "subject": {
+    "id": 17,
+    "index": 1,
+    "name": "Expression Subject 24x24",
+    "source": {
+      "id": 16,
+      "width": 24,
+      "height": 24
+    },
+    "position": {
+      "matchName": "ADBE Position",
+      "storedBase": [
+        23,
+        41,
+        0
+      ],
+      "expression": "var a=thisComp.layer(\"Controller\").effect(\"Amplitude\")(\"Slider\"); [80+a*Math.sin(2*Math.PI*time)+15*time,80+12*time*time]",
+      "expressionEnabled": true
+    }
+  },
+  "controller": {
+    "id": 15,
+    "index": 2,
+    "name": "Controller",
+    "enabled": false,
+    "nullLayer": true,
+    "effect": {
+      "index": 1,
+      "name": "Amplitude",
+      "matchName": "ADBE Slider Control",
+      "control": {
+        "index": 1,
+        "name": "Slider",
+        "matchName": "ADBE Slider Control-0001",
+        "value": 35
+      }
+    }
+  },
+  "samples": [
+    {
+      "timeSeconds": 0,
+      "evaluated": [
+        80,
+        80,
+        0
+      ],
+      "preExpression": [
+        23,
+        41,
+        0
+      ]
+    },
+    {
+      "timeSeconds": 0.25,
+      "evaluated": [
+        118.75,
+        80.75,
+        0
+      ],
+      "preExpression": [
+        23,
+        41,
+        0
+      ]
+    },
+    {
+      "timeSeconds": 0.5,
+      "evaluated": [
+        87.5,
+        83,
+        0
+      ],
+      "preExpression": [
+        23,
+        41,
+        0
+      ]
+    },
+    {
+      "timeSeconds": 0.75,
+      "evaluated": [
+        56.25,
+        86.75,
+        0
+      ],
+      "preExpression": [
+        23,
+        41,
+        0
+      ]
+    },
+    {
+      "timeSeconds": 1.25,
+      "evaluated": [
+        133.75,
+        98.75,
+        0
+      ],
+      "preExpression": [
+        23,
+        41,
+        0
+      ]
+    },
+    {
+      "timeSeconds": 1.95833333333333,
+      "evaluated": [
+        100.316333421412,
+        126.020833333333,
+        0
+      ],
+      "preExpression": [
+        23,
+        41,
+        0
+      ]
+    }
+  ],
+  "expectedReference": {
+    "outputFps": 30,
+    "frameCount": 60,
+    "aerenderStartFrame": 0,
+    "aerenderEndFrame": 47
+  },
+  "saved": {
+    "path": "crates/aftereffects_file/tests/fixtures/expression_samples/sampled_position_expression.aep",
+    "bytes": 89839
+  },
+  "redactions": {
+    "saved.path": "Repository-relative path replaces the machine-specific absolute save path."
+  },
+  "original_receipt_sha256": "6a612bc4d78b65e7ac4791833dd914485e0fb7097914dc0eb0a8e497aebeb8e9",
+  "source_sha256": "ff5d9d59e13079dffa0eae8153bcfbf3ec01c57227267a0a256fc7c638c8abbd",
+  "source_bytes": 89839
+}

@@ -1,0 +1,85 @@
+{
+  "composition_id": 1,
+  "composition_name": "AEP_PROOF_ADD_BLEND_EXPORT",
+  "layer_id": 17,
+  "background_layer_id": 15,
+  "fps": 24,
+  "frames": 48,
+  "width": 1920,
+  "height": 1080,
+  "foreground_is_add": true,
+  "background_is_normal": true,
+  "position": [
+    960,
+    540,
+    0
+  ],
+  "anchor": [
+    240,
+    135,
+    0
+  ],
+  "scale": [
+    100,
+    100,
+    100
+  ],
+  "rotation": 0,
+  "foreground_rgb": [
+    0.5,
+    0.125,
+    0.125
+  ],
+  "background_rgb": [
+    0.25,
+    0.25,
+    0.25
+  ],
+  "foreground_size": [
+    480,
+    270
+  ],
+  "source_sha256": "d04ffbca88577b14b1702e24a003c3a92aecf038a741a478df4e1fb8c9169aee",
+  "source_bytes": 85933,
+  "author": "After Effects JSX DoScriptFile",
+  "ae_version": "26.5x89",
+  "case": "export_add_blend",
+  "author_jsx_sha256": "7787e0d79146e621ef8ecc97122d6533de156f3b19d1cf09ec4a25dafb700be1",
+  "reference_mp4_sha256": "dec5766a85c441513f22b6c2feb5cb18cea3787c237bcddf16851d76f683ae7b",
+  "reference_mp4_bytes": 16479,
+  "reference_raw_yuv420p_sha256": "7de4236965c4cd80b4d205095461129f53fb014cca094183eb0775c7ea94a892",
+  "reference_center_yuv_by_frame": {
+    "0": [
+      116,
+      118,
+      170
+    ],
+    "24": [
+      116,
+      118,
+      170
+    ],
+    "47": [
+      116,
+      118,
+      170
+    ]
+  },
+  "reference_corner_yuv_by_frame": {
+    "0": [
+      71,
+      128,
+      128
+    ],
+    "24": [
+      71,
+      128,
+      128
+    ],
+    "47": [
+      71,
+      128,
+      128
+    ]
+  }
+}

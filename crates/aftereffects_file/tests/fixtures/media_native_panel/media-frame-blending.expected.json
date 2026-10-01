@@ -1,0 +1,11 @@
+{
+  "status": "AUTHORING_REQUEST_UNRUN_UNMEASURED",
+  "caseId": "fx-export-media-frame-blending",
+  "assets": [
+    "movie"
+  ],
+  "layers": [
+    "Frame Mix Movie"
+  ],
+  "frameBlending": "frameMix"
+}

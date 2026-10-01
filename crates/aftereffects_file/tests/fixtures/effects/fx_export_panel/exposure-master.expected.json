@@ -1,0 +1,24 @@
+{
+  "controls": [
+    {
+      "name": "ADBE Exposure2-0003",
+      "value": [
+        1.25
+      ]
+    },
+    {
+      "name": "ADBE Exposure2-0004",
+      "value": [
+        0.125
+      ]
+    },
+    {
+      "name": "ADBE Exposure2-0005",
+      "value": [
+        0.8
+      ]
+    }
+  ],
+  "effect": "ADBE Exposure2",
+  "enabled": true
+}

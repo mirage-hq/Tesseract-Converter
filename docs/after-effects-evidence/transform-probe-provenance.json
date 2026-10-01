@@ -1,0 +1,25 @@
+{
+  "case_id": "ae26-solid-static-transform-probe",
+  "source": "transform_probe.aep",
+  "sha256": "d669d0ca3d505ebaca545d6866185f6f6e69fe00256024bd0cb9ee22ba1a67d7",
+  "bytes": 81159,
+  "provenance": "Independently Adobe-authored in After Effects 2026 26.5 build 89: opened the native gaussian_probe.aep in an owned pristine session, used After Effects ExtendScript setValue for five Transform controls, and saved a new file without rewriting its bytes through our converter. The source Gaussian effect is incidental to these Transform assertions; no claim about effect conversion or render fidelity follows.",
+  "target": {
+    "composition_item_id": 1,
+    "source_item_id": 14,
+    "layer_id": 15,
+    "anchor_pixels": [61, 41],
+    "position_pixels": [159, 89],
+    "scale_percent": [90, 110],
+    "rotation_degrees": 10,
+    "opacity_percent": 90
+  },
+  "evidence": {
+    "native_import": "fresh-import editable Transform assertions in writer::solids::tests::native_static_transform_probe_imports_pixel_anchor_and_values",
+    "native_format": "writer::solids::tests::fresh_solid_source_registration_matches_native_grammar",
+    "adobe_ui_inspection": "not performed for this saved target",
+    "independent_adobe_30fps_reference": "pending parent work: no long-term Asset ID or verified MP4 hash",
+    "fresh_export_adobe_acceptance": "not established by these structural tests",
+    "visual_comparison": "unmeasured"
+  }
+}

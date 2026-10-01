@@ -1,0 +1,12 @@
+{
+  "status": "AUTHORING_REQUEST_UNRUN_UNMEASURED",
+  "caseId": "fx-export-media-shared-source",
+  "assets": [
+    "movie"
+  ],
+  "layers": [
+    "Blue Movie Left",
+    "Blue Movie Right"
+  ],
+  "sharedFootage": true
+}

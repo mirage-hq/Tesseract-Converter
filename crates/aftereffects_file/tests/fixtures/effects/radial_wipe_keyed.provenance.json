@@ -1,0 +1,69 @@
+{
+  "case_id": "aep-radial-wipe-keyed-c22",
+  "source": {
+    "file": "radial_wipe_keyed.aep",
+    "sha256": "7df3d2c575ec1d67fb5ea6076e3133b03c1d4fbafbf2bb0cd404854fd8fd32d7",
+    "bytes": 197818,
+    "provenance": "Independently edited in Adobe After Effects 26.5x89 from radial_wipe_edited.aep, not from converter output. Replaced the Start Angle expression with native Hold keys at 0s=30 and 1s=120; center remains [41,17]. Source FPS and canvas unchanged."
+  },
+  "targets": [
+    {
+      "composition_id": 22,
+      "name": "Half-plane Radial Wipe",
+      "feature": "Direct native Start Angle keys",
+      "canvas": [
+        96,
+        64
+      ],
+      "source_fps": 24,
+      "duration_seconds": 2,
+      "owner_layer_id": 34
+    },
+    {
+      "composition_id": 1,
+      "name": "Asymmetric quadrants",
+      "role": "Supporting editable source exercised through target22",
+      "supported_by": [
+        "aep-radial-wipe-keyed-c22"
+      ]
+    }
+  ],
+  "independent_reference": {
+    "renderer": "Adobe Render Queue 26.5x89",
+    "settings": "Best Settings; Use this frame rate=30; H.264 - Match Render Settings - 40 Mbps",
+    "canvas": [
+      96,
+      64
+    ],
+    "fps": 30,
+    "frames": 60,
+    "duration_seconds": 2,
+    "path": "tests/references/aep/special/radial-wipe-keyed.mp4"
+  },
+  "import": {
+    "test": "structure_document::radial_wipe::tests::radial_wipe_native_direct_angle_keys_import_as_editable_hold_rotation",
+    "execution": "passed; pinned native source failed before removing the direct-key-only rejection, then passed through existing atomic clock/easing/budget checks",
+    "assertions": [
+      "editable Shape and Add PathMask",
+      "center [41,17]",
+      "Rotation keys at 0ms=30 and 1000ms=120, arriving Hold easing"
+    ],
+    "strict_fx_rgb_alpha_comparison": "unmeasured"
+  },
+  "export_and_reimport": {
+    "test": "export_document::radial_wipe::proof_tests::edited_quadrant_half_plane_exports_current_center_and_hold_angles",
+    "execution": "passed; fresh exported direct Angle keys also reimport as editable Hold Rotation",
+    "independent_adobe_inspection": "Adobe API readback confirmed empty expression, two native Hold Angle keys at 0s=30 and 1s=120, center [41,17], Completion50, Wipe1 and Feather0. Samples at 0,0.5,29/30,1,31/30,1.5,59/30 matched the fresh export.",
+    "rgb_comparison": "All60 full-resolution FFmpeg rgb24 frames exactly equal to the fresh exported AEP render recorded in radial_wipe_edited.provenance.json",
+    "rgba_comparison": "All6144 pixels and all4 channels exactly equal at0s and1s; Adobe premultiplied/matted TIFF references, decoded identically with FFmpeg rgba",
+    "shared_independent_alpha_references": [
+      "radial_wipe_edited_0.tif",
+      "radial_wipe_edited_1.tif"
+    ],
+    "manual_ui_inspection": false
+  },
+  "limitations": [
+    "Only the bounded 50% hard-edge profile; no new general Wipe modes, feather or expression runtime.",
+    "Independent exact RGB/RGBA equality establishes this edited native export case, not general FX import alpha fidelity or full Intro export."
+  ]
+}

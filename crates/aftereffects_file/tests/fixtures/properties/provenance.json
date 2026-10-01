@@ -1,0 +1,560 @@
+{
+  "repository": "https://github.com/forticheprod/py-aep",
+  "commit": "e12a451c35bacd3f34a080090265f9370e66162b",
+  "cases": [
+    {
+      "file": "transform_unseparated.aep",
+      "source": "samples/models/property/transform_unseparated.aep",
+      "sha256": "1004b3ee82efd5e24b90ff67d8dd8c89a92c9a5ae554d69d96dc8847cdc61537",
+      "bytes": 112510,
+      "sidecar": {
+        "source": "samples/models/property/transform_unseparated.json",
+        "sha256": "eb75c6521508cc1264f0da596efe1d9b9a5378914fefb1689ed45f13c76626a5",
+        "bytes": 246356
+      },
+      "compositions": [
+        {
+          "id": 1,
+          "width": 1920,
+          "height": 1080,
+          "frameRate": 24,
+          "layers": [
+            {
+              "id": 15,
+              "sourceId": 14,
+              "properties": [
+                {
+                  "matchName": "ADBE Anchor Point",
+                  "value": [
+                    960,
+                    540,
+                    0
+                  ],
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Position",
+                  "value": [
+                    960,
+                    540,
+                    0
+                  ],
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Position_0",
+                  "value": 0,
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Position_1",
+                  "value": 0,
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Scale",
+                  "value": [
+                    100,
+                    100,
+                    100
+                  ],
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Rotate Z",
+                  "value": 0,
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Opacity",
+                  "value": 100,
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "transform_separated.aep",
+      "source": "samples/models/property/transform_separated.aep",
+      "sha256": "8d664bfebbf1c3f38790328be891b9a6bb4de797b76d5af13280690909b5fa19",
+      "bytes": 112329,
+      "sidecar": {
+        "source": "samples/models/property/transform_separated.json",
+        "sha256": "b942f11a1540518a17c705d1ffe0f325f70abc3c6bbe8171b8fc0cf75d61dc81",
+        "bytes": 246359
+      },
+      "compositions": [
+        {
+          "id": 1,
+          "width": 1920,
+          "height": 1080,
+          "frameRate": 24,
+          "layers": [
+            {
+              "id": 15,
+              "sourceId": 14,
+              "properties": [
+                {
+                  "matchName": "ADBE Anchor Point",
+                  "value": [
+                    960,
+                    540,
+                    0
+                  ],
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Position",
+                  "value": [
+                    960,
+                    540,
+                    0
+                  ],
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": true
+                },
+                {
+                  "matchName": "ADBE Position_0",
+                  "value": 960,
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Position_1",
+                  "value": 540,
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Scale",
+                  "value": [
+                    100,
+                    100,
+                    100
+                  ],
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Rotate Z",
+                  "value": 0,
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Opacity",
+                  "value": 100,
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "property_2D_position.aep",
+      "source": "samples/models/property/property_2D_position.aep",
+      "sha256": "afd303bec0c345010c15869e1e85ceeced05ee710cbe039914200b60d11b93de",
+      "bytes": 108099,
+      "sidecar": {
+        "source": "samples/models/property/property_2D_position.json",
+        "sha256": "a9d9fcb8bf282e6db4f61c16b2e03d642cbfe5e354ab457446b1bfb6fc2af8af",
+        "bytes": 249141
+      },
+      "compositions": [
+        {
+          "id": 1,
+          "width": 100,
+          "height": 100,
+          "frameRate": 24,
+          "layers": [
+            {
+              "id": 15,
+              "sourceId": 14,
+              "properties": [
+                {
+                  "matchName": "ADBE Anchor Point",
+                  "value": [
+                    50,
+                    50,
+                    0
+                  ],
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Position",
+                  "value": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "numKeys": 2,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Position_0",
+                  "value": 0,
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Position_1",
+                  "value": 0,
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Scale",
+                  "value": [
+                    100,
+                    100,
+                    100
+                  ],
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Rotate Z",
+                  "value": 0,
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Opacity",
+                  "value": 100,
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "property_scale.aep",
+      "source": "samples/models/property/property_scale.aep",
+      "sha256": "1a759f2228e868f34c02e167589ce9591529a4116d0a43283d2a265619774b54",
+      "bytes": 108131,
+      "sidecar": {
+        "source": "samples/models/property/property_scale.json",
+        "sha256": "622039cf011485855142aee7b5d54689d785aaf73881aa6bd059f39df27a8e41",
+        "bytes": 249395
+      },
+      "compositions": [
+        {
+          "id": 1,
+          "width": 100,
+          "height": 100,
+          "frameRate": 24,
+          "layers": [
+            {
+              "id": 15,
+              "sourceId": 14,
+              "properties": [
+                {
+                  "matchName": "ADBE Anchor Point",
+                  "value": [
+                    50,
+                    50,
+                    0
+                  ],
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Position",
+                  "value": [
+                    50,
+                    50,
+                    0
+                  ],
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Position_0",
+                  "value": 0,
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Position_1",
+                  "value": 0,
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Scale",
+                  "value": [
+                    100,
+                    100,
+                    100
+                  ],
+                  "numKeys": 2,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Rotate Z",
+                  "value": 0,
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Opacity",
+                  "value": 100,
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "property_rotation.aep",
+      "source": "samples/models/property/property_rotation.aep",
+      "sha256": "0dc102e22a1c36a9b6589edf07e4c075593f483ab0eb43a617b1f494b18f5351",
+      "bytes": 107939,
+      "sidecar": {
+        "source": "samples/models/property/property_rotation.json",
+        "sha256": "1d50f16160a95c3cf41643a8db02417f972854e9e15d0702e83c656119437813",
+        "bytes": 247994
+      },
+      "compositions": [
+        {
+          "id": 1,
+          "width": 100,
+          "height": 100,
+          "frameRate": 24,
+          "layers": [
+            {
+              "id": 15,
+              "sourceId": 14,
+              "properties": [
+                {
+                  "matchName": "ADBE Anchor Point",
+                  "value": [
+                    50,
+                    50,
+                    0
+                  ],
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Position",
+                  "value": [
+                    50,
+                    50,
+                    0
+                  ],
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Position_0",
+                  "value": 0,
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Position_1",
+                  "value": 0,
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Scale",
+                  "value": [
+                    100,
+                    100,
+                    100
+                  ],
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Rotate Z",
+                  "value": 0,
+                  "numKeys": 2,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Opacity",
+                  "value": 100,
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "property_1D_opacity.aep",
+      "source": "samples/models/property/property_1D_opacity.aep",
+      "sha256": "49604b49834bfec8dd2a09ce448bc09421a8a09cd53b2647da45b651127e08a0",
+      "bytes": 107971,
+      "sidecar": {
+        "source": "samples/models/property/property_1D_opacity.json",
+        "sha256": "795603be295e1b704122fde992089443364823935b370611e210f2f563508788",
+        "bytes": 247994
+      },
+      "compositions": [
+        {
+          "id": 1,
+          "width": 100,
+          "height": 100,
+          "frameRate": 24,
+          "layers": [
+            {
+              "id": 15,
+              "sourceId": 14,
+              "properties": [
+                {
+                  "matchName": "ADBE Anchor Point",
+                  "value": [
+                    50,
+                    50,
+                    0
+                  ],
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Position",
+                  "value": [
+                    50,
+                    50,
+                    0
+                  ],
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Position_0",
+                  "value": 0,
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Position_1",
+                  "value": 0,
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Scale",
+                  "value": [
+                    100,
+                    100,
+                    100
+                  ],
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Rotate Z",
+                  "value": 0,
+                  "numKeys": 0,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                },
+                {
+                  "matchName": "ADBE Opacity",
+                  "value": 0,
+                  "numKeys": 2,
+                  "expressionEnabled": false,
+                  "dimensionsSeparated": false
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "orientation_5_0_0.aep",
+      "source": "samples/models/layer/orientation_5_0_0.aep",
+      "sha256": "61ab561c4c77820fc8e2460e677286d1772a127d0cc46403248c6fcf8350c223",
+      "bytes": 109703,
+      "sidecar": {
+        "file": "orientation_5_0_0.json.gz",
+        "source": "samples/models/layer/orientation_5_0_0.json",
+        "sha256": "97b2e9e638770b9167439666fc4325225286d4946ecbb1996c9f8c3e3863f004",
+        "bytes": 246316
+      },
+      "compositions": []
+    },
+    {
+      "file": "orientation_with_keyframes.aep",
+      "source": "samples/models/layer/orientation_with_keyframes.aep",
+      "sha256": "f5617cea97ae15e942a354c36e05476006fddc0867991c6c64ac7d8aca3da8e6",
+      "bytes": 111042,
+      "sidecar": {
+        "file": "orientation_with_keyframes.json.gz",
+        "source": "samples/models/layer/orientation_with_keyframes.json",
+        "sha256": "afc631d191230b3bdedf87fa1026cbe5fe30d92c1dc06da058e4c5fd0f9a4047",
+        "bytes": 249148
+      },
+      "compositions": []
+    }
+  ]
+}

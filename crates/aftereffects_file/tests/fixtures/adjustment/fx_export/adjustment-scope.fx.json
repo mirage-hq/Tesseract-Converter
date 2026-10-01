@@ -1,0 +1,253 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "formatVersion": 1,
+  "dimensions": {
+    "width": 320,
+    "height": 180
+  },
+  "duration": 2.0,
+  "backgroundColor": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "composition": {
+    "id": "main",
+    "name": "adjustment-scope",
+    "layers": [
+      {
+        "id": 103,
+        "name": "upper-sentinel-37x23",
+        "type": "Rect",
+        "parent": null,
+        "blendMode": "normal",
+        "activeRange": {
+          "start": 0,
+          "duration": 2000
+        },
+        "effects": [],
+        "rect": {
+          "size": [
+            37.0,
+            23.0
+          ],
+          "position": [
+            0.0,
+            0.0
+          ],
+          "roundness": 0.0,
+          "fillEnabled": true,
+          "fillColor": [
+            1.0,
+            0.05,
+            0.72,
+            1.0
+          ],
+          "strokeEnabled": false,
+          "strokeWidth": 0.0
+        },
+        "transform": {
+          "anchorPoint": [
+            18.5,
+            11.5
+          ],
+          "position": [
+            287.0,
+            19.0
+          ],
+          "scale": [
+            100.0,
+            100.0
+          ],
+          "rotation": 17.0,
+          "rotationX": 0.0,
+          "rotationY": 0.0,
+          "orientation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "skew": 0.0,
+          "skewAxis": 0.0,
+          "opacity": 100.0
+        },
+        "description": "Editable AE solid; independently specified Adjustment reference content"
+      },
+      {
+        "id": 102,
+        "name": "scope-adjustment",
+        "type": "Adjustment",
+        "parent": null,
+        "blendMode": "normal",
+        "activeRange": {
+          "start": 0,
+          "duration": 2000
+        },
+        "effects": [
+          {
+            "id": 9001,
+            "enabled": true,
+            "effect": {
+              "type": "gaussianBlur",
+              "blurriness": 19.0,
+              "repeatEdgePixels": true
+            }
+          }
+        ],
+        "transform": {
+          "anchorPoint": [
+            160.0,
+            90.0
+          ],
+          "position": [
+            160.0,
+            90.0
+          ],
+          "scale": [
+            100.0,
+            100.0
+          ],
+          "rotation": 0.0,
+          "rotationX": 0.0,
+          "rotationY": 0.0,
+          "orientation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "skew": 0.0,
+          "skewAxis": 0.0,
+          "opacity": 100.0
+        }
+      },
+      {
+        "id": 104,
+        "name": "lower-amber-83x117",
+        "type": "Rect",
+        "parent": null,
+        "blendMode": "normal",
+        "activeRange": {
+          "start": 0,
+          "duration": 2000
+        },
+        "effects": [],
+        "rect": {
+          "size": [
+            83.0,
+            117.0
+          ],
+          "position": [
+            0.0,
+            0.0
+          ],
+          "roundness": 0.0,
+          "fillEnabled": true,
+          "fillColor": [
+            0.96,
+            0.38,
+            0.05,
+            1.0
+          ],
+          "strokeEnabled": false,
+          "strokeWidth": 0.0
+        },
+        "transform": {
+          "anchorPoint": [
+            41.5,
+            58.5
+          ],
+          "position": [
+            238.0,
+            108.0
+          ],
+          "scale": [
+            100.0,
+            100.0
+          ],
+          "rotation": -11.0,
+          "rotationX": 0.0,
+          "rotationY": 0.0,
+          "orientation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "skew": 0.0,
+          "skewAxis": 0.0,
+          "opacity": 100.0
+        },
+        "description": "Editable AE solid; independently specified Adjustment reference content"
+      },
+      {
+        "id": 101,
+        "name": "lower-cobalt-127x71",
+        "type": "Rect",
+        "parent": null,
+        "blendMode": "normal",
+        "activeRange": {
+          "start": 0,
+          "duration": 2000
+        },
+        "effects": [],
+        "rect": {
+          "size": [
+            127.0,
+            71.0
+          ],
+          "position": [
+            0.0,
+            0.0
+          ],
+          "roundness": 0.0,
+          "fillEnabled": true,
+          "fillColor": [
+            0.08,
+            0.24,
+            0.88,
+            1.0
+          ],
+          "strokeEnabled": false,
+          "strokeWidth": 0.0
+        },
+        "transform": {
+          "anchorPoint": [
+            63.5,
+            35.5
+          ],
+          "position": [
+            77.0,
+            58.0
+          ],
+          "scale": [
+            100.0,
+            100.0
+          ],
+          "rotation": 7.0,
+          "rotationX": 0.0,
+          "rotationY": 0.0,
+          "orientation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "skew": 0.0,
+          "skewAxis": 0.0,
+          "opacity": 100.0
+        },
+        "description": "Editable AE solid; independently specified Adjustment reference content"
+      }
+    ],
+    "segmentLayerIds": [],
+    "dynamics": {
+      "entries": []
+    },
+    "motionBlur": {
+      "enabled": false,
+      "shutterAngle": 180.0,
+      "shutterPhase": 0.0,
+      "samplesPerFrame": 16,
+      "adaptiveSampleLimit": 128
+    }
+  }
+}

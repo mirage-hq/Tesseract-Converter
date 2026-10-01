@@ -1,0 +1,26 @@
+{
+  "evidence": {
+    "adobeControlReadback": "verified-by-exact-input-and-aep-hash",
+    "adobeRender": "60-native-rgb24-frames-match-independent-reference",
+    "nativeSource": "adobe-authored-and-sha-pinned"
+  },
+  "layerName": "Edited Rectangle",
+  "properties": [
+    {
+      "keys": [[0, 80, 40], [1, 150, 70]],
+      "name": "ADBE Vector Rect Size"
+    },
+    {
+      "keys": [[0, 47, 17], [1, 82, 32]],
+      "name": "ADBE Vector Rect Position"
+    },
+    {
+      "name": "ADBE Vector Rect Roundness",
+      "value": [2]
+    },
+    {
+      "name": "ADBE Vector Fill Color",
+      "value": [0.2, 0.4, 0.6, 1]
+    }
+  ]
+}

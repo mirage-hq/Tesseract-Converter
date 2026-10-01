@@ -1,0 +1,122 @@
+<PremiereData Version="3">
+  <VideoFilterComponent ObjectID="403" ClassID="d10da199-beea-4dd1-b941-ed3a78766d50" Version="9">
+    <Component Version="7">
+      <Params Version="1">
+        <Param Index="0" ObjectRef="817"/>
+        <Param Index="1" ObjectRef="818"/>
+        <Param Index="2" ObjectRef="819"/>
+        <Param Index="3" ObjectRef="820"/>
+        <Param Index="4" ObjectRef="821"/>
+        <Param Index="5" ObjectRef="822"/>
+      </Params>
+      <ID>5</ID>
+      <DisplayName>Crop</DisplayName>
+    </Component>
+    <VideoFilterType>2</VideoFilterType>
+    <MatchName>AE.ADBE AECrop</MatchName>
+  </VideoFilterComponent>
+  <VideoFilterComponent ObjectID="405" ClassID="d10da199-beea-4dd1-b941-ed3a78766d50" Version="9">
+    <Component Version="7">
+      <Params Version="1">
+        <Param Index="0" ObjectRef="823"/>
+        <Param Index="1" ObjectRef="824"/>
+        <Param Index="2" ObjectRef="825"/>
+        <Param Index="3" ObjectRef="826"/>
+        <Param Index="4" ObjectRef="827"/>
+        <Param Index="5" ObjectRef="828"/>
+      </Params>
+      <ID>5</ID>
+      <DisplayName>Crop</DisplayName>
+    </Component>
+    <VideoFilterType>2</VideoFilterType>
+    <MatchName>AE.ADBE AECrop</MatchName>
+  </VideoFilterComponent>
+  <VideoComponentParam ObjectID="817" ClassID="fe47129e-6c94-4fc0-95d5-c056a517aaf3" Version="10">
+    <ParameterID>1</ParameterID>
+    <Name>Left</Name>
+    <StartKeyframe>-91445760000000000,0.,0,0,0,0,0,0</StartKeyframe>
+    <CurrentValue>99</CurrentValue>
+    <UpperBound>100</UpperBound>
+    <LowerBound>0</LowerBound>
+  </VideoComponentParam>
+  <VideoComponentParam ObjectID="818" ClassID="fe47129e-6c94-4fc0-95d5-c056a517aaf3" Version="10">
+    <ParameterID>2</ParameterID>
+    <Name>Top</Name>
+    <StartKeyframe>-91445760000000000,0.,0,0,0,0,0,0</StartKeyframe>
+    <UpperBound>100</UpperBound>
+    <LowerBound>0</LowerBound>
+  </VideoComponentParam>
+  <VideoComponentParam ObjectID="819" ClassID="fe47129e-6c94-4fc0-95d5-c056a517aaf3" Version="10">
+    <ParameterID>3</ParameterID>
+    <Name>Right</Name>
+    <StartKeyframe>-91445760000000000,49.107574462891,0,0,0,0,0,0</StartKeyframe>
+    <UpperBound>100</UpperBound>
+    <LowerBound>0</LowerBound>
+  </VideoComponentParam>
+  <VideoComponentParam ObjectID="820" ClassID="fe47129e-6c94-4fc0-95d5-c056a517aaf3" Version="10">
+    <ParameterID>4</ParameterID>
+    <Name>Bottom</Name>
+    <StartKeyframe>-91445760000000000,0.,0,0,0,0,0,0</StartKeyframe>
+    <UpperBound>100</UpperBound>
+    <LowerBound>0</LowerBound>
+  </VideoComponentParam>
+  <VideoComponentParam ObjectID="821" ClassID="cc12343e-f113-4d3b-ae05-b287db77d461" Version="10">
+    <ParameterID>5</ParameterID>
+    <Name> </Name>
+    <StartKeyframe>-91445760000000000,false,0,0,0,0,0,0</StartKeyframe>
+  </VideoComponentParam>
+  <VideoComponentParam ObjectID="822" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+    <ParameterID>6</ParameterID>
+    <UpperUIBound>100</UpperUIBound>
+    <ParameterControlType>1</ParameterControlType>
+    <Name>Edge Feather</Name>
+    <LowerUIBound>-100</LowerUIBound>
+    <StartKeyframe>-91445760000000000,0,0,0,0,0,0,0</StartKeyframe>
+    <UpperBound>30000</UpperBound>
+    <LowerBound>-30000</LowerBound>
+  </VideoComponentParam>
+  <VideoComponentParam ObjectID="823" ClassID="fe47129e-6c94-4fc0-95d5-c056a517aaf3" Version="10">
+    <ParameterID>1</ParameterID>
+    <Name>Left</Name>
+    <StartKeyframe>-91445760000000000,0.,0,0,0,0,0,0</StartKeyframe>
+    <CurrentValue>99</CurrentValue>
+    <UpperBound>100</UpperBound>
+    <LowerBound>0</LowerBound>
+  </VideoComponentParam>
+  <VideoComponentParam ObjectID="824" ClassID="fe47129e-6c94-4fc0-95d5-c056a517aaf3" Version="10">
+    <ParameterID>2</ParameterID>
+    <Name>Top</Name>
+    <StartKeyframe>-91445760000000000,0.,0,0,0,0,0,0</StartKeyframe>
+    <UpperBound>100</UpperBound>
+    <LowerBound>0</LowerBound>
+  </VideoComponentParam>
+  <VideoComponentParam ObjectID="825" ClassID="fe47129e-6c94-4fc0-95d5-c056a517aaf3" Version="10">
+    <ParameterID>3</ParameterID>
+    <Name>Right</Name>
+    <StartKeyframe>-91445760000000000,49.107574462891,0,0,0,0,0,0</StartKeyframe>
+    <UpperBound>100</UpperBound>
+    <LowerBound>0</LowerBound>
+  </VideoComponentParam>
+  <VideoComponentParam ObjectID="826" ClassID="fe47129e-6c94-4fc0-95d5-c056a517aaf3" Version="10">
+    <ParameterID>4</ParameterID>
+    <Name>Bottom</Name>
+    <StartKeyframe>-91445760000000000,0.,0,0,0,0,0,0</StartKeyframe>
+    <UpperBound>100</UpperBound>
+    <LowerBound>0</LowerBound>
+  </VideoComponentParam>
+  <VideoComponentParam ObjectID="827" ClassID="cc12343e-f113-4d3b-ae05-b287db77d461" Version="10">
+    <ParameterID>5</ParameterID>
+    <Name> </Name>
+    <StartKeyframe>-91445760000000000,false,0,0,0,0,0,0</StartKeyframe>
+  </VideoComponentParam>
+  <VideoComponentParam ObjectID="828" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+    <ParameterID>6</ParameterID>
+    <UpperUIBound>100</UpperUIBound>
+    <ParameterControlType>1</ParameterControlType>
+    <Name>Edge Feather</Name>
+    <LowerUIBound>-100</LowerUIBound>
+    <StartKeyframe>-91445760000000000,0,0,0,0,0,0,0</StartKeyframe>
+    <UpperBound>30000</UpperBound>
+    <LowerBound>-30000</LowerBound>
+  </VideoComponentParam>
+</PremiereData>

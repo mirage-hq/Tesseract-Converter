@@ -1,0 +1,40 @@
+{
+  "composition_id": 1,
+  "composition_name": "AEP_PROOF_POSITION",
+  "layer_id": 17,
+  "background_layer_id": 15,
+  "fps": 24,
+  "frames": 48,
+  "width": 1920,
+  "height": 1080,
+  "position": [
+    1040,
+    480,
+    0
+  ],
+  "scale": [
+    125,
+    80,
+    100
+  ],
+  "rotation": 11,
+  "foreground_rgb": [
+    0.1875,
+    0.625,
+    0.9375
+  ],
+  "foreground_size": [
+    480,
+    270
+  ],
+  "source_sha256": "561f584f8531b4133c0565b22f14489ed509a9dfc3315d4d2c735fcc903d58ea",
+  "source_bytes": 86891,
+  "reference_mp4_sha256": "a351fc4d6af5873abc921ba00561be1dbd6b5afd0d47fc69fe79bf5e30e2f307",
+  "reference_mp4_bytes": 44377,
+  "author_jsx_sha256": "dfe6c36fb5b4806e851382f617f7676e2a5c8ab3d80496f2e1d381cfbe3b6794",
+  "author_jsx_current_sha256": "4d5d0bfda656992aa5098f313abc1974a1312bb9113c8647c86965e948a7d909",
+  "author": "Independently Adobe-authored by After Effects JSX DoScriptFile",
+  "ae_version": "26.5x89",
+  "case": "static_position",
+  "evidence_scope": "Independent Adobe-native source and retained Adobe reference; import assertions only in this PR, no current conversion or export fidelity result."
+}

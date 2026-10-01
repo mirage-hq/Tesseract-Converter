@@ -1,0 +1,88 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "backgroundColor": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "composition": {
+    "dynamics": {
+      "entries": []
+    },
+    "id": "main",
+    "layers": [
+      {
+        "activeRange": {
+          "duration": 2000,
+          "start": 0
+        },
+        "blendMode": "normal",
+        "id": 900,
+        "name": "Editable identity rectangle",
+        "parent": null,
+        "rect": {
+          "fillColor": [
+            0.18823529411764706,
+            0.39215686274509803,
+            0.592156862745098,
+            1
+          ],
+          "fillEnabled": true,
+          "position": [
+            0,
+            0
+          ],
+          "roundness": 0,
+          "size": [
+            120,
+            80
+          ],
+          "strokeEnabled": false,
+          "strokeWidth": 0
+        },
+        "transform": {
+          "anchorPoint": [
+            60,
+            40
+          ],
+          "opacity": 100,
+          "orientation": [
+            0,
+            0,
+            0
+          ],
+          "position": [
+            960,
+            540
+          ],
+          "rotation": 0,
+          "rotationX": 0,
+          "rotationY": 0,
+          "scale": [
+            100,
+            100
+          ],
+          "skew": 0,
+          "skewAxis": 0
+        },
+        "type": "Rect"
+      }
+    ],
+    "motionBlur": {
+      "adaptiveSampleLimit": 128,
+      "enabled": false,
+      "samplesPerFrame": 16,
+      "shutterAngle": 180,
+      "shutterPhase": 0
+    },
+    "name": "Hybrid_Rect_Identity_30fps",
+    "segmentLayerIds": []
+  },
+  "dimensions": {
+    "width": 1920,
+    "height": 1080
+  },
+  "duration": 2.0,
+  "formatVersion": 1
+}

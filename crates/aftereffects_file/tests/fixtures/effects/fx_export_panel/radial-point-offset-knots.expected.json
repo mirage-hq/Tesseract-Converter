@@ -1,0 +1,48 @@
+{
+  "controls": [
+    {
+      "name": "ADBE Radial Blur-0001",
+      "value": [
+        12
+      ]
+    },
+    {
+      "keys": [
+        [
+          0,
+          30,
+          20
+        ],
+        [
+          0.5,
+          60,
+          60
+        ],
+        [
+          1,
+          90,
+          20
+        ]
+      ],
+      "name": "ADBE Radial Blur-0002",
+      "segments": [
+        "linear",
+        "linear"
+      ],
+      "valueAtTime": [
+        [
+          0.25,
+          45,
+          40
+        ],
+        [
+          0.75,
+          75,
+          40
+        ]
+      ]
+    }
+  ],
+  "effect": "ADBE Radial Blur",
+  "enabled": true
+}

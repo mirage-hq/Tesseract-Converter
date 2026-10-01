@@ -1,0 +1,35 @@
+{
+  "source_sha256": "6d632ac99c9e081746d51b83a651cb311dc063f0541bbe43ba1a241bd8870fdd",
+  "source_compositions": [
+    907,
+    883
+  ],
+  "source_layers": [
+    910,
+    892,
+    887
+  ],
+  "chunks": [
+    {
+      "offset": 2117986,
+      "bytes": 40746,
+      "kind": "Layr",
+      "sha256": "89653f25d5a1fea9dc9ed5e885720054b02c72d53ca560ffd2b5421391dd7de7"
+    },
+    {
+      "offset": 1689756,
+      "bytes": 7388,
+      "kind": "parT",
+      "sha256": "2c7ce9b132fa011cdc189d41cb7d61b5637514236f54cbaf7ef43a1e970e6d77"
+    },
+    {
+      "offset": 1786540,
+      "bytes": 22912,
+      "kind": "Layr",
+      "sha256": "cb4ff51f92c25fdaf107c6f17ede06c25cfa50268d217fc3fa531fe232a4397f"
+    }
+  ],
+  "fixture_bytes": 71058,
+  "fixture_sha256": "8c01401e4dd0cb286821a18d92de51cb208c761da5b25bf3c76d27ff7cb4f746",
+  "scope": "Exact native layer910 sparse Fractal stages and full same-source Fractal parT definitions from892. Structural effect mapping test only; kernel, scale and evolution pixels remain approximate. Exact native layer887 adds a source-derived zero-contrast Multiply approximation regression."
+}

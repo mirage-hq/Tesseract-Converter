@@ -1,0 +1,10 @@
+{
+  "source_sha256": "6d632ac99c9e081746d51b83a651cb311dc063f0541bbe43ba1a241bd8870fdd",
+  "source_layer": 1037,
+  "native_parameter_table_offset": 1904854,
+  "native_parameter_table_bytes": 1918,
+  "fixture": "cosmic-set-matte-alpha-defaults.rifx",
+  "fixture_bytes": 1918,
+  "fixture_sha256": "afa50609009ad22e0b06343c5b1278d13df8952a3ac41dd98c6f4f61c978d2f0",
+  "description": "Exact full native Set Matte Alpha/default/composite parameter table. Layer948 has sparse empty parT; this accompanying table pins its bounded assumed default profile, not a generic effect registry or independently proved stage-selector law."
+}

@@ -1,0 +1,69 @@
+{
+  "total": 477,
+  "finished": 477,
+  "unrun": 0,
+  "counts": {
+    "success": 475,
+    "failure": 2
+  },
+  "execution_errors": 0,
+  "scored": 477,
+  "below_threshold": 2,
+  "elapsed_seconds": 1285.6596499159932,
+  "minimum_frame_threshold": 0.95,
+  "compared_frames": 39780,
+  "expected_frames": 39780,
+  "build": {
+    "mode": "all",
+    "commit": "e9724e878d0698bdb29c1485f95d964ee638e10f",
+    "worktree_status": "",
+    "manifest_sha256": "263b759c4503a56c4681a9209268d530ee13d2f7813763d09960c5658ff49a7b",
+    "binary_sha256": {
+      "tesseract-conv": "4bd4f4e1517c9761fc47e78ba4570978ca0abe78f308e01deb218bf63672878f",
+      "tsrct": "7f4e34775483c55950903a1ee76b724573833ae421b4a35f9b806e03d513fc8f",
+      "validation_cli": "de301ef4f3f0bd941ad359639f591a46482f341fc534b3a269d11aa3cdef2f10"
+    },
+    "count": 477,
+    "requested_case_ids": null,
+    "total_reference_frames": 39780,
+    "policy": "30fps, full resolution, canonical RGB24, rgb-hybrid; minimum frame score >=0.95"
+  },
+  "newly_passing": [
+    "import_full_justification_variants-c182f48a-c1",
+    "import_full_justification_variants-c182f48a-c17",
+    "import_full_justification_variants-c182f48a-c32",
+    "import_gradient_controls-5406fe7f-c1",
+    "import_gradient_controls-5406fe7f-c17",
+    "import_gradient_controls-5406fe7f-c62",
+    "import_gradient_controls-5406fe7f-c77",
+    "import_isolated_native_gradients-1cb781c4-c14",
+    "import_isolated_native_gradients-1cb781c4-c27",
+    "import_temporal_clock_cases-d80216ea-c57",
+    "native_export_edit_controls-c961d610-c1"
+  ],
+  "regressions": [],
+  "below_threshold_cases": [
+    {
+      "case_id": "import_audio_media_controls-36920d6b-c139",
+      "score": 0.9489544923805896,
+      "worst_time_secs": 0.6
+    },
+    {
+      "case_id": "import_temporal_clock_cases-d80216ea-c30",
+      "score": 0.9352196582428282,
+      "worst_time_secs": 0.0
+    }
+  ],
+  "proof_limits": [
+    "Import RGB measurement only; no alpha/audio equality or Adobe UI inspection.",
+    "Only separately enumerated editable assertions were run; 477 scores do not establish 477 complete feature contracts.",
+    "Edited FX-to-AEP independent Adobe open/inspection/render proof remains unrun.",
+    "Same-named local Arial/Helvetica files were packaged; exact Adobe reference font bytes are unknown.",
+    "Immutable Adobe references and source AEPs are unchanged. No score threshold, frame count or resolution reduction.",
+    "Baseline column comes from the historical mixed-build checkpoint, not one baseline binary."
+  ],
+  "packaged_font_sha256": {
+    "Arial.ttf": "525979822591a3447cfc49d943d6f7683508e25543407871c0ed8fed05fd2bd9",
+    "Helvetica.ttc": "25eceb458d4baf628ee0b6a135a9f8ac5ec7b2826646720834bd2bf00dfc825a"
+  }
+}

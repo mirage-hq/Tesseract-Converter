@@ -1,0 +1,89 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "backgroundColor": [
+    0.0,
+    0.0,
+    0.0,
+    1.0
+  ],
+  "composition": {
+    "dynamics": {
+      "entries": [
+        {
+          "animator": {
+            "enabled": true,
+            "keyframes": [
+              {
+                "easing": {
+                  "type": "linear"
+                },
+                "id": "audio-e2e-700-AudioVolume-0",
+                "layerTime": 500,
+                "value": {
+                  "type": "float",
+                  "value": 0.5
+                }
+              },
+              {
+                "easing": {
+                  "type": "linear"
+                },
+                "id": "audio-e2e-700-AudioVolume-1",
+                "layerTime": 1500,
+                "value": {
+                  "type": "float",
+                  "value": 1.0
+                }
+              }
+            ],
+            "type": "keyframes"
+          },
+          "dependencies": [],
+          "layerRefs": {},
+          "target": {
+            "kind": "layer",
+            "layerId": 700,
+            "propertyType": "volume"
+          }
+        }
+      ]
+    },
+    "id": "main",
+    "layers": [
+      {
+        "activeRange": {
+          "duration": 2000,
+          "start": 1000
+        },
+        "id": 700,
+        "name": "audio-700",
+        "parent": null,
+        "source": {
+          "assetId": "sound"
+        },
+        "sourceIntrinsicDuration": 4000,
+        "sourceRange": {
+          "duration": 1000,
+          "start": 500
+        },
+        "type": "Audio",
+        "volume": 0.5
+      }
+    ],
+    "motionBlur": {
+      "adaptiveSampleLimit": 128.0,
+      "enabled": false,
+      "samplesPerFrame": 16.0,
+      "shutterAngle": 180.0,
+      "shutterPhase": 0.0
+    },
+    "name": "linear-gain",
+    "segmentLayerIds": []
+  },
+  "dimensions": {
+    "height": 180,
+    "width": 320
+  },
+  "duration": 6.0,
+  "formatVersion": 1
+}

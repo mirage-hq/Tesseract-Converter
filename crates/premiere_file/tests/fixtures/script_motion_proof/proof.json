@@ -1,0 +1,269 @@
+{
+  "scope": "Paired Position, uniform Scale and Rotation on one trimmed, offset video over an opaque gray video.",
+  "candidate_source_head": "82979b5b15323931da587a05cc3ab332c2117ca8",
+  "base_main": "130cd868ddd93301c912a3aab7b1c05815f76d32",
+  "converter": {
+    "bytes": 29997888,
+    "sha256": "fc4d7a7c97c36118e5596a47d634713cfcfd1f382d514357981965267e0c9df7"
+  },
+  "source": {
+    "script-motion-pairs-stored.tsrct": {
+      "bytes": 42899,
+      "sha256": "3016cfa0ae3cbabe27a582590d2e12167c249c54f8607446480beda958922127"
+    },
+    "project.json": {
+      "bytes": 4172,
+      "sha256": "b03290ad59084aeaf1e0bab855a8955831904760597b1d6fbf1094455aa340af"
+    },
+    "red.mp4": {
+      "bytes": 26748,
+      "sha256": "dcf99b6140002b8b8b2af4c217e4c438f17aa0a73a845fa7a0cb89cbed60b7df"
+    },
+    "gray.mp4": {
+      "bytes": 10510,
+      "sha256": "cbff1e847f756aa0b5c4579e4cd900098832604854765b5fa02670f6db4862e9"
+    }
+  },
+  "archive_metadata": {
+    "$schema": "urn:tesseract:file:metadata:v2",
+    "format": "tesseract",
+    "formatVersion": 2,
+    "documentId": "a8db5aba-05df-4ee3-9237-5c43a54a3cef",
+    "createdAt": "2026-09-28T02:00:00Z",
+    "modifiedAt": "2026-09-28T02:00:00Z",
+    "generator": {
+      "name": "fixture-package",
+      "version": "1",
+      "engineVersion": "1"
+    },
+    "project": {
+      "path": "project.json",
+      "contentType": "application/vnd.tesseract.fx-composition+json",
+      "byteLength": 4172,
+      "sha256": "b03290ad59084aeaf1e0bab855a8955831904760597b1d6fbf1094455aa340af"
+    },
+    "assets": {
+      "premiere-video-1": {
+        "path": "assets/red.mp4",
+        "contentType": "video/mp4",
+        "byteLength": 26748,
+        "sha256": "dcf99b6140002b8b8b2af4c217e4c438f17aa0a73a845fa7a0cb89cbed60b7df",
+        "kind": "video"
+      },
+      "script-proof-gray": {
+        "path": "assets/gray.mp4",
+        "contentType": "video/mp4",
+        "byteLength": 10510,
+        "sha256": "cbff1e847f756aa0b5c4579e4cd900098832604854765b5fa02670f6db4862e9",
+        "kind": "video"
+      }
+    }
+  },
+  "archive_layout": [
+    "metadata.json",
+    "project.json",
+    "assets/red.mp4",
+    "assets/gray.mp4"
+  ],
+  "archive_compression": "ZIP_STORED",
+  "frame_metadata": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "duration_seconds": 3.5,
+    "decoded_frames": 105
+  },
+  "reference": {
+    "started_at": "2026-09-28T19:06:49.703721+00:00",
+    "completed_at": "2026-09-28T19:06:51.684195+00:00",
+    "path": "tests/references/premiere/special/script-motion-proof.mp4"
+  },
+  "adobe": {
+    "premiere": "26.5.1",
+    "ame": "2026 build 85",
+    "preset": "01 - Match Source - High bitrate.epr",
+    "preset_sha256": "68cf2ab2a0a62193c8d9f4a0b4501c0bd4be72258a13c1e0437539cf35aa4597",
+    "independence": "Control authored from the independent expected values, before inspecting candidate XML. Approved Position and placement XML edits followed bridge limitations; control-edit.diff preserves them. Control then reopened and passed native checks.",
+    "candidate_opened": "candidate-9a915008f.prproj",
+    "final_candidate_validation": "Strict native-output equivalence; candidate-82979b5b1.prproj was not reopened in Adobe.",
+    "native_controls": "One intrinsic Motion owner; paired Position, uniform Scale and Rotation; two Linear keys each, static Scale Width and Anchor [0.5, 0.5].",
+    "placement_seconds": {
+      "gray": {
+        "source": [
+          0,
+          3.5
+        ],
+        "timeline": [
+          0,
+          3.5
+        ]
+      },
+      "red": {
+        "source": [
+          1,
+          4
+        ],
+        "timeline": [
+          0.5,
+          3.5
+        ]
+      }
+    },
+    "control_and_candidate_values_as_reported": [
+      {
+        "source_seconds": 1,
+        "timeline_seconds": 0.5,
+        "position_normalized": [
+          0.36458333333333,
+          0.39814814814815
+        ],
+        "scale_percent": 35,
+        "rotation_degrees": -15
+      },
+      {
+        "source_seconds": 2.5,
+        "timeline_seconds": 2,
+        "position_normalized": [
+          0.48177083333333,
+          0.48148148148148
+        ],
+        "scale_percent": 42.5,
+        "rotation_degrees": 0
+      },
+      {
+        "source_seconds": 4,
+        "timeline_seconds": 3.5,
+        "position_normalized": [
+          0.59895833333333,
+          0.56481481481481
+        ],
+        "scale_percent": 50,
+        "rotation_degrees": 15
+      }
+    ],
+    "value_method": "Endpoints from stored native keys; midpoint from get_value_at_time. The source-end key is outside the rendered interval.",
+    "candidate_render": {
+      "bytes": 309648,
+      "sha256": "7eb7060cc8fdf8da13f40031771cc5c8a8ed85cc7bc54c2ef20aad8bba5ba224"
+    },
+    "control_render": {
+      "bytes": 309648,
+      "sha256": "e2cb856ae6553250e2d15490013af7d8d162933d3a5968310a1df118ce7e82b4"
+    },
+    "equal_native_render_png_frames": [
+      14,
+      15,
+      16,
+      59,
+      60,
+      61,
+      104
+    ],
+    "native_lead_in": "Frame 0 is opaque (alpha 255). This does not prove alpha over the whole sequence."
+  },
+  "fx": {
+    "render_source_head": "27f5c6513cb1fb8d5eb5c7a6bd40c78a06fe132c",
+    "renderer": {
+      "bytes": 116408064,
+      "sha256": "b063ac006229aef1a9c7a34e34ba3a04ebe935f8bbe40214e0f59a853bb5b4d4"
+    },
+    "scorer": {
+      "bytes": 7403536,
+      "sha256": "6780891facaec210e46e42ec5d23ae71276cb716c227a3ab8d541ae9d4598e66"
+    },
+    "original_script_render": {
+      "bytes": 222640,
+      "sha256": "f0da6704687549367ddf1f58f9ce643d33e053f24a50e9faafd50f15b37ed5d1"
+    },
+    "reuse_audit": {
+      "compared_paths": [
+        "Cargo.lock",
+        "Cargo.toml",
+        "crates/renderer",
+        "crates/fx_composition",
+        "crates/fx_model",
+        "crates/fx_schema",
+        "crates/native_api",
+        "crates/codec",
+        "apps/public_cli"
+      ],
+      "changed_files": [
+        "crates/fx_composition/tests/premiere_keyframes.rs"
+      ],
+      "production_engine_code_unchanged": true
+    },
+    "score": {
+      "status": "passed",
+      "candidate_head": "27f5c6513cb1fb8d5eb5c7a6bd40c78a06fe132c",
+      "policy": {
+        "min_mean_similarity": 0.99,
+        "min_frame_similarity": 0.98,
+        "sample_interval_secs": 0.25
+      },
+      "algorithm": "rgb-hybrid",
+      "canonical_rgb24": true,
+      "max_dimension": 0,
+      "mean_similarity": 0.997579888617181,
+      "minimum_similarity": 0.9963071806119456,
+      "worst_time_secs": 3.5,
+      "sample_count": 15,
+      "metadata_alignment": "passed",
+      "reference_asset_id": "Y02F9qv3rukjGwyqGOB7_vid",
+      "scope": "Paired Motion fixture only; the old Opacity/Rotation failure is unchanged.",
+      "endpoint_note": "3.5-second sample clamps to frame 104."
+    },
+    "inspected_frames": [
+      14,
+      15,
+      16,
+      59,
+      60,
+      61,
+      104
+    ]
+  },
+  "limits": [
+    "Only this paired Motion fixture has passed the original-FX comparison.",
+    "No new proof for effects, graphics, audio, nested owners, arbitrary scripts or general nondeterminism.",
+    "No all-frame equality claim for expanded Motion; seven native frame pairs were compared, with 15 full-resolution FX/control score samples.",
+    "Historical Opacity/Rotation original-FX failure is unchanged: mean 0.9434598004977821, minimum 0.6190204161763145."
+  ],
+  "packaged_artifacts": {
+    "candidate-82979b5b1.prproj": {
+      "bytes": 8436,
+      "sha256": "a90c65bdc00662b63d0a2dc8cfda784ea8cabe81793f3e0eb0a04fe95ae7d9b3"
+    },
+    "candidate-9a915008f.prproj": {
+      "bytes": 8437,
+      "sha256": "783ea3cefdc4bc82a10d4ee38056538cc977a95f116f265e78ee161207dd258e"
+    },
+    "contact-sheet.png": {
+      "bytes": 63144,
+      "sha256": "5a346b7e894e07acb01fb83eba198ed7aacaf5e6a0624d2f1c66078ccac3f8ed"
+    },
+    "control-edit.diff": {
+      "bytes": 1399,
+      "sha256": "1699134661aa89f1939e0ced601b4a2b77b4e370f4af6c4037505b6f20a1c9de"
+    },
+    "control.prproj": {
+      "bytes": 11699,
+      "sha256": "94f6305700ba39905e5030687d4c576595116437477ae8014e5499b6011cdb04"
+    },
+    "native-identity.json": {
+      "bytes": 936,
+      "sha256": "e42db6ee7f45c526ba7b79a8e3bdbed170b5743e8e1252f18ca3c395005c6874"
+    },
+    "native-readbacks.json": {
+      "bytes": 6300,
+      "sha256": "f028e51c9871c328b82f9e8e0245205ae101cbef13b3d7a4611fc30ee9fb57ad"
+    },
+    "original-fx-vs-control.json": {
+      "bytes": 3029,
+      "sha256": "43103f2360756a2039ab633f26fda5430505e3551022da8f3a3fb13bbe5cd517"
+    },
+    "source.json": {
+      "bytes": 4172,
+      "sha256": "b03290ad59084aeaf1e0bab855a8955831904760597b1d6fbf1094455aa340af"
+    }
+  }
+}

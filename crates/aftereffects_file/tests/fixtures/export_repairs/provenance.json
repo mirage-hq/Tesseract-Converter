@@ -1,0 +1,55 @@
+{
+  "source": "native-controls.aep",
+  "sourceSha256": "f62f72bf6ec281a63be63ec22b35e7552ee1ef48e4b8db97bb19773f372450a3",
+  "authoringScript": "author_export_repairs_first_three.jsx",
+  "authoringScriptSha256": "96a759573b18eca28930815508990dc0344bab95446b13e08b581fd3e441f7cb",
+  "adobeVersion": "26.5x89",
+  "adobeBuild": 89,
+  "nativeReadback": {
+    "path": "native-readback.json",
+    "sha256": "7ceb199d467b4705271b3940c3fd96a3462898e3844d34fd1e99744d71e057e4",
+    "normalization": "Removed local sourcePath and session ownershipToken; control values unchanged."
+  },
+  "targets": [
+    {
+      "compositionId": 1,
+      "name": "export-repair-compound-static-paths",
+      "editableAssertions": "pending",
+      "nativeRender": "rendered, decoded and inspected at 30fps; see references.json",
+      "referenceAsset": "M5hXobdr8ktHde9blWPX_vid",
+      "freshExport": "Adobe opened/read back and rendered; 60-frame RGB pass at checkpoint v1, editable-linkage and alpha proof incomplete; see export-checkpoint-v1.json"
+    },
+    {
+      "compositionId": 17,
+      "name": "export-repair-scale-hold-cubic",
+      "editableAssertions": "passed: export_document::tests::paired_transform::paired_scale_native_hold_and_cubic_owners_survive_fresh_export; rounded own-reader times do not establish native frame timing",
+      "nativeRender": "rendered, decoded and inspected at 30fps; see references.json",
+      "referenceAsset": "po70jozQxo2QRJlnPcVf_vid",
+      "freshExport": "Adobe opened/read back and rendered; RGB failed frame 33 due to property-clock mismatch; see export-checkpoint-v1.json"
+    },
+    {
+      "compositionId": 34,
+      "name": "export-repair-independent-axis-union",
+      "editableAssertions": "passed: export_document::tests::paired_transform::paired_scale_native_independent_knots_preserve_separated_position",
+      "nativeRender": "rendered, decoded and inspected at 30fps; see references.json",
+      "referenceAsset": "sIlQAi0f7tpC6fv7HH7I_vid",
+      "freshExport": "Adobe opened/read back and rendered; 60-frame RGB pass at checkpoint v1; alpha unverified; see export-checkpoint-v1.json"
+    }
+  ],
+  "limitations": [
+    "Independent native authoring, control readback and 30fps references are complete, including long-term publication and fresh download hash verification. Three fresh exports were independently opened/read back and rendered: two RGB passes and one timing failure at checkpoint v1. Alpha, complete editable linkage and final-code reverification remain incomplete. Publication is not a conversion pass."
+  ],
+  "completionReceipt": {
+    "schema": "aftereffects-export-repairs-authoring-receipt/v1",
+    "adobeVersion": "26.5x89",
+    "adobeBuild": 89,
+    "completed": true,
+    "ownedProjectClosed": true,
+    "recoveredAfterInvalidatedClosedProjectReference": true,
+    "source": "export_repairs_first_three.aep",
+    "readback": "native-readback.json",
+    "rendered": false,
+    "published": false,
+    "registered": false
+  }
+}

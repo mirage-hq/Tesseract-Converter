@@ -1,0 +1,35 @@
+[package]
+name = "premiere_file"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+default = ["ffmpeg-library"]
+ffmpeg-library = ["media_transcode/ffmpeg-library", "aftereffects_file/ffmpeg-library"]
+
+[dependencies]
+aftereffects_file = { path = "../aftereffects_file", default-features = false }
+anyhow = { workspace = true }
+base64 = { workspace = true }
+boa_engine = { version = "0.21.1", default-features = false, features = ["js"] }
+flatbuffers = "25.12.19"
+flate2 = "1"
+fx_conv = { path = "../fx_conv" }
+fx_keyframe_bake = { path = "../fx_keyframe_bake" }
+fx_schema = { path = "../fx_schema" }
+h264-reader = "=0.8.0"
+image = { workspace = true }
+media_transcode = { path = "../media_transcode", default-features = false }
+quick-xml = { workspace = true, features = ["overlapped-lists", "serialize"] }
+roxmltree = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+symphonia = { workspace = true }
+tesseract_file = { path = "../tesseract_file" }
+tempfile = "3"
+thiserror = { workspace = true }
+uuid = { workspace = true }

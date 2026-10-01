@@ -1,0 +1,2249 @@
+{
+  "status": "ok",
+  "error": null,
+  "adobe_version": "26.5x89",
+  "adobe_build": 89,
+  "owned_project_closed": true,
+  "result": {
+    "source": "Adobe After Effects authored project",
+    "projectFile": "/Users/yusuke/.box/workspaces/aep-effects/jerboa/crates/aftereffects_file/tests/fixtures/audio_e2e/audio_cases.aep",
+    "fps": 24,
+    "roots": [
+      {
+        "id": 199,
+        "name": "affine-playback",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "primary-sound",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 200,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [
+                {
+                  "time": 1,
+                  "value": [
+                    -6.02059984207153,
+                    -6.02059984207153
+                  ],
+                  "inType": "6614",
+                  "outType": "6614",
+                  "inEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ]
+                },
+                {
+                  "time": 2,
+                  "value": [
+                    0,
+                    0
+                  ],
+                  "inType": "6614",
+                  "outType": "6614",
+                  "inEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ]
+                }
+              ],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 108,
+        "name": "all-zero-one-key",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "primary-sound",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": false,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -192,
+                -192
+              ],
+              "keys": [
+                {
+                  "time": 1.5,
+                  "value": [
+                    -192,
+                    -192
+                  ],
+                  "inType": "6614",
+                  "outType": "6614",
+                  "inEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ]
+                }
+              ],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 121,
+        "name": "all-zero-two-keys",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "primary-sound",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": false,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -192,
+                -192
+              ],
+              "keys": [
+                {
+                  "time": 1.5,
+                  "value": [
+                    -192,
+                    -192
+                  ],
+                  "inType": "6614",
+                  "outType": "6614",
+                  "inEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ]
+                },
+                {
+                  "time": 2.5,
+                  "value": [
+                    -192,
+                    -192
+                  ],
+                  "inType": "6614",
+                  "outType": "6614",
+                  "inEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ]
+                }
+              ],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 238,
+        "name": "audio-group",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "precomp-audio-container",
+            "sourceId": 250,
+            "sourceName": "audio-group__audio-child",
+            "sourceKind": "composition",
+            "sourceWidth": 320,
+            "sourceHeight": 180,
+            "sourceDuration": 3,
+            "startTime": 0,
+            "inPoint": 0,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                0,
+                0
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 173,
+        "name": "bezier-gain",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "primary-sound",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [
+                {
+                  "time": 1.5,
+                  "value": [
+                    -6.02059984207153,
+                    -6.02059984207153
+                  ],
+                  "inType": "6613",
+                  "outType": "6613",
+                  "inEase": [
+                    {
+                      "speed": 0,
+                      "influence": 25
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 25
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": 3.311414812658,
+                      "influence": 25
+                    },
+                    {
+                      "speed": 3.311414812658,
+                      "influence": 25
+                    }
+                  ]
+                },
+                {
+                  "time": 2.5,
+                  "value": [
+                    0,
+                    0
+                  ],
+                  "inType": "6613",
+                  "outType": "6613",
+                  "inEase": [
+                    {
+                      "speed": 1.78211157689218,
+                      "influence": 25
+                    },
+                    {
+                      "speed": 1.78211157689218,
+                      "influence": 25
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": 0,
+                      "influence": 25
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 25
+                    }
+                  ]
+                }
+              ],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 395,
+        "name": "conflicting-gain-clock",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "retained-sibling",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 95,
+        "name": "constant-zero-nonzero-base",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "primary-sound",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": false,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -192,
+                -192
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 82,
+        "name": "constant-zero-zero-base",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "primary-sound",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": false,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -192,
+                -192
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 290,
+        "name": "empty-nested-group",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "precomp-audio-container",
+            "sourceId": 302,
+            "sourceName": "empty-nested-group__audio-child",
+            "sourceKind": "composition",
+            "sourceWidth": 320,
+            "sourceHeight": 180,
+            "sourceDuration": 3,
+            "startTime": 0,
+            "inPoint": 0,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                0,
+                0
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 421,
+        "name": "empty-only-group",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "empty-no-audio",
+            "sourceId": 434,
+            "sourceName": "empty-only-group__empty-child",
+            "sourceKind": "composition",
+            "sourceWidth": 320,
+            "sourceHeight": 180,
+            "sourceDuration": 2,
+            "startTime": 0,
+            "inPoint": 0,
+            "outPoint": 2,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": false,
+            "audioEnabled": false,
+            "timeRemapEnabled": false,
+            "audioLevels": null
+          },
+          {
+            "index": 2,
+            "name": "retained-sibling",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 212,
+        "name": "eof-tail",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "primary-sound",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 4.5,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 461,
+        "name": "expression",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "expression-retained-sibling",
+            "sourceId": 2,
+            "sourceName": "other.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          },
+          {
+            "index": 2,
+            "name": "primary-sound",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [],
+              "expression": "value + [Math.sin(time * 2) * 3, Math.sin(time * 2) * 3]",
+              "expressionEnabled": true,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 329,
+        "name": "fractional-duration",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "precomp-audio-container",
+            "sourceId": 341,
+            "sourceName": "fractional-duration__audio-child",
+            "sourceKind": "composition",
+            "sourceWidth": 320,
+            "sourceHeight": 180,
+            "sourceDuration": 2.04166666666667,
+            "startTime": 0,
+            "inPoint": 0,
+            "outPoint": 2.00101725260417,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                0,
+                0
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 264,
+        "name": "group-affine-playback",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "precomp-audio-container",
+            "sourceId": 276,
+            "sourceName": "group-affine-playback__audio-child",
+            "sourceKind": "composition",
+            "sourceWidth": 320,
+            "sourceHeight": 180,
+            "sourceDuration": 3,
+            "startTime": 1,
+            "inPoint": 1,
+            "outPoint": 5,
+            "stretch": 200,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                0,
+                0
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 43,
+        "name": "hidden-group",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "precomp-audio-container",
+            "sourceId": 55,
+            "sourceName": "hidden-group__audio-child",
+            "sourceKind": "composition",
+            "sourceWidth": 320,
+            "sourceHeight": 180,
+            "sourceDuration": 3,
+            "startTime": 0,
+            "inPoint": 0,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": false,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                0,
+                0
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 30,
+        "name": "hidden-layer",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "primary-sound",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": false,
+            "hasAudio": true,
+            "audioEnabled": false,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 147,
+        "name": "hold-gain",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "primary-sound",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [
+                {
+                  "time": 1.5,
+                  "value": [
+                    -6.02059984207153,
+                    -6.02059984207153
+                  ],
+                  "inType": "6614",
+                  "outType": "6614",
+                  "inEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ]
+                },
+                {
+                  "time": 2.5,
+                  "value": [
+                    0,
+                    0
+                  ],
+                  "inType": "6614",
+                  "outType": "6614",
+                  "inEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ]
+                }
+              ],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 408,
+        "name": "invalid-gain-hull",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "retained-sibling",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 160,
+        "name": "linear-gain",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "primary-sound",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [
+                {
+                  "time": 1.5,
+                  "value": [
+                    -6.02059984207153,
+                    -6.02059984207153
+                  ],
+                  "inType": "6612",
+                  "outType": "6612",
+                  "inEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": 6.02059984207153,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 6.02059984207153,
+                      "influence": 16.666666667
+                    }
+                  ]
+                },
+                {
+                  "time": 2.5,
+                  "value": [
+                    0,
+                    0
+                  ],
+                  "inType": "6612",
+                  "outType": "6612",
+                  "inEase": [
+                    {
+                      "speed": 6.02059984207153,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 6.02059984207153,
+                      "influence": 16.666666667
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ]
+                }
+              ],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 225,
+        "name": "mov-audio-only",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "primary-sound",
+            "sourceId": 3,
+            "sourceName": "movie.mov",
+            "sourceKind": "footage",
+            "sourceWidth": 320,
+            "sourceHeight": 180,
+            "sourceDuration": 8,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": false,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 17,
+        "name": "native-muted",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "primary-sound",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": false,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 382,
+        "name": "nonlinear-remap",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "primary-sound",
+            "sourceId": 3,
+            "sourceName": "movie.mov",
+            "sourceKind": "footage",
+            "sourceWidth": 320,
+            "sourceHeight": 180,
+            "sourceDuration": 8,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 2,
+            "stretch": 100,
+            "enabled": false,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": true,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            },
+            "timeRemap": {
+              "value": 0.5,
+              "keys": [
+                {
+                  "time": 0,
+                  "value": 0.5,
+                  "inType": "6612",
+                  "outType": "6612",
+                  "inEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": 0.2,
+                      "influence": 16.666666667
+                    }
+                  ]
+                },
+                {
+                  "time": 1.25,
+                  "value": 0.75,
+                  "inType": "6612",
+                  "outType": "6612",
+                  "inEase": [
+                    {
+                      "speed": 0.2,
+                      "influence": 16.666666667
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": 0.5,
+                      "influence": 16.666666667
+                    }
+                  ]
+                },
+                {
+                  "time": 1.75,
+                  "value": 1,
+                  "inType": "6612",
+                  "outType": "6612",
+                  "inEase": [
+                    {
+                      "speed": 0.5,
+                      "influence": 16.666666667
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": 0.2,
+                      "influence": 16.666666667
+                    }
+                  ]
+                },
+                {
+                  "time": 3,
+                  "value": 1.25,
+                  "inType": "6612",
+                  "outType": "6612",
+                  "inEase": [
+                    {
+                      "speed": 0.2,
+                      "influence": 16.666666667
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ]
+                }
+              ],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 368,
+        "name": "source-switch",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "switch-other-second",
+            "sourceId": 2,
+            "sourceName": "other.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 1.5,
+            "inPoint": 3,
+            "outPoint": 4,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [
+                {
+                  "time": 2,
+                  "value": [
+                    -6.02059984207153,
+                    -6.02059984207153
+                  ],
+                  "inType": "6614",
+                  "outType": "6614",
+                  "inEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ]
+                },
+                {
+                  "time": 3,
+                  "value": [
+                    0,
+                    0
+                  ],
+                  "inType": "6614",
+                  "outType": "6614",
+                  "inEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ]
+                }
+              ],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          },
+          {
+            "index": 2,
+            "name": "switch-sound-first",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 1.5,
+            "inPoint": 2,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [
+                {
+                  "time": 2,
+                  "value": [
+                    -6.02059984207153,
+                    -6.02059984207153
+                  ],
+                  "inType": "6614",
+                  "outType": "6614",
+                  "inEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ]
+                },
+                {
+                  "time": 3,
+                  "value": [
+                    0,
+                    0
+                  ],
+                  "inType": "6614",
+                  "outType": "6614",
+                  "inEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ]
+                }
+              ],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 69,
+        "name": "static-zero",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "primary-sound",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": false,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -192,
+                -192
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 447,
+        "name": "stereo-levels",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "stereo-retained-sibling",
+            "sourceId": 2,
+            "sourceName": "other.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          },
+          {
+            "index": 2,
+            "name": "primary-sound",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -3,
+                -12
+              ],
+              "keys": [
+                {
+                  "time": 1.5,
+                  "value": [
+                    -3,
+                    -12
+                  ],
+                  "inType": "6612",
+                  "outType": "6612",
+                  "inEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": -9,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 9,
+                      "influence": 16.666666667
+                    }
+                  ]
+                },
+                {
+                  "time": 2.5,
+                  "value": [
+                    -12,
+                    -3
+                  ],
+                  "inType": "6612",
+                  "outType": "6612",
+                  "inEase": [
+                    {
+                      "speed": -9,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 9,
+                      "influence": 16.666666667
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ]
+                }
+              ],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 186,
+        "name": "trim-offset",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "primary-sound",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "name": "wave-static",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "primary-sound",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 134,
+        "name": "zero-base-unmute",
+        "duration": 6,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 6,
+        "layers": [
+          {
+            "index": 1,
+            "name": "primary-sound",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -192,
+                -192
+              ],
+              "keys": [
+                {
+                  "time": 1.5,
+                  "value": [
+                    -192,
+                    -192
+                  ],
+                  "inType": "6614",
+                  "outType": "6614",
+                  "inEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ]
+                },
+                {
+                  "time": 2.5,
+                  "value": [
+                    0,
+                    0
+                  ],
+                  "inType": "6614",
+                  "outType": "6614",
+                  "inEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ],
+                  "outEase": [
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    },
+                    {
+                      "speed": 0,
+                      "influence": 16.666666667
+                    }
+                  ]
+                }
+              ],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      }
+    ],
+    "media": [
+      {
+        "id": 3,
+        "name": "movie.mov",
+        "path": "/Users/yusuke/.box/workspaces/aep-effects/jerboa/crates/aftereffects_file/tests/fixtures/audio_e2e/movie.mov",
+        "duration": 8,
+        "hasAudio": true,
+        "hasVideo": true
+      },
+      {
+        "id": 2,
+        "name": "other.wav",
+        "path": "/Users/yusuke/.box/workspaces/aep-effects/jerboa/crates/aftereffects_file/tests/fixtures/audio_e2e/other.wav",
+        "duration": 4,
+        "hasAudio": true,
+        "hasVideo": false
+      },
+      {
+        "id": 1,
+        "name": "sound.wav",
+        "path": "/Users/yusuke/.box/workspaces/aep-effects/jerboa/crates/aftereffects_file/tests/fixtures/audio_e2e/sound.wav",
+        "duration": 4,
+        "hasAudio": true,
+        "hasVideo": false
+      }
+    ],
+    "nested": [
+      {
+        "id": 250,
+        "name": "audio-group__audio-child",
+        "duration": 3,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 3,
+        "layers": [
+          {
+            "index": 1,
+            "name": "child-primary-sound",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 302,
+        "name": "empty-nested-group__audio-child",
+        "duration": 3,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 3,
+        "layers": [
+          {
+            "index": 1,
+            "name": "child-primary-sound",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          },
+          {
+            "index": 2,
+            "name": "empty-nested-no-audio",
+            "sourceId": 314,
+            "sourceName": "empty-nested-group__empty-child",
+            "sourceKind": "composition",
+            "sourceWidth": 320,
+            "sourceHeight": 180,
+            "sourceDuration": 3,
+            "startTime": 0,
+            "inPoint": 0,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": false,
+            "audioEnabled": false,
+            "timeRemapEnabled": false,
+            "audioLevels": null
+          }
+        ]
+      },
+      {
+        "id": 314,
+        "name": "empty-nested-group__empty-child",
+        "duration": 3,
+        "hasAudio": false,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 3,
+        "layers": []
+      },
+      {
+        "id": 434,
+        "name": "empty-only-group__empty-child",
+        "duration": 2,
+        "hasAudio": false,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 2,
+        "layers": []
+      },
+      {
+        "id": 341,
+        "name": "fractional-duration__audio-child",
+        "duration": 2.04166666666667,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 2.04166666666667,
+        "layers": [
+          {
+            "index": 1,
+            "name": "child-primary-sound",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 2.00101725260417,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          },
+          {
+            "index": 2,
+            "name": "empty-nested-no-audio",
+            "sourceId": 353,
+            "sourceName": "fractional-duration__empty-child",
+            "sourceKind": "composition",
+            "sourceWidth": 320,
+            "sourceHeight": 180,
+            "sourceDuration": 2.04166666666667,
+            "startTime": 0,
+            "inPoint": 0,
+            "outPoint": 2.00101725260417,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": false,
+            "audioEnabled": false,
+            "timeRemapEnabled": false,
+            "audioLevels": null
+          }
+        ]
+      },
+      {
+        "id": 353,
+        "name": "fractional-duration__empty-child",
+        "duration": 2.04166666666667,
+        "hasAudio": false,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 2.04166666666667,
+        "layers": []
+      },
+      {
+        "id": 276,
+        "name": "group-affine-playback__audio-child",
+        "duration": 3,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 3,
+        "layers": [
+          {
+            "index": 1,
+            "name": "child-primary-sound",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": 55,
+        "name": "hidden-group__audio-child",
+        "duration": 3,
+        "hasAudio": true,
+        "width": 320,
+        "height": 180,
+        "frameRate": 24,
+        "displayStart": 0,
+        "workAreaStart": 0,
+        "workAreaDuration": 3,
+        "layers": [
+          {
+            "index": 1,
+            "name": "child-primary-sound",
+            "sourceId": 1,
+            "sourceName": "sound.wav",
+            "sourceKind": "footage",
+            "sourceWidth": 0,
+            "sourceHeight": 0,
+            "sourceDuration": 4,
+            "startTime": 0.5,
+            "inPoint": 1,
+            "outPoint": 3,
+            "stretch": 100,
+            "enabled": true,
+            "hasAudio": true,
+            "audioEnabled": true,
+            "timeRemapEnabled": false,
+            "audioLevels": {
+              "value": [
+                -6.02059984207153,
+                -6.02059984207153
+              ],
+              "keys": [],
+              "expression": "",
+              "expressionEnabled": false,
+              "expressionError": ""
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

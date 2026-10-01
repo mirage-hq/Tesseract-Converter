@@ -1,0 +1,934 @@
+{
+  "scope": "Eight explicitly authored FX documents freshly exported by Rust, opened/read back and rendered in Adobe26.5x89. Current controls,enable,keytimes,values and interpolation verified. This is not an AEP/FX visual or alpha comparison, nor proof for untested mappings.",
+  "adobe_version": "26.5x89",
+  "adobe_build": 89,
+  "generator": "AEP_EFFECTS_FX_PANEL_DIR=<ignored-dir> make -f Makefile -f <wrapper> aep-effects-test filter=export_document::tests::effects_native_panel",
+  "validation": {
+    "scope": "Native control/key values/types verified; valueAtTime sample deltas retained, not a render-fidelity score. Scalar cubic manual values are rounded to two decimals; analytic cubic uses explicit authored4->20 with handles(0.25,0,0.75,1). Point subpixel deltas are not rounded away.",
+    "static_key_value_tolerance": 1e-05,
+    "key_time_tolerance_seconds": 1e-06,
+    "enum_codes": {
+      "6612": "linear",
+      "6613": "cubic",
+      "6614": "hold"
+    },
+    "cases": [
+      {
+        "case": "disabled-glow",
+        "controls": 3,
+        "keys": 0,
+        "static_key_values_and_interpolation": "passed",
+        "sample_count": 0,
+        "maximum_sample_delta_from_manual_oracle": 0,
+        "maximum_scalar_cubic_delta_from_explicit_fx_bezier": null
+      },
+      {
+        "case": "exposure-master",
+        "controls": 3,
+        "keys": 0,
+        "static_key_values_and_interpolation": "passed",
+        "sample_count": 0,
+        "maximum_sample_delta_from_manual_oracle": 0,
+        "maximum_scalar_cubic_delta_from_explicit_fx_bezier": null
+      },
+      {
+        "case": "levels-normalized",
+        "controls": 5,
+        "keys": 0,
+        "static_key_values_and_interpolation": "passed",
+        "sample_count": 0,
+        "maximum_sample_delta_from_manual_oracle": 0,
+        "maximum_scalar_cubic_delta_from_explicit_fx_bezier": null
+      },
+      {
+        "case": "radial-point-offset-knots",
+        "controls": 2,
+        "keys": 3,
+        "static_key_values_and_interpolation": "passed",
+        "sample_count": 2,
+        "maximum_sample_delta_from_manual_oracle": 0.00031094152630117833,
+        "maximum_scalar_cubic_delta_from_explicit_fx_bezier": null
+      },
+      {
+        "case": "ramp-rgba-split-knots",
+        "controls": 4,
+        "keys": 3,
+        "static_key_values_and_interpolation": "passed",
+        "sample_count": 2,
+        "maximum_sample_delta_from_manual_oracle": 0.0,
+        "maximum_scalar_cubic_delta_from_explicit_fx_bezier": null
+      },
+      {
+        "case": "scalar-cubic",
+        "controls": 2,
+        "keys": 2,
+        "static_key_values_and_interpolation": "passed",
+        "sample_count": 5,
+        "maximum_sample_delta_from_manual_oracle": 0.0023018106354300016,
+        "maximum_scalar_cubic_delta_from_explicit_fx_bezier": 3.552713678800501e-14
+      },
+      {
+        "case": "scalar-hold",
+        "controls": 1,
+        "keys": 3,
+        "static_key_values_and_interpolation": "passed",
+        "sample_count": 5,
+        "maximum_sample_delta_from_manual_oracle": 0,
+        "maximum_scalar_cubic_delta_from_explicit_fx_bezier": null
+      },
+      {
+        "case": "twirl-center-and-angle",
+        "controls": 3,
+        "keys": 0,
+        "static_key_values_and_interpolation": "passed",
+        "sample_count": 0,
+        "maximum_sample_delta_from_manual_oracle": 0,
+        "maximum_scalar_cubic_delta_from_explicit_fx_bezier": null
+      }
+    ]
+  },
+  "cases": [
+    {
+      "case": "disabled-glow",
+      "test_symbol": "export_document::tests::effects_native_panel::disabled_glow",
+      "input_path": "crates/aftereffects_file/tests/fixtures/effects/fx_export_panel/disabled-glow.fx.json",
+      "input": {
+        "sha256": "4257ba9ccc7887af3c4d8f9becb38a4aea9b3bc96894b18c98a0bbfe4fa15b7a",
+        "bytes": 1939
+      },
+      "manual_oracle_path": "crates/aftereffects_file/tests/fixtures/effects/fx_export_panel/disabled-glow.expected.json",
+      "generated_aep": {
+        "sha256": "bf5f67ccba856547732c30499c1aacb5467fa89575c7502b200ac8a823b28a42",
+        "bytes": 76084
+      },
+      "adobe_render": {
+        "sha256": "7759ea1f5b61a8a9518c23eb0b255894f167080dbd69df0f4e1b12406c8eb5e6",
+        "bytes": 13663,
+        "width": 320,
+        "height": 180,
+        "r_frame_rate": "30/1",
+        "duration": "2.000000",
+        "nb_read_frames": "60",
+        "storage": "Ignored local actual, not an independent reference Asset."
+      },
+      "adobe_readback": {
+        "name": "disabled-glow",
+        "compositions": [
+          {
+            "id": 1,
+            "name": "disabled-glow"
+          }
+        ],
+        "controls": [
+          {
+            "name": "ADBE Glo2-0002",
+            "value": [
+              102
+            ],
+            "keys": [],
+            "samples": []
+          },
+          {
+            "name": "ADBE Glo2-0003",
+            "value": [
+              13
+            ],
+            "keys": [],
+            "samples": []
+          },
+          {
+            "name": "ADBE Glo2-0004",
+            "value": [
+              2
+            ],
+            "keys": [],
+            "samples": []
+          }
+        ],
+        "width": 320,
+        "height": 180,
+        "duration": 2,
+        "frameRate": 24,
+        "enabled": false,
+        "anchor": [
+          60,
+          40,
+          0
+        ],
+        "effect": "ADBE Glo2"
+      },
+      "comparison": {
+        "case": "disabled-glow",
+        "controls": 3,
+        "keys": 0,
+        "static_key_values_and_interpolation": "passed",
+        "sample_count": 0,
+        "maximum_sample_delta_from_manual_oracle": 0,
+        "maximum_scalar_cubic_delta_from_explicit_fx_bezier": null
+      }
+    },
+    {
+      "case": "exposure-master",
+      "test_symbol": "export_document::tests::effects_native_panel::exposure_master",
+      "input_path": "crates/aftereffects_file/tests/fixtures/effects/fx_export_panel/exposure-master.fx.json",
+      "input": {
+        "sha256": "23713f757d75271b6907d5ef06138e5546acdfac848e96a42409628618c92192",
+        "bytes": 1944
+      },
+      "manual_oracle_path": "crates/aftereffects_file/tests/fixtures/effects/fx_export_panel/exposure-master.expected.json",
+      "generated_aep": {
+        "sha256": "624c618cca9f35cf6356a3bf4f74ff140cc808772053a79f37e694c81dcf0336",
+        "bytes": 78566
+      },
+      "adobe_render": {
+        "sha256": "dce399051cac6784c1e071ca09c29e903d242a916cf28220d8a05d37f093166b",
+        "bytes": 13657,
+        "width": 320,
+        "height": 180,
+        "r_frame_rate": "30/1",
+        "duration": "2.000000",
+        "nb_read_frames": "60",
+        "storage": "Ignored local actual, not an independent reference Asset."
+      },
+      "adobe_readback": {
+        "name": "exposure-master",
+        "compositions": [
+          {
+            "id": 1,
+            "name": "exposure-master"
+          }
+        ],
+        "controls": [
+          {
+            "name": "ADBE Exposure2-0003",
+            "value": [
+              1.25
+            ],
+            "keys": [],
+            "samples": []
+          },
+          {
+            "name": "ADBE Exposure2-0004",
+            "value": [
+              0.125
+            ],
+            "keys": [],
+            "samples": []
+          },
+          {
+            "name": "ADBE Exposure2-0005",
+            "value": [
+              0.8
+            ],
+            "keys": [],
+            "samples": []
+          }
+        ],
+        "width": 320,
+        "height": 180,
+        "duration": 2,
+        "frameRate": 24,
+        "enabled": true,
+        "anchor": [
+          60,
+          40,
+          0
+        ],
+        "effect": "ADBE Exposure2"
+      },
+      "comparison": {
+        "case": "exposure-master",
+        "controls": 3,
+        "keys": 0,
+        "static_key_values_and_interpolation": "passed",
+        "sample_count": 0,
+        "maximum_sample_delta_from_manual_oracle": 0,
+        "maximum_scalar_cubic_delta_from_explicit_fx_bezier": null
+      }
+    },
+    {
+      "case": "levels-normalized",
+      "test_symbol": "export_document::tests::effects_native_panel::levels_normalized",
+      "input_path": "crates/aftereffects_file/tests/fixtures/effects/fx_export_panel/levels-normalized.fx.json",
+      "input": {
+        "sha256": "62728e512c9f29a140767b0c092b14abe349f2c6891f5388304ed5c545649cce",
+        "bytes": 2007
+      },
+      "manual_oracle_path": "crates/aftereffects_file/tests/fixtures/effects/fx_export_panel/levels-normalized.expected.json",
+      "generated_aep": {
+        "sha256": "0f242966babb361b03187cc0421a494a1d6c1ad293713136bd80a512107a2e42",
+        "bytes": 90038
+      },
+      "adobe_render": {
+        "sha256": "83b0d24c1f882de3f1de7f3fb39f6fa99c6f36c7abafe806b491e9386de3c11c",
+        "bytes": 13715,
+        "width": 320,
+        "height": 180,
+        "r_frame_rate": "30/1",
+        "duration": "2.000000",
+        "nb_read_frames": "60",
+        "storage": "Ignored local actual, not an independent reference Asset."
+      },
+      "adobe_readback": {
+        "name": "levels-normalized",
+        "compositions": [
+          {
+            "id": 1,
+            "name": "levels-normalized"
+          }
+        ],
+        "controls": [
+          {
+            "name": "ADBE Pro Levels2-0004",
+            "value": [
+              0.2
+            ],
+            "keys": [],
+            "samples": []
+          },
+          {
+            "name": "ADBE Pro Levels2-0005",
+            "value": [
+              0.8
+            ],
+            "keys": [],
+            "samples": []
+          },
+          {
+            "name": "ADBE Pro Levels2-0006",
+            "value": [
+              1.5
+            ],
+            "keys": [],
+            "samples": []
+          },
+          {
+            "name": "ADBE Pro Levels2-0007",
+            "value": [
+              0.1
+            ],
+            "keys": [],
+            "samples": []
+          },
+          {
+            "name": "ADBE Pro Levels2-0008",
+            "value": [
+              0.9
+            ],
+            "keys": [],
+            "samples": []
+          }
+        ],
+        "width": 320,
+        "height": 180,
+        "duration": 2,
+        "frameRate": 24,
+        "enabled": true,
+        "anchor": [
+          60,
+          40,
+          0
+        ],
+        "effect": "ADBE Pro Levels2"
+      },
+      "comparison": {
+        "case": "levels-normalized",
+        "controls": 5,
+        "keys": 0,
+        "static_key_values_and_interpolation": "passed",
+        "sample_count": 0,
+        "maximum_sample_delta_from_manual_oracle": 0,
+        "maximum_scalar_cubic_delta_from_explicit_fx_bezier": null
+      }
+    },
+    {
+      "case": "radial-point-offset-knots",
+      "test_symbol": "export_document::tests::effects_native_panel::radial_point_offset_knots",
+      "input_path": "crates/aftereffects_file/tests/fixtures/effects/fx_export_panel/radial-point-offset-knots.fx.json",
+      "input": {
+        "sha256": "cbaea6f67f27ac9861a03ad034526c766c4b3adc856be4c05624d342d3e5ef68",
+        "bytes": 4192
+      },
+      "manual_oracle_path": "crates/aftereffects_file/tests/fixtures/effects/fx_export_panel/radial-point-offset-knots.expected.json",
+      "generated_aep": {
+        "sha256": "f91126a48898be0796e9df24dde1e5ee33ee14a73f1386081333a5f8217f91b4",
+        "bytes": 69472
+      },
+      "adobe_render": {
+        "sha256": "b021e7cc523ef720faabe1357f817c6ead218f61170561379f98567f9fe7b1a3",
+        "bytes": 22633,
+        "width": 320,
+        "height": 180,
+        "r_frame_rate": "30/1",
+        "duration": "2.000000",
+        "nb_read_frames": "60",
+        "storage": "Ignored local actual, not an independent reference Asset."
+      },
+      "adobe_readback": {
+        "name": "radial-point-offset-knots",
+        "compositions": [
+          {
+            "id": 1,
+            "name": "radial-point-offset-knots"
+          }
+        ],
+        "controls": [
+          {
+            "name": "ADBE Radial Blur-0001",
+            "value": [
+              12
+            ],
+            "keys": [],
+            "samples": []
+          },
+          {
+            "name": "ADBE Radial Blur-0002",
+            "value": [
+              30,
+              20
+            ],
+            "keys": [
+              {
+                "time": 0,
+                "value": [
+                  30,
+                  20
+                ],
+                "inType": "6612",
+                "outType": "6612"
+              },
+              {
+                "time": 0.5,
+                "value": [
+                  60,
+                  60
+                ],
+                "inType": "6612",
+                "outType": "6612"
+              },
+              {
+                "time": 1,
+                "value": [
+                  90,
+                  20
+                ],
+                "inType": "6612",
+                "outType": "6612"
+              }
+            ],
+            "samples": [
+              {
+                "time": 0.25,
+                "value": [
+                  45.0002332061447,
+                  40.0003109415263
+                ]
+              },
+              {
+                "time": 0.75,
+                "value": [
+                  74.9997667938553,
+                  40.0003109415262
+                ]
+              }
+            ]
+          }
+        ],
+        "width": 320,
+        "height": 180,
+        "duration": 2,
+        "frameRate": 24,
+        "enabled": true,
+        "anchor": [
+          60,
+          40,
+          0
+        ],
+        "effect": "ADBE Radial Blur"
+      },
+      "comparison": {
+        "case": "radial-point-offset-knots",
+        "controls": 2,
+        "keys": 3,
+        "static_key_values_and_interpolation": "passed",
+        "sample_count": 2,
+        "maximum_sample_delta_from_manual_oracle": 0.00031094152630117833,
+        "maximum_scalar_cubic_delta_from_explicit_fx_bezier": null
+      }
+    },
+    {
+      "case": "ramp-rgba-split-knots",
+      "test_symbol": "export_document::tests::effects_native_panel::ramp_rgba_split_knots",
+      "input_path": "crates/aftereffects_file/tests/fixtures/effects/fx_export_panel/ramp-rgba-split-knots.fx.json",
+      "input": {
+        "sha256": "e7cc13dbd82dd508f0ff9cc8a5f7a9c796f27dddee936ec85abeeac19771fd53",
+        "bytes": 4420
+      },
+      "manual_oracle_path": "crates/aftereffects_file/tests/fixtures/effects/fx_export_panel/ramp-rgba-split-knots.expected.json",
+      "generated_aep": {
+        "sha256": "d97fe5d5f3b3d1e56ba7a1d12b7d858906168b031a9593eaa6fbdf3d9a225d2a",
+        "bytes": 71104
+      },
+      "adobe_render": {
+        "sha256": "f5fb92f7551573f6594f5e981e46b2a8c20a01ea25e827b21551f7d9600168c3",
+        "bytes": 17869,
+        "width": 320,
+        "height": 180,
+        "r_frame_rate": "30/1",
+        "duration": "2.000000",
+        "nb_read_frames": "60",
+        "storage": "Ignored local actual, not an independent reference Asset."
+      },
+      "adobe_readback": {
+        "name": "ramp-rgba-split-knots",
+        "compositions": [
+          {
+            "id": 1,
+            "name": "ramp-rgba-split-knots"
+          }
+        ],
+        "controls": [
+          {
+            "name": "ADBE Ramp-0001",
+            "value": [
+              30,
+              40
+            ],
+            "keys": [],
+            "samples": []
+          },
+          {
+            "name": "ADBE Ramp-0002",
+            "value": [
+              0.2,
+              0.4,
+              0.1,
+              1
+            ],
+            "keys": [
+              {
+                "time": 0,
+                "value": [
+                  0.2,
+                  0.4,
+                  0.1,
+                  1
+                ],
+                "inType": "6612",
+                "outType": "6612"
+              },
+              {
+                "time": 0.5,
+                "value": [
+                  0.5,
+                  0.6,
+                  0.1,
+                  1
+                ],
+                "inType": "6612",
+                "outType": "6612"
+              },
+              {
+                "time": 1,
+                "value": [
+                  0.8,
+                  0.4,
+                  0.1,
+                  1
+                ],
+                "inType": "6612",
+                "outType": "6612"
+              }
+            ],
+            "samples": [
+              {
+                "time": 0.25,
+                "value": [
+                  0.35,
+                  0.5,
+                  0.1,
+                  1
+                ]
+              },
+              {
+                "time": 0.75,
+                "value": [
+                  0.65,
+                  0.5,
+                  0.1,
+                  1
+                ]
+              }
+            ]
+          },
+          {
+            "name": "ADBE Ramp-0003",
+            "value": [
+              90,
+              80
+            ],
+            "keys": [],
+            "samples": []
+          },
+          {
+            "name": "ADBE Ramp-0004",
+            "value": [
+              0.8,
+              0.6,
+              0.2,
+              1
+            ],
+            "keys": [],
+            "samples": []
+          }
+        ],
+        "width": 320,
+        "height": 180,
+        "duration": 2,
+        "frameRate": 24,
+        "enabled": true,
+        "anchor": [
+          60,
+          40,
+          0
+        ],
+        "effect": "ADBE Ramp"
+      },
+      "comparison": {
+        "case": "ramp-rgba-split-knots",
+        "controls": 4,
+        "keys": 3,
+        "static_key_values_and_interpolation": "passed",
+        "sample_count": 2,
+        "maximum_sample_delta_from_manual_oracle": 0.0,
+        "maximum_scalar_cubic_delta_from_explicit_fx_bezier": null
+      }
+    },
+    {
+      "case": "scalar-cubic",
+      "test_symbol": "export_document::tests::effects_native_panel::scalar_cubic",
+      "input_path": "crates/aftereffects_file/tests/fixtures/effects/fx_export_panel/scalar-cubic.fx.json",
+      "input": {
+        "sha256": "5370466f43577a4927254905213b32e02cc5455846303836372e4f6391fdf676",
+        "bytes": 3019
+      },
+      "manual_oracle_path": "crates/aftereffects_file/tests/fixtures/effects/fx_export_panel/scalar-cubic.expected.json",
+      "generated_aep": {
+        "sha256": "17c9a7e76f6b203f30af865ded0b0457da9a099e2768e43cc63003c0da70bb33",
+        "bytes": 67518
+      },
+      "adobe_render": {
+        "sha256": "7490416be9eb40ee750b8d66f741747c46c0ee302d0b5556f9e9ed349dbd4597",
+        "bytes": 13737,
+        "width": 320,
+        "height": 180,
+        "r_frame_rate": "30/1",
+        "duration": "2.000000",
+        "nb_read_frames": "60",
+        "storage": "Ignored local actual, not an independent reference Asset."
+      },
+      "adobe_readback": {
+        "name": "scalar-cubic",
+        "compositions": [
+          {
+            "id": 1,
+            "name": "scalar-cubic"
+          }
+        ],
+        "controls": [
+          {
+            "name": "ADBE Gaussian Blur 2-0001",
+            "value": [
+              4
+            ],
+            "keys": [
+              {
+                "time": 0,
+                "value": [
+                  4
+                ],
+                "inType": "6612",
+                "outType": "6613"
+              },
+              {
+                "time": 1,
+                "value": [
+                  20
+                ],
+                "inType": "6613",
+                "outType": "6612"
+              }
+            ],
+            "samples": [
+              {
+                "time": 0,
+                "value": [
+                  4
+                ]
+              },
+              {
+                "time": 0.25,
+                "value": [
+                  6.91769818936457
+                ]
+              },
+              {
+                "time": 0.5,
+                "value": [
+                  12
+                ]
+              },
+              {
+                "time": 0.75,
+                "value": [
+                  17.0823018106354
+                ]
+              },
+              {
+                "time": 1,
+                "value": [
+                  20
+                ]
+              }
+            ]
+          },
+          {
+            "name": "ADBE Gaussian Blur 2-0003",
+            "value": [
+              1
+            ],
+            "keys": [],
+            "samples": []
+          }
+        ],
+        "width": 320,
+        "height": 180,
+        "duration": 2,
+        "frameRate": 24,
+        "enabled": true,
+        "anchor": [
+          60,
+          40,
+          0
+        ],
+        "effect": "ADBE Gaussian Blur 2"
+      },
+      "comparison": {
+        "case": "scalar-cubic",
+        "controls": 2,
+        "keys": 2,
+        "static_key_values_and_interpolation": "passed",
+        "sample_count": 5,
+        "maximum_sample_delta_from_manual_oracle": 0.0023018106354300016,
+        "maximum_scalar_cubic_delta_from_explicit_fx_bezier": 3.552713678800501e-14
+      }
+    },
+    {
+      "case": "scalar-hold",
+      "test_symbol": "export_document::tests::effects_native_panel::scalar_hold",
+      "input_path": "crates/aftereffects_file/tests/fixtures/effects/fx_export_panel/scalar-hold.fx.json",
+      "input": {
+        "sha256": "8cafcce20c9feaef4bf89b6596bc9bd38f1b70bdf734187ed2d41f3dc3b703da",
+        "bytes": 3163
+      },
+      "manual_oracle_path": "crates/aftereffects_file/tests/fixtures/effects/fx_export_panel/scalar-hold.expected.json",
+      "generated_aep": {
+        "sha256": "af76df2cdd40df4a6b92c6c7c8e543855b781357ee74e835dfeb810d29d646fb",
+        "bytes": 67566
+      },
+      "adobe_render": {
+        "sha256": "19e99e77a9f47b2beb5600bf48863febb34507d372be4729a035eedd16e10307",
+        "bytes": 14115,
+        "width": 320,
+        "height": 180,
+        "r_frame_rate": "30/1",
+        "duration": "2.000000",
+        "nb_read_frames": "60",
+        "storage": "Ignored local actual, not an independent reference Asset."
+      },
+      "adobe_readback": {
+        "name": "scalar-hold",
+        "compositions": [
+          {
+            "id": 1,
+            "name": "scalar-hold"
+          }
+        ],
+        "controls": [
+          {
+            "name": "ADBE Gaussian Blur 2-0001",
+            "value": [
+              4
+            ],
+            "keys": [
+              {
+                "time": 0,
+                "value": [
+                  4
+                ],
+                "inType": "6612",
+                "outType": "6614"
+              },
+              {
+                "time": 0.5,
+                "value": [
+                  18
+                ],
+                "inType": "6614",
+                "outType": "6612"
+              },
+              {
+                "time": 1,
+                "value": [
+                  30
+                ],
+                "inType": "6612",
+                "outType": "6612"
+              }
+            ],
+            "samples": [
+              {
+                "time": 0,
+                "value": [
+                  4
+                ]
+              },
+              {
+                "time": 0.25,
+                "value": [
+                  4
+                ]
+              },
+              {
+                "time": 0.5,
+                "value": [
+                  18
+                ]
+              },
+              {
+                "time": 0.75,
+                "value": [
+                  24
+                ]
+              },
+              {
+                "time": 1,
+                "value": [
+                  30
+                ]
+              }
+            ]
+          }
+        ],
+        "width": 320,
+        "height": 180,
+        "duration": 2,
+        "frameRate": 24,
+        "enabled": true,
+        "anchor": [
+          60,
+          40,
+          0
+        ],
+        "effect": "ADBE Gaussian Blur 2"
+      },
+      "comparison": {
+        "case": "scalar-hold",
+        "controls": 1,
+        "keys": 3,
+        "static_key_values_and_interpolation": "passed",
+        "sample_count": 5,
+        "maximum_sample_delta_from_manual_oracle": 0,
+        "maximum_scalar_cubic_delta_from_explicit_fx_bezier": null
+      }
+    },
+    {
+      "case": "twirl-center-and-angle",
+      "test_symbol": "export_document::tests::effects_native_panel::twirl_center_and_angle",
+      "input_path": "crates/aftereffects_file/tests/fixtures/effects/fx_export_panel/twirl-center-and-angle.fx.json",
+      "input": {
+        "sha256": "13f3b38b0b2736a5fa10f7910bd28da5d83fcae8be2a8eb1399e5c2ced2b4ea7",
+        "bytes": 1965
+      },
+      "manual_oracle_path": "crates/aftereffects_file/tests/fixtures/effects/fx_export_panel/twirl-center-and-angle.expected.json",
+      "generated_aep": {
+        "sha256": "e4cc35ac02675e94c03c3e2c1e3d1a5e55d711ebeab14aa66a2fc65c0a39a35c",
+        "bytes": 67212
+      },
+      "adobe_render": {
+        "sha256": "d63aefd0495b7746bcbc0aa72b842872f2f27a554799a65014635b97583895b9",
+        "bytes": 18841,
+        "width": 320,
+        "height": 180,
+        "r_frame_rate": "30/1",
+        "duration": "2.000000",
+        "nb_read_frames": "60",
+        "storage": "Ignored local actual, not an independent reference Asset."
+      },
+      "adobe_readback": {
+        "name": "twirl-center-and-angle",
+        "compositions": [
+          {
+            "id": 1,
+            "name": "twirl-center-and-angle"
+          }
+        ],
+        "controls": [
+          {
+            "name": "ADBE Twirl-0001",
+            "value": [
+              45
+            ],
+            "keys": [],
+            "samples": []
+          },
+          {
+            "name": "ADBE Twirl-0002",
+            "value": [
+              30
+            ],
+            "keys": [],
+            "samples": []
+          },
+          {
+            "name": "ADBE Twirl-0003",
+            "value": [
+              90,
+              20
+            ],
+            "keys": [],
+            "samples": []
+          }
+        ],
+        "width": 320,
+        "height": 180,
+        "duration": 2,
+        "frameRate": 24,
+        "enabled": true,
+        "anchor": [
+          60,
+          40,
+          0
+        ],
+        "effect": "ADBE Twirl"
+      },
+      "comparison": {
+        "case": "twirl-center-and-angle",
+        "controls": 3,
+        "keys": 0,
+        "static_key_values_and_interpolation": "passed",
+        "sample_count": 0,
+        "maximum_sample_delta_from_manual_oracle": 0,
+        "maximum_scalar_cubic_delta_from_explicit_fx_bezier": null
+      }
+    }
+  ],
+  "limitations": [
+    "Scalar cubic/hold and compatible Linear Point/RGBA are selected export evidence, not all animation combinations.",
+    "Native Point quarter-time sample deviations up to0.000311px are retained as measured numerical differences.",
+    "Levels uses animatable Individual Controls; the earlier Easy Levels output ignored overrides. The FX input was unchanged; the native-plugin oracle was deliberately revised using independently authored levels_controls.aep.",
+    "Earlier Shape files failed without required RectSize/VectorScale range records. Earlier Point/Color animated records were rejected, and static Point overrides were ignored. Own-reader passing tests did not establish acceptance.",
+    "Native interpolation codes were captured directly as strings; an ExtendScript enum helper misclassified them and its receipts are not used here.",
+    "No comparison against freshly rendered imported FX, no alpha proof, no full seven-type pixel fidelity pass, and no independent edited-FX export proof for all other mapped effects."
+  ]
+}

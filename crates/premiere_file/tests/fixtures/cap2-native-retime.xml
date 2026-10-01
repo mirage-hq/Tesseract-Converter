@@ -1,0 +1,17 @@
+<PremiereData Version="3">
+<VideoClipTrackItem ObjectID="255" ClassID="368b0406-29e3-4923-9fcd-094fbf9a1089" Version="8">
+		<ClipTrackItem Version="8">
+			<TrackItem Version="4">
+				<Start>10594584000</Start>
+				<End>360215856000</End>
+			</TrackItem>
+			</ClipTrackItem>
+		</VideoClipTrackItem>
+	<VideoClip ObjectID="648" ClassID="9308dbef-2440-4acb-9ab2-953b9a4e82ec" Version="11">
+		<Clip Version="18">
+			<InPoint>0</InPoint>
+			<OutPoint>69924254400</OutPoint>
+			<PlaybackSpeed>0.2</PlaybackSpeed>
+		</Clip>
+	</VideoClip>
+	</PremiereData>

@@ -1,0 +1,35 @@
+{
+  "source_sha256": "6d632ac99c9e081746d51b83a651cb311dc063f0541bbe43ba1a241bd8870fdd",
+  "source_composition": 907,
+  "source_layers": [
+    1037,
+    1034,
+    949,
+    948
+  ],
+  "layer_envelopes": [
+    {
+      "offset": 1896872,
+      "bytes": 25398,
+      "sha256": "40c88d57ee5d88ced27ca362c6c36defe331cccb6bdf47a5eb5101606a661453"
+    },
+    {
+      "offset": 1922782,
+      "bytes": 27372,
+      "sha256": "d0d233134c8e27b8a5cc00fba6842fe94d3247f77043c3cd9532cae7a3b9ecad"
+    },
+    {
+      "offset": 1969288,
+      "bytes": 25828,
+      "sha256": "311b0b87eabc74434db1e3ba9af0c24ad3a1709cf5004400bcc937edd88f2988"
+    },
+    {
+      "offset": 1995692,
+      "bytes": 24878,
+      "sha256": "fa45f61a2d5c7091ca10762f36d2ab6ed7839cd092a0c89f09e34162ab849c27"
+    }
+  ],
+  "geometry_defaults_from": "aftereffects_file/tests/fixtures/effects/self-inverse-post-transform-controls.rifx",
+  "fixture_sha256": "1998c3ceb008934d6a923a9338ad3f9c3f577deec2d7e512fc165e71ae1a1057",
+  "scope": "Source-derived static uniform linked placement compensation and unchanged native half-turn offset signs. No new export or independent GPU/native kernel parity claim."
+}

@@ -1,0 +1,337 @@
+{
+  "schema_version": 1,
+  "source_path": "crates/aftereffects_file/tests/fixtures/adjustment/native_controls.aep",
+  "cases": [
+    {
+      "case_id": "aep-adjustment-native-controls-c84",
+      "feature": "adjustment-disabled",
+      "composition_id": 84,
+      "source_sha256": "ed45319ed014ba979a9e0b4868aa635775f288fe851c39d9242aab097020f26f",
+      "requirement": "required",
+      "supported_by": [],
+      "import": {
+        "implementation": "bounded direct Adjustment mapping; see support ledger",
+        "test_status": "PASSED",
+        "baseline_test_status": "FAILED: no direct Adjustment mapping",
+        "test_symbol": "structure_document::tests::adjustment::adjustment_import_disabled",
+        "rgb_min": 0.988785813914405
+      },
+      "export": {
+        "implementation": "fresh native Adjustment subset; parent hierarchy normalized",
+        "test_status": "PASSED",
+        "test_symbol": "export_document::tests::adjustment::adjustment_export_disabled",
+        "adobe_open": "accepted",
+        "native_controls": "matched",
+        "rgb_min": 1.0
+      },
+      "native_reference": {
+        "status": "verified",
+        "fps": 30,
+        "frame_count": 60,
+        "path": "tests/references/aep/adjustment/native_controls__composition_84.mp4"
+      },
+      "visual": "measured descriptive RGB; no fidelity pass; alpha unverified",
+      "evidence": "evidence.json"
+    },
+    {
+      "case_id": "aep-adjustment-native-controls-c44",
+      "feature": "adjustment-effect-order",
+      "composition_id": 44,
+      "source_sha256": "ed45319ed014ba979a9e0b4868aa635775f288fe851c39d9242aab097020f26f",
+      "requirement": "required",
+      "supported_by": [],
+      "import": {
+        "implementation": "bounded direct Adjustment mapping; see support ledger",
+        "test_status": "PASSED",
+        "baseline_test_status": "FAILED: no direct Adjustment mapping",
+        "test_symbol": "structure_document::tests::adjustment::adjustment_import_effect_order",
+        "rgb_min": 0.859299589919198
+      },
+      "export": {
+        "implementation": "fresh native Adjustment subset; parent hierarchy normalized",
+        "test_status": "PASSED",
+        "test_symbol": "export_document::tests::adjustment::adjustment_export_effect_order",
+        "adobe_open": "accepted",
+        "native_controls": "matched",
+        "rgb_min": 0.9826955912510554
+      },
+      "native_reference": {
+        "status": "verified",
+        "fps": 30,
+        "frame_count": 60,
+        "path": "tests/references/aep/adjustment/native_controls__composition_44.mp4"
+      },
+      "visual": "measured descriptive RGB; no fidelity pass; alpha unverified",
+      "evidence": "evidence.json"
+    },
+    {
+      "case_id": "aep-adjustment-native-controls-c64",
+      "feature": "adjustment-keys",
+      "composition_id": 64,
+      "source_sha256": "ed45319ed014ba979a9e0b4868aa635775f288fe851c39d9242aab097020f26f",
+      "requirement": "required",
+      "supported_by": [],
+      "import": {
+        "implementation": "bounded direct Adjustment mapping; see support ledger",
+        "test_status": "PASSED",
+        "baseline_test_status": "FAILED: no direct Adjustment mapping",
+        "test_symbol": "structure_document::tests::adjustment::adjustment_import_keys",
+        "rgb_min": 0.7319852556442169
+      },
+      "export": {
+        "implementation": "fresh native Adjustment subset; parent hierarchy normalized",
+        "test_status": "PASSED",
+        "test_symbol": "export_document::tests::adjustment::adjustment_export_keys",
+        "adobe_open": "accepted",
+        "native_controls": "matched",
+        "rgb_min": 0.9415303433603711
+      },
+      "native_reference": {
+        "status": "verified",
+        "fps": 30,
+        "frame_count": 60,
+        "path": "tests/references/aep/adjustment/native_controls__composition_64.mp4"
+      },
+      "visual": "measured descriptive RGB; no fidelity pass; alpha unverified",
+      "evidence": "evidence.json"
+    },
+    {
+      "case_id": "aep-adjustment-native-controls-c163",
+      "feature": "adjustment-masks",
+      "composition_id": 163,
+      "source_sha256": "ed45319ed014ba979a9e0b4868aa635775f288fe851c39d9242aab097020f26f",
+      "requirement": "required",
+      "supported_by": [],
+      "import": {
+        "implementation": "bounded direct Adjustment mapping; see support ledger",
+        "test_status": "PASSED",
+        "baseline_test_status": "FAILED: no direct Adjustment mapping",
+        "test_symbol": "structure_document::tests::adjustment::adjustment_import_masks",
+        "rgb_min": 0.9583832708249489
+      },
+      "export": {
+        "implementation": "fresh native Adjustment subset; parent hierarchy normalized",
+        "test_status": "PASSED",
+        "test_symbol": "export_document::tests::adjustment::adjustment_export_masks",
+        "adobe_open": "accepted",
+        "native_controls": "matched",
+        "rgb_min": 1.0
+      },
+      "native_reference": {
+        "status": "verified",
+        "fps": 30,
+        "frame_count": 60,
+        "path": "tests/references/aep/adjustment/native_controls__composition_163.mp4"
+      },
+      "visual": "measured descriptive RGB; no fidelity pass; alpha unverified",
+      "evidence": "evidence.json"
+    },
+    {
+      "case_id": "aep-adjustment-native-controls-c183",
+      "feature": "adjustment-matte",
+      "composition_id": 183,
+      "source_sha256": "ed45319ed014ba979a9e0b4868aa635775f288fe851c39d9242aab097020f26f",
+      "requirement": "required",
+      "supported_by": [],
+      "import": {
+        "implementation": "bounded direct Adjustment mapping; see support ledger",
+        "test_status": "PASSED",
+        "baseline_test_status": "FAILED: no direct Adjustment mapping",
+        "test_symbol": "structure_document::tests::adjustment::adjustment_import_matte",
+        "rgb_min": 0.7561284812353551
+      },
+      "export": {
+        "implementation": "fresh native Adjustment subset; parent hierarchy normalized",
+        "test_status": "PASSED",
+        "test_symbol": "export_document::tests::adjustment::adjustment_export_matte",
+        "adobe_open": "accepted",
+        "native_controls": "matched",
+        "rgb_min": 0.9895994349983004
+      },
+      "native_reference": {
+        "status": "verified",
+        "fps": 30,
+        "frame_count": 60,
+        "path": "tests/references/aep/adjustment/native_controls__composition_183.mp4"
+      },
+      "visual": "measured descriptive RGB; no fidelity pass; alpha unverified",
+      "evidence": "evidence.json"
+    },
+    {
+      "case_id": "aep-adjustment-native-controls-c146",
+      "feature": "adjustment-nested",
+      "composition_id": 146,
+      "source_sha256": "ed45319ed014ba979a9e0b4868aa635775f288fe851c39d9242aab097020f26f",
+      "requirement": "required",
+      "supported_by": [],
+      "import": {
+        "implementation": "bounded direct Adjustment mapping; see support ledger",
+        "test_status": "PASSED",
+        "baseline_test_status": "FAILED: no direct Adjustment mapping",
+        "test_symbol": "structure_document::tests::adjustment::adjustment_import_nested",
+        "rgb_min": 0.903448963318434
+      },
+      "export": {
+        "implementation": "fresh native Adjustment subset; parent hierarchy normalized",
+        "test_status": "PASSED",
+        "test_symbol": "export_document::tests::adjustment::adjustment_export_nested",
+        "adobe_open": "accepted",
+        "native_controls": "matched",
+        "rgb_min": 0.9935026517179277
+      },
+      "native_reference": {
+        "status": "verified",
+        "fps": 30,
+        "frame_count": 60,
+        "path": "tests/references/aep/adjustment/native_controls__composition_146.mp4"
+      },
+      "visual": "measured descriptive RGB; no fidelity pass; alpha unverified",
+      "evidence": "evidence.json"
+    },
+    {
+      "case_id": "aep-adjustment-native-controls-c126",
+      "feature": "adjustment-nested__support",
+      "composition_id": 126,
+      "source_sha256": "ed45319ed014ba979a9e0b4868aa635775f288fe851c39d9242aab097020f26f",
+      "requirement": "supporting",
+      "supported_by": [
+        "aep-adjustment-native-controls-c146"
+      ],
+      "import": {
+        "implementation": "editable support composition imported through target146",
+        "test_status": "PASSED via adjustment_import_nested",
+        "baseline_test_status": "exercised by nested contract; failed baseline"
+      },
+      "export": {
+        "implementation": "editable support composition exported through target146",
+        "test_status": "PASSED via adjustment_export_nested"
+      },
+      "native_reference": "supporting",
+      "visual": "measured through target146 only"
+    },
+    {
+      "case_id": "aep-adjustment-native-controls-c205",
+      "feature": "adjustment-parent",
+      "composition_id": 205,
+      "source_sha256": "ed45319ed014ba979a9e0b4868aa635775f288fe851c39d9242aab097020f26f",
+      "requirement": "required",
+      "supported_by": [],
+      "import": {
+        "implementation": "bounded direct Adjustment mapping; see support ledger",
+        "test_status": "PASSED",
+        "baseline_test_status": "FAILED: no direct Adjustment mapping",
+        "test_symbol": "structure_document::tests::adjustment::adjustment_import_parent",
+        "rgb_min": 0.9548677683787213
+      },
+      "export": {
+        "implementation": "fresh native Adjustment subset; parent hierarchy normalized",
+        "test_status": "PASSED",
+        "test_symbol": "export_document::tests::adjustment::adjustment_export_parent_normalized_gate",
+        "adobe_open": "accepted",
+        "native_controls": "partial: adjustment-parent.layers: expected 5 entries, got 4",
+        "rgb_min": 0.9897172821892632
+      },
+      "native_reference": {
+        "status": "verified",
+        "fps": 30,
+        "frame_count": 60,
+        "path": "tests/references/aep/adjustment/native_controls__composition_205.mp4"
+      },
+      "visual": "measured descriptive RGB; no fidelity pass; alpha unverified",
+      "evidence": "evidence.json"
+    },
+    {
+      "case_id": "aep-adjustment-native-controls-c1",
+      "feature": "adjustment-scope",
+      "composition_id": 1,
+      "source_sha256": "ed45319ed014ba979a9e0b4868aa635775f288fe851c39d9242aab097020f26f",
+      "requirement": "required",
+      "supported_by": [],
+      "import": {
+        "implementation": "bounded direct Adjustment mapping; see support ledger",
+        "test_status": "PASSED",
+        "baseline_test_status": "FAILED: no direct Adjustment mapping",
+        "test_symbol": "structure_document::tests::adjustment::adjustment_import_scope",
+        "rgb_min": 0.8779928943584673
+      },
+      "export": {
+        "implementation": "fresh native Adjustment subset; parent hierarchy normalized",
+        "test_status": "PASSED",
+        "test_symbol": "export_document::tests::adjustment::adjustment_export_scope",
+        "adobe_open": "accepted",
+        "native_controls": "matched",
+        "rgb_min": 0.9932105639908049
+      },
+      "native_reference": {
+        "status": "verified",
+        "fps": 30,
+        "frame_count": 60,
+        "path": "tests/references/aep/adjustment/native_controls__composition_1.mp4"
+      },
+      "visual": "measured descriptive RGB; no fidelity pass; alpha unverified",
+      "evidence": "evidence.json"
+    },
+    {
+      "case_id": "aep-adjustment-native-controls-c106",
+      "feature": "adjustment-span",
+      "composition_id": 106,
+      "source_sha256": "ed45319ed014ba979a9e0b4868aa635775f288fe851c39d9242aab097020f26f",
+      "requirement": "required",
+      "supported_by": [],
+      "import": {
+        "implementation": "bounded direct Adjustment mapping; see support ledger",
+        "test_status": "PASSED",
+        "baseline_test_status": "FAILED: no direct Adjustment mapping",
+        "test_symbol": "structure_document::tests::adjustment::adjustment_import_span",
+        "rgb_min": 0.9830024571592609
+      },
+      "export": {
+        "implementation": "fresh native Adjustment subset; parent hierarchy normalized",
+        "test_status": "PASSED",
+        "test_symbol": "export_document::tests::adjustment::adjustment_export_span",
+        "adobe_open": "accepted",
+        "native_controls": "matched",
+        "rgb_min": 1.0
+      },
+      "native_reference": {
+        "status": "verified",
+        "fps": 30,
+        "frame_count": 60,
+        "path": "tests/references/aep/adjustment/native_controls__composition_106.mp4"
+      },
+      "visual": "measured descriptive RGB; no fidelity pass; alpha unverified",
+      "evidence": "evidence.json"
+    },
+    {
+      "case_id": "aep-adjustment-native-controls-c22",
+      "feature": "adjustment-stack-order",
+      "composition_id": 22,
+      "source_sha256": "ed45319ed014ba979a9e0b4868aa635775f288fe851c39d9242aab097020f26f",
+      "requirement": "required",
+      "supported_by": [],
+      "import": {
+        "implementation": "bounded direct Adjustment mapping; see support ledger",
+        "test_status": "PASSED",
+        "baseline_test_status": "FAILED: no direct Adjustment mapping",
+        "test_symbol": "structure_document::tests::adjustment::adjustment_import_stack_order",
+        "rgb_min": 0.8589208997330732
+      },
+      "export": {
+        "implementation": "fresh native Adjustment subset; parent hierarchy normalized",
+        "test_status": "PASSED",
+        "test_symbol": "export_document::tests::adjustment::adjustment_export_stack_order",
+        "adobe_open": "accepted",
+        "native_controls": "matched",
+        "rgb_min": 0.9917060322231717
+      },
+      "native_reference": {
+        "status": "verified",
+        "fps": 30,
+        "frame_count": 60,
+        "path": "tests/references/aep/adjustment/native_controls__composition_22.mp4"
+      },
+      "visual": "measured descriptive RGB; no fidelity pass; alpha unverified",
+      "evidence": "evidence.json"
+    }
+  ]
+}

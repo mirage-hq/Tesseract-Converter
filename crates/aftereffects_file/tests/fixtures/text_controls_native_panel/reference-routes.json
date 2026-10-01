@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "status": "UNRUN_UNMEASURED_REFERENCE_PUBLICATION_PENDING",
+  "source_convention": "crates/aftereffects_file/tests/fixtures/text_controls_native_panel/native/<case_id>.aep",
+  "identity_policy": "Native authoring and publication receipts supply real pins. Published uninspected references are recorded without promoting inspection, execution or comparison status.",
+  "cases": [
+    {
+      "case_id": "fx-export-panel-text-style-hold",
+      "composition_name": "panel-text-style-hold",
+      "source_sha256": "0339099cae22167f8441bca8ad05fab5abcd3eba9bf41de42752f3cf3e90e68a",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-panel-text-animator-controls",
+      "composition_name": "panel-text-animator-controls",
+      "source_sha256": "7c60651b2806ace411bd33e8ff79496cf9e75b7a4f65ba7e5ca70031e6515ffa",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-panel-text-selectors-more",
+      "composition_name": "panel-text-selectors-more",
+      "source_sha256": "5445c0ba51db7695187e4732405a11ad0aa49d80c5698e36dbb42a8f6539da01",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-panel-text-path-controls",
+      "composition_name": "panel-text-path-controls",
+      "source_sha256": "76b9d65c8d788c7954d6a0f61dd0eba4ca818bde8adadad2237cb56ce812db46",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-panel-text-unsupported-layout",
+      "composition_name": "panel-text-unsupported-layout",
+      "source_sha256": "d7aa0251dd8f26dbbad300c80d38841aa4fdf40acaa6bdf946c7a02f5377c08b",
+      "composition_id": 1
+    }
+  ]
+}

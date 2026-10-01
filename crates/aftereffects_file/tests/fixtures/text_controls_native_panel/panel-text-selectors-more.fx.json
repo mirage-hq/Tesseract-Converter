@@ -1,0 +1,522 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "formatVersion": 1,
+  "duration": 2,
+  "dimensions": {
+    "width": 320,
+    "height": 180
+  },
+  "backgroundColor": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "composition": {
+    "id": "main",
+    "name": "panel-text-selectors-more",
+    "segmentLayerIds": [],
+    "dynamics": {
+      "entries": [
+        {
+          "target": {
+            "kind": "fxItemProperty",
+            "itemId": 6302,
+            "propertyName": "start"
+          },
+          "animator": {
+            "type": "keyframes",
+            "enabled": true,
+            "keyframes": [
+              {
+                "id": "range-start-0",
+                "layerTime": 0,
+                "value": {
+                  "type": "float",
+                  "value": 0
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "range-start-1",
+                "layerTime": 1000,
+                "value": {
+                  "type": "float",
+                  "value": 0.25
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              }
+            ]
+          },
+          "dependencies": [],
+          "layerRefs": {}
+        },
+        {
+          "target": {
+            "kind": "fxItemProperty",
+            "itemId": 6302,
+            "propertyName": "end"
+          },
+          "animator": {
+            "type": "keyframes",
+            "enabled": true,
+            "keyframes": [
+              {
+                "id": "range-end-0",
+                "layerTime": 0,
+                "value": {
+                  "type": "float",
+                  "value": 0.75
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "range-end-1",
+                "layerTime": 1000,
+                "value": {
+                  "type": "float",
+                  "value": 1
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              }
+            ]
+          },
+          "dependencies": [],
+          "layerRefs": {}
+        },
+        {
+          "target": {
+            "kind": "fxItemProperty",
+            "itemId": 6302,
+            "propertyName": "offset"
+          },
+          "animator": {
+            "type": "keyframes",
+            "enabled": true,
+            "keyframes": [
+              {
+                "id": "range-offset-0",
+                "layerTime": 0,
+                "value": {
+                  "type": "float",
+                  "value": 0
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "range-offset-1",
+                "layerTime": 1000,
+                "value": {
+                  "type": "float",
+                  "value": 0.2
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              }
+            ]
+          },
+          "dependencies": [],
+          "layerRefs": {}
+        },
+        {
+          "target": {
+            "kind": "fxItemProperty",
+            "itemId": 6302,
+            "propertyName": "amount"
+          },
+          "animator": {
+            "type": "keyframes",
+            "enabled": true,
+            "keyframes": [
+              {
+                "id": "range-amount-0",
+                "layerTime": 0,
+                "value": {
+                  "type": "float",
+                  "value": 1
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "range-amount-1",
+                "layerTime": 1000,
+                "value": {
+                  "type": "float",
+                  "value": 0.6
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              }
+            ]
+          },
+          "dependencies": [],
+          "layerRefs": {}
+        },
+        {
+          "target": {
+            "kind": "fxItemProperty",
+            "itemId": 6302,
+            "propertyName": "easeHigh"
+          },
+          "animator": {
+            "type": "keyframes",
+            "enabled": true,
+            "keyframes": [
+              {
+                "id": "ease-high-0",
+                "layerTime": 0,
+                "value": {
+                  "type": "float",
+                  "value": 0
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "ease-high-1",
+                "layerTime": 1000,
+                "value": {
+                  "type": "float",
+                  "value": 0.2
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              }
+            ]
+          },
+          "dependencies": [],
+          "layerRefs": {}
+        },
+        {
+          "target": {
+            "kind": "fxItemProperty",
+            "itemId": 6302,
+            "propertyName": "easeLow"
+          },
+          "animator": {
+            "type": "keyframes",
+            "enabled": true,
+            "keyframes": [
+              {
+                "id": "ease-low-0",
+                "layerTime": 0,
+                "value": {
+                  "type": "float",
+                  "value": 0
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "ease-low-1",
+                "layerTime": 1000,
+                "value": {
+                  "type": "float",
+                  "value": -0.2
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              }
+            ]
+          },
+          "dependencies": [],
+          "layerRefs": {}
+        },
+        {
+          "target": {
+            "kind": "fxItemProperty",
+            "itemId": 6302,
+            "propertyName": "randomSeed"
+          },
+          "animator": {
+            "type": "keyframes",
+            "enabled": true,
+            "keyframes": [
+              {
+                "id": "range-seed-0",
+                "layerTime": 0,
+                "value": {
+                  "type": "float",
+                  "value": 1
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "range-seed-1",
+                "layerTime": 1000,
+                "value": {
+                  "type": "float",
+                  "value": 3
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              }
+            ]
+          },
+          "dependencies": [],
+          "layerRefs": {}
+        },
+        {
+          "target": {
+            "kind": "fxItemProperty",
+            "itemId": 6303,
+            "propertyName": "amount"
+          },
+          "animator": {
+            "type": "keyframes",
+            "enabled": true,
+            "keyframes": [
+              {
+                "id": "wiggle-amount-0",
+                "layerTime": 0,
+                "value": {
+                  "type": "float",
+                  "value": 20
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "wiggle-amount-1",
+                "layerTime": 1000,
+                "value": {
+                  "type": "float",
+                  "value": 35
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              }
+            ]
+          },
+          "dependencies": [],
+          "layerRefs": {}
+        },
+        {
+          "target": {
+            "kind": "fxItemProperty",
+            "itemId": 6303,
+            "propertyName": "speed"
+          },
+          "animator": {
+            "type": "keyframes",
+            "enabled": true,
+            "keyframes": [
+              {
+                "id": "wiggle-speed-0",
+                "layerTime": 0,
+                "value": {
+                  "type": "float",
+                  "value": 1
+                },
+                "easing": {
+                  "type": "hold"
+                }
+              },
+              {
+                "id": "wiggle-speed-1",
+                "layerTime": 1000,
+                "value": {
+                  "type": "float",
+                  "value": 2
+                },
+                "easing": {
+                  "type": "hold"
+                }
+              }
+            ]
+          },
+          "dependencies": [],
+          "layerRefs": {}
+        },
+        {
+          "target": {
+            "kind": "fxItemProperty",
+            "itemId": 6303,
+            "propertyName": "seed"
+          },
+          "animator": {
+            "type": "keyframes",
+            "enabled": true,
+            "keyframes": [
+              {
+                "id": "wiggle-seed-0",
+                "layerTime": 0,
+                "value": {
+                  "type": "float",
+                  "value": 2
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "wiggle-seed-1",
+                "layerTime": 1000,
+                "value": {
+                  "type": "float",
+                  "value": 4
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              }
+            ]
+          },
+          "dependencies": [],
+          "layerRefs": {}
+        },
+        {
+          "target": {
+            "kind": "fxItemProperty",
+            "itemId": 6304,
+            "propertyName": "groupingAlignment"
+          },
+          "animator": {
+            "type": "keyframes",
+            "enabled": true,
+            "keyframes": [
+              {
+                "id": "alignment-0",
+                "layerTime": 0,
+                "value": {
+                  "type": "vector2",
+                  "value": [
+                    0,
+                    0
+                  ]
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "alignment-1",
+                "layerTime": 1000,
+                "value": {
+                  "type": "vector2",
+                  "value": [
+                    10,
+                    -5
+                  ]
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              }
+            ]
+          },
+          "dependencies": [],
+          "layerRefs": {}
+        }
+      ]
+    },
+    "layers": [
+      {
+        "type": "Text",
+        "id": 6300,
+        "name": "Range Wiggly and More",
+        "parent": null,
+        "activeRange": {
+          "start": 0,
+          "duration": 2000
+        },
+        "transform": {
+          "anchorPoint": [
+            0,
+            0
+          ],
+          "position": [
+            90,
+            90
+          ],
+          "scale": [
+            100,
+            100
+          ],
+          "rotation": 0,
+          "opacity": 100
+        },
+        "sourceText": {
+          "text": "SELECTORS",
+          "fontFamily": "ArialMT",
+          "fontStyle": "Regular",
+          "fontSize": 32,
+          "applyFill": true,
+          "fillColor": [
+            1,
+            1,
+            1,
+            1
+          ]
+        },
+        "animators": [
+          {
+            "id": 6301,
+            "name": "Selector Controls",
+            "position": [
+              0,
+              16
+            ],
+            "selectors": [
+              {
+                "id": 6302,
+                "start": 0,
+                "end": 0.75,
+                "offset": 0,
+                "units": "percentage",
+                "basedOn": "characters",
+                "mode": "add",
+                "amount": 1,
+                "shape": "square",
+                "easeHigh": 0,
+                "easeLow": 0,
+                "randomizeOrder": true,
+                "randomSeed": 1
+              }
+            ],
+            "wigglySelectors": [
+              {
+                "id": 6303,
+                "mode": "add",
+                "speed": 1,
+                "amount": 20,
+                "seed": 2
+              }
+            ]
+          }
+        ],
+        "anchorOptions": {
+          "id": 6304,
+          "anchorPointGrouping": "word",
+          "groupingAlignment": [
+            0,
+            0
+          ]
+        }
+      }
+    ]
+  }
+}

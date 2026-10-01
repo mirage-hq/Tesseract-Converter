@@ -1,0 +1,243 @@
+//! Inspect one still-image source with the `image` decoders the renderer uses.
+//!
+//! Only headers are decoded: format, pixel dimensions, alpha, and whether an
+//! ICC profile is embedded. Decoder errors reject malformed, truncated,
+//! IDAT-less, 12-bit, lossless, and arithmetic-coded files; an Exif orientation
+//! other than 1 (the renderer rotates the pixels) and APNG reject too. CMYK/YCCK
+//! JPEG, unreadable Exif (drawn as orientation 1), and PNG `cICP` (not exposed
+//! by the decoder) convert as the renderer draws them; Premiere parity is inferred.
+
+use crate::error::{unsupported, BuildError, Result};
+use image::{
+    codecs::{jpeg::JpegDecoder, png::PngDecoder},
+    metadata::Orientation,
+    ImageDecoder, ImageError, ImageReader,
+};
+use std::io::{BufReader, ErrorKind, Read, Seek};
+
+/// Still-image container accepted by conversion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ImageFormat {
+    Jpeg,
+    Png,
+}
+
+impl ImageFormat {
+    /// The format a package file extension names, case-insensitively: the one
+    /// still-image extension rule, which `media::MediaContainer` applies per
+    /// media kind.
+    pub(crate) fn from_extension(extension: &str) -> Option<Self> {
+        match extension.to_ascii_lowercase().as_str() {
+            "png" => Some(Self::Png),
+            "jpg" | "jpeg" => Some(Self::Jpeg),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn content_type(self) -> &'static str {
+        match self {
+            Self::Jpeg => "image/jpeg",
+            Self::Png => "image/png",
+        }
+    }
+}
+
+/// Source facts shared by every placement of one validated still image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ValidatedImage {
+    pub(crate) format: ImageFormat,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    /// A PNG alpha channel or `tRNS` chunk (see `declaration_mismatch`).
+    pub(crate) alpha: bool,
+    /// An embedded ICC profile; the renderer converts only a Display-P3 one.
+    pub(crate) icc_profile: bool,
+}
+
+impl ValidatedImage {
+    /// Why this file cannot stand for a native still that does or does not
+    /// declare straight alpha under a package name ending in `extension`.
+    ///
+    /// The package content type follows the extension, so PNG bytes under a
+    /// `.jpg` name reject. Alpha must agree both ways: Premiere would draw an
+    /// undeclared alpha channel opaque, and declared straight alpha needs an
+    /// alpha channel. `AlphaType` `1` with RGBA PNG (`cinemagraph`,
+    /// `phone_title`) and its absence with JPEG are observed; the grey+alpha,
+    /// `tRNS` and opaque-PNG declarations are inferred, so this check can omit
+    /// such a still on import but never import one whose file contradicts it.
+    pub(crate) fn declaration_mismatch(
+        &self,
+        extension: Option<&str>,
+        declared_alpha: bool,
+    ) -> Option<String> {
+        if extension.and_then(ImageFormat::from_extension) != Some(self.format) {
+            return Some(format!(
+                "still file extension does not match its {:?} image data",
+                self.format
+            ));
+        }
+        match (self.alpha, declared_alpha) {
+            (true, false) => Some(
+                "still image carries alpha that its native AlphaType does not declare; Premiere would render it opaque".to_owned(),
+            ),
+            (false, true) => Some(
+                "still image has no alpha channel although its native AlphaType declares straight alpha".to_owned(),
+            ),
+            _ => None,
+        }
+    }
+
+    /// The Feature note reported for every still that embeds an ICC profile.
+    pub(crate) fn colour_note(&self) -> Option<&'static str> {
+        self.icc_profile.then_some(
+            "still image embeds an ICC colour profile; colours are kept as stored and parity with Premiere colour management is inferred",
+        )
+    }
+}
+
+/// Inspect a still image by its content, independently of its file name.
+pub(crate) fn inspect_image_media(reader: impl Read + Seek) -> Result<ValidatedImage> {
+    let reader = ImageReader::new(BufReader::new(reader)).with_guessed_format()?;
+    match reader.format() {
+        Some(image::ImageFormat::Jpeg) => {
+            let decoder = JpegDecoder::new(reader.into_inner()).map_err(undecodable)?;
+            decoded_facts(ImageFormat::Jpeg, decoder)
+        }
+        Some(image::ImageFormat::Png) => {
+            let decoder = PngDecoder::new(reader.into_inner()).map_err(undecodable)?;
+            if decoder.is_apng().map_err(undecodable)? {
+                return Err(unsupported(
+                    "animated PNG (APNG) is unsupported; image sequences are out of scope for stills",
+                ));
+            }
+            decoded_facts(ImageFormat::Png, decoder)
+        }
+        other => Err(unsupported(format!(
+            "still image must be a PNG or JPEG file; {} data is unsupported",
+            other.map_or("unrecognized image", |format| format.to_mime_type())
+        ))),
+    }
+}
+
+fn decoded_facts(format: ImageFormat, mut decoder: impl ImageDecoder) -> Result<ValidatedImage> {
+    let orientation = decoder.orientation().map_err(undecodable)?;
+    if orientation != Orientation::NoTransforms {
+        return Err(unsupported(format!(
+            "still image Exif orientation {} is unsupported; only unrotated (orientation 1) stills convert",
+            orientation.to_exif()
+        )));
+    }
+    let (width, height) = decoder.dimensions();
+    Ok(ValidatedImage {
+        format,
+        width,
+        height,
+        alpha: decoder.color_type().has_alpha(),
+        icc_profile: decoder.icc_profile().map_err(undecodable)?.is_some(),
+    })
+}
+
+/// Malformed or unsupported data rejects the still; failing to read the
+/// source stays an I/O error.
+fn undecodable(error: ImageError) -> BuildError {
+    match error {
+        ImageError::IoError(error) if error.kind() != ErrorKind::UnexpectedEof => error.into(),
+        error => unsupported(format!("still image data cannot be decoded: {error}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ImageFormat::*, *};
+    use std::io::Cursor;
+
+    const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/feature_still_");
+    const IDAT: (&[u8; 4], &[u8]) = (b"IDAT", &[0; 4]);
+
+    fn fixture(name: &str) -> Vec<u8> {
+        std::fs::read(format!("{FIXTURES}{name}")).unwrap()
+    }
+
+    /// A 1920×1080 PNG of `colour` type with `chunks` after IHDR; the image
+    /// data can be a stub because only headers are decoded.
+    fn png(colour: u8, chunks: &[(&[u8; 4], &[u8])]) -> Vec<u8> {
+        let ihdr = [0, 0, 7, 128, 0, 0, 4, 56, 8, colour, 0, 0, 0];
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        for (kind, data) in [(b"IHDR", &ihdr[..])].iter().chain(chunks) {
+            let mut crc = flate2::Crc::new();
+            crc.update(&[&kind[..], data].concat());
+            let length = (data.len() as u32).to_be_bytes();
+            bytes.extend([&length[..], &kind[..], data, &crc.sum().to_be_bytes()].concat());
+        }
+        bytes
+    }
+
+    /// The fixture JPEG with one more segment after SOI.
+    fn jpeg_with(marker: u8, payload: &[u8]) -> Vec<u8> {
+        let jpeg = fixture("opaque.jpg");
+        let length = (payload.len() as u16 + 2).to_be_bytes();
+        [&jpeg[..2], &[0xff, marker], &length, payload, &jpeg[2..]].concat()
+    }
+
+    /// The three-component fixture JPEG with a fourth (CMYK) component
+    /// declared in its frame and scan headers.
+    fn cmyk_jpeg() -> Vec<u8> {
+        let mut jpeg = fixture("opaque.jpg");
+        let at = |jpeg: &[u8], marker| jpeg.windows(2).position(|w| w == [0xff, marker]);
+        let scan = at(&jpeg, 0xda).unwrap();
+        jpeg.splice(scan + 3..scan + 5, [14, 4]); // length and component count
+        jpeg.splice(scan + 11..scan + 11, [4, 0x11]); // component 4, tables 1/1
+        let frame = at(&jpeg, 0xc0).unwrap();
+        jpeg.splice(frame + 3..frame + 4, [20]);
+        jpeg[frame + 9] = 4;
+        jpeg.splice(frame + 19..frame + 19, [4, 0x11, 0]); // component 4, 1×1, table 0
+        jpeg
+    }
+
+    #[test]
+    fn decoder_facts_accept_or_reject_each_still() {
+        let exif_3 = b"Exif\0\0MM\0*\0\0\0\x08\0\x01\x01\x12\0\x03\0\0\0\x01\0\x03\0\0\0\0";
+        let (jpeg, rgba) = (fixture("opaque.jpg"), fixture("transparent.png"));
+        let opaque = png(2, &[IDAT]);
+        let trns = png(3, &[(b"PLTE", &[0; 3]), (b"tRNS", &[0]), IDAT]);
+        let bad_exif = jpeg_with(0xe1, b"Exif\0\0XX\0*");
+        let icc = jpeg_with(0xe2, b"ICC_PROFILE\0\x01\x01data");
+        let rotated = jpeg_with(0xe1, exif_3);
+        let apng = png(6, &[(b"acTL", &[0, 0, 0, 1, 0, 0, 0, 0]), IDAT]);
+        let idat_less = png(6, &[(b"IEND", &[])]);
+        let truncated = rgba[..40].to_vec();
+        let cases = [
+            (jpeg, Ok((Jpeg, false, false))),
+            (rgba, Ok((Png, true, false))),
+            (opaque, Ok((Png, false, false))),
+            (trns, Ok((Png, true, false))),
+            (cmyk_jpeg(), Ok((Jpeg, false, false))),
+            (bad_exif, Ok((Jpeg, false, false))),
+            (icc, Ok((Jpeg, false, true))),
+            (rotated, Err("Exif orientation 3 is unsupported")),
+            (apng, Err("animated PNG")),
+            (idat_less, Err("cannot be decoded")),
+            (truncated, Err("cannot be decoded")),
+            (b"GIF89a".to_vec(), Err("image/gif data is unsupported")),
+        ];
+        for (row, (bytes, expected)) in cases.into_iter().enumerate() {
+            let facts = inspect_image_media(Cursor::new(bytes))
+                .map(|image| {
+                    (
+                        image.format,
+                        image.alpha,
+                        image.icc_profile,
+                        image.width,
+                        image.height,
+                    )
+                })
+                .map_err(|error| error.to_string());
+            match expected {
+                Ok((format, alpha, icc)) => {
+                    assert_eq!(facts, Ok((format, alpha, icc, 1920, 1080)), "row {row}")
+                }
+                Err(reason) => assert!(facts.is_err_and(|e| e.contains(reason)), "row {row}"),
+            }
+        }
+    }
+}

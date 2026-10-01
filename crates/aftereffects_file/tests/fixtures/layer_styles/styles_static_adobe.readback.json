@@ -1,0 +1,359 @@
+{
+  "status": "ok",
+  "error": null,
+  "adobe_version": "26.5x89",
+  "adobe_build": 89,
+  "owned_project_closed": true,
+  "result": [
+    {
+      "feature": "DropShadow",
+      "composition_id": 1,
+      "layer_id": 15,
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "group_enabled": true,
+      "controls": [
+        {
+          "match_name": "dropShadow/color",
+          "value": [
+            0.05000000074506,
+            0.11999999731779,
+            0.20000000298023,
+            1
+          ]
+        },
+        {
+          "match_name": "dropShadow/opacity",
+          "value": 70
+        },
+        {
+          "match_name": "dropShadow/useGlobalAngle",
+          "value": 0
+        },
+        {
+          "match_name": "dropShadow/localLightingAngle",
+          "value": 135
+        },
+        {
+          "match_name": "dropShadow/distance",
+          "value": 12
+        },
+        {
+          "match_name": "dropShadow/blur",
+          "value": 9
+        },
+        {
+          "match_name": "dropShadow/chokeMatte",
+          "value": 20
+        }
+      ]
+    },
+    {
+      "feature": "InnerShadow",
+      "composition_id": 16,
+      "layer_id": 29,
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "group_enabled": true,
+      "controls": [
+        {
+          "match_name": "innerShadow/color",
+          "value": [
+            0.10000000149012,
+            0.05000000074506,
+            0.20000000298023,
+            1
+          ]
+        },
+        {
+          "match_name": "innerShadow/opacity",
+          "value": 65
+        },
+        {
+          "match_name": "innerShadow/useGlobalAngle",
+          "value": 0
+        },
+        {
+          "match_name": "innerShadow/localLightingAngle",
+          "value": 145
+        },
+        {
+          "match_name": "innerShadow/distance",
+          "value": 8
+        },
+        {
+          "match_name": "innerShadow/blur",
+          "value": 12
+        },
+        {
+          "match_name": "innerShadow/chokeMatte",
+          "value": 15
+        }
+      ]
+    },
+    {
+      "feature": "OuterGlow",
+      "composition_id": 30,
+      "layer_id": 43,
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "group_enabled": true,
+      "controls": [
+        {
+          "match_name": "outerGlow/color",
+          "value": [
+            0.10000000149012,
+            0.80000001192093,
+            1,
+            1
+          ]
+        },
+        {
+          "match_name": "outerGlow/opacity",
+          "value": 85
+        },
+        {
+          "match_name": "outerGlow/blur",
+          "value": 14
+        },
+        {
+          "match_name": "outerGlow/chokeMatte",
+          "value": 25
+        },
+        {
+          "match_name": "outerGlow/inputRange",
+          "value": 75
+        }
+      ]
+    },
+    {
+      "feature": "InnerGlow",
+      "composition_id": 44,
+      "layer_id": 57,
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "group_enabled": true,
+      "controls": [
+        {
+          "match_name": "innerGlow/color",
+          "value": [
+            1,
+            0.20000000298023,
+            0.60000002384186,
+            1
+          ]
+        },
+        {
+          "match_name": "innerGlow/opacity",
+          "value": 70
+        },
+        {
+          "match_name": "innerGlow/blur",
+          "value": 12
+        },
+        {
+          "match_name": "innerGlow/chokeMatte",
+          "value": 10
+        },
+        {
+          "match_name": "innerGlow/inputRange",
+          "value": 70
+        },
+        {
+          "match_name": "innerGlow/innerGlowSource",
+          "value": 2
+        }
+      ]
+    },
+    {
+      "feature": "BevelEmboss",
+      "composition_id": 58,
+      "layer_id": 71,
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "group_enabled": true,
+      "controls": [
+        {
+          "match_name": "bevelEmboss/bevelStyle",
+          "value": 2
+        },
+        {
+          "match_name": "bevelEmboss/strengthRatio",
+          "value": 160
+        },
+        {
+          "match_name": "bevelEmboss/blur",
+          "value": 10
+        },
+        {
+          "match_name": "bevelEmboss/softness",
+          "value": 2
+        },
+        {
+          "match_name": "bevelEmboss/useGlobalAngle",
+          "value": 0
+        },
+        {
+          "match_name": "bevelEmboss/localLightingAngle",
+          "value": 120
+        },
+        {
+          "match_name": "bevelEmboss/localLightingAltitude",
+          "value": 35
+        },
+        {
+          "match_name": "bevelEmboss/highlightOpacity",
+          "value": 80
+        },
+        {
+          "match_name": "bevelEmboss/shadowOpacity",
+          "value": 60
+        }
+      ]
+    },
+    {
+      "feature": "Satin",
+      "composition_id": 72,
+      "layer_id": 85,
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "group_enabled": true,
+      "controls": [
+        {
+          "match_name": "chromeFX/color",
+          "value": [
+            0.5,
+            0.10000000149012,
+            0.25,
+            1
+          ]
+        },
+        {
+          "match_name": "chromeFX/opacity",
+          "value": 55
+        },
+        {
+          "match_name": "chromeFX/localLightingAngle",
+          "value": 25
+        },
+        {
+          "match_name": "chromeFX/distance",
+          "value": 13
+        },
+        {
+          "match_name": "chromeFX/blur",
+          "value": 8
+        },
+        {
+          "match_name": "chromeFX/invert",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "feature": "ColorOverlay",
+      "composition_id": 86,
+      "layer_id": 99,
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "group_enabled": true,
+      "controls": [
+        {
+          "match_name": "solidFill/color",
+          "value": [
+            0.89999997615814,
+            0.20000000298023,
+            0.10000000149012,
+            1
+          ]
+        },
+        {
+          "match_name": "solidFill/opacity",
+          "value": 65
+        }
+      ]
+    },
+    {
+      "feature": "GradientOverlay",
+      "composition_id": 100,
+      "layer_id": 113,
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "group_enabled": true,
+      "controls": [
+        {
+          "match_name": "gradientFill/opacity",
+          "value": 85
+        },
+        {
+          "match_name": "gradientFill/angle",
+          "value": 35
+        },
+        {
+          "match_name": "gradientFill/scale",
+          "value": 80
+        },
+        {
+          "match_name": "gradientFill/offset",
+          "value": [
+            10,
+            -5
+          ]
+        }
+      ]
+    },
+    {
+      "feature": "Stroke",
+      "composition_id": 114,
+      "layer_id": 127,
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "group_enabled": true,
+      "controls": [
+        {
+          "match_name": "frameFX/color",
+          "value": [
+            0.10000000149012,
+            0.5,
+            1,
+            1
+          ]
+        },
+        {
+          "match_name": "frameFX/size",
+          "value": 8
+        },
+        {
+          "match_name": "frameFX/opacity",
+          "value": 90
+        },
+        {
+          "match_name": "frameFX/style",
+          "value": 2
+        }
+      ]
+    }
+  ],
+  "source_sha256": "0160adcfd09c70f4f13b7eedbb539b57e855312fbb0c7b2b44513aef8f418273",
+  "source_bytes": 635693,
+  "authoring_method": "Independent Adobe GUI Layer > Layer Styles selection in a new exclusively owned session, followed by native JSX setValue/readback. No converter-generated project used.",
+  "authoring_wrapper_sha256": "8e8ee19bb5650f4c3500e52163587b5d4b0966b48bbf8bc21910cd8052eafac8"
+}

@@ -1,0 +1,24 @@
+{
+  "controls": [
+    {
+      "name": "ADBE Glo2-0002",
+      "value": [
+        102
+      ]
+    },
+    {
+      "name": "ADBE Glo2-0003",
+      "value": [
+        13
+      ]
+    },
+    {
+      "name": "ADBE Glo2-0004",
+      "value": [
+        2
+      ]
+    }
+  ],
+  "effect": "ADBE Glo2",
+  "enabled": false
+}

@@ -1,0 +1,50 @@
+{
+  "repository": "https://github.com/forticheprod/py-aep",
+  "commit": "e12a451c35bacd3f34a080090265f9370e66162b",
+  "license": "MIT (see ../LICENSE)",
+  "cases": [
+    {
+      "file": "shape_basic.aep",
+      "source": "samples/models/property/shape_basic.aep",
+      "sha256": "742fa5bc2c0267385f0331caf0ada3063b7c66bd97377ee659df775389eeafa5",
+      "bytes": 183809,
+      "sidecar": {
+        "file": "shape_basic.json.gz",
+        "source": "samples/models/property/shape_basic.json",
+        "sha256": "c954727ff947e09bb428d8ccbf196ccbe4b6fb81b662120850b14d4a0e6b6105",
+        "bytes": 767174
+      }
+    },
+    {
+      "file": "gradient.aep",
+      "source": "samples/models/property/gradient.aep",
+      "sha256": "e1ba81de12b4dc2a5ef29c1f53a37830eec3cd545225d09b3a35ad4e17d98bee",
+      "bytes": 75589,
+      "sidecar": {
+        "file": "gradient.json.gz",
+        "source": "samples/models/property/gradient.json",
+        "sha256": "1cc98a9581e792b80f54d10bfac006ef8f4444d68da32bfb9b8c093f93b5cf16",
+        "bytes": 432826
+      }
+    },
+    {
+      "file": "gradient_animated.aep",
+      "source": "samples/models/property/gradient_animated.aep",
+      "sha256": "b75aa0ca8f4c54ea20992dfbbdbeb022bc7445d3794b7199f9d6e9f08049f3d5",
+      "bytes": 78007,
+      "sidecar": null
+    },
+    {
+      "file": "shape_misc.aep",
+      "source": "samples/models/property/shape_misc.aep",
+      "sha256": "13b3f91aab931cae9bc6eb74ae20d0c419098c2f9854a5455526457aca196ad6",
+      "bytes": 189779,
+      "sidecar": {
+        "file": "shape_misc.json.gz",
+        "source": "samples/models/property/shape_misc.json",
+        "sha256": "596a76fe558f4657d86b6d9973d9324766b2a65a272199e8da2ee3ea2d007e5f",
+        "bytes": 987710
+      }
+    }
+  ]
+}

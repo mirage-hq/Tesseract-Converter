@@ -1,0 +1,238 @@
+{
+  "case_id": "aep-radial-wipe-edited-c22",
+  "source": {
+    "file": "radial_wipe_edited.aep",
+    "sha256": "8bb3d334d53dbff0c9fd75cf376582d1ee5a99c11ea1915f9db2f9407c9b9f26",
+    "bytes": 196587,
+    "provenance": "Independently edited in Adobe 26.5x89 from the independently authored radial_wipe_half_plane.aep; no converter source replay, licensed media or baked frames. Center changed from [35,24] to [41,17]; controller Hold angles from 0/90 to 30/120 degrees.",
+    "authoring_script_sha256": "509a2a6fbb8dde55af67acc1a4636dc7a877c5639c0f143510c55d589a691764",
+    "readback_receipt_sha256": "018247f12d9fd041de761c7eaf20348769f8ade8651ad2d3ba0de082dffe2ac2"
+  },
+  "targets": [
+    {
+      "composition_id": 22,
+      "name": "Half-plane Radial Wipe",
+      "feature": "50% hard Radial Wipe with edited center and animated angle",
+      "canvas": [
+        96,
+        64
+      ],
+      "source_fps": 24,
+      "duration_seconds": 2,
+      "owner_layer_id": 34,
+      "controller_layer_id": 36
+    },
+    {
+      "composition_id": 1,
+      "name": "Asymmetric quadrants",
+      "role": "supporting editable four-solid source exercised through composition22; not a standalone Radial Wipe case",
+      "supported_by": [
+        "aep-radial-wipe-edited-c22"
+      ]
+    }
+  ],
+  "independent_reference": {
+    "path": "tests/references/aep/special/radial-wipe-edited.mp4"
+  },
+  "reference_settings": {
+    "renderer": "Adobe Render Queue 26.5x89",
+    "render_settings": "Best Settings; Use this frame rate=30",
+    "output_module": "H.264 - Match Render Settings - 40 Mbps",
+    "fps": 30,
+    "frames": 60,
+    "canvas": [
+      96,
+      64
+    ],
+    "duration_seconds": 2,
+    "bits_per_channel": 8,
+    "working_space": "None"
+  },
+  "import": {
+    "test": "structure_document::radial_wipe::tests::radial_wipe_edited_adobe_source_imports_current_center_and_hold_angles",
+    "execution": "passed",
+    "assertions": [
+      "fresh import of pinned native source c22",
+      "editable Shape/PathMask with center41,17",
+      "Rotation0ms=30/1000ms=120 with arriving Hold easing",
+      "no painted guide or flattening"
+    ],
+    "strict_rgb_comparison": "unmeasured",
+    "alpha_fidelity": "unverified; FX edge antialiasing is not proved identical to Adobe"
+  },
+  "export": {
+    "test": "export_document::radial_wipe::proof_tests::edited_quadrant_half_plane_exports_current_center_and_hold_angles",
+    "execution": "passed; controlled red without export recognition, then green",
+    "explicit_fx_input_sha256": "e63188cd33873f0e5451493faf4cdb310e46067bb0642e4f3fa05568d7d22c7f",
+    "fresh_aep_sha256": "393a767ee460033cbb706d250d5177b2c3843fe2d891ef551688c7a3a53104ce",
+    "input_provenance": "Four explicit current FX Rects and an unpainted Shape/PathMask; center41,17 and Hold angles30/120. Not a replay of the native oracle. The test specifies all render-affecting controls.",
+    "independent_adobe_readback": {
+      "version": "26.5x89",
+      "bitsPerChannel": 8,
+      "workingSpace": "None",
+      "items": [
+        {
+          "id": 1,
+          "name": "Comp 1"
+        },
+        {
+          "id": 13,
+          "name": "Edited canvas"
+        },
+        {
+          "id": 14,
+          "name": "Quadrant 0"
+        },
+        {
+          "id": 16,
+          "name": "Quadrant 1"
+        },
+        {
+          "id": 18,
+          "name": "Quadrant 2"
+        },
+        {
+          "id": 20,
+          "name": "Quadrant 3"
+        }
+      ],
+      "compositionId": 1,
+      "canvas": [
+        96,
+        64
+      ],
+      "fps": 24,
+      "duration": 2,
+      "effectName": "ADBE Radial Wipe",
+      "center": [
+        41,
+        17
+      ],
+      "completion": 50,
+      "direction": 1,
+      "feather": 0,
+      "expression": "",
+      "keys": [
+        {
+          "time": 0,
+          "value": 30,
+          "hold": true
+        },
+        {
+          "time": 1,
+          "value": 120,
+          "hold": false
+        }
+      ],
+      "samples": [
+        {
+          "time": 0,
+          "angle": 30
+        },
+        {
+          "time": 0.5,
+          "angle": 30
+        },
+        {
+          "time": 0.96666666666667,
+          "angle": 30
+        },
+        {
+          "time": 1,
+          "angle": 120
+        },
+        {
+          "time": 1.03333333333333,
+          "angle": 120
+        },
+        {
+          "time": 1.5,
+          "angle": 120
+        },
+        {
+          "time": 1.96666666666667,
+          "angle": 120
+        }
+      ],
+      "renderStatuses": [
+        3019,
+        3019,
+        3019
+      ]
+    },
+    "readback_receipt_sha256": "558400c2a28d08bef9d7b888717cb0212b0dbd232271b73189862f00026abb38",
+    "rgb_comparison": {
+      "metadata": [
+        {
+          "width": 96,
+          "height": 64,
+          "r_frame_rate": "30/1",
+          "duration": "2.000000",
+          "nb_read_frames": "60"
+        },
+        {
+          "width": 96,
+          "height": 64,
+          "r_frame_rate": "30/1",
+          "duration": "2.000000",
+          "nb_read_frames": "60"
+        }
+      ],
+      "frames": 60,
+      "rgb_equal": true,
+      "rgb_max_difference": 0,
+      "samples": [
+        0,
+        15,
+        29,
+        30,
+        31,
+        45,
+        59
+      ]
+    },
+    "rgba_comparison": [
+      {
+        "time": 0,
+        "pixels": 6144,
+        "rgba_max_difference": 0,
+        "rgba_mean_absolute_difference": 0.0,
+        "alpha_max_difference": 0,
+        "different_pixels": 0
+      },
+      {
+        "time": 1,
+        "pixels": 6144,
+        "rgba_max_difference": 0,
+        "rgba_mean_absolute_difference": 0.0,
+        "alpha_max_difference": 0,
+        "different_pixels": 0
+      }
+    ],
+    "alpha_convention": "Adobe output module independently read as RGB + Alpha, Premultiplied (Matted), Millions of Colors+. Both TIFFs decoded identically with FFmpeg rgba; raw associated RGB and alpha channels compared separately.",
+    "independent_alpha_references": [
+      {
+        "time_seconds": 0,
+        "file": "radial_wipe_edited_0.tif",
+        "sha256": "20956e8a9045e987e9aba440941044ef1310a5955af8634b0566fce8141521ce",
+        "bytes": 42848
+      },
+      {
+        "time_seconds": 1,
+        "file": "radial_wipe_edited_1.tif",
+        "sha256": "3fbc5869a4181968abf6ae3e32e126d337c9bac9066ea7813b5898c42b4f270c",
+        "bytes": 43060
+      }
+    ],
+    "rgba_comparison_policy": "exact equality over every RGBA channel of all6144 pixels at each0s/1s sample",
+    "rgb_comparison_policy": "exact equality over full-resolution FFmpeg rgb24 of all60 aligned frames; not the general AE scoring gate",
+    "manual_ui_inspection": false
+  },
+  "limitations": [
+    "Only 50% hard-edge Wipe1/Feather0 half-plane geometry. Arbitrary completion, feather, animated center, guide deformation, and nonidentity source clocks remain unsupported.",
+    "Imported FX uses existing PathMask geometry, not a dedicated Radial Wipe control. Export recognizes geometry regardless of IDs/names and does not recover discarded source metadata.",
+    "Only explicit edited Hold case has independent export render/alpha equality. Linear keys, source-origin rebasing and effect order have structural tests, not additional independent Adobe fidelity claims.",
+    "The last native key has no outgoing Hold flag because no following interval exists; independent sample values match through end of composition.",
+    "Public MP4 references are long_term Assets, never Git files. Licensed Intro evidence stays local. This does not establish full-project bidirectional fidelity."
+  ]
+}

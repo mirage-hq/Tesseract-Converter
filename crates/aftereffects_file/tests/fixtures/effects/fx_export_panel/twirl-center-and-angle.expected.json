@@ -1,0 +1,25 @@
+{
+  "controls": [
+    {
+      "name": "ADBE Twirl-0001",
+      "value": [
+        45
+      ]
+    },
+    {
+      "name": "ADBE Twirl-0002",
+      "value": [
+        30
+      ]
+    },
+    {
+      "name": "ADBE Twirl-0003",
+      "value": [
+        90,
+        20
+      ]
+    }
+  ],
+  "effect": "ADBE Twirl",
+  "enabled": true
+}

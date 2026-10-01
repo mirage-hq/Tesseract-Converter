@@ -1,0 +1,35 @@
+[package]
+name = "tsrct-conv"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Standalone editable Adobe project interchange"
+
+[[bin]]
+name = "tsrct-conv"
+path = "src/main.rs"
+
+[features]
+default = ["ffmpeg-library"]
+ffmpeg-library = ["media_transcode/ffmpeg-library", "aftereffects_file/ffmpeg-library", "premiere_file/ffmpeg-library"]
+
+[dependencies]
+anyhow = { workspace = true }
+aftereffects_file = { path = "../../crates/aftereffects_file", default-features = false }
+clap = { workspace = true }
+ctrlc = "3"
+media_transcode = { path = "../../crates/media_transcode" }
+premiere_file = { path = "../../crates/premiere_file", default-features = false }
+fx_conv = { path = "../../crates/fx_conv" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+fx_schema = { path = "../../crates/fx_schema" }
+tempfile = "3"
+tesseract_file = { path = "../../crates/tesseract_file" }
+
+[dev-dependencies]
+flate2 = "1"
+zip = { version = "7.2", default-features = false }

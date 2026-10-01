@@ -1,0 +1,24 @@
+{
+  "source_sha256": "6d632ac99c9e081746d51b83a651cb311dc063f0541bbe43ba1a241bd8870fdd",
+  "effects": [
+    {
+      "layer": 892,
+      "effect": "ADBE Invert",
+      "offset": 1678776,
+      "bytes": 10890,
+      "sha256": "2f069fa534f7410884dd12d22d6b77a32cadf027243898facf3cceedfdc87836",
+      "fixture": "cosmic-invert-controls.rifx",
+      "fixture_sha256": "bfa10111574878a08e46668505e5758b599077c54660be3caa148c780bfcc4e4"
+    },
+    {
+      "layer": 890,
+      "effect": "ADBE Gaussian Blur 2",
+      "offset": 1725824,
+      "bytes": 2114,
+      "sha256": "6db95b620a339c6da10c65c00839bac5f4920cbf3ca62d371c06d1535db9e206",
+      "fixture": "cosmic-adjustment-blur-controls.rifx",
+      "fixture_sha256": "60a6575843a0a25fc524fdb57efe5b191cc0be1a6df1fbc5beadb30fba15a602"
+    }
+  ],
+  "description": "Exact native named Effect Parade runs only, wrapped in a minimal RIFX FaFX envelope. No project, footage, text, geometry, or creative assets are included. The source AEP and all media remain private and unchanged. CPU regressions establish decoding and editable payloads; native rendering fidelity is not certified."
+}

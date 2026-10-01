@@ -1,0 +1,19 @@
+{
+  "status": "UNRUN_UNINSPECTED_UNMEASURED",
+  "module": "src/export_document/tests/media_native_panel.rs",
+  "native_spec": "tests/fixtures/media_native_panel/native-specs.json",
+  "primary_media": ["tests/fixtures/media_native_panel/media/red.exr", "tests/fixtures/media_native_panel/media/green.exr", "tests/fixtures/media_native_panel/media/movie.mov", "tests/fixtures/media_native_panel/media/unsupported.png"],
+  "cases": [
+    {"case_id":"fx-export-media-image-fit","test_symbol":"export_document::tests::media_native_panel::media_image_fit","fx":"tests/fixtures/media_native_panel/media-image-fit.fx.json","expected":"tests/fixtures/media_native_panel/media-image-fit.expected.json"},
+    {"case_id":"fx-export-media-video-clock","test_symbol":"export_document::tests::media_native_panel::media_video_clock","fx":"tests/fixtures/media_native_panel/media-video-clock.fx.json","expected":"tests/fixtures/media_native_panel/media-video-clock.expected.json"},
+    {"case_id":"fx-export-media-video-stretch","test_symbol":"export_document::tests::media_native_panel::media_video_stretch","fx":"tests/fixtures/media_native_panel/media-video-stretch.fx.json","expected":"tests/fixtures/media_native_panel/media-video-stretch.expected.json"},
+    {"case_id":"fx-export-media-frame-blending","test_symbol":"export_document::tests::media_native_panel::media_frame_blending","fx":"tests/fixtures/media_native_panel/media-frame-blending.fx.json","expected":"tests/fixtures/media_native_panel/media-frame-blending.expected.json"},
+    {"case_id":"fx-export-media-shared-source","test_symbol":"export_document::tests::media_native_panel::media_shared_source","fx":"tests/fixtures/media_native_panel/media-shared-source.fx.json","expected":"tests/fixtures/media_native_panel/media-shared-source.expected.json"},
+    {"case_id":"fx-export-media-source-switch","test_symbol":"export_document::tests::media_native_panel::media_source_switch","fx":"tests/fixtures/media_native_panel/media-source-switch.fx.json","expected":"tests/fixtures/media_native_panel/media-source-switch.expected.json"},
+    {"case_id":"fx-export-media-unsupported-sibling","test_symbol":"export_document::tests::media_native_panel::media_unsupported_sibling","fx":"tests/fixtures/media_native_panel/media-unsupported-sibling.fx.json","expected":"tests/fixtures/media_native_panel/media-unsupported-sibling.expected.json"},
+    {"case_id":"fx-export-media-static-remap","test_symbol":"export_document::tests::media_native_panel::media_static_remap","fx":"tests/fixtures/media_native_panel/media-static-remap.fx.json","expected":"tests/fixtures/media_native_panel/media-static-remap.expected.json"},
+    {"case_id":"fx-export-media-image-3d","test_symbol":"export_document::tests::media_native_panel::media_image_3d","fx":"tests/fixtures/media_native_panel/media-image-3d.fx.json","expected":"tests/fixtures/media_native_panel/media-image-3d.expected.json"},
+    {"case_id":"fx-export-media-constant-source","test_symbol":"export_document::tests::media_native_panel::media_constant_source","fx":"tests/fixtures/media_native_panel/media-constant-source.fx.json","expected":"tests/fixtures/media_native_panel/media-constant-source.expected.json"},
+    {"case_id":"fx-export-media-legacy-image","test_symbol":"export_document::tests::media_native_panel::media_legacy_image","fx":"tests/fixtures/media_native_panel/media-legacy-image.fx.json","expected":"tests/fixtures/media_native_panel/media-legacy-image.expected.json"}
+  ]
+}

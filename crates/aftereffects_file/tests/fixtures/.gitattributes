@@ -1,0 +1,8 @@
+# Native source files and Adobe probe JSON are SHA-pinned upstream bytes.
+# Preserve their original line endings, including CRLF, on every checkout.
+*.aep -text
+# PDF-compatible AI uses byte offsets and significant xref trailing spaces.
+*.ai binary
+*.gz binary
+# Whitespace inside these pinned files is evidence, not project formatting.
+*.json -text -whitespace

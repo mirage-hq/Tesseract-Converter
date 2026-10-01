@@ -1,0 +1,26 @@
+{
+  "source": "/Users/joycechen/nocap/wt/local-bonsa/evidence/native-reference/capture-v2/cache/cases/bonsa_compact_native_reference_v2/media/Cosmic Spirit Anime Titles/Cosmic Spirit Anime Titles (converted).aep",
+  "source_sha256": "6d632ac99c9e081746d51b83a651cb311dc063f0541bbe43ba1a241bd8870fdd",
+  "fixture_sha256": "735fc715e3450ba7d39c147ded7103e7026f96f43647fb5af89e715581f72c6f",
+  "chunks": [
+    {
+      "offset": 1896872,
+      "bytes": 25398,
+      "kind": "Layr",
+      "sha256": "40c88d57ee5d88ced27ca362c6c36defe331cccb6bdf47a5eb5101606a661453"
+    },
+    {
+      "offset": 1922782,
+      "bytes": 27372,
+      "kind": "Layr",
+      "sha256": "d0d233134c8e27b8a5cc00fba6842fe94d3247f77043c3cd9532cae7a3b9ecad"
+    },
+    {
+      "offset": 1662866,
+      "bytes": 2992,
+      "kind": "parT",
+      "sha256": "8d49295aa3d2e2da774224ca021b578831a0fae5692a92a94ab2b209bc520d31"
+    }
+  ],
+  "scope": "Exact native1037/1034 layer envelopes and complete same-source Geometry2 defaults from893. Test scaffold source96 supplied separately; no render calibration."
+}

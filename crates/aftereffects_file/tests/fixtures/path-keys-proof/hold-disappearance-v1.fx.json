@@ -1,0 +1,29 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "formatVersion": 1,
+  "dimensions": {"width": 320, "height": 180},
+  "duration": 2,
+  "composition": {
+    "id": "hold-disappearance-v1",
+    "name": "EmptyPathProbe",
+    "layers": [{
+      "type": "Shape",
+      "id": 7,
+      "name": "Editable disappearance",
+      "activeRange": {"start": 0, "duration": 2000},
+      "transform": {"anchorPoint": [0,0], "position": [0,0], "scale": [100,100], "rotation": 0, "opacity": 100},
+      "shape": {
+        "path": {"commands": []},
+        "fills": [{"paint": {"type": "solid", "color": [0.2,1,0.3,1]}}],
+        "strokes": [{"paint": {"type": "solid", "color": [1,0.2,0.2,1]}, "width": 16, "cap": "round"}]
+      }
+    }],
+    "dynamics": {"entries": [{
+      "target": {"kind": "layer", "layerId": 7, "propertyType": "shapePath"},
+      "animator": {
+        "type": "jsScript",
+        "layerTimeJsCode": "var t=input.time.milliseconds; if(t>=500 && t<1000)return {commands:[]}; if(t>=1500)return {commands:[{type:'moveTo',x:160,y:90}]}; return {commands:[{type:'moveTo',x:80,y:40},{type:'lineTo',x:240,y:40},{type:'lineTo',x:160,y:140},{type:'close'}]};"
+      }
+    }]}
+  }
+}

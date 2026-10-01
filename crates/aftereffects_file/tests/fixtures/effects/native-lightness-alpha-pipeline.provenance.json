@@ -1,0 +1,23 @@
+{
+  "source_sha256": "6d632ac99c9e081746d51b83a651cb311dc063f0541bbe43ba1a241bd8870fdd",
+  "source_composition": 984,
+  "source_layers": [
+    986,
+    1027
+  ],
+  "chunks": [
+    {
+      "offset": 2440170,
+      "bytes": 15320,
+      "sha256": "718ccec5eb8e9c0149ca10d9ec8be98fb6fdcc51d497c90bd2afdcb4c423b7c8"
+    },
+    {
+      "offset": 2413730,
+      "bytes": 26056,
+      "sha256": "a0a01052fde9c1d5b4243e37543297b75293241be3ebb931038aa1b6ee175855"
+    }
+  ],
+  "fixture_bytes": 41388,
+  "fixture_sha256": "d072d1f2606e1ede343f21cccc11a3f8aff2865baf2a9de281fe72bf1ba44105",
+  "scope": "Exact native layer envelopes for SolidComposite black, ShiftChannels Lightness alpha, RemoveColorMatting black, including animated preceding Tint and following Circle. Supplied source content scaffold is editable native Text953; Lightness to Luma approximation is declared."
+}

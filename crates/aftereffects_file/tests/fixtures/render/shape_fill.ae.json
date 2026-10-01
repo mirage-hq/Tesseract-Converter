@@ -1,0 +1,25 @@
+{
+  "composition_id": 1,
+  "composition_name": "AEP_PROOF_SHAPE_FILL",
+  "layer_id": 16,
+  "background_layer_id": 15,
+  "fps": 24,
+  "frames": 48,
+  "width": 1920,
+  "height": 1080,
+  "rectangle_size": [
+    480,
+    270
+  ],
+  "fill_rgba": [
+    0.75,
+    0.125,
+    0.25,
+    1
+  ],
+  "source_sha256": "d53dcd179dfcc3df963d9d2ff146c7fc81e24324816960fb04987caa50dd602b",
+  "source_bytes": 85315,
+  "author": "After Effects JSX DoScriptFile",
+  "ae_version": "26.5x89",
+  "case": "shape_fill"
+}

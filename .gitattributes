@@ -1,0 +1,7 @@
+# These source identities are hashed by the legal-artifact manifest.
+/Cargo.lock text eol=lf
+/patches/mp4/LICENSE text eol=lf
+/crates/fx_schema/src/stored/wire/de.rs text eol=lf
+# Preserve upstream legal texts byte-for-byte, including original CRLFs and
+# whitespace; formatting these artifacts would invalidate their source hashes.
+/licenses/** -text -whitespace

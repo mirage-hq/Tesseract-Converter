@@ -1,0 +1,31 @@
+{
+  "source_sha256": "6d632ac99c9e081746d51b83a651cb311dc063f0541bbe43ba1a241bd8870fdd",
+  "source_composition": 907,
+  "source_layers": [
+    949,
+    948
+  ],
+  "fixture_sha256": "03a9967de4a3528abdc93654ef6d6b91d5ddb7f82a9ef93adb8e273f060c9d70",
+  "fixture_bytes": 53710,
+  "chunks": [
+    {
+      "offset": 1969288,
+      "bytes": 25828,
+      "kind": "Layr",
+      "sha256": "311b0b87eabc74434db1e3ba9af0c24ad3a1709cf5004400bcc937edd88f2988"
+    },
+    {
+      "offset": 1995692,
+      "bytes": 24878,
+      "kind": "Layr",
+      "sha256": "fa45f61a2d5c7091ca10762f36d2ab6ed7839cd092a0c89f09e34162ab849c27"
+    },
+    {
+      "offset": 1662866,
+      "bytes": 2992,
+      "kind": "parT",
+      "sha256": "8d49295aa3d2e2da774224ca021b578831a0fae5692a92a94ab2b209bc520d31"
+    }
+  ],
+  "scope": "Exact native949/948 opaque solid layer envelopes and same-project legacy Geometry2 declarations from893.949 references948 at stage\u22122 with equal authored mask geometry/key controls; 949 has opposed Wipes and final rotation180. Host composition and white-solid source96 are test scaffolding; no source project/media or render calibration."
+}

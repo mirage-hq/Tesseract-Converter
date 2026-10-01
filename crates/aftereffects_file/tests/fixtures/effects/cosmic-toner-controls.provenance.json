@@ -1,0 +1,24 @@
+{
+  "source_sha256": "6d632ac99c9e081746d51b83a651cb311dc063f0541bbe43ba1a241bd8870fdd",
+  "effects": [
+    {
+      "layer": 895,
+      "effect": "CC Toner",
+      "offset": 1634250,
+      "bytes": 3566,
+      "sha256": "87747d43a57f3a3429548e7c072db50d0071b3d01aff9f4b6e862eddf202cd8c",
+      "fixture": "cosmic-toner-tritone-controls.rifx",
+      "fixture_sha256": "5fd7a368bc6446ac53f008e05dccb4bfe01f189a16a893dbe3c6c6070d00894c"
+    },
+    {
+      "layer": 1799,
+      "effect": "CC Toner",
+      "offset": 2102412,
+      "bytes": 2596,
+      "sha256": "65a69ffb9e7811ee628c49a43e7ab2e46ff4915ecb02ae93ba23543cdd8b8c00",
+      "fixture": "cosmic-toner-pentone-controls.rifx",
+      "fixture_sha256": "75c2ddbf3c42dea998cd790c59cabb00192edecf48dd76ccbb2b8468a5c3aba7"
+    }
+  ],
+  "description": "Exact native Toner Effect Parade runs only in minimal RIFX FaFX envelopes; no project/assets/creative content. Static controls/defaults are source-read evidence, not Adobe UI or render equivalence proof."
+}

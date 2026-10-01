@@ -1,0 +1,16 @@
+{
+  "source_sha256": "6d632ac99c9e081746d51b83a651cb311dc063f0541bbe43ba1a241bd8870fdd",
+  "source_composition": 984,
+  "source_layer": 1027,
+  "source_effect": "ADBE Tint",
+  "source_parameter": "ADBE Tint-0001",
+  "chunk": {
+    "offset": 2416104,
+    "bytes": 720,
+    "kind": "tdbs",
+    "sha256": "fc933c579bf502bf8095e601b34f34928629ffdbb8a0fcc50fae8c5e2b510dd5"
+  },
+  "fixture_bytes": 732,
+  "fixture_sha256": "ef0923e36431d75ba99b6dc87be45da86364b638c213a91f3f928787d54224ec",
+  "scope": "Exact native animated color numeric leaf, no re-encoded values; tests native RGB-vector temporal speed normalization with unchanged alpha. No native raster claim."
+}

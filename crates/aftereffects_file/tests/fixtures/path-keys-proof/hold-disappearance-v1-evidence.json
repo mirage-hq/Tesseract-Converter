@@ -1,0 +1,99 @@
+{
+  "case_id": "path-held-disappearance-v1-c1",
+  "feature": "Editable JS ShapePath baking and held whole-path disappearance",
+  "status": "editable controls and disappearance verified; full RGB fidelity fails/unestablished",
+  "source": {
+    "path": "hold-disappearance-v1.aep",
+    "sha256": "c4746691f91a5f771d12ee9e6435f83e6b7ae4ae4c9100f1b32ed04c82ca921c",
+    "bytes": 74771,
+    "composition_id": 1,
+    "composition_name": "EmptyPathProbe",
+    "layer_id": 13,
+    "canvas": [320, 180],
+    "fps": "30/1",
+    "duration_seconds": 2,
+    "pixel_aspect": 1,
+    "provenance": {
+      "application": "Adobe After Effects 26.5x89",
+      "method": "Independently authored through Adobe JSX, not converter output",
+      "author_script_sha256": "45c0d3d66ad5d7065093d3d5561fcc908b4fa0e520dc4019f0f39f877aadef4a",
+      "author_script_distribution": "session-controlling scratch script retained locally, not shipped",
+      "readback": "Adobe scripting API; no manual UI-control inspection",
+      "native_key_times_ms": [0, 500, 1000, 1500],
+      "native_vertex_counts": [3, 1, 3, 1],
+      "native_segments": "Hold",
+      "paint": "green fill plus red 16px round-cap stroke"
+    }
+  },
+  "reference": {
+    "asset_id": "nLFLXPOMFfpilLfAriY9_vid",
+    "retention": "long_term",
+    "sha256": "90c6d01d19d61688e7e836049bd2e28990c0fa04a789ae6911295b4a67ca7dbe",
+    "bytes": 25545,
+    "fresh_download_sha256_verified": true,
+    "frames": 60,
+    "fps": "30/1",
+    "render_settings": "Use this frame rate: 30; Quality: Best; Resolution: Full",
+    "output_module": "H.264 - Match Render Settings - 40 Mbps",
+    "inspection": "Frames 0/15/30/45 show triangle, absent, triangle, absent. Per-pixel checks at frames 15/29/45/59 found no RGB channel above 2; frames 14/30 retain 11882 pixels above 20. No offline media or error slate."
+  },
+  "editable_input": {
+    "path": "hold-disappearance-v1.fx.json",
+    "sha256": "7263af05297b781bc5325c48c7db77c69ad941f60886a6ba309b0e068b5b63a2",
+    "contract": "Owner-local JS returns triangle, empty commands, triangle, one MoveTo. Bake retains 0/500/1000/1500ms Hold keys, native Path geometry and independent shared-paint group visibility."
+  },
+  "tests": [
+    {
+      "symbol": "export_document::tests::path_keys::native_held_disappearance_imports_editable_path_controls",
+      "direction": "import",
+      "execution": "PASS",
+      "assertions": "Fresh hash-pinned native import retains four Path keys at exact times; absent keys contain only the independent native MoveTo coordinates 0,0 and 160,90."
+    },
+    {
+      "symbol": "export_document::tests::path_keys::path_keys_held_disappearance_uses_adobe_native_one_vertex_record",
+      "direction": "export",
+      "execution": "PASS",
+      "assertions": "Fresh edited compound input retains sibling, serializes held empty intervals, and exactly matches independent Adobe one-vertex geometry records.",
+      "baseline": "FAIL when the original two-vertex minimum is restored"
+    },
+    {
+      "symbol": "adapter::export::script_bake::tests::path_script_bake_matches_pinned_disappearance_controls",
+      "direction": "export",
+      "execution": "PASS",
+      "assertions": "Explicit editable input bakes four owner-local Hold keys; fresh export retains 100/0/100/0 native group-opacity keys without dropping the layer."
+    },
+    {
+      "symbol": "export_document::tests::path_keys::path_keys_stroked_partial_disappearance_is_diagnosed_without_losing_sibling",
+      "direction": "export",
+      "execution": "PASS",
+      "assertions": "Partial stroked-contour loss is explicitly diagnosed; independent exportable sibling remains."
+    }
+  ],
+  "fresh_export": {
+    "aep_sha256": "cd528160efc62028f52d69ec8ab377032cbf16086451087adab14ac271e64563",
+    "mp4_sha256": "2505ef92f8dc476850df308234b52bec709361b2f87e93baae80881e1f0993b9",
+    "adobe_open": "PASS",
+    "adobe_readback": {
+      "version": "26.5x89",
+      "path_key_times_ms": [0, 500, 1000, 1500],
+      "vertex_counts": [3, 1, 3, 1],
+      "opacity_key_times_ms": [0, 500, 1000, 1500],
+      "group_opacity": [100, 0, 100, 0],
+      "interpolation": "All three outgoing Path segments Hold; final unused outgoing side remains Linear"
+    },
+    "frames": 60,
+    "fps": "30/1",
+    "visibility_samples": "Native and fresh-export samples at frames 15/29/45/59 have maximum RGB channel 2 and no pixels above 20. Frames 14/30 retain 11882 visible pixels in both.",
+    "diagnostic_rgb_psnr_db": 19.568788,
+    "minimum_frame_rgb_psnr_db": 16.558488,
+    "visual_status": "disappearance verified; visible fill/stroke compositing differs, not a fidelity pass"
+  },
+  "limitations": [
+    "Native and explicit FX visible fill/stroke compositing are not pixel-equal; the diagnostic RGB score does not meet or replace the existing strict panel gate.",
+    "The initial fresh export without opacity keys left a 56-pixel round-cap dot at 0.5s; broad blackdetect missed it. The final export uses actual zero-opacity keys rather than weakening the reference.",
+    "Imported-FX render comparison and alpha fidelity are unmeasured. Native import implementation was not changed.",
+    "This is one contour disappearance oracle, not independent compound-particle identity proof; held compound splitting has supplementary structural tests and the separate S02 diagnostic render.",
+    "Partial disappearance with strokes remains diagnosed/omitted; no invented particle correspondence, footage replacement or FX runtime changes.",
+    "Reference publication is verified, but source-to-render execution lineage is procedurally observed, not cryptographically attested."
+  ]
+}

@@ -1,0 +1,70 @@
+{
+  "case_id": "aep-effects-coverage-hue-master-static-adobe-c1",
+  "export_case": "hueMasterStatic",
+  "adobe_version": "26.5x89",
+  "composition_id": 1,
+  "source_sha256": "e720cfaa8bcebf2fd4ede1ad4116d4e267c3bc37e3a148d5f6c555c2b559be38",
+  "reference_asset_id": "eEeno9ksJPILcDemDHsH_vid",
+  "reference_sha256": "c3d34c11c524c0335fbfb69e2b90ce83302af217b9393d2e813828792a0c0a53",
+  "reference_fresh_download_verified": true,
+  "fx_input_sha256": "58f9576a5f51993143ad1ee9d99900802869334c697ce642e7651475f5ccc240",
+  "previous_pard_only_attempt": {
+    "commit": "207c8102a56660c643aae37fc5fdffc937587d9c",
+    "aep_sha256": "4cd113b885ae2ac926c3aede9297cc0fcdbcbc975734ab87315a368f30c71c1c",
+    "video_sha256": "1dbde705595ca5431d025eee92632028eda31381acf615a66ab7344438fd7114",
+    "render_log_sha256": "fdd3c2e01d390a44d99de630e340c0d657ee773b289d3672cd131e36239f35e2",
+    "min_frame_similarity": 0.9877521247996224,
+    "mean_similarity": 0.9877521247996224,
+    "reference_center_rgb": [123, 113, 146],
+    "export_center_rgb": [47, 98, 150],
+    "feature_result": "failed: Master effect absent; mostly black background hid the error in the full-frame score"
+  },
+  "final_fresh_export": {
+    "aep_sha256": "c40ee1b6bcea5fcf0f6c6db6e2260d1bf7ddad7a09baa2239b11046e1ab2dcfb",
+    "video_sha256": "1610134560f0b739e59854630af803a26837da7934303347d25b6ac20d4f7473",
+    "render_log_sha256": "4a78d4b125ecc7635c94388b9fa3225e20356526a4f6289a16395a69603b08ac",
+    "adobe_exit": 0,
+    "adobe_warning_or_error": false,
+    "aep_unchanged_during_render": true,
+    "width": 320,
+    "height": 180,
+    "fps": 30,
+    "duration_seconds": 2,
+    "video_bytes": 13477,
+    "metric": "canonical_rgb24_similarity",
+    "half_open_native_frames": {
+      "unique_frame_count": 60,
+      "mean_similarity": 1.0,
+      "min_frame_similarity": 1.0,
+      "worst_time_seconds": 0.0,
+      "range": "[0,2/1)"
+    },
+    "ffmpeg_rgb24_all_frames_identical": true,
+    "ffmpeg_rgb24_sha256": "92329ad2c621e7cfaac4de8931d376cb9e73a0db14d2d02aa29152a38f84b2a1",
+    "roi": {
+      "x": 100,
+      "y": 50,
+      "width": 120,
+      "height": 80,
+      "frames": 60,
+      "rgb24_identical": true,
+      "rgb24_sha256": "c2535c8ab604c31858f439c070025c16c50d061e90d6949c43944fbe28c6cf95"
+    },
+    "critical_frame_indices": [0, 15, 30, 59],
+    "reference_and_export_center_rgb_at_each_critical_frame": [123, 113, 146],
+    "feature_result": "measured static Master-only RGB pass; not a broad fidelity claim"
+  },
+  "limitations": {
+    "adobe_ui_values": "unverified",
+    "fresh_generated_output_scripted_control_readback": "unrun",
+    "import_rgb": "unmeasured",
+    "independent_native_default_control_pair": "unrun",
+    "master_and_colorize_toggle_animation": "unsupported: authored base retained with diagnostics",
+    "fractional_master_values": "rounded with diagnostics; independent fractional Adobe proof unrun",
+    "mixed_master_colorize_and_individual_ranges": "unverified",
+    "alpha": "unverified",
+    "audio": "unverified",
+    "historical_colorize_on_import_tests": "two retained failures",
+    "full_adobe_test_suite": "not rerun"
+  }
+}

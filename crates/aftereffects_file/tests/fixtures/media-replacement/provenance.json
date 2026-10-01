@@ -1,0 +1,20 @@
+{
+  "upstream": "https://github.com/forticheprod/py-aep",
+  "revision": "e12a451c35bacd3f34a080090265f9370e66162b",
+  "license": "MIT (see ../LICENSE)",
+  "evidence": "Native AEP and upstream AE JSON projection; no Adobe render or UI inspection performed here.",
+  "files": [
+    {
+      "path": "media_replacement.aep",
+      "upstream_path": "samples/models/essential_graphics/media_replacement.aep",
+      "sha256": "dcb61584658d6ec02fa9239c2035a9e7a0e218d367935949166a97ba0d9313e4",
+      "size": 201515
+    },
+    {
+      "path": "media_replacement.json.gz",
+      "upstream_path": "samples/models/essential_graphics/media_replacement.json",
+      "sha256": "c970ea7013b9b8a286aba52235fb4b0795068c0a415376c59fc6af22cca848a1",
+      "size": 788950
+    }
+  ]
+}

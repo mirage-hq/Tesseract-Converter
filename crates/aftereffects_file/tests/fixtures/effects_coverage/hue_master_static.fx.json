@@ -1,0 +1,61 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "backgroundColor": [0, 0, 0, 0],
+  "composition": {
+    "dynamics": {"entries": []},
+    "id": "main",
+    "layers": [
+      {
+        "activeRange": {"duration": 2000, "start": 0},
+        "blendMode": "normal",
+        "effects": [
+          {
+            "id": 9001,
+            "enabled": true,
+            "effect": {
+              "type": "hueSaturation",
+              "hue": 50,
+              "saturation": -60,
+              "lightness": 20,
+              "colorize": false,
+              "colorizeHue": 0,
+              "colorizeSaturation": 25,
+              "colorizeLightness": 0
+            }
+          }
+        ],
+        "id": 900,
+        "name": "Adobe-native Master source equivalent",
+        "parent": null,
+        "rect": {
+          "fillColor": [0.18823529411764706, 0.39215686274509803, 0.592156862745098, 1],
+          "fillEnabled": true,
+          "position": [0, 0],
+          "roundness": 0,
+          "size": [120, 80],
+          "strokeEnabled": false,
+          "strokeWidth": 0
+        },
+        "transform": {
+          "anchorPoint": [60, 40],
+          "opacity": 100,
+          "orientation": [0, 0, 0],
+          "position": [160, 90],
+          "rotation": 0,
+          "rotationX": 0,
+          "rotationY": 0,
+          "scale": [100, 100],
+          "skew": 0,
+          "skewAxis": 0
+        },
+        "type": "Rect"
+      }
+    ],
+    "motionBlur": {"adaptiveSampleLimit": 128, "enabled": false, "samplesPerFrame": 16, "shutterAngle": 180, "shutterPhase": 0},
+    "name": "hueMasterStatic",
+    "segmentLayerIds": []
+  },
+  "dimensions": {"height": 180, "width": 320},
+  "duration": 2.0,
+  "formatVersion": 1
+}

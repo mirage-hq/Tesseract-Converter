@@ -1,0 +1,16 @@
+[package]
+name = "fx_keyframe_bake"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# Match the animation runtime on native and WASM, without renderer dependencies.
+boa_engine = { version = "0.21.1", default-features = false, features = ["js"] }
+boa_runtime = { version = "0.21.1", default-features = false }
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

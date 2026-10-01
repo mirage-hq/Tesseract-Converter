@@ -1,0 +1,195 @@
+{
+  "schema": "fill-isolated-native-authoring/v1",
+  "native": {
+    "application": "Adobe After Effects",
+    "version": "26.5x89",
+    "build": 89
+  },
+  "composition": {
+    "id": 1,
+    "name": "FillIsolated",
+    "width": 320,
+    "height": 180,
+    "pixelAspect": 1,
+    "durationSeconds": 2,
+    "frameRate": 24,
+    "frameDuration": 0.04166666666667,
+    "sourceFrameCount": 48,
+    "displayStartSeconds": 0,
+    "workAreaStartSeconds": 0,
+    "workAreaDurationSeconds": 2
+  },
+  "subject": {
+    "id": 15,
+    "index": 1,
+    "name": "Opaque Blue Subject 120x80",
+    "enabled": true,
+    "source": {
+      "id": 14,
+      "width": 120,
+      "height": 80,
+      "opaqueBlueRgb": [
+        0.05,
+        0.15,
+        0.9
+      ]
+    },
+    "effect": {
+      "index": 1,
+      "name": "Fill",
+      "matchName": "ADBE Fill",
+      "enabled": true,
+      "controls": [
+        {
+          "index": 1,
+          "name": "Fill Mask",
+          "matchName": "ADBE Fill-0001",
+          "value": 0,
+          "canVaryOverTime": false,
+          "numKeys": 0
+        },
+        {
+          "index": 2,
+          "name": "All Masks",
+          "matchName": "ADBE Fill-0007",
+          "value": 0,
+          "canVaryOverTime": false,
+          "numKeys": 0
+        },
+        {
+          "index": 3,
+          "name": "Color",
+          "matchName": "ADBE Fill-0002",
+          "value": [
+            0.80000001192093,
+            0.20000000298023,
+            0.10000000149012,
+            1
+          ],
+          "canVaryOverTime": true,
+          "numKeys": 0
+        },
+        {
+          "index": 4,
+          "name": "Invert",
+          "matchName": "ADBE Fill-0006",
+          "value": 0,
+          "canVaryOverTime": true,
+          "numKeys": 0
+        },
+        {
+          "index": 5,
+          "name": "Horizontal Feather",
+          "matchName": "ADBE Fill-0003",
+          "value": 0,
+          "canVaryOverTime": true,
+          "numKeys": 0
+        },
+        {
+          "index": 6,
+          "name": "Vertical Feather",
+          "matchName": "ADBE Fill-0004",
+          "value": 0,
+          "canVaryOverTime": true,
+          "numKeys": 0
+        },
+        {
+          "index": 7,
+          "name": "Opacity",
+          "matchName": "ADBE Fill-0005",
+          "value": 0.64999997615814,
+          "canVaryOverTime": true,
+          "numKeys": 0
+        }
+      ]
+    }
+  },
+  "authored": {
+    "colorRgba": [
+      0.8,
+      0.2,
+      0.1,
+      1
+    ],
+    "opacityNative": 0.65,
+    "opacityPercent": 65
+  },
+  "samples": [
+    {
+      "timeSeconds": 0,
+      "color": [
+        0.80000001192093,
+        0.20000000298023,
+        0.10000000149012,
+        1
+      ],
+      "opacityNative": 0.64999997615814
+    },
+    {
+      "timeSeconds": 0.25,
+      "color": [
+        0.80000001192093,
+        0.20000000298023,
+        0.10000000149012,
+        1
+      ],
+      "opacityNative": 0.64999997615814
+    },
+    {
+      "timeSeconds": 0.5,
+      "color": [
+        0.80000001192093,
+        0.20000000298023,
+        0.10000000149012,
+        1
+      ],
+      "opacityNative": 0.64999997615814
+    },
+    {
+      "timeSeconds": 0.75,
+      "color": [
+        0.80000001192093,
+        0.20000000298023,
+        0.10000000149012,
+        1
+      ],
+      "opacityNative": 0.64999997615814
+    },
+    {
+      "timeSeconds": 1.25,
+      "color": [
+        0.80000001192093,
+        0.20000000298023,
+        0.10000000149012,
+        1
+      ],
+      "opacityNative": 0.64999997615814
+    },
+    {
+      "timeSeconds": 1.95833333333333,
+      "color": [
+        0.80000001192093,
+        0.20000000298023,
+        0.10000000149012,
+        1
+      ],
+      "opacityNative": 0.64999997615814
+    }
+  ],
+  "expectedReference": {
+    "outputFps": 30,
+    "frameCount": 60,
+    "aerenderStartFrame": 0,
+    "aerenderEndFrame": 47
+  },
+  "saved": {
+    "path": "crates/aftereffects_file/tests/fixtures/effects/fill_isolated.aep",
+    "bytes": 79987
+  },
+  "redactions": {
+    "saved.path": "Repository-relative path replaces the machine-specific absolute save path."
+  },
+  "original_receipt_sha256": "3838a93fda852849c53b6173ceea50f35cbde3be76b551e5a17531e5b12e545a",
+  "source_sha256": "22696788c14ba53d400609e15d923c5e60b58d86a2d066fbfc5e7a2c42a1aed9",
+  "source_bytes": 79987
+}

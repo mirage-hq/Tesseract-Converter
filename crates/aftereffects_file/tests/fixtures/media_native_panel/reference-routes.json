@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "status": "UNRUN_UNMEASURED_REFERENCE_PUBLICATION_PENDING",
+  "source_convention": "crates/aftereffects_file/tests/fixtures/media_native_panel/native/<case_id>.aep",
+  "identity_policy": "Native authoring and publication receipts supply real pins. Published uninspected references are recorded without promoting inspection, execution or comparison status.",
+  "cases": [
+    {
+      "case_id": "fx-export-media-image-fit",
+      "composition_name": "media-image-fit",
+      "source_sha256": "59e9a0d4a802932aa3b0e27e5855f4d25f6b982c5f6a8d26a1388988945dc248",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-media-video-clock",
+      "composition_name": "media-video-clock",
+      "source_sha256": "02407424a45d8a90a767afea53f2df799bbb23785b532a340c6470b61639d536",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-media-video-stretch",
+      "composition_name": "media-video-stretch",
+      "source_sha256": "3efbed60e483041379013d5d2df9c7b328a835bb7d91151813a108baebff0879",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-media-frame-blending",
+      "composition_name": "media-frame-blending",
+      "source_sha256": "8498cf1a96c02756c12a6d1a4dc2cd271972056a384f402b63d26087e82a1d23",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-media-shared-source",
+      "composition_name": "media-shared-source",
+      "source_sha256": "95bd5043679d89cc59eaaf896506599dede90929bb3fb4ea9706a487d36e5ac0",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-media-source-switch",
+      "composition_name": "media-source-switch",
+      "source_sha256": "598b8c0e74e11847bc02f92e79125c54c678b1e54eafd72abb70f6b47f391376",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-media-unsupported-sibling",
+      "composition_name": "media-unsupported-sibling",
+      "source_sha256": "1d018a734b1041dfbe4ae4832e88d70b03e999b9e9785fbb6b708538970badea",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-media-static-remap",
+      "composition_name": "media-static-remap",
+      "source_sha256": "e795d41e2265565f5da6104dfc52893270cb619fac571576eb46c8317c9cb706",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-media-image-3d",
+      "composition_name": "media-image-3d",
+      "source_sha256": "12b90283b38c03ce69340daf60b7a4eae8dc325fa4f93c7338c52c1d7b6fbc35",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-media-constant-source",
+      "composition_name": "media-constant-source",
+      "source_sha256": "4cbcd93c5aa1cfb5a006ac9e3b086ca93d73b8291f32bc3bf32932a688031798",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-media-legacy-image",
+      "composition_name": "media-legacy-image",
+      "source_sha256": "ef926d7b11b8a4f833842e4a17d1921abb7453c2ffe1b10e23b0af7a5797fa03",
+      "composition_id": 1
+    }
+  ]
+}

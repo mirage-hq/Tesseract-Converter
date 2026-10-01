@@ -1,0 +1,4311 @@
+{
+  "version": "26.5x89",
+  "build": 89,
+  "effects": [
+    {
+      "matchName": "ADBE Gaussian Blur 2",
+      "compositionId": 1,
+      "composition": "Effect_0",
+      "layerId": 15,
+      "name": "Gaussian Blur",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Blurriness",
+          "matchName": "ADBE Gaussian Blur 2-0001",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 25,
+          "min": 0,
+          "max": 30000
+        },
+        {
+          "index": 2,
+          "name": "Blur Dimensions",
+          "matchName": "ADBE Gaussian Blur 2-0002",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 3
+        },
+        {
+          "index": 3,
+          "name": "Repeat Edge Pixels",
+          "matchName": "ADBE Gaussian Blur 2-0003",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 4,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Glo2",
+      "compositionId": 16,
+      "composition": "Effect_1",
+      "layerId": 29,
+      "name": "Glow",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Glow Based On",
+          "matchName": "ADBE Glo2-0001",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 2,
+          "min": 1,
+          "max": 2
+        },
+        {
+          "index": 2,
+          "name": "Glow Threshold",
+          "matchName": "ADBE Glo2-0002",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 153,
+          "min": 0,
+          "max": 255
+        },
+        {
+          "index": 3,
+          "name": "Glow Radius",
+          "matchName": "ADBE Glo2-0003",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 10,
+          "min": 0,
+          "max": 1000
+        },
+        {
+          "index": 4,
+          "name": "Glow Intensity",
+          "matchName": "ADBE Glo2-0004",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 255
+        },
+        {
+          "index": 5,
+          "name": "Composite Original",
+          "matchName": "ADBE Glo2-0005",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 2,
+          "min": 1,
+          "max": 3
+        },
+        {
+          "index": 6,
+          "name": "Glow Operation",
+          "matchName": "ADBE Glo2-0006",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 3,
+          "min": 1,
+          "max": 25
+        },
+        {
+          "index": 7,
+          "name": "Glow Colors",
+          "matchName": "ADBE Glo2-0007",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 3
+        },
+        {
+          "index": 8,
+          "name": "Color Looping",
+          "matchName": "ADBE Glo2-0008",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 3,
+          "min": 1,
+          "max": 4
+        },
+        {
+          "index": 9,
+          "name": "Color Loops",
+          "matchName": "ADBE Glo2-0009",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 127
+        },
+        {
+          "index": 10,
+          "name": "Color Phase",
+          "matchName": "ADBE Glo2-0010",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0
+        },
+        {
+          "index": 11,
+          "name": "A & B Midpoint",
+          "matchName": "ADBE Glo2-0011",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0.5,
+          "min": 0.00999450683594,
+          "max": 0.99000549316406
+        },
+        {
+          "index": 12,
+          "name": "Color A",
+          "matchName": "ADBE Glo2-0012",
+          "type": "6418",
+          "canVaryOverTime": true,
+          "value": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "min": -3921568.62745098,
+          "max": 3921568.62745098
+        },
+        {
+          "index": 13,
+          "name": "Color B",
+          "matchName": "ADBE Glo2-0013",
+          "type": "6418",
+          "canVaryOverTime": true,
+          "value": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "min": -3921568.62745098,
+          "max": 3921568.62745098
+        },
+        {
+          "index": 14,
+          "name": "Glow Dimensions",
+          "matchName": "ADBE Glo2-0014",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 3
+        },
+        {
+          "index": 15,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Motion Blur",
+      "compositionId": 30,
+      "composition": "Effect_2",
+      "layerId": 43,
+      "name": "Directional Blur",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Direction",
+          "matchName": "ADBE Motion Blur-0001",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 90
+        },
+        {
+          "index": 2,
+          "name": "Blur Length",
+          "matchName": "ADBE Motion Blur-0002",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 10,
+          "min": 0,
+          "max": 1000
+        },
+        {
+          "index": 3,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE OFMotionBlur",
+      "compositionId": 44,
+      "composition": "Effect_3",
+      "layerId": 57,
+      "name": "Pixel Motion Blur",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Shutter Control",
+          "matchName": "ADBE OFMotionBlur-0001",
+          "type": "6417",
+          "canVaryOverTime": false,
+          "value": 1,
+          "min": 1,
+          "max": 2
+        },
+        {
+          "index": 2,
+          "name": "Shutter Angle",
+          "matchName": "ADBE OFMotionBlur-0002",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 180,
+          "min": 0,
+          "max": 5000
+        },
+        {
+          "index": 3,
+          "name": "Shutter Samples",
+          "matchName": "ADBE OFMotionBlur-0003",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 5,
+          "min": 1,
+          "max": 256
+        },
+        {
+          "index": 4,
+          "name": "Vector Detail",
+          "matchName": "ADBE OFMotionBlur-0004",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 20,
+          "min": 5,
+          "max": 100
+        },
+        {
+          "index": 5,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Mosaic",
+      "compositionId": 58,
+      "composition": "Effect_4",
+      "layerId": 71,
+      "name": "Mosaic",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Horizontal Blocks",
+          "matchName": "ADBE Mosaic-0001",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 10,
+          "min": 1,
+          "max": 4000
+        },
+        {
+          "index": 2,
+          "name": "Vertical Blocks",
+          "matchName": "ADBE Mosaic-0002",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 10,
+          "min": 1,
+          "max": 4000
+        },
+        {
+          "index": 3,
+          "name": "Sharp Colors",
+          "matchName": "ADBE Mosaic-0003",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 4,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Brightness & Contrast 2",
+      "compositionId": 72,
+      "composition": "Effect_5",
+      "layerId": 85,
+      "name": "Brightness & Contrast",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Brightness",
+          "matchName": "ADBE Brightness & Contrast 2-0001",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -150,
+          "max": 150
+        },
+        {
+          "index": 2,
+          "name": "Contrast",
+          "matchName": "ADBE Brightness & Contrast 2-0002",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -100,
+          "max": 100
+        },
+        {
+          "index": 3,
+          "name": "Use Legacy (supports HDR)",
+          "matchName": "ADBE Brightness & Contrast 2-0003",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 4,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Shift Channels",
+      "compositionId": 86,
+      "composition": "Effect_6",
+      "layerId": 99,
+      "name": "Shift Channels",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Take Alpha From",
+          "matchName": "ADBE Shift Channels-0001",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 10
+        },
+        {
+          "index": 2,
+          "name": "Take Red From",
+          "matchName": "ADBE Shift Channels-0002",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 2,
+          "min": 1,
+          "max": 10
+        },
+        {
+          "index": 3,
+          "name": "Take Green From",
+          "matchName": "ADBE Shift Channels-0003",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 3,
+          "min": 1,
+          "max": 10
+        },
+        {
+          "index": 4,
+          "name": "Take Blue From",
+          "matchName": "ADBE Shift Channels-0004",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 4,
+          "min": 1,
+          "max": 10
+        },
+        {
+          "index": 5,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE HUE SATURATION",
+      "compositionId": 100,
+      "composition": "Effect_7",
+      "layerId": 113,
+      "name": "Hue/Saturation",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Channel Control",
+          "matchName": "ADBE HUE SATURATION-0002",
+          "type": "6417",
+          "canVaryOverTime": false,
+          "value": 1,
+          "min": 1,
+          "max": 7
+        },
+        {
+          "index": 2,
+          "name": "Channel Range",
+          "matchName": "ADBE HUE SATURATION-0003",
+          "type": "6419",
+          "canVaryOverTime": true
+        },
+        {
+          "index": 3,
+          "name": "Master Hue",
+          "matchName": "ADBE HUE SATURATION-0004",
+          "type": "6417",
+          "canVaryOverTime": false,
+          "value": 0
+        },
+        {
+          "index": 4,
+          "name": "Master Saturation",
+          "matchName": "ADBE HUE SATURATION-0005",
+          "type": "6417",
+          "canVaryOverTime": false,
+          "value": 0,
+          "min": -100,
+          "max": 100
+        },
+        {
+          "index": 5,
+          "name": "Master Lightness",
+          "matchName": "ADBE HUE SATURATION-0006",
+          "type": "6417",
+          "canVaryOverTime": false,
+          "value": 0,
+          "min": -100,
+          "max": 100
+        },
+        {
+          "index": 6,
+          "name": "Colorize",
+          "matchName": "ADBE HUE SATURATION-0007",
+          "type": "6417",
+          "canVaryOverTime": false,
+          "value": 0,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 7,
+          "name": "Colorize Hue",
+          "matchName": "ADBE HUE SATURATION-0008",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0
+        },
+        {
+          "index": 8,
+          "name": "Colorize Saturation",
+          "matchName": "ADBE HUE SATURATION-0009",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 25,
+          "min": 0,
+          "max": 100
+        },
+        {
+          "index": 9,
+          "name": "Colorize Lightness",
+          "matchName": "ADBE HUE SATURATION-0010",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -100,
+          "max": 100
+        },
+        {
+          "index": 10,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Radial Blur",
+      "compositionId": 114,
+      "composition": "Effect_8",
+      "layerId": 127,
+      "name": "Radial Blur",
+      "properties": [
+        {
+          "index": 1,
+          "name": "",
+          "matchName": "ADBE Radial Blur-0005",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 2,
+          "name": "Amount",
+          "matchName": "ADBE Radial Blur-0001",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 10,
+          "min": 0,
+          "max": 1000
+        },
+        {
+          "index": 3,
+          "name": "Center",
+          "matchName": "ADBE Radial Blur-0002",
+          "type": "6415",
+          "canVaryOverTime": true,
+          "value": [
+            60,
+            40
+          ]
+        },
+        {
+          "index": 4,
+          "name": "Type",
+          "matchName": "ADBE Radial Blur-0003",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 2
+        },
+        {
+          "index": 5,
+          "name": "Antialiasing (Best Quality)",
+          "matchName": "ADBE Radial Blur-0004",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 2
+        },
+        {
+          "index": 6,
+          "name": "Random Seed",
+          "matchName": "ADBE Radial Blur-0006",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 10000
+        },
+        {
+          "index": 7,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Easy Levels2",
+      "compositionId": 128,
+      "composition": "Effect_9",
+      "layerId": 141,
+      "name": "Levels",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Channel:",
+          "matchName": "ADBE Easy Levels2-0001",
+          "type": "6417",
+          "canVaryOverTime": false,
+          "value": 1,
+          "min": 1,
+          "max": 5
+        },
+        {
+          "index": 2,
+          "name": "Histogram",
+          "matchName": "ADBE Easy Levels2-0002",
+          "type": "6419",
+          "canVaryOverTime": true
+        },
+        {
+          "index": 3,
+          "name": "Input Black",
+          "matchName": "ADBE Easy Levels2-0003",
+          "type": "6417",
+          "canVaryOverTime": false,
+          "value": 0,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 4,
+          "name": "Input White",
+          "matchName": "ADBE Easy Levels2-0004",
+          "type": "6417",
+          "canVaryOverTime": false,
+          "value": 1,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 5,
+          "name": "Gamma",
+          "matchName": "ADBE Easy Levels2-0005",
+          "type": "6417",
+          "canVaryOverTime": false,
+          "value": 1,
+          "min": 0,
+          "max": 5
+        },
+        {
+          "index": 6,
+          "name": "Output Black",
+          "matchName": "ADBE Easy Levels2-0006",
+          "type": "6417",
+          "canVaryOverTime": false,
+          "value": 0,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 7,
+          "name": "Output White",
+          "matchName": "ADBE Easy Levels2-0007",
+          "type": "6417",
+          "canVaryOverTime": false,
+          "value": 1,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 8,
+          "name": "Clip To Output Black",
+          "matchName": "ADBE Easy Levels2-0008",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 3,
+          "min": 1,
+          "max": 3
+        },
+        {
+          "index": 9,
+          "name": "Clip To Output White",
+          "matchName": "ADBE Easy Levels2-0009",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 3,
+          "min": 1,
+          "max": 3
+        },
+        {
+          "index": 10,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Pro Levels2",
+      "compositionId": 142,
+      "composition": "Effect_10",
+      "layerId": 155,
+      "name": "Levels (Individual Controls)",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Channel:",
+          "matchName": "ADBE Pro Levels2-0001",
+          "type": "6417",
+          "canVaryOverTime": false,
+          "value": 1,
+          "min": 1,
+          "max": 5
+        },
+        {
+          "index": 2,
+          "name": "Histogram",
+          "matchName": "ADBE Pro Levels2-0002",
+          "type": "6419",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 3,
+          "name": "RGB",
+          "matchName": "ADBE Pro Levels2-0003",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 4,
+          "name": "Input Black",
+          "matchName": "ADBE Pro Levels2-0004",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 5,
+          "name": "Input White",
+          "matchName": "ADBE Pro Levels2-0005",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 6,
+          "name": "Gamma",
+          "matchName": "ADBE Pro Levels2-0006",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 5
+        },
+        {
+          "index": 7,
+          "name": "Output Black",
+          "matchName": "ADBE Pro Levels2-0007",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 8,
+          "name": "Output White",
+          "matchName": "ADBE Pro Levels2-0008",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 9,
+          "name": "RGB",
+          "matchName": "ADBE Pro Levels2-0009",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 10,
+          "name": "Red",
+          "matchName": "ADBE Pro Levels2-0010",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 11,
+          "name": "Red Input Black",
+          "matchName": "ADBE Pro Levels2-0011",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 12,
+          "name": "Red Input White",
+          "matchName": "ADBE Pro Levels2-0012",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 13,
+          "name": "Red Gamma",
+          "matchName": "ADBE Pro Levels2-0013",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 5
+        },
+        {
+          "index": 14,
+          "name": "Red Output Black",
+          "matchName": "ADBE Pro Levels2-0014",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 15,
+          "name": "Red Output White",
+          "matchName": "ADBE Pro Levels2-0015",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 16,
+          "name": "Red",
+          "matchName": "ADBE Pro Levels2-0016",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 17,
+          "name": "Green",
+          "matchName": "ADBE Pro Levels2-0017",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 18,
+          "name": "Green Input Black",
+          "matchName": "ADBE Pro Levels2-0018",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 19,
+          "name": "Green Input White",
+          "matchName": "ADBE Pro Levels2-0019",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 20,
+          "name": "Green Gamma",
+          "matchName": "ADBE Pro Levels2-0020",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 5
+        },
+        {
+          "index": 21,
+          "name": "Green Output Black",
+          "matchName": "ADBE Pro Levels2-0021",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 22,
+          "name": "Green Output White",
+          "matchName": "ADBE Pro Levels2-0022",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 23,
+          "name": "Green",
+          "matchName": "ADBE Pro Levels2-0023",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 24,
+          "name": "Blue",
+          "matchName": "ADBE Pro Levels2-0024",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 25,
+          "name": "Blue Input Black",
+          "matchName": "ADBE Pro Levels2-0025",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 26,
+          "name": "Blue Input White",
+          "matchName": "ADBE Pro Levels2-0026",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 27,
+          "name": "Blue Gamma",
+          "matchName": "ADBE Pro Levels2-0027",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 5
+        },
+        {
+          "index": 28,
+          "name": "Blue Output Black",
+          "matchName": "ADBE Pro Levels2-0028",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 29,
+          "name": "Blue Output White",
+          "matchName": "ADBE Pro Levels2-0029",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 30,
+          "name": "Blue",
+          "matchName": "ADBE Pro Levels2-0030",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 31,
+          "name": "Alpha",
+          "matchName": "ADBE Pro Levels2-0031",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 32,
+          "name": "Alpha Input Black",
+          "matchName": "ADBE Pro Levels2-0032",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 33,
+          "name": "Alpha Input White",
+          "matchName": "ADBE Pro Levels2-0033",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 34,
+          "name": "Alpha Gamma",
+          "matchName": "ADBE Pro Levels2-0034",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 5
+        },
+        {
+          "index": 35,
+          "name": "Alpha Output Black",
+          "matchName": "ADBE Pro Levels2-0035",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 36,
+          "name": "Alpha Output White",
+          "matchName": "ADBE Pro Levels2-0036",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 37,
+          "name": "Alpha",
+          "matchName": "ADBE Pro Levels2-0037",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 38,
+          "name": "Clip To Output Black",
+          "matchName": "ADBE Pro Levels2-0038",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 3,
+          "min": 1,
+          "max": 3
+        },
+        {
+          "index": 39,
+          "name": "Clip To Output White",
+          "matchName": "ADBE Pro Levels2-0039",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 3,
+          "min": 1,
+          "max": 3
+        },
+        {
+          "index": 40,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Bulge",
+      "compositionId": 156,
+      "composition": "Effect_11",
+      "layerId": 169,
+      "name": "Bulge",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Horizontal Radius",
+          "matchName": "ADBE Bulge-0001",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 50,
+          "min": 0,
+          "max": 8000
+        },
+        {
+          "index": 2,
+          "name": "Vertical Radius",
+          "matchName": "ADBE Bulge-0002",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 50,
+          "min": 0,
+          "max": 8000
+        },
+        {
+          "index": 3,
+          "name": "Bulge Center",
+          "matchName": "ADBE Bulge-0003",
+          "type": "6415",
+          "canVaryOverTime": true,
+          "value": [
+            60,
+            40
+          ]
+        },
+        {
+          "index": 4,
+          "name": "Bulge Height",
+          "matchName": "ADBE Bulge-0004",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": -4,
+          "max": 4
+        },
+        {
+          "index": 5,
+          "name": "Taper Radius",
+          "matchName": "ADBE Bulge-0005",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 8000
+        },
+        {
+          "index": 6,
+          "name": "Antialiasing (Best Qual Only)",
+          "matchName": "ADBE Bulge-0006",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 2
+        },
+        {
+          "index": 7,
+          "name": "Pinning",
+          "matchName": "ADBE Bulge-0007",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 8,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Corner Pin",
+      "compositionId": 170,
+      "composition": "Effect_12",
+      "layerId": 183,
+      "name": "Corner Pin",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Upper Left",
+          "matchName": "ADBE Corner Pin-0001",
+          "type": "6415",
+          "canVaryOverTime": true,
+          "value": [
+            0,
+            0
+          ]
+        },
+        {
+          "index": 2,
+          "name": "Upper Right",
+          "matchName": "ADBE Corner Pin-0002",
+          "type": "6415",
+          "canVaryOverTime": true,
+          "value": [
+            120,
+            0
+          ]
+        },
+        {
+          "index": 3,
+          "name": "Lower Left",
+          "matchName": "ADBE Corner Pin-0003",
+          "type": "6415",
+          "canVaryOverTime": true,
+          "value": [
+            0,
+            80
+          ]
+        },
+        {
+          "index": 4,
+          "name": "Lower Right",
+          "matchName": "ADBE Corner Pin-0004",
+          "type": "6415",
+          "canVaryOverTime": true,
+          "value": [
+            120,
+            80
+          ]
+        },
+        {
+          "index": 5,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Tile",
+      "compositionId": 184,
+      "composition": "Effect_13",
+      "layerId": 197,
+      "name": "Motion Tile",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Tile Center",
+          "matchName": "ADBE Tile-0001",
+          "type": "6415",
+          "canVaryOverTime": true,
+          "value": [
+            60,
+            40
+          ]
+        },
+        {
+          "index": 2,
+          "name": "Tile Width",
+          "matchName": "ADBE Tile-0002",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 100,
+          "min": 0,
+          "max": 100
+        },
+        {
+          "index": 3,
+          "name": "Tile Height",
+          "matchName": "ADBE Tile-0003",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 100,
+          "min": 0,
+          "max": 100
+        },
+        {
+          "index": 4,
+          "name": "Output Width",
+          "matchName": "ADBE Tile-0004",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 100,
+          "min": 0,
+          "max": 30000
+        },
+        {
+          "index": 5,
+          "name": "Output Height",
+          "matchName": "ADBE Tile-0005",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 100,
+          "min": 0,
+          "max": 30000
+        },
+        {
+          "index": 6,
+          "name": "Mirror Edges",
+          "matchName": "ADBE Tile-0006",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 7,
+          "name": "Phase",
+          "matchName": "ADBE Tile-0007",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0
+        },
+        {
+          "index": 8,
+          "name": "Horizontal Phase Shift",
+          "matchName": "ADBE Tile-0008",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 9,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Drop Shadow",
+      "compositionId": 198,
+      "composition": "Effect_14",
+      "layerId": 211,
+      "name": "Drop Shadow",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Shadow Color",
+          "matchName": "ADBE Drop Shadow-0001",
+          "type": "6418",
+          "canVaryOverTime": true,
+          "value": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "min": -3921568.62745098,
+          "max": 3921568.62745098
+        },
+        {
+          "index": 2,
+          "name": "Opacity",
+          "matchName": "ADBE Drop Shadow-0002",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 127.5,
+          "min": 0,
+          "max": 255
+        },
+        {
+          "index": 3,
+          "name": "Direction",
+          "matchName": "ADBE Drop Shadow-0003",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 135
+        },
+        {
+          "index": 4,
+          "name": "Distance",
+          "matchName": "ADBE Drop Shadow-0004",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 5,
+          "min": 0,
+          "max": 4000
+        },
+        {
+          "index": 5,
+          "name": "Softness",
+          "matchName": "ADBE Drop Shadow-0005",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 30000
+        },
+        {
+          "index": 6,
+          "name": "Shadow Only",
+          "matchName": "ADBE Drop Shadow-0006",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 7,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Posterize",
+      "compositionId": 212,
+      "composition": "Effect_15",
+      "layerId": 225,
+      "name": "Posterize",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Level",
+          "matchName": "ADBE Posterize-0001",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 7,
+          "min": 2,
+          "max": 255
+        },
+        {
+          "index": 2,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Posterize Time",
+      "compositionId": 226,
+      "composition": "Effect_16",
+      "layerId": 239,
+      "name": "Posterize Time",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Frame Rate",
+          "matchName": "ADBE Posterize Time-0001",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 24,
+          "min": 0.00999450683594,
+          "max": 999
+        },
+        {
+          "index": 2,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "CS Vignette",
+      "compositionId": 240,
+      "composition": "Effect_17",
+      "layerId": 253,
+      "name": "CC Vignette",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Amount",
+          "matchName": "CS Vignette-0001",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 100,
+          "min": -1000,
+          "max": 1000
+        },
+        {
+          "index": 2,
+          "name": "Angle of View",
+          "matchName": "CS Vignette-0002",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 45,
+          "min": 0,
+          "max": 120
+        },
+        {
+          "index": 3,
+          "name": "Center",
+          "matchName": "CS Vignette-0003",
+          "type": "6415",
+          "canVaryOverTime": true,
+          "value": [
+            60,
+            40
+          ]
+        },
+        {
+          "index": 4,
+          "name": "Pin Highlights",
+          "matchName": "CS Vignette-0005",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 100
+        },
+        {
+          "index": 5,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Find Edges",
+      "compositionId": 254,
+      "composition": "Effect_18",
+      "layerId": 267,
+      "name": "Find Edges",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Invert",
+          "matchName": "ADBE Find Edges-0001",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 2,
+          "name": "Blend With Original",
+          "matchName": "ADBE Find Edges-0002",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 3,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Exposure2",
+      "compositionId": 268,
+      "composition": "Effect_19",
+      "layerId": 281,
+      "name": "Exposure",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Channels:",
+          "matchName": "ADBE Exposure2-0001",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 2
+        },
+        {
+          "index": 2,
+          "name": "Master",
+          "matchName": "ADBE Exposure2-0002",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 3,
+          "name": "Exposure",
+          "matchName": "ADBE Exposure2-0003",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -100,
+          "max": 100
+        },
+        {
+          "index": 4,
+          "name": "Offset",
+          "matchName": "ADBE Exposure2-0004",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -2,
+          "max": 2
+        },
+        {
+          "index": 5,
+          "name": "Gamma Correction",
+          "matchName": "ADBE Exposure2-0005",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0.10000000149012,
+          "max": 10
+        },
+        {
+          "index": 6,
+          "name": "Master",
+          "matchName": "ADBE Exposure2-0006",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 7,
+          "name": "Red",
+          "matchName": "ADBE Exposure2-0007",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 8,
+          "name": "Red Exposure",
+          "matchName": "ADBE Exposure2-0008",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -100,
+          "max": 100
+        },
+        {
+          "index": 9,
+          "name": "Red Offset",
+          "matchName": "ADBE Exposure2-0009",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -2,
+          "max": 2
+        },
+        {
+          "index": 10,
+          "name": "Red Gamma Correction",
+          "matchName": "ADBE Exposure2-0010",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0.10000000149012,
+          "max": 10
+        },
+        {
+          "index": 11,
+          "name": "Red",
+          "matchName": "ADBE Exposure2-0011",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 12,
+          "name": "Green",
+          "matchName": "ADBE Exposure2-0012",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 13,
+          "name": "Green Exposure",
+          "matchName": "ADBE Exposure2-0013",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -100,
+          "max": 100
+        },
+        {
+          "index": 14,
+          "name": "Green Offset",
+          "matchName": "ADBE Exposure2-0014",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -2,
+          "max": 2
+        },
+        {
+          "index": 15,
+          "name": "Green Gamma Correction",
+          "matchName": "ADBE Exposure2-0015",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0.10000000149012,
+          "max": 10
+        },
+        {
+          "index": 16,
+          "name": "Green",
+          "matchName": "ADBE Exposure2-0016",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 17,
+          "name": "Blue",
+          "matchName": "ADBE Exposure2-0017",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 18,
+          "name": "Blue Exposure",
+          "matchName": "ADBE Exposure2-0018",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -100,
+          "max": 100
+        },
+        {
+          "index": 19,
+          "name": "Blue Offset",
+          "matchName": "ADBE Exposure2-0019",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -2,
+          "max": 2
+        },
+        {
+          "index": 20,
+          "name": "Blue Gamma Correction",
+          "matchName": "ADBE Exposure2-0020",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0.10000000149012,
+          "max": 10
+        },
+        {
+          "index": 21,
+          "name": "Blue",
+          "matchName": "ADBE Exposure2-0021",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 22,
+          "name": "Bypass Linear Light Conversion",
+          "matchName": "ADBE Exposure2-0022",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 23,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Vibrance",
+      "compositionId": 282,
+      "composition": "Effect_20",
+      "layerId": 295,
+      "name": "Vibrance",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Vibrance",
+          "matchName": "ADBE Vibrance-0001",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -100,
+          "max": 100
+        },
+        {
+          "index": 2,
+          "name": "Saturation",
+          "matchName": "ADBE Vibrance-0002",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -100,
+          "max": 100
+        },
+        {
+          "index": 3,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Twirl",
+      "compositionId": 296,
+      "composition": "Effect_21",
+      "layerId": 309,
+      "name": "Twirl (Legacy)",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Angle",
+          "matchName": "ADBE Twirl-0001",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0
+        },
+        {
+          "index": 2,
+          "name": "Twirl Radius",
+          "matchName": "ADBE Twirl-0002",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 30,
+          "min": 0,
+          "max": 100
+        },
+        {
+          "index": 3,
+          "name": "Twirl Center",
+          "matchName": "ADBE Twirl-0003",
+          "type": "6415",
+          "canVaryOverTime": true,
+          "value": [
+            60,
+            40
+          ]
+        },
+        {
+          "index": 4,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Ripple",
+      "compositionId": 310,
+      "composition": "Effect_22",
+      "layerId": 323,
+      "name": "Ripple",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Radius",
+          "matchName": "ADBE Ripple-0001",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 100
+        },
+        {
+          "index": 2,
+          "name": "Center of Ripple",
+          "matchName": "ADBE Ripple-0002",
+          "type": "6415",
+          "canVaryOverTime": true,
+          "value": [
+            60,
+            40
+          ]
+        },
+        {
+          "index": 3,
+          "name": "Type of Conversion",
+          "matchName": "ADBE Ripple-0003",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 2
+        },
+        {
+          "index": 4,
+          "name": "Wave Speed",
+          "matchName": "ADBE Ripple-0004",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": -15,
+          "max": 15
+        },
+        {
+          "index": 5,
+          "name": "Wave Width",
+          "matchName": "ADBE Ripple-0005",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 20,
+          "min": 2,
+          "max": 100
+        },
+        {
+          "index": 6,
+          "name": "Wave Height",
+          "matchName": "ADBE Ripple-0006",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 20,
+          "min": 0,
+          "max": 400
+        },
+        {
+          "index": 7,
+          "name": "Ripple Phase",
+          "matchName": "ADBE Ripple-0007",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0
+        },
+        {
+          "index": 8,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Sharpen",
+      "compositionId": 324,
+      "composition": "Effect_23",
+      "layerId": 337,
+      "name": "Sharpen",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Sharpen Amount",
+          "matchName": "ADBE Sharpen-0001",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 4000
+        },
+        {
+          "index": 2,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Luma Key",
+      "compositionId": 338,
+      "composition": "Effect_24",
+      "layerId": 351,
+      "name": "Luma Key",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Key Type",
+          "matchName": "ADBE Luma Key-0001",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 2,
+          "min": 1,
+          "max": 4
+        },
+        {
+          "index": 2,
+          "name": "Threshold",
+          "matchName": "ADBE Luma Key-0002",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 255
+        },
+        {
+          "index": 3,
+          "name": "Tolerance",
+          "matchName": "ADBE Luma Key-0003",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 255
+        },
+        {
+          "index": 4,
+          "name": "Edge Thin",
+          "matchName": "ADBE Luma Key-0004",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -5,
+          "max": 5
+        },
+        {
+          "index": 5,
+          "name": "Edge Feather",
+          "matchName": "ADBE Luma Key-0005",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 100
+        },
+        {
+          "index": 6,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Simple Choker",
+      "compositionId": 352,
+      "composition": "Effect_25",
+      "layerId": 365,
+      "name": "Simple Choker",
+      "properties": [
+        {
+          "index": 1,
+          "name": "View",
+          "matchName": "ADBE Simple Choker-0001",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 2
+        },
+        {
+          "index": 2,
+          "name": "Choke Matte",
+          "matchName": "ADBE Simple Choker-0002",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -100,
+          "max": 100
+        },
+        {
+          "index": 3,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "VISINF Grain Implant",
+      "compositionId": 366,
+      "composition": "Effect_26",
+      "layerId": 379,
+      "name": "Add Grain",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Viewing Mode",
+          "matchName": "VISINF Grain Implant-0021",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 3
+        },
+        {
+          "index": 2,
+          "name": "Preset",
+          "matchName": "VISINF Grain Implant-0027",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 15
+        },
+        {
+          "index": 3,
+          "name": "Preview Region",
+          "matchName": "VISINF Grain Implant-0102",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 4,
+          "name": "Center",
+          "matchName": "VISINF Grain Implant-0022",
+          "type": "6415",
+          "canVaryOverTime": true,
+          "value": [
+            60,
+            40
+          ]
+        },
+        {
+          "index": 5,
+          "name": "Width",
+          "matchName": "VISINF Grain Implant-0023",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 200,
+          "min": 50,
+          "max": 1024
+        },
+        {
+          "index": 6,
+          "name": "Height",
+          "matchName": "VISINF Grain Implant-0024",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 200,
+          "min": 50,
+          "max": 1024
+        },
+        {
+          "index": 7,
+          "name": "Show Box",
+          "matchName": "VISINF Grain Implant-0028",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 8,
+          "name": "Box Color",
+          "matchName": "VISINF Grain Implant-0029",
+          "type": "6418",
+          "canVaryOverTime": true,
+          "value": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "min": -3921568.62745098,
+          "max": 3921568.62745098
+        },
+        {
+          "index": 9,
+          "name": "",
+          "matchName": "VISINF Grain Implant-0103",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 10,
+          "name": "Tweaking",
+          "matchName": "VISINF Grain Implant-0110",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 11,
+          "name": "Intensity",
+          "matchName": "VISINF Grain Implant-0008",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 100
+        },
+        {
+          "index": 12,
+          "name": "Size",
+          "matchName": "VISINF Grain Implant-0007",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 10
+        },
+        {
+          "index": 13,
+          "name": "Softness",
+          "matchName": "VISINF Grain Implant-0130",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 10
+        },
+        {
+          "index": 14,
+          "name": "Aspect Ratio",
+          "matchName": "VISINF Grain Implant-0030",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 10
+        },
+        {
+          "index": 15,
+          "name": "Channel Intensities",
+          "matchName": "VISINF Grain Implant-0100",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 16,
+          "name": "Red Intensity",
+          "matchName": "VISINF Grain Implant-0002",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 10
+        },
+        {
+          "index": 17,
+          "name": "Green Intensity",
+          "matchName": "VISINF Grain Implant-0003",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 10
+        },
+        {
+          "index": 18,
+          "name": "Blue Intensity",
+          "matchName": "VISINF Grain Implant-0004",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 10
+        },
+        {
+          "index": 19,
+          "name": "",
+          "matchName": "VISINF Grain Implant-0101",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 20,
+          "name": "Channel Size",
+          "matchName": "VISINF Grain Implant-0114",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 21,
+          "name": "Red Size",
+          "matchName": "VISINF Grain Implant-0032",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 5
+        },
+        {
+          "index": 22,
+          "name": "Green Size",
+          "matchName": "VISINF Grain Implant-0033",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 5
+        },
+        {
+          "index": 23,
+          "name": "Blue Size",
+          "matchName": "VISINF Grain Implant-0034",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 5
+        },
+        {
+          "index": 24,
+          "name": "",
+          "matchName": "VISINF Grain Implant-0115",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 25,
+          "name": "",
+          "matchName": "VISINF Grain Implant-0111",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 26,
+          "name": "Color",
+          "matchName": "VISINF Grain Implant-0122",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 27,
+          "name": "Monochromatic",
+          "matchName": "VISINF Grain Implant-0005",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 28,
+          "name": "Saturation",
+          "matchName": "VISINF Grain Implant-0006",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 2
+        },
+        {
+          "index": 29,
+          "name": "Tint Amount",
+          "matchName": "VISINF Grain Implant-0011",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 100,
+          "min": 0,
+          "max": 100
+        },
+        {
+          "index": 30,
+          "name": "Tint Color",
+          "matchName": "VISINF Grain Implant-0010",
+          "type": "6418",
+          "canVaryOverTime": true,
+          "value": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "min": -3921568.62745098,
+          "max": 3921568.62745098
+        },
+        {
+          "index": 31,
+          "name": "",
+          "matchName": "VISINF Grain Implant-0123",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 32,
+          "name": "Application",
+          "matchName": "VISINF Grain Implant-0108",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 33,
+          "name": "Blending Mode",
+          "matchName": "VISINF Grain Implant-0014",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 5
+        },
+        {
+          "index": 34,
+          "name": "Shadows",
+          "matchName": "VISINF Grain Implant-0040",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 5
+        },
+        {
+          "index": 35,
+          "name": "Midtones",
+          "matchName": "VISINF Grain Implant-0041",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 5
+        },
+        {
+          "index": 36,
+          "name": "Highlights",
+          "matchName": "VISINF Grain Implant-0042",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 5
+        },
+        {
+          "index": 37,
+          "name": "Midpoint",
+          "matchName": "VISINF Grain Implant-0043",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0.5,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 38,
+          "name": "Channel Balance",
+          "matchName": "VISINF Grain Implant-0106",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 39,
+          "name": "Red Shadows",
+          "matchName": "VISINF Grain Implant-0044",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 5
+        },
+        {
+          "index": 40,
+          "name": "Red Midtones",
+          "matchName": "VISINF Grain Implant-0045",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 5
+        },
+        {
+          "index": 41,
+          "name": "Red Highlights",
+          "matchName": "VISINF Grain Implant-0046",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 5
+        },
+        {
+          "index": 42,
+          "name": "Green Shadows",
+          "matchName": "VISINF Grain Implant-0047",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 5
+        },
+        {
+          "index": 43,
+          "name": "Green Midtones",
+          "matchName": "VISINF Grain Implant-0048",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 5
+        },
+        {
+          "index": 44,
+          "name": "Green Highlights",
+          "matchName": "VISINF Grain Implant-0049",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 5
+        },
+        {
+          "index": 45,
+          "name": "Blue Shadows",
+          "matchName": "VISINF Grain Implant-0050",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 5
+        },
+        {
+          "index": 46,
+          "name": "Blue Midtones",
+          "matchName": "VISINF Grain Implant-0051",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 5
+        },
+        {
+          "index": 47,
+          "name": "Blue Highlights",
+          "matchName": "VISINF Grain Implant-0052",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 5
+        },
+        {
+          "index": 48,
+          "name": "",
+          "matchName": "VISINF Grain Implant-0107",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 49,
+          "name": "",
+          "matchName": "VISINF Grain Implant-0109",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 50,
+          "name": "Animation",
+          "matchName": "VISINF Grain Implant-0120",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 51,
+          "name": "Animation Speed",
+          "matchName": "VISINF Grain Implant-0039",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 52,
+          "name": "Animate Smoothly",
+          "matchName": "VISINF Grain Implant-0038",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 53,
+          "name": "Random Seed",
+          "matchName": "VISINF Grain Implant-0013",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 10000
+        },
+        {
+          "index": 54,
+          "name": "",
+          "matchName": "VISINF Grain Implant-0121",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 55,
+          "name": "Blend with Original",
+          "matchName": "VISINF Grain Implant-0112",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 56,
+          "name": "Amount",
+          "matchName": "VISINF Grain Implant-0053",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 100
+        },
+        {
+          "index": 57,
+          "name": "Combine Match and Mask Using",
+          "matchName": "VISINF Grain Implant-0063",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 2
+        },
+        {
+          "index": 58,
+          "name": "Blur Matte",
+          "matchName": "VISINF Grain Implant-0059",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 100
+        },
+        {
+          "index": 59,
+          "name": "Color Matching",
+          "matchName": "VISINF Grain Implant-0124",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 60,
+          "name": "Match Color Using",
+          "matchName": "VISINF Grain Implant-0057",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 3,
+          "min": 1,
+          "max": 9
+        },
+        {
+          "index": 61,
+          "name": "Matching Color",
+          "matchName": "VISINF Grain Implant-0054",
+          "type": "6418",
+          "canVaryOverTime": true,
+          "value": [
+            0.49803921568627,
+            0.49803921568627,
+            0.49803921568627,
+            0.49803921568627
+          ],
+          "min": -3921568.62745098,
+          "max": 3921568.62745098
+        },
+        {
+          "index": 62,
+          "name": "Matching Tolerance",
+          "matchName": "VISINF Grain Implant-0055",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0.09999084472656,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 63,
+          "name": "Matching Softness",
+          "matchName": "VISINF Grain Implant-0056",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0.09999084472656,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 64,
+          "name": "Invert Match",
+          "matchName": "VISINF Grain Implant-0058",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 65,
+          "name": "",
+          "matchName": "VISINF Grain Implant-0125",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 66,
+          "name": "Masking Layer",
+          "matchName": "VISINF Grain Implant-0126",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 67,
+          "name": "Mask Layer",
+          "matchName": "VISINF Grain Implant-0060",
+          "type": "6421",
+          "canVaryOverTime": false,
+          "value": 0
+        },
+        {
+          "index": 68,
+          "name": "Masking Mode",
+          "matchName": "VISINF Grain Implant-0062",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 4
+        },
+        {
+          "index": 69,
+          "name": "If Mask Size Differs",
+          "matchName": "VISINF Grain Implant-0061",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 2
+        },
+        {
+          "index": 70,
+          "name": "",
+          "matchName": "VISINF Grain Implant-0127",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 71,
+          "name": "",
+          "matchName": "VISINF Grain Implant-0113",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 72,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Wave Warp",
+      "compositionId": 380,
+      "composition": "Effect_27",
+      "layerId": 393,
+      "name": "Wave Warp",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Wave Type",
+          "matchName": "ADBE Wave Warp-0001",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 9
+        },
+        {
+          "index": 2,
+          "name": "Wave Height",
+          "matchName": "ADBE Wave Warp-0002",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 10,
+          "min": -32000,
+          "max": 32000
+        },
+        {
+          "index": 3,
+          "name": "Wave Width",
+          "matchName": "ADBE Wave Warp-0003",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 40,
+          "min": 1,
+          "max": 32000
+        },
+        {
+          "index": 4,
+          "name": "Direction",
+          "matchName": "ADBE Wave Warp-0004",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 90
+        },
+        {
+          "index": 5,
+          "name": "Wave Speed",
+          "matchName": "ADBE Wave Warp-0005",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": -100,
+          "max": 100
+        },
+        {
+          "index": 6,
+          "name": "Pinning",
+          "matchName": "ADBE Wave Warp-0006",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 11
+        },
+        {
+          "index": 7,
+          "name": "Phase",
+          "matchName": "ADBE Wave Warp-0007",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0
+        },
+        {
+          "index": 8,
+          "name": "Antialiasing (Best Quality)",
+          "matchName": "ADBE Wave Warp-0008",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 3
+        },
+        {
+          "index": 9,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Optics Compensation",
+      "compositionId": 394,
+      "composition": "Effect_28",
+      "layerId": 407,
+      "name": "Optics Compensation",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Field Of View (FOV)",
+          "matchName": "ADBE Optics Compensation-0001",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 179.999984741211
+        },
+        {
+          "index": 2,
+          "name": "Reverse Lens Distortion",
+          "matchName": "ADBE Optics Compensation-0002",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 3,
+          "name": "FOV Orientation",
+          "matchName": "ADBE Optics Compensation-0003",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 3
+        },
+        {
+          "index": 4,
+          "name": "View Center",
+          "matchName": "ADBE Optics Compensation-0004",
+          "type": "6415",
+          "canVaryOverTime": true,
+          "value": [
+            60,
+            40
+          ]
+        },
+        {
+          "index": 5,
+          "name": "Optimal Pixels (Invalidates Reversal)",
+          "matchName": "ADBE Optics Compensation-0005",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 6,
+          "name": "Resize",
+          "matchName": "ADBE Optics Compensation-0006",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 4
+        },
+        {
+          "index": 7,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Tint",
+      "compositionId": 408,
+      "composition": "Effect_29",
+      "layerId": 421,
+      "name": "Tint",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Map Black To",
+          "matchName": "ADBE Tint-0001",
+          "type": "6418",
+          "canVaryOverTime": true,
+          "value": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "min": -3921568.62745098,
+          "max": 3921568.62745098
+        },
+        {
+          "index": 2,
+          "name": "Map White To",
+          "matchName": "ADBE Tint-0002",
+          "type": "6418",
+          "canVaryOverTime": true,
+          "value": [
+            1,
+            1,
+            1,
+            0
+          ],
+          "min": -3921568.62745098,
+          "max": 3921568.62745098
+        },
+        {
+          "index": 3,
+          "name": "Amount to Tint",
+          "matchName": "ADBE Tint-0003",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 100,
+          "min": 0,
+          "max": 100
+        },
+        {
+          "index": 4,
+          "name": "",
+          "matchName": "ADBE Tint-0004",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 5,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE Ramp",
+      "compositionId": 422,
+      "composition": "Effect_30",
+      "layerId": 435,
+      "name": "Gradient Ramp",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Start of Ramp",
+          "matchName": "ADBE Ramp-0001",
+          "type": "6415",
+          "canVaryOverTime": true,
+          "value": [
+            60,
+            0
+          ]
+        },
+        {
+          "index": 2,
+          "name": "Start Color",
+          "matchName": "ADBE Ramp-0002",
+          "type": "6418",
+          "canVaryOverTime": true,
+          "value": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "min": -3921568.62745098,
+          "max": 3921568.62745098
+        },
+        {
+          "index": 3,
+          "name": "End of Ramp",
+          "matchName": "ADBE Ramp-0003",
+          "type": "6415",
+          "canVaryOverTime": true,
+          "value": [
+            60,
+            80
+          ]
+        },
+        {
+          "index": 4,
+          "name": "End Color",
+          "matchName": "ADBE Ramp-0004",
+          "type": "6418",
+          "canVaryOverTime": true,
+          "value": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "min": -3921568.62745098,
+          "max": 3921568.62745098
+        },
+        {
+          "index": 5,
+          "name": "Ramp Shape",
+          "matchName": "ADBE Ramp-0005",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 2
+        },
+        {
+          "index": 6,
+          "name": "Ramp Scatter",
+          "matchName": "ADBE Ramp-0006",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 512
+        },
+        {
+          "index": 7,
+          "name": "Blend With Original",
+          "matchName": "ADBE Ramp-0007",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 8,
+          "name": "",
+          "matchName": "ADBE Ramp-0008",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 9,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "matchName": "ADBE AIF Perlin Noise 3D",
+      "compositionId": 436,
+      "composition": "Effect_31",
+      "layerId": 449,
+      "name": "Turbulent Noise",
+      "properties": [
+        {
+          "index": 1,
+          "name": "Fractal Type",
+          "matchName": "ADBE AIF Perlin Noise 3D-0001",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 1,
+          "max": 20
+        },
+        {
+          "index": 2,
+          "name": "Noise Type",
+          "matchName": "ADBE AIF Perlin Noise 3D-0002",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 3,
+          "min": 1,
+          "max": 4
+        },
+        {
+          "index": 3,
+          "name": "Invert",
+          "matchName": "ADBE AIF Perlin Noise 3D-0003",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 4,
+          "name": "Contrast",
+          "matchName": "ADBE AIF Perlin Noise 3D-0004",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 100,
+          "min": 0,
+          "max": 10000
+        },
+        {
+          "index": 5,
+          "name": "Brightness",
+          "matchName": "ADBE AIF Perlin Noise 3D-0005",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": -10000,
+          "max": 10000
+        },
+        {
+          "index": 6,
+          "name": "Overflow",
+          "matchName": "ADBE AIF Perlin Noise 3D-0006",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 4,
+          "min": 1,
+          "max": 4
+        },
+        {
+          "index": 7,
+          "name": "Transform",
+          "matchName": "ADBE AIF Perlin Noise 3D-0007",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 8,
+          "name": "Rotation",
+          "matchName": "ADBE AIF Perlin Noise 3D-0008",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0
+        },
+        {
+          "index": 9,
+          "name": "Uniform Scaling",
+          "matchName": "ADBE AIF Perlin Noise 3D-0009",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 10,
+          "name": "Scale",
+          "matchName": "ADBE AIF Perlin Noise 3D-0010",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 100,
+          "min": 1,
+          "max": 10000
+        },
+        {
+          "index": 11,
+          "name": "Scale Width",
+          "matchName": "ADBE AIF Perlin Noise 3D-0011",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 100,
+          "min": 1,
+          "max": 10000
+        },
+        {
+          "index": 12,
+          "name": "Scale Height",
+          "matchName": "ADBE AIF Perlin Noise 3D-0012",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 100,
+          "min": 1,
+          "max": 10000
+        },
+        {
+          "index": 13,
+          "name": "Offset Turbulence",
+          "matchName": "ADBE AIF Perlin Noise 3D-0013",
+          "type": "6415",
+          "canVaryOverTime": true,
+          "value": [
+            60,
+            40
+          ]
+        },
+        {
+          "index": 14,
+          "name": "Perspective Offset",
+          "matchName": "ADBE AIF Perlin Noise 3D-0027",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 1
+        },
+        {
+          "index": 15,
+          "name": "",
+          "matchName": "ADBE AIF Perlin Noise 3D-0014",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 16,
+          "name": "Complexity",
+          "matchName": "ADBE AIF Perlin Noise 3D-0015",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 6,
+          "min": 1,
+          "max": 20
+        },
+        {
+          "index": 17,
+          "name": "Sub Settings",
+          "matchName": "ADBE AIF Perlin Noise 3D-0016",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 18,
+          "name": "Sub Influence (%)",
+          "matchName": "ADBE AIF Perlin Noise 3D-0017",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 70,
+          "min": 1.525878906e-05,
+          "max": 10000
+        },
+        {
+          "index": 19,
+          "name": "Sub Scaling",
+          "matchName": "ADBE AIF Perlin Noise 3D-0018",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 56,
+          "min": 10,
+          "max": 10000
+        },
+        {
+          "index": 20,
+          "name": "Sub Scaling",
+          "matchName": "ADBE AIF Perlin Noise 3D-0019",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 21,
+          "name": "Evolution",
+          "matchName": "ADBE AIF Perlin Noise 3D-0020",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0
+        },
+        {
+          "index": 22,
+          "name": "Evolution Options",
+          "matchName": "ADBE AIF Perlin Noise 3D-0021",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 23,
+          "name": "Turbulence Factor",
+          "matchName": "ADBE AIF Perlin Noise 3D-0022",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 1.5,
+          "min": 1,
+          "max": 4
+        },
+        {
+          "index": 24,
+          "name": "Random Seed",
+          "matchName": "ADBE AIF Perlin Noise 3D-0023",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 0,
+          "min": 0,
+          "max": 100000
+        },
+        {
+          "index": 25,
+          "name": "Random Seed",
+          "matchName": "ADBE AIF Perlin Noise 3D-0024",
+          "type": "6412",
+          "canVaryOverTime": false
+        },
+        {
+          "index": 26,
+          "name": "Opacity",
+          "matchName": "ADBE AIF Perlin Noise 3D-0025",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 100,
+          "min": 0,
+          "max": 100
+        },
+        {
+          "index": 27,
+          "name": "Blending Mode",
+          "matchName": "ADBE AIF Perlin Noise 3D-0026",
+          "type": "6417",
+          "canVaryOverTime": true,
+          "value": 2,
+          "min": 1,
+          "max": 21
+        },
+        {
+          "index": 28,
+          "name": "Compositing Options",
+          "matchName": "ADBE Effect Built In Params",
+          "type": "undefined",
+          "canVaryOverTime": null,
+          "properties": [
+            {
+              "index": 1,
+              "name": "Masks",
+              "matchName": "ADBE Effect Mask Parade",
+              "type": "undefined",
+              "canVaryOverTime": null,
+              "value": null
+            },
+            {
+              "index": 2,
+              "name": "Effect Opacity",
+              "matchName": "ADBE Effect Mask Opacity",
+              "type": "6417",
+              "canVaryOverTime": true,
+              "value": 100,
+              "min": 0,
+              "max": 100
+            },
+            {
+              "index": 3,
+              "name": "GPU Rendering",
+              "matchName": "ADBE Force CPU GPU",
+              "type": "6417",
+              "canVaryOverTime": false,
+              "value": 1,
+              "min": 1,
+              "max": 3
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

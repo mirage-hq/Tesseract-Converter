@@ -1,0 +1,43 @@
+{
+  "version": "26.5x89",
+  "build": 89,
+  "enumValues": {
+    "linear": "6612",
+    "hold": "6614",
+    "cubic": "6613"
+  },
+  "source": {
+    "path": "crates/aftereffects_file/tests/fixtures/effects/static_point_controls.aep",
+    "compositionId": 1,
+    "layerId": 13,
+    "width": 320,
+    "height": 180,
+    "duration": 2,
+    "frameRate": 24,
+    "pixelAspect": 1,
+    "renderer": "ADBE Advanced 3d",
+    "bitsPerChannel": 8,
+    "workingSpace": "None",
+    "linearBlending": false,
+    "angle": 45,
+    "radius": 30,
+    "center": [
+      30,
+      60
+    ],
+    "layerWidth": 320,
+    "layerHeight": 180
+  },
+  "source_sha256": "ae417da40f9b460e7594302c84f5b3c58afa3e62d542d48695c43b973ba425fb",
+  "source_bytes": 77337,
+  "case_id": "aep-effects-static-point-controls-c1",
+  "authoring_script": {
+    "name": "static-point-author.jsx",
+    "sha256": "c889f7c9bcea125f9f7185b5db2e39e836091e7c9c12b1ce73084fb30582c226",
+    "bytes": 2966,
+    "availability": "Machine-specific session wrapper not shipped."
+  },
+  "limitations": [
+    "Independent native authoring/readback is not fresh-conversion render or alpha proof."
+  ]
+}

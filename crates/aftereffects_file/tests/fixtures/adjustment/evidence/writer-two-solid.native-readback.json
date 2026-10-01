@@ -1,0 +1,208 @@
+{
+  "compositions": [
+    {
+      "displayStart": 0,
+      "duration": 2,
+      "frameDuration": 0.04166666666667,
+      "frameRate": 24,
+      "height": 1080,
+      "id": 1,
+      "layers": [
+        {
+          "effects": [],
+          "flags": {
+            "adjustmentLayer": false,
+            "collapseTransformation": false,
+            "enabled": true,
+            "guideLayer": false,
+            "hasTrackMatte": false,
+            "isTrackMatte": false,
+            "locked": false,
+            "shy": false,
+            "solo": false,
+            "threeDLayer": false
+          },
+          "id": 14,
+          "index": 1,
+          "masks": [],
+          "name": "Foreground",
+          "parentLayerId": null,
+          "source": {
+            "duration": 0,
+            "height": 270,
+            "id": 13,
+            "kind": "footage",
+            "name": "Foreground",
+            "width": 480
+          },
+          "timing": {
+            "inPoint": 0,
+            "outPoint": 2,
+            "startTime": 0,
+            "stretch": 100
+          },
+          "trackMatte": {
+            "layerId": null,
+            "type": null
+          },
+          "transform": [
+            {
+              "keys": [],
+              "matchName": "ADBE Anchor Point",
+              "name": "Anchor Point",
+              "propertyIndex": 1,
+              "value": [
+                240,
+                135,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Position",
+              "name": "Position",
+              "propertyIndex": 2,
+              "value": [
+                960,
+                540,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Scale",
+              "name": "Scale",
+              "propertyIndex": 6,
+              "value": [
+                100,
+                100,
+                100
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Rotate Z",
+              "name": "Rotation",
+              "propertyIndex": 10,
+              "value": 0
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Opacity",
+              "name": "Opacity",
+              "propertyIndex": 11,
+              "value": 100
+            }
+          ]
+        },
+        {
+          "effects": [],
+          "flags": {
+            "adjustmentLayer": false,
+            "collapseTransformation": false,
+            "enabled": true,
+            "guideLayer": false,
+            "hasTrackMatte": false,
+            "isTrackMatte": false,
+            "locked": false,
+            "shy": false,
+            "solo": false,
+            "threeDLayer": false
+          },
+          "id": 16,
+          "index": 2,
+          "masks": [],
+          "name": "Background",
+          "parentLayerId": null,
+          "source": {
+            "duration": 0,
+            "height": 1080,
+            "id": 15,
+            "kind": "footage",
+            "name": "Background",
+            "width": 1920
+          },
+          "timing": {
+            "inPoint": 0,
+            "outPoint": 2,
+            "startTime": 0,
+            "stretch": 100
+          },
+          "trackMatte": {
+            "layerId": null,
+            "type": null
+          },
+          "transform": [
+            {
+              "keys": [],
+              "matchName": "ADBE Anchor Point",
+              "name": "Anchor Point",
+              "propertyIndex": 1,
+              "value": [
+                960,
+                540,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Position",
+              "name": "Position",
+              "propertyIndex": 2,
+              "value": [
+                960,
+                540,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Scale",
+              "name": "Scale",
+              "propertyIndex": 6,
+              "value": [
+                100,
+                100,
+                100
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Rotate Z",
+              "name": "Rotation",
+              "propertyIndex": 10,
+              "value": 0
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Opacity",
+              "name": "Opacity",
+              "propertyIndex": 11,
+              "value": 100
+            }
+          ]
+        }
+      ],
+      "name": "AEP_PROOF_ADD_BLEND_EXPORT",
+      "sourceFrameCount": 48,
+      "width": 1920,
+      "workAreaDuration": 2,
+      "workAreaStart": 0
+    }
+  ],
+  "ordinary": {
+    "background_color": [
+      0.25,
+      0.25,
+      0.25
+    ],
+    "background_normal": true,
+    "foreground_add": true,
+    "foreground_color": [
+      0.5,
+      0.125,
+      0.125
+    ]
+  },
+  "schema": "aftereffects-adjustment-export-readback/v1"
+}

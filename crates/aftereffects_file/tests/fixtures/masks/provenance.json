@@ -1,0 +1,17 @@
+{
+  "repository": "https://github.com/forticheprod/py-aep",
+  "commit": "e12a451c35bacd3f34a080090265f9370e66162b",
+  "license": "MIT (see ../LICENSE)",
+  "cases": [{
+    "file": "mask.aep",
+    "source": "samples/models/property/mask.aep",
+    "sha256": "de9d38b08b200209eb7fffdccd403ffd4e001fd9df52cc7b4203f9a1f35232b9",
+    "bytes": 126245,
+    "sidecar": {
+      "file": "mask.json.gz",
+      "source": "samples/models/property/mask.json",
+      "sha256": "a710f913e0f91ee0ba5105f3684d82ffc015b21c1b432f08ae04ad24a18c0c97",
+      "bytes": 522083
+    }
+  }]
+}

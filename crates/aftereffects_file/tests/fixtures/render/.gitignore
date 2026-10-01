@@ -1,0 +1,5 @@
+# Expected videos belong in long-term Assets, never in Git/GitHub.
+*_reference.mp4
+.expected-30fps/
+.aep-feature-proof/
+.aep-feature-proof-cache/

@@ -1,0 +1,235 @@
+{
+  "case_id": "H-IDENTITY-01",
+  "scope": "Independent native source/reference provenance; not converter fidelity",
+  "sources": [
+    {
+      "path": "linked-compositions.aep",
+      "sha256": "90ba0883e9c54ee006a8e33d8b497666706a2f25297dbeb3cac71e4c2127f3ff",
+      "bytes": 138239
+    },
+    {
+      "path": "native-linked.prproj",
+      "sha256": "a03b8d06787e500a803fe2b28ebca4df2b3f817a6d91098638acc80ea877ef04",
+      "bytes": 9662
+    }
+  ],
+  "unique_name_seed": {
+    "sha256": "6d058791b83883b256d542d6bbebb9cfc5e2fad202f810f020608e52a40b7a76",
+    "bytes": 137789,
+    "status": "preserved locally; final checked-in AEP is the independently renamed revision"
+  },
+  "applications": {
+    "after_effects": "26.5x89",
+    "after_effects_build": 89,
+    "premiere": "26.5.2"
+  },
+  "identity_profile": {
+    "head_prefix_hex": "0061000a",
+    "producer_word_hex": "0f928659",
+    "guid_byte_order": "network order; first BE32 is nonzero item ID, final12bytes zero; only observed profile admitted"
+  },
+  "native_targets": [
+    {
+      "composition_id": 1,
+      "name": "Hybrid_Duplicate_Name",
+      "dynamic_link_guid": "00000001-0000-0000-0000-000000000000",
+      "authored_solid_rgb": [
+        1,
+        0,
+        0
+      ],
+      "width": 1920,
+      "height": 1080,
+      "pixel_aspect": 1,
+      "source_fps": 30,
+      "duration_seconds": 2
+    },
+    {
+      "composition_id": 16,
+      "name": "Hybrid_Duplicate_Name",
+      "dynamic_link_guid": "00000010-0000-0000-0000-000000000000",
+      "authored_solid_rgb": [
+        0,
+        0,
+        1
+      ],
+      "width": 1920,
+      "height": 1080,
+      "pixel_aspect": 1,
+      "source_fps": 30,
+      "duration_seconds": 2
+    }
+  ],
+  "native_sequence": {
+    "sequence_uid": "1650b494-2985-4142-8645-626872e29ad7",
+    "source_sha256": "a03b8d06787e500a803fe2b28ebca4df2b3f817a6d91098638acc80ea877ef04",
+    "frame_ticks": 8467200000,
+    "ticks_per_second": 254016000000,
+    "placements": [
+      {
+        "composition_id": 1,
+        "timeline_seconds": [
+          0,
+          1
+        ],
+        "source_seconds": [
+          0,
+          1
+        ]
+      },
+      {
+        "composition_id": 16,
+        "timeline_seconds": [
+          1,
+          2
+        ],
+        "source_seconds": [
+          0.5,
+          1.5
+        ]
+      }
+    ]
+  },
+  "ordinary_media_dependency": {
+    "path": "crates/premiere_file/tests/fixtures/feature_linked_av_source.mp4",
+    "native_authoring_basename": "background.mp4",
+    "sha256": "f421d0eaef840534f3f60804e9b417a77077ce08215eabd68b99088352543362",
+    "bytes": 568745,
+    "source_audio_clips": "removed during independent source authoring; not a converter operation"
+  },
+  "rendering": {
+    "aep": "Adobe render queue; exact numeric item-object selection on byte-identical disposable AEP",
+    "premiere": "exportAsMediaDirect on reopened byte-identical disposable PR project after duplicate AEP names",
+    "ae_render_settings": "Use this frame rate: 30; Quality: Best; Resolution: Full",
+    "ae_output_template": "H.264 - Match Render Settings - 40 Mbps",
+    "ae_audio_output": "Off",
+    "premiere_preset": "01 - Match Source - High bitrate.epr",
+    "source_hashes_unchanged": true,
+    "output_fps": 30,
+    "output_frames_each": 60,
+    "output_duration_seconds": 2,
+    "width": 1920,
+    "height": 1080,
+    "project_color_management_and_bit_depth": "not separately read back; no color/alpha equivalence claim"
+  },
+  "references": [
+    {
+      "file": "comp-1.mp4",
+      "source_sha256": "90ba0883e9c54ee006a8e33d8b497666706a2f25297dbeb3cac71e4c2127f3ff",
+      "target": {
+        "composition_id": 1
+      },
+      "path": "tests/references/aep/special/hybrid-identity/comp-1.mp4"
+    },
+    {
+      "file": "comp-16.mp4",
+      "source_sha256": "90ba0883e9c54ee006a8e33d8b497666706a2f25297dbeb3cac71e4c2127f3ff",
+      "target": {
+        "composition_id": 16
+      },
+      "path": "tests/references/aep/special/hybrid-identity/comp-16.mp4"
+    },
+    {
+      "file": "linked-sequence.mp4",
+      "source_sha256": "a03b8d06787e500a803fe2b28ebca4df2b3f817a6d91098638acc80ea877ef04",
+      "target": {
+        "sequence_uid": "1650b494-2985-4142-8645-626872e29ad7"
+      },
+      "path": "tests/references/aep/special/hybrid-identity/linked-sequence.mp4"
+    }
+  ],
+  "decoded_frame_checks": {
+    "method": "full decode; per-frame whole-canvas area-mean RGB",
+    "aep_comp_1_frames_0_through_59": [
+      255,
+      1,
+      0
+    ],
+    "aep_comp_16_frames_0_through_59": [
+      0,
+      0,
+      255
+    ],
+    "premiere_frames_0_through_29": [
+      255,
+      1,
+      0
+    ],
+    "premiere_frames_30_through_59": [
+      0,
+      0,
+      255
+    ],
+    "premiere_audio_stream_count": 1,
+    "alpha_and_audio_fidelity": "unverified",
+    "fresh_converter_comparison": "unmeasured"
+  },
+  "local_artifact_hashes": [
+    {
+      "name": "author-ae.jsx",
+      "sha256": "cbe357e0a8dd497a8d497359ab0d4fdcfcc547a98394af45de0b5cdc76b68b56",
+      "bytes": 1548
+    },
+    {
+      "name": "author-ae-receipt/readback.json",
+      "sha256": "53cd5c33bbdb7c0205cbb2e8c66a432ced5264d6a844fb010ed600075e1f9531",
+      "bytes": 793
+    },
+    {
+      "name": "rename-compositions.jsx",
+      "sha256": "22f087998eeb8afe1a5e97a9e142377ed9a0ab27c19ea2a7e0ca02a7e2bb1ec3",
+      "bytes": 1681
+    },
+    {
+      "name": "rename-receipt/readback.json",
+      "sha256": "14a634a8f9db71a9e4546e83fd56e69e1d136c0f2a3981730476fc214d08faed",
+      "bytes": 673
+    },
+    {
+      "name": "save-native-premiere.jsx",
+      "sha256": "94f8a91bd733ee78aa3381f0b860343586c8a9d0f859bca6e783cfb7ed379fe8",
+      "bytes": 2047
+    },
+    {
+      "name": "save-native-premiere-receipt/receipt.json",
+      "sha256": "4e775b9d368ec4f9d0a5be38c6ed017035684f32a62161b65c51c7e16709da68",
+      "bytes": 710
+    },
+    {
+      "name": "render-owned-copy.jsx",
+      "sha256": "3f661535a0250a3cf0444f753e055f3bc4eee2ee5bea80492a6fd7f5219d7e8a",
+      "bytes": 3760
+    },
+    {
+      "name": "renders/native-owned-copy/receipt.json",
+      "sha256": "a2b84e036a1751f2a3784c148a24655414fed3a67eb600bd4b588664f1be2f58",
+      "bytes": 3605
+    },
+    {
+      "name": "render-premiere-copy.jsx",
+      "sha256": "44cb89bff622f31fd0308eb483aa82416a51ed1f5fd027d1a86a50f0ecf72302",
+      "bytes": 2717
+    },
+    {
+      "name": "renders/premiere-native/receipt.json",
+      "sha256": "5a4432a78a3553081d47ad83da343e036f282aac2099fa1a57ff83880b093a7f",
+      "bytes": 853
+    },
+    {
+      "name": "renders/validated.json",
+      "sha256": "1f47f9e26a5e0cac3aa6799e7c88072aee3277fd44bf01a03cb28417d5d519dd",
+      "bytes": 977
+    },
+    {
+      "name": "renders/premiere-validated.json",
+      "sha256": "795773b50fecae22a31838282fce02a02901f0a9a2214f9e1688368f7273a1ff",
+      "bytes": 532
+    },
+    {
+      "name": "assets-published.json",
+      "sha256": "6d81bd5ae8394c3e9be73fb72c9ea2f98dcc030a44d64568f003973e24a349f4",
+      "bytes": 1447
+    }
+  ],
+  "local_artifact_limitation": "Machine-specific session scripts and full receipts are not shipped; hashes alone are not reproducible authoring proof. Public metadata contains no signed URLs or credentials."
+}

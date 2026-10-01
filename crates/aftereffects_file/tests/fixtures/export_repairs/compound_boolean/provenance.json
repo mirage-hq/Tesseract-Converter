@@ -1,0 +1,40 @@
+{
+  "source": "native.aep",
+  "sourceSha256": "87802637746bc0c6f9af34bd163ca5be510c3019a88e858822e7b9c32a75ac2c",
+  "composition": {
+    "id": 1,
+    "name": "compound-boolean-operand-scope-v1",
+    "width": 320,
+    "height": 180,
+    "frameRate": 24,
+    "duration": 2
+  },
+  "authoringScript": "author.jsx",
+  "executedAuthoringScriptSha256": "d2ea820180c3649c7a17976e2b60e1a36746e774cb9e9984ffb539ecd4675097",
+  "publishedAuthoringScriptSha256": "9a287f97dd428f9453d8d78678240ce0153f65e31435745f86bfb90eafc06310",
+  "scriptDifference": "Comment-only correction of AE/FX Subtract order; executable code unchanged. FX combined_path uses split_last; native AE retains first. Logical FX operands are [compound,cutter].",
+  "adobeVersion": "26.5x89",
+  "nativeReference": {
+    "rendered": true,
+    "outputFps": 30,
+    "frames": 60,
+    "mp4Sha256": "28665e3ea5371fcbd21560f8e6c40d194384a58344b3b651bd624b956480c67b",
+    "asset": "unpublished",
+    "geometryInteriorChecks": 15120,
+    "geometryOccupancyPassed": true,
+    "minimumForegroundRgb8": 253,
+    "maximumBackgroundRgb8": 0,
+    "alpha": "unverified"
+  },
+  "freshExport": "unrun",
+  "nativeReadbackSha256": "b42f7c7238c9f67328b88a1c41a7320dc350c2e69758797bd4112fe7936ad616",
+  "executableNativeAssertions": {
+    "symbol": "writer::shapes::tests::compound_path_keeps_one_operand_for_non_associative_booleans",
+    "status": "failed before scope repair (5 entries versus native 3); passed afterward",
+    "scope": "Pinned source/readback identity, native compound-group scope, Merge mode 1, outer operation ordinal, fresh writer operand count/order and internal Merge mode. Not fresh-export Adobe render proof."
+  },
+  "limitations": [
+    "Reference publication/fresh-download verification and fresh-export Adobe comparison remain incomplete.",
+    "Initial analytical checker assumed incorrect Subtract order; corrected against FX evaluator split_last and native first-operand behavior without changing source, render or thresholds."
+  ]
+}

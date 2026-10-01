@@ -1,0 +1,4912 @@
+{
+  "version": 1,
+  "policy": {
+    "sample_rate": 48000,
+    "channels": 2,
+    "duration_seconds": 6,
+    "duration_tolerance_seconds": 0.01,
+    "relative_rms_error_max": 0.05,
+    "window_rms_error_max": 0.003,
+    "silence_reference_rms_max": 0.0001,
+    "silence_leak_rms_max": 0.0005
+  },
+  "cases": [
+    {
+      "id": "affine-playback",
+      "directions": [
+        "import",
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 199,
+        "composition_name": "affine-playback"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "0be9d860c9d2e7f4671a052376db3cccc6878d2b92e95d148f7a98a69383be6a"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/affine-playback.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [
+          [
+            1.1,
+            1.4
+          ]
+        ],
+        "silent_windows": [
+          [
+            0,
+            0.9
+          ],
+          [
+            5.1,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "primary-sound",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "primary-sound",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "primary-sound",
+            "field": "startTime",
+            "value": 0
+          },
+          {
+            "layer": "primary-sound",
+            "field": "stretch",
+            "value": 200
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.length",
+            "value": 2
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.time",
+            "value": 1
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.value",
+            "value": [
+              -6.02059984207153,
+              -6.02059984207153
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.inType",
+            "value": "6614"
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.outType",
+            "value": "6614"
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.time",
+            "value": 2
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.value",
+            "value": [
+              0,
+              0
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.inType",
+            "value": "6614"
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.outType",
+            "value": "6614"
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-700",
+            "field": "stretch",
+            "value": 200
+          },
+          {
+            "layer": "audio-700",
+            "field": "startTime",
+            "value": 0
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.length",
+            "value": 2
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.0.time",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.0.value",
+            "value": [
+              -6.020599913279624,
+              -6.020599913279624
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.1.time",
+            "value": 2
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.1.value",
+            "value": [
+              0,
+              0
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.0.outType",
+            "value": "6614"
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.1.inType",
+            "value": "6614"
+          }
+        ]
+      }
+    },
+    {
+      "id": "all-zero-one-key",
+      "directions": [
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 108,
+        "composition_name": "all-zero-one-key"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "57cd7a86db521ffddc2b9867164ea5d2c9aff99fa3351c8bf331ee367f483229"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/all-zero-one-key.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [],
+        "silent_windows": [
+          [
+            0,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "primary-sound",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "primary-sound",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "primary-sound",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioEnabled",
+            "value": false
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.length",
+            "value": 1
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.time",
+            "value": 1.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.value",
+            "value": [
+              -192,
+              -192
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.inType",
+            "value": "6614"
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.outType",
+            "value": "6614"
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioEnabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-700",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "audio-700",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.length",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.0.time",
+            "value": 1.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.0.value",
+            "value": [
+              -192,
+              -192
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.0.outType",
+            "value": "6614"
+          }
+        ]
+      }
+    },
+    {
+      "id": "all-zero-two-keys",
+      "directions": [
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 121,
+        "composition_name": "all-zero-two-keys"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "b4adbfec70e444845d5051b6057a52fed0ea73bb3a465f13da3466b9a211ad31"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/all-zero-two-keys.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [],
+        "silent_windows": [
+          [
+            0,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "primary-sound",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "primary-sound",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "primary-sound",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioEnabled",
+            "value": false
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.length",
+            "value": 2
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.time",
+            "value": 1.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.value",
+            "value": [
+              -192,
+              -192
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.inType",
+            "value": "6614"
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.outType",
+            "value": "6614"
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.time",
+            "value": 2.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.value",
+            "value": [
+              -192,
+              -192
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.inType",
+            "value": "6614"
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.outType",
+            "value": "6614"
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioEnabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-700",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "audio-700",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.length",
+            "value": 2
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.0.time",
+            "value": 1.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.0.value",
+            "value": [
+              -192,
+              -192
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.1.time",
+            "value": 2.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.1.value",
+            "value": [
+              -192,
+              -192
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.0.outType",
+            "value": "6614"
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.1.inType",
+            "value": "6614"
+          }
+        ]
+      }
+    },
+    {
+      "id": "audio-group",
+      "directions": [
+        "import",
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 238,
+        "composition_name": "audio-group"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "acf94f316760679ccc72c746237972d41560245cc3eb4c7dc860285008f84a14"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/audio-group.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [
+          [
+            1.1,
+            1.4
+          ]
+        ],
+        "silent_windows": [
+          [
+            0,
+            0.9
+          ],
+          [
+            5.1,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "precomp-audio-container",
+            "field": "inPoint",
+            "value": 0
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "startTime",
+            "value": 0
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "audioLevels.value",
+            "value": [
+              0,
+              0
+            ]
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "audioLevels.keys.length",
+            "value": 0
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-700",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "audio-700",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.value",
+            "value": [
+              -6.020599913279624,
+              -6.020599913279624
+            ]
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "sourceKind",
+            "value": "composition"
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "sourceWidth",
+            "value": 1
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "sourceHeight",
+            "value": 1
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "inPoint",
+            "value": 0
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "stretch",
+            "value": 100
+          }
+        ]
+      }
+    },
+    {
+      "id": "bezier-gain",
+      "directions": [
+        "import",
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 173,
+        "composition_name": "bezier-gain"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "5a6c77086fd9f7d59a691fe4f20ec3fe936115d794b40d8fe750b104d4876e53"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/bezier-gain.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [
+          [
+            1.1,
+            1.4
+          ]
+        ],
+        "silent_windows": [
+          [
+            0,
+            0.9
+          ],
+          [
+            5.1,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": [
+          "continuous gain keys are approximated"
+        ]
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "primary-sound",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "primary-sound",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "primary-sound",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.length",
+            "value": 2
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.time",
+            "value": 1.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.value",
+            "value": [
+              -6.02059984207153,
+              -6.02059984207153
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.inType",
+            "value": "6613"
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.outType",
+            "value": "6613"
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.time",
+            "value": 2.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.value",
+            "value": [
+              0,
+              0
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.inType",
+            "value": "6613"
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.outType",
+            "value": "6613"
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-700",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "audio-700",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.length",
+            "value": 2
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.0.time",
+            "value": 1.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.0.value",
+            "value": [
+              -6.020599913279624,
+              -6.020599913279624
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.1.time",
+            "value": 2.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.1.value",
+            "value": [
+              0,
+              0
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.0.outType",
+            "value": "6613"
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.1.inType",
+            "value": "6613"
+          }
+        ]
+      }
+    },
+    {
+      "id": "conflicting-gain-clock",
+      "directions": [
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 395,
+        "composition_name": "conflicting-gain-clock"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "957a25f9f40a4a0cba0ee9e7487c8f6760a1c43c4dbeb56160ffe52e2b76130f"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/conflicting-gain-clock.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [
+          [
+            1.1,
+            1.4
+          ]
+        ],
+        "silent_windows": [
+          [
+            0,
+            0.9
+          ],
+          [
+            5.1,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": [
+          "Time Remap cannot drive occurrence-owned Audio Levels"
+        ]
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "retained-sibling",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "audioLevels.value",
+            "value": [
+              -6.02059984207153,
+              -6.02059984207153
+            ]
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "audioLevels.keys.length",
+            "value": 0
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-701",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-701",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-701",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-701",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "audio-701",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-701",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-701",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "audio-701",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "audio-701",
+            "field": "audioLevels.value",
+            "value": [
+              -6.020599913279624,
+              -6.020599913279624
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "constant-zero-nonzero-base",
+      "directions": [
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 95,
+        "composition_name": "constant-zero-nonzero-base"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "9a8849efcf0469f2bb11b648a02608169824dfb29b3b34df2486dcfcc2d78d73"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/constant-zero-nonzero-base.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [],
+        "silent_windows": [
+          [
+            0,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "primary-sound",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "primary-sound",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "primary-sound",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioEnabled",
+            "value": false
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.value",
+            "value": [
+              -192,
+              -192
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.length",
+            "value": 0
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioEnabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-700",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "audio-700",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.value",
+            "value": [
+              -192,
+              -192
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "constant-zero-zero-base",
+      "directions": [
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 82,
+        "composition_name": "constant-zero-zero-base"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "4d0164dca107f2edd147103d9a8910d7b3b1d3edd5e04bccfe5e110fc061e3c2"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/constant-zero-zero-base.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [],
+        "silent_windows": [
+          [
+            0,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "primary-sound",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "primary-sound",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "primary-sound",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioEnabled",
+            "value": false
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.value",
+            "value": [
+              -192,
+              -192
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.length",
+            "value": 0
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioEnabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-700",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "audio-700",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.value",
+            "value": [
+              -192,
+              -192
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "empty-nested-group",
+      "directions": [
+        "import",
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 290,
+        "composition_name": "empty-nested-group"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "3d9b6f2afb4998a3c2fab951ba51f52a6e283c1c194b5a6fa8d4de80650d3e77"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/empty-nested-group.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [
+          [
+            1.1,
+            1.4
+          ]
+        ],
+        "silent_windows": [
+          [
+            0,
+            0.9
+          ],
+          [
+            5.1,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "precomp-audio-container",
+            "field": "inPoint",
+            "value": 0
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "startTime",
+            "value": 0
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "audioLevels.value",
+            "value": [
+              0,
+              0
+            ]
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "audioLevels.keys.length",
+            "value": 0
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-700",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "audio-700",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.value",
+            "value": [
+              -6.020599913279624,
+              -6.020599913279624
+            ]
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "sourceKind",
+            "value": "composition"
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "sourceWidth",
+            "value": 1
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "sourceHeight",
+            "value": 1
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "inPoint",
+            "value": 0
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "stretch",
+            "value": 100
+          }
+        ]
+      }
+    },
+    {
+      "id": "empty-only-group",
+      "directions": [
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 421,
+        "composition_name": "empty-only-group"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "cf55a303671afb71ee208e9df420f8e292de93ac906d8c4a009ee20db2957c4e"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/empty-only-group.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [
+          [
+            1.1,
+            1.4
+          ]
+        ],
+        "silent_windows": [
+          [
+            0,
+            0.9
+          ],
+          [
+            5.1,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "empty-no-audio",
+            "field": "inPoint",
+            "value": 0
+          },
+          {
+            "layer": "empty-no-audio",
+            "field": "outPoint",
+            "value": 2
+          },
+          {
+            "layer": "empty-no-audio",
+            "field": "startTime",
+            "value": 0
+          },
+          {
+            "layer": "empty-no-audio",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "empty-no-audio",
+            "field": "audioEnabled",
+            "value": false
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "audioLevels.value",
+            "value": [
+              -6.02059984207153,
+              -6.02059984207153
+            ]
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "audioLevels.keys.length",
+            "value": 0
+          }
+        ],
+        "export": [
+          {
+            "layer": "retained-sibling",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "audioLevels.value",
+            "value": [
+              -6.020599913279624,
+              -6.020599913279624
+            ]
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "$count",
+            "value": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "eof-tail",
+      "directions": [
+        "import",
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 212,
+        "composition_name": "eof-tail"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "db7c1a2d7729ccbcc788123fad559f7522bd99eb9ae448430bb1a9b55ebf5695"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/eof-tail.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [
+          [
+            1.1,
+            1.4
+          ],
+          [
+            4.1,
+            4.4
+          ]
+        ],
+        "silent_windows": [
+          [
+            0,
+            0.9
+          ],
+          [
+            4.6,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": [
+          "retains the audible prefix"
+        ]
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "primary-sound",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "primary-sound",
+            "field": "outPoint",
+            "value": 4.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.value",
+            "value": [
+              -6.02059984207153,
+              -6.02059984207153
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.length",
+            "value": 0
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "outPoint",
+            "value": 4.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "audio-700",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.value",
+            "value": [
+              -6.020599913279624,
+              -6.020599913279624
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "expression",
+      "directions": [
+        "import"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 461,
+        "composition_name": "expression"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": null,
+      "reference": {
+        "path": "tests/references/aep/audio/expression.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [
+          [
+            1.1,
+            1.4
+          ]
+        ],
+        "silent_windows": [
+          [
+            0,
+            0.9
+          ],
+          [
+            5.1,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [
+          "expression requires the AE environment"
+        ],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "expression-retained-sibling",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "expression-retained-sibling",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "expression-retained-sibling",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "expression-retained-sibling",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "expression-retained-sibling",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "expression-retained-sibling",
+            "field": "audioLevels.value",
+            "value": [
+              -6.02059984207153,
+              -6.02059984207153
+            ]
+          },
+          {
+            "layer": "expression-retained-sibling",
+            "field": "audioLevels.keys.length",
+            "value": 0
+          },
+          {
+            "layer": "primary-sound",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "primary-sound",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "primary-sound",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.length",
+            "value": 0
+          }
+        ],
+        "export": []
+      }
+    },
+    {
+      "id": "fractional-duration",
+      "directions": [
+        "import",
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 329,
+        "composition_name": "fractional-duration"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "4e93f744ca055758b462fe137599ef6849f135456b09537a0866854a68a0865d"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/fractional-duration.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [
+          [
+            1.1,
+            1.4
+          ]
+        ],
+        "silent_windows": [
+          [
+            0,
+            0.9
+          ],
+          [
+            5.1,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "precomp-audio-container",
+            "field": "inPoint",
+            "value": 0
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "outPoint",
+            "value": 2.00101725260417
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "startTime",
+            "value": 0
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "audioLevels.value",
+            "value": [
+              0,
+              0
+            ]
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "audioLevels.keys.length",
+            "value": 0
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "outPoint",
+            "value": 2.001
+          },
+          {
+            "layer": "audio-700",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "audio-700",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.value",
+            "value": [
+              -6.020599913279624,
+              -6.020599913279624
+            ]
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "sourceKind",
+            "value": "composition"
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "sourceWidth",
+            "value": 1
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "sourceHeight",
+            "value": 1
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "inPoint",
+            "value": 0
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "outPoint",
+            "value": 2.001
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "sourceDuration",
+            "value": 2.0416666666666665
+          }
+        ]
+      }
+    },
+    {
+      "id": "group-affine-playback",
+      "directions": [
+        "import",
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 264,
+        "composition_name": "group-affine-playback"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "d5bc0cad11a721606b5686adbc3b1c8b48034117e166051536c501d64da76b5c"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/group-affine-playback.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [
+          [
+            3.1,
+            3.4
+          ],
+          [
+            4.1,
+            4.4
+          ]
+        ],
+        "silent_windows": [
+          [
+            0,
+            2.9
+          ],
+          [
+            5.1,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "precomp-audio-container",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "outPoint",
+            "value": 5
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "startTime",
+            "value": 1
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "stretch",
+            "value": 200
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "audioLevels.value",
+            "value": [
+              0,
+              0
+            ]
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "audioLevels.keys.length",
+            "value": 0
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-700",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "audio-700",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.value",
+            "value": [
+              -6.020599913279624,
+              -6.020599913279624
+            ]
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "sourceKind",
+            "value": "composition"
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "sourceWidth",
+            "value": 1
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "sourceHeight",
+            "value": 1
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "outPoint",
+            "value": 5
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "stretch",
+            "value": 200
+          }
+        ]
+      }
+    },
+    {
+      "id": "hidden-group",
+      "directions": [
+        "import",
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 43,
+        "composition_name": "hidden-group"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "1a9ee74071265ba1778b902b08d17e75b025fd94abc7c4bda29effd8b7730ffc"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/hidden-group.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [],
+        "silent_windows": [
+          [
+            0,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "precomp-audio-container",
+            "field": "inPoint",
+            "value": 0
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "startTime",
+            "value": 0
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "audioEnabled",
+            "value": false
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "audioLevels.value",
+            "value": [
+              0,
+              0
+            ]
+          },
+          {
+            "layer": "precomp-audio-container",
+            "field": "audioLevels.keys.length",
+            "value": 0
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioEnabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-700",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "audio-700",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.value",
+            "value": [
+              -6.020599913279624,
+              -6.020599913279624
+            ]
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "sourceKind",
+            "value": "composition"
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "sourceWidth",
+            "value": 1
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "sourceHeight",
+            "value": 1
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "inPoint",
+            "value": 0
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-group-701",
+            "field": "stretch",
+            "value": 100
+          }
+        ]
+      }
+    },
+    {
+      "id": "hidden-layer",
+      "directions": [
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 30,
+        "composition_name": "hidden-layer"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "bebae94102364f40ac9ee4150c6bc9a95e24bf0bfeeed320c3c2131e90d2babd"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/hidden-layer.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [],
+        "silent_windows": [
+          [
+            0,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "primary-sound",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "primary-sound",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "primary-sound",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioEnabled",
+            "value": false
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.value",
+            "value": [
+              -6.02059984207153,
+              -6.02059984207153
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.length",
+            "value": 0
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioEnabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-700",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "audio-700",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.value",
+            "value": [
+              -6.020599913279624,
+              -6.020599913279624
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "hold-gain",
+      "directions": [
+        "import",
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 147,
+        "composition_name": "hold-gain"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "2849b26c4b2888d8b9b1e4e142a8fa9eabc24f556f7c71f33382d8802e536e5d"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/hold-gain.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [
+          [
+            1.1,
+            1.4
+          ]
+        ],
+        "silent_windows": [
+          [
+            0,
+            0.9
+          ],
+          [
+            5.1,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "primary-sound",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "primary-sound",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "primary-sound",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.length",
+            "value": 2
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.time",
+            "value": 1.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.value",
+            "value": [
+              -6.02059984207153,
+              -6.02059984207153
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.inType",
+            "value": "6614"
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.outType",
+            "value": "6614"
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.time",
+            "value": 2.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.value",
+            "value": [
+              0,
+              0
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.inType",
+            "value": "6614"
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.outType",
+            "value": "6614"
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-700",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "audio-700",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.length",
+            "value": 2
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.0.time",
+            "value": 1.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.0.value",
+            "value": [
+              -6.020599913279624,
+              -6.020599913279624
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.1.time",
+            "value": 2.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.1.value",
+            "value": [
+              0,
+              0
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.0.outType",
+            "value": "6614"
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.1.inType",
+            "value": "6614"
+          }
+        ]
+      }
+    },
+    {
+      "id": "invalid-gain-hull",
+      "directions": [
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 408,
+        "composition_name": "invalid-gain-hull"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "3caee96911ceff276c12f447a647a736c8c16e1a271d5f3de093a2a895f95680"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/invalid-gain-hull.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [
+          [
+            1.1,
+            1.4
+          ]
+        ],
+        "silent_windows": [
+          [
+            0,
+            0.9
+          ],
+          [
+            5.1,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": [
+          "gain control hull is negative"
+        ]
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "retained-sibling",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "audioLevels.value",
+            "value": [
+              -6.02059984207153,
+              -6.02059984207153
+            ]
+          },
+          {
+            "layer": "retained-sibling",
+            "field": "audioLevels.keys.length",
+            "value": 0
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-701",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-701",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-701",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-701",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "audio-701",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-701",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-701",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "audio-701",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "audio-701",
+            "field": "audioLevels.value",
+            "value": [
+              -6.020599913279624,
+              -6.020599913279624
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "linear-gain",
+      "directions": [
+        "import",
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 160,
+        "composition_name": "linear-gain"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "b7f5a667b4cb4891ad0587498e2a90ecf52bf1ab615ca9ac2077c0211c24a060"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/linear-gain.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [
+          [
+            1.1,
+            1.4
+          ]
+        ],
+        "silent_windows": [
+          [
+            0,
+            0.9
+          ],
+          [
+            5.1,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": [
+          "continuous gain keys are approximated"
+        ]
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "primary-sound",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "primary-sound",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "primary-sound",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.length",
+            "value": 2
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.time",
+            "value": 1.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.value",
+            "value": [
+              -6.02059984207153,
+              -6.02059984207153
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.inType",
+            "value": "6612"
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.outType",
+            "value": "6612"
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.time",
+            "value": 2.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.value",
+            "value": [
+              0,
+              0
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.inType",
+            "value": "6612"
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.outType",
+            "value": "6612"
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-700",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "audio-700",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.length",
+            "value": 2
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.0.time",
+            "value": 1.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.0.value",
+            "value": [
+              -6.020599913279624,
+              -6.020599913279624
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.1.time",
+            "value": 2.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.1.value",
+            "value": [
+              0,
+              0
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.0.outType",
+            "value": "6612"
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.1.inType",
+            "value": "6612"
+          }
+        ]
+      }
+    },
+    {
+      "id": "mov-audio-only",
+      "directions": [
+        "import",
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 225,
+        "composition_name": "mov-audio-only"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "0d49598d6fa29b8451c3f7a4bdc6cf7b408015ee7649c07508a51c5f936cc675"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/mov-audio-only.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [
+          [
+            1.1,
+            1.4
+          ]
+        ],
+        "silent_windows": [
+          [
+            0,
+            0.9
+          ],
+          [
+            5.1,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "primary-sound",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "primary-sound",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "primary-sound",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.value",
+            "value": [
+              -6.02059984207153,
+              -6.02059984207153
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.length",
+            "value": 0
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-700",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "audio-700",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.value",
+            "value": [
+              -6.020599913279624,
+              -6.020599913279624
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "native-muted",
+      "directions": [
+        "import"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 17,
+        "composition_name": "native-muted"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": null,
+      "reference": {
+        "path": "tests/references/aep/audio/native-muted.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [],
+        "silent_windows": [
+          [
+            0,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "primary-sound",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "primary-sound",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "primary-sound",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioEnabled",
+            "value": false
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.value",
+            "value": [
+              -6.02059984207153,
+              -6.02059984207153
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.length",
+            "value": 0
+          }
+        ],
+        "export": []
+      }
+    },
+    {
+      "id": "nonlinear-remap",
+      "directions": [
+        "import",
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 382,
+        "composition_name": "nonlinear-remap"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "b78ea20b306de85103ba7d0e962113099e7b17a249a9f050bed0e1fe73812171"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/nonlinear-remap.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [
+          [
+            1.1,
+            1.4
+          ]
+        ],
+        "silent_windows": [
+          [
+            0,
+            0.9
+          ],
+          [
+            5.1,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "primary-sound",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "primary-sound",
+            "field": "outPoint",
+            "value": 2
+          },
+          {
+            "layer": "primary-sound",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.value",
+            "value": [
+              -6.02059984207153,
+              -6.02059984207153
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.length",
+            "value": 0
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "outPoint",
+            "value": 2
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.value",
+            "value": [
+              -6.020599913279624,
+              -6.020599913279624
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "timeRemapEnabled",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "timeRemap.keys.length",
+            "value": 4
+          }
+        ]
+      }
+    },
+    {
+      "id": "source-switch",
+      "directions": [
+        "import",
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 368,
+        "composition_name": "source-switch"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "2fe1c3e5116bc0fa9518769ca38dd482ddd737bbc3094c1199ac2c0efe227d8e"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/source-switch.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [
+          [
+            2.1,
+            2.4
+          ],
+          [
+            3.1,
+            3.4
+          ]
+        ],
+        "silent_windows": [
+          [
+            0,
+            1.9
+          ],
+          [
+            4.1,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "switch-other-second",
+            "field": "inPoint",
+            "value": 3
+          },
+          {
+            "layer": "switch-other-second",
+            "field": "outPoint",
+            "value": 4
+          },
+          {
+            "layer": "switch-other-second",
+            "field": "startTime",
+            "value": 1.5
+          },
+          {
+            "layer": "switch-other-second",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "switch-other-second",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "switch-other-second",
+            "field": "audioLevels.keys.length",
+            "value": 2
+          },
+          {
+            "layer": "switch-other-second",
+            "field": "audioLevels.keys.0.time",
+            "value": 2
+          },
+          {
+            "layer": "switch-other-second",
+            "field": "audioLevels.keys.0.value",
+            "value": [
+              -6.02059984207153,
+              -6.02059984207153
+            ]
+          },
+          {
+            "layer": "switch-other-second",
+            "field": "audioLevels.keys.0.inType",
+            "value": "6614"
+          },
+          {
+            "layer": "switch-other-second",
+            "field": "audioLevels.keys.0.outType",
+            "value": "6614"
+          },
+          {
+            "layer": "switch-other-second",
+            "field": "audioLevels.keys.1.time",
+            "value": 3
+          },
+          {
+            "layer": "switch-other-second",
+            "field": "audioLevels.keys.1.value",
+            "value": [
+              0,
+              0
+            ]
+          },
+          {
+            "layer": "switch-other-second",
+            "field": "audioLevels.keys.1.inType",
+            "value": "6614"
+          },
+          {
+            "layer": "switch-other-second",
+            "field": "audioLevels.keys.1.outType",
+            "value": "6614"
+          },
+          {
+            "layer": "switch-sound-first",
+            "field": "inPoint",
+            "value": 2
+          },
+          {
+            "layer": "switch-sound-first",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "switch-sound-first",
+            "field": "startTime",
+            "value": 1.5
+          },
+          {
+            "layer": "switch-sound-first",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "switch-sound-first",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "switch-sound-first",
+            "field": "audioLevels.keys.length",
+            "value": 2
+          },
+          {
+            "layer": "switch-sound-first",
+            "field": "audioLevels.keys.0.time",
+            "value": 2
+          },
+          {
+            "layer": "switch-sound-first",
+            "field": "audioLevels.keys.0.value",
+            "value": [
+              -6.02059984207153,
+              -6.02059984207153
+            ]
+          },
+          {
+            "layer": "switch-sound-first",
+            "field": "audioLevels.keys.0.inType",
+            "value": "6614"
+          },
+          {
+            "layer": "switch-sound-first",
+            "field": "audioLevels.keys.0.outType",
+            "value": "6614"
+          },
+          {
+            "layer": "switch-sound-first",
+            "field": "audioLevels.keys.1.time",
+            "value": 3
+          },
+          {
+            "layer": "switch-sound-first",
+            "field": "audioLevels.keys.1.value",
+            "value": [
+              0,
+              0
+            ]
+          },
+          {
+            "layer": "switch-sound-first",
+            "field": "audioLevels.keys.1.inType",
+            "value": "6614"
+          },
+          {
+            "layer": "switch-sound-first",
+            "field": "audioLevels.keys.1.outType",
+            "value": "6614"
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 2
+          },
+          {
+            "layer": "audio-700",
+            "field": "$all.inPoint",
+            "value": [
+              2,
+              3
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "$all.outPoint",
+            "value": [
+              3,
+              4
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "$all.startTime",
+            "value": [
+              1.5,
+              1.5
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "$all.stretch",
+            "value": [
+              100,
+              100
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "$all.enabled",
+            "value": [
+              false,
+              false
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "$all.audioEnabled",
+            "value": [
+              true,
+              true
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "$all.audioLevels.keys.0.time",
+            "value": [
+              2,
+              2
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "$all.audioLevels.keys.1.time",
+            "value": [
+              3,
+              3
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "$all.audioLevels.keys.0.value",
+            "value": [
+              [
+                -6.020599913279624,
+                -6.020599913279624
+              ],
+              [
+                -6.020599913279624,
+                -6.020599913279624
+              ]
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "$all.audioLevels.keys.1.value",
+            "value": [
+              [
+                0,
+                0
+              ],
+              [
+                0,
+                0
+              ]
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "$all.audioLevels.keys.0.outType",
+            "value": [
+              "6614",
+              "6614"
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "$all.audioLevels.keys.1.inType",
+            "value": [
+              "6614",
+              "6614"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "static-zero",
+      "directions": [
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 69,
+        "composition_name": "static-zero"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "918f7d591e605635699826a80097907afc03124d73d015807260256cde0f8ff9"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/static-zero.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [],
+        "silent_windows": [
+          [
+            0,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "primary-sound",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "primary-sound",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "primary-sound",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioEnabled",
+            "value": false
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.value",
+            "value": [
+              -192,
+              -192
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.length",
+            "value": 0
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioEnabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-700",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "audio-700",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.value",
+            "value": [
+              -192,
+              -192
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "stereo-levels",
+      "directions": [
+        "import"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 447,
+        "composition_name": "stereo-levels"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": null,
+      "reference": {
+        "path": "tests/references/aep/audio/stereo-levels.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [
+          [
+            1.1,
+            1.4
+          ]
+        ],
+        "silent_windows": [
+          [
+            0,
+            0.9
+          ],
+          [
+            5.1,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [
+          "quieter channel"
+        ],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "stereo-retained-sibling",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "stereo-retained-sibling",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "stereo-retained-sibling",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "stereo-retained-sibling",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "stereo-retained-sibling",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "stereo-retained-sibling",
+            "field": "audioLevels.value",
+            "value": [
+              -6.02059984207153,
+              -6.02059984207153
+            ]
+          },
+          {
+            "layer": "stereo-retained-sibling",
+            "field": "audioLevels.keys.length",
+            "value": 0
+          },
+          {
+            "layer": "primary-sound",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "primary-sound",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "primary-sound",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.length",
+            "value": 2
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.time",
+            "value": 1.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.value",
+            "value": [
+              -3,
+              -12
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.inType",
+            "value": "6612"
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.outType",
+            "value": "6612"
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.time",
+            "value": 2.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.value",
+            "value": [
+              -12,
+              -3
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.inType",
+            "value": "6612"
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.outType",
+            "value": "6612"
+          }
+        ],
+        "export": []
+      }
+    },
+    {
+      "id": "trim-offset",
+      "directions": [
+        "import",
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 186,
+        "composition_name": "trim-offset"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "a053e9f702b580b5df70177eddfa37ac235d0f61af007ed123111ff6ef91d18b"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/trim-offset.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [
+          [
+            1.1,
+            1.4
+          ]
+        ],
+        "silent_windows": [
+          [
+            0,
+            0.9
+          ],
+          [
+            5.1,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "primary-sound",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "primary-sound",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "primary-sound",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.value",
+            "value": [
+              -6.02059984207153,
+              -6.02059984207153
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.length",
+            "value": 0
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-700",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "audio-700",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.value",
+            "value": [
+              -6.020599913279624,
+              -6.020599913279624
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "wave-static",
+      "directions": [
+        "import",
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 4,
+        "composition_name": "wave-static"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "9795a991afab9945747811f4ea677f0cc84606caf8b377e35041826d5df2cbb2"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/wave-static.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [
+          [
+            1.1,
+            1.4
+          ]
+        ],
+        "silent_windows": [
+          [
+            0,
+            0.9
+          ],
+          [
+            5.1,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "primary-sound",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "primary-sound",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "primary-sound",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.value",
+            "value": [
+              -6.02059984207153,
+              -6.02059984207153
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.length",
+            "value": 0
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-700",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "audio-700",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.value",
+            "value": [
+              -6.020599913279624,
+              -6.020599913279624
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "zero-base-unmute",
+      "directions": [
+        "import",
+        "export"
+      ],
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 134,
+        "composition_name": "zero-base-unmute"
+      },
+      "primary": [
+        {
+          "path": "sound.wav",
+          "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+        },
+        {
+          "path": "other.wav",
+          "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+        },
+        {
+          "path": "movie.mov",
+          "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+        }
+      ],
+      "fx_input": {
+        "document_sha256": "6ac3f8a8683b56e15c2c9bcca34d75af55027862c27f3b1d03be2a1e8e706659"
+      },
+      "reference": {
+        "path": "tests/references/aep/audio/zero-base-unmute.mp4"
+      },
+      "reference_expectation": {
+        "audible_windows": [
+          [
+            2.6,
+            2.9
+          ]
+        ],
+        "silent_windows": [
+          [
+            0,
+            2.4
+          ],
+          [
+            3.1,
+            6
+          ]
+        ],
+        "minimum_rms": 0.005,
+        "maximum_silent_rms": 0.0001
+      },
+      "expected_diagnostics": {
+        "import": [],
+        "export": []
+      },
+      "native_expected": {
+        "import": [
+          {
+            "layer": "primary-sound",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "primary-sound",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "primary-sound",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.length",
+            "value": 2
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.time",
+            "value": 1.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.value",
+            "value": [
+              -192,
+              -192
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.inType",
+            "value": "6614"
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.0.outType",
+            "value": "6614"
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.time",
+            "value": 2.5
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.value",
+            "value": [
+              0,
+              0
+            ]
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.inType",
+            "value": "6614"
+          },
+          {
+            "layer": "primary-sound",
+            "field": "audioLevels.keys.1.outType",
+            "value": "6614"
+          }
+        ],
+        "export": [
+          {
+            "layer": "audio-700",
+            "field": "$count",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "hasAudio",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "enabled",
+            "value": false
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioEnabled",
+            "value": true
+          },
+          {
+            "layer": "audio-700",
+            "field": "inPoint",
+            "value": 1
+          },
+          {
+            "layer": "audio-700",
+            "field": "outPoint",
+            "value": 3
+          },
+          {
+            "layer": "audio-700",
+            "field": "stretch",
+            "value": 100
+          },
+          {
+            "layer": "audio-700",
+            "field": "startTime",
+            "value": 0.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.length",
+            "value": 2
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.0.time",
+            "value": 1.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.0.value",
+            "value": [
+              -192,
+              -192
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.1.time",
+            "value": 2.5
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.1.value",
+            "value": [
+              0,
+              0
+            ]
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.0.outType",
+            "value": "6614"
+          },
+          {
+            "layer": "audio-700",
+            "field": "audioLevels.keys.1.inType",
+            "value": "6614"
+          }
+        ]
+      }
+    }
+  ]
+}

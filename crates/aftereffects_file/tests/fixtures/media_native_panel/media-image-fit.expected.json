@@ -1,0 +1,21 @@
+{
+  "status": "AUTHORING_REQUEST_UNRUN_UNMEASURED",
+  "caseId": "fx-export-media-image-fit",
+  "assets": [
+    "red"
+  ],
+  "layers": [
+    "Red Cover Crop"
+  ],
+  "maskCount": 1,
+  "opacityKeys": [
+    [
+      0,
+      1
+    ],
+    [
+      1,
+      0.35
+    ]
+  ]
+}

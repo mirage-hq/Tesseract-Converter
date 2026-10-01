@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "scope": "Native reference publication only; not conversion passes",
+  "references": [
+    {
+      "caseId": "aep-export-repairs-native-controls-c1",
+      "compositionId": 1,
+      "compositionName": "export-repair-compound-static-paths",
+      "sourceSha256": "f62f72bf6ec281a63be63ec22b35e7552ee1ef48e4b8db97bb19773f372450a3",
+      "width": 320,
+      "height": 180,
+      "outputFps": 30,
+      "frames": 60,
+      "durationSeconds": 2,
+      "nativeSourceFps": 24,
+      "adobeVersion": "26.5x89",
+      "renderer": "aerender, fresh process without -reuse",
+      "renderRangeNativeFrames": [
+        0,
+        47
+      ],
+      "renderSettings": "Use this frame rate: 30; Quality: Best; Resolution: Full",
+      "outputModule": "H.264 - Match Render Settings - 40 Mbps",
+      "fullDecode": true,
+      "inspectedFrames": [
+        0,
+        6,
+        28,
+        33,
+        34,
+        50
+      ],
+      "inspectionNote": "Nonzero orange and even-odd cyan holes visible; lime open angular and curved contours share static Trim/Stroke scope.",
+      "freshExportComparison": "checkpoint v1 RGB pass; see export-checkpoint-v1.json for limitations",
+      "alphaFidelity": "unverified",
+      "audioFidelity": "not applicable",
+      "path": "tests/references/aep/special/export-repairs/aep-export-repairs-native-controls-c1.mp4"
+    },
+    {
+      "caseId": "aep-export-repairs-native-controls-c17",
+      "compositionId": 17,
+      "compositionName": "export-repair-scale-hold-cubic",
+      "sourceSha256": "f62f72bf6ec281a63be63ec22b35e7552ee1ef48e4b8db97bb19773f372450a3",
+      "width": 320,
+      "height": 180,
+      "outputFps": 30,
+      "frames": 60,
+      "durationSeconds": 2,
+      "nativeSourceFps": 24,
+      "adobeVersion": "26.5x89",
+      "renderer": "aerender, fresh process without -reuse",
+      "renderRangeNativeFrames": [
+        0,
+        47
+      ],
+      "renderSettings": "Use this frame rate: 30; Quality: Best; Resolution: Full",
+      "outputModule": "H.264 - Match Render Settings - 40 Mbps",
+      "fullDecode": true,
+      "inspectedFrames": [
+        0,
+        6,
+        28,
+        33,
+        34,
+        50
+      ],
+      "inspectionNote": "Red asymmetric solid shows discrete Hold scale transitions; violet outlined path shows continuous anisotropic cubic scale.",
+      "freshExportComparison": "checkpoint v1 RGB failure at frame 33; see export-checkpoint-v1.json",
+      "alphaFidelity": "unverified",
+      "audioFidelity": "not applicable",
+      "path": "tests/references/aep/special/export-repairs/aep-export-repairs-native-controls-c17.mp4"
+    },
+    {
+      "caseId": "aep-export-repairs-native-controls-c34",
+      "compositionId": 34,
+      "compositionName": "export-repair-independent-axis-union",
+      "sourceSha256": "f62f72bf6ec281a63be63ec22b35e7552ee1ef48e4b8db97bb19773f372450a3",
+      "width": 320,
+      "height": 180,
+      "outputFps": 30,
+      "frames": 60,
+      "durationSeconds": 2,
+      "nativeSourceFps": 24,
+      "adobeVersion": "26.5x89",
+      "renderer": "aerender, fresh process without -reuse",
+      "renderRangeNativeFrames": [
+        0,
+        47
+      ],
+      "renderSettings": "Use this frame rate: 30; Quality: Best; Resolution: Full",
+      "outputModule": "H.264 - Match Render Settings - 40 Mbps",
+      "fullDecode": true,
+      "inspectedFrames": [
+        0,
+        6,
+        28,
+        33,
+        34,
+        50
+      ],
+      "inspectionNote": "Gold/blue asymmetric shape moves on independent axes while nonuniform scale changes; edge crossings are visible.",
+      "freshExportComparison": "checkpoint v1 RGB pass; see export-checkpoint-v1.json for limitations",
+      "alphaFidelity": "unverified",
+      "audioFidelity": "not applicable",
+      "path": "tests/references/aep/special/export-repairs/aep-export-repairs-native-controls-c34.mp4"
+    }
+  ]
+}

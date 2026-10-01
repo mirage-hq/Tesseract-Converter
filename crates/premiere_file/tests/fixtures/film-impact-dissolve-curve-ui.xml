@@ -1,0 +1,11 @@
+<ArbVideoComponentParam ObjectID="2690" ClassID="313e54d4-6903-49ad-b0bf-8262cdd10f4e" Version="3">
+		<Node Version="1">
+			<Properties Version="1">
+				<ECP.Custom.Expanded>true</ECP.Custom.Expanded>
+			</Properties>
+		</Node>
+		<Name>Curve Graph</Name>
+		<ParameterControlType>9</ParameterControlType>
+		<ParameterID>8022</ParameterID>
+		<StartKeyframePosition>-91445760000000000</StartKeyframePosition>
+	</ArbVideoComponentParam>

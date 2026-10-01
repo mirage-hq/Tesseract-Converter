@@ -1,0 +1,654 @@
+{
+  "schema_version": 1,
+  "scope": "One independently authored vector case; actual Adobe readback and native RGB evidence, not exhaustive coverage or import fidelity.",
+  "cases": [
+    {
+      "case": "vector-rect-size",
+      "input": {
+        "path": "crates/aftereffects_file/tests/fixtures/vectors/fx_export_panel/vector-rect-size.fx.json",
+        "sha256": "8f04226b4f33ead78ec293ffdb6b8c3b3816b7bcb341283eaaa42a6025bd7a33"
+      },
+      "generated_aep": {
+        "sha256": "0ad8a0657b71bbf8c684114c35a0cdcb2d4b35c7f39f6892319d93f0b31189cc",
+        "bytes": 63012
+      },
+      "oracle_sha256": "5349e159fd4caf4cf122a1fa92da25d28d102973dca3203bc71b0c7725e36d16",
+      "inspector_sha256": "6a847d71b9e4345fb751e197ea61dcd2f5a5b83bcd0e1dfd5af5739568d6aaab",
+      "source_sha256": "ba0abcd0916165f6a62db0103d947362e75a27f37c5dd07e80047e4bf6f81b0c",
+      "source_path": "crates/aftereffects_file/tests/fixtures/vectors/fx_export_panel/vector-rect-size.aep",
+      "source_readback": {
+        "case": "vector-rect-size",
+        "mode": "author",
+        "adobeVersion": "26.5x89",
+        "adobeBuild": 89,
+        "completed": true,
+        "composition": {
+          "id": 1,
+          "name": "vector-rect-size",
+          "width": 320,
+          "height": 180,
+          "duration": 2,
+          "frameRate": 24,
+          "pixelAspect": 1,
+          "displayStartTime": 0,
+          "workAreaStart": 0,
+          "workAreaDuration": 2,
+          "layers": 1
+        },
+        "layer": {
+          "name": "Edited Rectangle",
+          "inPoint": 0,
+          "outPoint": 2,
+          "startTime": 0,
+          "stretch": 100,
+          "anchor": [
+            0,
+            0,
+            0
+          ],
+          "position": [
+            100,
+            70,
+            0
+          ],
+          "scale": [
+            100,
+            100,
+            100
+          ],
+          "opacity": 100
+        },
+        "controls": [
+          {
+            "name": "ADBE Vector Rect Size",
+            "value": [
+              80,
+              40
+            ],
+            "keys": [
+              {
+                "time": 0,
+                "value": [
+                  80,
+                  40
+                ],
+                "inCode": "6612",
+                "outCode": "6612"
+              },
+              {
+                "time": 1,
+                "value": [
+                  150,
+                  70
+                ],
+                "inCode": "6612",
+                "outCode": "6612"
+              }
+            ],
+            "samples": [
+              {
+                "time": 0,
+                "value": [
+                  80,
+                  40
+                ]
+              },
+              {
+                "time": 0.5,
+                "value": [
+                  115,
+                  55
+                ]
+              },
+              {
+                "time": 0.96666666666667,
+                "value": [
+                  147.667236328125,
+                  69.000244140625
+                ]
+              },
+              {
+                "time": 1,
+                "value": [
+                  150,
+                  70
+                ]
+              },
+              {
+                "time": 1.03333333333333,
+                "value": [
+                  150,
+                  70
+                ]
+              },
+              {
+                "time": 1.96666666666667,
+                "value": [
+                  150,
+                  70
+                ]
+              }
+            ]
+          },
+          {
+            "name": "ADBE Vector Rect Position",
+            "value": [
+              47,
+              17
+            ],
+            "keys": [
+              {
+                "time": 0,
+                "value": [
+                  47,
+                  17
+                ],
+                "inCode": "6612",
+                "outCode": "6612"
+              },
+              {
+                "time": 1,
+                "value": [
+                  82,
+                  32
+                ],
+                "inCode": "6612",
+                "outCode": "6612"
+              }
+            ],
+            "samples": [
+              {
+                "time": 0,
+                "value": [
+                  47,
+                  17
+                ]
+              },
+              {
+                "time": 0.5,
+                "value": [
+                  64.5002720738355,
+                  24.5001166030723
+                ]
+              },
+              {
+                "time": 0.96666666666667,
+                "value": [
+                  80.8334445606156,
+                  31.5000476688353
+                ]
+              },
+              {
+                "time": 1,
+                "value": [
+                  82,
+                  32
+                ]
+              },
+              {
+                "time": 1.03333333333333,
+                "value": [
+                  82,
+                  32
+                ]
+              },
+              {
+                "time": 1.96666666666667,
+                "value": [
+                  82,
+                  32
+                ]
+              }
+            ]
+          },
+          {
+            "name": "ADBE Vector Rect Roundness",
+            "value": [
+              2
+            ],
+            "keys": [],
+            "samples": [
+              {
+                "time": 0,
+                "value": [
+                  2
+                ]
+              },
+              {
+                "time": 0.5,
+                "value": [
+                  2
+                ]
+              },
+              {
+                "time": 0.96666666666667,
+                "value": [
+                  2
+                ]
+              },
+              {
+                "time": 1,
+                "value": [
+                  2
+                ]
+              },
+              {
+                "time": 1.03333333333333,
+                "value": [
+                  2
+                ]
+              },
+              {
+                "time": 1.96666666666667,
+                "value": [
+                  2
+                ]
+              }
+            ]
+          },
+          {
+            "name": "ADBE Vector Fill Color",
+            "value": [
+              0.20000000298023,
+              0.40000000596046,
+              0.60000002384186,
+              1
+            ],
+            "keys": [],
+            "samples": [
+              {
+                "time": 0,
+                "value": [
+                  0.20000000298023,
+                  0.40000000596046,
+                  0.60000002384186,
+                  1
+                ]
+              },
+              {
+                "time": 0.5,
+                "value": [
+                  0.20000000298023,
+                  0.40000000596046,
+                  0.60000002384186,
+                  1
+                ]
+              },
+              {
+                "time": 0.96666666666667,
+                "value": [
+                  0.20000000298023,
+                  0.40000000596046,
+                  0.60000002384186,
+                  1
+                ]
+              },
+              {
+                "time": 1,
+                "value": [
+                  0.20000000298023,
+                  0.40000000596046,
+                  0.60000002384186,
+                  1
+                ]
+              },
+              {
+                "time": 1.03333333333333,
+                "value": [
+                  0.20000000298023,
+                  0.40000000596046,
+                  0.60000002384186,
+                  1
+                ]
+              },
+              {
+                "time": 1.96666666666667,
+                "value": [
+                  0.20000000298023,
+                  0.40000000596046,
+                  0.60000002384186,
+                  1
+                ]
+              }
+            ]
+          }
+        ],
+        "project": {
+          "bitsPerChannel": 8,
+          "workingSpace": "None",
+          "linearBlending": false
+        },
+        "ownedProjectClosed": true,
+        "sourceBasename": "vector-rect-size.aep"
+      },
+      "export_readback": {
+        "case": "vector-rect-size",
+        "mode": "inspect",
+        "adobeVersion": "26.5x89",
+        "adobeBuild": 89,
+        "completed": true,
+        "composition": {
+          "id": 1,
+          "name": "vector-rect-size",
+          "width": 320,
+          "height": 180,
+          "duration": 2,
+          "frameRate": 24,
+          "pixelAspect": 1,
+          "displayStartTime": 0,
+          "workAreaStart": 0,
+          "workAreaDuration": 2,
+          "layers": 1
+        },
+        "layer": {
+          "name": "Edited Rectangle",
+          "inPoint": 0,
+          "outPoint": 2,
+          "startTime": 0,
+          "stretch": 100,
+          "anchor": [
+            0,
+            0,
+            0
+          ],
+          "position": [
+            100,
+            70,
+            0
+          ],
+          "scale": [
+            100,
+            100,
+            100
+          ],
+          "opacity": 100
+        },
+        "controls": [
+          {
+            "name": "ADBE Vector Rect Size",
+            "value": [
+              80,
+              40
+            ],
+            "keys": [
+              {
+                "time": 0,
+                "value": [
+                  80,
+                  40
+                ],
+                "inCode": "6612",
+                "outCode": "6612"
+              },
+              {
+                "time": 1,
+                "value": [
+                  150,
+                  70
+                ],
+                "inCode": "6612",
+                "outCode": "6612"
+              }
+            ],
+            "samples": [
+              {
+                "time": 0,
+                "value": [
+                  80,
+                  40
+                ]
+              },
+              {
+                "time": 0.5,
+                "value": [
+                  115,
+                  55
+                ]
+              },
+              {
+                "time": 0.96666666666667,
+                "value": [
+                  147.667236328125,
+                  69.000244140625
+                ]
+              },
+              {
+                "time": 1,
+                "value": [
+                  150,
+                  70
+                ]
+              },
+              {
+                "time": 1.03333333333333,
+                "value": [
+                  150,
+                  70
+                ]
+              },
+              {
+                "time": 1.96666666666667,
+                "value": [
+                  150,
+                  70
+                ]
+              }
+            ]
+          },
+          {
+            "name": "ADBE Vector Rect Position",
+            "value": [
+              47,
+              17
+            ],
+            "keys": [
+              {
+                "time": 0,
+                "value": [
+                  47,
+                  17
+                ],
+                "inCode": "6612",
+                "outCode": "6612"
+              },
+              {
+                "time": 1,
+                "value": [
+                  82,
+                  32
+                ],
+                "inCode": "6612",
+                "outCode": "6612"
+              }
+            ],
+            "samples": [
+              {
+                "time": 0,
+                "value": [
+                  47,
+                  17
+                ]
+              },
+              {
+                "time": 0.5,
+                "value": [
+                  64.5002720738355,
+                  24.5001166030723
+                ]
+              },
+              {
+                "time": 0.96666666666667,
+                "value": [
+                  80.8334445606156,
+                  31.5000476688353
+                ]
+              },
+              {
+                "time": 1,
+                "value": [
+                  82,
+                  32
+                ]
+              },
+              {
+                "time": 1.03333333333333,
+                "value": [
+                  82,
+                  32
+                ]
+              },
+              {
+                "time": 1.96666666666667,
+                "value": [
+                  82,
+                  32
+                ]
+              }
+            ]
+          },
+          {
+            "name": "ADBE Vector Rect Roundness",
+            "value": [
+              2
+            ],
+            "keys": [],
+            "samples": [
+              {
+                "time": 0,
+                "value": [
+                  2
+                ]
+              },
+              {
+                "time": 0.5,
+                "value": [
+                  2
+                ]
+              },
+              {
+                "time": 0.96666666666667,
+                "value": [
+                  2
+                ]
+              },
+              {
+                "time": 1,
+                "value": [
+                  2
+                ]
+              },
+              {
+                "time": 1.03333333333333,
+                "value": [
+                  2
+                ]
+              },
+              {
+                "time": 1.96666666666667,
+                "value": [
+                  2
+                ]
+              }
+            ]
+          },
+          {
+            "name": "ADBE Vector Fill Color",
+            "value": [
+              0.2,
+              0.4,
+              0.6,
+              1
+            ],
+            "keys": [],
+            "samples": [
+              {
+                "time": 0,
+                "value": [
+                  0.2,
+                  0.4,
+                  0.6,
+                  1
+                ]
+              },
+              {
+                "time": 0.5,
+                "value": [
+                  0.2,
+                  0.4,
+                  0.6,
+                  1
+                ]
+              },
+              {
+                "time": 0.96666666666667,
+                "value": [
+                  0.2,
+                  0.4,
+                  0.6,
+                  1
+                ]
+              },
+              {
+                "time": 1,
+                "value": [
+                  0.2,
+                  0.4,
+                  0.6,
+                  1
+                ]
+              },
+              {
+                "time": 1.03333333333333,
+                "value": [
+                  0.2,
+                  0.4,
+                  0.6,
+                  1
+                ]
+              },
+              {
+                "time": 1.96666666666667,
+                "value": [
+                  0.2,
+                  0.4,
+                  0.6,
+                  1
+                ]
+              }
+            ]
+          }
+        ],
+        "project": {
+          "bitsPerChannel": 8,
+          "workingSpace": "None",
+          "linearBlending": false
+        },
+        "ownedProjectClosed": true,
+        "sourceBasename": "vector-rect-size.aep"
+      },
+      "render_comparison": {
+        "method": "fully_decoded_rgb24_framemd5",
+        "frames": 60,
+        "exactly_equal_frames": 60,
+        "alpha": "unverified",
+        "audio": "not present",
+        "critical_indices": [
+          0,
+          15,
+          29,
+          30,
+          31,
+          59
+        ]
+      },
+      "reference": {
+        "path": "tests/references/aep/main/crates/aftereffects_file/tests/fixtures/vectors/fx_export_panel/vector-rect-size__composition_1.mp4"
+      },
+      "export_video": {
+        "sha256": "02c19509fe102407ae91df13ad867dca556f0a8461d6351452ff403a112462b4",
+        "bytes": 18195
+      },
+      "sampling_policy": "Compare export valueAtTime to independently authored Adobe source, not ideal interpolation. Both native files exhibit identical internal sampling deviations up to 0.000570px from ideal Linear interpolation; keys and Linear interpolation codes agree. No render threshold was introduced or weakened."
+    }
+  ]
+}

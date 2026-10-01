@@ -1,0 +1,44 @@
+{
+  "upstream": "https://github.com/forticheprod/py-aep",
+  "revision": "e12a451c35bacd3f34a080090265f9370e66162b",
+  "license": "MIT (see ../LICENSE)",
+  "evidence": "Native AEP and upstream AE JSON projection; no Adobe render or UI inspection performed here.",
+  "files": [
+    {
+      "path": "blendingMode.aep",
+      "upstream_path": "samples/models/layer/blendingMode.aep",
+      "sha256": "70deef0d63823b70dff651d33200d557f6f558eb9e3e9c06e2cf5a06cdcf18d5",
+      "size": 181329
+    },
+    {
+      "path": "blendingMode.json.gz",
+      "upstream_path": "samples/models/layer/blendingMode.json",
+      "sha256": "b027833a8f41d3a155bd2d8da8c7786326580565a1b6f824471a11d8c43c6b66",
+      "size": 736357
+    },
+    {
+      "path": "trackMatteType.aep",
+      "upstream_path": "samples/models/layer/trackMatteType.aep",
+      "sha256": "4a6580962e57b8d523a4bbf90afd7cdf1c942ae66ade4274ae1111385830c1c4",
+      "size": 148921
+    },
+    {
+      "path": "trackMatteType.json.gz",
+      "upstream_path": "samples/models/layer/trackMatteType.json",
+      "sha256": "4876fc4af033798f412180992453bf4d697477bc2a6de49aea4dba8b0b27f2d3",
+      "size": 978085
+    },
+    {
+      "path": "shutterAngle.aep",
+      "upstream_path": "samples/models/composition/shutterAngle.aep",
+      "sha256": "89fa65dd9d4d687f43cf28480d7d9e6e6a90d77e46966bdaa98823da71988da9",
+      "size": 98719
+    },
+    {
+      "path": "shutterAngle.json",
+      "upstream_path": "samples/models/composition/shutterAngle.json",
+      "sha256": "e3eb4ae9aee5da9766918ab687c074212e34d7a0db6d518bc38f7a08ff5b1843",
+      "size": 4416
+    }
+  ]
+}

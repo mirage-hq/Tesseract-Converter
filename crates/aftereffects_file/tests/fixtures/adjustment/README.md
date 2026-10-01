@@ -1,0 +1,122 @@
+# Native Adjustment Layer reference panel
+
+`author_adjustment_cases.jsx` is a source-only, independent Adobe After Effects
+authoring recipe for the approved ten-case Adjustment Layer panel. It does not
+invoke the converter, render video, publish Assets, register cases, or claim any
+import/export or visual proof.
+
+The parent runner must create and own a new empty unsaved AE project, inject an
+absolute `ADJUSTMENT_SOURCE_PATH` whose file does not exist, and invoke
+`runAudioCase(project)` through the established
+`scripts/aep_audio_adobe.py` owned-session wrapper. The compatibility function
+name belongs to that wrapper; this fixture contains no audio. The script refuses
+an existing destination and performs its sole `project.save()` only after all
+cases and the complete native control readback succeed.
+
+## Authored panel
+
+Every target is 320×180, two seconds, square-pixel, and 24fps (48 native source
+frames). Visual controls use deliberately asymmetric solid dimensions,
+placements, and rotations. Every root has a small upper sentinel above the
+adjustment content so scope/order failures remain visible.
+
+| Target | Native discrimination |
+|---|---|
+| `adjustment-scope` | Gaussian Blur affects two lower asymmetric solids but not the upper sentinel. |
+| `adjustment-stack-order` | Two adjustment owners apply nonlinear Levels gamma and Gaussian Blur in a fixed stack order. The pair is intentionally noncommutative. |
+| `adjustment-effect-order` | One owner has Gaussian Blur followed by nonlinear Levels gamma in Effect Parade order, also noncommutative. |
+| `adjustment-keys` | Owner starts at 0.25s; Blur and owner Opacity have distinct linear key times/values for clock rebasing. |
+| `adjustment-disabled` | A disabled adjustment with an effect and an enabled empty adjustment preserve surrounding siblings. |
+| `adjustment-span` | Levels adjustment is active only from 0.5s through 1.5s. |
+| `adjustment-nested` | Links `adjustment-nested__support`; its local adjustment cannot affect the root's outer sibling. |
+| `adjustment-masks` | Static asymmetric five-point mask with explicit opacity, feather, expansion, mode, and polarity. Native Mask Path animation remains out of scope. |
+| `adjustment-matte` | Adjustment uses an independent asymmetric alpha provider through native `setTrackMatte`, with inverted-alpha polarity and provider identity/visibility read back. |
+| `adjustment-parent` | A transformed null parents a masked asymmetric adjustment gate; the lower image layers are not parented. |
+
+`adjustment-nested__support` is the only supporting composition and is explicitly
+linked in `supportRelations` to the consuming target composition and occurrence
+layer IDs. The source therefore has exactly ten target compositions plus one
+supporting composition.
+
+## Returned readback
+
+The function returns a plain JSON-safe object using schema
+`aftereffects-adjustment-native-authoring-readback/v1`. It records:
+
+- all target/support composition IDs, duration, source FPS, 48-frame count,
+  canvas, work area, and support relation;
+- every layer's ID, stack index, timing, source identity/dimensions, visibility
+  and adjustment/guide/3D/collapse/matte flags;
+- transform controls and keys, parent IDs, native matte provider/type;
+- every mask's exact native controls and static path;
+- Effect Parade order, exact effect/control `matchName`s, values, key times, and
+  interpolation types;
+- native reference intent: source frames `0..47` (`aerender -s 0 -e 47`) with
+  render setting `Use this frame rate: 30`, expected to yield 60 frames.
+
+The parent should preserve the returned readback and source bytes, then pin the
+actual source hash, Adobe version/build, composition IDs, and support relation
+before any converter implementation. Parent-side registration and independently
+rendered 30fps references happen only after review and successful authoring.
+
+## Current evidence status
+
+- Native authoring execution: **executed**, Adobe After Effects 26.5x89.
+- Native save/readback: **executed**, `native-readback.json`.
+- Source: `native_controls.aep`, 1,304,431 bytes, SHA-256
+  `ed45319ed014ba979a9e0b4868aa635775f288fe851c39d9242aab097020f26f`.
+  Final target/support identities and recipe hash are pinned in `provenance.json`.
+- Independent Adobe references: **10 full 30fps/60-frame MP4s rendered,
+  long-term Assets published, freshly downloaded and SHA-verified**. Asset IDs
+  and hashes are in `cases.json` and `../aep_video_references.json`. Supporting
+  comp 126 is exercised through target 146; no separate render is claimed.
+- Native visual inspection: scope/order content, keyed changes, span boundaries,
+  nested scope, masks, matte and parented gate checked in critical samples.
+  These inspections are not fresh-converter RGB or alpha comparisons.
+- Import editable assertions: **10 failed before the mapping, then passed**;
+  supporting comp126 is asserted through nested146. Export: **10 independently
+  specified FX contracts passed**, not inputs generated by importing the oracle.
+- Adobe export acceptance: **all10 fresh AEPs opened without repair**; **9/10
+  native control comparisons matched**. Parent205 uses normalized hierarchy and
+  an approximate transformed feather, so native equivalence remains failed.
+- RGB: **10 fresh imports and10 generated exports measured**. Minimum import
+  scores span0.731985–0.988786; exports span0.941530–1.0. These are descriptive
+  measurements, not fidelity passes. Alpha remains unverified.
+- Exact per-case IDs, Asset identities, test symbols, input/output/readback
+  hashes and critical-frame scores: [`evidence.json`](evidence.json). Native
+  generated-output readbacks are checked in under `evidence/`. Final fresh CPU
+  AEP bytes exactly match the independently Adobe-tested bytes; final imported
+  `project.json` matches the measured document semantically after diagnostic-only
+  review fixes. No stale binary is presented as a new Adobe execution.
+- Supplemental ordinary writer control: `fx_export/writer-two-solid.fx.json`
+  explicitly specifies the independent `../render/export_add_blend.aep` controls.
+  Two layers, colors and Add/Normal modes passed Adobe readback; RGB minimum1.0.
+  This is shared-writer evidence, not an eleventh Adjustment feature case.
+- Scoped validation:27 Adjustment-related tests;103 writer tests;63 unchanged
+  Effects contracts plus3 guards;62 Python tests and4 subtests; scoped crate
+  check/clippy and standalone-workspace fmt passed. These are not full-suite or
+  renewed63-case Adobe acceptance claims.
+
+The [single support/limitation ledger](../../../../../docs/after-effects-support.md#adjustment-layer-bidirectional-checkpoint)
+records remaining converter gaps, parent approximation, gated alpha behavior,
+untested combinations and the measured failures. The requested broad fidelity
+and completion gate is **not complete**. Boolean operand animation and ordinary
+nested-precomposition Effects remain separate unfinished work.
+
+### Preserved failures and accounting
+
+Initial fresh scope exposed1/4 layers in Adobe despite our reader seeing4;
+missing timeline envelopes were repaired against a pinned ordinary native source.
+The first masked export raised `missing data in file` / `skipped sections:1`;
+array allocation, typed mask descriptors/opacity units and segment-handle order
+were repaired with red→green tests. The first nested export produced
+anchor51200,16200 instead of160,90; source-relative encoding repaired it and
+raised the measured minimum from0.667980 to0.993503. The oracle was never replaced.
+
+22 Adobe renders ran:10 references,7 initial exports,4 selected repaired/remaining
+exports (including the nested retry),1 ordinary writer control. Scripted inspection
+attempts include failed scope/mask and a failed scratch-only ordinary readback
+wrapper; failed outputs were preserved, owned projects closed without saving,
+and execution stopped after uncertain ownership. The ordinary wrapper error was
+not an AEP failure and consumed no render. No MP4 is committed, no new CI gate is
+claimed, and no threshold was weakened to turn these measurements into passes.

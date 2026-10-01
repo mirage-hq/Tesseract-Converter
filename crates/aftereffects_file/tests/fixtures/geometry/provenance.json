@@ -1,0 +1,20 @@
+{
+  "upstream": "https://github.com/forticheprod/py-aep",
+  "revision": "e12a451c35bacd3f34a080090265f9370e66162b",
+  "license": "MIT (see ../LICENSE)",
+  "evidence": "Native AEP and upstream AE JSON projection; no Adobe render or UI inspection performed here.",
+  "files": [
+    {
+      "path": "geometry_probe.aep",
+      "upstream_path": "samples/models/layer/geometry_probe.aep",
+      "sha256": "a7f4830e5e37ba1fbbcb897cfe7a40b6eff3496267c2ca911763cc96971260b2",
+      "size": 388549
+    },
+    {
+      "path": "geometry_rects_probe.json",
+      "upstream_path": "samples/models/layer/geometry_rects_probe.json",
+      "sha256": "88a7f8db084072204710f336c464c5bf7d63ffdb1a7466145f4080ec857e6710",
+      "size": 11753
+    }
+  ]
+}

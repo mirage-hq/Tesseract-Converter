@@ -1,0 +1,282 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "formatVersion": 1,
+  "dimensions": {
+    "width": 320,
+    "height": 180
+  },
+  "duration": 2.0,
+  "backgroundColor": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "composition": {
+    "id": "main",
+    "name": "adjustment-keys",
+    "layers": [
+      {
+        "id": 645,
+        "name": "upper-sentinel-37x23",
+        "type": "Rect",
+        "parent": null,
+        "activeRange": {
+          "start": 0,
+          "duration": 2000
+        },
+        "rect": {
+          "size": [
+            37,
+            23
+          ],
+          "position": [
+            0,
+            0
+          ],
+          "fillEnabled": true,
+          "fillColor": [
+            1,
+            0.05,
+            0.72,
+            1
+          ],
+          "strokeEnabled": false,
+          "strokeWidth": 0
+        },
+        "transform": {
+          "anchorPoint": [
+            18.5,
+            11.5
+          ],
+          "position": [
+            287,
+            19
+          ],
+          "scale": [
+            100,
+            100
+          ],
+          "rotation": 17,
+          "opacity": 100
+        },
+        "description": "Editable AE solid; independently specified Adjustment reference content"
+      },
+      {
+        "id": 644,
+        "name": "keyed-adjustment-owner-offset",
+        "type": "Adjustment",
+        "parent": null,
+        "activeRange": {
+          "start": 250,
+          "duration": 1500
+        },
+        "effects": [
+          {
+            "id": 6441,
+            "enabled": true,
+            "effect": {
+              "type": "gaussianBlur",
+              "blurriness": 4,
+              "repeatEdgePixels": true
+            }
+          }
+        ],
+        "transform": {
+          "anchorPoint": [
+            160,
+            90
+          ],
+          "position": [
+            160,
+            90
+          ],
+          "scale": [
+            100,
+            100
+          ],
+          "rotation": 0,
+          "opacity": 28
+        }
+      },
+      {
+        "id": 643,
+        "name": "lower-amber-83x117",
+        "type": "Rect",
+        "parent": null,
+        "activeRange": {
+          "start": 0,
+          "duration": 2000
+        },
+        "rect": {
+          "size": [
+            83,
+            117
+          ],
+          "position": [
+            0,
+            0
+          ],
+          "fillEnabled": true,
+          "fillColor": [
+            0.96,
+            0.38,
+            0.05,
+            1
+          ],
+          "strokeEnabled": false,
+          "strokeWidth": 0
+        },
+        "transform": {
+          "anchorPoint": [
+            41.5,
+            58.5
+          ],
+          "position": [
+            238,
+            108
+          ],
+          "scale": [
+            100,
+            100
+          ],
+          "rotation": -11,
+          "opacity": 100
+        },
+        "description": "Editable AE solid; independently specified Adjustment reference content"
+      },
+      {
+        "id": 642,
+        "name": "lower-cobalt-127x71",
+        "type": "Rect",
+        "parent": null,
+        "activeRange": {
+          "start": 0,
+          "duration": 2000
+        },
+        "rect": {
+          "size": [
+            127,
+            71
+          ],
+          "position": [
+            0,
+            0
+          ],
+          "fillEnabled": true,
+          "fillColor": [
+            0.08,
+            0.24,
+            0.88,
+            1
+          ],
+          "strokeEnabled": false,
+          "strokeWidth": 0
+        },
+        "transform": {
+          "anchorPoint": [
+            63.5,
+            35.5
+          ],
+          "position": [
+            77,
+            58
+          ],
+          "scale": [
+            100,
+            100
+          ],
+          "rotation": 7,
+          "opacity": 100
+        },
+        "description": "Editable AE solid; independently specified Adjustment reference content"
+      }
+    ],
+    "segmentLayerIds": [],
+    "dynamics": {
+      "entries": [
+        {
+          "target": {
+            "kind": "effectProperty",
+            "effectId": 6441,
+            "paramName": "blurriness"
+          },
+          "animator": {
+            "type": "keyframes",
+            "enabled": true,
+            "keyframes": [
+              {
+                "id": "adjustment-blur-0",
+                "layerTime": 250,
+                "value": {
+                  "type": "float",
+                  "value": 4
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "adjustment-blur-1",
+                "layerTime": 1000,
+                "value": {
+                  "type": "float",
+                  "value": 31
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              }
+            ]
+          },
+          "dependencies": [],
+          "layerRefs": {}
+        },
+        {
+          "target": {
+            "kind": "layer",
+            "layerId": 644,
+            "propertyType": "opacity"
+          },
+          "animator": {
+            "type": "keyframes",
+            "enabled": true,
+            "keyframes": [
+              {
+                "id": "adjustment-opacity-0",
+                "layerTime": 500,
+                "value": {
+                  "type": "float",
+                  "value": 28
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "adjustment-opacity-1",
+                "layerTime": 1250,
+                "value": {
+                  "type": "float",
+                  "value": 86
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              }
+            ]
+          },
+          "dependencies": [],
+          "layerRefs": {}
+        }
+      ]
+    },
+    "motionBlur": {
+      "enabled": false,
+      "shutterAngle": 180,
+      "shutterPhase": 0,
+      "samplesPerFrame": 16,
+      "adaptiveSampleLimit": 128
+    }
+  }
+}

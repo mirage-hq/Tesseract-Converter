@@ -1,0 +1,50 @@
+{
+  "upstream": "https://github.com/forticheprod/py-aep",
+  "revision": "e12a451c35bacd3f34a080090265f9370e66162b",
+  "license": "MIT (see ../LICENSE)",
+  "evidence": "Native AEP and upstream AE JSON projection; no Adobe render or UI inspection performed here.",
+  "files": [
+    {
+      "path": "footage_not_missing.aep",
+      "upstream_path": "samples/models/footage/footage_not_missing.aep",
+      "sha256": "692fa37886a98a8deb63addda6da0193d6f9cc4c6725f42e13a424d0e8bd9104",
+      "size": 87419
+    },
+    {
+      "path": "footage_not_missing.json.gz",
+      "upstream_path": "samples/models/footage/footage_not_missing.json",
+      "sha256": "ca47e83017b2bdfc64e33db01f1830632c9cc11d884a1bb0159c13eeea767a1a",
+      "size": 246422
+    },
+    {
+      "path": "footage_missing.aep",
+      "upstream_path": "samples/models/footage/footage_missing.aep",
+      "sha256": "8ed134b498c1ae4dbb7033d3eef1a43d74de00d9b473e7d219a1e7e5b9468677",
+      "size": 88523
+    },
+    {
+      "path": "footage_missing.json.gz",
+      "upstream_path": "samples/models/footage/footage_missing.json",
+      "sha256": "583224d56ab6183ce1e1ae39a573366f7f6737584af7a4ff2650f6952fd6d451",
+      "size": 246418
+    },
+    {
+      "path": "imio_sequence.aep",
+      "upstream_path": "samples/models/import/imio_sequence.aep",
+      "sha256": "ed64774d086fa20ef65b598c1630bb712234456d790c1fddecc447643313e03d",
+      "size": 10786
+    },
+    {
+      "path": "audioEnabled.aep",
+      "upstream_path": "samples/models/layer/audioEnabled.aep",
+      "sha256": "b6b887df9e2b055f4a2aac128b24f510ff116012e9a0e7cd6929c8dfb467f3d2",
+      "size": 123067
+    },
+    {
+      "path": "audioEnabled.json.gz",
+      "upstream_path": "samples/models/layer/audioEnabled.json",
+      "sha256": "3b9155487815c0fea5b0a749f1b8274697a94ee39c8b5de6bc3b95b516535adb",
+      "size": 490085
+    }
+  ]
+}

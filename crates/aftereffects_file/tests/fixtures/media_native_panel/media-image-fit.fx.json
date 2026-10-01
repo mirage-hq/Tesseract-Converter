@@ -1,0 +1,106 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "formatVersion": 1,
+  "duration": 2,
+  "dimensions": {
+    "width": 320,
+    "height": 180
+  },
+  "backgroundColor": [
+    0,
+    0,
+    0,
+    1
+  ],
+  "composition": {
+    "id": "main",
+    "name": "media-image-fit",
+    "segmentLayerIds": [],
+    "motionBlur": {
+      "enabled": false,
+      "shutterAngle": 180,
+      "shutterPhase": 0,
+      "samplesPerFrame": 16,
+      "adaptiveSampleLimit": 128
+    },
+    "dynamics": {
+      "entries": [
+        {
+          "target": {
+            "kind": "layer",
+            "layerId": 101,
+            "propertyType": "opacity"
+          },
+          "animator": {
+            "type": "keyframes",
+            "enabled": true,
+            "keyframes": [
+              {
+                "id": "media-101-opacity-0",
+                "layerTime": 0,
+                "value": {
+                  "type": "float",
+                  "value": 100
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "media-101-opacity-1",
+                "layerTime": 1000,
+                "value": {
+                  "type": "float",
+                  "value": 35
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              }
+            ]
+          },
+          "dependencies": [],
+          "layerRefs": {}
+        }
+      ]
+    },
+    "layers": [
+      {
+        "type": "Image",
+        "id": 101,
+        "name": "Red Cover Crop",
+        "parent": null,
+        "activeRange": {
+          "start": 0,
+          "duration": 2000
+        },
+        "transform": {
+          "anchorPoint": [
+            0,
+            0
+          ],
+          "position": [
+            0,
+            0
+          ],
+          "scale": [
+            100,
+            100
+          ],
+          "rotation": 0,
+          "opacity": 100
+        },
+        "source": {
+          "assetId": "red",
+          "fit": "cover",
+          "frameRect": {
+            "x": 40,
+            "y": 20,
+            "width": 120,
+            "height": 80
+          }
+        }
+      }
+    ]
+  }
+}

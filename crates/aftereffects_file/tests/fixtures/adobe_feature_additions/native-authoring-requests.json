@@ -1,0 +1,45 @@
+{
+  "status": "REQUESTED_NOT_AUTHORED_OR_VERIFIED",
+  "note": "Independent Adobe authoring requests; no source SHA, composition ID, reference Asset or test result exists yet. Use native AE API only. The runner precreates comp and mediaRoot, and supplies linearKeys(property,times,values).",
+  "cases": [
+    {
+      "case_id": "aep-adobe-feature-additions-native-nonlinear-remap-independent-c1",
+      "source_path": "crates/aftereffects_file/tests/fixtures/adobe_feature_additions/native/nonlinear-remap-independent.aep",
+      "composition_name": "IMPORT_NONLINEAR_REMAP_INDEPENDENT",
+      "width": 640,
+      "height": 360,
+      "duration": 2,
+      "fps": 24,
+      "author_jsx": "var source = app.project.items.addComp('NONLINEAR_SOURCE', 640, 360, 1, 3, 24); var moving = source.layers.addSolid([0.1,0.3,0.9], 'MOVING_SOURCE_BLUE', 80, 80, 1, 3); linearKeys(moving.property('ADBE Transform Group').property('ADBE Position'), [0,2], [[100,180],[540,180]]); var sampled = comp.layers.add(source); sampled.name = 'PIECEWISE_REMAP_OWNER'; sampled.timeRemapEnabled = true; var remap = sampled.property('ADBE Time Remapping'); linearKeys(remap, [0,0.5,1.5,2], [0,1.25,0.5,2]); if (remap.numKeys > 4 && Math.abs(remap.keyTime(remap.numKeys)-3) < 0.000001) remap.removeKey(remap.numKeys); var sibling = comp.layers.addSolid([0.8,0.1,0.2], 'EDITABLE_SIBLING_RED', 48, 48, 1, 2); sibling.property('ADBE Transform Group').property('ADBE Position').setValue([40,40]);",
+      "expected_editable": "Source-backed Group with nonaffine Time Remap keys at 0/0.5/1.5/2 s mapping to 0/1.25/0.5/2 s; separate editable sibling Rect. Record precise source-vs-parent clock and interpolation after independent native readback; do not infer resulting FX key values from importer.",
+      "critical_samples_seconds": [0, 0.25, 0.5, 1, 1.5, 1.75],
+      "registry": "PENDING_NATIVE_SOURCE_AND_REFERENCE; no source hash/composition ID may be assigned before Adobe receipt"
+    },
+    {
+      "case_id": "aep-adobe-feature-additions-native-adjustment-effect-sibling-c1",
+      "source_path": "crates/aftereffects_file/tests/fixtures/adobe_feature_additions/native/adjustment-effect-sibling.aep",
+      "composition_name": "IMPORT_ADJUSTMENT_GAUSSIAN_SIBLING",
+      "width": 640,
+      "height": 360,
+      "duration": 2,
+      "fps": 24,
+      "author_jsx": "var background = comp.layers.addSolid([0.15,0.65,0.1], 'GREEN_BASE', 640, 360, 1, 2); var foreground = comp.layers.addSolid([0.9,0.15,0.2], 'RED_EDITABLE_SIBLING', 200, 200, 1, 2); foreground.property('ADBE Transform Group').property('ADBE Position').setValue([240,180]); var adjustment = comp.layers.addSolid([1,1,1], 'ADJUSTMENT_BLUR_OWNER', 640, 360, 1, 2); adjustment.adjustmentLayer = true; var blur = adjustment.property('ADBE Effect Parade').addProperty('ADBE Gaussian Blur 2'); blur.property(1).setValue(22);",
+      "expected_editable": "Independent readback must confirm adjustment switch and Blurriness 22. Fresh import must retain a visible editable red sibling and Gaussian Blur as an editable effect, with contextual adjustment/compositing diagnostic if FX cannot represent AE's below-layer application. Never treat a normal opaque white solid as an equivalent adjustment render.",
+      "critical_samples_seconds": [0, 0.5, 1, 1.5],
+      "registry": "PENDING_NATIVE_SOURCE_AND_REFERENCE; no source hash/composition ID may be assigned before Adobe receipt"
+    },
+    {
+      "case_id": "aep-adobe-feature-additions-native-nested-effect-stack-c1",
+      "source_path": "crates/aftereffects_file/tests/fixtures/adobe_feature_additions/native/nested-effect-stack.aep",
+      "composition_name": "IMPORT_NESTED_EFFECT_STACK",
+      "width": 640,
+      "height": 360,
+      "duration": 2,
+      "fps": 24,
+      "author_jsx": "var source = app.project.items.addComp('NESTED_EFFECT_SOURCE',640,360,1,2,24); var painted = source.layers.addSolid([0.8,0.2,0.1], 'NESTED_PAINTED_OWNER', 280, 160, 1, 2); var blur = painted.property('ADBE Effect Parade').addProperty('ADBE Gaussian Blur 2'); blur.property(1).setValue(17); var instance = comp.layers.add(source); instance.name = 'NESTED_EFFECT_INSTANCE'; var sibling = comp.layers.addSolid([0.1,0.2,0.8], 'BLUE_EDITABLE_SIBLING', 70, 70, 1, 2); sibling.property('ADBE Transform Group').property('ADBE Position').setValue([75,75]);",
+      "expected_editable": "After independent native readback of plugin identity/control 17 and composition item IDs, fresh import must retain Gaussian Blur 17 on the inner painted owner, not duplicate/hoist it to the outer occurrence or blue sibling. Supporting NESTED_EFFECT_SOURCE requires its own source/comp receipt and consuming-case link; register both targets when IDs are known.",
+      "critical_samples_seconds": [0, 0.5, 1, 1.5],
+      "registry": "PENDING_NATIVE_SOURCE_AND_REFERENCE; support composition must also be linked after Adobe receipt"
+    }
+  ]
+}

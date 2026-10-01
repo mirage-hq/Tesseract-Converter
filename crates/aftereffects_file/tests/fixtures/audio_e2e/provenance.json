@@ -1,0 +1,224 @@
+{
+  "source": {
+    "path": "audio_cases.aep",
+    "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+    "bytes": 2349299
+  },
+  "authoring": {
+    "path": "author_audio_cases.jsx",
+    "sha256": "a898949c7954ed456103ff0e7295388d4b268b8662b40666bd85512960429764"
+  },
+  "native_readback": {
+    "path": "native-readback.json",
+    "sha256": "868b13907656e0975b5e24af6b12c090abad73c8509d2348ed60d3352f0f4943"
+  },
+  "adobe_version": "26.5x89",
+  "adobe_build": 89,
+  "source_fps": 24,
+  "source_duration_seconds": 6,
+  "primary_media": [
+    {
+      "path": "sound.wav",
+      "sha256": "8a6c3cca1a71610b6c9506563d8ed341451a5eb570a46be60880095cafab680b"
+    },
+    {
+      "path": "other.wav",
+      "sha256": "7181fce199ef390ddf9577c780a0c5fa4ee4680409460051d9f9e3d7105f6819"
+    },
+    {
+      "path": "movie.mov",
+      "sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+    }
+  ],
+  "supporting_targets": [
+    {
+      "composition_id": 250,
+      "name": "audio-group__audio-child",
+      "consuming_cases": [
+        "audio-group"
+      ]
+    },
+    {
+      "composition_id": 302,
+      "name": "empty-nested-group__audio-child",
+      "consuming_cases": [
+        "empty-nested-group"
+      ]
+    },
+    {
+      "composition_id": 314,
+      "name": "empty-nested-group__empty-child",
+      "consuming_cases": [
+        "empty-nested-group"
+      ]
+    },
+    {
+      "composition_id": 434,
+      "name": "empty-only-group__empty-child",
+      "consuming_cases": [
+        "empty-only-group"
+      ]
+    },
+    {
+      "composition_id": 341,
+      "name": "fractional-duration__audio-child",
+      "consuming_cases": [
+        "fractional-duration"
+      ]
+    },
+    {
+      "composition_id": 353,
+      "name": "fractional-duration__empty-child",
+      "consuming_cases": [
+        "fractional-duration"
+      ]
+    },
+    {
+      "composition_id": 276,
+      "name": "group-affine-playback__audio-child",
+      "consuming_cases": [
+        "group-affine-playback"
+      ]
+    },
+    {
+      "composition_id": 55,
+      "name": "hidden-group__audio-child",
+      "consuming_cases": [
+        "hidden-group"
+      ]
+    }
+  ],
+  "edited_fx_inputs": [
+    {
+      "case": "affine-playback",
+      "path": "fx/affine-playback.json",
+      "sha256": "0be9d860c9d2e7f4671a052376db3cccc6878d2b92e95d148f7a98a69383be6a"
+    },
+    {
+      "case": "all-zero-one-key",
+      "path": "fx/all-zero-one-key.json",
+      "sha256": "57cd7a86db521ffddc2b9867164ea5d2c9aff99fa3351c8bf331ee367f483229"
+    },
+    {
+      "case": "all-zero-two-keys",
+      "path": "fx/all-zero-two-keys.json",
+      "sha256": "b4adbfec70e444845d5051b6057a52fed0ea73bb3a465f13da3466b9a211ad31"
+    },
+    {
+      "case": "audio-group",
+      "path": "fx/audio-group.json",
+      "sha256": "acf94f316760679ccc72c746237972d41560245cc3eb4c7dc860285008f84a14"
+    },
+    {
+      "case": "bezier-gain",
+      "path": "fx/bezier-gain.json",
+      "sha256": "5a6c77086fd9f7d59a691fe4f20ec3fe936115d794b40d8fe750b104d4876e53"
+    },
+    {
+      "case": "conflicting-gain-clock",
+      "path": "fx/conflicting-gain-clock.json",
+      "sha256": "957a25f9f40a4a0cba0ee9e7487c8f6760a1c43c4dbeb56160ffe52e2b76130f"
+    },
+    {
+      "case": "constant-zero-nonzero-base",
+      "path": "fx/constant-zero-nonzero-base.json",
+      "sha256": "9a8849efcf0469f2bb11b648a02608169824dfb29b3b34df2486dcfcc2d78d73"
+    },
+    {
+      "case": "constant-zero-zero-base",
+      "path": "fx/constant-zero-zero-base.json",
+      "sha256": "4d0164dca107f2edd147103d9a8910d7b3b1d3edd5e04bccfe5e110fc061e3c2"
+    },
+    {
+      "case": "empty-nested-group",
+      "path": "fx/empty-nested-group.json",
+      "sha256": "3d9b6f2afb4998a3c2fab951ba51f52a6e283c1c194b5a6fa8d4de80650d3e77"
+    },
+    {
+      "case": "empty-only-group",
+      "path": "fx/empty-only-group.json",
+      "sha256": "cf55a303671afb71ee208e9df420f8e292de93ac906d8c4a009ee20db2957c4e"
+    },
+    {
+      "case": "eof-tail",
+      "path": "fx/eof-tail.json",
+      "sha256": "db7c1a2d7729ccbcc788123fad559f7522bd99eb9ae448430bb1a9b55ebf5695"
+    },
+    {
+      "case": "fractional-duration",
+      "path": "fx/fractional-duration.json",
+      "sha256": "4e93f744ca055758b462fe137599ef6849f135456b09537a0866854a68a0865d"
+    },
+    {
+      "case": "group-affine-playback",
+      "path": "fx/group-affine-playback.json",
+      "sha256": "8205e03fc91f6848c18a2de4ffd021bfa88f9e717c1cf90d2dad26ba207ebe54"
+    },
+    {
+      "case": "hidden-group",
+      "path": "fx/hidden-group.json",
+      "sha256": "1a9ee74071265ba1778b902b08d17e75b025fd94abc7c4bda29effd8b7730ffc"
+    },
+    {
+      "case": "hidden-layer",
+      "path": "fx/hidden-layer.json",
+      "sha256": "bebae94102364f40ac9ee4150c6bc9a95e24bf0bfeeed320c3c2131e90d2babd"
+    },
+    {
+      "case": "hold-gain",
+      "path": "fx/hold-gain.json",
+      "sha256": "2849b26c4b2888d8b9b1e4e142a8fa9eabc24f556f7c71f33382d8802e536e5d"
+    },
+    {
+      "case": "invalid-gain-hull",
+      "path": "fx/invalid-gain-hull.json",
+      "sha256": "3caee96911ceff276c12f447a647a736c8c16e1a271d5f3de093a2a895f95680"
+    },
+    {
+      "case": "linear-gain",
+      "path": "fx/linear-gain.json",
+      "sha256": "b7f5a667b4cb4891ad0587498e2a90ecf52bf1ab615ca9ac2077c0211c24a060"
+    },
+    {
+      "case": "mov-audio-only",
+      "path": "fx/mov-audio-only.json",
+      "sha256": "0d49598d6fa29b8451c3f7a4bdc6cf7b408015ee7649c07508a51c5f936cc675"
+    },
+    {
+      "case": "nonlinear-remap",
+      "path": "fx/nonlinear-remap.json",
+      "sha256": "b78ea20b306de85103ba7d0e962113099e7b17a249a9f050bed0e1fe73812171"
+    },
+    {
+      "case": "source-switch",
+      "path": "fx/source-switch.json",
+      "sha256": "2fe1c3e5116bc0fa9518769ca38dd482ddd737bbc3094c1199ac2c0efe227d8e"
+    },
+    {
+      "case": "static-zero",
+      "path": "fx/static-zero.json",
+      "sha256": "918f7d591e605635699826a80097907afc03124d73d015807260256cde0f8ff9"
+    },
+    {
+      "case": "trim-offset",
+      "path": "fx/trim-offset.json",
+      "sha256": "a053e9f702b580b5df70177eddfa37ac235d0f61af007ed123111ff6ef91d18b"
+    },
+    {
+      "case": "wave-static",
+      "path": "fx/wave-static.json",
+      "sha256": "9795a991afab9945747811f4ea677f0cc84606caf8b377e35041826d5df2cbb2"
+    },
+    {
+      "case": "zero-base-unmute",
+      "path": "fx/zero-base-unmute.json",
+      "sha256": "6ac3f8a8683b56e15c2c9bcca34d75af55027862c27f3b1d03be2a1e8e706659"
+    }
+  ],
+  "reference_render": "UNRUN",
+  "asset_publication": "UNRUN",
+  "import_execution": "UNRUN",
+  "export_execution": "UNRUN",
+  "audio_scores": "unmeasured",
+  "note": "Primary media are inputs, never independent Adobe reference output."
+}

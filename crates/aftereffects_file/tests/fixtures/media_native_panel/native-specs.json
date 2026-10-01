@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "status": "AUTHORING_REQUESTS_ONLY_UNRUN_UNINSPECTED",
+  "contract": "Each author_jsx receives precreated comp, absolute mediaRoot, and linearKeys(property,times,values). MediaRoot is the enclosing-repository-relative opensource/conv/crates/aftereffects_file/tests/fixtures/media_native_panel/media directory; movie.mov is byte-for-byte copied from audio_e2e/movie.mov; red.exr and green.exr are independently generated primary uncompressed OpenEXR media by make_media.py, never converter output. Independently author native/<case_id>.aep, record actual source hash and composition ID, Adobe-render full two seconds at 30fps and publish/hash-verify a long-term Asset. No native source, Adobe inspection, render or score exists yet. These settings are requests, not observed Adobe controls. Do not relabel/resample media or use exported FX AEP as an oracle.",
+  "cases": [
+    {
+      "case_id": "fx-export-media-image-fit",
+      "composition_name": "media-image-fit",
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "media_root": "crates/aftereffects_file/tests/fixtures/media_native_panel/media",
+      "author_jsx": "var f=app.project.importFile(new ImportOptions(new File(mediaRoot+'/red.exr'))); var l=comp.layers.add(f); l.name='Red Cover Crop'; l.transform.anchorPoint.setValue([0,0]); l.transform.position.setValue([40,15]); l.transform.scale.setValue([187.5,187.5]); var m=l.property('ADBE Mask Parade').addProperty('ADBE Mask Atom'); m.name='Media Crop'; var sh=new Shape(); sh.vertices=[[0,2.6666666667],[64,2.6666666667],[64,45.3333333333],[0,45.3333333333]]; sh.inTangents=[[0,0],[0,0],[0,0],[0,0]]; sh.outTangents=[[0,0],[0,0],[0,0],[0,0]]; sh.closed=true; m.property('ADBE Mask Shape').setValue(sh); linearKeys(l.transform.opacity,[0,1],[100,35]);"
+    },
+    {
+      "case_id": "fx-export-media-video-clock",
+      "composition_name": "media-video-clock",
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "media_root": "crates/aftereffects_file/tests/fixtures/media_native_panel/media",
+      "author_jsx": "var f=app.project.importFile(new ImportOptions(new File(mediaRoot+'/movie.mov'))); var l=comp.layers.add(f); l.name='Trimmed Blue Movie'; l.startTime=-0.5; l.inPoint=0; l.outPoint=2; l.transform.position.setValue([160,90]); l.audioEnabled=false;"
+    },
+    {
+      "case_id": "fx-export-media-video-stretch",
+      "composition_name": "media-video-stretch",
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "media_root": "crates/aftereffects_file/tests/fixtures/media_native_panel/media",
+      "author_jsx": "var f=app.project.importFile(new ImportOptions(new File(mediaRoot+'/movie.mov'))); var l=comp.layers.add(f); l.name='Double Speed Movie'; l.startTime=-0.125; l.stretch=50; l.inPoint=0; l.outPoint=2; l.transform.position.setValue([160,90]); l.audioEnabled=false;"
+    },
+    {
+      "case_id": "fx-export-media-frame-blending",
+      "composition_name": "media-frame-blending",
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "media_root": "crates/aftereffects_file/tests/fixtures/media_native_panel/media",
+      "author_jsx": "var f=app.project.importFile(new ImportOptions(new File(mediaRoot+'/movie.mov'))); var l=comp.layers.add(f); l.name='Frame Mix Movie'; l.startTime=0; l.inPoint=0; l.outPoint=2; l.frameBlendingType=FrameBlendingType.FRAME_MIX; comp.frameBlending=true; l.audioEnabled=false;"
+    },
+    {
+      "case_id": "fx-export-media-shared-source",
+      "composition_name": "media-shared-source",
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "media_root": "crates/aftereffects_file/tests/fixtures/media_native_panel/media",
+      "author_jsx": "var f=app.project.importFile(new ImportOptions(new File(mediaRoot+'/movie.mov'))); var a=comp.layers.add(f); a.name='Blue Movie Left'; a.transform.position.setValue([80,90]); a.transform.scale.setValue([45,45]); a.audioEnabled=false; var b=comp.layers.add(f); b.name='Blue Movie Right'; b.transform.position.setValue([240,90]); b.transform.scale.setValue([45,45]); b.audioEnabled=false;"
+    },
+    {
+      "case_id": "fx-export-media-source-switch",
+      "composition_name": "media-source-switch",
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "media_root": "crates/aftereffects_file/tests/fixtures/media_native_panel/media",
+      "author_jsx": "var r=app.project.importFile(new ImportOptions(new File(mediaRoot+'/red.exr'))); var g=app.project.importFile(new ImportOptions(new File(mediaRoot+'/green.exr'))); var child=app.project.items.addComp('Source Switch Child',320,180,1,2,24); var a=child.layers.add(r); a.name='Red Before'; a.outPoint=1; var b=child.layers.add(g); b.name='Green After'; b.inPoint=1; var l=comp.layers.add(child); l.name='Red to Green';"
+    },
+    {
+      "case_id": "fx-export-media-unsupported-sibling",
+      "composition_name": "media-unsupported-sibling",
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "media_root": "crates/aftereffects_file/tests/fixtures/media_native_panel/media",
+      "author_jsx": "var r=app.project.importFile(new ImportOptions(new File(mediaRoot+'/red.exr'))); var l=comp.layers.add(r); l.name='Retained Red Sibling'; l.transform.position.setValue([160,90]);"
+    },
+    {
+      "case_id": "fx-export-media-static-remap",
+      "composition_name": "media-static-remap",
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "media_root": "crates/aftereffects_file/tests/fixtures/media_native_panel/media",
+      "author_jsx": "var f=app.project.importFile(new ImportOptions(new File(mediaRoot+'/movie.mov'))); var l=comp.layers.add(f); l.name='Held Blue Frame'; l.timeRemapEnabled=true; l.property('ADBE Time Remapping').setValueAtTime(0,0.75); l.property('ADBE Time Remapping').setValueAtTime(2,0.75); l.audioEnabled=false;"
+    },
+    {
+      "case_id": "fx-export-media-image-3d",
+      "composition_name": "media-image-3d",
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "media_root": "crates/aftereffects_file/tests/fixtures/media_native_panel/media",
+      "author_jsx": "var f=app.project.importFile(new ImportOptions(new File(mediaRoot+'/red.exr'))); var l=comp.layers.add(f); l.name='Spatial Red'; l.threeDLayer=true; l.transform.anchorPoint.setValue([0,0,0]); l.transform.position.setValue([160,90,35]); l.transform.scale.setValue([110,85,100]); l.transform.orientation.setValue([3,4,5]); l.transform.xRotation.setValue(12); l.transform.yRotation.setValue(-8); l.transform.opacity.setValue(70);"
+    },
+    {
+      "case_id": "fx-export-media-constant-source",
+      "composition_name": "media-constant-source",
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "media_root": "crates/aftereffects_file/tests/fixtures/media_native_panel/media",
+      "author_jsx": "var f=app.project.importFile(new ImportOptions(new File(mediaRoot+'/green.exr'))); var l=comp.layers.add(f); l.name='Constant Green'; l.transform.anchorPoint.setValue([0,0]); l.transform.position.setValue([160,90]);"
+    },
+    {
+      "case_id": "fx-export-media-legacy-image",
+      "composition_name": "media-legacy-image",
+      "width": 320,
+      "height": 180,
+      "duration": 2,
+      "fps": 24,
+      "media_root": "crates/aftereffects_file/tests/fixtures/media_native_panel/media",
+      "author_jsx": "var f=app.project.importFile(new ImportOptions(new File(mediaRoot+'/red.exr'))); var l=comp.layers.add(f); l.name='Legacy Red Stretch'; l.transform.anchorPoint.setValue([0,0]); l.transform.position.setValue([160,90]); l.transform.scale.setValue([312.5,150]); l.transform.opacity.setValue(55);"
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "status": "Partial repair checkpoint, not full converter fidelity or task completion",
+  "sourceSha256": "f62f72bf6ec281a63be63ec22b35e7552ee1ef48e4b8db97bb19773f372450a3",
+  "execution": {
+    "adobeVersion": "26.5x89",
+    "sourceFps": 24,
+    "freshExportFps": 30,
+    "width": 320,
+    "height": 180,
+    "framesPerCase": 60,
+    "durationSeconds": 2,
+    "fullDecode": true,
+    "adobeOpenedAndReadBackFreshExports": true,
+    "allObservedGeneratedCompositionFps": 30,
+    "metric": "FFmpeg per-frame SSIM on planar RGB (gbrp), zero-origin timestamps",
+    "minimumEveryFrame": 0.99,
+    "policyDeclaredBeforeComparison": true,
+    "alpha": "unverified; opaque-background RGB is not general alpha proof",
+    "audio": "not applicable",
+    "localArtifacts": "Local-only validation artifacts; not included in this repository.",
+    "finalCodeReverification": "pending after remaining repairs"
+  },
+  "cases": [
+    {
+      "compositionId": 1,
+      "caseId": "aep-export-repairs-native-controls-c1",
+      "explicitFxInputSha256": "7722b06ccbb1859afac11ab4c4c070438aa5ea1685d3ee3368b6500f9c83f3ab",
+      "freshAepSha256": "f6c9dbdedcef381692d226d1d11a78ea0b1b35db0f0670b347112976a49f978a",
+      "adobeReadbackSha256": "af78942ca4910c28591d8d7bdb48c0f2c8dcbf03b6ee8db13e76832dc0af3a01",
+      "freshAdobeMp4Sha256": "8cd7d31725b6ad8abc99456d8535b655370e325b09226f6865e8293eede188b1",
+      "minimumRgbSsim": 0.999625,
+      "meanRgbSsim": 0.999625,
+      "failedFramesZeroBased": [],
+      "rgbPassed": true,
+      "limitations": ["Hidden empty-path Trim guide 4 is diagnosed as omitted; full editable-control/linkage proof remains incomplete", "Does not prove compound Boolean operand grouping"]
+    },
+    {
+      "compositionId": 17,
+      "caseId": "aep-export-repairs-native-controls-c17",
+      "explicitFxInputSha256": "4390f923de63e40b11e3fb2c7d971f7ae4fe5307d15ff382dc26ffde6dd9b52c",
+      "freshAepSha256": "753ef7ce2c461623c72defd805c59ab0eb95f30c0db94f69957556c14435e6fe",
+      "adobeReadbackSha256": "421698d6f095a1c07a790126a18ce0cd304ca0107eb37d9e7dea9fc8ee38ca0f",
+      "freshAdobeMp4Sha256": "29ab0ad8778a4c1793d60fccb6d37d2e8d1a563d9ffc9f4242dbea294903cb7a",
+      "minimumRgbSsim": 0.904684,
+      "meanRgbSsim": 0.99550245,
+      "failedFramesZeroBased": [33],
+      "rgbPassed": false,
+      "holdSecondKey": {
+        "requestedFxMillis": 1100,
+        "nativeSourceSeconds": 1.10001627604167,
+        "freshExportAdobeSeconds": 1.10003255208333,
+        "encodedPropertyTimebase": 24576,
+        "independentNative30FpsPropertyTimebase": 30720,
+        "status": "confirmed composition/property clock mismatch; repair pending"
+      }
+    },
+    {
+      "compositionId": 34,
+      "caseId": "aep-export-repairs-native-controls-c34",
+      "explicitFxInputSha256": "6f62a80886450ac913925de481cd266e11c7110a74b8a3689cc167b11b6e7c1c",
+      "inputEdit": "Retain ScaleX keys at 200/1100ms and ScaleY at 550/1550ms, removing only redundant union knots; native separated Position unchanged",
+      "freshAepSha256": "8cfa69a09f2d51cf369fef84fd107b3da705724bbf4e70b8bbc9cd1f24dccf3a",
+      "adobeReadbackSha256": "60afe050fc6245683929eeea2e2a56fa4df784821a3c6371b025f3fae487fae6",
+      "freshAdobeMp4Sha256": "fab7a3445244f6048e859f9d61a074b997cf8c009a240436e373727a54aee1d7",
+      "minimumRgbSsim": 0.992457,
+      "meanRgbSsim": 0.9965340333333333,
+      "failedFramesZeroBased": [],
+      "rgbPassed": true
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "upstream": "https://github.com/forticheprod/py-aep",
+  "revision": "e12a451c35bacd3f34a080090265f9370e66162b",
+  "license": "MIT (see ../LICENSE)",
+  "evidence": "Native AEP and upstream AE JSON projection; no Adobe render or UI inspection performed here.",
+  "files": [
+    {
+      "path": "layer_misc.json.gz",
+      "upstream_path": "samples/models/layer/layer_misc.json",
+      "sha256": "b0ad48f49cf97bd410b3acbe67c1e86c5bf5179e53915ccf4bdc23fdda229d35",
+      "size": 1224703
+    }
+  ]
+}

@@ -1,0 +1,188 @@
+{
+  "status": "NATIVE_REFERENCES_PUBLISHED_TESTS_UNRUN",
+  "note": "Actual Adobe authoring/publication identities are bound. Test execution and comparison remain deliberately unrun.",
+  "patches": [
+    {
+      "case_id": "aep-text-import-text-animator-channels-c1",
+      "assertions_append": {
+        "description": "Animator 1 identity, one selector and editable static anchorPoint on the same Text owner; supplements existing exact value check.",
+        "source_anchor": "assert_text_animator_owner("
+      }
+    },
+    {
+      "case_id": "aep-text-import-text-animator-channels-c17",
+      "assertions_append": {
+        "description": "Animator 1 owns keyed anchorPoint at 500/2000ms; supplements existing exact endpoints.",
+        "source_anchor": "assert_text_animator_owner("
+      }
+    },
+    {
+      "case_id": "aep-text-import-text-animator-channels-c92",
+      "assertions_append": {
+        "description": "Animator 1 identity, one selector and editable static rotation on the same Text owner; supplements existing exact value check.",
+        "source_anchor": "assert_text_animator_owner("
+      }
+    },
+    {
+      "case_id": "aep-text-import-text-animator-channels-c107",
+      "assertions_append": {
+        "description": "Animator 1 owns keyed rotation at 500/2000ms; supplements existing exact endpoints.",
+        "source_anchor": "assert_text_animator_owner("
+      }
+    },
+    {
+      "case_id": "aep-masks-import-mask-controls-c178",
+      "assertions_append": {
+        "description": "Feather two-key control targets the retained mask ID with a live guide on the named target; first value [0,0], keys differ.",
+        "source_anchor": "assert_mask_key_owner("
+      }
+    },
+    {
+      "case_id": "aep-masks-import-mask-controls-c194",
+      "assertions_append": {
+        "description": "Opacity two-key control targets the retained mask ID with a live guide on the named target; first value 1, keys differ.",
+        "source_anchor": "assert_mask_key_owner("
+      }
+    },
+    {
+      "case_id": "aep-masks-import-mask-controls-c210",
+      "assertions_append": {
+        "description": "Expansion two-key control targets the retained mask ID with a live guide on the named target; first value 0, keys differ.",
+        "source_anchor": "assert_mask_key_owner("
+      }
+    },
+    {
+      "case_id": "aep-media-import-audio-media-controls-c63",
+      "assertions_append": {
+        "description": "Original audio-stereo.wav reference and exactly one editable two-key audioVolume track on fresh import.",
+        "source_anchor": "assert_audio_gain_and_switch("
+      }
+    },
+    {
+      "case_id": "aep-media-import-audio-media-controls-c78",
+      "assertions_append": {
+        "description": "Original audio-stereo.wav reference retained and imported audio-off content is hidden/inaudible.",
+        "source_anchor": "assert_audio_gain_and_switch("
+      }
+    },
+    {
+      "case_id": "aep-media-import-audio-media-controls-c93",
+      "assertions_append": {
+        "description": "Original audio-stereo.wav reference retained for visual-off independent audio source.",
+        "source_anchor": "assert_audio_gain_and_switch("
+      }
+    }
+  ],
+  "new_cases": [
+    {
+      "case_id": "aep-adobe-feature-additions-native-nonlinear-remap-independent-c1",
+      "direction": "import",
+      "feature": "Independent four-key nonaffine source Time Remap and editable sibling",
+      "source_path": "crates/aftereffects_file/tests/fixtures/adobe_feature_additions/native/nonlinear-remap-independent.aep",
+      "composition_name": "IMPORT_NONLINEAR_REMAP_INDEPENDENT",
+      "source_sha256": "874ec99e6b79d7dbea337b34b9ddf8610a37acadb9f6502e64e749fe86514abb",
+      "composition_id": 1,
+      "reference_asset_id": "RM6jhfEWJC0IT3jbog6D_vid",
+      "reference_sha256": "1c4600d0e50dbd4bd05948234aab45ac52a4dd41712c44da4c0e8305bcd541da",
+      "critical_frames_seconds": [
+        0,
+        0.25,
+        0.5,
+        1,
+        1.5,
+        1.75
+      ],
+      "test_symbol": "native_nonlinear_remap_retains_four_editable_clock_keys_and_sibling",
+      "assertions": "Four editable linear source-clock keys at 0/0.5/1.5/2 seconds with source times 0/1.25/0.5/2; separate editable red Rect; no JS.",
+      "execution": {
+        "status": "UNRUN"
+      },
+      "visual": {
+        "status": "unmeasured"
+      },
+      "pending_reason": "Native AEP and independent AME 30fps reference published. Tests UNRUN; Adobe control inspection, full decode and visual comparison not performed at user request."
+    },
+    {
+      "case_id": "aep-adobe-feature-additions-native-adjustment-effect-sibling-c1",
+      "direction": "import",
+      "feature": "Adjustment Gaussian 22 and editable red sibling with diagnosed below-layer omission",
+      "source_path": "crates/aftereffects_file/tests/fixtures/adobe_feature_additions/native/adjustment-effect-sibling.aep",
+      "composition_name": "IMPORT_ADJUSTMENT_GAUSSIAN_SIBLING",
+      "source_sha256": "5252b9c520bcfcc525ee7055ba1be659baf371969e6de7c4de9cfea97a602c58",
+      "composition_id": 1,
+      "reference_asset_id": "afvHP6n6XCWcJ4C9h9BN_vid",
+      "reference_sha256": "5047fb5f9fb4701c8413cfda56a311356f7ae6ebb9444f7d034e5ec5a734c536",
+      "critical_frames_seconds": [
+        0,
+        0.5,
+        1,
+        1.5
+      ],
+      "test_symbol": "native_adjustment_omits_cross_layer_pixels_but_keeps_effect_and_sibling",
+      "assertions": "Independent native adjustment switch; editable Gaussian Blur 22 on owner, not opaque white pixels; red sibling Rect; contextual below-layer omission diagnostic.",
+      "execution": {
+        "status": "UNRUN"
+      },
+      "visual": {
+        "status": "unmeasured"
+      },
+      "pending_reason": "Native AEP and independent AME 30fps reference published. Tests UNRUN; Adobe control inspection, full decode and visual comparison not performed at user request."
+    },
+    {
+      "case_id": "aep-adobe-feature-additions-native-nested-effect-stack-c1",
+      "direction": "import",
+      "feature": "Nested owner Gaussian Blur 17 without hoist or sibling leakage",
+      "source_path": "crates/aftereffects_file/tests/fixtures/adobe_feature_additions/native/nested-effect-stack.aep",
+      "composition_name": "IMPORT_NESTED_EFFECT_STACK",
+      "source_sha256": "9d0f3e3d877c383dc391f3fe75d7896df9e8b1aa66c59315d313b4525e084f7a",
+      "composition_id": 1,
+      "support_composition_id": 13,
+      "reference_asset_id": "TJhYjtxxxuhHWZgQgaK5_vid",
+      "reference_sha256": "d707d19b89e4ac4415a687cc006617bb38cb968bb6131fd2446b70c20a160120",
+      "critical_frames_seconds": [
+        0,
+        0.5,
+        1,
+        1.5
+      ],
+      "test_symbol": "native_nested_effect_stays_on_inner_owner_and_support_composition",
+      "assertions": "Fresh main and support imports retain editable inner-owner Gaussian Blur 17, no outer/sibling copy, editable blue sibling Rect.",
+      "execution": {
+        "status": "UNRUN"
+      },
+      "visual": {
+        "status": "unmeasured"
+      },
+      "pending_reason": "Native AEP and independent AME 30fps reference published. Tests UNRUN; Adobe control inspection, full decode and visual comparison not performed at user request."
+    },
+    {
+      "case_id": "aep-adobe-feature-additions-native-nested-effect-stack-c13",
+      "direction": "import",
+      "feature": "Supporting NESTED_EFFECT_SOURCE composition consumed by nested-effect-stack",
+      "source_path": "crates/aftereffects_file/tests/fixtures/adobe_feature_additions/native/nested-effect-stack.aep",
+      "composition_name": "NESTED_EFFECT_SOURCE",
+      "source_sha256": "9d0f3e3d877c383dc391f3fe75d7896df9e8b1aa66c59315d313b4525e084f7a",
+      "composition_id": 13,
+      "supported_by": [
+        "aep-adobe-feature-additions-native-nested-effect-stack-c1"
+      ],
+      "reference_asset_id": "2xenjrlvJAqLbTTkoEh4_vid",
+      "reference_sha256": "424c6ac1eb2d5f3defda18ee4e60ef0e55b750edaf01d8b075a2a3bd082fd5f6",
+      "critical_frames_seconds": [
+        0,
+        0.5,
+        1,
+        1.5
+      ],
+      "test_symbol": "native_nested_effect_stays_on_inner_owner_and_support_composition",
+      "assertions": "Fresh support composition import retains inner painted owner Gaussian Blur 17.",
+      "execution": {
+        "status": "UNRUN"
+      },
+      "visual": {
+        "status": "unmeasured"
+      },
+      "pending_reason": "Native AEP and independent AME 30fps reference published. Tests UNRUN; Adobe control inspection, full decode and visual comparison not performed at user request."
+    }
+  ]
+}

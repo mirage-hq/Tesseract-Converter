@@ -1,0 +1,62 @@
+{
+  "composition_id": 1,
+  "composition_name": "AEP_PROOF_OPACITY_EXPORT",
+  "layer_id": 17,
+  "background_layer_id": 15,
+  "fps": 24,
+  "frames": 48,
+  "width": 1920,
+  "height": 1080,
+  "position": [
+    960,
+    540,
+    0
+  ],
+  "anchor": [
+    240,
+    135,
+    0
+  ],
+  "scale": [
+    100,
+    100,
+    100
+  ],
+  "rotation": 0,
+  "foreground_rgb": [
+    0.1875,
+    0.625,
+    0.9375
+  ],
+  "foreground_size": [
+    480,
+    270
+  ],
+  "opacity_keys": [
+    [
+      0.5,
+      0
+    ],
+    [
+      1.5,
+      100
+    ]
+  ],
+  "source_sha256": "f9197a0b7dae276d46955dda5331eefa1a6c0420d56903947d1c52af0aff261f",
+  "source_bytes": 86365,
+  "author": "After Effects JSX DoScriptFile",
+  "ae_version": "26.5x89",
+  "case": "export_linear_opacity",
+  "author_jsx_sha256": "a3a76d5b7b0651ac270a93e30d2da96369011c1ee6321c6e786c320bdac8cc5f",
+  "reference_mp4_sha256": "20512a26b24864086938a4af57a7127039d98a33360518abe63e484e18f96f28",
+  "reference_mp4_bytes": 28813,
+  "reference_center_luma_by_frame": {
+    "0": 16,
+    "12": 16,
+    "24": 77,
+    "36": 137,
+    "47": 137
+  },
+  "reference_render_log_sha256": "ec240360d90e8bcdb006b3cb7879e70ed9525d5868feba5d9ffc61106d8ea4d5",
+  "reference_format": "Independent Adobe H.264/BT.709 YUV420p 1920x1080 24fps frames 0..47; opaque blue on black, no alpha/audio"
+}

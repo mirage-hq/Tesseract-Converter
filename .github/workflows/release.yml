@@ -1,0 +1,422 @@
+# Binary-only release; never publishes the source tree.
+name: Release
+run-name: Tesseract-Converter Release · ${{ github.event_name }}
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: converter-release-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    outputs:
+      action: ${{ steps.route.outputs.action }}
+      version: ${{ steps.route.outputs.version }}
+      source_sha: ${{ steps.route.outputs.source_sha }}
+      tag: ${{ steps.route.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Route release against immutable identity
+        id: route
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release_plan.py --phase validate
+      - name: Require license when public
+        if: steps.route.outputs.action == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          visibility="$(gh api "repos/$GITHUB_REPOSITORY" --jq .visibility)"
+          if [[ "$visibility" = public ]]; then
+            test -s LICENSE || { echo '::error::Public release requires an approved project LICENSE'; exit 1; }
+          fi
+  build:
+    needs: validate
+    if: needs.validate.outputs.action == 'release'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: darwin-arm64
+          - runner: macos-15-intel
+            platform: darwin-x86_64
+          - runner: windows-2022
+            platform: windows-x86_64
+          - runner: ubuntu-22.04
+            platform: linux-x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+      RELEASE_PLATFORM: ${{ matrix.platform }}
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.validate.outputs.source_sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@ffaa7fb73f2b6e3c49bc425913220fa3d71c3ee5 # 1.92.0
+        with:
+          toolchain: '1.92.0'
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Install controlled FFmpeg build prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config nasm zlib1g-dev patchelf clang libclang-dev
+      - name: Set up MSVC compiler
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+      - name: Install MSYS2 build tools
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        with:
+          msystem: MSYS
+          path-type: inherit
+          install: make diffutils patch nasm
+      - name: Build pinned shared FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          export PATH="$(dirname "$(which cl)"):$PATH"
+          prefix="$(cygpath -w "$PWD/target/release-ffmpeg")"
+          python scripts/ffmpeg.py "$prefix"
+          echo "FFMPEG_DIR=$prefix" >> "$GITHUB_ENV"
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-I$prefix\\include" >> "$GITHUB_ENV"
+          echo "LIBCLANG_PATH=C:\\Program Files\\LLVM\\bin" >> "$GITHUB_ENV"
+          echo "$prefix\\bin" >> "$GITHUB_PATH"
+      - name: Build pinned shared FFmpeg (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="$PWD/target/release-ffmpeg"
+          python3 scripts/ffmpeg.py "$prefix"
+          echo "FFMPEG_DIR=$prefix" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$prefix/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_LIBDIR=$prefix/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-I$prefix/include" >> "$GITHUB_ENV"
+          if [[ "$RUNNER_OS" = macOS ]]; then
+            echo "MACOSX_DEPLOYMENT_TARGET=14.0" >> "$GITHUB_ENV"
+            echo "DYLD_LIBRARY_PATH=$prefix/lib" >> "$GITHUB_ENV"
+          else
+            echo "LD_LIBRARY_PATH=$prefix/lib" >> "$GITHUB_ENV"
+          fi
+      - name: Build, smoke, and package CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          case "$RELEASE_PLATFORM" in
+            darwin-*) test "$(uname -m)" = "${RELEASE_PLATFORM#darwin-}" ;;
+            linux-x86_64) test "$(uname -m)" = x86_64 ;;
+            windows-x86_64) test "$PROCESSOR_ARCHITECTURE" = AMD64 ;;
+            *) echo '::error::Unsupported release platform'; exit 1 ;;
+          esac
+          if [[ "$RUNNER_OS" = Windows ]]; then export PATH="$(dirname "$(command -v cl)"):$PATH"; fi
+          cargo build --locked --release -p tsrct-conv --features ffmpeg-library
+          cargo install cargo-about --locked --version 0.9.2 --features cli
+          make generate-third-party-notices
+          test -s target/THIRD_PARTY_NOTICES.md
+          binary=target/release/tsrct-conv
+          if [[ "$RUNNER_OS" = Windows ]]; then binary+=.exe; fi
+          version_line=$("$binary" --version | tr -d '\r')
+          test "$version_line" = "tsrct-conv $VERSION"
+          "$binary" --help >/dev/null
+          python scripts/native_bundle.py --binary "$binary" --ffmpeg-prefix "$FFMPEG_DIR" \
+            --platform "$RELEASE_PLATFORM" --output target/native-bundle
+          packaged=target/native-bundle/tsrct-conv
+          if [[ "$RUNNER_OS" = Windows ]]; then packaged+=.exe; fi
+          python scripts/release_archive.py build --version "$VERSION" --source-sha "$SOURCE_SHA" \
+            --platform "$RELEASE_PLATFORM" --binary "$packaged" --native-bundle target/native-bundle --notices target/THIRD_PARTY_NOTICES.md --output release-artifacts
+          shopt -s nullglob
+          archives=(release-artifacts/Tesseract-Converter-"$VERSION"-"$RELEASE_PLATFORM".zip)
+          test "${#archives[@]}" -eq 1
+          mkdir -p target/release-smoke
+          python - "${archives[0]}" target/release-smoke <<'PY'
+          import pathlib, sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as archive:
+              archive.extractall(sys.argv[2])
+          PY
+          extracted="target/release-smoke/Tesseract-Converter-$VERSION-$RELEASE_PLATFORM"
+          if [[ "$RUNNER_OS" != Windows ]]; then chmod 755 "$extracted/tsrct-conv" "$extracted"/lib/*; fi
+          helper="$FFMPEG_DIR/bin/ffmpeg"
+          if [[ "$RUNNER_OS" = Windows ]]; then helper+=.exe; fi
+          python scripts/test_release_runtime.py --bundle "$extracted" --platform "$RELEASE_PLATFORM" --ffmpeg "$helper"
+      # Mac binaries are not release-ready until a separate, checkout-free job
+      # signs and notarizes them. Never publish these raw artifacts.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: runner.os == 'macOS'
+        with:
+          name: unsigned-${{ matrix.platform }}
+          path: release-artifacts/
+          retention-days: 30
+          compression-level: 0
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: runner.os != 'macOS'
+        with:
+          name: release-${{ matrix.platform }}
+          path: release-artifacts/
+          retention-days: 30
+          compression-level: 0
+          if-no-files-found: error
+  sign-macos:
+    needs: [validate, build]
+    if: needs.validate.outputs.action == 'release'
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [darwin-arm64, darwin-x86_64]
+    # Like Tesseract's public CLI signer: no checkout or repository code runs
+    # with the Developer ID certificate or App Store Connect key in scope.
+    runs-on: macos-15
+    environment: release
+    timeout-minutes: 60
+    permissions: {}
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+      PLATFORM: ${{ matrix.platform }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: unsigned-${{ matrix.platform }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Verify input and extract only allowlisted Mach-O payloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          zips=(Tesseract-Converter-"$VERSION"-"$PLATFORM".zip)
+          test "${#zips[@]}" -eq 1
+          shasum -a 256 -c "${zips[0]}.sha256"
+          python3 - "${zips[0]}" "$RUNNER_TEMP/macho" <<'PY'
+          import hashlib, json, os, pathlib, re, stat, sys, zipfile
+          folder = f"Tesseract-Converter-{os.environ['VERSION']}-{os.environ['PLATFORM']}"
+          destination = pathlib.Path(sys.argv[2])
+          with zipfile.ZipFile(sys.argv[1]) as archive:
+              entries = archive.infolist()
+              names = [item.filename for item in entries]
+              if len(names) != len(set(names)) or any(not n.startswith(folder + "/") or
+                  pathlib.PurePosixPath(n).is_absolute() or ".." in pathlib.PurePosixPath(n).parts or
+                  not stat.S_ISREG(item.external_attr >> 16) for n, item in zip(names, entries)):
+                  raise SystemExit("unexpected, unsafe or duplicate release ZIP entry")
+              build = json.loads(archive.read(folder + "/build.json"))
+              expected = {"version": os.environ["VERSION"], "source_sha": os.environ["SOURCE_SHA"],
+                          "platform": os.environ["PLATFORM"]}
+              if build != expected:
+                  raise SystemExit("unsigned release provenance mismatch")
+              manifest = json.loads(archive.read(folder + "/native/manifest.json"))
+              if (manifest.get("schemaVersion") != 1 or manifest.get("platform") != os.environ["PLATFORM"] or
+                  manifest.get("ffmpegVersion") != "7.1.5" or not isinstance(manifest.get("files"), dict)):
+                  raise SystemExit("invalid native manifest provenance")
+              files = manifest["files"]
+              majors = {"avcodec": 61, "avformat": 61, "avutil": 59, "avfilter": 10,
+                        "avdevice": 61, "swscale": 8, "swresample": 5}
+              allowed = {f"lib/lib{name}.{major}.dylib" for name, major in majors.items()} | {"tsrct-conv"}
+              payloads = sorted(name for name in files if name == "tsrct-conv" or name.startswith("lib/"))
+              if set(payloads) != allowed:
+                  raise SystemExit("missing or unapproved signed native payload")
+              actual = {name.removeprefix(folder + "/") for name in names}
+              if (set(files) != {name for name in actual if name == "tsrct-conv" or name.startswith(("lib/", "native/"))} - {"native/manifest.json"}):
+                  raise SystemExit("native manifest file coverage mismatch")
+              for name, digest in files.items():
+                  if not re.fullmatch(r"[a-f0-9]{64}", digest) or hashlib.sha256(archive.read(folder + "/" + name)).hexdigest() != digest:
+                      raise SystemExit("native manifest hash mismatch")
+              for name in payloads:
+                  path = destination / name
+                  path.parent.mkdir(parents=True, exist_ok=True)
+                  path.write_bytes(archive.read(folder + "/" + name))
+                  path.chmod(0o755)
+          PY
+          for binary in "$RUNNER_TEMP/macho/tsrct-conv" "$RUNNER_TEMP/macho"/lib/*.dylib; do
+            test "$(lipo -archs "$binary")" = "${PLATFORM#darwin-}"
+          done
+      - name: Sign and notarize the release ZIP
+        env:
+          CERTIFICATE: ${{ secrets.APPLE_SIGNING_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_SIGNING_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${CERTIFICATE:?Set APPLE_SIGNING_P12 in the release environment}"
+          : "${CERTIFICATE_PASSWORD:?Set APPLE_SIGNING_PASSWORD in the release environment}"
+          : "${SIGNING_IDENTITY:?Set APPLE_SIGNING_IDENTITY in the release environment}"
+          : "${NOTARY_KEY:?Set APPLE_NOTARY_KEY in the release environment}"
+          : "${NOTARY_KEY_ID:?Set APPLE_NOTARY_KEY_ID in the release environment}"
+          : "${NOTARY_ISSUER_ID:?Set APPLE_NOTARY_ISSUER_ID in the release environment}"
+          : "${TEAM_ID:?Set APPLE_TEAM_ID in the release environment}"
+          umask 077
+          keychain="$RUNNER_TEMP/conv-signing.keychain-db"
+          password=$(openssl rand -hex 24)
+          echo "::add-mask::$password"
+          printf '%s' "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          printf '%s' "$NOTARY_KEY" > "$RUNNER_TEMP/notary.p8"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          binary="$RUNNER_TEMP/macho/tsrct-conv"
+          for library in "$RUNNER_TEMP/macho"/lib/*.dylib; do
+            codesign --force --options runtime --timestamp --keychain "$keychain" --sign "$SIGNING_IDENTITY" "$library"
+          done
+          codesign --force --options runtime --timestamp --identifier com.captions.tsrct-conv --keychain "$keychain" --sign "$SIGNING_IDENTITY" "$binary"
+          for signed_file in "$RUNNER_TEMP/macho"/lib/*.dylib "$binary"; do
+            codesign --verify --strict "$signed_file"
+            team=$(codesign -dv --verbose=4 "$signed_file" 2>&1 | awk -F= '$1 == "TeamIdentifier" {print $2}')
+            test "$team" = "$TEAM_ID"
+            test "$(lipo -archs "$signed_file")" = "${PLATFORM#darwin-}"
+          done
+          shopt -s nullglob
+          zips=(Tesseract-Converter-"$VERSION"-"$PLATFORM".zip)
+          python3 - "${zips[0]}" "$binary" <<'PY'
+          import hashlib, io, json, os, pathlib, sys, zipfile
+          original = pathlib.Path(sys.argv[1])
+          payload = pathlib.Path(sys.argv[2]).parent
+          folder = f"Tesseract-Converter-{os.environ['VERSION']}-{os.environ['PLATFORM']}"
+          with zipfile.ZipFile(original) as archive:
+              manifest = json.loads(archive.read(folder + "/native/manifest.json"))
+              files = manifest["files"]
+              replacements = {name: (payload / name).read_bytes() for name in files
+                              if name == "tsrct-conv" or name.startswith("lib/")}
+              if not replacements or not any(name.startswith("lib/") for name in replacements):
+                  raise SystemExit("missing signed executable or libraries")
+              for name, data in replacements.items():
+                  files[name] = hashlib.sha256(data).hexdigest()
+              replacements["native/manifest.json"] = json.dumps(manifest, sort_keys=True, indent=2).encode() + b"\n"
+              entries = [(item.filename, replacements.get(item.filename.removeprefix(folder + "/"), archive.read(item)))
+                         for item in archive.infolist()]
+              for name, digest in files.items():
+                  data = next((value for path, value in entries if path == folder + "/" + name), None)
+                  if data is None or hashlib.sha256(data).hexdigest() != digest:
+                      raise SystemExit("signed manifest file mismatch")
+          buffer = io.BytesIO()
+          with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+              for name, data in sorted(entries):
+                  info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+                  info.create_system = 3
+                  info.external_attr = (0o100000 | (0o755 if name == folder + '/tsrct-conv' or name.startswith(folder + '/lib/') else 0o644)) << 16
+                  info.compress_type = zipfile.ZIP_DEFLATED
+                  archive.writestr(info, data, compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+          digest = hashlib.sha256(buffer.getvalue()).hexdigest()
+          name = f"{folder}.zip"
+          output = pathlib.Path("release-artifacts")
+          output.mkdir()
+          (output / name).write_bytes(buffer.getvalue())
+          (output / f"{name}.sha256").write_text(f"{digest}  {name}\n")
+          PY
+          signed=(release-artifacts/*.zip)
+          test "${#signed[@]}" -eq 1
+          (cd release-artifacts && shasum -a 256 -c "$(basename "${signed[0]}").sha256")
+          mkdir -p "$RUNNER_TEMP/packaged"
+          unzip -q "${signed[0]}" -d "$RUNNER_TEMP/packaged"
+          for signed_file in "$RUNNER_TEMP/macho"/lib/*.dylib "$binary"; do
+            relative=${signed_file#"$RUNNER_TEMP/macho/"}
+            packaged="$RUNNER_TEMP/packaged/Tesseract-Converter-$VERSION-$PLATFORM/$relative"
+            cmp "$signed_file" "$packaged"
+            codesign --verify --strict "$packaged"
+            team=$(codesign -dv --verbose=4 "$packaged" 2>&1 | awk -F= '$1 == "TeamIdentifier" {print $2}')
+            test "$team" = "$TEAM_ID"
+          done
+          xcrun notarytool submit "${signed[0]}" --key "$RUNNER_TEMP/notary.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" --wait --output-format json > "$RUNNER_TEMP/notarization.json"
+          if ! jq -e '.status == "Accepted"' "$RUNNER_TEMP/notarization.json"; then
+            xcrun notarytool log "$(jq -r .id "$RUNNER_TEMP/notarization.json")" --key "$RUNNER_TEMP/notary.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID"
+            exit 1
+          fi
+      - name: Remove signing credentials
+        if: always()
+        shell: bash
+        run: |
+          security delete-keychain "$RUNNER_TEMP/conv-signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/certificate.p12" "$RUNNER_TEMP/notary.p8"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: release-artifacts/
+          retention-days: 30
+          compression-level: 0
+          if-no-files-found: error
+  github-release:
+    needs: [validate, build, sign-macos]
+    if: needs.validate.outputs.action == 'release'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.validate.outputs.version }}
+      SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.validate.outputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release-artifacts
+      - name: Validate the complete release before any remote write
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/compare/$SOURCE_SHA...main" --jq .merge_base_commit.sha)" = "$SOURCE_SHA"
+          license_check=()
+          visibility="$(gh api "repos/$GITHUB_REPOSITORY" --jq .visibility)"
+          if [[ "$visibility" = public ]]; then
+            license_check=(--require-license)
+          fi
+          python scripts/release_archive.py verify --version "$VERSION" --source-sha "$SOURCE_SHA" \
+            --output release-artifacts "${license_check[@]}"
+          python3 scripts/release_plan.py --phase publish
+      - name: Create the GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+          FX_SCHEMA_VERSION="$(python3 - <<'PY'
+          import pathlib, re
+          source = pathlib.Path('crates/fx_schema/src/lib.rs').read_text()
+          match = re.search(r'^pub const FX_SCHEMA_REVISION: u8 = (\d+);$', source, re.MULTILINE)
+          if match is None:
+              raise SystemExit('FX_SCHEMA_REVISION not found in checked-out source')
+          print(match.group(1))
+          PY
+          )"
+          printf 'Tesseract-Converter %s\n\nfxSchemaVersion: %s\nSource provenance is recorded in each archive’s build.json. Verify each ZIP against its .sha256 file. See RELEASING.md for distribution and licensing requirements.\n' \
+            "$VERSION" "$FX_SCHEMA_VERSION" > "$RUNNER_TEMP/release-notes.md"
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" \
+            --title "Tesseract-Converter v$VERSION" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" release-artifacts/*.zip release-artifacts/*.sha256

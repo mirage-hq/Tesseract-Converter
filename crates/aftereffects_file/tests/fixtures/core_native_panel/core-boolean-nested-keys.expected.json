@@ -1,0 +1,1 @@
+{"status":"AUTHORED_UNRUN","capabilities":["E12","E11"],"layers":[{"name":"Nested Boolean","kind":"shape","booleanOp":"intersect","operandKinds":["shape","boolean"],"properties":[{"name":"ADBE Vector Merge Type","value":[4]},{"name":"ADBE Vector Rect Size","keys":[[0,70,40],[0.5,95,55]]},{"name":"ADBE Vector Ellipse Size","keys":[[0,44,36],[0.5,56,48]]}]}]}

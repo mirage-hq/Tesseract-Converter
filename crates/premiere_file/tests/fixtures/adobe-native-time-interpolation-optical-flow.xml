@@ -1,0 +1,19 @@
+<VideoClip ObjectID="2576" ClassID="9308dbef-2440-4acb-9ab2-953b9a4e82ec" Version="11">
+<Clip Version="18">
+<Node Version="1">
+<Properties Version="1">
+<asl.clip.label.color>13408882</asl.clip.label.color>
+<asl.clip.label.name>BE.Prefs.LabelColors.1</asl.clip.label.name>
+</Properties>
+</Node>
+<MarkerOwner Version="1">
+<Markers ObjectRef="586"/>
+</MarkerOwner>
+<Source ObjectRef="587"/>
+<ClipID>7fb661e8-f427-41ff-9824-e832d1eea369</ClipID>
+<PlaybackSpeed>0.88</PlaybackSpeed>
+<InPoint>0</InPoint>
+<OutPoint>2804428763136</OutPoint>
+</Clip>
+<TimeInterpolationType>2</TimeInterpolationType>
+</VideoClip>

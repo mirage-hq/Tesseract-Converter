@@ -1,0 +1,69 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "formatVersion": 1,
+  "duration": 2,
+  "dimensions": {
+    "width": 320,
+    "height": 180
+  },
+  "backgroundColor": [
+    0,
+    0,
+    0,
+    1
+  ],
+  "composition": {
+    "id": "main",
+    "name": "media-legacy-image",
+    "segmentLayerIds": [],
+    "motionBlur": {
+      "enabled": false,
+      "shutterAngle": 180,
+      "shutterPhase": 0,
+      "samplesPerFrame": 16,
+      "adaptiveSampleLimit": 128
+    },
+    "dynamics": {
+      "entries": []
+    },
+    "layers": [
+      {
+        "type": "Media",
+        "id": 113,
+        "name": "Legacy Red Stretch",
+        "parent": null,
+        "activeRange": {
+          "start": 0,
+          "duration": 2000
+        },
+        "transform": {
+          "anchorPoint": [
+            0,
+            0
+          ],
+          "position": [
+            160,
+            90
+          ],
+          "scale": [
+            125,
+            80
+          ],
+          "rotation": 0,
+          "opacity": 55
+        },
+        "source": {
+          "assetId": "red",
+          "kind": "image",
+          "fit": "stretch",
+          "sourceRect": {
+            "x": 20,
+            "y": 20,
+            "width": 160,
+            "height": 90
+          }
+        }
+      }
+    ]
+  }
+}

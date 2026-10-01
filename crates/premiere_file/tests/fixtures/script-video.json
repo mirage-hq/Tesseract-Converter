@@ -1,0 +1,62 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "formatVersion": 1,
+  "dimensions": { "width": 1920, "height": 1080 },
+  "duration": 3.5,
+  "composition": {
+    "id": "script-video",
+    "name": "Video script keys",
+    "layers": [
+      {
+        "type": "Video",
+        "id": 1,
+        "name": "Animated red video",
+        "playback": {
+          "type": "windowed",
+          "inputRange": { "start": 500, "duration": 3000 },
+          "mapping": {
+            "type": "linear",
+            "input": { "start": 500, "duration": 3000 },
+            "output": { "start": 1000, "duration": 3000 }
+          },
+          "inputOffsetMs": 0
+        },
+        "sourceRange": { "start": 1000, "duration": 3000 },
+        "sourceIntrinsicDuration": 10000,
+        "volume": 0,
+        "transform": {
+          "anchorPoint": [960, 540], "position": [960, 540], "scale": [45, 45],
+          "rotation": 0, "opacity": 100
+        },
+        "source": {
+          "assetId": "premiere-video-1",
+          "fit": "contain",
+          "sourceRect": { "x": 0, "y": 0, "width": 1920, "height": 1080 }
+        }
+      },
+      {
+        "type": "Rect",
+        "id": 2,
+        "name": "Black canvas",
+        "activeRange": { "start": 0, "duration": 3500 },
+        "transform": {
+          "anchorPoint": [0, 0], "position": [0, 0], "scale": [100, 100],
+          "rotation": 0, "opacity": 100
+        },
+        "rect": { "size": [1920, 1080], "fillColor": [0, 0, 0, 1] }
+      }
+    ],
+    "dynamics": {
+      "entries": [
+        {
+          "target": { "kind": "layer", "layerId": 1, "propertyType": "opacity" },
+          "animator": { "type": "jsScript", "layerTimeJsCode": "return 20 + 20 * input.time.seconds;" }
+        },
+        {
+          "target": { "kind": "layer", "layerId": 1, "propertyType": "rotation" },
+          "animator": { "type": "jsScript", "layerTimeJsCode": "return -30 + 20 * input.time.seconds;" }
+        }
+      ]
+    }
+  }
+}

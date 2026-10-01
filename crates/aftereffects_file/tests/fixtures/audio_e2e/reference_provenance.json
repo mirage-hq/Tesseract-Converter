@@ -1,0 +1,3640 @@
+{
+  "scope": "Independent native Adobe audio reference observations for committed local MP4s; not conversion fidelity or generated-export Adobe acceptance",
+  "cases": [
+    {
+      "case_id": "affine-playback",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 199,
+        "composition_name": "affine-playback"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/affine-playback.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "audible_windows",
+            "start": 1.1,
+            "end": 1.4,
+            "channel_rms": [
+              0.09897690777106513,
+              0.06359829477427603
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 0.9,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 5.1,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:09:38+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "all-zero-one-key",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 108,
+        "composition_name": "all-zero-one-key"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/all-zero-one-key.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:09:59+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "all-zero-two-keys",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 121,
+        "composition_name": "all-zero-two-keys"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/all-zero-two-keys.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:10:19+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "audio-group",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 238,
+        "composition_name": "audio-group"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/audio-group.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "audible_windows",
+            "start": 1.1,
+            "end": 1.4,
+            "channel_rms": [
+              0.09898568404216765,
+              0.06362866218176261
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 0.9,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 5.1,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:10:40+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "bezier-gain",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 173,
+        "composition_name": "bezier-gain"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/bezier-gain.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "audible_windows",
+            "start": 1.1,
+            "end": 1.4,
+            "channel_rms": [
+              0.09898568404216765,
+              0.06362866218176261
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 0.9,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 5.1,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:11:00+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "conflicting-gain-clock",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 395,
+        "composition_name": "conflicting-gain-clock"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/conflicting-gain-clock.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "audible_windows",
+            "start": 1.1,
+            "end": 1.4,
+            "channel_rms": [
+              0.09898568404216765,
+              0.06362866218176261
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 0.9,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 5.1,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:11:20+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "constant-zero-nonzero-base",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 95,
+        "composition_name": "constant-zero-nonzero-base"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/constant-zero-nonzero-base.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:11:40+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "constant-zero-zero-base",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 82,
+        "composition_name": "constant-zero-zero-base"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/constant-zero-zero-base.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:12:01+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "empty-nested-group",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 290,
+        "composition_name": "empty-nested-group"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/empty-nested-group.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "audible_windows",
+            "start": 1.1,
+            "end": 1.4,
+            "channel_rms": [
+              0.09898568404216765,
+              0.06362866218176261
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 0.9,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 5.1,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:12:21+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "empty-only-group",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 421,
+        "composition_name": "empty-only-group"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/empty-only-group.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "audible_windows",
+            "start": 1.1,
+            "end": 1.4,
+            "channel_rms": [
+              0.09898568404216765,
+              0.06362866218176261
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 0.9,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 5.1,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:12:41+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "eof-tail",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 212,
+        "composition_name": "eof-tail"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/eof-tail.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "audible_windows",
+            "start": 1.1,
+            "end": 1.4,
+            "channel_rms": [
+              0.09898568404216765,
+              0.06362866218176261
+            ]
+          },
+          {
+            "kind": "audible_windows",
+            "start": 4.1,
+            "end": 4.4,
+            "channel_rms": [
+              0.09898376069443574,
+              0.06362945575932187
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 0.9,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 4.6,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:13:02+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "expression",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 461,
+        "composition_name": "expression"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/expression.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "audible_windows",
+            "start": 1.1,
+            "end": 1.4,
+            "channel_rms": [
+              0.1576898798854692,
+              0.10153371483539572
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 0.9,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 5.1,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:13:21+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "fractional-duration",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 329,
+        "composition_name": "fractional-duration"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/fractional-duration.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "audible_windows",
+            "start": 1.1,
+            "end": 1.4,
+            "channel_rms": [
+              0.09898568404216765,
+              0.06362866218176261
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 0.9,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 5.1,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:13:41+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "group-affine-playback",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 264,
+        "composition_name": "group-affine-playback"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/group-affine-playback.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "audible_windows",
+            "start": 3.1,
+            "end": 3.4,
+            "channel_rms": [
+              0.09897688102915084,
+              0.06359781511330077
+            ]
+          },
+          {
+            "kind": "audible_windows",
+            "start": 4.1,
+            "end": 4.4,
+            "channel_rms": [
+              0.09889304517947883,
+              0.06351321412164916
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 2.9,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 5.1,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:14:02+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "hidden-group",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 43,
+        "composition_name": "hidden-group"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/hidden-group.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:14:22+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "hidden-layer",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 30,
+        "composition_name": "hidden-layer"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/hidden-layer.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:14:42+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "hold-gain",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 147,
+        "composition_name": "hold-gain"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/hold-gain.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "audible_windows",
+            "start": 1.1,
+            "end": 1.4,
+            "channel_rms": [
+              0.09898568404216765,
+              0.06362866218176261
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 0.9,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 5.1,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:15:02+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "invalid-gain-hull",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 408,
+        "composition_name": "invalid-gain-hull"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/invalid-gain-hull.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "audible_windows",
+            "start": 1.1,
+            "end": 1.4,
+            "channel_rms": [
+              0.09898568404216765,
+              0.06362866218176261
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 0.9,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 5.1,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:15:23+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "linear-gain",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 160,
+        "composition_name": "linear-gain"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/linear-gain.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "audible_windows",
+            "start": 1.1,
+            "end": 1.4,
+            "channel_rms": [
+              0.09898568404216765,
+              0.06362866218176261
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 0.9,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 5.1,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:15:43+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "mov-audio-only",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 225,
+        "composition_name": "mov-audio-only"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/mov-audio-only.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "audible_windows",
+            "start": 1.1,
+            "end": 1.4,
+            "channel_rms": [
+              0.09865299392727854,
+              0.06357440053253614
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 0.9,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 5.1,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:16:04+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "native-muted",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 17,
+        "composition_name": "native-muted"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/native-muted.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:16:24+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "nonlinear-remap",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 382,
+        "composition_name": "nonlinear-remap"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/nonlinear-remap.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "audible_windows",
+            "start": 1.1,
+            "end": 1.4,
+            "channel_rms": [
+              0.09885541990434694,
+              0.06339516408485892
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 0.9,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 5.1,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:16:44+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "source-switch",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 368,
+        "composition_name": "source-switch"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/source-switch.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "audible_windows",
+            "start": 2.1,
+            "end": 2.4,
+            "channel_rms": [
+              0.0989823920549839,
+              0.06362969759010892
+            ]
+          },
+          {
+            "kind": "audible_windows",
+            "start": 3.1,
+            "end": 3.4,
+            "channel_rms": [
+              0.19804133741559377,
+              0.1272783345141572
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 1.9,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 4.1,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:17:05+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "static-zero",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 69,
+        "composition_name": "static-zero"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/static-zero.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:17:26+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "stereo-levels",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 447,
+        "composition_name": "stereo-levels"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/stereo-levels.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "audible_windows",
+            "start": 1.1,
+            "end": 1.4,
+            "channel_rms": [
+              0.11069578143144333,
+              0.11038078209847413
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 0.9,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 5.1,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:17:46+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "trim-offset",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 186,
+        "composition_name": "trim-offset"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/trim-offset.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "audible_windows",
+            "start": 1.1,
+            "end": 1.4,
+            "channel_rms": [
+              0.09898568404216765,
+              0.06362866218176261
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 0.9,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 5.1,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:18:04+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "wave-static",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 4,
+        "composition_name": "wave-static"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/wave-static.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "audible_windows",
+            "start": 1.1,
+            "end": 1.4,
+            "channel_rms": [
+              0.09898568404216765,
+              0.06362866218176261
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 0.9,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 5.1,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:05:05+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    },
+    {
+      "case_id": "zero-base-unmute",
+      "source": {
+        "path": "audio_cases.aep",
+        "sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+        "composition_id": 134,
+        "composition_name": "zero-base-unmute"
+      },
+      "reference": {
+        "fps": 30,
+        "frame_count": 180,
+        "duration_seconds": 6.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "audio_streams": [
+          {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "6.000000"
+          }
+        ],
+        "path": "tests/references/aep/audio/zero-base-unmute.mp4"
+      },
+      "audio_inspection": {
+        "rate": 48000,
+        "channels": 2,
+        "frames": 288000,
+        "critical_windows": [
+          {
+            "kind": "audible_windows",
+            "start": 2.6,
+            "end": 2.9,
+            "channel_rms": [
+              0.1979837901601067,
+              0.12727060805287993
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 0,
+            "end": 2.4,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "kind": "silent_windows",
+            "start": 3.1,
+            "end": 6,
+            "channel_rms": [
+              0.0,
+              0.0
+            ]
+          }
+        ],
+        "scope": "native reference content sanity, not conversion fidelity"
+      },
+      "source_copy_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+      "validated_at": "2026-09-27T14:18:23+00:00",
+      "decoded_frame_inspection": {
+        "samples_seconds": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "maximum_rgb_channel": 0,
+        "expected": "black audio-only canvas; not alpha proof"
+      },
+      "native_render": {
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "source_fps": 24,
+        "render_settings": {
+          "3:2 Pulldown": "Off",
+          "Color Depth": "Current Settings",
+          "Disk Cache": "Read Only",
+          "Effects": "Current Settings",
+          "Field Render": "Off",
+          "Frame Blending": "On for Checked Layers",
+          "Frame Rate": "Use this frame rate",
+          "Guide Layers": "All Off",
+          "Motion Blur": "On for Checked Layers",
+          "Proxy Use": "Use No Proxies",
+          "Quality": "Best",
+          "Resolution": "Full",
+          "Skip Existing Files": "false",
+          "Solo Switches": "Current Settings",
+          "Time Span": "Custom",
+          "Time Span Duration": "6.0",
+          "Time Span End": "6.0",
+          "Time Span Start": "0.0",
+          "Use comp's frame rate": "24.0",
+          "Use this frame rate": "30.0"
+        },
+        "output_settings": {
+          "Audio Bit Depth": "16 Bit",
+          "Audio Channels": "Stereo",
+          "Audio Sample Rate": "48.000 kHz",
+          "Channels": "RGB",
+          "Color": "Premultiplied (Matted)",
+          "Crop": "false",
+          "Crop Bottom": "0",
+          "Crop Left": "0",
+          "Crop Right": "0",
+          "Crop Top": "0",
+          "Depth": "Millions of Colors",
+          "Format": "H.264",
+          "Include Project Link": "false",
+          "Include Source XMP Metadata": "false",
+          "Lock Aspect Ratio": "true",
+          "Output Audio": "On",
+          "Post-Render Action": "None",
+          "Resize": "false",
+          "Resize Quality": "High",
+          "Resize to": {
+            "x": 320,
+            "y": 180
+          },
+          "Starting #": "0",
+          "Use Comp Frame Number": "true",
+          "Use Region of Interest": "false",
+          "Video Output": "true"
+        }
+      }
+    }
+  ]
+}

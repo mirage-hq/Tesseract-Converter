@@ -1,0 +1,16 @@
+{
+  "status": "AUTHORING_REQUEST_UNRUN_UNMEASURED",
+  "caseId": "fx-export-media-video-stretch",
+  "assets": [
+    "movie"
+  ],
+  "layers": [
+    "Double Speed Movie"
+  ],
+  "clock": {
+    "in": 0,
+    "out": 2,
+    "start": -0.125,
+    "stretch": 0.5
+  }
+}

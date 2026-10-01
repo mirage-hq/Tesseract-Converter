@@ -1,0 +1,9 @@
+/target/
+/tmp/
+/.venv/
+.pytest_cache/
+# Committed Adobe reference media live under tests/references/.
+# The enclosing repository's .gitignore ignores PNGs; retain the pinned native Motion proof.
+!/crates/premiere_file/tests/fixtures/script_motion_proof/contact-sheet.png
+__pycache__/
+*.pyc

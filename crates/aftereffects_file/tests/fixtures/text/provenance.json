@@ -1,0 +1,49 @@
+{
+  "source_repository": "https://github.com/forticheprod/py-aep",
+  "source_revision": "e12a451c35bacd3f34a080090265f9370e66162b",
+  "license": "MIT; repository copy retained at crates/aftereffects_file/tests/fixtures/LICENSE",
+  "targets": [
+    {
+      "fixture": "text_ranges.aep",
+      "composition_id": 1,
+      "composition_name": "TestComp",
+      "layer_ids": [14, 15, 16, 17, 18, 19, 20, 21]
+    },
+    {
+      "fixture": "text_animator.aep",
+      "composition_id": 1,
+      "composition_name": "Comp 1",
+      "layer_ids": [30]
+    }
+  ],
+  "files": [
+    {
+      "path": "text_ranges.aep",
+      "bytes": 235825,
+      "sha256": "bb169bce21c1bd31ca1651cef31c7d525d70cbf9d2e0eab2d99ebc665aadcc72",
+      "upstream_path": "samples/models/text/text_ranges.aep",
+      "role": "Adobe-native AEP structural source"
+    },
+    {
+      "path": "text_ranges.json.gz",
+      "bytes": 2227360,
+      "sha256": "472312715fbc9503b2203402352951b8565806226a30c8bd6b7dca4bb26cc51d",
+      "upstream_path": "samples/models/text/text_ranges.json",
+      "role": "independent ExtendScript JSON projection used for editable field assertions"
+    },
+    {
+      "path": "text_animator.aep",
+      "bytes": 108237,
+      "sha256": "952933eb8f2c27bb2d8d9eedf099a9b060af40f85da023857d490775d74dadfb",
+      "upstream_path": "samples/models/property/text_animator.aep",
+      "role": "Adobe-native AEP structural source with one materialized Text Animator and Range Selector"
+    }
+  ],
+  "evidence": {
+    "editable_structure": "Source Text fields, point/box layout, Unicode/newlines, font identity, size, fill, leading, justification, Text Animator properties, and Range Selector fields",
+    "adobe_ui_inspection": false,
+    "adobe_render_reference": false,
+    "visual_comparison": false,
+    "alpha_comparison": false
+  }
+}

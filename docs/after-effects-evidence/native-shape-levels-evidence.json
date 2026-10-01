@@ -1,0 +1,81 @@
+{
+  "version": "26.5x89",
+  "build": 89,
+  "scope": "Independent native authoring/readback and range records; no converted render fidelity or alpha claim.",
+  "sources": [
+    {
+      "case_id": "aep-effects-shape-owner-gaussian-c1",
+      "source_path": "crates/aftereffects_file/tests/fixtures/effects/shape_owner_gaussian.aep",
+      "source_sha256": "2ca64297532dd9359ddd14ed2d4fd575a34d202eb05729899ad80f6d219a290d",
+      "source_bytes": 79349,
+      "media_dependencies": [],
+      "adobe_metadata": {
+        "path": "crates/aftereffects_file/tests/fixtures/effects/shape_owner_gaussian.aep",
+        "bitsPerChannel": 8,
+        "workingSpace": "None",
+        "linearBlending": false,
+        "composition": {
+          "id": 1,
+          "name": "ShapeGaussian",
+          "width": 320,
+          "height": 180,
+          "frameRate": 24,
+          "duration": 2,
+          "pixelAspect": 1,
+          "displayStartTime": 0,
+          "workAreaStart": 0,
+          "workAreaDuration": 2,
+          "renderer": "ADBE Advanced 3d",
+          "layerId": 13,
+          "inPoint": 0,
+          "outPoint": 2,
+          "startTime": 0,
+          "stretch": 100
+        }
+      },
+      "authoring_script": {
+        "name": "shape-group-native.jsx",
+        "sha256": "d1a75e0525487a62c6c959b7a4408bf069064bc38ab4e8a9b6d3d074afcf8f2b",
+        "bytes": 1903,
+        "availability": "Machine-specific session wrapper is not shipped."
+      }
+    },
+    {
+      "case_id": "aep-effects-levels-controls-c1",
+      "source_path": "crates/aftereffects_file/tests/fixtures/effects/levels_controls.aep",
+      "source_sha256": "719a1307e9b8044d0ee09283bd38036cfed6a82e224dee170462a1c9702ed1f0",
+      "source_bytes": 117927,
+      "media_dependencies": [],
+      "adobe_metadata": {
+        "path": "crates/aftereffects_file/tests/fixtures/effects/levels_controls.aep",
+        "bitsPerChannel": 8,
+        "workingSpace": "None",
+        "linearBlending": false,
+        "composition": {
+          "id": 1,
+          "name": "LevelsControls",
+          "width": 320,
+          "height": 180,
+          "frameRate": 24,
+          "duration": 2,
+          "pixelAspect": 1,
+          "displayStartTime": 0,
+          "workAreaStart": 0,
+          "workAreaDuration": 2,
+          "renderer": "ADBE Advanced 3d",
+          "layerId": 15,
+          "inPoint": 0,
+          "outPoint": 2,
+          "startTime": 0,
+          "stretch": 100
+        }
+      },
+      "authoring_script": {
+        "name": "levels-pro-native.jsx",
+        "sha256": "1b4c5ab2a0a059ca1c1a0408115c445469e2546b4f60d600ece0b37c6957bef5",
+        "bytes": 2079,
+        "availability": "Machine-specific session wrapper is not shipped."
+      }
+    }
+  ]
+}

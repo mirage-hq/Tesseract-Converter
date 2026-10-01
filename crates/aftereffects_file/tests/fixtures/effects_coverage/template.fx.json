@@ -1,0 +1,89 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "backgroundColor": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "composition": {
+    "dynamics": {
+      "entries": []
+    },
+    "id": "main",
+    "layers": [
+      {
+        "activeRange": {
+          "duration": 2000,
+          "start": 0
+        },
+        "blendMode": "normal",
+        "effects": [],
+        "id": 900,
+        "name": "Coverage shape",
+        "parent": null,
+        "rect": {
+          "fillColor": [
+            0.2,
+            0.4,
+            0.6,
+            1
+          ],
+          "fillEnabled": true,
+          "position": [
+            0,
+            0
+          ],
+          "roundness": 0,
+          "size": [
+            120,
+            80
+          ],
+          "strokeEnabled": false,
+          "strokeWidth": 0
+        },
+        "transform": {
+          "anchorPoint": [
+            60,
+            40
+          ],
+          "opacity": 100,
+          "orientation": [
+            0,
+            0,
+            0
+          ],
+          "position": [
+            160,
+            90
+          ],
+          "rotation": 0,
+          "rotationX": 0,
+          "rotationY": 0,
+          "scale": [
+            100,
+            100
+          ],
+          "skew": 0,
+          "skewAxis": 0
+        },
+        "type": "Rect"
+      }
+    ],
+    "motionBlur": {
+      "adaptiveSampleLimit": 128,
+      "enabled": false,
+      "samplesPerFrame": 16,
+      "shutterAngle": 180,
+      "shutterPhase": 0
+    },
+    "name": "Effect coverage",
+    "segmentLayerIds": []
+  },
+  "dimensions": {
+    "height": 180,
+    "width": 320
+  },
+  "duration": 2.0,
+  "formatVersion": 1
+}

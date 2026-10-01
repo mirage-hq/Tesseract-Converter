@@ -1,0 +1,47 @@
+[workspace]
+resolver = "2"
+members = [
+    "apps/tesseract-conv",
+    "crates/media_transcode",
+    "crates/aftereffects_file",
+    "crates/premiere_file",
+    "crates/fx_conv",
+    "crates/fx_keyframe_bake",
+    "crates/tesseract_file",
+    "crates/fx_schema",
+]
+default-members = ["apps/tesseract-conv"]
+
+[workspace.package]
+rust-version = "1.92.0"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1"
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+log = "0.4"
+quick-xml = "0.41"
+roxmltree = "0.21.1"
+serde = { version = "1", features = ["derive"] }
+serde_ignored = "0.1"
+serde_json = "1"
+sha2 = "0.10"
+strum = { version = "0.27", features = ["derive"] }
+symphonia = { version = "0.5", features = ["isomp4", "aac", "mp3", "wav", "pcm"] }
+thiserror = "1"
+uuid = { version = "1", features = ["v4", "js", "serde"] }
+
+[profile.dev]
+debug = 0
+
+[profile.dev.package."*"]
+# Deep but valid XML fixtures require dependency optimizations under this profile.
+opt-level = 2
+
+[profile.dev.package.fx_keyframe_bake]
+# Boa's parser is generic over its source reader, so this crate compiles it.
+# Unoptimized, it takes about eight times the native stack per nesting level
+# that Premiere script baking sizes its evaluation threads for.
+opt-level = 2

@@ -1,0 +1,11 @@
+{
+  "source_sha256": "6d632ac99c9e081746d51b83a651cb311dc063f0541bbe43ba1a241bd8870fdd",
+  "source_composition": 907,
+  "source_layer": 948,
+  "source_layer_offset": 1995692,
+  "source_layer_chunk_bytes": 24878,
+  "fixture": "cosmic-self-mask-controls.rifx",
+  "fixture_bytes": 24878,
+  "fixture_sha256": "7023b6b031a53b6a55780e5e5683b26c7e2174ce459e3fedc024aa6695933f8c",
+  "description": "Exact native layer record and property content for the opaque solid self-inverse Set Matte source profile. Includes masks, path keys, effects/default tables, transform and source-clock declarations; no full project or media. Host and solid fixture scaffolding documented by tests."
+}

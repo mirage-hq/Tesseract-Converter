@@ -1,0 +1,26 @@
+{
+  "status": "AUTHORING_REQUEST_UNRUN_UNMEASURED",
+  "caseId": "fx-export-media-source-switch",
+  "assets": [
+    "red",
+    "green"
+  ],
+  "layers": [
+    "Red to Green",
+    "Red to Green"
+  ],
+  "sourceOrder": [
+    "red",
+    "green"
+  ],
+  "ranges": [
+    [
+      0,
+      1
+    ],
+    [
+      1,
+      2
+    ]
+  ]
+}

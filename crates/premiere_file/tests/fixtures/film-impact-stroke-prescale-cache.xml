@@ -1,0 +1,8 @@
+<VideoComponentParam ObjectID="23300" ClassID="a4ff2d6e-7ac2-44f8-9d52-17d9ca50e542" Version="10">
+		<Name>Scale</Name>
+		<ParameterID>8223</ParameterID>
+		<StartKeyframe>-91445760000000000,99.,0,0,0,0,0,0</StartKeyframe>
+		<CurrentValue>95</CurrentValue>
+		<LowerBound>0</LowerBound>
+		<UpperBound>100</UpperBound>
+	</VideoComponentParam>

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "formatVersion": 1,
+  "dimensions": { "width": 1920, "height": 1080 },
+  "duration": 1.0,
+  "composition": {
+    "id": "main",
+    "name": "Fresh exact 30",
+    "layers": [
+      {
+        "type": "Video",
+        "id": 1,
+        "name": "Source",
+        "playback": {
+          "type": "windowed",
+          "inputRange": { "start": 0, "duration": 1000 },
+          "mapping": {
+            "type": "linear",
+            "input": { "start": 0, "duration": 1000 },
+            "output": { "start": 0, "duration": 1000 }
+          },
+          "inputOffsetMs": 0
+        },
+        "sourceRange": { "start": 0, "duration": 1000 },
+        "sourceIntrinsicDuration": 1000,
+        "volume": 0,
+        "transform": {
+          "anchorPoint": [0, 0], "position": [0, 0], "scale": [100, 100],
+          "rotation": 0, "opacity": 100
+        },
+        "source": {
+          "assetId": "premiere-video-1",
+          "fit": "contain",
+          "sourceRect": { "x": 0, "y": 0, "width": 1920, "height": 1080 }
+        }
+      },
+      {
+        "type": "Rect",
+        "id": 2,
+        "name": "Black canvas",
+        "activeRange": { "start": 0, "duration": 1000 },
+        "transform": {
+          "anchorPoint": [0, 0], "position": [0, 0], "scale": [100, 100],
+          "rotation": 0, "opacity": 100
+        },
+        "rect": { "size": [1920, 1080], "fillColor": [0, 0, 0, 1] }
+      }
+    ]
+  }
+}

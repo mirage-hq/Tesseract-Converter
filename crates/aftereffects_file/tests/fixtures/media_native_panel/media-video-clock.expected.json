@@ -1,0 +1,16 @@
+{
+  "status": "AUTHORING_REQUEST_UNRUN_UNMEASURED",
+  "caseId": "fx-export-media-video-clock",
+  "assets": [
+    "movie"
+  ],
+  "layers": [
+    "Trimmed Blue Movie"
+  ],
+  "clock": {
+    "in": 0,
+    "out": 2,
+    "start": -0.5,
+    "stretch": 1
+  }
+}

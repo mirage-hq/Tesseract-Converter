@@ -1,0 +1,4 @@
+# Release dependency selection: prefer permissive alternatives where available.
+accepted = ["MIT", "Apache-2.0", "BSD-3-Clause", "BSD-2-Clause", "ISC", "Unicode-3.0", "MPL-2.0", "WTFPL", "Zlib", "0BSD", "Unlicense", "BSL-1.0", "LGPL-2.1-or-later"]
+ignore-dev-dependencies = true
+ignore-build-dependencies = true

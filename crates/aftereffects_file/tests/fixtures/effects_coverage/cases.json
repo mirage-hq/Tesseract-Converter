@@ -1,0 +1,2383 @@
+{
+  "version": 1,
+  "note": "Explicit FX controls and independently specified native values for 120x80 Shape content; native Shape Point storage uses 320x180 composition coordinates. These are test oracles, not execution results or render-fidelity evidence.",
+  "cases": [
+    {
+      "id": "gaussianBlur",
+      "effect": {
+        "type": "gaussianBlur",
+        "blurriness": 12,
+        "repeatEdgePixels": true
+      },
+      "native_effect": "ADBE Gaussian Blur 2",
+      "controls": [
+        {
+          "name": "ADBE Gaussian Blur 2-0001",
+          "value": [
+            12
+          ],
+          "end": [
+            24
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Gaussian Blur 2-0003",
+          "value": [
+            1
+          ]
+        }
+      ],
+      "tracks": [
+        {
+          "param": "blurriness",
+          "values": [
+            12.0,
+            24.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "glow",
+      "effect": {
+        "type": "glow",
+        "glowThreshold": 20,
+        "glowRadius": 8,
+        "glowIntensity": 0.5
+      },
+      "native_effect": "ADBE Glo2",
+      "controls": [
+        {
+          "name": "ADBE Glo2-0002",
+          "value": [
+            51
+          ],
+          "end": [
+            102
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Glo2-0003",
+          "value": [
+            8
+          ],
+          "end": [
+            16
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Glo2-0004",
+          "value": [
+            0.5
+          ],
+          "end": [
+            1.5
+          ],
+          "segment": "linear"
+        }
+      ],
+      "tracks": [
+        {
+          "param": "glowThreshold",
+          "values": [
+            20.0,
+            40.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "glowRadius",
+          "values": [
+            8.0,
+            16.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "glowIntensity",
+          "values": [
+            0.5,
+            1.5
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "directionalBlur",
+      "effect": {
+        "type": "directionalBlur",
+        "direction": 35,
+        "blurLength": 12
+      },
+      "native_effect": "ADBE Motion Blur",
+      "controls": [
+        {
+          "name": "ADBE Motion Blur-0001",
+          "value": [
+            35
+          ],
+          "end": [
+            95
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Motion Blur-0002",
+          "value": [
+            12
+          ],
+          "end": [
+            24
+          ],
+          "segment": "linear"
+        }
+      ],
+      "tracks": [
+        {
+          "param": "direction",
+          "values": [
+            35.0,
+            95.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "blurLength",
+          "values": [
+            12.0,
+            24.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "pixelMotionBlur",
+      "rect_size_keys": [[0, 120, 80], [1, 180, 100]],
+      "effect": {
+        "type": "pixelMotionBlur",
+        "shutterControl": "manual",
+        "shutterAngle": 120,
+        "shutterSamples": 8,
+        "vectorDetail": 20
+      },
+      "native_effect": "ADBE OFMotionBlur",
+      "controls": [
+        {
+          "name": "ADBE OFMotionBlur-0002",
+          "value": [
+            120
+          ],
+          "end": [
+            240
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE OFMotionBlur-0003",
+          "value": [
+            8
+          ],
+          "end": [
+            16
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE OFMotionBlur-0004",
+          "value": [
+            20
+          ],
+          "end": [
+            40
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE OFMotionBlur-0001",
+          "value": [
+            1
+          ]
+        }
+      ],
+      "tracks": [
+        {
+          "param": "shutterAngle",
+          "values": [
+            120.0,
+            240.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "shutterSamples",
+          "values": [
+            8.0,
+            16.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "vectorDetail",
+          "values": [
+            20.0,
+            40.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "mosaic",
+      "effect": {
+        "type": "mosaic",
+        "horizontalBlocks": 12,
+        "verticalBlocks": 8,
+        "sharpColors": true
+      },
+      "native_effect": "ADBE Mosaic",
+      "controls": [
+        {
+          "name": "ADBE Mosaic-0001",
+          "value": [
+            12
+          ],
+          "end": [
+            24
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Mosaic-0002",
+          "value": [
+            8
+          ],
+          "end": [
+            16
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Mosaic-0003",
+          "value": [
+            1
+          ]
+        }
+      ],
+      "tracks": [
+        {
+          "param": "horizontalBlocks",
+          "values": [
+            12.0,
+            24.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "verticalBlocks",
+          "values": [
+            8.0,
+            16.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "shiftChannels",
+      "effect": {
+        "type": "shiftChannels",
+        "takeRedFrom": "fullOff",
+        "takeGreenFrom": "fullOn",
+        "takeBlueFrom": "blue"
+      },
+      "native_effect": "ADBE Shift Channels",
+      "controls": [
+        {
+          "name": "ADBE Shift Channels-0002",
+          "value": [
+            10
+          ]
+        },
+        {
+          "name": "ADBE Shift Channels-0003",
+          "value": [
+            9
+          ]
+        },
+        {
+          "name": "ADBE Shift Channels-0004",
+          "value": [
+            4
+          ]
+        }
+      ],
+      "tracks": []
+    },
+    {
+      "id": "dropShadow",
+      "effect": {
+        "type": "dropShadow",
+        "enabled": true,
+        "color": [
+          0.2,
+          0.4,
+          0.6,
+          0.5
+        ],
+        "offset": [
+          6,
+          -8
+        ],
+        "blurRadius": 4,
+        "spreadRadius": 0,
+        "blendMode": "normal"
+      },
+      "native_effect": "ADBE Drop Shadow",
+      "controls": [
+        {
+          "name": "ADBE Drop Shadow-0001",
+          "value": [
+            0.2,
+            0.4,
+            0.6,
+            1
+          ]
+        },
+        {
+          "name": "ADBE Drop Shadow-0002",
+          "value": [
+            127.5
+          ]
+        },
+        {
+          "name": "ADBE Drop Shadow-0003",
+          "value": [
+            36.86989764584402
+          ]
+        },
+        {
+          "name": "ADBE Drop Shadow-0004",
+          "value": [
+            10
+          ]
+        },
+        {
+          "name": "ADBE Drop Shadow-0005",
+          "value": [
+            4
+          ]
+        }
+      ],
+      "tracks": []
+    },
+    {
+      "id": "brightnessContrast",
+      "effect": {
+        "type": "brightnessContrast",
+        "brightness": 20,
+        "contrast": -25
+      },
+      "native_effect": "ADBE Brightness & Contrast 2",
+      "controls": [
+        {
+          "name": "ADBE Brightness & Contrast 2-0001",
+          "value": [
+            20
+          ],
+          "end": [
+            50
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Brightness & Contrast 2-0002",
+          "value": [
+            -25
+          ],
+          "end": [
+            25
+          ],
+          "segment": "linear"
+        }
+      ],
+      "tracks": [
+        {
+          "param": "brightness",
+          "values": [
+            20.0,
+            50.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "contrast",
+          "values": [
+            -25.0,
+            25.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "hueSaturation",
+      "effect": {
+        "type": "hueSaturation",
+        "hue": 15,
+        "saturation": 20,
+        "lightness": -10,
+        "colorize": true,
+        "colorizeHue": 80,
+        "colorizeSaturation": 40,
+        "colorizeLightness": 10
+      },
+      "native_effect": "ADBE HUE SATURATION",
+      "controls": [
+        {
+          "name": "ADBE HUE SATURATION-0004",
+          "value": [
+            15
+          ],
+          "end": [
+            30
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE HUE SATURATION-0005",
+          "value": [
+            20
+          ],
+          "end": [
+            40
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE HUE SATURATION-0006",
+          "value": [
+            -10
+          ],
+          "end": [
+            10
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE HUE SATURATION-0007",
+          "value": [
+            1
+          ],
+          "end": [
+            0
+          ],
+          "segment": "hold"
+        },
+        {
+          "name": "ADBE HUE SATURATION-0008",
+          "value": [
+            80
+          ],
+          "end": [
+            140
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE HUE SATURATION-0009",
+          "value": [
+            40
+          ],
+          "end": [
+            70
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE HUE SATURATION-0010",
+          "value": [
+            10
+          ],
+          "end": [
+            20
+          ],
+          "segment": "linear"
+        }
+      ],
+      "tracks": [
+        {
+          "param": "hue",
+          "values": [
+            15.0,
+            30.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "saturation",
+          "values": [
+            20.0,
+            40.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "lightness",
+          "values": [
+            -10.0,
+            10.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "colorize",
+          "values": [
+            1.0,
+            0.0
+          ],
+          "easing": "hold"
+        },
+        {
+          "param": "colorizeHue",
+          "values": [
+            80.0,
+            140.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "colorizeSaturation",
+          "values": [
+            40.0,
+            70.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "colorizeLightness",
+          "values": [
+            10.0,
+            20.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "radialBlur",
+      "effect": {
+        "type": "radialBlur",
+        "amount": 15,
+        "centerX": 0.25,
+        "centerY": 0.75
+      },
+      "native_effect": "ADBE Radial Blur",
+      "controls": [
+        {
+          "name": "ADBE Radial Blur-0001",
+          "value": [
+            15
+          ],
+          "end": [
+            30
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Radial Blur-0002",
+          "value": [
+            30.0,
+            60.0
+          ],
+          "end": [
+            90.0,
+            20.0
+          ],
+          "segment": "linear"
+        }
+      ],
+      "tracks": [
+        {
+          "param": "amount",
+          "values": [
+            15.0,
+            30.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "centerX",
+          "values": [
+            0.25,
+            0.75
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "centerY",
+          "values": [
+            0.75,
+            0.25
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "levels",
+      "effect": {
+        "type": "levels",
+        "inputBlack": 51,
+        "inputWhite": 204,
+        "gamma": 1.5,
+        "outputBlack": 25.5,
+        "outputWhite": 229.5
+      },
+      "native_effect": "ADBE Pro Levels2",
+      "controls": [
+        {
+          "name": "ADBE Pro Levels2-0004",
+          "value": [
+            0.2
+          ],
+          "end": [
+            0.1
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Pro Levels2-0005",
+          "value": [
+            0.8
+          ],
+          "end": [
+            0.9
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Pro Levels2-0006",
+          "value": [
+            1.5
+          ],
+          "end": [
+            0.8
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Pro Levels2-0007",
+          "value": [
+            0.1
+          ],
+          "end": [
+            0.2
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Pro Levels2-0008",
+          "value": [
+            0.9
+          ],
+          "end": [
+            0.8
+          ],
+          "segment": "linear"
+        }
+      ],
+      "tracks": [
+        {
+          "param": "inputBlack",
+          "values": [
+            51.0,
+            25.5
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "inputWhite",
+          "values": [
+            204.0,
+            229.5
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "gamma",
+          "values": [
+            1.5,
+            0.8
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "outputBlack",
+          "values": [
+            25.5,
+            51.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "outputWhite",
+          "values": [
+            229.5,
+            204.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "bulge",
+      "effect": {
+        "type": "bulge",
+        "horizontalRadius": 0.3,
+        "verticalRadius": 0.4,
+        "centerX": 0.25,
+        "centerY": 0.75,
+        "bulgeHeight": 0.6,
+        "pinning": true
+      },
+      "native_effect": "ADBE Bulge",
+      "controls": [
+        {
+          "name": "ADBE Bulge-0001",
+          "value": [
+            36
+          ],
+          "end": [
+            48
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Bulge-0002",
+          "value": [
+            32
+          ],
+          "end": [
+            40
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Bulge-0003",
+          "value": [
+            30.0,
+            60.0
+          ],
+          "end": [
+            90.0,
+            20.0
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Bulge-0004",
+          "value": [
+            0.6
+          ],
+          "end": [
+            0.9
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Bulge-0007",
+          "value": [
+            1
+          ],
+          "end": [
+            0
+          ],
+          "segment": "hold"
+        }
+      ],
+      "tracks": [
+        {
+          "param": "horizontalRadius",
+          "values": [
+            0.3,
+            0.4
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "verticalRadius",
+          "values": [
+            0.4,
+            0.5
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "centerX",
+          "values": [
+            0.25,
+            0.75
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "centerY",
+          "values": [
+            0.75,
+            0.25
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "bulgeHeight",
+          "values": [
+            0.6,
+            0.9
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "pinning",
+          "values": [
+            1.0,
+            0.0
+          ],
+          "easing": "hold"
+        }
+      ]
+    },
+    {
+      "id": "cornerPin",
+      "effect": {
+        "type": "cornerPin",
+        "upperLeftX": 0.1,
+        "upperLeftY": 0.2,
+        "upperRightX": 0.9,
+        "upperRightY": 0.1,
+        "lowerLeftX": -0.1,
+        "lowerLeftY": 0.8,
+        "lowerRightX": 1.1,
+        "lowerRightY": 0.9
+      },
+      "native_effect": "ADBE Corner Pin",
+      "controls": [
+        {
+          "name": "ADBE Corner Pin-0001",
+          "value": [
+            12.0,
+            16.0
+          ],
+          "end": [
+            24.0,
+            8.0
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Corner Pin-0002",
+          "value": [
+            108.0,
+            8.0
+          ],
+          "end": [
+            96.0,
+            16.0
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Corner Pin-0003",
+          "value": [
+            -12.0,
+            64.0
+          ],
+          "end": [
+            0,
+            72.0
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Corner Pin-0004",
+          "value": [
+            132.0,
+            72.0
+          ],
+          "end": [
+            120,
+            64.0
+          ],
+          "segment": "linear"
+        }
+      ],
+      "tracks": [
+        {
+          "param": "upperLeftX",
+          "values": [
+            0.1,
+            0.2
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "upperLeftY",
+          "values": [
+            0.2,
+            0.1
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "upperRightX",
+          "values": [
+            0.9,
+            0.8
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "upperRightY",
+          "values": [
+            0.1,
+            0.2
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "lowerLeftX",
+          "values": [
+            -0.1,
+            0.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "lowerLeftY",
+          "values": [
+            0.8,
+            0.9
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "lowerRightX",
+          "values": [
+            1.1,
+            1.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "lowerRightY",
+          "values": [
+            0.9,
+            0.8
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "motionTile",
+      "effect": {
+        "type": "motionTile",
+        "tileCenterX": 0.25,
+        "tileCenterY": 0.75,
+        "tileWidth": 80,
+        "tileHeight": 90,
+        "outputWidth": 150,
+        "outputHeight": 160,
+        "mirrorEdges": true,
+        "phase": 45
+      },
+      "native_effect": "ADBE Tile",
+      "controls": [
+        {
+          "name": "ADBE Tile-0001",
+          "value": [
+            30.0,
+            60.0
+          ],
+          "end": [
+            90.0,
+            20.0
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Tile-0002",
+          "value": [
+            80
+          ],
+          "end": [
+            60
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Tile-0003",
+          "value": [
+            90
+          ],
+          "end": [
+            70
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Tile-0004",
+          "value": [
+            150
+          ],
+          "end": [
+            180
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Tile-0005",
+          "value": [
+            160
+          ],
+          "end": [
+            190
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Tile-0006",
+          "value": [
+            1
+          ],
+          "end": [
+            0
+          ],
+          "segment": "hold"
+        },
+        {
+          "name": "ADBE Tile-0007",
+          "value": [
+            45
+          ],
+          "end": [
+            90
+          ],
+          "segment": "linear"
+        }
+      ],
+      "tracks": [
+        {
+          "param": "tileCenterX",
+          "values": [
+            0.25,
+            0.75
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "tileCenterY",
+          "values": [
+            0.75,
+            0.25
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "tileWidth",
+          "values": [
+            80.0,
+            60.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "tileHeight",
+          "values": [
+            90.0,
+            70.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "outputWidth",
+          "values": [
+            150.0,
+            180.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "outputHeight",
+          "values": [
+            160.0,
+            190.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "mirrorEdges",
+          "values": [
+            1.0,
+            0.0
+          ],
+          "easing": "hold"
+        },
+        {
+          "param": "phase",
+          "values": [
+            45.0,
+            90.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "posterize",
+      "effect": {
+        "type": "posterize",
+        "levels": 7
+      },
+      "native_effect": "ADBE Posterize",
+      "controls": [
+        {
+          "name": "ADBE Posterize-0001",
+          "value": [
+            7
+          ],
+          "end": [
+            13
+          ],
+          "segment": "linear"
+        }
+      ],
+      "tracks": [
+        {
+          "param": "levels",
+          "values": [
+            7.0,
+            13.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "posterizeTime",
+      "rect_size_keys": [[0, 120, 80], [1, 180, 100]],
+      "effect": {
+        "type": "posterizeTime",
+        "frameRate": 12
+      },
+      "native_effect": "ADBE Posterize Time",
+      "controls": [
+        {
+          "name": "ADBE Posterize Time-0001",
+          "value": [
+            12
+          ]
+        }
+      ],
+      "tracks": []
+    },
+    {
+      "id": "vignette",
+      "effect": {
+        "type": "vignette",
+        "amount": 0.8,
+        "radius": 0.65,
+        "feather": 0.42
+      },
+      "native_effect": "CS Vignette",
+      "controls": [
+        {
+          "name": "CS Vignette-0001",
+          "value": [
+            80
+          ],
+          "end": [
+            120
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "CS Vignette-0002",
+          "value": [
+            39
+          ],
+          "end": [
+            54
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "CS Vignette-0003",
+          "value": [
+            60,
+            40
+          ]
+        },
+        {
+          "name": "CS Vignette-0005",
+          "value": [
+            0
+          ]
+        }
+      ],
+      "tracks": [
+        {
+          "param": "amount",
+          "values": [
+            0.8,
+            1.2
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "radius",
+          "values": [
+            0.65,
+            0.9
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "findEdges",
+      "effect": {
+        "type": "findEdges",
+        "invert": 1
+      },
+      "native_effect": "ADBE Find Edges",
+      "controls": [
+        {
+          "name": "ADBE Find Edges-0001",
+          "value": [
+            1
+          ],
+          "end": [
+            0
+          ],
+          "segment": "hold"
+        }
+      ],
+      "tracks": [
+        {
+          "param": "invert",
+          "values": [
+            1.0,
+            0.0
+          ],
+          "easing": "hold"
+        }
+      ]
+    },
+    {
+      "id": "exposure",
+      "effect": {
+        "type": "exposure",
+        "exposure": 1.25,
+        "offset": 0.1,
+        "gammaCorrection": 0.8
+      },
+      "native_effect": "ADBE Exposure2",
+      "controls": [
+        {
+          "name": "ADBE Exposure2-0003",
+          "value": [
+            1.25
+          ],
+          "end": [
+            2.25
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Exposure2-0004",
+          "value": [
+            0.1
+          ],
+          "end": [
+            -0.1
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Exposure2-0005",
+          "value": [
+            0.8
+          ],
+          "end": [
+            1.2
+          ],
+          "segment": "linear"
+        }
+      ],
+      "tracks": [
+        {
+          "param": "exposure",
+          "values": [
+            1.25,
+            2.25
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "offset",
+          "values": [
+            0.1,
+            -0.1
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "gammaCorrection",
+          "values": [
+            0.8,
+            1.2
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "vibrance",
+      "effect": {
+        "type": "vibrance",
+        "vibrance": 30,
+        "saturation": -20
+      },
+      "native_effect": "ADBE Vibrance",
+      "controls": [
+        {
+          "name": "ADBE Vibrance-0001",
+          "value": [
+            30
+          ],
+          "end": [
+            60
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Vibrance-0002",
+          "value": [
+            -20
+          ],
+          "end": [
+            20
+          ],
+          "segment": "linear"
+        }
+      ],
+      "tracks": [
+        {
+          "param": "vibrance",
+          "values": [
+            30.0,
+            60.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "saturation",
+          "values": [
+            -20.0,
+            20.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "twirl",
+      "effect": {
+        "type": "twirl",
+        "angle": 45,
+        "radius": 0.3,
+        "centerX": 0.25,
+        "centerY": 0.75
+      },
+      "native_effect": "ADBE Twirl",
+      "controls": [
+        {
+          "name": "ADBE Twirl-0001",
+          "value": [
+            45
+          ],
+          "end": [
+            90
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Twirl-0002",
+          "value": [
+            30
+          ],
+          "end": [
+            50
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Twirl-0003",
+          "value": [
+            30.0,
+            60.0
+          ],
+          "end": [
+            90.0,
+            20.0
+          ],
+          "segment": "linear"
+        }
+      ],
+      "tracks": [
+        {
+          "param": "angle",
+          "values": [
+            45.0,
+            90.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "radius",
+          "values": [
+            0.3,
+            0.5
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "centerX",
+          "values": [
+            0.25,
+            0.75
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "centerY",
+          "values": [
+            0.75,
+            0.25
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "ripple",
+      "effect": {
+        "type": "ripple",
+        "amplitude": 0.025,
+        "phase": 0.5235987755982988,
+        "centerX": 0.25,
+        "centerY": 0.75,
+        "frequency": 18.84955592153876
+      },
+      "native_effect": "ADBE Ripple",
+      "controls": [
+        {
+          "name": "ADBE Ripple-0006",
+          "value": [
+            3
+          ],
+          "end": [
+            6
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Ripple-0007",
+          "value": [
+            30
+          ],
+          "end": [
+            60
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Ripple-0002",
+          "value": [
+            30.0,
+            60.0
+          ],
+          "end": [
+            90.0,
+            20.0
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Ripple-0005",
+          "value": [
+            40
+          ]
+        }
+      ],
+      "tracks": [
+        {
+          "param": "amplitude",
+          "values": [
+            0.025,
+            0.05
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "phase",
+          "values": [
+            0.5235987755982988,
+            1.0471975511965976
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "centerX",
+          "values": [
+            0.25,
+            0.75
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "centerY",
+          "values": [
+            0.75,
+            0.25
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "sharpen",
+      "effect": {
+        "type": "sharpen",
+        "amount": 35
+      },
+      "native_effect": "ADBE Sharpen",
+      "controls": [
+        {
+          "name": "ADBE Sharpen-0001",
+          "value": [
+            35
+          ],
+          "end": [
+            65
+          ],
+          "segment": "linear"
+        }
+      ],
+      "tracks": [
+        {
+          "param": "amount",
+          "values": [
+            35.0,
+            65.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "lumaKey",
+      "effect": {
+        "type": "lumaKey",
+        "invert": 0,
+        "threshold": 0.1,
+        "softness": 0.2
+      },
+      "native_effect": "ADBE Luma Key",
+      "controls": [
+        {
+          "name": "ADBE Luma Key-0002",
+          "native_quantization": "Independent Adobe26 authoring rounds requested25.5 to26; valueAtTime(0.5) is89 between native keys26 and153.",
+          "samples": [[0.5, 89]],
+          "value": [
+            26
+          ],
+          "end": [
+            153
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Luma Key-0003",
+          "value": [
+            20
+          ],
+          "end": [
+            40
+          ],
+          "segment": "linear"
+        }
+      ],
+      "tracks": [
+        {
+          "param": "threshold",
+          "values": [
+            0.1,
+            0.6
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "softness",
+          "values": [
+            0.2,
+            0.4
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "simpleChoker",
+      "effect": {
+        "type": "simpleChoker",
+        "choke": 2
+      },
+      "native_effect": "ADBE Simple Choker",
+      "controls": [
+        {
+          "name": "ADBE Simple Choker-0002",
+          "value": [
+            2
+          ],
+          "end": [
+            4
+          ],
+          "segment": "linear"
+        }
+      ],
+      "tracks": [
+        {
+          "param": "choke",
+          "values": [
+            2.0,
+            4.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "grain",
+      "effect": {
+        "type": "grain",
+        "amount": 0.5,
+        "size": 1.3,
+        "softness": 0.4,
+        "aspectRatio": 1.2,
+        "seed": 9
+      },
+      "native_effect": "VISINF Grain Implant",
+      "controls": [
+        {
+          "name": "VISINF Grain Implant-0008",
+          "value": [
+            0.5
+          ],
+          "end": [
+            0.8
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "VISINF Grain Implant-0007",
+          "value": [
+            1.3
+          ],
+          "end": [
+            1.7
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "VISINF Grain Implant-0130",
+          "value": [
+            0.4
+          ],
+          "end": [
+            0.7
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "VISINF Grain Implant-0030",
+          "value": [
+            1.2
+          ],
+          "end": [
+            1.5
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "VISINF Grain Implant-0013",
+          "value": [
+            9
+          ],
+          "end": [
+            13
+          ],
+          "segment": "linear"
+        }
+      ],
+      "tracks": [
+        {
+          "param": "intensity",
+          "values": [
+            0.5,
+            0.8
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "size",
+          "values": [
+            1.3,
+            1.7
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "softness",
+          "values": [
+            0.4,
+            0.7
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "aspectRatio",
+          "values": [
+            1.2,
+            1.5
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "seed",
+          "values": [
+            9.0,
+            13.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "waveWarp",
+      "effect": {
+        "type": "waveWarp",
+        "waveHeight": 0.1,
+        "waveWidth": 6,
+        "direction": 45,
+        "phase": 0.5235987755982988
+      },
+      "native_effect": "ADBE Wave Warp",
+      "controls": [
+        {
+          "name": "ADBE Wave Warp-0002",
+          "value": [
+            8
+          ],
+          "end": [
+            16
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Wave Warp-0003",
+          "value": [
+            20
+          ]
+        },
+        {
+          "name": "ADBE Wave Warp-0004",
+          "value": [
+            45
+          ],
+          "end": [
+            90
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Wave Warp-0007",
+          "value": [
+            30
+          ],
+          "end": [
+            60
+          ],
+          "segment": "linear"
+        }
+      ],
+      "tracks": [
+        {
+          "param": "waveHeight",
+          "values": [
+            0.1,
+            0.2
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "direction",
+          "values": [
+            45.0,
+            90.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "phase",
+          "values": [
+            0.5235987755982988,
+            1.0471975511965976
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "tintTritone",
+      "effect": {
+        "type": "tintTritone",
+        "blackR": 0.1,
+        "blackG": 0.2,
+        "blackB": 0.3,
+        "whiteR": 0.8,
+        "whiteG": 0.7,
+        "whiteB": 0.6,
+        "amount": 70
+      },
+      "native_effect": "ADBE Tint",
+      "controls": [
+        {
+          "name": "ADBE Tint-0001",
+          "value": [
+            0.1,
+            0.2,
+            0.3,
+            0
+          ],
+          "end": [
+            0.2,
+            0.3,
+            0.4,
+            0
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Tint-0002",
+          "value": [
+            0.8,
+            0.7,
+            0.6,
+            0
+          ],
+          "end": [
+            0.7,
+            0.6,
+            0.5,
+            0
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Tint-0003",
+          "value": [
+            70
+          ],
+          "end": [
+            90
+          ],
+          "segment": "linear"
+        }
+      ],
+      "tracks": [
+        {
+          "param": "blackR",
+          "values": [
+            0.1,
+            0.2
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "blackG",
+          "values": [
+            0.2,
+            0.3
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "blackB",
+          "values": [
+            0.3,
+            0.4
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "whiteR",
+          "values": [
+            0.8,
+            0.7
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "whiteG",
+          "values": [
+            0.7,
+            0.6
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "whiteB",
+          "values": [
+            0.6,
+            0.5
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "amount",
+          "values": [
+            70.0,
+            90.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "gradientRamp",
+      "effect": {
+        "type": "gradientRamp",
+        "startX": 0.1,
+        "startY": 0.2,
+        "startR": 0.1,
+        "startG": 0.2,
+        "startB": 0.3,
+        "endX": 0.9,
+        "endY": 0.8,
+        "endR": 0.8,
+        "endG": 0.7,
+        "endB": 0.6,
+        "shape": 0,
+        "blend": 0.75
+      },
+      "native_effect": "ADBE Ramp",
+      "controls": [
+        {
+          "name": "ADBE Ramp-0001",
+          "value": [
+            12.0,
+            16.0
+          ],
+          "end": [
+            24.0,
+            24.0
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Ramp-0002",
+          "value": [
+            0.1,
+            0.2,
+            0.3,
+            1
+          ],
+          "end": [
+            0.2,
+            0.3,
+            0.4,
+            1
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Ramp-0003",
+          "value": [
+            108.0,
+            64.0
+          ],
+          "end": [
+            96.0,
+            56.0
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Ramp-0004",
+          "value": [
+            0.8,
+            0.7,
+            0.6,
+            1
+          ],
+          "end": [
+            0.7,
+            0.6,
+            0.5,
+            1
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE Ramp-0005",
+          "value": [
+            1
+          ],
+          "end": [
+            2
+          ],
+          "segment": "hold"
+        },
+        {
+          "name": "ADBE Ramp-0007",
+          "value": [
+            0.25
+          ],
+          "end": [
+            0.5
+          ],
+          "segment": "linear"
+        }
+      ],
+      "tracks": [
+        {
+          "param": "startX",
+          "values": [
+            0.1,
+            0.2
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "startY",
+          "values": [
+            0.2,
+            0.3
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "startR",
+          "values": [
+            0.1,
+            0.2
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "startG",
+          "values": [
+            0.2,
+            0.3
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "startB",
+          "values": [
+            0.3,
+            0.4
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "endX",
+          "values": [
+            0.9,
+            0.8
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "endY",
+          "values": [
+            0.8,
+            0.7
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "endR",
+          "values": [
+            0.8,
+            0.7
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "endG",
+          "values": [
+            0.7,
+            0.6
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "endB",
+          "values": [
+            0.6,
+            0.5
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "shape",
+          "values": [
+            0.0,
+            1.0
+          ],
+          "easing": "hold"
+        },
+        {
+          "param": "blend",
+          "values": [
+            0.75,
+            0.5
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "id": "turbulentNoise",
+      "effect": {
+        "type": "turbulentNoise",
+        "noiseType": "spline",
+        "fractalType": "turbulentSharp",
+        "invert": 1,
+        "contrast": 120,
+        "brightness": 10,
+        "rotation": 20,
+        "scale": 80,
+        "complexity": 3.5,
+        "subInfluence": 45,
+        "evolution": 30,
+        "blend": 0.6,
+        "offsetX": 20,
+        "offsetY": -10
+      },
+      "native_effect": "ADBE AIF Perlin Noise 3D",
+      "controls": [
+        {
+          "name": "ADBE AIF Perlin Noise 3D-0003",
+          "value": [
+            1
+          ],
+          "end": [
+            0
+          ],
+          "segment": "hold"
+        },
+        {
+          "name": "ADBE AIF Perlin Noise 3D-0004",
+          "value": [
+            120
+          ],
+          "end": [
+            80
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE AIF Perlin Noise 3D-0005",
+          "value": [
+            10
+          ],
+          "end": [
+            -10
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE AIF Perlin Noise 3D-0008",
+          "value": [
+            20
+          ],
+          "end": [
+            50
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE AIF Perlin Noise 3D-0010",
+          "value": [
+            80
+          ],
+          "end": [
+            140
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE AIF Perlin Noise 3D-0015",
+          "value": [
+            3.5
+          ],
+          "end": [
+            4.5
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE AIF Perlin Noise 3D-0017",
+          "value": [
+            45
+          ],
+          "end": [
+            60
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE AIF Perlin Noise 3D-0020",
+          "value": [
+            30
+          ],
+          "end": [
+            90
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE AIF Perlin Noise 3D-0025",
+          "value": [
+            60
+          ]
+        },
+        {
+          "name": "ADBE AIF Perlin Noise 3D-0013",
+          "value": [
+            84,
+            28
+          ],
+          "end": [
+            36,
+            52
+          ],
+          "segment": "linear"
+        },
+        {
+          "name": "ADBE AIF Perlin Noise 3D-0001",
+          "value": [
+            5
+          ]
+        },
+        {
+          "name": "ADBE AIF Perlin Noise 3D-0002",
+          "value": [
+            4
+          ]
+        }
+      ],
+      "tracks": [
+        {
+          "param": "invert",
+          "values": [
+            1.0,
+            0.0
+          ],
+          "easing": "hold"
+        },
+        {
+          "param": "contrast",
+          "values": [
+            120.0,
+            80.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "brightness",
+          "values": [
+            10.0,
+            -10.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "rotation",
+          "values": [
+            20.0,
+            50.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "scale",
+          "values": [
+            80.0,
+            140.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "complexity",
+          "values": [
+            3.5,
+            4.5
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "subInfluence",
+          "values": [
+            45.0,
+            60.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "evolution",
+          "values": [
+            30.0,
+            90.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "offsetX",
+          "values": [
+            20.0,
+            -20.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "offsetY",
+          "values": [
+            -10.0,
+            10.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    }
+  ]
+}

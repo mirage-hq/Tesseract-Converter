@@ -1,0 +1,11 @@
+{
+  "source_sha256": "6d632ac99c9e081746d51b83a651cb311dc063f0541bbe43ba1a241bd8870fdd",
+  "source_composition": 970,
+  "source_layer": 1032,
+  "offset": 2518524,
+  "envelope_bytes": 34724,
+  "envelope_sha256": "6d84661891b47b24565acaeab90113fd572d761b2881b37276d2dda9382d51fa",
+  "fixture_bytes": 34736,
+  "fixture_sha256": "28de0c8f42587118c61614cf42549dae990c372b0eb542c6ab61ef183fc1bf65",
+  "scope": "Exact native layer envelope pins Vegas controls/default ABI, identity Levels prefix and source sweep keys. Editable full-outline approximation only; native segment/phase/edge algorithm parity unverified."
+}

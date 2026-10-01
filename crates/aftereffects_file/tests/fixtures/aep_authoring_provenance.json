@@ -1,0 +1,237 @@
+{
+  "schema_version": 1,
+  "scope": "Historical identity index for the independent JSX authoring artifacts used to create part of the PR4415 native AEP corpus.",
+  "limitations": [
+    "Only artifact names, byte counts, and hashes are retained; this index is not a substitute for committed reviewed authoring source and does not make an oracle reproducible.",
+    "The historical scripts are not committed because they contain machine-specific absolute paths and Adobe session-control operations; copying them as runnable helpers would be unsafe.",
+    "AEP source bytes and Adobe reference publication remain authoritative in aep_video_references.json; Rust tests and aep_feature_cases.json state which targets still lack durable semantic evidence.",
+    "No test execution or AEP/FX visual comparison is established by this metadata."
+  ],
+  "artifacts": [
+    {
+      "artifact_name": "aep-author-batch2.jsx",
+      "sha256": "6b9cae8c62f594f8c4ca7bfe9520ddc89467f93238835fc3ed39ee473ba8a59b",
+      "bytes": 5295,
+      "content_committed": false,
+      "execution_receipt_name": "aep-author-batch2-status.txt",
+      "execution_receipt_sha256": "679c38cb02b812daa56ec14b89598b7ab0d37a1a077423276c4b5e150d83d982",
+      "execution_receipt_bytes": 1948
+    },
+    {
+      "artifact_name": "aep-author-batch3.jsx",
+      "sha256": "8bdbcd3c4fbd5ea4c6b8fb3638572b8ab208b91408ce527d071f0c9fc44befac",
+      "bytes": 4334,
+      "content_committed": false,
+      "execution_receipt_name": "aep-author-batch3-status.txt",
+      "execution_receipt_sha256": "784a9c8f86d44329c0ea2b864ddadc41399d209a4184f7220413e32df73ef260",
+      "execution_receipt_bytes": 924
+    },
+    {
+      "artifact_name": "aep-author-combinations.jsx",
+      "sha256": "f5bcdef1a6d6491aecbb5d2182979ad34c9be84b779511cedd37dd261528685a",
+      "bytes": 4489,
+      "content_committed": false,
+      "execution_receipt_name": "aep-author-combinations-status.txt",
+      "execution_receipt_sha256": "202a8b3ac2fafe674fe1787a901914621eaca0a284b1bcd64dcbc8ced1a5b629",
+      "execution_receipt_bytes": 455
+    },
+    {
+      "artifact_name": "aep-author-combined-transform.jsx",
+      "sha256": "dfe6c36fb5b4806e851382f617f7676e2a5c8ab3d80496f2e1d381cfbe3b6794",
+      "bytes": 2376,
+      "content_committed": false,
+      "execution_receipt_name": null,
+      "execution_receipt_sha256": null,
+      "execution_receipt_bytes": null
+    },
+    {
+      "artifact_name": "aep-author-essential-text-flags.jsx",
+      "sha256": "a349a323a0362a330df5e9af032f027d6e4bb64466382656ff3af2738079d0cb",
+      "bytes": 4253,
+      "content_committed": false,
+      "execution_receipt_name": "aep-author-essential-text-flags-status.txt",
+      "execution_receipt_sha256": "a1e43a3fef57de3e69520f16cc49d260cfb4a466d9c19e7257ad74a07e519a98",
+      "execution_receipt_bytes": 411
+    },
+    {
+      "artifact_name": "aep-author-final-eleven.jsx",
+      "sha256": "b6b4c5eb94cceecb327a007666d2115c103dc561b836639bd30833967e7d896b",
+      "bytes": 4296,
+      "content_committed": false,
+      "execution_receipt_name": "aep-author-final-eleven-status.txt",
+      "execution_receipt_sha256": "7a62dd49b30f67f22ed5339a1b7a233f2c191bfa4fd4aaf73e55e19503abe65b",
+      "execution_receipt_bytes": 486
+    },
+    {
+      "artifact_name": "aep-author-final-variants.jsx",
+      "sha256": "2c7e65b375f55d8c3bada835de4232095ebf9b94ec6fa7db84391fbccc252e5b",
+      "bytes": 2504,
+      "content_committed": false,
+      "execution_receipt_name": "aep-author-final-variants-status.txt",
+      "execution_receipt_sha256": "2c7201194df169b37d6d468c0da34b5aa275ecb304152dd3bbe7d566a53e2bfd",
+      "execution_receipt_bytes": 249
+    },
+    {
+      "artifact_name": "aep-author-gradient-nested.jsx",
+      "sha256": "b071351d866db88c89a9004e972b9c2aa1ad7e15ad5c50f55b9b1d5092a05b0b",
+      "bytes": 2483,
+      "content_committed": false,
+      "execution_receipt_name": "aep-author-gradient-nested-status.txt",
+      "execution_receipt_sha256": "4f2e7bc717ed4d18daca7fd3cf146cb7c54320d0f5a9dc067291b848dcef5b21",
+      "execution_receipt_bytes": 377
+    },
+    {
+      "artifact_name": "aep-author-image-gradient-clocks.jsx",
+      "sha256": "905e249e5da40fbe07c9b5e9633ca4db62c152e6aa9120cab6d2350522b85031",
+      "bytes": 3983,
+      "content_committed": false,
+      "execution_receipt_name": "aep-author-image-gradient-clocks-status.txt",
+      "execution_receipt_sha256": "7277de843dda9d6b3465c104dd4956c25906da815c5548c0d4830cd5a01e2de2",
+      "execution_receipt_bytes": 613
+    },
+    {
+      "artifact_name": "aep-author-remaining-batch.jsx",
+      "sha256": "576201b76ad314462459c0fa28d6089bcb35c58643fd5ede986f2151e8ed6ae2",
+      "bytes": 6427,
+      "content_committed": false,
+      "execution_receipt_name": "aep-author-remaining-batch-status.txt",
+      "execution_receipt_sha256": "361b22ae46a1502fc6bfa4174530f37a4f086f3c4b067850f9e59497f728ae70",
+      "execution_receipt_bytes": 1381
+    },
+    {
+      "artifact_name": "aep-author-shape-animation.jsx",
+      "sha256": "90cb1334fcb48fb30a70da462e146dbf04037bb3985f024ab27e1dabd6377d9c",
+      "bytes": 3381,
+      "content_committed": false,
+      "execution_receipt_name": "aep-author-shape-animation-status.txt",
+      "execution_receipt_sha256": "95ce1dfd0ef078d5e582b58889e71e8ca9bc6c26029c27e0a92bf792a3628cae",
+      "execution_receipt_bytes": 692
+    },
+    {
+      "artifact_name": "aep-author-shape-details.jsx",
+      "sha256": "14391e83b6ed14a56e85af89761a44e0c8320c913f942ba70d2b8f0c754461e7",
+      "bytes": 4570,
+      "content_committed": false,
+      "execution_receipt_name": "aep-author-shape-details-status.txt",
+      "execution_receipt_sha256": "4ddb3727f97010d9e031bda410ecd242fea8156b9ffbf049129300db90809ec0",
+      "execution_receipt_bytes": 547
+    },
+    {
+      "artifact_name": "aep-author-structure-blend-keyed.jsx",
+      "sha256": "b1c8c40d9390f5cddca05c901ee16d574f0b53947257bc611f89be4dd4b245be",
+      "bytes": 4578,
+      "content_committed": false,
+      "execution_receipt_name": "aep-author-structure-blend-keyed-status.txt",
+      "execution_receipt_sha256": "dc8257b1b5b655bcbf831b568a265ed5652b5b728afefacb031fc0a70a21a938",
+      "execution_receipt_bytes": 721
+    },
+    {
+      "artifact_name": "aep-author-text-animators.jsx",
+      "sha256": "b9f984580c227b740355e00507664a1c3ebf39bbaab907c67488b48630fe1f35",
+      "bytes": 5163,
+      "content_committed": false,
+      "execution_receipt_name": "aep-author-text-animators-status.txt",
+      "execution_receipt_sha256": "b6b50474eef0ef407eb1b41acdf81b48175cbdce7e4866df1eb45d4db4ab6375",
+      "execution_receipt_bytes": 1941
+    },
+    {
+      "artifact_name": "aep-author-text-extra.jsx",
+      "sha256": "6b912e445eb67f16e1274c5169abfa0361d8d44828ef619b7b840d986b90fc61",
+      "bytes": 3053,
+      "content_committed": false,
+      "execution_receipt_name": "aep-author-text-extra-status.txt",
+      "execution_receipt_sha256": "db16e63692de239150ee64fa9d0951aa3ef1f83f67d1441f0b19ea590aa98738",
+      "execution_receipt_bytes": 324
+    },
+    {
+      "artifact_name": "jerboa-aep-import-blend-modes-20260926.jsx",
+      "sha256": "6d820baf1d7da8c9a0c806067f3b0dcb08daa0bc1e605250f0fd455702088cfa",
+      "bytes": 3704,
+      "content_committed": false,
+      "execution_receipt_name": "jerboa-aep-import-blend-modes-20260926-status.json",
+      "execution_receipt_sha256": "0d6c9549147477f7d5d03438cd4c183982cb1927f47872fc774e37e70b8ca7c9",
+      "execution_receipt_bytes": 2382
+    },
+    {
+      "artifact_name": "jerboa-aep-import-matte-20260926.jsx",
+      "sha256": "b33705e7a227b158be94fa7d449defebba394773c671382faf91613dd861f79b",
+      "bytes": 3038,
+      "content_committed": false,
+      "execution_receipt_name": "jerboa-aep-import-matte-20260926-status.json",
+      "execution_receipt_sha256": "2a03e92602a0cd27efbaddc48c94ab28c76f120f2650f7195ac29a1a60665e5c",
+      "execution_receipt_bytes": 694
+    },
+    {
+      "artifact_name": "jerboa-aep-import-motion-blur-20260926.jsx",
+      "sha256": "d3beca795d73f4950d81c831a0631c58b97df71decbcfd21fdd10fe26d441ce1",
+      "bytes": 3327,
+      "content_committed": false,
+      "execution_receipt_name": "jerboa-aep-import-motion-blur-20260926-status.json",
+      "execution_receipt_sha256": "fba0958c35304a09b231f48f73d2f6d8845686d347e1b5c82307e906511e1a97",
+      "execution_receipt_bytes": 844
+    },
+    {
+      "artifact_name": "jerboa-aep-import-parametric-shapes-20260926.jsx",
+      "sha256": "1163e28c36fbf19dcd55e03b3fab7b0b702c3a75a09c68bfad70f266007b6d0e",
+      "bytes": 5171,
+      "content_committed": false,
+      "execution_receipt_name": "jerboa-aep-import-parametric-shapes-20260926-status.json",
+      "execution_receipt_sha256": "a393748051444a4cdc2002aceb8a766d4caf30465b526b31f1da9ffc2a90c5fa",
+      "execution_receipt_bytes": 1990
+    },
+    {
+      "artifact_name": "jerboa-aep-import-parenting-20260926.jsx",
+      "sha256": "bbc319f4d076c7d3e93f239a44f7a8b0f2483e4ca5002cab3ce6b656cbd7683d",
+      "bytes": 5544,
+      "content_committed": false,
+      "execution_receipt_name": "jerboa-aep-import-parenting-20260926-status.json",
+      "execution_receipt_sha256": "affb691dd43b5e199f6ed2da13b8a3e59201bb83832f2c3ad38e1d1d6dcb8d04",
+      "execution_receipt_bytes": 1631
+    },
+    {
+      "artifact_name": "jerboa-aep-import-rectangle-controls-20260926.jsx",
+      "sha256": "9947cb29c3bb4137e8c34916c8252f33e4ccf07f279a2561c8fe0e5901354f5c",
+      "bytes": 4597,
+      "content_committed": false,
+      "execution_receipt_name": "jerboa-aep-import-rectangle-controls-20260926-status.json",
+      "execution_receipt_sha256": "70ddff2fbf28d4f16372eab26f54441ea18023a322f212eec7a25bb2fe68b538",
+      "execution_receipt_bytes": 1388
+    },
+    {
+      "artifact_name": "jerboa-aep-import-solid-paint-controls-20260926.jsx",
+      "sha256": "9f0bab11a6e6a8bc26d0766069209aed42fe3c1570a5ee5bba6a356e5da0d3ed",
+      "bytes": 4498,
+      "content_committed": false,
+      "execution_receipt_name": "jerboa-aep-import-solid-paint-controls-20260926-status.json",
+      "execution_receipt_sha256": "f8ed4de161aad076112476e053563c2ebc64b194801406dcee459e5a871f37aa",
+      "execution_receipt_bytes": 1772
+    },
+    {
+      "artifact_name": "jerboa-aep-import-stroke-geometry-20260926.jsx",
+      "sha256": "1de116c3442707d8e82f393b2c64f09892553e8ecc67832cbedb8c5f8d24535d",
+      "bytes": 5298,
+      "content_committed": false,
+      "execution_receipt_name": null,
+      "execution_receipt_sha256": null,
+      "execution_receipt_bytes": null
+    },
+    {
+      "artifact_name": "jerboa-aep-import-switches-20260926.jsx",
+      "sha256": "95b515a31c738dddbad37c2c584dce3cc3c32697232a630bdf1726404b3029fa",
+      "bytes": 4042,
+      "content_committed": false,
+      "execution_receipt_name": "jerboa-aep-import-switches-20260926-status.json",
+      "execution_receipt_sha256": "086df21e90973c4c0467674624220616f717ee41d9ac4641927230c9f00eecf9",
+      "execution_receipt_bytes": 952
+    },
+    {
+      "artifact_name": "jerboa-aep-import-transform-components-20260926.jsx",
+      "sha256": "554adc01f12b7794c00fad7a1869a85d833d2af80a438e17b710ae7ee29e18c1",
+      "bytes": 4349,
+      "content_committed": false,
+      "execution_receipt_name": "jerboa-aep-import-transform-components-20260926-status.json",
+      "execution_receipt_sha256": "29ea68ba2ea41c366aa061e5d51acdf8c6855ab2b1c1d93177ceacc72725c0fb",
+      "execution_receipt_bytes": 3378
+    }
+  ]
+}

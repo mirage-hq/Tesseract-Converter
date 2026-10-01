@@ -1,0 +1,147 @@
+{
+  "score": {
+    "similarity": 0.997579888617181,
+    "deviation": 0.0024201113828189458
+  },
+  "compared_frames": 15,
+  "compared_duration_secs": 3.5,
+  "sample_interval_secs": 0.25,
+  "min_frame_similarity": 0.9963071806119456,
+  "max_frame_similarity": 0.999999010923468,
+  "frame_results": [
+    {
+      "index": 0,
+      "time_secs": 0.0,
+      "score": {
+        "similarity": 0.9998646192730944,
+        "deviation": 0.00013538072690555403
+      }
+    },
+    {
+      "index": 1,
+      "time_secs": 0.25,
+      "score": {
+        "similarity": 0.999999010923468,
+        "deviation": 9.890765320097472e-7
+      }
+    },
+    {
+      "index": 2,
+      "time_secs": 0.5,
+      "score": {
+        "similarity": 0.9972156836514442,
+        "deviation": 0.0027843163485558042
+      }
+    },
+    {
+      "index": 3,
+      "time_secs": 0.75,
+      "score": {
+        "similarity": 0.9970033299917194,
+        "deviation": 0.002996670008280633
+      }
+    },
+    {
+      "index": 4,
+      "time_secs": 1.0,
+      "score": {
+        "similarity": 0.9976781293317492,
+        "deviation": 0.002321870668250847
+      }
+    },
+    {
+      "index": 5,
+      "time_secs": 1.25,
+      "score": {
+        "similarity": 0.9969563961978771,
+        "deviation": 0.003043603802122874
+      }
+    },
+    {
+      "index": 6,
+      "time_secs": 1.5,
+      "score": {
+        "similarity": 0.9967343764882075,
+        "deviation": 0.0032656235117924926
+      }
+    },
+    {
+      "index": 7,
+      "time_secs": 1.75,
+      "score": {
+        "similarity": 0.9970977826134796,
+        "deviation": 0.0029022173865204115
+      }
+    },
+    {
+      "index": 8,
+      "time_secs": 2.0,
+      "score": {
+        "similarity": 0.9996050193685072,
+        "deviation": 0.0003949806314927917
+      }
+    },
+    {
+      "index": 9,
+      "time_secs": 2.25,
+      "score": {
+        "similarity": 0.9977769660712852,
+        "deviation": 0.0022230339287148126
+      }
+    },
+    {
+      "index": 10,
+      "time_secs": 2.5,
+      "score": {
+        "similarity": 0.997348940433233,
+        "deviation": 0.0026510595667670334
+      }
+    },
+    {
+      "index": 11,
+      "time_secs": 2.75,
+      "score": {
+        "similarity": 0.9967573486527509,
+        "deviation": 0.0032426513472491036
+      }
+    },
+    {
+      "index": 12,
+      "time_secs": 3.0,
+      "score": {
+        "similarity": 0.9970004433636083,
+        "deviation": 0.0029995566363917314
+      }
+    },
+    {
+      "index": 13,
+      "time_secs": 3.25,
+      "score": {
+        "similarity": 0.9963531022853459,
+        "deviation": 0.003646897714654096
+      }
+    },
+    {
+      "index": 14,
+      "time_secs": 3.5,
+      "score": {
+        "similarity": 0.9963071806119456,
+        "deviation": 0.0036928193880544358
+      }
+    }
+  ],
+  "left": {
+    "width": 1920,
+    "height": 1080,
+    "duration_secs": 3.5,
+    "frame_count": 105,
+    "fps": 30.0
+  },
+  "right": {
+    "width": 1920,
+    "height": 1080,
+    "duration_secs": 3.5,
+    "frame_count": 105,
+    "fps": 30.0
+  }
+}

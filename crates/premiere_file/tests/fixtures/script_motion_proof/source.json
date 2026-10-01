@@ -1,0 +1,193 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "formatVersion": 1,
+  "dimensions": {
+    "width": 1920,
+    "height": 1080
+  },
+  "duration": 3.5,
+  "composition": {
+    "id": "script-motion-pairs",
+    "name": "Paired Motion script keys",
+    "layers": [
+      {
+        "type": "Video",
+        "id": 1,
+        "name": "Scripted Motion",
+        "activeRange": {
+          "start": 500,
+          "duration": 3000
+        },
+        "sourceRange": {
+          "start": 1000,
+          "duration": 3000
+        },
+        "sourceIntrinsicDuration": 10000,
+        "volume": 0,
+        "transform": {
+          "anchorPoint": [
+            960,
+            540
+          ],
+          "position": [
+            700,
+            430
+          ],
+          "scale": [
+            35,
+            35
+          ],
+          "rotation": -15,
+          "opacity": 100
+        },
+        "source": {
+          "assetId": "premiere-video-1",
+          "fit": "contain",
+          "sourceRect": {
+            "x": 0,
+            "y": 0,
+            "width": 1920,
+            "height": 1080
+          }
+        }
+      },
+      {
+        "type": "Video",
+        "id": 3,
+        "name": "Opaque gray backing",
+        "activeRange": {
+          "start": 0,
+          "duration": 3500
+        },
+        "sourceRange": {
+          "start": 0,
+          "duration": 3500
+        },
+        "sourceIntrinsicDuration": 3500,
+        "volume": 0,
+        "transform": {
+          "anchorPoint": [
+            960,
+            540
+          ],
+          "position": [
+            960,
+            540
+          ],
+          "scale": [
+            100,
+            100
+          ],
+          "rotation": 0,
+          "opacity": 100
+        },
+        "source": {
+          "assetId": "script-proof-gray",
+          "fit": "contain",
+          "sourceRect": {
+            "x": 0,
+            "y": 0,
+            "width": 1920,
+            "height": 1080
+          }
+        }
+      },
+      {
+        "type": "Rect",
+        "id": 2,
+        "name": "Black canvas",
+        "activeRange": {
+          "start": 0,
+          "duration": 3500
+        },
+        "transform": {
+          "anchorPoint": [
+            0,
+            0
+          ],
+          "position": [
+            0,
+            0
+          ],
+          "scale": [
+            100,
+            100
+          ],
+          "rotation": 0,
+          "opacity": 100
+        },
+        "rect": {
+          "size": [
+            1920,
+            1080
+          ],
+          "fillColor": [
+            0,
+            0,
+            0,
+            1
+          ]
+        }
+      }
+    ],
+    "dynamics": {
+      "entries": [
+        {
+          "target": {
+            "kind": "layer",
+            "layerId": 1,
+            "propertyType": "positionX"
+          },
+          "animator": {
+            "type": "jsScript",
+            "layerTimeJsCode": "return 700 + 150 * input.time.seconds;"
+          }
+        },
+        {
+          "target": {
+            "kind": "layer",
+            "layerId": 1,
+            "propertyType": "positionY"
+          },
+          "animator": {
+            "type": "jsScript",
+            "layerTimeJsCode": "return 430 + 60 * input.time.seconds;"
+          }
+        },
+        {
+          "target": {
+            "kind": "layer",
+            "layerId": 1,
+            "propertyType": "scaleX"
+          },
+          "animator": {
+            "type": "jsScript",
+            "layerTimeJsCode": "return 35 + 5 * input.time.seconds;"
+          }
+        },
+        {
+          "target": {
+            "kind": "layer",
+            "layerId": 1,
+            "propertyType": "scaleY"
+          },
+          "animator": {
+            "type": "jsScript",
+            "layerTimeJsCode": "return 35 + 5 * input.time.seconds;"
+          }
+        },
+        {
+          "target": {
+            "kind": "layer",
+            "layerId": 1,
+            "propertyType": "rotation"
+          },
+          "animator": {
+            "type": "jsScript",
+            "layerTimeJsCode": "return -15 + 10 * input.time.seconds;"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,767 @@
+{
+  "compositions": [
+    {
+      "displayStart": 0,
+      "duration": 2,
+      "frameDuration": 0.04166666666667,
+      "frameRate": 24,
+      "height": 180,
+      "id": 1,
+      "layers": [
+        {
+          "effects": [],
+          "flags": {
+            "adjustmentLayer": false,
+            "collapseTransformation": false,
+            "enabled": true,
+            "guideLayer": false,
+            "hasTrackMatte": false,
+            "isTrackMatte": false,
+            "locked": false,
+            "shy": false,
+            "solo": false,
+            "threeDLayer": false
+          },
+          "id": 14,
+          "index": 1,
+          "masks": [],
+          "name": "upper-sentinel-37x23",
+          "parentLayerId": null,
+          "source": {
+            "duration": 0,
+            "height": 23,
+            "id": 13,
+            "kind": "footage",
+            "name": "upper-sentinel-37x23",
+            "width": 37
+          },
+          "timing": {
+            "inPoint": 0,
+            "outPoint": 2,
+            "startTime": 0,
+            "stretch": 100
+          },
+          "trackMatte": {
+            "layerId": null,
+            "type": null
+          },
+          "transform": [
+            {
+              "keys": [],
+              "matchName": "ADBE Anchor Point",
+              "name": "Anchor Point",
+              "propertyIndex": 1,
+              "value": [
+                18.5,
+                11.5,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Position",
+              "name": "Position",
+              "propertyIndex": 2,
+              "value": [
+                287,
+                19,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Scale",
+              "name": "Scale",
+              "propertyIndex": 6,
+              "value": [
+                100,
+                100,
+                100
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Rotate Z",
+              "name": "Rotation",
+              "propertyIndex": 10,
+              "value": 17
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Opacity",
+              "name": "Opacity",
+              "propertyIndex": 11,
+              "value": 100
+            }
+          ]
+        },
+        {
+          "effects": [
+            {
+              "controls": [
+                {
+                  "keys": [],
+                  "matchName": "ADBE Gaussian Blur 2-0001",
+                  "name": "Blurriness",
+                  "propertyIndex": 1,
+                  "value": 23
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Gaussian Blur 2-0002",
+                  "name": "Blur Dimensions",
+                  "propertyIndex": 2,
+                  "value": 1
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Gaussian Blur 2-0003",
+                  "name": "Repeat Edge Pixels",
+                  "propertyIndex": 3,
+                  "value": 1
+                }
+              ],
+              "enabled": true,
+              "index": 1,
+              "matchName": "ADBE Gaussian Blur 2",
+              "name": "Gaussian Blur"
+            }
+          ],
+          "flags": {
+            "adjustmentLayer": true,
+            "collapseTransformation": false,
+            "enabled": true,
+            "guideLayer": false,
+            "hasTrackMatte": false,
+            "isTrackMatte": false,
+            "locked": false,
+            "shy": false,
+            "solo": false,
+            "threeDLayer": false
+          },
+          "id": 16,
+          "index": 2,
+          "masks": [],
+          "name": "stack-blur-upper",
+          "parentLayerId": null,
+          "source": {
+            "duration": 0,
+            "height": 180,
+            "id": 15,
+            "kind": "footage",
+            "name": "stack-blur-upper",
+            "width": 320
+          },
+          "timing": {
+            "inPoint": 0,
+            "outPoint": 2,
+            "startTime": 0,
+            "stretch": 100
+          },
+          "trackMatte": {
+            "layerId": null,
+            "type": null
+          },
+          "transform": [
+            {
+              "keys": [],
+              "matchName": "ADBE Anchor Point",
+              "name": "Anchor Point",
+              "propertyIndex": 1,
+              "value": [
+                160,
+                90,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Position",
+              "name": "Position",
+              "propertyIndex": 2,
+              "value": [
+                160,
+                90,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Scale",
+              "name": "Scale",
+              "propertyIndex": 6,
+              "value": [
+                100,
+                100,
+                100
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Rotate Z",
+              "name": "Rotation",
+              "propertyIndex": 10,
+              "value": 0
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Opacity",
+              "name": "Opacity",
+              "propertyIndex": 11,
+              "value": 100
+            }
+          ]
+        },
+        {
+          "effects": [
+            {
+              "controls": [
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0001",
+                  "name": "Channel:",
+                  "propertyIndex": 1,
+                  "value": 1
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0002",
+                  "name": "Histogram",
+                  "propertyIndex": 2,
+                  "value": null
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0003",
+                  "name": "RGB",
+                  "propertyIndex": 3,
+                  "value": null
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0004",
+                  "name": "Input Black",
+                  "propertyIndex": 4,
+                  "value": 0.08
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0005",
+                  "name": "Input White",
+                  "propertyIndex": 5,
+                  "value": 0.82
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0006",
+                  "name": "Gamma",
+                  "propertyIndex": 6,
+                  "value": 2.2
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0007",
+                  "name": "Output Black",
+                  "propertyIndex": 7,
+                  "value": 0.04
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0008",
+                  "name": "Output White",
+                  "propertyIndex": 8,
+                  "value": 0.93
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0009",
+                  "name": "RGB",
+                  "propertyIndex": 9,
+                  "value": null
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0010",
+                  "name": "Red",
+                  "propertyIndex": 10,
+                  "value": null
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0011",
+                  "name": "Red Input Black",
+                  "propertyIndex": 11,
+                  "value": 0
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0012",
+                  "name": "Red Input White",
+                  "propertyIndex": 12,
+                  "value": 1
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0013",
+                  "name": "Red Gamma",
+                  "propertyIndex": 13,
+                  "value": 1
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0014",
+                  "name": "Red Output Black",
+                  "propertyIndex": 14,
+                  "value": 0
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0015",
+                  "name": "Red Output White",
+                  "propertyIndex": 15,
+                  "value": 1
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0016",
+                  "name": "Red",
+                  "propertyIndex": 16,
+                  "value": null
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0017",
+                  "name": "Green",
+                  "propertyIndex": 17,
+                  "value": null
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0018",
+                  "name": "Green Input Black",
+                  "propertyIndex": 18,
+                  "value": 0
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0019",
+                  "name": "Green Input White",
+                  "propertyIndex": 19,
+                  "value": 1
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0020",
+                  "name": "Green Gamma",
+                  "propertyIndex": 20,
+                  "value": 1
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0021",
+                  "name": "Green Output Black",
+                  "propertyIndex": 21,
+                  "value": 0
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0022",
+                  "name": "Green Output White",
+                  "propertyIndex": 22,
+                  "value": 1
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0023",
+                  "name": "Green",
+                  "propertyIndex": 23,
+                  "value": null
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0024",
+                  "name": "Blue",
+                  "propertyIndex": 24,
+                  "value": null
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0025",
+                  "name": "Blue Input Black",
+                  "propertyIndex": 25,
+                  "value": 0
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0026",
+                  "name": "Blue Input White",
+                  "propertyIndex": 26,
+                  "value": 1
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0027",
+                  "name": "Blue Gamma",
+                  "propertyIndex": 27,
+                  "value": 1
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0028",
+                  "name": "Blue Output Black",
+                  "propertyIndex": 28,
+                  "value": 0
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0029",
+                  "name": "Blue Output White",
+                  "propertyIndex": 29,
+                  "value": 1
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0030",
+                  "name": "Blue",
+                  "propertyIndex": 30,
+                  "value": null
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0031",
+                  "name": "Alpha",
+                  "propertyIndex": 31,
+                  "value": null
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0032",
+                  "name": "Alpha Input Black",
+                  "propertyIndex": 32,
+                  "value": 0
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0033",
+                  "name": "Alpha Input White",
+                  "propertyIndex": 33,
+                  "value": 1
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0034",
+                  "name": "Alpha Gamma",
+                  "propertyIndex": 34,
+                  "value": 1
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0035",
+                  "name": "Alpha Output Black",
+                  "propertyIndex": 35,
+                  "value": 0
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0036",
+                  "name": "Alpha Output White",
+                  "propertyIndex": 36,
+                  "value": 1
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0037",
+                  "name": "Alpha",
+                  "propertyIndex": 37,
+                  "value": null
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0038",
+                  "name": "Clip To Output Black",
+                  "propertyIndex": 38,
+                  "value": 3
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Pro Levels2-0039",
+                  "name": "Clip To Output White",
+                  "propertyIndex": 39,
+                  "value": 3
+                }
+              ],
+              "enabled": true,
+              "index": 1,
+              "matchName": "ADBE Pro Levels2",
+              "name": "Levels (Individual Controls)"
+            }
+          ],
+          "flags": {
+            "adjustmentLayer": true,
+            "collapseTransformation": false,
+            "enabled": true,
+            "guideLayer": false,
+            "hasTrackMatte": false,
+            "isTrackMatte": false,
+            "locked": false,
+            "shy": false,
+            "solo": false,
+            "threeDLayer": false
+          },
+          "id": 18,
+          "index": 3,
+          "masks": [],
+          "name": "stack-levels-lower",
+          "parentLayerId": null,
+          "source": {
+            "duration": 0,
+            "height": 180,
+            "id": 17,
+            "kind": "footage",
+            "name": "stack-levels-lower",
+            "width": 320
+          },
+          "timing": {
+            "inPoint": 0,
+            "outPoint": 2,
+            "startTime": 0,
+            "stretch": 100
+          },
+          "trackMatte": {
+            "layerId": null,
+            "type": null
+          },
+          "transform": [
+            {
+              "keys": [],
+              "matchName": "ADBE Anchor Point",
+              "name": "Anchor Point",
+              "propertyIndex": 1,
+              "value": [
+                160,
+                90,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Position",
+              "name": "Position",
+              "propertyIndex": 2,
+              "value": [
+                160,
+                90,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Scale",
+              "name": "Scale",
+              "propertyIndex": 6,
+              "value": [
+                100,
+                100,
+                100
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Rotate Z",
+              "name": "Rotation",
+              "propertyIndex": 10,
+              "value": 0
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Opacity",
+              "name": "Opacity",
+              "propertyIndex": 11,
+              "value": 100
+            }
+          ]
+        },
+        {
+          "effects": [],
+          "flags": {
+            "adjustmentLayer": false,
+            "collapseTransformation": false,
+            "enabled": true,
+            "guideLayer": false,
+            "hasTrackMatte": false,
+            "isTrackMatte": false,
+            "locked": false,
+            "shy": false,
+            "solo": false,
+            "threeDLayer": false
+          },
+          "id": 20,
+          "index": 4,
+          "masks": [],
+          "name": "lower-amber-83x117",
+          "parentLayerId": null,
+          "source": {
+            "duration": 0,
+            "height": 117,
+            "id": 19,
+            "kind": "footage",
+            "name": "lower-amber-83x117",
+            "width": 83
+          },
+          "timing": {
+            "inPoint": 0,
+            "outPoint": 2,
+            "startTime": 0,
+            "stretch": 100
+          },
+          "trackMatte": {
+            "layerId": null,
+            "type": null
+          },
+          "transform": [
+            {
+              "keys": [],
+              "matchName": "ADBE Anchor Point",
+              "name": "Anchor Point",
+              "propertyIndex": 1,
+              "value": [
+                41.5,
+                58.5,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Position",
+              "name": "Position",
+              "propertyIndex": 2,
+              "value": [
+                238,
+                108,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Scale",
+              "name": "Scale",
+              "propertyIndex": 6,
+              "value": [
+                100,
+                100,
+                100
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Rotate Z",
+              "name": "Rotation",
+              "propertyIndex": 10,
+              "value": -11
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Opacity",
+              "name": "Opacity",
+              "propertyIndex": 11,
+              "value": 100
+            }
+          ]
+        },
+        {
+          "effects": [],
+          "flags": {
+            "adjustmentLayer": false,
+            "collapseTransformation": false,
+            "enabled": true,
+            "guideLayer": false,
+            "hasTrackMatte": false,
+            "isTrackMatte": false,
+            "locked": false,
+            "shy": false,
+            "solo": false,
+            "threeDLayer": false
+          },
+          "id": 22,
+          "index": 5,
+          "masks": [],
+          "name": "lower-cobalt-127x71",
+          "parentLayerId": null,
+          "source": {
+            "duration": 0,
+            "height": 71,
+            "id": 21,
+            "kind": "footage",
+            "name": "lower-cobalt-127x71",
+            "width": 127
+          },
+          "timing": {
+            "inPoint": 0,
+            "outPoint": 2,
+            "startTime": 0,
+            "stretch": 100
+          },
+          "trackMatte": {
+            "layerId": null,
+            "type": null
+          },
+          "transform": [
+            {
+              "keys": [],
+              "matchName": "ADBE Anchor Point",
+              "name": "Anchor Point",
+              "propertyIndex": 1,
+              "value": [
+                63.5,
+                35.5,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Position",
+              "name": "Position",
+              "propertyIndex": 2,
+              "value": [
+                77,
+                58,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Scale",
+              "name": "Scale",
+              "propertyIndex": 6,
+              "value": [
+                100,
+                100,
+                100
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Rotate Z",
+              "name": "Rotation",
+              "propertyIndex": 10,
+              "value": 7
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Opacity",
+              "name": "Opacity",
+              "propertyIndex": 11,
+              "value": 100
+            }
+          ]
+        }
+      ],
+      "name": "adjustment-stack-order",
+      "sourceFrameCount": 48,
+      "width": 320,
+      "workAreaDuration": 2,
+      "workAreaStart": 0
+    }
+  ],
+  "schema": "aftereffects-adjustment-export-readback/v1"
+}

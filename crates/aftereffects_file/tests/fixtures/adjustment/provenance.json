@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "source": {
+    "path": "crates/aftereffects_file/tests/fixtures/adjustment/native_controls.aep",
+    "fileName": "native_controls.aep",
+    "saved": true,
+    "sha256": "ed45319ed014ba979a9e0b4868aa635775f288fe851c39d9242aab097020f26f",
+    "bytes": 1304431
+  },
+  "authoring": "Independent Adobe scripting API, no converter/writer output or fixture template",
+  "recipe": "author_adjustment_cases.jsx",
+  "recipe_sha256": "471b547479f1ac0f40e86a171e77953501cdaf89227d911d0ed05a84ca472919",
+  "adobe_version": "26.5x89",
+  "adobe_build": 89,
+  "targets": [
+    {
+      "id": 84,
+      "name": "adjustment-disabled"
+    },
+    {
+      "id": 44,
+      "name": "adjustment-effect-order"
+    },
+    {
+      "id": 64,
+      "name": "adjustment-keys"
+    },
+    {
+      "id": 163,
+      "name": "adjustment-masks"
+    },
+    {
+      "id": 183,
+      "name": "adjustment-matte"
+    },
+    {
+      "id": 146,
+      "name": "adjustment-nested"
+    },
+    {
+      "id": 205,
+      "name": "adjustment-parent"
+    },
+    {
+      "id": 1,
+      "name": "adjustment-scope"
+    },
+    {
+      "id": 106,
+      "name": "adjustment-span"
+    },
+    {
+      "id": 22,
+      "name": "adjustment-stack-order"
+    }
+  ],
+  "support_relations": [
+    {
+      "supportCompositionId": 126,
+      "supportCompositionName": "adjustment-nested__support",
+      "consumerCompositionId": 146,
+      "consumerCompositionName": "adjustment-nested",
+      "consumerLayerId": 160
+    }
+  ],
+  "render_status": "10 full native references rendered and published long_term; fresh downloads SHA-verified",
+  "conversion_status": "UNRUN",
+  "visual_status": "unmeasured",
+  "session_note": "Native save/readback succeeded and owned project closed; Python kqueue context-manager incompatibility interrupted only host-exit wait. Process absence independently confirmed."
+}

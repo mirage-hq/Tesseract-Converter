@@ -1,0 +1,89 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "formatVersion": 1,
+  "duration": 2,
+  "dimensions": {
+    "width": 320,
+    "height": 180
+  },
+  "backgroundColor": [
+    0,
+    0,
+    0,
+    1
+  ],
+  "composition": {
+    "id": "main",
+    "name": "media-video-stretch",
+    "segmentLayerIds": [],
+    "motionBlur": {
+      "enabled": false,
+      "shutterAngle": 180,
+      "shutterPhase": 0,
+      "samplesPerFrame": 16,
+      "adaptiveSampleLimit": 128
+    },
+    "dynamics": {
+      "entries": []
+    },
+    "layers": [
+      {
+        "type": "Video",
+        "id": 103,
+        "name": "Double Speed Movie",
+        "parent": null,
+        "activeRange": {
+          "start": 0,
+          "duration": 2000
+        },
+        "sourceRange": {
+          "start": 250,
+          "duration": 4000
+        },
+        "sourceIntrinsicDuration": 8000,
+        "transform": {
+          "anchorPoint": [
+            0,
+            0
+          ],
+          "position": [
+            160,
+            90
+          ],
+          "scale": [
+            100,
+            100
+          ],
+          "rotation": 0,
+          "opacity": 100
+        },
+        "source": {
+          "assetId": "movie",
+          "fit": "contain"
+        },
+        "playback": {
+          "before": "inactive",
+          "after": "inactive",
+          "keyframes": [
+            {
+              "id": "stretch-in",
+              "time": 0,
+              "value": 250,
+              "easing": {
+                "type": "linear"
+              }
+            },
+            {
+              "id": "stretch-out",
+              "time": 2000,
+              "value": 4250,
+              "easing": {
+                "type": "linear"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

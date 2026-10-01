@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "policy": {
+    "sample_rate": 48000,
+    "channels": 2,
+    "duration_seconds": 4.0,
+    "duration_tolerance_seconds": 0.01,
+    "relative_rms_error_max": 0.05,
+    "window_rms_error_max": 0.003,
+    "silence_reference_rms_max": 0.0001,
+    "silence_leak_rms_max": 0.0005
+  },
+  "cases": [
+    {
+      "id": "import-audio-gain-keyed-c63-pending-audio",
+      "direction": "import",
+      "oracle_source_sha256": "36920d6bdc07dbb6292cc305327ace44efbacacb182dc18da3c979439f5473a8",
+      "composition_id": 63,
+      "reference_sha256": "",
+      "edited_fx_sha256": "",
+      "status": "UNRUN"
+    },
+    {
+      "id": "export-edited-audio-pending-native-oracle",
+      "direction": "export",
+      "oracle_source_sha256": "",
+      "composition_id": null,
+      "reference_sha256": "",
+      "edited_fx_sha256": "",
+      "status": "UNRUN"
+    }
+  ]
+}

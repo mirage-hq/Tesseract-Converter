@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "scope": "Shape and Mask Path controls, isolated root-content RGB and alpha; not full-project preview-background alpha preservation",
+  "canvas": [640, 360],
+  "source_fps": 24,
+  "output_fps": 30,
+  "duration_seconds": 5,
+  "frame_count": 150,
+  "critical_frame_indices": [0, 3, 4, 14, 15, 16, 44, 45, 46, 74, 75, 76, 105, 134, 135, 149],
+  "time_policy": "frame i at i/30 seconds; authoring/editable readback separately verifies off-grid key time 0.125 seconds",
+  "rgb": {"algorithm": "rgb-hybrid", "minimum_per_frame": 0.99, "max_dimension": 0, "canonical_rgb24": true},
+  "rgba_critical": {"algorithm": "rgba-hybrid", "minimum_per_frame": 0.99},
+  "alpha_critical": {"algorithm": "rgb-rms on lossless grayscale alpha planes", "minimum_per_frame": 0.99},
+  "geometry_tolerance_source_pixels": 0.001,
+  "native_control_time_tolerance_seconds": 0.00005,
+  "alpha_convention": "Adobe Lossless with Alpha uses premultiplied black; independently inspect opaque/edge samples and normalize to the same declared convention before comparing",
+  "fx_render": "source-built tsrct export --format prores --fx-solo main:1 --fps 30; isolates the imported root-content Group, excluding only the diagnosed opaque preview background",
+  "prohibited": ["downsampling", "reference replacement to pass", "threshold lowering", "source FPS mutation", "converting an FX render into an Adobe reference"]
+}

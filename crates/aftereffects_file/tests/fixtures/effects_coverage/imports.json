@@ -1,0 +1,1510 @@
+{
+  "sources": {
+    "static": {"path": "native_static_controls.aep", "sha256": "7c65ebe724fc8403399979cc1354adca3abd737b6ad7a76ba8eafc5b61ccf95b"},
+    "animated": {"path": "native_animated_controls.aep", "sha256": "4e38ded65e44f6a1adfe22713ddb36557afd312959a612ee601b75849d3f73ce"}
+  },
+  "source_plane": [
+    320,
+    180
+  ],
+  "content_extent": [
+    120,
+    80
+  ],
+  "note": "Manually specified editable Shape-plane semantics; source/FX child-bound approximations are not render fidelity. Native API cannot key four Hue/Saturation master leaves; this source animates only its three keyable colorize leaves.",
+  "cases": [
+    {
+      "name": "gaussianBlur-static",
+      "composition_id": 157,
+      "effect": {
+        "type": "gaussianBlur",
+        "blurriness": 12,
+        "repeatEdgePixels": true
+      },
+      "tracks": []
+    },
+    {
+      "name": "gaussianBlur-animated",
+      "composition_id": 144,
+      "effect": {
+        "type": "gaussianBlur",
+        "blurriness": 12,
+        "repeatEdgePixels": true
+      },
+      "tracks": [
+        {
+          "param": "blurriness",
+          "values": [
+            12.0,
+            24.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "name": "glow-static",
+      "composition_id": 183,
+      "effect": {
+        "type": "glow",
+        "glowThreshold": 20,
+        "glowRadius": 8,
+        "glowIntensity": 0.5
+      },
+      "tracks": []
+    },
+    {
+      "name": "glow-animated",
+      "composition_id": 170,
+      "effect": {
+        "type": "glow",
+        "glowThreshold": 20,
+        "glowRadius": 8,
+        "glowIntensity": 0.5
+      },
+      "tracks": [
+        {
+          "param": "glowThreshold",
+          "values": [
+            20.0,
+            40.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "glowRadius",
+          "values": [
+            8.0,
+            16.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "glowIntensity",
+          "values": [
+            0.5,
+            1.5
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "name": "directionalBlur-static",
+      "composition_id": 66,
+      "effect": {
+        "type": "directionalBlur",
+        "direction": 35,
+        "blurLength": 12
+      },
+      "tracks": []
+    },
+    {
+      "name": "directionalBlur-animated",
+      "composition_id": 53,
+      "effect": {
+        "type": "directionalBlur",
+        "direction": 35,
+        "blurLength": 12
+      },
+      "tracks": [
+        {
+          "param": "direction",
+          "values": [
+            35.0,
+            95.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "blurLength",
+          "values": [
+            12.0,
+            24.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "name": "pixelMotionBlur-static",
+      "composition_id": 391,
+      "effect": {
+        "type": "pixelMotionBlur",
+        "shutterControl": "manual",
+        "shutterAngle": 120,
+        "shutterSamples": 8,
+        "vectorDetail": 20
+      },
+      "tracks": []
+    },
+    {
+      "name": "pixelMotionBlur-animated",
+      "composition_id": 378,
+      "effect": {
+        "type": "pixelMotionBlur",
+        "shutterControl": "manual",
+        "shutterAngle": 120,
+        "shutterSamples": 8,
+        "vectorDetail": 20
+      },
+      "tracks": [
+        {
+          "param": "shutterAngle",
+          "values": [
+            120.0,
+            240.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "shutterSamples",
+          "values": [
+            8.0,
+            16.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "vectorDetail",
+          "values": [
+            20.0,
+            40.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "name": "mosaic-static",
+      "composition_id": 339,
+      "effect": {
+        "type": "mosaic",
+        "horizontalBlocks": 12,
+        "verticalBlocks": 8,
+        "sharpColors": true
+      },
+      "tracks": []
+    },
+    {
+      "name": "mosaic-animated",
+      "composition_id": 326,
+      "effect": {
+        "type": "mosaic",
+        "horizontalBlocks": 12,
+        "verticalBlocks": 8,
+        "sharpColors": true
+      },
+      "tracks": [
+        {
+          "param": "horizontalBlocks",
+          "values": [
+            12.0,
+            24.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "verticalBlocks",
+          "values": [
+            8.0,
+            16.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "name": "shiftChannels-static",
+      "composition_id": 521,
+      "effect": {
+        "type": "shiftChannels",
+        "takeRedFrom": "fullOff",
+        "takeGreenFrom": "fullOn",
+        "takeBlueFrom": "blue"
+      },
+      "tracks": []
+    },
+    {
+      "name": "dropShadow-static",
+      "composition_id": 79,
+      "effect": {
+        "type": "dropShadow",
+        "enabled": true,
+        "color": [
+          0.2,
+          0.4,
+          0.6,
+          0.5
+        ],
+        "offset": [
+          6,
+          -8
+        ],
+        "blurRadius": 4,
+        "spreadRadius": 0,
+        "blendMode": "normal"
+      },
+      "tracks": []
+    },
+    {
+      "name": "hueSaturation-static",
+      "composition_id": 261,
+      "effect": {
+        "type": "hueSaturation",
+        "hue": 15,
+        "saturation": 20,
+        "lightness": -10,
+        "colorize": true,
+        "colorizeHue": 80,
+        "colorizeSaturation": 40,
+        "colorizeLightness": 10
+      },
+      "tracks": []
+    },
+    {
+      "name": "hueSaturation-animated",
+      "composition_id": 248,
+      "effect": {
+        "type": "hueSaturation",
+        "hue": 15,
+        "saturation": 20,
+        "lightness": -10,
+        "colorize": true,
+        "colorizeHue": 80,
+        "colorizeSaturation": 40,
+        "colorizeLightness": 10
+      },
+      "tracks": [
+        {
+          "param": "colorizeHue",
+          "values": [
+            80.0,
+            140.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "colorizeSaturation",
+          "values": [
+            40.0,
+            70.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "colorizeLightness",
+          "values": [
+            10.0,
+            20.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "name": "radialBlur-static",
+      "composition_id": 456,
+      "effect": {
+        "type": "radialBlur",
+        "amount": 15,
+        "centerX": 0.09375,
+        "centerY": 0.3333333333333333
+      },
+      "tracks": []
+    },
+    {
+      "name": "radialBlur-animated",
+      "composition_id": 443,
+      "effect": {
+        "type": "radialBlur",
+        "amount": 15,
+        "centerX": 0.09375,
+        "centerY": 0.3333333333333333
+      },
+      "tracks": [
+        {
+          "param": "amount",
+          "values": [
+            15.0,
+            30.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "centerX",
+          "values": [
+            0.09375,
+            0.28125
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "centerY",
+          "values": [
+            0.3333333333333333,
+            0.1111111111111111
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "name": "levels-static",
+      "composition_id": 287,
+      "effect": {
+        "type": "levels",
+        "inputBlack": 51,
+        "inputWhite": 204,
+        "gamma": 1.5,
+        "outputBlack": 25.5,
+        "outputWhite": 229.5
+      },
+      "tracks": []
+    },
+    {
+      "name": "levels-animated",
+      "composition_id": 274,
+      "effect": {
+        "type": "levels",
+        "inputBlack": 51,
+        "inputWhite": 204,
+        "gamma": 1.5,
+        "outputBlack": 25.5,
+        "outputWhite": 229.5
+      },
+      "tracks": [
+        {
+          "param": "inputBlack",
+          "values": [
+            51.0,
+            25.5
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "inputWhite",
+          "values": [
+            204.0,
+            229.5
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "gamma",
+          "values": [
+            1.5,
+            0.8
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "outputBlack",
+          "values": [
+            25.5,
+            51.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "outputWhite",
+          "values": [
+            229.5,
+            204.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "name": "bulge-static",
+      "composition_id": 14,
+      "effect": {
+        "type": "bulge",
+        "horizontalRadius": 0.1125,
+        "verticalRadius": 0.17777777777777778,
+        "centerX": 0.09375,
+        "centerY": 0.3333333333333333,
+        "bulgeHeight": 0.6,
+        "pinning": true
+      },
+      "tracks": []
+    },
+    {
+      "name": "bulge-animated",
+      "composition_id": 1,
+      "effect": {
+        "type": "bulge",
+        "horizontalRadius": 0.1125,
+        "verticalRadius": 0.17777777777777778,
+        "centerX": 0.09375,
+        "centerY": 0.3333333333333333,
+        "bulgeHeight": 0.6,
+        "pinning": true
+      },
+      "tracks": [
+        {
+          "param": "horizontalRadius",
+          "values": [
+            0.1125,
+            0.15
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "verticalRadius",
+          "values": [
+            0.17777777777777778,
+            0.2222222222222222
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "centerX",
+          "values": [
+            0.09375,
+            0.28125
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "centerY",
+          "values": [
+            0.3333333333333333,
+            0.1111111111111111
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "bulgeHeight",
+          "values": [
+            0.6,
+            0.9
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "pinning",
+          "values": [
+            1.0,
+            0.0
+          ],
+          "easing": "hold"
+        }
+      ]
+    },
+    {
+      "name": "cornerPin-static",
+      "composition_id": 40,
+      "effect": {
+        "type": "cornerPin",
+        "upperLeftX": 0.0375,
+        "upperLeftY": 0.08888888888888889,
+        "upperRightX": 0.3375,
+        "upperRightY": 0.044444444444444446,
+        "lowerLeftX": -0.0375,
+        "lowerLeftY": 0.35555555555555557,
+        "lowerRightX": 0.4125,
+        "lowerRightY": 0.4
+      },
+      "tracks": []
+    },
+    {
+      "name": "cornerPin-animated",
+      "composition_id": 27,
+      "effect": {
+        "type": "cornerPin",
+        "upperLeftX": 0.0375,
+        "upperLeftY": 0.08888888888888889,
+        "upperRightX": 0.3375,
+        "upperRightY": 0.044444444444444446,
+        "lowerLeftX": -0.0375,
+        "lowerLeftY": 0.35555555555555557,
+        "lowerRightX": 0.4125,
+        "lowerRightY": 0.4
+      },
+      "tracks": [
+        {
+          "param": "upperLeftX",
+          "values": [
+            0.0375,
+            0.075
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "upperLeftY",
+          "values": [
+            0.08888888888888889,
+            0.044444444444444446
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "upperRightX",
+          "values": [
+            0.3375,
+            0.3
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "upperRightY",
+          "values": [
+            0.044444444444444446,
+            0.08888888888888889
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "lowerLeftX",
+          "values": [
+            -0.0375,
+            0.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "lowerLeftY",
+          "values": [
+            0.35555555555555557,
+            0.4
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "lowerRightX",
+          "values": [
+            0.4125,
+            0.375
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "lowerRightY",
+          "values": [
+            0.4,
+            0.35555555555555557
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "name": "motionTile-static",
+      "composition_id": 365,
+      "effect": {
+        "type": "motionTile",
+        "tileCenterX": 0.09375,
+        "tileCenterY": 0.3333333333333333,
+        "tileWidth": 80,
+        "tileHeight": 90,
+        "outputWidth": 150,
+        "outputHeight": 160,
+        "mirrorEdges": true,
+        "phase": 45
+      },
+      "tracks": []
+    },
+    {
+      "name": "motionTile-animated",
+      "composition_id": 352,
+      "effect": {
+        "type": "motionTile",
+        "tileCenterX": 0.09375,
+        "tileCenterY": 0.3333333333333333,
+        "tileWidth": 80,
+        "tileHeight": 90,
+        "outputWidth": 150,
+        "outputHeight": 160,
+        "mirrorEdges": true,
+        "phase": 45
+      },
+      "tracks": [
+        {
+          "param": "tileCenterX",
+          "values": [
+            0.09375,
+            0.28125
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "tileCenterY",
+          "values": [
+            0.3333333333333333,
+            0.1111111111111111
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "tileWidth",
+          "values": [
+            80.0,
+            60.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "tileHeight",
+          "values": [
+            90.0,
+            70.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "outputWidth",
+          "values": [
+            150.0,
+            180.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "outputHeight",
+          "values": [
+            160.0,
+            190.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "mirrorEdges",
+          "values": [
+            1.0,
+            0.0
+          ],
+          "easing": "hold"
+        },
+        {
+          "param": "phase",
+          "values": [
+            45.0,
+            90.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "name": "posterize-static",
+      "composition_id": 417,
+      "effect": {
+        "type": "posterize",
+        "levels": 7
+      },
+      "tracks": []
+    },
+    {
+      "name": "posterize-animated",
+      "composition_id": 404,
+      "effect": {
+        "type": "posterize",
+        "levels": 7
+      },
+      "tracks": [
+        {
+          "param": "levels",
+          "values": [
+            7.0,
+            13.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "name": "posterizeTime-static",
+      "composition_id": 430,
+      "effect": {
+        "type": "posterizeTime",
+        "frameRate": 12
+      },
+      "tracks": []
+    },
+    {
+      "name": "findEdges-static",
+      "composition_id": 131,
+      "effect": {
+        "type": "findEdges",
+        "invert": 1
+      },
+      "tracks": []
+    },
+    {
+      "name": "findEdges-animated",
+      "composition_id": 118,
+      "effect": {
+        "type": "findEdges",
+        "invert": 1
+      },
+      "tracks": [
+        {
+          "param": "invert",
+          "values": [
+            1.0,
+            0.0
+          ],
+          "easing": "hold"
+        }
+      ]
+    },
+    {
+      "name": "exposure-static",
+      "composition_id": 105,
+      "effect": {
+        "type": "exposure",
+        "exposure": 1.25,
+        "offset": 0.1,
+        "gammaCorrection": 0.8
+      },
+      "tracks": []
+    },
+    {
+      "name": "exposure-animated",
+      "composition_id": 92,
+      "effect": {
+        "type": "exposure",
+        "exposure": 1.25,
+        "offset": 0.1,
+        "gammaCorrection": 0.8
+      },
+      "tracks": [
+        {
+          "param": "exposure",
+          "values": [
+            1.25,
+            2.25
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "offset",
+          "values": [
+            0.1,
+            -0.1
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "gammaCorrection",
+          "values": [
+            0.8,
+            1.2
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "name": "vibrance-static",
+      "composition_id": 651,
+      "effect": {
+        "type": "vibrance",
+        "vibrance": 30,
+        "saturation": -20
+      },
+      "tracks": []
+    },
+    {
+      "name": "vibrance-animated",
+      "composition_id": 638,
+      "effect": {
+        "type": "vibrance",
+        "vibrance": 30,
+        "saturation": -20
+      },
+      "tracks": [
+        {
+          "param": "vibrance",
+          "values": [
+            30.0,
+            60.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "saturation",
+          "values": [
+            -20.0,
+            20.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "name": "twirl-static",
+      "composition_id": 625,
+      "effect": {
+        "type": "twirl",
+        "angle": 45,
+        "radius": 0.3,
+        "centerX": 0.09375,
+        "centerY": 0.3333333333333333
+      },
+      "tracks": []
+    },
+    {
+      "name": "twirl-animated",
+      "composition_id": 612,
+      "effect": {
+        "type": "twirl",
+        "angle": 45,
+        "radius": 0.3,
+        "centerX": 0.09375,
+        "centerY": 0.3333333333333333
+      },
+      "tracks": [
+        {
+          "param": "angle",
+          "values": [
+            45.0,
+            90.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "radius",
+          "values": [
+            0.3,
+            0.5
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "centerX",
+          "values": [
+            0.09375,
+            0.28125
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "centerY",
+          "values": [
+            0.3333333333333333,
+            0.1111111111111111
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "name": "ripple-static",
+      "composition_id": 482,
+      "effect": {
+        "type": "ripple",
+        "amplitude": 0.009375,
+        "phase": 0.5235987755982988,
+        "centerX": 0.09375,
+        "centerY": 0.3333333333333333,
+        "frequency": 50.26548245743668
+      },
+      "tracks": []
+    },
+    {
+      "name": "ripple-animated",
+      "composition_id": 469,
+      "effect": {
+        "type": "ripple",
+        "amplitude": 0.009375,
+        "phase": 0.5235987755982988,
+        "centerX": 0.09375,
+        "centerY": 0.3333333333333333,
+        "frequency": 50.26548245743668
+      },
+      "tracks": [
+        {
+          "param": "amplitude",
+          "values": [
+            0.009375,
+            0.01875
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "phase",
+          "values": [
+            0.5235987755982988,
+            1.0471975511965976
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "centerX",
+          "values": [
+            0.09375,
+            0.28125
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "centerY",
+          "values": [
+            0.3333333333333333,
+            0.1111111111111111
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "name": "sharpen-static",
+      "composition_id": 508,
+      "effect": {
+        "type": "sharpen",
+        "amount": 35
+      },
+      "tracks": []
+    },
+    {
+      "name": "sharpen-animated",
+      "composition_id": 495,
+      "effect": {
+        "type": "sharpen",
+        "amount": 35
+      },
+      "tracks": [
+        {
+          "param": "amount",
+          "values": [
+            35.0,
+            65.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "name": "lumaKey-static",
+      "composition_id": 313,
+      "effect": {
+        "type": "lumaKey",
+        "invert": 0,
+        "threshold": 0.10196078431372549,
+        "softness": 0.2
+      },
+      "tracks": []
+    },
+    {
+      "name": "lumaKey-animated",
+      "composition_id": 300,
+      "effect": {
+        "type": "lumaKey",
+        "invert": 0,
+        "threshold": 0.10196078431372549,
+        "softness": 0.2
+      },
+      "tracks": [
+        {
+          "param": "threshold",
+          "values": [
+            0.10196078431372549,
+            0.6
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "softness",
+          "values": [
+            0.2,
+            0.4
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "name": "simpleChoker-static",
+      "composition_id": 547,
+      "effect": {
+        "type": "simpleChoker",
+        "choke": 2
+      },
+      "tracks": []
+    },
+    {
+      "name": "simpleChoker-animated",
+      "composition_id": 534,
+      "effect": {
+        "type": "simpleChoker",
+        "choke": 2
+      },
+      "tracks": [
+        {
+          "param": "choke",
+          "values": [
+            2.0,
+            4.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "name": "grain-static",
+      "composition_id": 235,
+      "effect": {
+        "type": "grain",
+        "amount": 0.5,
+        "size": 1.3,
+        "softness": 0.4,
+        "aspectRatio": 1.2,
+        "seed": 9
+      },
+      "tracks": []
+    },
+    {
+      "name": "grain-animated",
+      "composition_id": 222,
+      "effect": {
+        "type": "grain",
+        "amount": 0.5,
+        "size": 1.3,
+        "softness": 0.4,
+        "aspectRatio": 1.2,
+        "seed": 9
+      },
+      "tracks": [
+        {
+          "param": "intensity",
+          "values": [
+            0.5,
+            0.8
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "size",
+          "values": [
+            1.3,
+            1.7
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "softness",
+          "values": [
+            0.4,
+            0.7
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "aspectRatio",
+          "values": [
+            1.2,
+            1.5
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "seed",
+          "values": [
+            9.0,
+            13.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "name": "waveWarp-static",
+      "composition_id": 677,
+      "effect": {
+        "type": "waveWarp",
+        "waveHeight": 0.044444444444444446,
+        "waveWidth": 16.0,
+        "direction": 45,
+        "phase": 0.5235987755982988
+      },
+      "tracks": []
+    },
+    {
+      "name": "waveWarp-animated",
+      "composition_id": 664,
+      "effect": {
+        "type": "waveWarp",
+        "waveHeight": 0.044444444444444446,
+        "waveWidth": 16.0,
+        "direction": 45,
+        "phase": 0.5235987755982988
+      },
+      "tracks": [
+        {
+          "param": "waveHeight",
+          "values": [
+            0.044444444444444446,
+            0.08888888888888889
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "direction",
+          "values": [
+            45.0,
+            90.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "phase",
+          "values": [
+            0.5235987755982988,
+            1.0471975511965976
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "name": "tintTritone-static",
+      "composition_id": 573,
+      "effect": {
+        "type": "tintTritone",
+        "blackR": 0.1,
+        "blackG": 0.2,
+        "blackB": 0.3,
+        "whiteR": 0.8,
+        "whiteG": 0.7,
+        "whiteB": 0.6,
+        "amount": 70
+      },
+      "tracks": []
+    },
+    {
+      "name": "tintTritone-animated",
+      "composition_id": 560,
+      "effect": {
+        "type": "tintTritone",
+        "blackR": 0.1,
+        "blackG": 0.2,
+        "blackB": 0.3,
+        "whiteR": 0.8,
+        "whiteG": 0.7,
+        "whiteB": 0.6,
+        "amount": 70
+      },
+      "tracks": [
+        {
+          "param": "blackR",
+          "values": [
+            0.1,
+            0.2
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "blackG",
+          "values": [
+            0.2,
+            0.3
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "blackB",
+          "values": [
+            0.3,
+            0.4
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "whiteR",
+          "values": [
+            0.8,
+            0.7
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "whiteG",
+          "values": [
+            0.7,
+            0.6
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "whiteB",
+          "values": [
+            0.6,
+            0.5
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "amount",
+          "values": [
+            70.0,
+            90.0
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "name": "gradientRamp-static",
+      "composition_id": 209,
+      "effect": {
+        "type": "gradientRamp",
+        "startX": 0.0375,
+        "startY": 0.08888888888888889,
+        "startR": 0.1,
+        "startG": 0.2,
+        "startB": 0.3,
+        "endX": 0.3375,
+        "endY": 0.35555555555555557,
+        "endR": 0.8,
+        "endG": 0.7,
+        "endB": 0.6,
+        "shape": 0,
+        "blend": 0.75
+      },
+      "tracks": []
+    },
+    {
+      "name": "gradientRamp-animated",
+      "composition_id": 196,
+      "effect": {
+        "type": "gradientRamp",
+        "startX": 0.0375,
+        "startY": 0.08888888888888889,
+        "startR": 0.1,
+        "startG": 0.2,
+        "startB": 0.3,
+        "endX": 0.3375,
+        "endY": 0.35555555555555557,
+        "endR": 0.8,
+        "endG": 0.7,
+        "endB": 0.6,
+        "shape": 0,
+        "blend": 0.75
+      },
+      "tracks": [
+        {
+          "param": "startX",
+          "values": [
+            0.0375,
+            0.075
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "startY",
+          "values": [
+            0.08888888888888889,
+            0.13333333333333333
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "startR",
+          "values": [
+            0.1,
+            0.2
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "startG",
+          "values": [
+            0.2,
+            0.3
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "startB",
+          "values": [
+            0.3,
+            0.4
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "endX",
+          "values": [
+            0.3375,
+            0.3
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "endY",
+          "values": [
+            0.35555555555555557,
+            0.3111111111111111
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "endR",
+          "values": [
+            0.8,
+            0.7
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "endG",
+          "values": [
+            0.7,
+            0.6
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "endB",
+          "values": [
+            0.6,
+            0.5
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "shape",
+          "values": [
+            0.0,
+            1.0
+          ],
+          "easing": "hold"
+        },
+        {
+          "param": "blend",
+          "values": [
+            0.75,
+            0.5
+          ],
+          "easing": "linear"
+        }
+      ]
+    },
+    {
+      "name": "turbulentNoise-static",
+      "composition_id": 599,
+      "effect": {
+        "type": "turbulentNoise",
+        "noiseType": "spline",
+        "fractalType": "turbulentSharp",
+        "invert": 1,
+        "contrast": 120,
+        "brightness": 10,
+        "rotation": 20,
+        "scale": 80,
+        "complexity": 3.5,
+        "subInfluence": 45,
+        "evolution": 30,
+        "blend": 0.6,
+        "offsetX": -23.75,
+        "offsetY": -19.375
+      },
+      "tracks": []
+    },
+    {
+      "name": "turbulentNoise-animated",
+      "composition_id": 586,
+      "effect": {
+        "type": "turbulentNoise",
+        "noiseType": "spline",
+        "fractalType": "turbulentSharp",
+        "invert": 1,
+        "contrast": 120,
+        "brightness": 10,
+        "rotation": 20,
+        "scale": 80,
+        "complexity": 3.5,
+        "subInfluence": 45,
+        "evolution": 30,
+        "blend": 0.6,
+        "offsetX": -23.75,
+        "offsetY": -19.375
+      },
+      "tracks": [
+        {
+          "param": "invert",
+          "values": [
+            1.0,
+            0.0
+          ],
+          "easing": "hold"
+        },
+        {
+          "param": "contrast",
+          "values": [
+            120.0,
+            80.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "brightness",
+          "values": [
+            10.0,
+            -10.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "rotation",
+          "values": [
+            20.0,
+            50.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "scale",
+          "values": [
+            80.0,
+            140.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "complexity",
+          "values": [
+            3.5,
+            4.5
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "subInfluence",
+          "values": [
+            45.0,
+            60.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "evolution",
+          "values": [
+            30.0,
+            90.0
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "offsetX",
+          "values": [
+            -23.75,
+            -38.75
+          ],
+          "easing": "linear"
+        },
+        {
+          "param": "offsetY",
+          "values": [
+            -19.375,
+            -11.875
+          ],
+          "easing": "linear"
+        }
+      ]
+    }
+  ]
+}

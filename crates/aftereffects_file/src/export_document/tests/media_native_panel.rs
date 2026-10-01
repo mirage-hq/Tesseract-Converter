@@ -1,0 +1,484 @@
+//! Explicit edited-FX non-audio media export cases with packaged primary source bytes.
+//!
+//! This crate's native reader supplies supplementary structural assertions only.
+//! The separate native-specs.json requests independent Adobe authoring; neither
+//! native acceptance nor 30fps reference/render fidelity has run for these cases.
+
+use std::{fs, path::Path};
+
+use fx_conv::{ConversionMode, ExportFromTesseract};
+use fx_schema::EditableFxCompositionDocument;
+use serde_json::Value;
+use tesseract_file::{AssetKind, TesseractFileBuilder};
+
+use super::*;
+use crate::{AfterEffects, properties};
+
+const FIXTURE_ROOT: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/media_native_panel"
+);
+
+fn close(actual: f64, expected: f64, label: &str) {
+    assert!(
+        (actual - expected).abs() < 1e-6,
+        "{label}: expected {expected}, got {actual}"
+    );
+}
+
+fn property(layer: &crate::structure::Layer, match_name: &str) -> properties::NumericProperty {
+    properties::read_transform(&layer.content)
+        .expect("native Transform")
+        .into_iter()
+        .find(|property| property.match_name == match_name)
+        .unwrap_or_else(|| panic!("missing editable {match_name} on {}", layer.name))
+        .numeric
+        .expect("numeric Transform control")
+}
+
+fn assert_values(actual: &[f64], expected: &Value, label: &str) {
+    let values = expected.as_array().expect("manual numeric oracle");
+    assert_eq!(actual.len(), values.len(), "{label} component count");
+    for (index, (actual, oracle)) in actual.iter().zip(values).enumerate() {
+        close(
+            *actual,
+            oracle.as_f64().expect("numeric component"),
+            &format!("{label}[{index}]"),
+        );
+    }
+}
+
+fn source_name<'a>(
+    project: &'a crate::structure::StructuralProject,
+    layer: &crate::structure::Layer,
+) -> &'a str {
+    let source = project
+        .item(layer.record.source_id())
+        .expect("editable footage identity");
+    let media = source.media.as_ref().expect("footage source item");
+    let descriptor = media.as_ref().expect("typed native media descriptor");
+    let path = descriptor.authored_path.as_str();
+    assert!(
+        path.starts_with("media/"),
+        "package-relative media path: {path}"
+    );
+    path.rsplit_once('-')
+        .expect("staged asset suffix")
+        .1
+        .split_once('.')
+        .expect("staged source extension")
+        .0
+}
+
+fn media_file(id: &str) -> (&'static str, AssetKind) {
+    match id {
+        "red" => ("red.exr", AssetKind::Image),
+        "green" => ("green.exr", AssetKind::Image),
+        "movie" => ("movie.mov", AssetKind::Video),
+        "unsupported-png" => ("unsupported.png", AssetKind::Image),
+        _ => panic!("undeclared media asset: {id}"),
+    }
+}
+
+fn check_case(name: &str, input_json: &str, expected_json: &str) {
+    let input: Value = serde_json::from_str(input_json).expect("committed edited FX input");
+    let expected: Value = serde_json::from_str(expected_json).expect("manual native contract");
+    assert_eq!(input["composition"]["name"], name);
+    assert_eq!(expected["caseId"], format!("fx-export-{name}"));
+    assert_eq!(expected["status"], "AUTHORING_REQUEST_UNRUN_UNMEASURED");
+    assert!(
+        !input_json.contains("jsScript"),
+        "native editable media only"
+    );
+
+    let root = tempfile::tempdir().expect("panel scratch");
+    let document = EditableFxCompositionDocument::from_json_value(input)
+        .expect("explicit FX media composition");
+    let mut builder = TesseractFileBuilder::try_new(document).expect("editable FX archive");
+    for asset in expected["assets"]
+        .as_array()
+        .expect("declared packaged assets")
+    {
+        let id = asset.as_str().expect("media asset ID");
+        let (filename, kind) = media_file(id);
+        let path = Path::new(FIXTURE_ROOT).join("media").join(filename);
+        builder = builder
+            .add_asset(id, &path, kind)
+            .expect("package actual primary media");
+    }
+    let archive_path = root.path().join("edited.tsrct");
+    drop(
+        builder
+            .write(&archive_path)
+            .expect("fresh edited FX archive"),
+    );
+    let output_path = root.path().join("exported");
+    let report = AfterEffects
+        .export_from_tesseract(
+            &archive_path,
+            &output_path,
+            &Default::default(),
+            ConversionMode::Write,
+        )
+        .expect("fresh FX-to-AEP export with actual media descriptors");
+    if let Some(reason) = expected["diagnostic"].as_str() {
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|entry| entry.message.contains(reason)),
+            "missing contextual unsupported-format diagnostic: {:?}",
+            report.diagnostics
+        );
+    } else {
+        assert!(
+            report.diagnostics.is_empty(),
+            "unexpected omission: {:?}",
+            report.diagnostics
+        );
+    }
+
+    let bytes = fs::read(output_path.join("project.aep")).expect("fresh native project");
+    if let Some(dir) = std::env::var_os("AEP_EFFECTS_FX_PANEL_DIR") {
+        fs::create_dir_all(&dir).expect("panel artifact directory");
+        let base = Path::new(&dir).join(name);
+        fs::write(base.with_extension("fx.json"), input_json).expect("explicit FX input artifact");
+        fs::write(base.with_extension("aep"), &bytes)
+            .expect("FX-exported AEP artifact (not Adobe oracle)");
+        fs::write(base.with_extension("expected.json"), expected_json)
+            .expect("manual native contract artifact");
+        // Open <case>/project.aep with its neighboring media/ folder for Adobe
+        // inspection; the flat <case>.aep is only an artifact for the runner.
+        let package_dir = Path::new(&dir).join(name);
+        fs::create_dir_all(&package_dir).expect("standalone native package");
+        fs::write(package_dir.join("project.aep"), &bytes).expect("native package project");
+        let media_dir = package_dir.join("media");
+        if output_path.join("media").is_dir() {
+            fs::create_dir_all(&media_dir).expect("panel packaged media directory");
+            for entry in fs::read_dir(output_path.join("media")).expect("published media") {
+                let entry = entry.expect("published source");
+                fs::copy(entry.path(), media_dir.join(entry.file_name()))
+                    .expect("copy byte-identical native media for Adobe inspection");
+            }
+        }
+    }
+
+    let project = read_project(&bytes).expect("supplementary structural readback");
+    let ItemKind::Composition(comp) = &project.item(1).expect("root item").kind else {
+        panic!("{name}: root is not a composition");
+    };
+    assert_eq!((comp.width, comp.height), (320, 180));
+    close(comp.duration_secs, 2.0, "composition duration");
+    close(
+        comp.frame_rate,
+        24.0,
+        "source composition fps (not Adobe MP4 output fps)",
+    );
+    let names = expected["layers"]
+        .as_array()
+        .expect("named editable layers");
+    assert_eq!(comp.layers.len(), names.len(), "{name}: native layer count");
+    for (layer, oracle) in comp.layers.iter().zip(names) {
+        assert_eq!(
+            layer.name.as_ref(),
+            oracle.as_str().expect("native layer name")
+        );
+        assert_ne!(
+            layer.record.source_id(),
+            0,
+            "media must reference editable footage"
+        );
+    }
+
+    let published = expected["published"].as_array().unwrap_or_else(|| {
+        expected["assets"]
+            .as_array()
+            .expect("declared media assets")
+    });
+    let descriptors = project
+        .items
+        .iter()
+        .filter_map(|item| item.media.as_ref())
+        .map(|media| media.as_ref().expect("typed footage descriptor"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        descriptors.len(),
+        published.len(),
+        "only emitted media may be staged"
+    );
+    assert_eq!(
+        report.artifacts.len(),
+        descriptors.len() + 1,
+        "report must contain only the project and emitted media"
+    );
+    for artifact in &report.artifacts {
+        assert!(
+            output_path.join(&artifact.path).is_file(),
+            "reported artifact does not exist: {}",
+            artifact.path.display()
+        );
+    }
+    for descriptor in &descriptors {
+        assert!(
+            report
+                .artifacts
+                .iter()
+                .any(|artifact| artifact.path == Path::new(descriptor.authored_path.as_str())),
+            "emitted media is missing from the report: {}",
+            descriptor.authored_path
+        );
+    }
+    for asset in published {
+        let id = asset.as_str().expect("expected published asset");
+        let (filename, _) = media_file(id);
+        let descriptor = descriptors
+            .iter()
+            .find(|descriptor| {
+                descriptor.authored_path.ends_with(&format!(
+                    "-{id}.{}",
+                    filename.rsplit_once('.').expect("fixture extension").1
+                ))
+            })
+            .unwrap_or_else(|| panic!("missing typed native descriptor for {id}"));
+        assert_eq!(
+            descriptor.source_format,
+            if id == "movie" { *b"MOoV" } else { *b"oEXR" }
+        );
+        assert_eq!(
+            (descriptor.width, descriptor.height),
+            if id == "movie" { (320, 180) } else { (64, 48) }
+        );
+        if id == "movie" {
+            close(descriptor.duration.seconds(), 8.0, "original MOV duration");
+            assert_eq!(descriptor.native_frame_rate.integer, 24);
+        } else {
+            close(descriptor.duration.seconds(), 0.0, "EXR still duration");
+        }
+        let published_bytes = fs::read(output_path.join(&descriptor.authored_path))
+            .expect("published package media bytes");
+        let original_bytes = fs::read(Path::new(FIXTURE_ROOT).join("media").join(filename))
+            .expect("primary authoring media bytes");
+        assert_eq!(
+            published_bytes, original_bytes,
+            "asset {id} was not rewritten"
+        );
+    }
+
+    if let Some(order) = expected["sourceOrder"].as_array() {
+        for (layer, asset) in comp.layers.iter().zip(order) {
+            assert_eq!(
+                source_name(&project, layer),
+                asset.as_str().expect("source identity")
+            );
+        }
+    }
+    if expected["sharedFootage"] == true {
+        assert_eq!(
+            comp.layers[0].record.source_id(),
+            comp.layers[1].record.source_id(),
+            "two occurrences must reference one reusable original source"
+        );
+    }
+    if let Some(ranges) = expected["ranges"].as_array() {
+        for (layer, range) in comp.layers.iter().zip(ranges) {
+            close(
+                layer.record.in_point().expect("variant in-point"),
+                range[0].as_f64().expect("manual in-point"),
+                "variant in-point",
+            );
+            close(
+                layer.record.out_point().expect("variant out-point"),
+                range[1].as_f64().expect("manual out-point"),
+                "variant out-point",
+            );
+        }
+    }
+    let layer = &comp.layers[0];
+    if let Some(clock) = expected["clock"].as_object() {
+        for (name, actual) in [
+            ("in", layer.record.in_point().expect("editable in-point")),
+            ("out", layer.record.out_point().expect("editable out-point")),
+            (
+                "start",
+                layer.record.start_time().expect("editable source start"),
+            ),
+            (
+                "stretch",
+                layer.record.stretch().expect("editable playback stretch"),
+            ),
+        ] {
+            close(
+                actual,
+                clock[name].as_f64().expect("manual clock oracle"),
+                name,
+            );
+        }
+    }
+    if let Some(oracle) = expected.get("position") {
+        assert_values(
+            &property(layer, "ADBE Position").values,
+            oracle,
+            "native position",
+        );
+    }
+    if let Some(oracle) = expected.get("orientation") {
+        assert_values(
+            &property(layer, "ADBE Orientation").values,
+            oracle,
+            "native orientation",
+        );
+    }
+    if let Some(oracle) = expected.get("opacity") {
+        assert_values(
+            &property(layer, "ADBE Opacity").values,
+            oracle,
+            "native opacity",
+        );
+    }
+    if let Some(oracle) = expected["opacityKeys"].as_array() {
+        let native = property(layer, "ADBE Opacity");
+        assert!(native.animated, "animated native media opacity");
+        assert_eq!(native.keyframes.len(), oracle.len());
+        for (key, expected) in native.keyframes.iter().zip(oracle) {
+            close(
+                key.time_secs,
+                expected[0].as_f64().expect("key time"),
+                "opacity key time",
+            );
+            close(
+                key.values[0],
+                expected[1].as_f64().expect("key value"),
+                "opacity key value",
+            );
+            assert_eq!((key.in_interpolation, key.out_interpolation), (1, 1));
+        }
+    }
+    if let Some(count) = expected["maskCount"].as_u64() {
+        let parade = properties::root_runs(&layer.content)
+            .expect("native root")
+            .into_iter()
+            .find(|(name, _)| *name == "ADBE Mask Parade")
+            .expect("editable media crop mask");
+        let masks = properties::runs(parade.1)
+            .expect("mask children")
+            .into_iter()
+            .filter(|(name, _)| *name == "ADBE Mask Atom")
+            .count();
+        assert_eq!(
+            masks,
+            usize::try_from(count).expect("small manual mask count"),
+            "media frame crop must remain editable"
+        );
+    }
+    if expected["threeD"] == true {
+        assert!(
+            layer.record.flags().three_d_layer,
+            "media 3D transform retained"
+        );
+    }
+    if expected["timeRemap"] == true {
+        assert!(
+            properties::root_runs(&layer.content)
+                .expect("native root")
+                .into_iter()
+                .any(|(name, _)| name == "ADBE Time Remapping"),
+            "static source sample must retain editable native time remap"
+        );
+    }
+    if expected["frameBlending"] == "frameMix" {
+        assert!(
+            layer.record.flags().frame_blending,
+            "native layer frame mix"
+        );
+        assert!(
+            !layer.record.flags().frame_blending_mode,
+            "not optical flow"
+        );
+        assert_ne!(
+            comp.record.flags()[1] & 16,
+            0,
+            "composition blending master"
+        );
+    }
+}
+
+macro_rules! panel_case {
+    ($symbol:ident, $name:literal, $input:expr, $expected:expr) => {
+        #[test]
+        #[ignore = "Adobe-native proof backlog; see docs/after-effects-support.md"]
+        fn $symbol() {
+            crate::adobe_test_support::export_case($name, || {
+                check_case($name, $input, $expected);
+            });
+        }
+    };
+}
+
+panel_case!(
+    media_image_fit,
+    "media-image-fit",
+    include_str!("../../../tests/fixtures/media_native_panel/media-image-fit.fx.json"),
+    include_str!("../../../tests/fixtures/media_native_panel/media-image-fit.expected.json")
+);
+panel_case!(
+    media_video_clock,
+    "media-video-clock",
+    include_str!("../../../tests/fixtures/media_native_panel/media-video-clock.fx.json"),
+    include_str!("../../../tests/fixtures/media_native_panel/media-video-clock.expected.json")
+);
+panel_case!(
+    media_video_stretch,
+    "media-video-stretch",
+    include_str!("../../../tests/fixtures/media_native_panel/media-video-stretch.fx.json"),
+    include_str!("../../../tests/fixtures/media_native_panel/media-video-stretch.expected.json")
+);
+panel_case!(
+    media_frame_blending,
+    "media-frame-blending",
+    include_str!("../../../tests/fixtures/media_native_panel/media-frame-blending.fx.json"),
+    include_str!("../../../tests/fixtures/media_native_panel/media-frame-blending.expected.json")
+);
+panel_case!(
+    media_shared_source,
+    "media-shared-source",
+    include_str!("../../../tests/fixtures/media_native_panel/media-shared-source.fx.json"),
+    include_str!("../../../tests/fixtures/media_native_panel/media-shared-source.expected.json")
+);
+panel_case!(
+    media_source_switch,
+    "media-source-switch",
+    include_str!("../../../tests/fixtures/media_native_panel/media-source-switch.fx.json"),
+    include_str!("../../../tests/fixtures/media_native_panel/media-source-switch.expected.json")
+);
+panel_case!(
+    media_unsupported_sibling,
+    "media-unsupported-sibling",
+    include_str!("../../../tests/fixtures/media_native_panel/media-unsupported-sibling.fx.json"),
+    include_str!(
+        "../../../tests/fixtures/media_native_panel/media-unsupported-sibling.expected.json"
+    )
+);
+panel_case!(
+    media_static_remap,
+    "media-static-remap",
+    include_str!("../../../tests/fixtures/media_native_panel/media-static-remap.fx.json"),
+    include_str!("../../../tests/fixtures/media_native_panel/media-static-remap.expected.json")
+);
+panel_case!(
+    media_image_3d,
+    "media-image-3d",
+    include_str!("../../../tests/fixtures/media_native_panel/media-image-3d.fx.json"),
+    include_str!("../../../tests/fixtures/media_native_panel/media-image-3d.expected.json")
+);
+panel_case!(
+    media_constant_source,
+    "media-constant-source",
+    include_str!("../../../tests/fixtures/media_native_panel/media-constant-source.fx.json"),
+    include_str!("../../../tests/fixtures/media_native_panel/media-constant-source.expected.json")
+);
+panel_case!(
+    media_legacy_image,
+    "media-legacy-image",
+    include_str!("../../../tests/fixtures/media_native_panel/media-legacy-image.fx.json"),
+    include_str!("../../../tests/fixtures/media_native_panel/media-legacy-image.expected.json")
+);

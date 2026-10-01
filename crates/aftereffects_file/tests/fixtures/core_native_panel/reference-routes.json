@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "status": "UNRUN_UNMEASURED_REFERENCE_PUBLICATION_PENDING",
+  "source_convention": "crates/aftereffects_file/tests/fixtures/core_native_panel/native/<case_id>.aep",
+  "identity_policy": "Native authoring and publication receipts supply real pins. Published uninspected references are recorded without promoting inspection, execution or comparison status.",
+  "cases": [
+    {
+      "case_id": "fx-export-core-solid",
+      "composition_name": "core-solid",
+      "source_sha256": "a49ddba3ad392cf371af300a2beef5a0909c33fa025be16f7f9492c77c705e71",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-core-rect-paint",
+      "composition_name": "core-rect-paint",
+      "source_sha256": "6530a95c3745b0a8c2020735ecf9370f85e92f1fefe293cd51446e44e69362dc",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-core-path-ellipse",
+      "composition_name": "core-path-ellipse",
+      "source_sha256": "d012a22d396c75d4b7bb104e74a752c86ae257b51db5f0a9a488698eb2900ebb",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-core-star-polygon",
+      "composition_name": "core-star-polygon",
+      "source_sha256": "e804850dda2deab3a2e0c41659ba32c22a187963d6c5b522a4fdc28bcd0eb271",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-core-static-transform",
+      "composition_name": "core-static-transform",
+      "source_sha256": "6e66b9c2b3fccc6c92644ebe38db5d6038f1486ea6f8275a1dab8c044cb760b1",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-core-transform-keys",
+      "composition_name": "core-transform-keys",
+      "source_sha256": "74c719e7305eb220a2520908f09b789cae3a454ed6d863d0df6119c42713f2dd",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-core-rect-keys",
+      "composition_name": "core-rect-keys",
+      "source_sha256": "e2c4a8f3cdb3516b5fc3acf2cae9e82109fa200c99bc583213b7ba50f3cad50c",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-core-parametric-keys",
+      "composition_name": "core-parametric-keys",
+      "source_sha256": "25805ca4b08171d2055e683a24dea21430a995922159d2dfc966be11be36d63e",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-core-boolean",
+      "composition_name": "core-boolean",
+      "source_sha256": "202f63153c75f53b824a0659a58cb34bcc9a0a562c4d103e40b63f502f5303d9",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-core-boolean-nested-keys",
+      "composition_name": "core-boolean-nested-keys",
+      "source_sha256": "d766e699ae22884454267a9f8f10b70877e7b12875b95e104c423818c4406ce4",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-core-mixed-order",
+      "composition_name": "core-mixed-order",
+      "source_sha256": "29bc0ee6e5df21605fdd1b39c47764de60e82a0639d610171dc2a60fbd3b82ee",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-core-group-ranges",
+      "composition_name": "core-group-ranges",
+      "source_sha256": "9c3482981084f97872c5f97c72fdf41126a581c3d67556c892e849b894e95e62",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-core-limits",
+      "composition_name": "core-limits",
+      "source_sha256": "f9c2dfb18f4b253745254ab8c6bb58c4de8991c4ef19cac3bbd1c9d31db002e5",
+      "composition_id": 1
+    }
+  ]
+}

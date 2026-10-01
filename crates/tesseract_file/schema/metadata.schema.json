@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tesseract:file:metadata:v2",
+  "title": "Tesseract file metadata v2",
+  "description": "Metadata for a portable .tsrct ZIP file. Semantic archive-entry validation is also enforced by the tesseract_file reader.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "format",
+    "formatVersion",
+    "documentId",
+    "createdAt",
+    "modifiedAt",
+    "generator",
+    "project",
+    "assets"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "urn:tesseract:file:metadata:v2"
+    },
+    "format": { "const": "tesseract" },
+    "formatVersion": { "const": 2 },
+    "fxSchemaVersion": {
+      "description": "FX schema revision used by the last writer. Optional for archives written before this field existed; not a reader compatibility gate.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "documentId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "modifiedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "generator": { "$ref": "#/$defs/generator" },
+    "project": { "$ref": "#/$defs/project" },
+    "assets": {
+      "type": "object",
+      "propertyNames": {
+        "minLength": 1
+      },
+      "additionalProperties": { "$ref": "#/$defs/asset" }
+    },
+    "fonts": {
+      "description": "Authoring metadata keyed by the same opaque package key as assets. Asset descriptors remain transport-only.",
+      "type": "object",
+      "propertyNames": {
+        "minLength": 1
+      },
+      "additionalProperties": { "$ref": "#/$defs/fontProperties" }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "archivePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*\\\\)(?!.*//)[^\\u0000-\\u001f\\u007f]+$"
+    },
+    "generator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "engineVersion"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "engineVersion": { "type": "string", "minLength": 1 },
+        "gitRevision": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{7,64}$"
+        }
+      }
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "contentType", "byteLength", "sha256"],
+      "properties": {
+        "path": { "const": "project.json" },
+        "contentType": {
+          "const": "application/vnd.tesseract.fx-composition+json"
+        },
+        "byteLength": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "kind", "contentType", "byteLength", "sha256"],
+      "properties": {
+        "path": {
+          "allOf": [
+            { "$ref": "#/$defs/archivePath" },
+            { "pattern": "^assets/" }
+          ]
+        },
+        "kind": {
+          "enum": ["video", "image", "audio", "pag", "font", "text", "other"]
+        },
+        "contentType": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^\\s/]+/[^\\s/]+$"
+        },
+        "byteLength": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "fontProperties": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["faces"],
+      "properties": {
+        "fileName": { "type": "string", "minLength": 1 },
+        "mimeType": { "type": "string", "minLength": 1 },
+        "faces": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": { "$ref": "#/$defs/fontFace" }
+        }
+      }
+    },
+    "fontFace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["postscriptName", "fullName", "familyName", "styleName", "weight", "width"],
+      "properties": {
+        "faceIndex": { "type": "integer", "minimum": 0 },
+        "postscriptName": { "type": "string", "minLength": 1 },
+        "fullName": { "type": "string", "minLength": 1 },
+        "familyName": { "type": "string", "minLength": 1 },
+        "styleName": { "type": "string", "minLength": 1 },
+        "typographicFamilyName": { "type": "string" },
+        "typographicStyleName": { "type": "string" },
+        "weight": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "width": { "type": "integer", "minimum": 1, "maximum": 9 },
+        "italic": { "type": "boolean" },
+        "isSerif": { "type": "boolean" },
+        "coveredScripts": { "type": "array", "items": { "type": "string" } },
+        "variationAxes": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/fontAxis" }
+        },
+        "variationInstances": {
+          "type": "array",
+          "maxItems": 256,
+          "items": { "$ref": "#/$defs/fontInstance" }
+        },
+        "selectionNames": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 257,
+          "items": { "type": "string", "minLength": 1, "maxLength": 1024 }
+        }
+      }
+    },
+    "fontAxis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tag", "min", "default", "max", "hidden"],
+      "properties": {
+        "tag": { "type": "string", "pattern": "^[ -~]{4}$" },
+        "name": { "type": "string" },
+        "min": { "type": "number" },
+        "default": { "type": "number" },
+        "max": { "type": "number" },
+        "hidden": { "type": "boolean" }
+      }
+    },
+    "fontCoordinate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tag", "value"],
+      "properties": {
+        "tag": { "type": "string", "pattern": "^[ -~]{4}$" },
+        "value": { "type": "number" }
+      }
+    },
+    "fontInstance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "coordinates", "selectionName"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "postscriptName": { "type": "string" },
+        "coordinates": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/fontCoordinate" }
+        },
+        "selectionName": { "type": "string", "minLength": 1, "maxLength": 1024 }
+      }
+    }
+  }
+}

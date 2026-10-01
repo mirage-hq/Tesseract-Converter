@@ -1,0 +1,119 @@
+{
+  "historical_lineage": "procedurally observed, not cryptographically captured at import/Adobe-readback/render execution; post-run hashes prevent subsequent artifact substitution but do not retroactively authenticate causal provenance",
+  "controls": {
+    "authoring.json": {
+      "sha256": "fcc3cac1a728bf8201e745cc0ec20e3b4b21270bd58ec8602a8b339e22453730",
+      "bytes": 6991
+    },
+    "export-readback.json": {
+      "sha256": "27a323878083e3e0ba4195a8823823fdd27de55e91787f05b05e27b2c6f0f3ed",
+      "bytes": 4232
+    },
+    "shape-oracle-reopen.json": {
+      "sha256": "91a2b692bb7901223e97e0379aa46d9385de864694aa93db0708ef389d5d4244",
+      "bytes": 1945
+    },
+    "mask-oracle-reopen.json": {
+      "sha256": "470e7ac959da8f2f6cafe0f1fc045c9ec11340f2b6b74060cb6e75c244952b54",
+      "bytes": 1855
+    },
+    "import-shape/project.tsrct": {
+      "sha256": "3ddce63b0d7e4610cfd4fe5368c7bfbeca677b86a5d677c8230f08f54a0e7246",
+      "bytes": 17437
+    },
+    "edited-shape.tsrct": {
+      "sha256": "8f858dc8daf00bac96ddf1f2365d002eb8cb00a1b37dcd19cdfa8adabea29ba7",
+      "bytes": 6698
+    },
+    "export-shape-fixed/project.aep": {
+      "sha256": "c5aa8f826329831dfb06dcf6b1f29ac2a27b6578abd74ae1bd480cce87e05f6b",
+      "bytes": 225074
+    },
+    "export-shape-unique-root.aep": {
+      "sha256": "4b47fb59abb4ee46590092cb3cb925539528d10f834d9288dd792c088da32ff1",
+      "bytes": 267217
+    },
+    "import-mask/project.tsrct": {
+      "sha256": "77823a53646fa972c34e4b99ccbf6ec4055bb2da50b61365ae5402a5a93ea023",
+      "bytes": 20213
+    },
+    "edited-mask.tsrct": {
+      "sha256": "c34ed47c63200479bad13bfb167e50e7eecefc8ef960a60ad42f03c5378c54f0",
+      "bytes": 7913
+    },
+    "export-mask-fixed/project.aep": {
+      "sha256": "bb2b8710b7ea32c1de7804abb7ebf1bbe4a759bcb0cc93986bcf6ceb1b611f26",
+      "bytes": 224604
+    },
+    "export-mask-unique-root.aep": {
+      "sha256": "c386072bb701392bd7cdf6c6f412d11674fbdfd247afe7fef10e0d112d4b2536",
+      "bytes": 267825
+    }
+  },
+  "videos": {
+    "native/shape-export.mov": {
+      "sha256": "a3941a9e73e396dc4eeff4ae2b50074f6f19f0a943133c109e716644ed89d6dc",
+      "bytes": 3712508
+    },
+    "shape-import.mov": {
+      "sha256": "13add44e3d963869e473e87b8d6b9b15c8cf115ea19f805d249d4c2b9a5821ae",
+      "bytes": 7233532
+    },
+    "shape-edited.mov": {
+      "sha256": "260d488f7ddc5491d1d2b37855bf9265ffae9ea80fa20342b107912f72733f65",
+      "bytes": 7284751
+    },
+    "native/mask-export.mov": {
+      "sha256": "beba3c19f0cef84ed65c45a6b930eae502bd39d6a34382fea5c27dea2f250c23",
+      "bytes": 3150445
+    },
+    "mask-import.mov": {
+      "sha256": "469e4151c4aa674e9bec727a0e83589ea4e33474bb336e61fd7b2d90eb4c822b",
+      "bytes": 5188336
+    },
+    "mask-edited.mov": {
+      "sha256": "bdb4316c02b5578a995e131db8cc51605e97827cf73f5f0968d2a85ad49f797d",
+      "bytes": 5128551
+    }
+  },
+  "observed_imports": [
+    {
+      "input_source": "shape-v2.aep",
+      "source_sha256": "ba7414f2d44c111f0d7b93678bbe653ae226df1b0089899fa7ffc22ec42bbf1e",
+      "composition_id": 1,
+      "output": "import-shape/project.tsrct"
+    },
+    {
+      "input_source": "mask-v2.aep",
+      "source_sha256": "cd81f02114496a1938d27cb35e6bd66ba55c41d8e5e1262f1d09761835654ce8",
+      "composition_id": 1,
+      "output": "import-mask/project.tsrct"
+    }
+  ],
+  "observed_exports": [
+    {
+      "edited_input": "edited-shape.tsrct",
+      "fresh_export": "export-shape-fixed/project.aep",
+      "readback_receipt": "export-readback.json",
+      "readback_label": "shape-export",
+      "render_copy": "export-shape-unique-root.aep",
+      "rendered_aep_sha256": "4b47fb59abb4ee46590092cb3cb925539528d10f834d9288dd792c088da32ff1",
+      "root_composition_id": 1,
+      "root_composition_name": "PATH_PROOF_EXPORT_ROOT_shape",
+      "video": "native/shape-export.mov",
+      "copy_change": "root-name-only, original fresh export left untouched"
+    },
+    {
+      "edited_input": "edited-mask.tsrct",
+      "fresh_export": "export-mask-fixed/project.aep",
+      "readback_receipt": "export-readback.json",
+      "readback_label": "mask-export",
+      "render_copy": "export-mask-unique-root.aep",
+      "rendered_aep_sha256": "c386072bb701392bd7cdf6c6f412d11674fbdfd247afe7fef10e0d112d4b2536",
+      "root_composition_id": 1,
+      "root_composition_name": "PATH_PROOF_EXPORT_ROOT_mask",
+      "video": "native/mask-export.mov",
+      "copy_change": "root-name-only, original fresh export left untouched"
+    }
+  ]
+}

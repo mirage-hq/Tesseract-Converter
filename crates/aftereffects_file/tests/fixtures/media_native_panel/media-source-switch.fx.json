@@ -1,0 +1,100 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "formatVersion": 1,
+  "duration": 2,
+  "dimensions": {
+    "width": 320,
+    "height": 180
+  },
+  "backgroundColor": [
+    0,
+    0,
+    0,
+    1
+  ],
+  "composition": {
+    "id": "main",
+    "name": "media-source-switch",
+    "segmentLayerIds": [],
+    "motionBlur": {
+      "enabled": false,
+      "shutterAngle": 180,
+      "shutterPhase": 0,
+      "samplesPerFrame": 16,
+      "adaptiveSampleLimit": 128
+    },
+    "dynamics": {
+      "entries": [
+        {
+          "target": {
+            "kind": "layer",
+            "layerId": 107,
+            "propertyType": "mediaSourceAssetId"
+          },
+          "animator": {
+            "type": "keyframes",
+            "enabled": true,
+            "keyframes": [
+              {
+                "id": "media-107-mediaSourceAssetId-0",
+                "layerTime": 0,
+                "value": {
+                  "type": "string",
+                  "value": "red"
+                },
+                "easing": {
+                  "type": "hold"
+                }
+              },
+              {
+                "id": "media-107-mediaSourceAssetId-1",
+                "layerTime": 1000,
+                "value": {
+                  "type": "string",
+                  "value": "green"
+                },
+                "easing": {
+                  "type": "hold"
+                }
+              }
+            ]
+          },
+          "dependencies": [],
+          "layerRefs": {}
+        }
+      ]
+    },
+    "layers": [
+      {
+        "type": "Image",
+        "id": 107,
+        "name": "Red to Green",
+        "parent": null,
+        "activeRange": {
+          "start": 0,
+          "duration": 2000
+        },
+        "transform": {
+          "anchorPoint": [
+            0,
+            0
+          ],
+          "position": [
+            160,
+            90
+          ],
+          "scale": [
+            100,
+            100
+          ],
+          "rotation": 0,
+          "opacity": 100
+        },
+        "source": {
+          "assetId": "red",
+          "fit": "contain"
+        }
+      }
+    ]
+  }
+}

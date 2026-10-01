@@ -1,0 +1,257 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "formatVersion": 1,
+  "dimensions": {
+    "width": 320,
+    "height": 180
+  },
+  "duration": 2.0,
+  "backgroundColor": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "composition": {
+    "id": "main",
+    "name": "adjustment-matte",
+    "layers": [
+      {
+        "id": 1837,
+        "name": "upper-sentinel-37x23",
+        "type": "Rect",
+        "parent": null,
+        "activeRange": {
+          "start": 0,
+          "duration": 2000
+        },
+        "rect": {
+          "size": [
+            37,
+            23
+          ],
+          "position": [
+            0,
+            0
+          ],
+          "fillEnabled": true,
+          "fillColor": [
+            1,
+            0.05,
+            0.72,
+            1
+          ],
+          "strokeEnabled": false,
+          "strokeWidth": 0
+        },
+        "transform": {
+          "anchorPoint": [
+            18.5,
+            11.5
+          ],
+          "position": [
+            287,
+            19
+          ],
+          "scale": [
+            100,
+            100
+          ],
+          "rotation": 17,
+          "opacity": 100
+        },
+        "description": "Editable AE solid; independently specified Adjustment reference content"
+      },
+      {
+        "id": 1836,
+        "name": "independent-alpha-matte-provider-119x67",
+        "type": "Rect",
+        "parent": null,
+        "activeRange": {
+          "start": 0,
+          "duration": 2000
+        },
+        "rect": {
+          "size": [
+            119,
+            67
+          ],
+          "position": [
+            0,
+            0
+          ],
+          "fillEnabled": true,
+          "fillColor": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "strokeEnabled": false,
+          "strokeWidth": 0
+        },
+        "transform": {
+          "anchorPoint": [
+            59.5,
+            33.5
+          ],
+          "position": [
+            103,
+            83
+          ],
+          "scale": [
+            100,
+            100
+          ],
+          "rotation": 16,
+          "opacity": 100
+        },
+        "description": "Editable AE solid; independently specified Adjustment reference content"
+      },
+      {
+        "id": 1835,
+        "name": "matted-adjustment",
+        "type": "Adjustment",
+        "parent": null,
+        "trackMatte": {
+          "mode": "alphaInverted",
+          "layer": 1836
+        },
+        "activeRange": {
+          "start": 0,
+          "duration": 2000
+        },
+        "effects": [
+          {
+            "id": 18351,
+            "enabled": true,
+            "effect": {
+              "type": "gaussianBlur",
+              "blurriness": 29,
+              "repeatEdgePixels": true
+            }
+          }
+        ],
+        "transform": {
+          "anchorPoint": [
+            160,
+            90
+          ],
+          "position": [
+            160,
+            90
+          ],
+          "scale": [
+            100,
+            100
+          ],
+          "rotation": 0,
+          "opacity": 100
+        }
+      },
+      {
+        "id": 1834,
+        "name": "lower-amber-83x117",
+        "type": "Rect",
+        "parent": null,
+        "activeRange": {
+          "start": 0,
+          "duration": 2000
+        },
+        "rect": {
+          "size": [
+            83,
+            117
+          ],
+          "position": [
+            0,
+            0
+          ],
+          "fillEnabled": true,
+          "fillColor": [
+            0.96,
+            0.38,
+            0.05,
+            1
+          ],
+          "strokeEnabled": false,
+          "strokeWidth": 0
+        },
+        "transform": {
+          "anchorPoint": [
+            41.5,
+            58.5
+          ],
+          "position": [
+            238,
+            108
+          ],
+          "scale": [
+            100,
+            100
+          ],
+          "rotation": -11,
+          "opacity": 100
+        },
+        "description": "Editable AE solid; independently specified Adjustment reference content"
+      },
+      {
+        "id": 1833,
+        "name": "lower-cobalt-127x71",
+        "type": "Rect",
+        "parent": null,
+        "activeRange": {
+          "start": 0,
+          "duration": 2000
+        },
+        "rect": {
+          "size": [
+            127,
+            71
+          ],
+          "position": [
+            0,
+            0
+          ],
+          "fillEnabled": true,
+          "fillColor": [
+            0.08,
+            0.24,
+            0.88,
+            1
+          ],
+          "strokeEnabled": false,
+          "strokeWidth": 0
+        },
+        "transform": {
+          "anchorPoint": [
+            63.5,
+            35.5
+          ],
+          "position": [
+            77,
+            58
+          ],
+          "scale": [
+            100,
+            100
+          ],
+          "rotation": 7,
+          "opacity": 100
+        },
+        "description": "Editable AE solid; independently specified Adjustment reference content"
+      }
+    ],
+    "segmentLayerIds": [],
+    "dynamics": {
+      "entries": []
+    },
+    "motionBlur": {
+      "enabled": false,
+      "shutterAngle": 180,
+      "shutterPhase": 0,
+      "samplesPerFrame": 16,
+      "adaptiveSampleLimit": 128
+    }
+  }
+}

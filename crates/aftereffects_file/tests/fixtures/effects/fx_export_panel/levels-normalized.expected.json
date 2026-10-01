@@ -1,0 +1,36 @@
+{
+  "controls": [
+    {
+      "name": "ADBE Pro Levels2-0004",
+      "value": [
+        0.2
+      ]
+    },
+    {
+      "name": "ADBE Pro Levels2-0005",
+      "value": [
+        0.8
+      ]
+    },
+    {
+      "name": "ADBE Pro Levels2-0006",
+      "value": [
+        1.5
+      ]
+    },
+    {
+      "name": "ADBE Pro Levels2-0007",
+      "value": [
+        0.1
+      ]
+    },
+    {
+      "name": "ADBE Pro Levels2-0008",
+      "value": [
+        0.9
+      ]
+    }
+  ],
+  "effect": "ADBE Pro Levels2",
+  "enabled": true
+}

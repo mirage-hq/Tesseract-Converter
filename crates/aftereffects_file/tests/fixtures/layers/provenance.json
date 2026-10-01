@@ -1,0 +1,144 @@
+{
+  "repository": "https://github.com/forticheprod/py-aep",
+  "commit": "e12a451c35bacd3f34a080090265f9370e66162b",
+  "cases": [
+    {
+      "file": "type.aep",
+      "source": "samples/models/layer/type.aep",
+      "sha256": "074e5fb4356c74bb4b2db2da1443c8fe08336975329f7060658a0ff6c6c26027",
+      "bytes": 234005,
+      "sidecar": {
+        "source": "samples/models/layer/type.json",
+        "sha256": "2e415440fc1d51cbcdf05ce91268c0f7737a03b614acda1fb908a14d962d319f",
+        "bytes": 782524
+      }
+    },
+    {
+      "file": "lightType.aep",
+      "source": "samples/models/layer/lightType.aep",
+      "sha256": "bd5194fe281eb73bb7c431e062b9dcc2c31a16beb85aced996ced6702682ece5",
+      "bytes": 215603,
+      "sidecar": {
+        "source": "samples/models/layer/lightType.json",
+        "sha256": "708f007efbb93b920bc566daee11e805da74f6790f1204847911eb150a3a9053",
+        "bytes": 175670
+      }
+    },
+    {
+      "file": "parametric_meshes.aep",
+      "source": "samples/models/layer/parametric_meshes.aep",
+      "sha256": "a95df15284e2d966df59c2a9a5c69b6be677b79eae87fed36fcfd834de0c953a",
+      "bytes": 189953,
+      "sidecar": {
+        "source": "samples/models/layer/parametric_meshes.json",
+        "sha256": "e4630be53b4901cf292a40434936f69c6ea1c0e6728bb983bcfa7832624fff95",
+        "bytes": 2237363
+      }
+    },
+    {
+      "file": "three_d_model_layer.aep",
+      "source": "samples/models/layer/three_d_model_layer.aep",
+      "sha256": "7da05e672309b85f127fe8b802a8f1dfdb3abb1a76f131d71c96c013a6368e76",
+      "bytes": 78447,
+      "sidecar": {
+        "source": "samples/models/layer/three_d_model_layer.json",
+        "sha256": "56778c350f7e81fdcc976a62d5c8d220e85c2ca8fa644ddd5c105bcbd829914c",
+        "bytes": 256341
+      }
+    },
+    {
+      "file": "avlayer_flags.aep",
+      "source": "samples/models/layer/avlayer_flags.aep",
+      "sha256": "5710aa1799366be346efa66b42533e64a476d8015c3f46ff40630be2960a775d",
+      "bytes": 610949,
+      "sidecar": {
+        "source": "samples/models/layer/avlayer_flags.json",
+        "sha256": "0f4c648beacea4b25831c5b88ea6d45522061a1844453b2c302f01d333543322",
+        "bytes": 2208176
+      }
+    },
+    {
+      "file": "layer_misc.aep",
+      "source": "samples/models/layer/layer_misc.aep",
+      "sha256": "01892178603c5f4677574ec07cc320391f4ed02232bb9b4f0829e36ac2278d80",
+      "bytes": 251569,
+      "sidecar": {
+        "source": "samples/models/layer/layer_misc.json",
+        "sha256": "b0ad48f49cf97bd410b3acbe67c1e86c5bf5179e53915ccf4bdc23fdda229d35",
+        "bytes": 1224703
+      }
+    },
+    {
+      "file": "layer_timing.aep",
+      "source": "samples/models/layer/layer_timing.aep",
+      "sha256": "8f7595ddca0a1aee842f7e35c79e00d605c2142ef13df041506dd29f4b32b784",
+      "bytes": 238721,
+      "sidecar": {
+        "source": "samples/models/layer/layer_timing.json",
+        "sha256": "8d49b54736c6ccbbd20a89059d2977ae631f6db94c9f55e7d3271031968b928c",
+        "bytes": 981306
+      }
+    },
+    {
+      "file": "inPoint.aep",
+      "source": "samples/models/layer/inPoint.aep",
+      "sha256": "f18ec91d8a557f0129303c3465058303d3354239d751b0bfb8a2989a11eb4a74",
+      "bytes": 181315,
+      "sidecar": {
+        "source": "samples/models/layer/inPoint.json",
+        "sha256": "ec7aca52f8111be30a7aac0e9a15429be72dade50c8210c19fb3b1bc2f6d6206",
+        "bytes": 736341
+      }
+    },
+    {
+      "file": "outPoint.aep",
+      "source": "samples/models/layer/outPoint.aep",
+      "sha256": "fd3f3a8dffb495f8852e1cc1e368c81774c1d270803ef569ca0f7b5bacddb021",
+      "bytes": 181335,
+      "sidecar": {
+        "source": "samples/models/layer/outPoint.json",
+        "sha256": "5896014f6acc5acccab45a6406a69264928a9ebcf291db6a08c66210bd55bb55",
+        "bytes": 736362
+      }
+    },
+    {
+      "file": "outPoint_clamp.aep",
+      "source": "samples/models/layer/outPoint_clamp.aep",
+      "sha256": "7af92d08fc286979d1cb9a62f0b66e68761198410aa8bab78fcf0fbb031598fb",
+      "bytes": 279057,
+      "sidecar": {
+        "source": "samples/models/layer/outPoint_clamp.json",
+        "sha256": "a5445813cca243436d4043964fa77a669ddb6a7f535611a2134eb23950b6ee8f",
+        "bytes": 977699
+      }
+    },
+    {
+      "file": "track_matte_yes.aep",
+      "source": "samples/models/layer/track_matte_yes.aep",
+      "sha256": "78ac122b6384fbac85610034d6e1eacfe2e9d27681d5648aef15a0445b1b05a8",
+      "bytes": 124913,
+      "sidecar": {
+        "source": "samples/models/layer/track_matte_yes.json",
+        "sha256": "937e714f8ae069c0b97aea1e49341b5ee1e3752002a4ae3a8a52c9bdd817ad3a",
+        "bytes": 489651
+      }
+    },
+    {
+      "file": "folder.aep",
+      "source": "samples/models/folder/folder.aep",
+      "sha256": "2ddfb52c9ff4a082697b5ce9dada57698be85e4796bc7d37f2a244d3a6d94e09",
+      "bytes": 101719,
+      "sidecar": {
+        "source": "samples/models/folder/folder.json",
+        "sha256": "7b1f8dbdf12dc156973cc613f16edb584032ea64feca55400c54c69e32d7bc94",
+        "bytes": 9100
+      }
+    },
+    {
+      "file": "complex_comp.aep",
+      "source": "samples/models/import/complex_comp.aep",
+      "sha256": "6acf452e2b2cd8891ea760cfe0ffb90a2842e1da0cf8e7bcc1d59f029f1e4bf5",
+      "bytes": 457467
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "status": "AUTHORING_REQUEST_UNRUN_UNMEASURED",
+  "caseId": "fx-export-media-legacy-image",
+  "assets": [
+    "red"
+  ],
+  "layers": [
+    "Legacy Red Stretch"
+  ],
+  "position": [
+    160,
+    90,
+    0
+  ],
+  "opacity": [
+    0.55
+  ]
+}

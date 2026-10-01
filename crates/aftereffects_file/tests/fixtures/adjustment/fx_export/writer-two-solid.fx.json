@@ -1,0 +1,148 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "formatVersion": 1,
+  "dimensions": {
+    "width": 1920,
+    "height": 1080
+  },
+  "duration": 2.0,
+  "backgroundColor": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "composition": {
+    "id": "main",
+    "name": "AEP_PROOF_ADD_BLEND_EXPORT",
+    "layers": [
+      {
+        "id": 1,
+        "name": "Foreground",
+        "type": "Rect",
+        "parent": null,
+        "blendMode": "add",
+        "activeRange": {
+          "start": 0,
+          "duration": 2000
+        },
+        "effects": [],
+        "rect": {
+          "size": [
+            480.0,
+            270.0
+          ],
+          "position": [
+            0.0,
+            0.0
+          ],
+          "roundness": 0.0,
+          "fillEnabled": true,
+          "fillColor": [
+            0.5,
+            0.125,
+            0.125,
+            1.0
+          ],
+          "strokeEnabled": false,
+          "strokeWidth": 0.0
+        },
+        "transform": {
+          "anchorPoint": [
+            240.0,
+            135.0
+          ],
+          "position": [
+            960.0,
+            540.0
+          ],
+          "scale": [
+            100.0,
+            100.0
+          ],
+          "rotation": 0.0,
+          "rotationX": 0.0,
+          "rotationY": 0.0,
+          "orientation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "skew": 0.0,
+          "skewAxis": 0.0,
+          "opacity": 100.0
+        },
+        "description": "Editable AE solid; independent export_add_blend control"
+      },
+      {
+        "id": 2,
+        "name": "Background",
+        "type": "Rect",
+        "parent": null,
+        "blendMode": "normal",
+        "activeRange": {
+          "start": 0,
+          "duration": 2000
+        },
+        "effects": [],
+        "rect": {
+          "size": [
+            1920.0,
+            1080.0
+          ],
+          "position": [
+            0.0,
+            0.0
+          ],
+          "roundness": 0.0,
+          "fillEnabled": true,
+          "fillColor": [
+            0.25,
+            0.25,
+            0.25,
+            1.0
+          ],
+          "strokeEnabled": false,
+          "strokeWidth": 0.0
+        },
+        "transform": {
+          "anchorPoint": [
+            960.0,
+            540.0
+          ],
+          "position": [
+            960.0,
+            540.0
+          ],
+          "scale": [
+            100.0,
+            100.0
+          ],
+          "rotation": 0.0,
+          "rotationX": 0.0,
+          "rotationY": 0.0,
+          "orientation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "skew": 0.0,
+          "skewAxis": 0.0,
+          "opacity": 100.0
+        },
+        "description": "Editable AE solid; independent export_add_blend control"
+      }
+    ],
+    "segmentLayerIds": [],
+    "dynamics": {
+      "entries": []
+    },
+    "motionBlur": {
+      "enabled": false,
+      "shutterAngle": 180.0,
+      "shutterPhase": 0.0,
+      "samplesPerFrame": 16,
+      "adaptiveSampleLimit": 128
+    }
+  }
+}

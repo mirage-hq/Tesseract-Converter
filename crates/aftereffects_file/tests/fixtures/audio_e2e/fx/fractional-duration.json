@@ -1,0 +1,132 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "backgroundColor": [
+    0.0,
+    0.0,
+    0.0,
+    1.0
+  ],
+  "composition": {
+    "dynamics": {
+      "entries": []
+    },
+    "id": "main",
+    "layers": [
+      {
+        "activeRange": {
+          "duration": 2001,
+          "start": 0
+        },
+        "blendMode": "normal",
+        "description": "Explicit audio E2E group",
+        "id": 701,
+        "isHidden": false,
+        "layers": [
+          {
+            "activeRange": {
+              "duration": 1001,
+              "start": 1000
+            },
+            "id": 700,
+            "name": "audio-700",
+            "parent": 701,
+            "source": {
+              "assetId": "sound"
+            },
+            "sourceIntrinsicDuration": 4000,
+            "sourceRange": {
+              "duration": 1000,
+              "start": 500
+            },
+            "type": "Audio",
+            "volume": 0.5
+          },
+          {
+            "activeRange": {
+              "duration": 2001,
+              "start": 0
+            },
+            "blendMode": "normal",
+            "description": "Explicit audio E2E group",
+            "id": 702,
+            "isHidden": false,
+            "layers": [],
+            "name": "audio-group-702",
+            "parent": 701,
+            "playback": null,
+            "transform": {
+              "anchorPoint": [
+                0.0,
+                0.0
+              ],
+              "opacity": 100.0,
+              "orientation": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "position": [
+                0.0,
+                0.0
+              ],
+              "rotation": 0.0,
+              "rotationX": 0.0,
+              "rotationY": 0.0,
+              "scale": [
+                100.0,
+                100.0
+              ],
+              "skew": 0.0,
+              "skewAxis": 0.0
+            },
+            "type": "Group"
+          }
+        ],
+        "name": "audio-group-701",
+        "parent": null,
+        "playback": null,
+        "transform": {
+          "anchorPoint": [
+            0.0,
+            0.0
+          ],
+          "opacity": 100.0,
+          "orientation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "position": [
+            0.0,
+            0.0
+          ],
+          "rotation": 0.0,
+          "rotationX": 0.0,
+          "rotationY": 0.0,
+          "scale": [
+            100.0,
+            100.0
+          ],
+          "skew": 0.0,
+          "skewAxis": 0.0
+        },
+        "type": "Group"
+      }
+    ],
+    "motionBlur": {
+      "adaptiveSampleLimit": 128.0,
+      "enabled": false,
+      "samplesPerFrame": 16.0,
+      "shutterAngle": 180.0,
+      "shutterPhase": 0.0
+    },
+    "name": "fractional-duration",
+    "segmentLayerIds": []
+  },
+  "dimensions": {
+    "height": 180,
+    "width": 320
+  },
+  "duration": 6.0,
+  "formatVersion": 1
+}

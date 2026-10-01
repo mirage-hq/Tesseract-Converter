@@ -1,0 +1,34 @@
+[package]
+name = "tesseract_file"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Read, edit, and atomically save portable .tsrct project files"
+
+[dependencies]
+crc32fast = "1"
+fx_schema = { path = "../fx_schema" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tempfile = "3"
+thiserror = { workspace = true }
+time = { version = "0.3", features = ["formatting", "parsing"] }
+uuid = { workspace = true }
+zip = { version = "7.2", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+fs2 = "0.4"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+async_zip = { version = "0.0.19", default-features = false }
+futures-lite = { version = "2", default-features = false, features = ["std"] }
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Blob"] }

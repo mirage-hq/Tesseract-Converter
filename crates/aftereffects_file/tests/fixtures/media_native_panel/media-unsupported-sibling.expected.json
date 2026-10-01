@@ -1,0 +1,15 @@
+{
+  "status": "AUTHORING_REQUEST_UNRUN_UNMEASURED",
+  "caseId": "fx-export-media-unsupported-sibling",
+  "assets": [
+    "red",
+    "unsupported-png"
+  ],
+  "published": [
+    "red"
+  ],
+  "layers": [
+    "Retained Red Sibling"
+  ],
+  "diagnostic": "image asset does not use the source-backed OpenEXR native profile"
+}

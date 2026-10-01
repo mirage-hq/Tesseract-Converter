@@ -1,0 +1,409 @@
+{
+  "scope": "PSD import-only implementation/proof checkpoint; AI and FX-to-AEP explicitly deferred by user.",
+  "source": {
+    "path": "psd_sources_v2.aep",
+    "sha256": "d5917214c2a9a5e7d5c741ee1f60ebf6d199a37a7c8311a9eb3e83dc3ac8efdb",
+    "bytes": 181599,
+    "author": "Adobe After Effects 26.5x89, build 89, owned JSX session",
+    "native_fps": 24
+  },
+  "media": {
+    "path": "two_layers_v2.psd",
+    "sha256": "f0f1828ad0f5e50d9c6bc5e8539c1a3b3a137fade695cf389f0155a341f8027f",
+    "bytes": 16370,
+    "provenance": "Specification-built PSD v1 RGB8 raw planes, not Photoshop-authored. Two independently specified colored rectangular layers with distinct IDs/bounds and alpha."
+  },
+  "authoring": {
+    "script_sha256": "4aef427e5eddcbed766bd6cc322c15bd455adb2403b418dc3276a15ff72249af",
+    "receipt_sha256": "8a995a1cdf56f0e7ee2d0574fa10c8ac33e39df72bc09f93b564610d2a193185",
+    "native_controls": "Adobe scripting readback; no manual UI value inspection",
+    "targets": [
+      {
+        "id": 2,
+        "name": "PSD merged",
+        "width": 64,
+        "height": 48,
+        "fps": 24,
+        "duration": 2,
+        "layers": [
+          {
+            "name": "two_layers_v2.psd",
+            "id": 14,
+            "source_id": 1,
+            "width": 64,
+            "height": 48,
+            "position": [
+              32,
+              24,
+              0
+            ],
+            "anchor": [
+              32,
+              24,
+              0
+            ],
+            "scale": [
+              100,
+              100,
+              100
+            ],
+            "opacity": 100
+          }
+        ]
+      },
+      {
+        "id": 16,
+        "name": "PSD selected layers",
+        "width": 64,
+        "height": 48,
+        "fps": 24,
+        "duration": 2,
+        "layers": [
+          {
+            "name": "Blue",
+            "id": 31,
+            "source_id": 30,
+            "width": 32,
+            "height": 20,
+            "position": [
+              40,
+              30,
+              0
+            ],
+            "anchor": [
+              16,
+              10,
+              0
+            ],
+            "scale": [
+              100,
+              100,
+              100
+            ],
+            "opacity": 100
+          },
+          {
+            "name": "Red",
+            "id": 29,
+            "source_id": 28,
+            "width": 20,
+            "height": 16,
+            "position": [
+              20,
+              16,
+              0
+            ],
+            "anchor": [
+              10,
+              8,
+              0
+            ],
+            "scale": [
+              100,
+              100,
+              100
+            ],
+            "opacity": 100
+          }
+        ]
+      }
+    ]
+  },
+  "render_settings": {
+    "renderer": "Adobe After Effects aerender 26.5x89",
+    "settings": "Use this frame rate: 30; Quality: Best; Resolution: Full",
+    "output_module": "H.264 - Match Render Settings - 40 Mbps",
+    "native_frame_range": [
+      0,
+      47
+    ],
+    "source_fps_unchanged": true
+  },
+  "cases": [
+    {
+      "case_id": "aep-psd-merged-v2-c2",
+      "composition_id": 2,
+      "source_sha256": "d5917214c2a9a5e7d5c741ee1f60ebf6d199a37a7c8311a9eb3e83dc3ac8efdb",
+      "direction": "import",
+      "test_symbol": "adapter::tests::psd::adobe_psd_merged_import_packages_png_and_preserves_editable_image",
+      "editable_assertions": "PNG pixels/dimensions, ImageLayer, native anchor/position",
+      "execution": "passed (targeted CPU test)",
+      "reference": {
+        "sha256": "e53bdbb1dcd8e33522e9654810f729ba908d237a815b103255e6db74b5180e0d",
+        "bytes": 13941,
+        "local_name": "merged.mp4",
+        "metadata": {
+          "width": 64,
+          "height": 48,
+          "r_frame_rate": "30/1",
+          "duration": "2.000000",
+          "nb_read_frames": "60"
+        },
+        "asset_id": null,
+        "publication": "pending approval",
+        "full_decode": true,
+        "samples": [
+          {
+            "frame": 0,
+            "timestamp": "0/30",
+            "rgb24_sha256": "d2a694f11b119482645ab097a41a87c74369d7d839bae9b8dc575c3496ac5582",
+            "critical_rgb": {
+              "[0, 0]": [
+                0,
+                0,
+                0
+              ],
+              "[12, 12]": [
+                253,
+                31,
+                15
+              ],
+              "[40, 30]": [
+                8,
+                31,
+                127
+              ],
+              "[26, 22]": [
+                138,
+                45,
+                133
+              ]
+            }
+          },
+          {
+            "frame": 15,
+            "timestamp": "15/30",
+            "rgb24_sha256": "d2a694f11b119482645ab097a41a87c74369d7d839bae9b8dc575c3496ac5582",
+            "critical_rgb": {
+              "[0, 0]": [
+                0,
+                0,
+                0
+              ],
+              "[12, 12]": [
+                253,
+                31,
+                15
+              ],
+              "[40, 30]": [
+                8,
+                31,
+                127
+              ],
+              "[26, 22]": [
+                138,
+                45,
+                133
+              ]
+            }
+          },
+          {
+            "frame": 30,
+            "timestamp": "30/30",
+            "rgb24_sha256": "d2a694f11b119482645ab097a41a87c74369d7d839bae9b8dc575c3496ac5582",
+            "critical_rgb": {
+              "[0, 0]": [
+                0,
+                0,
+                0
+              ],
+              "[12, 12]": [
+                253,
+                31,
+                15
+              ],
+              "[40, 30]": [
+                8,
+                31,
+                127
+              ],
+              "[26, 22]": [
+                138,
+                45,
+                133
+              ]
+            }
+          },
+          {
+            "frame": 59,
+            "timestamp": "59/30",
+            "rgb24_sha256": "d2a694f11b119482645ab097a41a87c74369d7d839bae9b8dc575c3496ac5582",
+            "critical_rgb": {
+              "[0, 0]": [
+                0,
+                0,
+                0
+              ],
+              "[12, 12]": [
+                253,
+                31,
+                15
+              ],
+              "[40, 30]": [
+                8,
+                31,
+                127
+              ],
+              "[26, 22]": [
+                138,
+                45,
+                133
+              ]
+            }
+          }
+        ]
+      },
+      "rgb_comparison": "unmeasured",
+      "alpha_fidelity": "unverified"
+    },
+    {
+      "case_id": "aep-psd-layers-v2-c16",
+      "composition_id": 16,
+      "source_sha256": "d5917214c2a9a5e7d5c741ee1f60ebf6d199a37a7c8311a9eb3e83dc3ac8efdb",
+      "direction": "import",
+      "test_symbol": "adapter::tests::psd::adobe_psd_selected_layers_import_distinct_cropped_pngs_and_native_placement",
+      "editable_assertions": "Distinct PSD ID/index to cropped PNG assets; blue/red RGBA; native layer order, anchors, positions, scale and opacity",
+      "execution": "passed (targeted CPU test)",
+      "reference": {
+        "sha256": "76a536a50bc3d9a09358c6587f3383fb68f00e7d5170f198893bca8a5b71d3f9",
+        "bytes": 13941,
+        "local_name": "layers.mp4",
+        "metadata": {
+          "width": 64,
+          "height": 48,
+          "r_frame_rate": "30/1",
+          "duration": "2.000000",
+          "nb_read_frames": "60"
+        },
+        "asset_id": null,
+        "publication": "pending approval",
+        "full_decode": true,
+        "samples": [
+          {
+            "frame": 0,
+            "timestamp": "0/30",
+            "rgb24_sha256": "d2a694f11b119482645ab097a41a87c74369d7d839bae9b8dc575c3496ac5582",
+            "critical_rgb": {
+              "[0, 0]": [
+                0,
+                0,
+                0
+              ],
+              "[12, 12]": [
+                253,
+                31,
+                15
+              ],
+              "[40, 30]": [
+                8,
+                31,
+                127
+              ],
+              "[26, 22]": [
+                138,
+                45,
+                133
+              ]
+            }
+          },
+          {
+            "frame": 15,
+            "timestamp": "15/30",
+            "rgb24_sha256": "d2a694f11b119482645ab097a41a87c74369d7d839bae9b8dc575c3496ac5582",
+            "critical_rgb": {
+              "[0, 0]": [
+                0,
+                0,
+                0
+              ],
+              "[12, 12]": [
+                253,
+                31,
+                15
+              ],
+              "[40, 30]": [
+                8,
+                31,
+                127
+              ],
+              "[26, 22]": [
+                138,
+                45,
+                133
+              ]
+            }
+          },
+          {
+            "frame": 30,
+            "timestamp": "30/30",
+            "rgb24_sha256": "d2a694f11b119482645ab097a41a87c74369d7d839bae9b8dc575c3496ac5582",
+            "critical_rgb": {
+              "[0, 0]": [
+                0,
+                0,
+                0
+              ],
+              "[12, 12]": [
+                253,
+                31,
+                15
+              ],
+              "[40, 30]": [
+                8,
+                31,
+                127
+              ],
+              "[26, 22]": [
+                138,
+                45,
+                133
+              ]
+            }
+          },
+          {
+            "frame": 59,
+            "timestamp": "59/30",
+            "rgb24_sha256": "d2a694f11b119482645ab097a41a87c74369d7d839bae9b8dc575c3496ac5582",
+            "critical_rgb": {
+              "[0, 0]": [
+                0,
+                0,
+                0
+              ],
+              "[12, 12]": [
+                253,
+                31,
+                15
+              ],
+              "[40, 30]": [
+                8,
+                31,
+                127
+              ],
+              "[26, 22]": [
+                138,
+                45,
+                133
+              ]
+            }
+          }
+        ]
+      },
+      "rgb_comparison": "unmeasured",
+      "alpha_fidelity": "unverified"
+    }
+  ],
+  "discarded_prototype": {
+    "source_sha256": "faa1e9c1ab1ed497c3005b8e0594f887a7b600e4527588a9b89e758699116ade",
+    "media_sha256": "84f7a24575ea584616c78bcbade5d51c693e41e92ccab36ad9ec0f9384c722e3",
+    "reason": "Stored merged pixels disagreed with Adobe layer order in the overlap. Not accepted as a fidelity oracle; original local bytes retained, v2 is a new pinned revision."
+  },
+  "limitations": [
+    "No long_term Asset publication or fresh remote hash verification yet; publication authorization remains pending.",
+    "No fresh FX render comparison; RGB similarity unmeasured.",
+    "Native video is RGB only; independent alpha fidelity unverified.",
+    "Raw RGB8 native fixture only; RLE/profile/corruption tests are supplemental, not independent Adobe proof.",
+    "Unsupported PSD masks/effects/groups/blending, high bit depths/other color modes, ZIP and PSB are not fidelity passes.",
+    "No AI or FX-to-AEP implementation/proof in this user-approved import-only increment."
+  ]
+}

@@ -1,0 +1,5291 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://captions.ai/schemas/fx-composition.schema.json",
+  "title": "FX Composition",
+  "description": "A minimal After Effects/libpag-style composition document. It has one root composition, layers are stored in AE layer-stack order, parent-child relationships are represented by parent layer ids, and the supported layer classes include Text, Video, Image, legacy Media, Pag, Rect, Shape, Audio, Group, AiEdit, BooleanOperation, and Adjustment.",
+  "type": "object",
+  "required": [
+    "version",
+    "composition"
+  ],
+  "properties": {
+    "version": {
+      "description": "FX composition schema version.",
+      "const": 67
+    },
+    "backgroundColor": {
+      "description": "Composition-level render background color.",
+      "$ref": "#/$defs/color"
+    },
+    "composition": {
+      "description": "The single root composition rendered for this document.",
+      "$ref": "#/$defs/composition"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "blendMode": {
+      "description": "Compositing blend mode — mirrors scene::BlendMode 1:1.",
+      "enum": [
+        "normal",
+        "multiply",
+        "screen",
+        "overlay",
+        "darken",
+        "lighten",
+        "colorDodge",
+        "colorBurn",
+        "hardLight",
+        "softLight",
+        "difference",
+        "exclusion",
+        "hue",
+        "saturation",
+        "color",
+        "luminosity",
+        "add"
+      ]
+    },
+    "color": {
+      "type": "array",
+      "description": "Normalized RGBA color, matching AE/PAG floating-point color channels.",
+      "prefixItems": [
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      ],
+      "items": false,
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "composition": {
+      "type": "object",
+      "description": "An AE composition/PAG composition.",
+      "required": [
+        "id",
+        "name",
+        "width",
+        "height",
+        "duration",
+        "layers"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "duration": {
+          "description": "Composition duration in seconds.",
+          "$ref": "#/$defs/positiveNumber"
+        },
+        "motionBlur": {
+          "description": "AE-style composition master motion-blur and shutter settings.",
+          "$ref": "#/$defs/motionBlurSettings"
+        },
+        "segmentLayerIds": {
+          "type": "array",
+          "description": "Unique root layer ids with project-timeline segment semantics. Deleting one may ripple later project content; ordinary overlays must not be listed.",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "uniqueItems": true,
+          "default": []
+        },
+        "layers": {
+          "type": "array",
+          "description": "AE layer stack. The first item is index 1 and renders above later items.",
+          "items": {
+            "$ref": "#/$defs/layer"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "motionBlurSettings": {
+      "type": "object",
+      "description": "Composition-level standard motion-blur controls. A visual layer also requires motionBlur=true.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "shutterAngle": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 720,
+          "default": 180
+        },
+        "shutterPhase": {
+          "type": "number",
+          "minimum": -360,
+          "maximum": 360,
+          "default": -90
+        },
+        "samplesPerFrame": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 64,
+          "default": 16
+        },
+        "adaptiveSampleLimit": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 256,
+          "default": 128
+        }
+      },
+      "additionalProperties": false
+    },
+    "justification": {
+      "enum": [
+        "left",
+        "center",
+        "right",
+        "justify"
+      ]
+    },
+    "donorCaptionPresentation": {
+      "description": "Sparse occurrence-local presentation for captions projected by one caption-capable donor layer. Canonical transcription coordinates are persisted; projected effective-caption ids are runtime-only.",
+      "type": "object",
+      "properties": {
+        "phraseOverrides": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/donorCaptionPhrasePresentationOverride"
+          },
+          "default": []
+        },
+        "wordOverrides": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/donorCaptionWordPresentationOverride"
+          },
+          "default": []
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "donorCaptionPhrasePresentationOverride": {
+      "description": "Occurrence-local presentation for one canonical transcription phrase. Template and position use the host project's caption-template and captions-position wire shapes.",
+      "type": "object",
+      "required": [
+        "transcriptionId",
+        "phraseId"
+      ],
+      "properties": {
+        "transcriptionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "phraseId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "template": {
+          "type": "object"
+        },
+        "position": {
+          "type": "object"
+        },
+        "overrideId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "donorCaptionWordPresentationOverride": {
+      "description": "Occurrence-local presentation for one canonical transcription word. Omitted booleans inherit canonical presentation; explicit false overrides canonical true.",
+      "type": "object",
+      "required": [
+        "transcriptionId",
+        "phraseId",
+        "wordId"
+      ],
+      "properties": {
+        "transcriptionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "phraseId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "wordId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "emphasized": {
+          "description": "Occurrence-local emphasis. Omission inherits the canonical word; explicit false overrides canonical true.",
+          "type": "boolean"
+        },
+        "supersized": {
+          "description": "Occurrence-local supersized state. Omission inherits the canonical word; explicit false overrides canonical true.",
+          "type": "boolean"
+        },
+        "underlined": {
+          "description": "Occurrence-local underline state. Omission inherits the canonical word; explicit false overrides canonical true.",
+          "type": "boolean"
+        },
+        "hidden": {
+          "description": "Occurrence-local visibility. Omission inherits the canonical word; explicit false overrides canonical true.",
+          "type": "boolean"
+        },
+        "emoji": {
+          "$ref": "#/$defs/donorCaptionEmojiOverride"
+        },
+        "colorOverride": {
+          "$ref": "#/$defs/donorCaptionColorOverride"
+        },
+        "animatedEmoji": {
+          "description": "Occurrence-local animated emoji asset write. A wrapped null explicitly clears the canonical value.",
+          "$ref": "#/$defs/donorCaptionJsonOverride"
+        },
+        "wordBackgroundEffect": {
+          "description": "Occurrence-local word background asset write. A wrapped null explicitly clears the canonical value.",
+          "$ref": "#/$defs/donorCaptionJsonOverride"
+        },
+        "fontOverrideName": {
+          "description": "Occurrence-local font-name write. A wrapped null explicitly clears the canonical value.",
+          "$ref": "#/$defs/donorCaptionJsonOverride"
+        },
+        "animationOverride": {
+          "description": "Occurrence-local animation-name write. A wrapped null explicitly clears the canonical value.",
+          "$ref": "#/$defs/donorCaptionJsonOverride"
+        },
+        "wordBreakMode": {
+          "description": "Occurrence-local word-break-mode write. A wrapped null explicitly clears the canonical value.",
+          "$ref": "#/$defs/donorCaptionJsonOverride"
+        },
+        "negativeMode": {
+          "description": "Occurrence-local negative-mode write. A wrapped null explicitly clears the canonical value.",
+          "$ref": "#/$defs/donorCaptionJsonOverride"
+        },
+        "useEmphasisAnimation": {
+          "description": "Occurrence-local emphasis-animation write. A wrapped null explicitly clears the canonical value.",
+          "$ref": "#/$defs/donorCaptionJsonOverride"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "donorCaptionJsonOverride": {
+      "description": "Explicit opaque host-model write. The wrapper distinguishes omission from a persisted clear whose value is null.",
+      "type": "object",
+      "required": [
+        "value"
+      ],
+      "properties": {
+        "value": true
+      },
+      "unevaluatedProperties": false
+    },
+    "donorCaptionEmojiOverride": {
+      "description": "Explicit static-emoji write. The wrapper distinguishes no override from a persisted clear whose value is null.",
+      "type": "object",
+      "required": [
+        "value"
+      ],
+      "properties": {
+        "value": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "donorCaptionColorOverride": {
+      "description": "Explicit word-color write. The wrapper distinguishes no override from a persisted clear whose value is null.",
+      "type": "object",
+      "required": [
+        "value"
+      ],
+      "properties": {
+        "value": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/donorCaptionColor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "donorCaptionColor": {
+      "description": "Normalized RGBA word color persisted by donor caption presentation.",
+      "type": "object",
+      "required": [
+        "red",
+        "green",
+        "blue",
+        "alpha"
+      ],
+      "properties": {
+        "red": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "green": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "blue": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "alpha": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "layer": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/textLayer"
+        },
+        {
+          "$ref": "#/$defs/mediaLayer"
+        },
+        {
+          "$ref": "#/$defs/videoLayer"
+        },
+        {
+          "$ref": "#/$defs/imageLayer"
+        },
+        {
+          "$ref": "#/$defs/pagLayer"
+        },
+        {
+          "$ref": "#/$defs/rectLayer"
+        },
+        {
+          "$ref": "#/$defs/shapeLayer"
+        },
+        {
+          "$ref": "#/$defs/audioLayer"
+        },
+        {
+          "$ref": "#/$defs/groupLayer"
+        },
+        {
+          "$ref": "#/$defs/booleanOperationLayer"
+        },
+        {
+          "$ref": "#/$defs/adjustmentLayer"
+        },
+        {
+          "$ref": "#/$defs/aiEditLayer"
+        }
+      ]
+    },
+    "audioLayer": {
+      "description": "Audio-only layer (no visual output); contributes an audible clip to the export mix. AE models a pure audio import as a layer with only an Audio property group and in/out timing — no Transform.",
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "type",
+        "source",
+        "playback",
+        "sourceRange",
+        "sourceIntrinsicDuration"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/layerId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "Audio"
+        },
+        "description": {
+          "description": "Optional user-visible description for the layer.",
+          "type": "string",
+          "default": ""
+        },
+        "isHidden": {
+          "description": "Static local output visibility. When true, the audio layer contributes no audible output or captions.",
+          "type": "boolean",
+          "default": false
+        },
+        "captionsEnabled": {
+          "description": "Presence-aware caption contribution override for every audio modality. For voiceover audio, omission preserves legacy auto-enable when a canonical asset transcription resolves; music and sound-effect audio default off when omitted. Explicit true or false wins for every modality.",
+          "type": "boolean"
+        },
+        "captionPresentation": {
+          "description": "Sparse occurrence-local caption presentation. Valid only for caption-capable voiceover donors; keys are canonical transcription, phrase, and word ids.",
+          "$ref": "#/$defs/donorCaptionPresentation"
+        },
+        "parent": {
+          "description": "AE/PAG parent layer id. null means no parent.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/layerId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sourceRange": {
+          "description": "Authored source-audio selection, independent of the playback visibility window.",
+          "$ref": "#/$defs/timeRangeProperty"
+        },
+        "sourceIntrinsicDuration": {
+          "description": "Intrinsic duration of the backing audio source asset, in milliseconds.",
+          "$ref": "#/$defs/positiveDurationMillis"
+        },
+        "playback": {
+          "description": "Required independent visibility window and authored source-clock mapping.",
+          "$ref": "#/$defs/layerPlayback"
+        },
+        "volume": {
+          "description": "Linear gain applied to the source (AE Audio Levels); 1.0 = unity.",
+          "type": "number",
+          "minimum": 0,
+          "default": 1
+        },
+        "windowMs": {
+          "description": "Window in milliseconds, centred on the current time, over which this layer's audioGain{Left,Right,Both} derived properties reduce the waveform to a scalar gain.",
+          "type": "integer",
+          "minimum": 1,
+          "default": 50
+        },
+        "source": {
+          "$ref": "#/$defs/audioSource"
+        },
+        "metadata": {
+          "$ref": "#/$defs/audioLayerMetadata"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "audioLayerMetadata": {
+      "description": "Audio role, source, and label metadata.",
+      "type": "object",
+      "required": [
+        "modality",
+        "source"
+      ],
+      "properties": {
+        "modality": {
+          "type": "string",
+          "enum": [
+            "music",
+            "soundEffect",
+            "voiceover"
+          ]
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "generated",
+            "uploaded",
+            "stock"
+          ]
+        },
+        "isAiEdit": {
+          "description": "Whether AI Edit added this sound as part of a shot style. Style cleanup uses this marker and the clip start, independently of asset-source classification.",
+          "type": "boolean",
+          "default": false
+        },
+        "sourceName": {
+          "type": "string"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "audioSource": {
+      "type": "object",
+      "required": [
+        "assetId"
+      ],
+      "properties": {
+        "assetId": {
+          "description": "Captions asset identifier for the source audio.",
+          "type": "string",
+          "minLength": 1
+        },
+        "enhancement": {
+          "description": "Optional enhanced-audio state and asset lineage.",
+          "$ref": "#/$defs/audioSourceEnhancement"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "audioSourceEnhancement": {
+      "type": "object",
+      "required": [
+        "enhancedAssetId"
+      ],
+      "properties": {
+        "enabled": {
+          "description": "Whether this layer currently uses the enhanced output.",
+          "type": "boolean",
+          "default": false
+        },
+        "enhancedAssetId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerBase": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "type",
+        "transform"
+      ],
+      "if": {"properties": {"type": {"enum": ["Video", "Group"]}}},
+      "then": {"required": ["playback"], "properties": {"activeRange": false}},
+      "else": {"required": ["activeRange"]},
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/layerId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "description": "Optional user-visible description for the layer.",
+          "type": "string",
+          "default": ""
+        },
+        "isHidden": {
+          "description": "Static local output visibility. When true, the layer contributes no pixels, audio, captions, geometry, masks, adjustment processing, or effect input. Hidden Group and BooleanOperation containers suppress descendants without rewriting their flags.",
+          "type": "boolean",
+          "default": false
+        },
+        "type": {
+          "enum": [
+            "Text",
+            "Media",
+            "Video",
+            "Image",
+            "Pag",
+            "Rect",
+            "Shape",
+            "Audio",
+            "Group",
+            "BooleanOperation",
+            "Adjustment",
+            "AiEdit"
+          ]
+        },
+        "parent": {
+          "description": "AE/PAG parent layer id. null means no parent; children are the layers whose parent equals this layer's id.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/layerId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "blendMode": {
+          "$ref": "#/$defs/blendMode",
+          "default": "normal"
+        },
+        "trackMatte": {
+          "description": "Optional inline mask source applied to this layer before blending it into its parent stack.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/trackMatte"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "dropShadow": {
+          "description": "Optional legacy single-instance drop shadow applied to this layer's rendered silhouette. Still fully supported and lowered before layerStyles; new authoring should instead push a dropShadow entry into layerStyles, which carries a stable fx-item id, allows more than one shadow, and animates through fxItemProperty targets (JRB-1781).",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/dropShadow"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "layerStyles": {
+          "description": "Stacked layer styles (drop shadow / outer glow / stroke / gradient overlay / ...), each carrying a stable composition-unique fx-item id (JRB-1199 / JRB-1373). Lowered after the inline dropShadow field, in authored order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/layerStyleEntry"
+          },
+          "default": []
+        },
+        "masks": {
+          "description": "Stacked vector-path masks drawn directly on this layer, each carrying a stable composition-unique fx-item id. Distinct from layerMask (a track matte referencing another layer): these carry their own path geometry (JRB-1200).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pathMask"
+          },
+          "default": []
+        },
+        "activeRange": {
+          "description": "Immediate-parent-local span during which this layer is active. Root layers use composition time.",
+          "$ref": "#/$defs/timeRangeProperty"
+        },
+        "transform": {
+          "$ref": "#/$defs/transform"
+        }
+      }
+    },
+    "dropShadow": {
+      "type": "object",
+      "description": "Drop shadow cast behind a layer's rendered alpha silhouette. Payload of the layer's legacy inline dropShadow field; the stacked layerStyleDropShadow entry carries the same fields plus a type discriminator (JRB-1781).",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "color": {
+          "$ref": "#/$defs/colorProperty",
+          "default": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "offset": {
+          "$ref": "#/$defs/vector2Property",
+          "default": [
+            0,
+            0
+          ]
+        },
+        "blurRadius": {
+          "$ref": "#/$defs/nonNegativeProperty",
+          "default": 0
+        },
+        "spreadRadius": {
+          "$ref": "#/$defs/nonNegativeProperty",
+          "default": 0
+        },
+        "blendMode": {
+          "$ref": "#/$defs/blendMode",
+          "default": "normal"
+        }
+      },
+      "additionalProperties": false
+    },
+    "fxItemId": {
+      "description": "Stable caller-minted identity for one stacked FX sub-item, unique within the composition (JRB-1373).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "layerStyleEntry": {
+      "type": "object",
+      "description": "One entry in a layer's style stack: a stable fx-item id plus the style payload.",
+      "required": [
+        "id",
+        "style"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/fxItemId"
+        },
+        "style": {
+          "$ref": "#/$defs/layerStyle"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerStyle": {
+      "description": "A stacked layer style (outer glow / stroke / gradient overlay / inner shadow / inner glow / satin / bevel & emboss / drop shadow). Drop shadow also exists as the layer's legacy inline dropShadow field, which stays valid and lowers first; the stacked form is what new authoring should use (JRB-1781).",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layerStyleOuterGlow"
+        },
+        {
+          "$ref": "#/$defs/layerStyleStroke"
+        },
+        {
+          "$ref": "#/$defs/layerStyleGradientOverlay"
+        },
+        {
+          "$ref": "#/$defs/layerStyleInnerShadow"
+        },
+        {
+          "$ref": "#/$defs/layerStyleInnerGlow"
+        },
+        {
+          "$ref": "#/$defs/layerStyleSatin"
+        },
+        {
+          "$ref": "#/$defs/layerStyleBevelEmboss"
+        },
+        {
+          "$ref": "#/$defs/layerStyleDropShadow"
+        }
+      ]
+    },
+    "layerStyleDropShadow": {
+      "type": "object",
+      "description": "Drop shadow cast behind the layer's alpha silhouette (JRB-1781) - the stacked representation of the layer's inline dropShadow field, with the same payload and the same lowering. Prefer this over the inline field for new authoring: it carries a stable fx-item id, may appear more than once, can be reordered, and animates through fxItemProperty targets.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "dropShadow"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "color": {
+          "$ref": "#/$defs/colorProperty",
+          "default": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "offset": {
+          "$ref": "#/$defs/vector2Property",
+          "default": [
+            0,
+            0
+          ]
+        },
+        "blurRadius": {
+          "$ref": "#/$defs/nonNegativeProperty",
+          "default": 0
+        },
+        "spreadRadius": {
+          "$ref": "#/$defs/nonNegativeProperty",
+          "default": 0
+        },
+        "blendMode": {
+          "$ref": "#/$defs/blendMode",
+          "default": "normal"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerStyleOuterGlow": {
+      "type": "object",
+      "description": "Outer glow around the layer's rendered alpha silhouette.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "outerGlow"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "color": {
+          "$ref": "#/$defs/colorProperty",
+          "default": [
+            1,
+            1,
+            0.75,
+            0.75
+          ]
+        },
+        "size": {
+          "$ref": "#/$defs/nonNegativeProperty",
+          "default": 0
+        },
+        "spread": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0
+        },
+        "range": {
+          "type": "number",
+          "default": 0.5
+        },
+        "blendMode": {
+          "$ref": "#/$defs/blendMode",
+          "default": "normal"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerStyleStroke": {
+      "type": "object",
+      "description": "Stroke outline around the layer's rendered alpha silhouette.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "stroke"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "color": {
+          "$ref": "#/$defs/colorProperty",
+          "default": [
+            1,
+            0,
+            0,
+            1
+          ]
+        },
+        "width": {
+          "$ref": "#/$defs/nonNegativeProperty",
+          "default": 0
+        },
+        "position": {
+          "enum": [
+            "outside",
+            "center",
+            "inside"
+          ],
+          "default": "outside"
+        },
+        "blendMode": {
+          "$ref": "#/$defs/blendMode",
+          "default": "normal"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerStyleGradientOverlay": {
+      "type": "object",
+      "description": "Gradient fill composited over the layer's content between two points in layer-local pixels.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "gradientOverlay"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "opacity": {
+          "$ref": "#/$defs/normalizedOpacity",
+          "default": 1
+        },
+        "gradientType": {
+          "$ref": "#/$defs/shapeGradientType",
+          "default": "linear"
+        },
+        "start": {
+          "$ref": "#/$defs/vector2Property",
+          "default": [
+            0,
+            0
+          ]
+        },
+        "end": {
+          "$ref": "#/$defs/vector2Property",
+          "default": [
+            0,
+            0
+          ]
+        },
+        "stops": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shapeGradientStop"
+          },
+          "default": []
+        },
+        "blendMode": {
+          "$ref": "#/$defs/blendMode",
+          "default": "normal"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerStyleInnerShadow": {
+      "type": "object",
+      "description": "Inner shadow cast onto the inside of the layer's alpha silhouette (JRB-1468); the inverted sibling of the inline dropShadow. Authorable and animatable today; renderer compositing is a tracked follow-up.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "innerShadow"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "color": {
+          "$ref": "#/$defs/colorProperty",
+          "default": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "offset": {
+          "$ref": "#/$defs/vector2Property",
+          "default": [
+            0,
+            0
+          ]
+        },
+        "size": {
+          "$ref": "#/$defs/nonNegativeProperty",
+          "default": 0
+        },
+        "choke": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0
+        },
+        "blendMode": {
+          "$ref": "#/$defs/blendMode",
+          "default": "normal"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerStyleInnerGlow": {
+      "type": "object",
+      "description": "Inner glow radiating inward from the layer's alpha edge (JRB-1468); the inverted sibling of outerGlow. Authorable and animatable today; renderer compositing is a tracked follow-up.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "innerGlow"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "color": {
+          "$ref": "#/$defs/colorProperty",
+          "default": [
+            1,
+            1,
+            0.75,
+            0.75
+          ]
+        },
+        "size": {
+          "$ref": "#/$defs/nonNegativeProperty",
+          "default": 0
+        },
+        "choke": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0
+        },
+        "range": {
+          "type": "number",
+          "default": 0.5
+        },
+        "source": {
+          "enum": [
+            "edge",
+            "center"
+          ],
+          "default": "edge"
+        },
+        "blendMode": {
+          "$ref": "#/$defs/blendMode",
+          "default": "normal"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerStyleSatin": {
+      "type": "object",
+      "description": "Satin: soft folded sheen from contour interference of the alpha, tinted and masked to the inside (JRB-1468).",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "satin"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "color": {
+          "$ref": "#/$defs/colorProperty",
+          "default": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "offset": {
+          "$ref": "#/$defs/vector2Property",
+          "default": [
+            0,
+            0
+          ]
+        },
+        "size": {
+          "$ref": "#/$defs/nonNegativeProperty",
+          "default": 0
+        },
+        "invert": {
+          "type": "boolean",
+          "default": true
+        },
+        "blendMode": {
+          "$ref": "#/$defs/blendMode",
+          "default": "normal"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerStyleBevelEmboss": {
+      "type": "object",
+      "description": "Bevel & Emboss: fake directional lighting of the alpha edge slope (highlight + shadow), masked to the inside (JRB-1468).",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "bevelEmboss"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "style": {
+          "enum": [
+            "innerBevel",
+            "outerBevel",
+            "emboss",
+            "pillowEmboss",
+            "strokeEmboss"
+          ],
+          "default": "innerBevel"
+        },
+        "technique": {
+          "enum": [
+            "smooth",
+            "chiselHard",
+            "chiselSoft"
+          ],
+          "default": "smooth"
+        },
+        "depth": {
+          "type": "number",
+          "minimum": 0,
+          "default": 1
+        },
+        "direction": {
+          "enum": [
+            "up",
+            "down"
+          ],
+          "default": "up"
+        },
+        "size": {
+          "$ref": "#/$defs/nonNegativeProperty",
+          "default": 5
+        },
+        "soften": {
+          "$ref": "#/$defs/nonNegativeProperty",
+          "default": 0
+        },
+        "angle": {
+          "type": "number",
+          "default": 120
+        },
+        "altitude": {
+          "type": "number",
+          "default": 30
+        },
+        "highlightColor": {
+          "$ref": "#/$defs/colorProperty",
+          "default": [
+            1,
+            1,
+            1,
+            0.75
+          ]
+        },
+        "shadowColor": {
+          "$ref": "#/$defs/colorProperty",
+          "default": [
+            0,
+            0,
+            0,
+            0.75
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerId": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "trackMatte": {
+      "type": "object",
+      "description": "A track matte. Refers to another layer in the same composition by id; that layer is evaluated as the matte source and is filtered out of normal child iteration so it doesn't double-render.",
+      "required": [
+        "layer"
+      ],
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/trackMatteType",
+          "default": "alpha"
+        },
+        "layer": {
+          "description": "Id of the layer used as the mask source.",
+          "$ref": "#/$defs/layerId"
+        }
+      },
+      "additionalProperties": false
+    },
+    "trackMatteType": {
+      "enum": [
+        "alpha",
+        "alphaInverted",
+        "luma",
+        "lumaInverted"
+      ]
+    },
+    "maskMode": {
+      "description": "Boolean-combination mode for a stacked path mask, mirroring the eight AE mask modes (JRB-1200).",
+      "enum": [
+        "none",
+        "add",
+        "subtract",
+        "intersect",
+        "lighten",
+        "darken",
+        "difference",
+        "accum"
+      ]
+    },
+    "pathMask": {
+      "type": "object",
+      "description": "A single stacked vector-path mask drawn directly on a layer, in the layer's local content space (JRB-1200).",
+      "required": [
+        "id",
+        "path"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/fxItemId"
+        },
+        "mode": {
+          "$ref": "#/$defs/maskMode",
+          "default": "add"
+        },
+        "inverted": {
+          "type": "boolean",
+          "default": false
+        },
+        "path": {
+          "$ref": "#/$defs/shapePath"
+        },
+        "feather": {
+          "description": "Soft-edge feather radii [x, y] in pixels ([0, 0] = hard edge).",
+          "$ref": "#/$defs/vector2Property",
+          "default": [
+            0,
+            0
+          ]
+        },
+        "expansion": {
+          "description": "Grow (+) / shrink (-) the mask boundary in pixels before feather.",
+          "$ref": "#/$defs/scalarProperty",
+          "default": 0
+        },
+        "opacity": {
+          "description": "Mask opacity in 0..=1.",
+          "$ref": "#/$defs/nonNegativeProperty",
+          "default": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "timeRemapExtrapolation": {
+      "description": "Behavior outside the authored TimeRemap input interval.",
+      "type": "string",
+      "enum": [
+        "inactive",
+        "hold",
+        "continue",
+        "loop",
+        "pingPong"
+      ]
+    },
+    "timeRemapEasing": {
+      "description": "Bounded temporal easing applied while arriving at a TimeRemap keyframe.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "hold"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "linear"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "x1",
+            "y1",
+            "x2",
+            "y2"
+          ],
+          "properties": {
+            "type": {
+              "const": "cubicBezier"
+            },
+            "x1": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "y1": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "x2": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "y2": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "timeRemapKeyframe": {
+      "type": "object",
+      "required": [
+        "id",
+        "time",
+        "value",
+        "easing"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "time": {
+          "$ref": "#/$defs/nonNegativeDurationMillis"
+        },
+        "value": {
+          "$ref": "#/$defs/nonNegativeDurationMillis"
+        },
+        "easing": {
+          "$ref": "#/$defs/timeRemapEasing"
+        }
+      },
+      "additionalProperties": false
+    },
+    "timeRemapProperty": {
+      "type": "object",
+      "description": "Strict parent-clock to Group-content or absolute media-source clock mapping.",
+      "required": [
+        "keyframes",
+        "before",
+        "after"
+      ],
+      "properties": {
+        "keyframes": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/timeRemapKeyframe"
+          }
+        },
+        "before": {
+          "$ref": "#/$defs/timeRemapExtrapolation"
+        },
+        "after": {
+          "$ref": "#/$defs/timeRemapExtrapolation"
+        }
+      },
+      "additionalProperties": false
+    },
+    "pagAnimationType": {
+      "description": "Container animation understood by the PAG renderer.",
+      "type": "string",
+      "enum": [
+        "ANIMATION_TYPE_UNSPECIFIED",
+        "ANIMATION_TYPE_INSTANT",
+        "ANIMATION_TYPE_OPACITY",
+        "ANIMATION_TYPE_POP_IN",
+        "ANIMATION_TYPE_SCALE_IN",
+        "ANIMATION_TYPE_SLIDE_LEFT",
+        "ANIMATION_TYPE_SLIDE_UP",
+        "ANIMATION_TYPE_SLIDE_IN_RIGHT",
+        "ANIMATION_TYPE_SLIDE_IN_DOWN",
+        "ANIMATION_TYPE_SLIDE_OUT_LEFT",
+        "ANIMATION_TYPE_SLIDE_OUT_UP",
+        "ANIMATION_TYPE_SLIDE_OUT_RIGHT",
+        "ANIMATION_TYPE_SLIDE_OUT_DOWN",
+        "ANIMATION_TYPE_POP_OUT",
+        "ANIMATION_TYPE_SCALE_OUT",
+        "ANIMATION_TYPE_ZOOM_IN",
+        "ANIMATION_TYPE_ZOOM_OUT",
+        "ANIMATION_TYPE_SLIDE_IN_LEFT",
+        "ANIMATION_TYPE_SLIDE_IN_UP",
+        "ANIMATION_TYPE_FLIP_IN",
+        "ANIMATION_TYPE_TRANSFORM",
+        "ANIMATION_TYPE_JUMP",
+        "ANIMATION_TYPE_RANDOM",
+        "ANIMATION_TYPE_SOFT_RISE",
+        "ANIMATION_TYPE_IMPACT_SCALE",
+        "ANIMATION_TYPE_STAGGERED_POP",
+        "ANIMATION_TYPE_RAPID_STREAM",
+        "ANIMATION_TYPE_LATERAL_SLIDE_LEFT",
+        "ANIMATION_TYPE_LATERAL_SLIDE_RIGHT"
+      ]
+    },
+    "pagLayer": {
+      "description": "Standalone PAG sequence with its own parent-local timeline span. Root PAG layers can cross semantic boundaries and model transitions.",
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "type",
+        "activeRange",
+        "items"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/layerId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "Pag"
+        },
+        "description": {
+          "type": "string",
+          "default": ""
+        },
+        "isHidden": {
+          "type": "boolean",
+          "default": false
+        },
+        "parent": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/layerId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "activeRange": {
+          "$ref": "#/$defs/timeRangeProperty"
+        },
+        "playback": {
+          "description": "Optional bounded linear 1x trim. Input keys own parent-local visibility. Values and activeRange retain original project presentation time. Omission keeps legacy timing.",
+          "$ref": "#/$defs/timeRemapProperty"
+        },
+        "isBackground": {
+          "description": "Render this PAG below the active FX source stack.",
+          "type": "boolean",
+          "default": false
+        },
+        "opacity": {
+          "description": "Normalized PAG overlay opacity.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 1
+        },
+        "position": {
+          "$ref": "#/$defs/pagPosition",
+          "default": "Unknown"
+        },
+        "keyframeTrack": {
+          "$ref": "#/$defs/pagKeyframeTrack"
+        },
+        "metadata": {
+          "$ref": "#/$defs/pagMetadata"
+        },
+        "zooms": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pagZoomPoint"
+          },
+          "default": []
+        },
+        "inAnimation": {
+          "$ref": "#/$defs/pagAnimationType"
+        },
+        "activeAnimation": {
+          "$ref": "#/$defs/pagAnimationType"
+        },
+        "outAnimation": {
+          "$ref": "#/$defs/pagAnimationType"
+        },
+        "isCutout": {
+          "type": "boolean",
+          "default": false
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fxPagSequenceItem"
+          }
+        },
+        "colorInserts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pagColorInsert"
+          },
+          "default": []
+        },
+        "imageInserts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pagImageInsert"
+          },
+          "default": []
+        },
+        "textInserts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pagTextInsert"
+          },
+          "default": []
+        },
+        "transition": {
+          "$ref": "#/$defs/pagTransition"
+        }
+      },
+      "additionalProperties": false
+    },
+    "pagTransition": {
+      "description": "Two-source transition bindings and semantic transition identity.",
+      "type": "object",
+      "required": [
+        "cutOffset"
+      ],
+      "properties": {
+        "outgoingSourceLayerId": {
+          "$ref": "#/$defs/layerId"
+        },
+        "incomingSourceLayerId": {
+          "$ref": "#/$defs/layerId"
+        },
+        "cutOffset": {
+          "$ref": "#/$defs/nonNegativeDurationMillis"
+        },
+        "transitionId": {
+          "type": "string"
+        },
+        "logicalAssetId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transitionType": {
+          "type": "string"
+        },
+        "soundLayerId": {
+          "$ref": "#/$defs/layerId"
+        }
+      },
+      "additionalProperties": false
+    },
+    "pagPosition": {
+      "enum": [
+        "OVERLAY_POSITION_KEYFRAME",
+        "OVERLAY_POSITION_TOP_HALF",
+        "OVERLAY_POSITION_BOTTOM_HALF",
+        "OVERLAY_POSITION_CAPTIONS_AWARE",
+        "OVERLAY_POSITION_FULL_SCREEN",
+        "OVERLAY_POSITION_FILL",
+        "Unknown"
+      ]
+    },
+    "pagKeyframeTrack": {
+      "type": "object",
+      "properties": {
+        "keyframes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pagKeyframe"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "pagKeyframe": {
+      "type": "object",
+      "properties": {
+        "position": {
+          "$ref": "#/$defs/pagKeyframePosition"
+        },
+        "animationCurve": {
+          "type": "string"
+        },
+        "time": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "pagKeyframePosition": {
+      "type": "object",
+      "properties": {
+        "center": {
+          "$ref": "#/$defs/pagPoint"
+        },
+        "rotation": {
+          "type": "number"
+        },
+        "scaleFactor": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "pagPoint": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "default": 0
+        },
+        "y": {
+          "type": "number",
+          "default": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "pagMetadata": {
+      "type": "object",
+      "properties": {
+        "width": {
+          "type": "integer"
+        },
+        "height": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    },
+    "pagZoomPoint": {
+      "type": "object",
+      "properties": {
+        "progress": {
+          "type": "number",
+          "default": 0
+        },
+        "zoomFactor": {
+          "type": "number",
+          "default": 0
+        },
+        "focalPoint": {
+          "$ref": "#/$defs/pagPoint"
+        }
+      },
+      "additionalProperties": false
+    },
+    "fxPagSequenceItem": {
+      "type": "object",
+      "required": [
+        "assetId"
+      ],
+      "properties": {
+        "assetId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "duration": {
+          "$ref": "#/$defs/fxPagItemDuration"
+        },
+        "configuration": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fxPagLayerConfigEntry"
+          },
+          "default": []
+        },
+        "slots": {
+          "$ref": "#/$defs/fxPagSlots"
+        },
+        "isIntro": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "fxPagItemDuration": {
+      "anyOf": [
+        {
+          "type": "object",
+          "required": [
+            "customSeconds"
+          ],
+          "properties": {
+            "customSeconds": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "durationType": {
+              "type": "string",
+              "default": "PAG_ITEM_DURATION_TYPE_DURATION"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "fxPagLayerConfigEntry": {
+      "type": "object",
+      "required": [
+        "key",
+        "pagLayerConfig"
+      ],
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "pagLayerConfig": {
+          "$ref": "#/$defs/fxPagLayerConfig"
+        }
+      },
+      "additionalProperties": false
+    },
+    "fxPagLayerConfig": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "$ref": "#/$defs/fxPagImageRef"
+        },
+        "video": {
+          "$ref": "#/$defs/fxPagVideoRef"
+        },
+        "sourceLayerIds": {
+          "description": "Ordered FX Video or Image sources. The active source supplies the current base-video replacement.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/layerId"
+          },
+          "default": []
+        },
+        "text": {
+          "$ref": "#/$defs/fxPagLayerConfigText"
+        },
+        "solid": {
+          "$ref": "#/$defs/fxPagLayerConfigSolid"
+        }
+      },
+      "additionalProperties": false
+    },
+    "fxPagLayerConfigSolid": {
+      "type": "object",
+      "properties": {
+        "color": {
+          "$ref": "#/$defs/color"
+        }
+      },
+      "additionalProperties": false
+    },
+    "fxPagLayerConfigText": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "default": ""
+        },
+        "fontSize": {
+          "type": "number"
+        },
+        "color": {
+          "$ref": "#/$defs/color"
+        },
+        "fontFamily": {
+          "type": "string"
+        },
+        "fontStyle": {
+          "type": "string"
+        },
+        "strokeColor": {
+          "$ref": "#/$defs/color"
+        },
+        "strokeWidth": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "fxPagImageRef": {
+      "type": "object",
+      "required": [
+        "assetId"
+      ],
+      "properties": {
+        "assetId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "fxPagVideoRef": {
+      "type": "object",
+      "required": [
+        "assetId"
+      ],
+      "properties": {
+        "assetId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scaleMode": {
+          "$ref": "#/$defs/pagImageScaleMode"
+        }
+      },
+      "additionalProperties": false
+    },
+    "pagImageScaleMode": {
+      "enum": [
+        "PAG_IMAGE_INSERT_SCALE_MODE_STRETCH",
+        "PAG_IMAGE_INSERT_SCALE_MODE_LETTERBOX",
+        "PAG_IMAGE_INSERT_SCALE_MODE_ZOOM"
+      ]
+    },
+    "pagColorInsert": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "color": {
+          "$ref": "#/$defs/color"
+        }
+      },
+      "additionalProperties": false
+    },
+    "pagImageInsert": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "image": {
+          "$ref": "#/$defs/fxPagImageRef"
+        },
+        "video": {
+          "$ref": "#/$defs/fxPagVideoRef"
+        },
+        "sourceLayerIds": {
+          "description": "Ordered FX Video or Image sources. The active source supplies the current base-video replacement.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/layerId"
+          },
+          "default": []
+        },
+        "scaleMode": {
+          "$ref": "#/$defs/pagImageScaleMode"
+        }
+      },
+      "additionalProperties": false
+    },
+    "pagTextInsert": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string",
+          "default": ""
+        },
+        "fontSize": {
+          "type": "number"
+        },
+        "fontFamily": {
+          "type": "string"
+        },
+        "fontStyle": {
+          "type": "string"
+        },
+        "strokeWidth": {
+          "type": "number"
+        },
+        "fillColor": {
+          "$ref": "#/$defs/color"
+        },
+        "strokeColor": {
+          "$ref": "#/$defs/color"
+        },
+        "backgroundColor": {
+          "$ref": "#/$defs/color"
+        }
+      },
+      "additionalProperties": false
+    },
+    "fxPagSlots": {
+      "type": "object",
+      "properties": {
+        "colorSlots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pagSlot"
+          },
+          "default": []
+        },
+        "imageSlots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pagSlot"
+          },
+          "default": []
+        },
+        "textSlots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pagSlot"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "pagSlot": {
+      "type": "object",
+      "required": [
+        "insertId"
+      ],
+      "properties": {
+        "insertId": {
+          "type": "string"
+        },
+        "layerReferences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pagLayerReference"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "pagLayerReference": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "groupLayer": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/layerBase"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "layers"
+          ],
+          "properties": {
+            "type": {
+              "const": "Group"
+            },
+            "motionBlur": {
+              "description": "Per-layer standard motion-blur switch; requires the composition master switch.",
+              "type": "boolean",
+              "default": false
+            },
+            "playback": {
+              "description": "Required independent visibility window and authored child-content clock mapping.",
+              "$ref": "#/$defs/layerPlayback"
+            },
+            "effects": {
+              "description": "AE-style Effects stack applied to the group's composited output (children rendered and composed first, then effects applied to the result). PersonMatte is not valid on a Group and is skipped with a warn-once; future non-matte variants will apply.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/effectInstance"
+              },
+              "default": []
+            },
+            "paddingTop": {
+              "description": "Space above the child-derived content bounds, in Group-local pixels.",
+              "$ref": "#/$defs/nonNegativeProperty",
+              "default": 0
+            },
+            "paddingRight": {
+              "description": "Space to the right of the child-derived content bounds, in Group-local pixels.",
+              "$ref": "#/$defs/nonNegativeProperty",
+              "default": 0
+            },
+            "paddingBottom": {
+              "description": "Space below the child-derived content bounds, in Group-local pixels.",
+              "$ref": "#/$defs/nonNegativeProperty",
+              "default": 0
+            },
+            "paddingLeft": {
+              "description": "Space to the left of the child-derived content bounds, in Group-local pixels.",
+              "$ref": "#/$defs/nonNegativeProperty",
+              "default": 0
+            },
+            "fills": {
+              "description": "Ordered paints drawn behind the padded child-derived bounds.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/shapeFillStyle"
+              },
+              "default": []
+            },
+            "cornerRadiusTopLeft": {
+              "description": "Top-left background corner radius in Group-local pixels; does not clip children.",
+              "$ref": "#/$defs/nonNegativeProperty",
+              "default": 0
+            },
+            "cornerRadiusTopRight": {
+              "description": "Top-right background corner radius in Group-local pixels; does not clip children.",
+              "$ref": "#/$defs/nonNegativeProperty",
+              "default": 0
+            },
+            "cornerRadiusBottomRight": {
+              "description": "Bottom-right background corner radius in Group-local pixels; does not clip children.",
+              "$ref": "#/$defs/nonNegativeProperty",
+              "default": 0
+            },
+            "cornerRadiusBottomLeft": {
+              "description": "Bottom-left background corner radius in Group-local pixels; does not clip children.",
+              "$ref": "#/$defs/nonNegativeProperty",
+              "default": 0
+            },
+            "layers": {
+              "type": "array",
+              "description": "Nested layer stack for this group. The first item renders above later items.",
+              "items": {
+                "$ref": "#/$defs/layer"
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "booleanOperationLayer": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/layerBase"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "layers"
+          ],
+          "properties": {
+            "type": {
+              "const": "BooleanOperation"
+            },
+            "motionBlur": {
+              "description": "Per-layer standard motion-blur switch; requires the composition master switch.",
+              "type": "boolean",
+              "default": false
+            },
+            "effects": {
+              "description": "AE-style Effects stack applied to the rasterized combined shape.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/effectInstance"
+              },
+              "default": []
+            },
+            "op": {
+              "enum": [
+                "union",
+                "subtract",
+                "intersect",
+                "exclude"
+              ],
+              "default": "union"
+            },
+            "layers": {
+              "type": "array",
+              "description": "Nested vector geometry layers combined by op.",
+              "items": {
+                "$ref": "#/$defs/layer"
+              }
+            },
+            "fills": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/shapeFillStyle"
+              },
+              "default": []
+            },
+            "strokes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/shapeStrokeStyle"
+              },
+              "default": []
+            },
+            "trim": {
+              "$ref": "#/$defs/shapeTrimPaths"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "mediaLayer": {
+      "description": "Deprecated compatibility shape. New documents should use the Video or Image layer tag; Media remains accepted indefinitely for stored legacy documents.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/layerBase"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "source"
+          ],
+          "properties": {
+            "type": {
+              "const": "Media"
+            },
+            "motionBlur": {
+              "description": "Per-layer standard motion-blur switch; requires the composition master switch.",
+              "type": "boolean",
+              "default": false
+            },
+            "cornerRadius": {
+              "description": "Normalized rounded-corner clip for the media content: clip radius px = value × min(w, h) / 2 of the content box (1 = pill/circle on the shorter side). Omitted/0 = square corners.",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "captionsEnabled": {
+              "description": "Presence-aware caption contribution override for video media. Omission defaults to disabled; image layers are never caption-capable.",
+              "type": "boolean"
+            },
+            "captionPresentation": {
+              "description": "Sparse occurrence-local caption presentation for a video donor. Invalid on image Media layers.",
+              "$ref": "#/$defs/donorCaptionPresentation"
+            },
+            "volume": {
+              "description": "Non-negative finite linear gain for this asset-backed video's embedded audio. Omission disables embedded audio (preserving historical silence) unless an AudioVolume animator targets the layer, which opts it in with the animator driving the gain; 0 is mute and 1 is unity. Invalid on image media.",
+              "type": "number",
+              "minimum": 0
+            },
+            "effects": {
+              "description": "AE-style Effects stack applied to this layer's source frame in order. The first matte-source effect wins; non-matte effects (blur, glow, mosaic, brightnessContrast, shiftChannels) post-process the layer's rendered output in stack order.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/effectInstance"
+              },
+              "default": []
+            },
+            "placement": {
+              "description": "Half-canvas split-screen takeover placement. Drives a 0.12 second slide in and out, including the tail after the layer ends, and shifts the base video for video sources. The placement mutation writes the steady-state half-region content box, cover fit, and centered transform into ordinary layer fields. Omit this field for no takeover.",
+              "enum": [
+                "topHalf",
+                "bottomHalf"
+              ]
+            },
+            "source": {
+              "$ref": "#/$defs/mediaSource"
+            },
+            "sourceRange": {
+              "description": "Source-media span backing a video media layer's active range. Required when source.kind is video.",
+              "$ref": "#/$defs/timeRangeProperty"
+            },
+            "sourceIntrinsicDuration": {
+              "description": "Intrinsic duration of the backing video source asset, in milliseconds. Required when source.kind is video.",
+              "$ref": "#/$defs/positiveDurationMillis"
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "properties": {
+                  "kind": {
+                    "const": "image"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "sourceRange"
+                  ]
+                },
+                {
+                  "required": [
+                    "sourceIntrinsicDuration"
+                  ]
+                },
+                {
+                  "required": [
+                    "volume"
+                  ]
+                },
+                {
+                  "required": [
+                    "captionPresentation"
+                  ]
+                }
+              ]
+            }
+          },
+          "else": {
+            "required": [
+              "sourceRange",
+              "sourceIntrinsicDuration"
+            ]
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "videoLayerMetadata": {
+      "description": "Semantic editor state for AI features applied to one video layer. The layer's render data remains authoritative.",
+      "type": "object",
+      "properties": {
+        "aiZoomEnabled": {
+          "description": "Whether AI Zoom has been applied to this video layer.",
+          "type": "boolean",
+          "default": false
+        },
+        "aiTrimEnabled": {
+          "description": "Whether AI Trim has been applied to this video layer.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "videoLayer": {
+      "description": "Asset-backed video layer with required source timing.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/layerBase"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "source",
+            "sourceRange",
+            "sourceIntrinsicDuration"
+          ],
+          "properties": {
+            "type": {
+              "const": "Video"
+            },
+            "metadata": {
+              "description": "Optional semantic editor state for AI features applied to this video layer.",
+              "$ref": "#/$defs/videoLayerMetadata"
+            },
+            "motionBlur": {
+              "description": "Per-layer standard motion-blur switch; requires the composition master switch.",
+              "type": "boolean",
+              "default": false
+            },
+            "cornerRadius": {
+              "description": "Normalized rounded-corner clip for the video content: clip radius px = value × min(w, h) / 2 of the content box (1 = pill/circle on the shorter side). Omitted/0 = square corners.",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "captionsEnabled": {
+              "description": "Presence-aware caption contribution override. Omission defaults to disabled.",
+              "type": "boolean"
+            },
+            "captionPresentation": {
+              "description": "Sparse occurrence-local caption presentation for this video donor.",
+              "$ref": "#/$defs/donorCaptionPresentation"
+            },
+            "frameBlending": {
+              "description": "PTS-aware neighboring-frame synthesis for slow TimeRemap samples. false disables synthesis, true and simple select linear blending, and opticalFlow selects motion-compensated synthesis.",
+              "oneOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "simple",
+                    "opticalFlow"
+                  ]
+                }
+              ],
+              "default": false
+            },
+            "volume": {
+              "description": "Non-negative finite linear gain for this video's embedded audio. Omission disables embedded audio unless an AudioVolume animator targets the layer; 0 is mute and 1 is unity.",
+              "type": "number",
+              "minimum": 0
+            },
+            "effects": {
+              "description": "AE-style Effects stack applied to this video layer's source frame in order.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/effectInstance"
+              },
+              "default": []
+            },
+            "placement": {
+              "description": "Half-canvas split-screen takeover placement.",
+              "enum": [
+                "topHalf",
+                "bottomHalf"
+              ]
+            },
+            "source": {
+              "$ref": "#/$defs/videoSource"
+            },
+            "sourceRange": {
+              "description": "Authored source-video selection, independent of the playback visibility window.",
+              "$ref": "#/$defs/timeRangeProperty"
+            },
+            "sourceIntrinsicDuration": {
+              "description": "Intrinsic duration of the backing video source asset, in milliseconds.",
+              "$ref": "#/$defs/positiveDurationMillis"
+            },
+            "playback": {
+              "description": "Required independent visibility window and authored source-clock mapping.",
+              "$ref": "#/$defs/layerPlayback"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "imageLayer": {
+      "description": "Still-image layer without video-only source timing.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/layerBase"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "source"
+          ],
+          "properties": {
+            "type": {
+              "const": "Image"
+            },
+            "motionBlur": {
+              "description": "Per-layer standard motion-blur switch; requires the composition master switch.",
+              "type": "boolean",
+              "default": false
+            },
+            "cornerRadius": {
+              "description": "Normalized rounded-corner clip for the image content: clip radius px = value × min(w, h) / 2 of the content box (1 = pill/circle on the shorter side). Omitted/0 = square corners.",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "captionsEnabled": {
+              "description": "Preserved presence-aware caption metadata. Image layers are not caption-capable.",
+              "type": "boolean"
+            },
+            "effects": {
+              "description": "AE-style Effects stack applied to this image layer's source frame in order.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/effectInstance"
+              },
+              "default": []
+            },
+            "placement": {
+              "description": "Half-canvas split-screen takeover placement.",
+              "enum": [
+                "topHalf",
+                "bottomHalf"
+              ]
+            },
+            "source": {
+              "$ref": "#/$defs/imageSource"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "effectInstance": {
+      "type": "object",
+      "description": "One entry in a layer's effect stack: stable instance metadata plus the `effect` payload it applies. The `id` is caller-assigned at add time (the same mint-it-yourself contract as a layer id), unique within the composition, and is the durable identity an effect-param animator addresses — so an animation survives stack reorders, removals, and cross-layer moves. Set `enabled` to false to bypass rendering without removing the effect or its animators.",
+      "required": [
+        "id",
+        "effect"
+      ],
+      "properties": {
+        "id": {
+          "description": "Stable identity of this effect instance, unique within the composition.",
+          "$ref": "#/$defs/effectId"
+        },
+        "enabled": {
+          "description": "Whether the effect participates in rendering. Disabled effects retain their payload, stack position, id, and parameter animators.",
+          "type": "boolean",
+          "default": true
+        },
+        "effect": {
+          "$ref": "#/$defs/layerEffect"
+        }
+      },
+      "additionalProperties": false
+    },
+    "effectId": {
+      "description": "Stable effect-instance identifier (a number). Caller-assigned, like a layer id.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "layerEffect": {
+      "description": "One entry in a layer's AE-style Effects stack, discriminated by `type`. PersonMatte replaces the layer source with a segmentation matte; LookTransform, PrimaryGrade, and ColorCurves are reader-only ordered color operations; other variants post-process output in stack order or implement their documented clock behavior. Engine-owned shaders are ordinary named effects such as `posterize`; `customShader` remains the open-ended author-supplied WGSL escape hatch.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/layerEffectPersonMatte"
+        },
+        {
+          "$ref": "#/$defs/layerEffectGaussianBlur"
+        },
+        {
+          "$ref": "#/$defs/layerEffectGlow"
+        },
+        {
+          "$ref": "#/$defs/layerEffectDirectionalBlur"
+        },
+        {
+          "$ref": "#/$defs/layerEffectMosaic"
+        },
+        {
+          "$ref": "#/$defs/layerEffectLookTransform"
+        },
+        {
+          "$ref": "#/$defs/layerEffectPrimaryGrade"
+        },
+        {
+          "$ref": "#/$defs/layerEffectBrightnessContrast"
+        },
+        {
+          "$ref": "#/$defs/layerEffectShiftChannels"
+        },
+        {
+          "$ref": "#/$defs/layerEffectHueSaturation"
+        },
+        {
+          "$ref": "#/$defs/layerEffectRadialBlur"
+        },
+        {
+          "$ref": "#/$defs/layerEffectLevels"
+        },
+        {
+          "$ref": "#/$defs/layerEffectBulge"
+        },
+        {
+          "$ref": "#/$defs/layerEffectCornerPin"
+        },
+        {
+          "$ref": "#/$defs/layerEffectMotionTile"
+        },
+        {
+          "$ref": "#/$defs/layerEffectPosterize"
+        },
+        {
+          "$ref": "#/$defs/layerEffectVignette"
+        },
+        {
+          "$ref": "#/$defs/layerEffectFindEdges"
+        },
+        {
+          "$ref": "#/$defs/layerEffectExposure"
+        },
+        {
+          "$ref": "#/$defs/layerEffectVibrance"
+        },
+        {
+          "$ref": "#/$defs/layerEffectTemperatureTint"
+        },
+        {
+          "$ref": "#/$defs/layerEffectTwirl"
+        },
+        {
+          "$ref": "#/$defs/layerEffectRipple"
+        },
+        {
+          "$ref": "#/$defs/layerEffectSharpen"
+        },
+        {
+          "$ref": "#/$defs/layerEffectLumaKey"
+        },
+        {
+          "$ref": "#/$defs/layerEffectSimpleChoker"
+        },
+        {
+          "$ref": "#/$defs/layerEffectGrain"
+        },
+        {
+          "$ref": "#/$defs/layerEffectWaveWarp"
+        },
+        {
+          "$ref": "#/$defs/layerEffectLensDistortion"
+        },
+        {
+          "$ref": "#/$defs/layerEffectTintTritone"
+        },
+        {
+          "$ref": "#/$defs/layerEffectGradientRamp"
+        },
+        {
+          "$ref": "#/$defs/layerEffectChromaticAberration"
+        },
+        {
+          "$ref": "#/$defs/layerEffectTurbulentNoise"
+        },
+        {
+          "$ref": "#/$defs/layerEffectFisheye"
+        },
+        {
+          "$ref": "#/$defs/layerEffectPosterizeTime"
+        },
+        {
+          "$ref": "#/$defs/layerEffectCustomShader"
+        },
+        {
+          "$ref": "#/$defs/layerEffectColorCurves"
+        }
+      ]
+    },
+    "layerEffectPersonMatte": {
+      "type": "object",
+      "description": "ML person segmentation. Replaces a media layer's source frame with a grayscale matte where the person is white and the background is black. Supports video and still-image media sources and is designed to be used as the source of a sibling layer's TrackMatte (typically luma mode).",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "personMatte"
+        },
+        "emptyFallback": {
+          "description": "What the renderer substitutes when the segmenter produces an empty mask (no person detected).",
+          "enum": [
+            "white",
+            "hide"
+          ],
+          "default": "white"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectGaussianBlur": {
+      "type": "object",
+      "description": "AE \"Gaussian Blur\" of the layer's rendered output; blurriness in pixels.",
+      "required": [
+        "type",
+        "blurriness"
+      ],
+      "properties": {
+        "type": {
+          "const": "gaussianBlur"
+        },
+        "blurriness": {
+          "$ref": "#/$defs/nonNegativeProperty"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectGlow": {
+      "type": "object",
+      "description": "AE \"Glow\". glowThreshold is the AE percentage (0-100), glowRadius in pixels, glowIntensity the AE multiplier (1.0 = default).",
+      "required": [
+        "type",
+        "glowThreshold",
+        "glowRadius",
+        "glowIntensity"
+      ],
+      "properties": {
+        "type": {
+          "const": "glow"
+        },
+        "glowThreshold": {
+          "$ref": "#/$defs/percentageProperty"
+        },
+        "glowRadius": {
+          "$ref": "#/$defs/nonNegativeProperty"
+        },
+        "glowIntensity": {
+          "$ref": "#/$defs/nonNegativeProperty"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectDirectionalBlur": {
+      "type": "object",
+      "description": "AE \"Directional Blur\": direction in degrees (0 = up, clockwise positive), blurLength in composition pixels.",
+      "required": [
+        "type",
+        "direction",
+        "blurLength"
+      ],
+      "properties": {
+        "type": {
+          "const": "directionalBlur"
+        },
+        "direction": {
+          "type": "number"
+        },
+        "blurLength": {
+          "$ref": "#/$defs/nonNegativeProperty"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectMosaic": {
+      "type": "object",
+      "description": "AE \"Mosaic\" pixelation; parameters match AE exactly.",
+      "required": [
+        "type",
+        "horizontalBlocks",
+        "verticalBlocks"
+      ],
+      "properties": {
+        "type": {
+          "const": "mosaic"
+        },
+        "horizontalBlocks": {
+          "$ref": "#/$defs/positiveProperty"
+        },
+        "verticalBlocks": {
+          "$ref": "#/$defs/positiveProperty"
+        },
+        "sharpColors": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "colorEncodingId": {
+      "type": "string",
+      "description": "Versioned color-encoding identifier in lower-kebab authority:name:vN form.",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*:[a-z0-9]+(?:-[a-z0-9]+)*:v[1-9][0-9]*$"
+    },
+    "colorTransform": {
+      "type": "object",
+      "description": "Phase-0 three-dimensional LUT transform representation.",
+      "required": [
+        "type",
+        "assetId",
+        "inputEncoding",
+        "outputEncoding",
+        "interpolation"
+      ],
+      "properties": {
+        "type": {
+          "const": "lut3d"
+        },
+        "assetId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "inputEncoding": {
+          "$ref": "#/$defs/colorEncodingId"
+        },
+        "outputEncoding": {
+          "$ref": "#/$defs/colorEncodingId"
+        },
+        "interpolation": {
+          "const": "trilinear"
+        }
+      },
+      "additionalProperties": false
+    },
+    "inputTransform": {
+      "type": "object",
+      "description": "Reader-only source conversion evaluated before ordinary layer effects.",
+      "required": [
+        "semanticVersion",
+        "transform"
+      ],
+      "properties": {
+        "semanticVersion": {
+          "const": 1
+        },
+        "transform": {
+          "$ref": "#/$defs/colorTransform"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectLookTransform": {
+      "type": "object",
+      "description": "Reader-only creative LUT evaluated at its exact ordered LayerEffect position.",
+      "required": [
+        "type",
+        "semanticVersion",
+        "transform"
+      ],
+      "properties": {
+        "type": {
+          "const": "lookTransform"
+        },
+        "semanticVersion": {
+          "const": 1
+        },
+        "transform": {
+          "$ref": "#/$defs/colorTransform"
+        },
+        "mix": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectPrimaryGrade": {
+      "type": "object",
+      "description": "Reader-only v1 primary grade evaluated at its exact ordered LayerEffect position.",
+      "required": [
+        "type",
+        "semanticVersion",
+        "temperature",
+        "tint",
+        "exposure",
+        "contrast",
+        "highlights",
+        "shadows",
+        "whites",
+        "blacks",
+        "saturation",
+        "vibrance"
+      ],
+      "properties": {
+        "type": {
+          "const": "primaryGrade"
+        },
+        "semanticVersion": {
+          "const": 1
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1
+        },
+        "tint": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1
+        },
+        "exposure": {
+          "type": "number",
+          "minimum": -5,
+          "maximum": 5
+        },
+        "contrast": {
+          "type": "number",
+          "minimum": -2,
+          "maximum": 2
+        },
+        "highlights": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1
+        },
+        "shadows": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1
+        },
+        "whites": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1
+        },
+        "blacks": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1
+        },
+        "saturation": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1
+        },
+        "vibrance": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectBrightnessContrast": {
+      "type": "object",
+      "description": "AE \"Brightness & Contrast\". AE units pass through unscaled: brightness in -150..150, contrast in -100..100.",
+      "required": [
+        "type",
+        "brightness",
+        "contrast"
+      ],
+      "properties": {
+        "type": {
+          "const": "brightnessContrast"
+        },
+        "brightness": {
+          "type": "number"
+        },
+        "contrast": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectShiftChannels": {
+      "type": "object",
+      "description": "AE \"Shift Channels\" (supported subset): each output channel keeps its own input or is forced fullOn/fullOff. Omitted fields default to the channel's own input.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "shiftChannels"
+        },
+        "takeRedFrom": {
+          "$ref": "#/$defs/channelSource",
+          "default": "red"
+        },
+        "takeGreenFrom": {
+          "$ref": "#/$defs/channelSource",
+          "default": "green"
+        },
+        "takeBlueFrom": {
+          "$ref": "#/$defs/channelSource",
+          "default": "blue"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectHueSaturation": {
+      "type": "object",
+      "description": "AE \"Hue/Saturation\". hue in degrees (-180..180); saturation/lightness in AE -100..100. When colorize is set, the image is desaturated then tinted using the colorize* controls (colorizeHue 0..360, the others AE units). The colorize* controls are inert when colorize is false.",
+      "required": [
+        "type",
+        "hue",
+        "saturation",
+        "lightness"
+      ],
+      "properties": {
+        "type": {
+          "const": "hueSaturation"
+        },
+        "hue": {
+          "type": "number",
+          "description": "Hue rotation in degrees (-180..180)."
+        },
+        "saturation": {
+          "type": "number",
+          "description": "Saturation adjustment (-100 = grayscale, 100 = max)."
+        },
+        "lightness": {
+          "type": "number",
+          "description": "Lightness adjustment (-100 = black, 100 = white)."
+        },
+        "colorize": {
+          "type": "boolean",
+          "description": "Tint the image with the colorize controls below.",
+          "default": false
+        },
+        "colorizeHue": {
+          "type": "number",
+          "description": "Tint hue in degrees (0..360) when colorize is on.",
+          "default": 0
+        },
+        "colorizeSaturation": {
+          "type": "number",
+          "description": "Tint saturation (0..100) when colorize is on.",
+          "default": 0
+        },
+        "colorizeLightness": {
+          "type": "number",
+          "description": "Tint lightness (-100..100) when colorize is on.",
+          "default": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectRadialBlur": {
+      "type": "object",
+      "description": "AE \"Radial Blur\". centerX/centerY are the blur origin content-normalized [0,1] (0.5 = layer center); amount is in libpag raw units (the shader scales/clamps it, useful range ~0..50).",
+      "required": [
+        "type",
+        "centerX",
+        "centerY",
+        "amount"
+      ],
+      "properties": {
+        "type": {
+          "const": "radialBlur"
+        },
+        "centerX": {
+          "type": "number",
+          "description": "Blur origin X in UV space (0..1, 0.5 = center)."
+        },
+        "centerY": {
+          "type": "number",
+          "description": "Blur origin Y in UV space (0..1, 0.5 = center)."
+        },
+        "amount": {
+          "type": "number",
+          "description": "Radial blur strength (useful range ~0..50)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectLevels": {
+      "type": "object",
+      "description": "AE \"Levels\" master controls (mapped to per-channel curves left neutral). Input/output points are 0..255 (the shader divides by 255); gamma is the midpoint exponent (~0.1..10).",
+      "required": [
+        "type",
+        "inputBlack",
+        "inputWhite",
+        "gamma",
+        "outputBlack",
+        "outputWhite"
+      ],
+      "properties": {
+        "type": {
+          "const": "levels"
+        },
+        "inputBlack": {
+          "type": "number",
+          "description": "Input black point (0..255); inputs below map to black."
+        },
+        "inputWhite": {
+          "type": "number",
+          "description": "Input white point (0..255); inputs above map to white."
+        },
+        "gamma": {
+          "type": "number",
+          "description": "Midtone gamma exponent (~0.1..10; 1.0 = linear)."
+        },
+        "outputBlack": {
+          "type": "number",
+          "description": "Output black point (0..255); darkest output level."
+        },
+        "outputWhite": {
+          "type": "number",
+          "description": "Output white point (0..255); brightest output level."
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectBulge": {
+      "type": "object",
+      "description": "AE \"Bulge\". Center and radii are content-normalized [0,1] (0.5 = layer center); bulgeHeight is the pinch/bulge strength (negative pinches); pinning clamps displaced samples to the content edge.",
+      "required": [
+        "type",
+        "centerX",
+        "centerY",
+        "horizontalRadius",
+        "verticalRadius",
+        "bulgeHeight"
+      ],
+      "properties": {
+        "type": {
+          "const": "bulge"
+        },
+        "centerX": {
+          "type": "number",
+          "description": "Bulge center X, content-normalized (0..1, 0.5 = center)."
+        },
+        "centerY": {
+          "type": "number",
+          "description": "Bulge center Y, content-normalized (0..1, 0.5 = center)."
+        },
+        "horizontalRadius": {
+          "type": "number",
+          "description": "Bulge horizontal radius, content-normalized (0..1)."
+        },
+        "verticalRadius": {
+          "type": "number",
+          "description": "Bulge vertical radius, content-normalized (0..1)."
+        },
+        "bulgeHeight": {
+          "type": "number",
+          "description": "Bulge strength; positive bulges out, negative pinches in."
+        },
+        "pinning": {
+          "type": "boolean",
+          "description": "Clamp displaced samples to the content edge.",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectCornerPin": {
+      "type": "object",
+      "description": "AE \"Corner Pin\". The four corners are content-normalized [0,1] (default = identity quad: UL (0,0), UR (1,0), LL (0,1), LR (1,1)); the renderer projects them through the layer transform into a perspective quad.",
+      "required": [
+        "type",
+        "upperLeftX",
+        "upperLeftY",
+        "upperRightX",
+        "upperRightY",
+        "lowerLeftX",
+        "lowerLeftY",
+        "lowerRightX",
+        "lowerRightY"
+      ],
+      "properties": {
+        "type": {
+          "const": "cornerPin"
+        },
+        "upperLeftX": {
+          "type": "number",
+          "description": "Upper-left corner X, content-normalized (0..1)."
+        },
+        "upperLeftY": {
+          "type": "number",
+          "description": "Upper-left corner Y, content-normalized (0..1)."
+        },
+        "upperRightX": {
+          "type": "number",
+          "description": "Upper-right corner X, content-normalized (0..1)."
+        },
+        "upperRightY": {
+          "type": "number",
+          "description": "Upper-right corner Y, content-normalized (0..1)."
+        },
+        "lowerLeftX": {
+          "type": "number",
+          "description": "Lower-left corner X, content-normalized (0..1)."
+        },
+        "lowerLeftY": {
+          "type": "number",
+          "description": "Lower-left corner Y, content-normalized (0..1)."
+        },
+        "lowerRightX": {
+          "type": "number",
+          "description": "Lower-right corner X, content-normalized (0..1)."
+        },
+        "lowerRightY": {
+          "type": "number",
+          "description": "Lower-right corner Y, content-normalized (0..1)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectMotionTile": {
+      "type": "object",
+      "description": "AE \"Motion Tile\". tileCenter is content-normalized [0,1]; tile/output sizes are AE percentages (100 = 1x); phase in degrees. mirrorEdges flips alternate tiles.",
+      "required": [
+        "type",
+        "tileCenterX",
+        "tileCenterY",
+        "tileWidth",
+        "tileHeight",
+        "outputWidth",
+        "outputHeight",
+        "phase"
+      ],
+      "properties": {
+        "type": {
+          "const": "motionTile"
+        },
+        "tileCenterX": {
+          "type": "number",
+          "description": "Source tile center X, content-normalized (0..1)."
+        },
+        "tileCenterY": {
+          "type": "number",
+          "description": "Source tile center Y, content-normalized (0..1)."
+        },
+        "tileWidth": {
+          "type": "number",
+          "description": "Source tile width as a percentage (100 = 1×)."
+        },
+        "tileHeight": {
+          "type": "number",
+          "description": "Source tile height as a percentage (100 = 1×)."
+        },
+        "outputWidth": {
+          "type": "number",
+          "description": "Tiled output width as a percentage (100 = 1×)."
+        },
+        "outputHeight": {
+          "type": "number",
+          "description": "Tiled output height as a percentage (100 = 1×)."
+        },
+        "mirrorEdges": {
+          "type": "boolean",
+          "description": "Flip alternate tiles to mirror at seams.",
+          "default": false
+        },
+        "phase": {
+          "type": "number",
+          "description": "Tile phase offset in degrees."
+        }
+      },
+      "additionalProperties": false
+    },
+    "channelSource": {
+      "description": "Source selector for shiftChannels, mirroring AE's \"Take <channel> From\" dropdown (supported subset).",
+      "enum": [
+        "red",
+        "green",
+        "blue",
+        "fullOn",
+        "fullOff"
+      ]
+    },
+    "effectParam": {
+      "type": "object",
+      "description": "One named, animatable scalar param of an effect. For a customShader these are author-declared (one per shader uniform, in declared order); they are also the shape `param_schema` exposes for the built-in effects. `description` explains what the param controls so an AI agent editing the effect knows its purpose. An animator binds to a param by `name`.",
+      "required": [
+        "name",
+        "default"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Param name — the editor label and the key an animator binds to. For a customShader it is the WGSL uniform's logical name; unique within the shader. `animationTime` is RESERVED on a customShader: the engine drives that slot every frame with the owning layer's animation clock in seconds, it carries no editor control, and writes/animator binds to it are rejected — see the `effects/custom-shader` doc topic."
+        },
+        "description": {
+          "type": "string",
+          "description": "What this param controls, in plain language (e.g. \"Blur radius in pixels.\"). Surfaced to AI agents and the editor. Optional; omitted when empty.",
+          "default": ""
+        },
+        "min": {
+          "type": "number",
+          "description": "Slider lower bound / lerp-range floor.",
+          "default": 0.0
+        },
+        "max": {
+          "type": "number",
+          "description": "Slider upper bound / lerp-range ceiling.",
+          "default": 1.0
+        },
+        "default": {
+          "type": "number",
+          "description": "Value used at render time when no animator drives this param."
+        }
+      },
+      "additionalProperties": false
+    },
+    "effectTextureInput": {
+      "type": "object",
+      "description": "One declared TEXTURE input of a customShader: a named @binding(1..) texture the shader samples beyond the layer content (e.g. a \"map\" slot for displacement). Distinct from a scalar `params` entry — this is a texture bound to a source. `sourceLayerId` is the optional per-instance binding; `description` explains what the texture provides for an AI editing the shader.",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Slot name — the shader's @binding(1..) texture's logical name and the slot SetFxLayerEffectInputBinding targets. Unique within the shader."
+        },
+        "description": {
+          "type": "string",
+          "description": "What this input provides, in plain language (e.g. \"Grayscale displacement map; R→horizontal, G→vertical shift.\"). Surfaced to AI agents and the editor. Optional; omitted when empty.",
+          "default": ""
+        },
+        "sourceLayerId": {
+          "type": "integer",
+          "description": "Per-instance binding: the source layer wired into this slot. Omitted when unbound (the editor default; a preset like displacement ships declared-but-unbound). Only bound slots resolve into the render tree, and a bound source layer is consumed (auto-hidden from standalone paint). SetFxLayerEffectInputBinding sets/clears it."
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectCustomShader": {
+      "type": "object",
+      "description": "Author-supplied WGSL effect (the open-ended escape hatch beyond the built-in AE effects). The fragment runs against the standard single-pass effect layout. `description` + per-param `description`s record the shader's intent so it travels with the document and is shared back as context for later AI edits.",
+      "required": [
+        "type",
+        "name",
+        "wgsl"
+      ],
+      "properties": {
+        "type": {
+          "const": "customShader"
+        },
+        "name": {
+          "type": "string",
+          "description": "Stable, app-assigned label for this shader, and the upsert key: re-adding a custom shader with the same name replaces it in place (keeping its effectId) rather than stacking a duplicate. Survives WGSL/param edits. NOT the addressing handle — set params / animate by the effect's effectId. Unique among the layer's custom shaders (typed effects have no name)."
+        },
+        "description": {
+          "type": "string",
+          "description": "What this shader does, in plain language — recorded by the author (often an AI) so the intent travels with the shader and is shared back as context for later edits. Optional; omitted when empty.",
+          "default": ""
+        },
+        "wgsl": {
+          "type": "string",
+          "description": "WGSL fragment source, bound against the single-pass effect layout."
+        },
+        "params": {
+          "type": "array",
+          "description": "Scalar UNIFORM VALUES the shader reads (amount, angle, colour channels, …), packed std140 into the Params uniform buffer in declared order. Distinct from textureInputs: these are values, not textures. Each carries its own name/description/range; no shared registry.",
+          "items": {
+            "$ref": "#/$defs/effectParam"
+          },
+          "default": []
+        },
+        "textureInputs": {
+          "type": "array",
+          "description": "Extra TEXTURE inputs this shader samples beyond the layer content (its @binding(1..) textures), e.g. a \"map\" slot for displacement. Distinct from params (scalar uniforms): each is a named texture slot bound to a source layer. Empty = single-input.",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/effectTextureInput"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "mediaSource": {
+      "type": "object",
+      "description": "Source settings for an AE AVLayer/PAG image or video layer.",
+      "required": [
+        "assetId",
+        "kind"
+      ],
+      "properties": {
+        "assetId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "description": "Source asset kind.",
+          "enum": [
+            "video",
+            "image"
+          ]
+        },
+        "sourceRect": {
+          "description": "Optional complete authored layer-local frame. `x` / `y` locate layer geometry (never decoded-source pixels), while `width` / `height` size it; all fit modes resolve within and clip to it. Omission uses the source's logical natural display dimensions at the origin. A malformed rectangle is treated as omitted and therefore resolves as a Natural frame.",
+          "$ref": "#/$defs/rectBounds"
+        },
+        "fit": {
+          "description": "Responsive preset or explicit static source geometry within the frame. Custom scale components are strictly positive multipliers of logical natural display dimensions; contentCenter is an absolute layer-local coordinate.",
+          "oneOf": [
+            {
+              "enum": [
+                "stretch",
+                "contain",
+                "cover"
+              ]
+            },
+            {
+              "type": "object",
+              "required": [
+                "custom"
+              ],
+              "properties": {
+                "custom": {
+                  "type": "object",
+                  "required": [
+                    "scale",
+                    "contentCenter"
+                  ],
+                  "properties": {
+                    "scale": {
+                      "$ref": "#/$defs/positiveVector2Property"
+                    },
+                    "contentCenter": {
+                      "$ref": "#/$defs/vector2Property"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          ],
+          "default": "contain"
+        },
+        "timeRemap": {
+          "description": "Optional static AE-style source time remap, in source seconds.",
+          "$ref": "#/$defs/scalarProperty"
+        }
+      },
+      "additionalProperties": false
+    },
+    "videoSource": {
+      "type": "object",
+      "description": "Source settings for a video layer.",
+      "required": [
+        "assetId"
+      ],
+      "properties": {
+        "assetId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "eyeContact": {
+          "description": "Optional Eye Contact state and asset lineage.",
+          "$ref": "#/$defs/videoSourceEyeContact"
+        },
+        "audioEnhancement": {
+          "description": "Optional enhanced-audio (denoise) state and asset lineage for the layer's embedded audio.",
+          "$ref": "#/$defs/audioSourceEnhancement"
+        },
+        "inputTransform": {
+          "description": "Optional reader-only source conversion evaluated before ordinary layer effects.",
+          "$ref": "#/$defs/inputTransform"
+        },
+        "sourceRect": {
+          "description": "Optional complete authored layer-local frame. `x` / `y` locate layer geometry (never decoded-source pixels), while `width` / `height` size it; all fit modes resolve within and clip to it. Omission uses the source's logical natural display dimensions at the origin. A malformed rectangle is treated as omitted and therefore resolves as a Natural frame.",
+          "$ref": "#/$defs/rectBounds"
+        },
+        "fit": {
+          "description": "Responsive preset or explicit static source geometry within the frame. Custom scale components are strictly positive multipliers of logical natural display dimensions; contentCenter is an absolute layer-local coordinate.",
+          "oneOf": [
+            {
+              "enum": [
+                "stretch",
+                "contain",
+                "cover"
+              ]
+            },
+            {
+              "type": "object",
+              "required": [
+                "custom"
+              ],
+              "properties": {
+                "custom": {
+                  "type": "object",
+                  "required": [
+                    "scale",
+                    "contentCenter"
+                  ],
+                  "properties": {
+                    "scale": {
+                      "$ref": "#/$defs/positiveVector2Property"
+                    },
+                    "contentCenter": {
+                      "$ref": "#/$defs/vector2Property"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          ],
+          "default": "contain"
+        },
+        "timeRemap": {
+          "description": "Optional static AE-style source time remap, in source seconds.",
+          "$ref": "#/$defs/scalarProperty"
+        }
+      },
+      "additionalProperties": false
+    },
+    "videoSourceEyeContact": {
+      "type": "object",
+      "required": [
+        "eyeContactAssetId"
+      ],
+      "properties": {
+        "enabled": {
+          "description": "Whether this layer currently uses the Eye Contact output.",
+          "type": "boolean",
+          "default": false
+        },
+        "eyeContactAssetId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "imageSource": {
+      "description": "Source settings for a still-image layer.",
+      "$ref": "#/$defs/imageAssetSource"
+    },
+    "imageAssetSource": {
+      "type": "object",
+      "description": "Source settings for an asset-backed still-image layer.",
+      "required": [
+        "assetId"
+      ],
+      "properties": {
+        "assetId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "inputTransform": {
+          "description": "Optional reader-only source conversion evaluated before ordinary layer effects.",
+          "$ref": "#/$defs/inputTransform"
+        },
+        "sourceRect": {
+          "description": "Optional complete authored layer-local frame. `x` / `y` locate layer geometry (never decoded-source pixels), while `width` / `height` size it; all fit modes resolve within and clip to it. Omission uses the source's logical natural display dimensions at the origin. A malformed rectangle is treated as omitted and therefore resolves as a Natural frame.",
+          "$ref": "#/$defs/rectBounds"
+        },
+        "fit": {
+          "description": "Responsive preset or explicit static source geometry within the frame. Custom scale components are strictly positive multipliers of logical natural display dimensions; contentCenter is an absolute layer-local coordinate.",
+          "oneOf": [
+            {
+              "enum": [
+                "stretch",
+                "contain",
+                "cover"
+              ]
+            },
+            {
+              "type": "object",
+              "required": [
+                "custom"
+              ],
+              "properties": {
+                "custom": {
+                  "type": "object",
+                  "required": [
+                    "scale",
+                    "contentCenter"
+                  ],
+                  "properties": {
+                    "scale": {
+                      "$ref": "#/$defs/positiveVector2Property"
+                    },
+                    "contentCenter": {
+                      "$ref": "#/$defs/vector2Property"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          ],
+          "default": "contain"
+        },
+        "timeRemap": {
+          "description": "Preserved legacy source-time remap metadata; image evaluation ignores it.",
+          "$ref": "#/$defs/scalarProperty"
+        }
+      },
+      "additionalProperties": false
+    },
+    "nonNegativeNumber": {
+      "type": "number",
+      "minimum": 0
+    },
+    "nonNegativeProperty": {
+      "description": "AE/PAG-style non-negative scalar value.",
+      "$ref": "#/$defs/nonNegativeNumber"
+    },
+    "percentageNumber": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "percentageProperty": {
+      "description": "AE/PAG-style percentage scalar value in the inclusive range 0 to 100.",
+      "$ref": "#/$defs/percentageNumber"
+    },
+    "positiveNumber": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "positiveProperty": {
+      "description": "AE/PAG-style positive scalar value.",
+      "$ref": "#/$defs/positiveNumber"
+    },
+    "positiveVector2": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/positiveNumber"
+        },
+        {
+          "$ref": "#/$defs/positiveNumber"
+        }
+      ],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "positiveVector2Property": {
+      "description": "AE/PAG-style 2D vector with strictly positive components.",
+      "$ref": "#/$defs/positiveVector2"
+    },
+    "rectBounds": {
+      "type": "object",
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "width": {
+          "$ref": "#/$defs/positiveNumber"
+        },
+        "height": {
+          "$ref": "#/$defs/positiveNumber"
+        }
+      },
+      "additionalProperties": false
+    },
+    "rectLayer": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/layerBase"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "rect"
+          ],
+          "properties": {
+            "type": {
+              "const": "Rect"
+            },
+            "motionBlur": {
+              "description": "Per-layer standard motion-blur switch; requires the composition master switch.",
+              "type": "boolean",
+              "default": false
+            },
+            "effects": {
+              "description": "AE-style Effects stack applied to this layer's rasterized content, in authored stack order. PersonMatte needs a source video frame to segment and lowers to nothing on a vector layer (skipped, as on a Group).",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/effectInstance"
+              },
+              "default": []
+            },
+            "rect": {
+              "$ref": "#/$defs/rectShape"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "shapeLayer": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/layerBase"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "shape"
+          ],
+          "properties": {
+            "type": {
+              "const": "Shape"
+            },
+            "motionBlur": {
+              "description": "Per-layer standard motion-blur switch; requires the composition master switch.",
+              "type": "boolean",
+              "default": false
+            },
+            "effects": {
+              "description": "AE-style Effects stack applied to this layer's rasterized content, in authored stack order. PersonMatte needs a source video frame to segment and lowers to nothing on a vector layer (skipped, as on a Group).",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/effectInstance"
+              },
+              "default": []
+            },
+            "shape": {
+              "$ref": "#/$defs/shapeContent"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "shapeContent": {
+      "type": "object",
+      "description": "Generic vector shape content matching scene::NodeContent::Shape.",
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/shapePath"
+        },
+        "fills": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shapeFillStyle"
+          },
+          "default": []
+        },
+        "strokes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shapeStrokeStyle"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "shapePath": {
+      "type": "object",
+      "required": [
+        "commands"
+      ],
+      "properties": {
+        "commands": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shapePathCommand"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "shapePathCommand": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "x",
+            "y"
+          ],
+          "properties": {
+            "type": {
+              "const": "moveTo"
+            },
+            "x": {
+              "$ref": "#/$defs/scalarProperty"
+            },
+            "y": {
+              "$ref": "#/$defs/scalarProperty"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "x",
+            "y"
+          ],
+          "properties": {
+            "type": {
+              "const": "lineTo"
+            },
+            "x": {
+              "$ref": "#/$defs/scalarProperty"
+            },
+            "y": {
+              "$ref": "#/$defs/scalarProperty"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "c1x",
+            "c1y",
+            "c2x",
+            "c2y",
+            "x",
+            "y"
+          ],
+          "properties": {
+            "type": {
+              "const": "cubicTo"
+            },
+            "c1x": {
+              "$ref": "#/$defs/scalarProperty"
+            },
+            "c1y": {
+              "$ref": "#/$defs/scalarProperty"
+            },
+            "c2x": {
+              "$ref": "#/$defs/scalarProperty"
+            },
+            "c2y": {
+              "$ref": "#/$defs/scalarProperty"
+            },
+            "x": {
+              "$ref": "#/$defs/scalarProperty"
+            },
+            "y": {
+              "$ref": "#/$defs/scalarProperty"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "close"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "shapeFillStyle": {
+      "type": "object",
+      "required": [
+        "paint"
+      ],
+      "properties": {
+        "paint": {
+          "$ref": "#/$defs/shapePaint"
+        },
+        "fillRule": {
+          "$ref": "#/$defs/shapeFillRule",
+          "default": "nonZeroWinding"
+        },
+        "blendMode": {
+          "$ref": "#/$defs/blendMode",
+          "default": "normal"
+        },
+        "opacity": {
+          "$ref": "#/$defs/normalizedOpacity",
+          "default": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "shapeStrokeStyle": {
+      "type": "object",
+      "required": [
+        "paint",
+        "width"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether this authored stroke participates in rendering. Disabled strokes retain their complete style so editor visibility toggles are non-destructive."
+        },
+        "paint": {
+          "$ref": "#/$defs/shapePaint"
+        },
+        "width": {
+          "$ref": "#/$defs/nonNegativeProperty"
+        },
+        "cap": {
+          "$ref": "#/$defs/shapeLineCap",
+          "default": "butt"
+        },
+        "join": {
+          "$ref": "#/$defs/shapeLineJoin",
+          "default": "miter"
+        },
+        "miterLimit": {
+          "$ref": "#/$defs/nonNegativeProperty",
+          "default": 4
+        },
+        "blendMode": {
+          "$ref": "#/$defs/blendMode",
+          "default": "normal"
+        },
+        "opacity": {
+          "$ref": "#/$defs/normalizedOpacity",
+          "default": 1
+        },
+        "dashes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonNegativeProperty"
+          },
+          "default": []
+        },
+        "dashOffset": {
+          "$ref": "#/$defs/scalarProperty",
+          "default": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "shapePaint": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "color"
+          ],
+          "properties": {
+            "type": {
+              "const": "solid"
+            },
+            "color": {
+              "$ref": "#/$defs/colorProperty"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "gradientType",
+            "start",
+            "end",
+            "stops"
+          ],
+          "properties": {
+            "type": {
+              "const": "gradient"
+            },
+            "gradientType": {
+              "$ref": "#/$defs/shapeGradientType"
+            },
+            "start": {
+              "$ref": "#/$defs/vector2Property"
+            },
+            "end": {
+              "$ref": "#/$defs/vector2Property"
+            },
+            "stops": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/shapeGradientStop"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "shapeGradientType": {
+      "enum": [
+        "linear",
+        "radial",
+        "conic"
+      ]
+    },
+    "shapeGradientStop": {
+      "type": "object",
+      "required": [
+        "offset",
+        "color"
+      ],
+      "properties": {
+        "offset": {
+          "$ref": "#/$defs/scalarProperty"
+        },
+        "color": {
+          "$ref": "#/$defs/colorProperty"
+        }
+      },
+      "additionalProperties": false
+    },
+    "shapeFillRule": {
+      "enum": [
+        "nonZeroWinding",
+        "evenOdd"
+      ]
+    },
+    "shapeLineCap": {
+      "enum": [
+        "butt",
+        "round",
+        "square"
+      ]
+    },
+    "shapeLineJoin": {
+      "enum": [
+        "miter",
+        "round",
+        "bevel"
+      ]
+    },
+    "normalizedOpacity": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "rectShape": {
+      "type": "object",
+      "description": "AE rectangle shape/SolidLayer-compatible geometry and paint.",
+      "required": [
+        "size",
+        "fillColor"
+      ],
+      "properties": {
+        "size": {
+          "$ref": "#/$defs/vector2Property"
+        },
+        "position": {
+          "$ref": "#/$defs/vector2Property",
+          "default": [
+            0,
+            0
+          ]
+        },
+        "roundness": {
+          "description": "AE rectangle path roundness in pixels.",
+          "$ref": "#/$defs/scalarProperty",
+          "default": 0
+        },
+        "fillEnabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "fillColor": {
+          "$ref": "#/$defs/colorProperty"
+        },
+        "fillPaint": {
+          "description": "Optional complete fill-paint override. Legacy rectangles omit this and derive a solid paint from fillColor.",
+          "$ref": "#/$defs/shapePaint"
+        },
+        "fillBlendMode": {
+          "description": "How the rectangle fill composites inside the layer, independently of the layer's outer blend mode. Omission uses Normal.",
+          "$ref": "#/$defs/blendMode",
+          "default": "normal"
+        },
+        "strokeEnabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "strokeColor": {
+          "$ref": "#/$defs/colorProperty"
+        },
+        "strokeWidth": {
+          "$ref": "#/$defs/nonNegativeProperty",
+          "default": 0
+        },
+        "strokeDashes": {
+          "description": "Alternating dash/gap lengths in layer pixels; an empty array means a solid stroke.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonNegativeProperty"
+          },
+          "default": []
+        },
+        "strokeDashOffset": {
+          "description": "Phase offset into the dash pattern, in layer pixels.",
+          "$ref": "#/$defs/scalarProperty",
+          "default": 0
+        },
+        "strokeJoin": {
+          "description": "Stroke line-join style.",
+          "$ref": "#/$defs/shapeLineJoin",
+          "default": "miter"
+        },
+        "strokeMiterLimit": {
+          "description": "Miter limit used when strokeJoin is miter.",
+          "$ref": "#/$defs/scalarProperty",
+          "default": 4
+        }
+      },
+      "additionalProperties": false
+    },
+    "scalarProperty": {
+      "description": "AE/PAG-style scalar value.",
+      "type": "number"
+    },
+    "fontVariations": {
+      "type": "object",
+      "description": "OpenType variable-font coordinates. Axis values are animatable as fxItemProperty targets whose propertyName is the four-character axis tag.",
+      "required": [
+        "id",
+        "axes"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/fxItemId"
+        },
+        "axes": {
+          "type": "object",
+          "maxProperties": 16,
+          "propertyNames": {
+            "pattern": "^[ -~]{4}$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/scalarProperty"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "textDocument": {
+      "type": "object",
+      "description": "AE Source Text document data / PAG TextDocument subset.",
+      "required": [
+        "text",
+        "fontFamily",
+        "fontSize",
+        "fillColor"
+      ],
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "fontFamily": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fontStyle": {
+          "type": "string",
+          "default": "Regular"
+        },
+        "fontSize": {
+          "$ref": "#/$defs/positiveProperty"
+        },
+        "fontVariations": {
+          "$ref": "#/$defs/fontVariations"
+        },
+        "applyFill": {
+          "type": "boolean",
+          "default": true
+        },
+        "fillColor": {
+          "$ref": "#/$defs/colorProperty"
+        },
+        "applyStroke": {
+          "type": "boolean",
+          "default": false
+        },
+        "strokeColor": {
+          "$ref": "#/$defs/colorProperty"
+        },
+        "strokeWidth": {
+          "$ref": "#/$defs/nonNegativeProperty",
+          "default": 0
+        },
+        "strokeOverFill": {
+          "type": "boolean",
+          "default": false
+        },
+        "justification": {
+          "$ref": "#/$defs/justification",
+          "default": "left"
+        },
+        "tracking": {
+          "description": "AE character tracking amount.",
+          "$ref": "#/$defs/scalarProperty",
+          "default": 0
+        },
+        "leading": {
+          "description": "Line height in pixels. null means auto-leading.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/positiveProperty"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "baselineShift": {
+          "$ref": "#/$defs/scalarProperty",
+          "default": 0
+        },
+        "boxText": {
+          "description": "Whether the text uses AE paragraph box text.",
+          "type": "boolean",
+          "default": false
+        },
+        "boxSize": {
+          "$ref": "#/$defs/vector2Property"
+        },
+        "boxPosition": {
+          "$ref": "#/$defs/vector2Property"
+        },
+        "allCaps": {
+          "type": "boolean",
+          "default": false
+        },
+        "underline": {
+          "description": "Draw an underline beneath the text, in the fill color (Figma textDecoration: UNDERLINE).",
+          "type": "boolean",
+          "default": false
+        },
+        "strikethrough": {
+          "description": "Draw a strike line through the text, in the fill color (Figma textDecoration: STRIKETHROUGH).",
+          "type": "boolean",
+          "default": false
+        },
+        "verticalAlign": {
+          "description": "Vertical alignment of box text within its box (Figma textAlignVertical). Absent keeps the legacy libpag AdjustToFitBox behavior. Ignored for point text.",
+          "enum": [
+            "top",
+            "center",
+            "bottom"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "textLayer": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/layerBase"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "sourceText"
+          ],
+          "properties": {
+            "type": {
+              "const": "Text"
+            },
+            "motionBlur": {
+              "description": "Per-layer standard motion-blur switch; requires the composition master switch.",
+              "type": "boolean",
+              "default": false
+            },
+            "effects": {
+              "description": "AE-style Effects stack applied to this layer's rasterized content, in authored stack order. PersonMatte needs a source video frame to segment and lowers to nothing on a vector layer (skipped, as on a Group).",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/effectInstance"
+              },
+              "default": []
+            },
+            "sourceText": {
+              "$ref": "#/$defs/textDocument"
+            },
+            "animators": {
+              "description": "After Effects Text > Animators stack (range selectors + per-character properties), applied in order to produce the per-character char_animations the renderer draws. Empty/absent = plain text.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/textAnimator"
+              },
+              "default": []
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "textAnimator": {
+      "type": "object",
+      "description": "An After Effects text animator: range selectors choosing which characters are affected and by how much, plus per-character properties applied weighted by the selector output.",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "description": "Stable, caller-minted identity for graph addressing of this animator's per-character properties via PropertyTarget::FxItemProperty.",
+          "$ref": "#/$defs/fxItemId"
+        },
+        "name": {
+          "description": "Optional user-visible name for the text animator.",
+          "type": "string",
+          "default": ""
+        },
+        "selectors": {
+          "description": "Range selectors, combined in order by each selector's mode. No selectors = every character fully selected.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rangeSelector"
+          },
+          "default": []
+        },
+        "position": {
+          "description": "Per-character position offset in layer pixels.",
+          "$ref": "#/$defs/vector2Property"
+        },
+        "scale": {
+          "description": "Per-character scale in percent ([100, 100] = identity).",
+          "$ref": "#/$defs/vector2Property"
+        },
+        "rotation": {
+          "description": "Per-character rotation in degrees.",
+          "$ref": "#/$defs/scalarProperty"
+        },
+        "opacity": {
+          "description": "Per-character opacity in percent (100 = fully opaque).",
+          "$ref": "#/$defs/scalarProperty"
+        },
+        "fillColor": {
+          "description": "Per-character fill color override (RGBA 0..1).",
+          "$ref": "#/$defs/colorProperty"
+        },
+        "strokeColor": {
+          "description": "Per-character stroke color override (RGBA 0..1).",
+          "$ref": "#/$defs/colorProperty"
+        }
+      },
+      "additionalProperties": false
+    },
+    "rangeSelector": {
+      "type": "object",
+      "description": "A text range selector: picks which characters an animator affects and with what per-character weight. start/end/offset are read according to units.",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "description": "Stable, caller-minted identity for graph addressing of this selector's animatable scalars via PropertyTarget::FxItemProperty.",
+          "$ref": "#/$defs/fxItemId"
+        },
+        "start": {
+          "description": "Range start. [0,1] fraction of the unit count in percentage units, absolute unit index in index units.",
+          "$ref": "#/$defs/scalarProperty",
+          "default": 0
+        },
+        "end": {
+          "description": "Range end. Defaults to 1.0 (whole string in percentage units).",
+          "$ref": "#/$defs/scalarProperty",
+          "default": 1
+        },
+        "offset": {
+          "description": "Amount added to both start and end — the knob AE presets keyframe to produce a reveal.",
+          "$ref": "#/$defs/scalarProperty",
+          "default": 0
+        },
+        "units": {
+          "description": "Unit in which start/end/offset are expressed.",
+          "enum": [
+            "percentage",
+            "index"
+          ],
+          "default": "percentage"
+        },
+        "basedOn": {
+          "description": "The unit the selector partitions the string into. Every character inherits the weight of its unit.",
+          "enum": [
+            "characters",
+            "charactersExcludingSpaces",
+            "words",
+            "lines"
+          ],
+          "default": "characters"
+        },
+        "mode": {
+          "description": "How this selector combines with the running per-character weight of prior selectors.",
+          "enum": [
+            "add",
+            "subtract",
+            "intersect",
+            "min",
+            "max",
+            "difference"
+          ],
+          "default": "add"
+        },
+        "amount": {
+          "description": "Selector strength (1.0 = 100%). Multiplies every per-character weight.",
+          "$ref": "#/$defs/scalarProperty",
+          "default": 1
+        },
+        "shape": {
+          "description": "Falloff curve of the selector.",
+          "enum": [
+            "square",
+            "rampUp",
+            "rampDown",
+            "triangle",
+            "round",
+            "smooth"
+          ],
+          "default": "square"
+        },
+        "easeHigh": {
+          "description": "Ease into the high (selected) end — Triangle shape only, [-1, 1].",
+          "$ref": "#/$defs/scalarProperty",
+          "default": 0
+        },
+        "easeLow": {
+          "description": "Ease into the low (deselected) end — Triangle shape only, [-1, 1].",
+          "$ref": "#/$defs/scalarProperty",
+          "default": 0
+        },
+        "randomizeOrder": {
+          "description": "Randomize which unit each selector position maps to, using a deterministic MT19937 permutation seeded by randomSeed.",
+          "type": "boolean",
+          "default": false
+        },
+        "randomSeed": {
+          "description": "Seed for randomizeOrder (libpag stores it as uint16).",
+          "$ref": "#/$defs/scalarProperty",
+          "default": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerPlayback": {
+      "type": "object",
+      "required": ["type", "inputRange", "mapping", "inputOffsetMs"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {"const": "windowed"},
+        "inputRange": {"$ref": "#/$defs/playbackRange"},
+        "mapping": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["type", "input", "output"],
+              "additionalProperties": false,
+              "properties": {
+                "type": {"const": "linear"},
+                "input": {"$ref": "#/$defs/playbackRange"},
+                "output": {"$ref": "#/$defs/playbackRange"}
+              }
+            },
+            {
+              "type": "object",
+              "required": ["type", "property"],
+              "additionalProperties": false,
+              "properties": {
+                "type": {"const": "timeRemap"},
+                "property": {"$ref": "#/$defs/timeRemapProperty"}
+              }
+            }
+          ]
+        },
+        "inputOffsetMs": {"type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991}
+      }
+    },
+    "playbackRange": {
+      "description": "Positive exact-integer millisecond span. The reader additionally validates endpoint sums and mapped clock bounds.",
+      "type": "object",
+      "required": ["start", "duration"],
+      "additionalProperties": false,
+      "properties": {
+        "start": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "duration": {"type": "integer", "minimum": 1, "maximum": 9007199254740991}
+      }
+    },
+    "timeRangeProperty": {
+      "type": "object",
+      "description": "Timeline range represented as integer milliseconds: start plus duration.",
+      "required": [
+        "start",
+        "duration"
+      ],
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/timeMillis"
+        },
+        "duration": {
+          "$ref": "#/$defs/positiveDurationMillis"
+        }
+      },
+      "additionalProperties": false
+    },
+    "positiveDurationMillis": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "nonNegativeDurationMillis": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timeMillis": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "transform": {
+      "type": "object",
+      "description": "AE basic transform group. Position and anchor are in layer pixels, scale and opacity are percentages, and rotation, skew, and skewAxis are degrees. Skew is rendered in AE order and clamped to ±89.9 degrees before tan() is evaluated.",
+      "required": [
+        "anchorPoint",
+        "position",
+        "scale",
+        "rotation",
+        "opacity"
+      ],
+      "properties": {
+        "anchorPoint": {
+          "$ref": "#/$defs/vector2Property"
+        },
+        "position": {
+          "$ref": "#/$defs/positionProperty"
+        },
+        "scale": {
+          "$ref": "#/$defs/vector2Property"
+        },
+        "rotation": {
+          "$ref": "#/$defs/scalarProperty"
+        },
+        "skew": {
+          "description": "AE Skew shear angle in degrees. Omission is 0 (identity).",
+          "$ref": "#/$defs/scalarProperty"
+        },
+        "skewAxis": {
+          "description": "AE Skew Axis orientation in degrees. Omission is 0.",
+          "$ref": "#/$defs/scalarProperty"
+        },
+        "opacity": {
+          "$ref": "#/$defs/percentageProperty"
+        }
+      },
+      "additionalProperties": false
+    },
+    "vector2": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "vector2Property": {
+      "description": "AE/PAG-style 2D vector value.",
+      "$ref": "#/$defs/vector2"
+    },
+    "vector3": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "items": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "positionProperty": {
+      "description": "AE-style layer position. Two-component `[x, y]` declares a 2D layer (no z, no depth-sort bin participation). Three-component `[x, y, z]` declares a 3D layer that joins the AE 3D bin: contiguous 3D siblings are depth-sorted by camera distance with the larger z painted first, ties resolve by timeline order, and any 2D sibling breaks the bin. See crates/fx_composition/src/layer.rs::Position for the full rules.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/vector2"
+        },
+        {
+          "$ref": "#/$defs/vector3"
+        }
+      ]
+    },
+    "colorProperty": {
+      "description": "AE/PAG-style RGBA color value.",
+      "$ref": "#/$defs/color"
+    },
+    "adjustmentLayer": {
+      "description": "AE adjustment layer (ENG-1505): a contentless layer whose effects stack applies to the composite of every sibling layer BELOW it in the stack. Masks/trackMatte gate WHERE the effect applies (AE order: mask clips the backdrop copy, then effects run), transform.opacity is the wet/dry mix, blendMode blends the effected copy against the untouched composite. The geometric transform components are ignored (AE parity: they never move the layers beneath). dropShadow / layerStyles are rejected (silhouette styles are meaningless on a contentless layer). personMatte in the effects stack is skipped with a warn-once, same as on a Group.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/layerBase"
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "Adjustment"
+            },
+            "effects": {
+              "description": "AE-style Effects stack applied to the composite of the sibling layers below.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/effectInstance"
+              },
+              "default": []
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "layerEffectPosterize": {
+      "type": "object",
+      "description": "Engine-owned Posterize shader effect. Numeric properties are effect parameters.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "posterize"
+        },
+        "levels": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectVignette": {
+      "type": "object",
+      "description": "Engine-owned Vignette shader effect. Numeric properties are effect parameters.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "vignette"
+        },
+        "amount": {
+          "type": "number"
+        },
+        "radius": {
+          "type": "number"
+        },
+        "feather": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectFindEdges": {
+      "type": "object",
+      "description": "Engine-owned FindEdges shader effect. Numeric properties are effect parameters.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "findEdges"
+        },
+        "invert": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectExposure": {
+      "type": "object",
+      "description": "Engine-owned Exposure shader effect. Numeric properties are effect parameters.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "exposure"
+        },
+        "exposure": {
+          "type": "number"
+        },
+        "offset": {
+          "type": "number"
+        },
+        "gammaCorrection": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectVibrance": {
+      "type": "object",
+      "description": "Engine-owned Vibrance shader effect. Numeric properties are effect parameters.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "vibrance"
+        },
+        "vibrance": {
+          "type": "number"
+        },
+        "saturation": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectTemperatureTint": {
+      "type": "object",
+      "description": "Engine-owned TemperatureTint shader effect. Numeric properties are effect parameters.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "temperatureTint"
+        },
+        "temperature": {
+          "type": "number"
+        },
+        "tint": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectTwirl": {
+      "type": "object",
+      "description": "Engine-owned Twirl shader effect. Numeric properties are effect parameters.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "twirl"
+        },
+        "angle": {
+          "type": "number"
+        },
+        "radius": {
+          "type": "number"
+        },
+        "centerX": {
+          "type": "number"
+        },
+        "centerY": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectRipple": {
+      "type": "object",
+      "description": "Engine-owned Ripple shader effect. Numeric properties are effect parameters.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "ripple"
+        },
+        "amplitude": {
+          "type": "number"
+        },
+        "frequency": {
+          "type": "number"
+        },
+        "phase": {
+          "type": "number"
+        },
+        "centerX": {
+          "type": "number"
+        },
+        "centerY": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectSharpen": {
+      "type": "object",
+      "description": "Engine-owned Sharpen shader effect. Numeric properties are effect parameters.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "sharpen"
+        },
+        "amount": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectLumaKey": {
+      "type": "object",
+      "description": "Engine-owned LumaKey shader effect. Numeric properties are effect parameters.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "lumaKey"
+        },
+        "threshold": {
+          "type": "number"
+        },
+        "softness": {
+          "type": "number"
+        },
+        "invert": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectSimpleChoker": {
+      "type": "object",
+      "description": "Engine-owned SimpleChoker shader effect. Numeric properties are effect parameters.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "simpleChoker"
+        },
+        "choke": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectGrain": {
+      "type": "object",
+      "description": "Engine-owned Grain shader effect. Numeric properties are effect parameters.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "grain"
+        },
+        "amount": {
+          "type": "number"
+        },
+        "size": {
+          "type": "number"
+        },
+        "seed": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectWaveWarp": {
+      "type": "object",
+      "description": "Engine-owned WaveWarp shader effect. Numeric properties are effect parameters.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "waveWarp"
+        },
+        "waveHeight": {
+          "type": "number"
+        },
+        "waveWidth": {
+          "type": "number"
+        },
+        "direction": {
+          "type": "number"
+        },
+        "phase": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectLensDistortion": {
+      "type": "object",
+      "description": "Engine-owned LensDistortion shader effect. Numeric properties are effect parameters.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "lensDistortion"
+        },
+        "amount": {
+          "type": "number"
+        },
+        "centerX": {
+          "type": "number"
+        },
+        "centerY": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectTintTritone": {
+      "type": "object",
+      "description": "Engine-owned TintTritone shader effect. Numeric properties are effect parameters.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "tintTritone"
+        },
+        "blackR": {
+          "type": "number"
+        },
+        "blackG": {
+          "type": "number"
+        },
+        "blackB": {
+          "type": "number"
+        },
+        "whiteR": {
+          "type": "number"
+        },
+        "whiteG": {
+          "type": "number"
+        },
+        "whiteB": {
+          "type": "number"
+        },
+        "amount": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectGradientRamp": {
+      "type": "object",
+      "description": "Engine-owned GradientRamp shader effect. Numeric properties are effect parameters.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "gradientRamp"
+        },
+        "startX": {
+          "type": "number"
+        },
+        "startY": {
+          "type": "number"
+        },
+        "endX": {
+          "type": "number"
+        },
+        "endY": {
+          "type": "number"
+        },
+        "startR": {
+          "type": "number"
+        },
+        "startG": {
+          "type": "number"
+        },
+        "startB": {
+          "type": "number"
+        },
+        "endR": {
+          "type": "number"
+        },
+        "endG": {
+          "type": "number"
+        },
+        "endB": {
+          "type": "number"
+        },
+        "blend": {
+          "type": "number"
+        },
+        "shape": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectChromaticAberration": {
+      "type": "object",
+      "description": "Engine-owned ChromaticAberration shader effect. Numeric properties are effect parameters.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "chromaticAberration"
+        },
+        "amount": {
+          "type": "number"
+        },
+        "direction": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectTurbulentNoise": {
+      "type": "object",
+      "description": "Engine-owned TurbulentNoise shader effect. Numeric properties are effect parameters.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "turbulentNoise"
+        },
+        "brightness": {
+          "type": "number"
+        },
+        "contrast": {
+          "type": "number"
+        },
+        "scale": {
+          "type": "number"
+        },
+        "complexity": {
+          "type": "number"
+        },
+        "subInfluence": {
+          "type": "number"
+        },
+        "evolution": {
+          "type": "number"
+        },
+        "rotation": {
+          "type": "number"
+        },
+        "offsetX": {
+          "type": "number"
+        },
+        "offsetY": {
+          "type": "number"
+        },
+        "invert": {
+          "type": "number"
+        },
+        "blend": {
+          "type": "number"
+        },
+        "noiseType": {
+          "$ref": "#/$defs/noiseType",
+          "default": "softLinear"
+        },
+        "fractalType": {
+          "$ref": "#/$defs/fractalType",
+          "default": "basic"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectFisheye": {
+      "type": "object",
+      "description": "Engine-owned Fisheye shader effect. Numeric properties are effect parameters.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "fisheye"
+        },
+        "amount": {
+          "type": "number"
+        },
+        "centerX": {
+          "type": "number"
+        },
+        "centerY": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectPosterizeTime": {
+      "type": "object",
+      "description": "AE \"Posterize Time\": quantize the layer's effective time to frameRate frames per second, so its video frames, keyframed animation, and animated effects hold and step together while the composition plays at full rate. Applies to the whole layer regardless of stack position, including nested group members. External layers referenced as track mattes or custom-shader inputs are NOT retimed (AE parity) - posterize the source too, or posterize a group containing both. frameRate is 1-60 fps (default 8; out-of-range persisted values clamp) and is NOT animatable (the rate defines the quantization grid itself); set it statically. Not valid on adjustment layers.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "posterizeTime"
+        },
+        "frameRate": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 60
+        }
+      },
+      "additionalProperties": false
+    },
+    "noiseType": {
+      "description": "AE \"Noise Type\" popup for turbulentNoise: how the generator interpolates between lattice points. Not a scalar effect parameter — write it through JBUpdateFxLayerEffectAction, not JBSetFxLayerEffectParamsAction.",
+      "enum": [
+        "block",
+        "linear",
+        "softLinear",
+        "spline"
+      ]
+    },
+    "fractalType": {
+      "description": "AE \"Fractal Type\" popup for turbulentNoise: how the fractal's octaves are combined. \"strings\", \"rocky\" and \"cloudy\" approximate AE's proprietary algorithms. Not a scalar effect parameter — write it through JBUpdateFxLayerEffectAction, not JBSetFxLayerEffectParamsAction.",
+      "enum": [
+        "basic",
+        "turbulentSmooth",
+        "turbulentBasic",
+        "turbulentSharp",
+        "max",
+        "strings",
+        "rocky",
+        "cloudy"
+      ]
+    },
+    "aiEditStickerContent": {
+      "description": "Shot sticker content. PAG takes precedence over text when both are present.",
+      "type": "object",
+      "properties": {
+        "pag": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "aiEditStickerLocation": {
+      "description": "Canvas-relative sticker center as fractions of width and height.",
+      "type": "object",
+      "required": [
+        "horizontalPct",
+        "verticalPct"
+      ],
+      "properties": {
+        "horizontalPct": {
+          "type": "number"
+        },
+        "verticalPct": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "aiEditStickerPoint": {
+      "description": "Sticker origin in the legacy canvas coordinate space.",
+      "type": "object",
+      "required": [
+        "x",
+        "y"
+      ],
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "aiEditSticker": {
+      "description": "A shot-owned sticker rendered with AI Edit caption and emoji semantics.",
+      "type": "object",
+      "required": [
+        "content",
+        "duration",
+        "location",
+        "startTime",
+        "wordId"
+      ],
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/aiEditStickerContent"
+        },
+        "duration": {
+          "description": "Display duration in milliseconds.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "location": {
+          "$ref": "#/$defs/aiEditStickerLocation"
+        },
+        "origin": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/aiEditStickerPoint"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "startTime": {
+          "description": "Project-timeline display start in milliseconds.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "wordId": {
+          "type": "string"
+        },
+        "isHidden": {
+          "type": "boolean"
+        },
+        "rotation": {
+          "description": "Clockwise rotation in degrees.",
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "aiEditLayer": {
+      "description": "Semantic AI Edit folder for one segment. Visual and audio state belongs to its child layers.",
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "type",
+        "activeRange",
+        "styleId",
+        "sourceLayerId",
+        "layers"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/layerId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "AiEdit"
+        },
+        "parent": {
+          "description": "Containing semantic folder id. null means composition root.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/layerId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "activeRange": {
+          "description": "Immediate-parent-local segment span.",
+          "$ref": "#/$defs/timeRangeProperty"
+        },
+        "styleId": {
+          "description": "Required VideoStyleTemplate id.",
+          "type": "string",
+          "minLength": 1
+        },
+        "shotStyleId": {
+          "description": "ShotStyleTemplate variant id inside styleId. Omitted when a legacy split preserved rendered styling but lost template lineage.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": ".*\\S.*"
+        },
+        "sourceLayerId": {
+          "description": "Nested Video or Image layer that supplies source media.",
+          "$ref": "#/$defs/layerId"
+        },
+        "background": {
+          "description": "Base painted below background PAG content and a cut-out source.",
+          "enum": [
+            "source",
+            "black"
+          ]
+        },
+        "stickers": {
+          "description": "Shot-owned stickers rendered with caption and emoji timing semantics.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/aiEditSticker"
+          }
+        },
+        "layers": {
+          "description": "Source media, audio, matte, PAG, and other style-owned children in topmost-first order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/layer"
+          }
+        },
+        "mediaOverlaySourceStart": {
+          "description": "Unscaled source offset in milliseconds for shot-style media overlays. Migration preserves this value before speed scaling and rounding.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "colorCurvePoint": {
+      "type": "object",
+      "required": [
+        "x",
+        "y"
+      ],
+      "properties": {
+        "x": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "colorCurve": {
+      "type": "array",
+      "description": "2..32 normalized points, strictly increasing x; first x=0 and last x=1 (enforced by the reader).",
+      "minItems": 2,
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/colorCurvePoint"
+      }
+    },
+    "layerEffectColorCurves": {
+      "type": "object",
+      "description": "Reader-only Master/RGB piecewise-linear SDR curves: Master then each matching color channel, preserving alpha.",
+      "required": [
+        "type",
+        "semanticVersion",
+        "curves"
+      ],
+      "properties": {
+        "type": {
+          "const": "colorCurves"
+        },
+        "semanticVersion": {
+          "const": 1
+        },
+        "curves": {
+          "type": "object",
+          "required": [
+            "master",
+            "red",
+            "green",
+            "blue"
+          ],
+          "properties": {
+            "master": {
+              "$ref": "#/$defs/colorCurve"
+            },
+            "red": {
+              "$ref": "#/$defs/colorCurve"
+            },
+            "green": {
+              "$ref": "#/$defs/colorCurve"
+            },
+            "blue": {
+              "$ref": "#/$defs/colorCurve"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "status": "AUTHORING_REQUEST_UNRUN_UNMEASURED",
+  "caseId": "fx-export-media-constant-source",
+  "assets": [
+    "red",
+    "green"
+  ],
+  "published": [
+    "green"
+  ],
+  "layers": [
+    "Constant Green"
+  ],
+  "sourceOrder": [
+    "green"
+  ]
+}

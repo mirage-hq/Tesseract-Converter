@@ -1,0 +1,6115 @@
+{
+  "schema_version": 1,
+  "scope": "Static Layer Styles: independent native import sources/references and separate edited-FX export controls; no cross-renderer fidelity claim.",
+  "source": {
+    "source_path": "crates/aftereffects_file/tests/fixtures/layer_styles/styles_static_adobe.aep",
+    "source_sha256": "0160adcfd09c70f4f13b7eedbb539b57e855312fbb0c7b2b44513aef8f418273",
+    "source_bytes": 635693,
+    "media_dependencies": []
+  },
+  "cases": [
+    {
+      "feature": "DropShadow",
+      "native_composition_id": 1,
+      "case_id": "aep-layer-styles-styles-static-adobe-c1",
+      "reference": {
+        "fps": 30,
+        "frame_count": 60,
+        "duration_seconds": 2.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "smpte170m",
+        "color_transfer": "smpte170m",
+        "color_primaries": "smpte170m",
+        "audio_streams": [],
+        "render_log_sha256": "403c06a38971f3fba7a09535ed107203f03a59a641afd77f39d7ab287d830122",
+        "path": "tests/references/aep/main/crates/aftereffects_file/tests/fixtures/layer_styles/styles_static_adobe__composition_1.mp4"
+      },
+      "fx_input_path": "crates/aftereffects_file/tests/fixtures/layer_styles/DropShadow.edited.fx.json",
+      "fx_input_sha256": "ea4ae4d67dd5100dd06fe415d82361b7dfe1115e4e41af98cc4a7c074b70a6cc",
+      "export_expected_edited_controls": {
+        "color": [
+          0.15,
+          0.08,
+          0.25,
+          1
+        ],
+        "opacity": 65,
+        "localLightingAngle": 57.52880770915151,
+        "distance": 13.038404810405298,
+        "blur": 15,
+        "chokeMatte": 25
+      },
+      "export_render": "UNRUN",
+      "rgb_comparison": {
+        "alpha_fidelity": "unverified",
+        "audio_fidelity": "unverified",
+        "comparator_inclusive": {
+          "mean_similarity": 0.9586716244208375,
+          "min_frame_similarity": 0.9586713716385161,
+          "sample_count": 61,
+          "worst_time_seconds": 1.0
+        },
+        "critical_frame_schedule_status": "declared",
+        "critical_frames": [
+          {
+            "sample_index": 0,
+            "similarity": 0.9586718856292363,
+            "time": "0",
+            "time_seconds": 0.0
+          },
+          {
+            "sample_index": 30,
+            "similarity": 0.9586713716385161,
+            "time": "1",
+            "time_seconds": 1.0
+          },
+          {
+            "sample_index": 59,
+            "similarity": 0.9586713716385161,
+            "time": "59/30",
+            "time_seconds": 1.9666666666666666
+          }
+        ],
+        "frame_results": [
+          {
+            "index": 0,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.0
+          },
+          {
+            "index": 1,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.03333333333333333
+          },
+          {
+            "index": 2,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.06666666666666667
+          },
+          {
+            "index": 3,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.1
+          },
+          {
+            "index": 4,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.13333333333333333
+          },
+          {
+            "index": 5,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.16666666666666666
+          },
+          {
+            "index": 6,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.2
+          },
+          {
+            "index": 7,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.23333333333333334
+          },
+          {
+            "index": 8,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.26666666666666666
+          },
+          {
+            "index": 9,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.3
+          },
+          {
+            "index": 10,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.3333333333333333
+          },
+          {
+            "index": 11,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.36666666666666664
+          },
+          {
+            "index": 12,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.4
+          },
+          {
+            "index": 13,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.43333333333333335
+          },
+          {
+            "index": 14,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.4666666666666667
+          },
+          {
+            "index": 15,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.5
+          },
+          {
+            "index": 16,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.5333333333333333
+          },
+          {
+            "index": 17,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.5666666666666667
+          },
+          {
+            "index": 18,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.6
+          },
+          {
+            "index": 19,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.6333333333333333
+          },
+          {
+            "index": 20,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.6666666666666666
+          },
+          {
+            "index": 21,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.7
+          },
+          {
+            "index": 22,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.7333333333333333
+          },
+          {
+            "index": 23,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.7666666666666666
+          },
+          {
+            "index": 24,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.8
+          },
+          {
+            "index": 25,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.8333333333333334
+          },
+          {
+            "index": 26,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.8666666666666667
+          },
+          {
+            "index": 27,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.9
+          },
+          {
+            "index": 28,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.9333333333333333
+          },
+          {
+            "index": 29,
+            "score": {
+              "deviation": 0.04132811437076367,
+              "similarity": 0.9586718856292363
+            },
+            "time_secs": 0.9666666666666667
+          },
+          {
+            "index": 30,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.0
+          },
+          {
+            "index": 31,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.0333333333333332
+          },
+          {
+            "index": 32,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.0666666666666667
+          },
+          {
+            "index": 33,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.1
+          },
+          {
+            "index": 34,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.1333333333333333
+          },
+          {
+            "index": 35,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.1666666666666667
+          },
+          {
+            "index": 36,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.2
+          },
+          {
+            "index": 37,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.2333333333333334
+          },
+          {
+            "index": 38,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.2666666666666666
+          },
+          {
+            "index": 39,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.3
+          },
+          {
+            "index": 40,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.3333333333333333
+          },
+          {
+            "index": 41,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.3666666666666667
+          },
+          {
+            "index": 42,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.4
+          },
+          {
+            "index": 43,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.4333333333333333
+          },
+          {
+            "index": 44,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.4666666666666666
+          },
+          {
+            "index": 45,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.5
+          },
+          {
+            "index": 46,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.5333333333333332
+          },
+          {
+            "index": 47,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.5666666666666667
+          },
+          {
+            "index": 48,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.6
+          },
+          {
+            "index": 49,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.6333333333333333
+          },
+          {
+            "index": 50,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.6666666666666667
+          },
+          {
+            "index": 51,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.7
+          },
+          {
+            "index": 52,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.7333333333333334
+          },
+          {
+            "index": 53,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.7666666666666666
+          },
+          {
+            "index": 54,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.8
+          },
+          {
+            "index": 55,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.8333333333333333
+          },
+          {
+            "index": 56,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.8666666666666667
+          },
+          {
+            "index": 57,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.9
+          },
+          {
+            "index": 58,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.9333333333333333
+          },
+          {
+            "index": 59,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 1.9666666666666666
+          },
+          {
+            "index": 60,
+            "score": {
+              "deviation": 0.04132862836148388,
+              "similarity": 0.9586713716385161
+            },
+            "time_secs": 2.0
+          }
+        ],
+        "half_open_native_frames": {
+          "mean_similarity": 0.9586716286338762,
+          "min_frame_similarity": 0.9586713716385161,
+          "range": "[0,2/1)",
+          "unique_frame_count": 60,
+          "worst_time_seconds": 1.0
+        },
+        "metric": "canonical_rgb24_similarity",
+        "quality_threshold": null,
+        "quality_verdict": "not_defined_descriptive_only",
+        "resolution": {
+          "downsampling": false,
+          "height": 180,
+          "max_dimension": 320,
+          "width": 320
+        },
+        "rgb_only": true,
+        "terminal_probe": {
+          "included_by_comparator": true,
+          "note": "The inclusive duration probe repeats the terminal decoded frame and is not a 61st unique frame.",
+          "sample_index": 60,
+          "similarity": 0.9586713716385161,
+          "time_seconds": 2.0,
+          "unique_native_frame": false
+        }
+      },
+      "alpha_fidelity": "unverified",
+      "export_native_readback": "PASS_EDITED_CONTROLS",
+      "export_aep_sha256": "d298d621acf8b8205fe4b349347481ed1ac754560b192e1d8dd870925d4a909b",
+      "adobe_readback": {
+        "status": "ok",
+        "error": null,
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "owned_project_closed": true,
+        "result": {
+          "compositions": [
+            {
+              "name": "DropShadow",
+              "id": 1,
+              "width": 320,
+              "height": 180,
+              "duration": 2,
+              "fps": 24
+            },
+            {
+              "name": "DropShadow",
+              "id": 13,
+              "width": 96,
+              "height": 64,
+              "duration": 2,
+              "fps": 24
+            },
+            {
+              "name": "DropShadow Subject",
+              "id": 14,
+              "width": 96,
+              "height": 64,
+              "duration": 2,
+              "fps": 24
+            },
+            {
+              "name": "Source content clock",
+              "id": 15,
+              "width": 96,
+              "height": 64,
+              "duration": 2,
+              "fps": 24
+            }
+          ],
+          "styles": [
+            {
+              "composition": "DropShadow",
+              "composition_id": 13,
+              "layer": "DropShadow Subject",
+              "style": "dropShadow/enabled",
+              "enabled": true,
+              "controls": [
+                {
+                  "match_name": "dropShadow/mode2",
+                  "value": 5,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "dropShadow/color",
+                  "value": [
+                    0.15,
+                    0.08,
+                    0.25,
+                    1
+                  ],
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "dropShadow/opacity",
+                  "value": 65,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "dropShadow/useGlobalAngle",
+                  "value": 0,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "dropShadow/localLightingAngle",
+                  "value": 57.5288077091515,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "dropShadow/distance",
+                  "value": 13.0384048104053,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "dropShadow/chokeMatte",
+                  "value": 25,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "dropShadow/blur",
+                  "value": 15,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "dropShadow/noise",
+                  "value": 0,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "dropShadow/layerConceals",
+                  "value": 1,
+                  "error": null,
+                  "num_keys": 0
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "final_export_hash_equivalence": "UNRUN: user requested no further testing; readbacks apply only to recorded artifact hashes"
+    },
+    {
+      "feature": "InnerShadow",
+      "native_composition_id": 16,
+      "case_id": "aep-layer-styles-styles-static-adobe-c16",
+      "reference": {
+        "fps": 30,
+        "frame_count": 60,
+        "duration_seconds": 2.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "smpte170m",
+        "color_transfer": "smpte170m",
+        "color_primaries": "smpte170m",
+        "audio_streams": [],
+        "render_log_sha256": "b76140e67b8a30139359300b80c19e3ece14467ae048283dc973a7d747a0b10e",
+        "path": "tests/references/aep/main/crates/aftereffects_file/tests/fixtures/layer_styles/styles_static_adobe__composition_16.mp4"
+      },
+      "fx_input_path": "crates/aftereffects_file/tests/fixtures/layer_styles/InnerShadow.edited.fx.json",
+      "fx_input_sha256": "388fe8133fbf0ff93ea6e5f56bada6122fb417d924dcb037b8469aef6bcc0c73",
+      "export_expected_edited_controls": {
+        "color": [
+          0.1,
+          0.25,
+          0.05,
+          1
+        ],
+        "opacity": 55,
+        "localLightingAngle": 33.690067525979785,
+        "distance": 10.816653826391969,
+        "blur": 9,
+        "chokeMatte": 30
+      },
+      "export_render": "UNRUN",
+      "rgb_comparison": {
+        "alpha_fidelity": "unverified",
+        "audio_fidelity": "unverified",
+        "comparator_inclusive": {
+          "mean_similarity": 0.9750634847855525,
+          "min_frame_similarity": 0.9750533824496799,
+          "sample_count": 61,
+          "worst_time_seconds": 1.0
+        },
+        "critical_frame_schedule_status": "declared",
+        "critical_frames": [
+          {
+            "sample_index": 0,
+            "similarity": 0.975073923865954,
+            "time": "0",
+            "time_seconds": 0.0
+          },
+          {
+            "sample_index": 30,
+            "similarity": 0.9750533824496799,
+            "time": "1",
+            "time_seconds": 1.0
+          },
+          {
+            "sample_index": 59,
+            "similarity": 0.9750533824496799,
+            "time": "59/30",
+            "time_seconds": 1.9666666666666666
+          }
+        ],
+        "frame_results": [
+          {
+            "index": 0,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.0
+          },
+          {
+            "index": 1,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.03333333333333333
+          },
+          {
+            "index": 2,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.06666666666666667
+          },
+          {
+            "index": 3,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.1
+          },
+          {
+            "index": 4,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.13333333333333333
+          },
+          {
+            "index": 5,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.16666666666666666
+          },
+          {
+            "index": 6,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.2
+          },
+          {
+            "index": 7,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.23333333333333334
+          },
+          {
+            "index": 8,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.26666666666666666
+          },
+          {
+            "index": 9,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.3
+          },
+          {
+            "index": 10,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.3333333333333333
+          },
+          {
+            "index": 11,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.36666666666666664
+          },
+          {
+            "index": 12,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.4
+          },
+          {
+            "index": 13,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.43333333333333335
+          },
+          {
+            "index": 14,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.4666666666666667
+          },
+          {
+            "index": 15,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.5
+          },
+          {
+            "index": 16,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.5333333333333333
+          },
+          {
+            "index": 17,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.5666666666666667
+          },
+          {
+            "index": 18,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.6
+          },
+          {
+            "index": 19,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.6333333333333333
+          },
+          {
+            "index": 20,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.6666666666666666
+          },
+          {
+            "index": 21,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.7
+          },
+          {
+            "index": 22,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.7333333333333333
+          },
+          {
+            "index": 23,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.7666666666666666
+          },
+          {
+            "index": 24,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.8
+          },
+          {
+            "index": 25,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.8333333333333334
+          },
+          {
+            "index": 26,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.8666666666666667
+          },
+          {
+            "index": 27,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.9
+          },
+          {
+            "index": 28,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.9333333333333333
+          },
+          {
+            "index": 29,
+            "score": {
+              "deviation": 0.02492607613404596,
+              "similarity": 0.975073923865954
+            },
+            "time_secs": 0.9666666666666667
+          },
+          {
+            "index": 30,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.0
+          },
+          {
+            "index": 31,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.0333333333333332
+          },
+          {
+            "index": 32,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.0666666666666667
+          },
+          {
+            "index": 33,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.1
+          },
+          {
+            "index": 34,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.1333333333333333
+          },
+          {
+            "index": 35,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.1666666666666667
+          },
+          {
+            "index": 36,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.2
+          },
+          {
+            "index": 37,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.2333333333333334
+          },
+          {
+            "index": 38,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.2666666666666666
+          },
+          {
+            "index": 39,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.3
+          },
+          {
+            "index": 40,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.3333333333333333
+          },
+          {
+            "index": 41,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.3666666666666667
+          },
+          {
+            "index": 42,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.4
+          },
+          {
+            "index": 43,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.4333333333333333
+          },
+          {
+            "index": 44,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.4666666666666666
+          },
+          {
+            "index": 45,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.5
+          },
+          {
+            "index": 46,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.5333333333333332
+          },
+          {
+            "index": 47,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.5666666666666667
+          },
+          {
+            "index": 48,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.6
+          },
+          {
+            "index": 49,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.6333333333333333
+          },
+          {
+            "index": 50,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.6666666666666667
+          },
+          {
+            "index": 51,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.7
+          },
+          {
+            "index": 52,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.7333333333333334
+          },
+          {
+            "index": 53,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.7666666666666666
+          },
+          {
+            "index": 54,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.8
+          },
+          {
+            "index": 55,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.8333333333333333
+          },
+          {
+            "index": 56,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.8666666666666667
+          },
+          {
+            "index": 57,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.9
+          },
+          {
+            "index": 58,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.9333333333333333
+          },
+          {
+            "index": 59,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 1.9666666666666666
+          },
+          {
+            "index": 60,
+            "score": {
+              "deviation": 0.024946617550320127,
+              "similarity": 0.9750533824496799
+            },
+            "time_secs": 2.0
+          }
+        ],
+        "half_open_native_frames": {
+          "mean_similarity": 0.975063653157817,
+          "min_frame_similarity": 0.9750533824496799,
+          "range": "[0,2/1)",
+          "unique_frame_count": 60,
+          "worst_time_seconds": 1.0
+        },
+        "metric": "canonical_rgb24_similarity",
+        "quality_threshold": null,
+        "quality_verdict": "not_defined_descriptive_only",
+        "resolution": {
+          "downsampling": false,
+          "height": 180,
+          "max_dimension": 320,
+          "width": 320
+        },
+        "rgb_only": true,
+        "terminal_probe": {
+          "included_by_comparator": true,
+          "note": "The inclusive duration probe repeats the terminal decoded frame and is not a 61st unique frame.",
+          "sample_index": 60,
+          "similarity": 0.9750533824496799,
+          "time_seconds": 2.0,
+          "unique_native_frame": false
+        }
+      },
+      "alpha_fidelity": "unverified",
+      "export_native_readback": "PASS_EDITED_CONTROLS",
+      "export_aep_sha256": "907d2cc477933717aeae2358751116be0f7d10ccea6c8a858a476f3749ab3345",
+      "adobe_readback": {
+        "status": "ok",
+        "error": null,
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "owned_project_closed": true,
+        "result": {
+          "compositions": [
+            {
+              "name": "InnerShadow",
+              "id": 1,
+              "width": 320,
+              "height": 180,
+              "duration": 2,
+              "fps": 24
+            },
+            {
+              "name": "InnerShadow",
+              "id": 13,
+              "width": 96,
+              "height": 64,
+              "duration": 2,
+              "fps": 24
+            },
+            {
+              "name": "InnerShadow Subject",
+              "id": 14,
+              "width": 96,
+              "height": 64,
+              "duration": 2,
+              "fps": 24
+            },
+            {
+              "name": "Source content clock",
+              "id": 15,
+              "width": 96,
+              "height": 64,
+              "duration": 2,
+              "fps": 24
+            }
+          ],
+          "styles": [
+            {
+              "composition": "InnerShadow",
+              "composition_id": 13,
+              "layer": "InnerShadow Subject",
+              "style": "innerShadow/enabled",
+              "enabled": true,
+              "controls": [
+                {
+                  "match_name": "innerShadow/mode2",
+                  "value": 5,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "innerShadow/color",
+                  "value": [
+                    0.1,
+                    0.25,
+                    0.05,
+                    1
+                  ],
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "innerShadow/opacity",
+                  "value": 55,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "innerShadow/useGlobalAngle",
+                  "value": 0,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "innerShadow/localLightingAngle",
+                  "value": 33.6900675259798,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "innerShadow/distance",
+                  "value": 10.816653826392,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "innerShadow/chokeMatte",
+                  "value": 30,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "innerShadow/blur",
+                  "value": 9,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "innerShadow/noise",
+                  "value": 0,
+                  "error": null,
+                  "num_keys": 0
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "final_export_hash_equivalence": "UNRUN: user requested no further testing; readbacks apply only to recorded artifact hashes"
+    },
+    {
+      "feature": "OuterGlow",
+      "native_composition_id": 30,
+      "case_id": "aep-layer-styles-styles-static-adobe-c30",
+      "reference": {
+        "fps": 30,
+        "frame_count": 60,
+        "duration_seconds": 2.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "smpte170m",
+        "color_transfer": "smpte170m",
+        "color_primaries": "smpte170m",
+        "audio_streams": [],
+        "render_log_sha256": "2b6acbd35780279774511f6f14f43732a5241940a719ee5aeb7330b33a999397",
+        "path": "tests/references/aep/main/crates/aftereffects_file/tests/fixtures/layer_styles/styles_static_adobe__composition_30.mp4"
+      },
+      "fx_input_path": "crates/aftereffects_file/tests/fixtures/layer_styles/OuterGlow.edited.fx.json",
+      "fx_input_sha256": "9834e5ebaebb997a1d4a91c09f2e2728c1f35d0885233516f5c4234f8cbd4631",
+      "export_expected_edited_controls": {
+        "color": [
+          0.8,
+          0.1,
+          0.9,
+          1
+        ],
+        "opacity": 65,
+        "blur": 18,
+        "chokeMatte": 40,
+        "inputRange": 60
+      },
+      "export_render": "UNRUN",
+      "rgb_comparison": {
+        "alpha_fidelity": "unverified",
+        "audio_fidelity": "unverified",
+        "comparator_inclusive": {
+          "mean_similarity": 0.7669040361912166,
+          "min_frame_similarity": 0.7659057379599997,
+          "sample_count": 61,
+          "worst_time_seconds": 0.0
+        },
+        "critical_frame_schedule_status": "declared",
+        "critical_frames": [
+          {
+            "sample_index": 0,
+            "similarity": 0.7659057379599997,
+            "time": "0",
+            "time_seconds": 0.0
+          },
+          {
+            "sample_index": 30,
+            "similarity": 0.7678378739385839,
+            "time": "1",
+            "time_seconds": 1.0
+          },
+          {
+            "sample_index": 59,
+            "similarity": 0.7678367486318651,
+            "time": "59/30",
+            "time_seconds": 1.9666666666666666
+          }
+        ],
+        "frame_results": [
+          {
+            "index": 0,
+            "score": {
+              "deviation": 0.23409426204000028,
+              "similarity": 0.7659057379599997
+            },
+            "time_secs": 0.0
+          },
+          {
+            "index": 1,
+            "score": {
+              "deviation": 0.2340603473724332,
+              "similarity": 0.7659396526275668
+            },
+            "time_secs": 0.03333333333333333
+          },
+          {
+            "index": 2,
+            "score": {
+              "deviation": 0.23406259487577097,
+              "similarity": 0.765937405124229
+            },
+            "time_secs": 0.06666666666666667
+          },
+          {
+            "index": 3,
+            "score": {
+              "deviation": 0.23406259487577097,
+              "similarity": 0.765937405124229
+            },
+            "time_secs": 0.1
+          },
+          {
+            "index": 4,
+            "score": {
+              "deviation": 0.23406259487577097,
+              "similarity": 0.765937405124229
+            },
+            "time_secs": 0.13333333333333333
+          },
+          {
+            "index": 5,
+            "score": {
+              "deviation": 0.23406259487577097,
+              "similarity": 0.765937405124229
+            },
+            "time_secs": 0.16666666666666666
+          },
+          {
+            "index": 6,
+            "score": {
+              "deviation": 0.23406259487577097,
+              "similarity": 0.765937405124229
+            },
+            "time_secs": 0.2
+          },
+          {
+            "index": 7,
+            "score": {
+              "deviation": 0.23406259487577097,
+              "similarity": 0.765937405124229
+            },
+            "time_secs": 0.23333333333333334
+          },
+          {
+            "index": 8,
+            "score": {
+              "deviation": 0.23406259487577097,
+              "similarity": 0.765937405124229
+            },
+            "time_secs": 0.26666666666666666
+          },
+          {
+            "index": 9,
+            "score": {
+              "deviation": 0.23406259487577097,
+              "similarity": 0.765937405124229
+            },
+            "time_secs": 0.3
+          },
+          {
+            "index": 10,
+            "score": {
+              "deviation": 0.23406259487577097,
+              "similarity": 0.765937405124229
+            },
+            "time_secs": 0.3333333333333333
+          },
+          {
+            "index": 11,
+            "score": {
+              "deviation": 0.23406259487577097,
+              "similarity": 0.765937405124229
+            },
+            "time_secs": 0.36666666666666664
+          },
+          {
+            "index": 12,
+            "score": {
+              "deviation": 0.23406035099113875,
+              "similarity": 0.7659396490088612
+            },
+            "time_secs": 0.4
+          },
+          {
+            "index": 13,
+            "score": {
+              "deviation": 0.23406035099113875,
+              "similarity": 0.7659396490088612
+            },
+            "time_secs": 0.43333333333333335
+          },
+          {
+            "index": 14,
+            "score": {
+              "deviation": 0.23406035099113875,
+              "similarity": 0.7659396490088612
+            },
+            "time_secs": 0.4666666666666667
+          },
+          {
+            "index": 15,
+            "score": {
+              "deviation": 0.23406035099113875,
+              "similarity": 0.7659396490088612
+            },
+            "time_secs": 0.5
+          },
+          {
+            "index": 16,
+            "score": {
+              "deviation": 0.23406035099113875,
+              "similarity": 0.7659396490088612
+            },
+            "time_secs": 0.5333333333333333
+          },
+          {
+            "index": 17,
+            "score": {
+              "deviation": 0.23406035099113875,
+              "similarity": 0.7659396490088612
+            },
+            "time_secs": 0.5666666666666667
+          },
+          {
+            "index": 18,
+            "score": {
+              "deviation": 0.23406035099113875,
+              "similarity": 0.7659396490088612
+            },
+            "time_secs": 0.6
+          },
+          {
+            "index": 19,
+            "score": {
+              "deviation": 0.23406035099113875,
+              "similarity": 0.7659396490088612
+            },
+            "time_secs": 0.6333333333333333
+          },
+          {
+            "index": 20,
+            "score": {
+              "deviation": 0.23406035099113875,
+              "similarity": 0.7659396490088612
+            },
+            "time_secs": 0.6666666666666666
+          },
+          {
+            "index": 21,
+            "score": {
+              "deviation": 0.23406035099113875,
+              "similarity": 0.7659396490088612
+            },
+            "time_secs": 0.7
+          },
+          {
+            "index": 22,
+            "score": {
+              "deviation": 0.23406035099113875,
+              "similarity": 0.7659396490088612
+            },
+            "time_secs": 0.7333333333333333
+          },
+          {
+            "index": 23,
+            "score": {
+              "deviation": 0.23406035099113875,
+              "similarity": 0.7659396490088612
+            },
+            "time_secs": 0.7666666666666666
+          },
+          {
+            "index": 24,
+            "score": {
+              "deviation": 0.23406035099113875,
+              "similarity": 0.7659396490088612
+            },
+            "time_secs": 0.8
+          },
+          {
+            "index": 25,
+            "score": {
+              "deviation": 0.23406035099113875,
+              "similarity": 0.7659396490088612
+            },
+            "time_secs": 0.8333333333333334
+          },
+          {
+            "index": 26,
+            "score": {
+              "deviation": 0.23406035099113875,
+              "similarity": 0.7659396490088612
+            },
+            "time_secs": 0.8666666666666667
+          },
+          {
+            "index": 27,
+            "score": {
+              "deviation": 0.23406035099113875,
+              "similarity": 0.7659396490088612
+            },
+            "time_secs": 0.9
+          },
+          {
+            "index": 28,
+            "score": {
+              "deviation": 0.23406035099113875,
+              "similarity": 0.7659396490088612
+            },
+            "time_secs": 0.9333333333333333
+          },
+          {
+            "index": 29,
+            "score": {
+              "deviation": 0.23406035099113875,
+              "similarity": 0.7659396490088612
+            },
+            "time_secs": 0.9666666666666667
+          },
+          {
+            "index": 30,
+            "score": {
+              "deviation": 0.23216212606141606,
+              "similarity": 0.7678378739385839
+            },
+            "time_secs": 1.0
+          },
+          {
+            "index": 31,
+            "score": {
+              "deviation": 0.2321268759779761,
+              "similarity": 0.7678731240220239
+            },
+            "time_secs": 1.0333333333333332
+          },
+          {
+            "index": 32,
+            "score": {
+              "deviation": 0.2321268759779761,
+              "similarity": 0.7678731240220239
+            },
+            "time_secs": 1.0666666666666667
+          },
+          {
+            "index": 33,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.1
+          },
+          {
+            "index": 34,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.1333333333333333
+          },
+          {
+            "index": 35,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.1666666666666667
+          },
+          {
+            "index": 36,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.2
+          },
+          {
+            "index": 37,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.2333333333333334
+          },
+          {
+            "index": 38,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.2666666666666666
+          },
+          {
+            "index": 39,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.3
+          },
+          {
+            "index": 40,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.3333333333333333
+          },
+          {
+            "index": 41,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.3666666666666667
+          },
+          {
+            "index": 42,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.4
+          },
+          {
+            "index": 43,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.4333333333333333
+          },
+          {
+            "index": 44,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.4666666666666666
+          },
+          {
+            "index": 45,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.5
+          },
+          {
+            "index": 46,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.5333333333333332
+          },
+          {
+            "index": 47,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.5666666666666667
+          },
+          {
+            "index": 48,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.6
+          },
+          {
+            "index": 49,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.6333333333333333
+          },
+          {
+            "index": 50,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.6666666666666667
+          },
+          {
+            "index": 51,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.7
+          },
+          {
+            "index": 52,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.7333333333333334
+          },
+          {
+            "index": 53,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.7666666666666666
+          },
+          {
+            "index": 54,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.8
+          },
+          {
+            "index": 55,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.8333333333333333
+          },
+          {
+            "index": 56,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.8666666666666667
+          },
+          {
+            "index": 57,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.9
+          },
+          {
+            "index": 58,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.9333333333333333
+          },
+          {
+            "index": 59,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 1.9666666666666666
+          },
+          {
+            "index": 60,
+            "score": {
+              "deviation": 0.23216325136813487,
+              "similarity": 0.7678367486318651
+            },
+            "time_secs": 2.0
+          }
+        ],
+        "half_open_native_frames": {
+          "mean_similarity": 0.7668884909838725,
+          "min_frame_similarity": 0.7659057379599997,
+          "range": "[0,2/1)",
+          "unique_frame_count": 60,
+          "worst_time_seconds": 0.0
+        },
+        "metric": "canonical_rgb24_similarity",
+        "quality_threshold": null,
+        "quality_verdict": "not_defined_descriptive_only",
+        "resolution": {
+          "downsampling": false,
+          "height": 180,
+          "max_dimension": 320,
+          "width": 320
+        },
+        "rgb_only": true,
+        "terminal_probe": {
+          "included_by_comparator": true,
+          "note": "The inclusive duration probe repeats the terminal decoded frame and is not a 61st unique frame.",
+          "sample_index": 60,
+          "similarity": 0.7678367486318651,
+          "time_seconds": 2.0,
+          "unique_native_frame": false
+        }
+      },
+      "alpha_fidelity": "unverified",
+      "export_native_readback": "PASS_EDITED_CONTROLS",
+      "export_aep_sha256": "b907c2f6e87527cb12f3bb0eb70245dd95fd78f18a8bddd78c17ea2f22068398",
+      "adobe_readback": {
+        "status": "ok",
+        "error": null,
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "owned_project_closed": true,
+        "result": {
+          "compositions": [
+            {
+              "name": "OuterGlow",
+              "id": 1,
+              "width": 320,
+              "height": 180,
+              "duration": 2,
+              "fps": 24
+            },
+            {
+              "name": "OuterGlow",
+              "id": 13,
+              "width": 96,
+              "height": 64,
+              "duration": 2,
+              "fps": 24
+            },
+            {
+              "name": "OuterGlow Subject",
+              "id": 14,
+              "width": 96,
+              "height": 64,
+              "duration": 2,
+              "fps": 24
+            },
+            {
+              "name": "Source content clock",
+              "id": 15,
+              "width": 96,
+              "height": 64,
+              "duration": 2,
+              "fps": 24
+            }
+          ],
+          "styles": [
+            {
+              "composition": "OuterGlow",
+              "composition_id": 13,
+              "layer": "OuterGlow Subject",
+              "style": "outerGlow/enabled",
+              "enabled": true,
+              "controls": [
+                {
+                  "match_name": "outerGlow/mode2",
+                  "value": 11,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "outerGlow/opacity",
+                  "value": 65,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "outerGlow/noise",
+                  "value": 0,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "outerGlow/AEColorChoice",
+                  "value": 1,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "outerGlow/color",
+                  "value": [
+                    0.8,
+                    0.1,
+                    0.9,
+                    1
+                  ],
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "outerGlow/gradient",
+                  "value": null,
+                  "error": "Error: After Effects error: Can not get or set a value from this property (matchname is “outerGlow/gradient”). This property’s propertyValueType is PropertyValueType.NO_VALUE.",
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "outerGlow/gradientSmoothness",
+                  "value": 100,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "outerGlow/glowTechnique",
+                  "value": 1,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "outerGlow/chokeMatte",
+                  "value": 40,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "outerGlow/blur",
+                  "value": 18,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "outerGlow/inputRange",
+                  "value": 60,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "outerGlow/shadingNoise",
+                  "value": 0,
+                  "error": null,
+                  "num_keys": 0
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "final_export_hash_equivalence": "UNRUN: user requested no further testing; readbacks apply only to recorded artifact hashes"
+    },
+    {
+      "feature": "InnerGlow",
+      "native_composition_id": 44,
+      "case_id": "aep-layer-styles-styles-static-adobe-c44",
+      "reference": {
+        "fps": 30,
+        "frame_count": 60,
+        "duration_seconds": 2.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "smpte170m",
+        "color_transfer": "smpte170m",
+        "color_primaries": "smpte170m",
+        "audio_streams": [],
+        "render_log_sha256": "9dc71812f6c72ccf9eb9911f6455fbf6c8ef7ef8620cb21ba5ad7ed6bac651a6",
+        "path": "tests/references/aep/main/crates/aftereffects_file/tests/fixtures/layer_styles/styles_static_adobe__composition_44.mp4"
+      },
+      "fx_input_path": "crates/aftereffects_file/tests/fixtures/layer_styles/InnerGlow.edited.fx.json",
+      "fx_input_sha256": "e222278f67df30efcf1ea7beeda822111c0467cb23cdc243fada9cd1d782a9f1",
+      "export_expected_edited_controls": {
+        "color": [
+          0.2,
+          1,
+          0.5,
+          1
+        ],
+        "opacity": 80,
+        "blur": 16,
+        "chokeMatte": 20,
+        "inputRange": 80,
+        "innerGlowSource": 1
+      },
+      "export_render": "UNRUN",
+      "rgb_comparison": {
+        "alpha_fidelity": "unverified",
+        "audio_fidelity": "unverified",
+        "comparator_inclusive": {
+          "mean_similarity": 0.9886665842539626,
+          "min_frame_similarity": 0.9886541603008906,
+          "sample_count": 61,
+          "worst_time_seconds": 1.0
+        },
+        "critical_frame_schedule_status": "declared",
+        "critical_frames": [
+          {
+            "sample_index": 0,
+            "similarity": 0.9886794223388036,
+            "time": "0",
+            "time_seconds": 0.0
+          },
+          {
+            "sample_index": 30,
+            "similarity": 0.9886541603008906,
+            "time": "1",
+            "time_seconds": 1.0
+          },
+          {
+            "sample_index": 59,
+            "similarity": 0.9886541603008906,
+            "time": "59/30",
+            "time_seconds": 1.9666666666666666
+          }
+        ],
+        "frame_results": [
+          {
+            "index": 0,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.0
+          },
+          {
+            "index": 1,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.03333333333333333
+          },
+          {
+            "index": 2,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.06666666666666667
+          },
+          {
+            "index": 3,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.1
+          },
+          {
+            "index": 4,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.13333333333333333
+          },
+          {
+            "index": 5,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.16666666666666666
+          },
+          {
+            "index": 6,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.2
+          },
+          {
+            "index": 7,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.23333333333333334
+          },
+          {
+            "index": 8,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.26666666666666666
+          },
+          {
+            "index": 9,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.3
+          },
+          {
+            "index": 10,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.3333333333333333
+          },
+          {
+            "index": 11,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.36666666666666664
+          },
+          {
+            "index": 12,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.4
+          },
+          {
+            "index": 13,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.43333333333333335
+          },
+          {
+            "index": 14,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.4666666666666667
+          },
+          {
+            "index": 15,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.5
+          },
+          {
+            "index": 16,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.5333333333333333
+          },
+          {
+            "index": 17,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.5666666666666667
+          },
+          {
+            "index": 18,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.6
+          },
+          {
+            "index": 19,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.6333333333333333
+          },
+          {
+            "index": 20,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.6666666666666666
+          },
+          {
+            "index": 21,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.7
+          },
+          {
+            "index": 22,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.7333333333333333
+          },
+          {
+            "index": 23,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.7666666666666666
+          },
+          {
+            "index": 24,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.8
+          },
+          {
+            "index": 25,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.8333333333333334
+          },
+          {
+            "index": 26,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.8666666666666667
+          },
+          {
+            "index": 27,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.9
+          },
+          {
+            "index": 28,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.9333333333333333
+          },
+          {
+            "index": 29,
+            "score": {
+              "deviation": 0.01132057766119643,
+              "similarity": 0.9886794223388036
+            },
+            "time_secs": 0.9666666666666667
+          },
+          {
+            "index": 30,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.0
+          },
+          {
+            "index": 31,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.0333333333333332
+          },
+          {
+            "index": 32,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.0666666666666667
+          },
+          {
+            "index": 33,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.1
+          },
+          {
+            "index": 34,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.1333333333333333
+          },
+          {
+            "index": 35,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.1666666666666667
+          },
+          {
+            "index": 36,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.2
+          },
+          {
+            "index": 37,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.2333333333333334
+          },
+          {
+            "index": 38,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.2666666666666666
+          },
+          {
+            "index": 39,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.3
+          },
+          {
+            "index": 40,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.3333333333333333
+          },
+          {
+            "index": 41,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.3666666666666667
+          },
+          {
+            "index": 42,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.4
+          },
+          {
+            "index": 43,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.4333333333333333
+          },
+          {
+            "index": 44,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.4666666666666666
+          },
+          {
+            "index": 45,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.5
+          },
+          {
+            "index": 46,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.5333333333333332
+          },
+          {
+            "index": 47,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.5666666666666667
+          },
+          {
+            "index": 48,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.6
+          },
+          {
+            "index": 49,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.6333333333333333
+          },
+          {
+            "index": 50,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.6666666666666667
+          },
+          {
+            "index": 51,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.7
+          },
+          {
+            "index": 52,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.7333333333333334
+          },
+          {
+            "index": 53,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.7666666666666666
+          },
+          {
+            "index": 54,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.8
+          },
+          {
+            "index": 55,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.8333333333333333
+          },
+          {
+            "index": 56,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.8666666666666667
+          },
+          {
+            "index": 57,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.9
+          },
+          {
+            "index": 58,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.9333333333333333
+          },
+          {
+            "index": 59,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 1.9666666666666666
+          },
+          {
+            "index": 60,
+            "score": {
+              "deviation": 0.011345839699109406,
+              "similarity": 0.9886541603008906
+            },
+            "time_secs": 2.0
+          }
+        ],
+        "half_open_native_frames": {
+          "mean_similarity": 0.9886667913198471,
+          "min_frame_similarity": 0.9886541603008906,
+          "range": "[0,2/1)",
+          "unique_frame_count": 60,
+          "worst_time_seconds": 1.0
+        },
+        "metric": "canonical_rgb24_similarity",
+        "quality_threshold": null,
+        "quality_verdict": "not_defined_descriptive_only",
+        "resolution": {
+          "downsampling": false,
+          "height": 180,
+          "max_dimension": 320,
+          "width": 320
+        },
+        "rgb_only": true,
+        "terminal_probe": {
+          "included_by_comparator": true,
+          "note": "The inclusive duration probe repeats the terminal decoded frame and is not a 61st unique frame.",
+          "sample_index": 60,
+          "similarity": 0.9886541603008906,
+          "time_seconds": 2.0,
+          "unique_native_frame": false
+        }
+      },
+      "alpha_fidelity": "unverified",
+      "export_native_readback": "PASS_EDITED_CONTROLS",
+      "export_aep_sha256": "d3ba6d9c61ab118b48e5ee59f5bd76a87e3b93213ede94ba7964700a9739b919",
+      "adobe_readback": {
+        "status": "ok",
+        "error": null,
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "owned_project_closed": true,
+        "result": {
+          "compositions": [
+            {
+              "name": "InnerGlow",
+              "id": 1,
+              "width": 320,
+              "height": 180,
+              "duration": 2,
+              "fps": 24
+            },
+            {
+              "name": "InnerGlow",
+              "id": 13,
+              "width": 96,
+              "height": 64,
+              "duration": 2,
+              "fps": 24
+            },
+            {
+              "name": "InnerGlow Subject",
+              "id": 14,
+              "width": 96,
+              "height": 64,
+              "duration": 2,
+              "fps": 24
+            },
+            {
+              "name": "Source content clock",
+              "id": 15,
+              "width": 96,
+              "height": 64,
+              "duration": 2,
+              "fps": 24
+            }
+          ],
+          "styles": [
+            {
+              "composition": "InnerGlow",
+              "composition_id": 13,
+              "layer": "InnerGlow Subject",
+              "style": "innerGlow/enabled",
+              "enabled": true,
+              "controls": [
+                {
+                  "match_name": "innerGlow/mode2",
+                  "value": 11,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "innerGlow/opacity",
+                  "value": 80,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "innerGlow/noise",
+                  "value": 0,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "innerGlow/AEColorChoice",
+                  "value": 1,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "innerGlow/color",
+                  "value": [
+                    0.2,
+                    1,
+                    0.5,
+                    1
+                  ],
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "innerGlow/gradient",
+                  "value": null,
+                  "error": "Error: After Effects error: Can not get or set a value from this property (matchname is “innerGlow/gradient”). This property’s propertyValueType is PropertyValueType.NO_VALUE.",
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "innerGlow/gradientSmoothness",
+                  "value": 100,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "innerGlow/glowTechnique",
+                  "value": 1,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "innerGlow/innerGlowSource",
+                  "value": 1,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "innerGlow/chokeMatte",
+                  "value": 20,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "innerGlow/blur",
+                  "value": 16,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "innerGlow/inputRange",
+                  "value": 80,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "innerGlow/shadingNoise",
+                  "value": 0,
+                  "error": null,
+                  "num_keys": 0
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "final_export_hash_equivalence": "UNRUN: user requested no further testing; readbacks apply only to recorded artifact hashes"
+    },
+    {
+      "feature": "BevelEmboss",
+      "native_composition_id": 58,
+      "case_id": "aep-layer-styles-styles-static-adobe-c58",
+      "reference": {
+        "fps": 30,
+        "frame_count": 60,
+        "duration_seconds": 2.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "smpte170m",
+        "color_transfer": "smpte170m",
+        "color_primaries": "smpte170m",
+        "audio_streams": [],
+        "render_log_sha256": "0f54f43aebcf298f7bcad4f20209955b7825cf6679efb8a38b012793bc685097",
+        "path": "tests/references/aep/main/crates/aftereffects_file/tests/fixtures/layer_styles/styles_static_adobe__composition_58.mp4"
+      },
+      "fx_input_path": "crates/aftereffects_file/tests/fixtures/layer_styles/BevelEmboss.edited.fx.json",
+      "fx_input_sha256": "6dfea01f2d58c78dd68a676298007da372682efcf0127bb8e5971d788211f33e",
+      "export_expected_edited_controls": {
+        "strengthRatio": 220,
+        "bevelDirection": 2,
+        "blur": 12,
+        "softness": 3,
+        "localLightingAngle": 75,
+        "localLightingAltitude": 50,
+        "highlightColor": [
+          1,
+          0.8,
+          0.4,
+          1
+        ],
+        "highlightOpacity": 90,
+        "shadowColor": [
+          0.1,
+          0.2,
+          0.4,
+          1
+        ],
+        "shadowOpacity": 70
+      },
+      "export_render": "UNRUN",
+      "rgb_comparison": {
+        "alpha_fidelity": "unverified",
+        "audio_fidelity": "unverified",
+        "comparator_inclusive": {
+          "mean_similarity": 0.9667050818721671,
+          "min_frame_similarity": 0.9666785799960296,
+          "sample_count": 61,
+          "worst_time_seconds": 0.0
+        },
+        "critical_frame_schedule_status": "declared",
+        "critical_frames": [
+          {
+            "sample_index": 0,
+            "similarity": 0.9666785799960296,
+            "time": "0",
+            "time_seconds": 0.0
+          },
+          {
+            "sample_index": 30,
+            "similarity": 0.9667248261306021,
+            "time": "1",
+            "time_seconds": 1.0
+          },
+          {
+            "sample_index": 59,
+            "similarity": 0.9667309256063568,
+            "time": "59/30",
+            "time_seconds": 1.9666666666666666
+          }
+        ],
+        "frame_results": [
+          {
+            "index": 0,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.0
+          },
+          {
+            "index": 1,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.03333333333333333
+          },
+          {
+            "index": 2,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.06666666666666667
+          },
+          {
+            "index": 3,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.1
+          },
+          {
+            "index": 4,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.13333333333333333
+          },
+          {
+            "index": 5,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.16666666666666666
+          },
+          {
+            "index": 6,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.2
+          },
+          {
+            "index": 7,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.23333333333333334
+          },
+          {
+            "index": 8,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.26666666666666666
+          },
+          {
+            "index": 9,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.3
+          },
+          {
+            "index": 10,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.3333333333333333
+          },
+          {
+            "index": 11,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.36666666666666664
+          },
+          {
+            "index": 12,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.4
+          },
+          {
+            "index": 13,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.43333333333333335
+          },
+          {
+            "index": 14,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.4666666666666667
+          },
+          {
+            "index": 15,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.5
+          },
+          {
+            "index": 16,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.5333333333333333
+          },
+          {
+            "index": 17,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.5666666666666667
+          },
+          {
+            "index": 18,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.6
+          },
+          {
+            "index": 19,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.6333333333333333
+          },
+          {
+            "index": 20,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.6666666666666666
+          },
+          {
+            "index": 21,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.7
+          },
+          {
+            "index": 22,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.7333333333333333
+          },
+          {
+            "index": 23,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.7666666666666666
+          },
+          {
+            "index": 24,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.8
+          },
+          {
+            "index": 25,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.8333333333333334
+          },
+          {
+            "index": 26,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.8666666666666667
+          },
+          {
+            "index": 27,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.9
+          },
+          {
+            "index": 28,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.9333333333333333
+          },
+          {
+            "index": 29,
+            "score": {
+              "deviation": 0.033321420003970426,
+              "similarity": 0.9666785799960296
+            },
+            "time_secs": 0.9666666666666667
+          },
+          {
+            "index": 30,
+            "score": {
+              "deviation": 0.033275173869397934,
+              "similarity": 0.9667248261306021
+            },
+            "time_secs": 1.0
+          },
+          {
+            "index": 31,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.0333333333333332
+          },
+          {
+            "index": 32,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.0666666666666667
+          },
+          {
+            "index": 33,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.1
+          },
+          {
+            "index": 34,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.1333333333333333
+          },
+          {
+            "index": 35,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.1666666666666667
+          },
+          {
+            "index": 36,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.2
+          },
+          {
+            "index": 37,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.2333333333333334
+          },
+          {
+            "index": 38,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.2666666666666666
+          },
+          {
+            "index": 39,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.3
+          },
+          {
+            "index": 40,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.3333333333333333
+          },
+          {
+            "index": 41,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.3666666666666667
+          },
+          {
+            "index": 42,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.4
+          },
+          {
+            "index": 43,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.4333333333333333
+          },
+          {
+            "index": 44,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.4666666666666666
+          },
+          {
+            "index": 45,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.5
+          },
+          {
+            "index": 46,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.5333333333333332
+          },
+          {
+            "index": 47,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.5666666666666667
+          },
+          {
+            "index": 48,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.6
+          },
+          {
+            "index": 49,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.6333333333333333
+          },
+          {
+            "index": 50,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.6666666666666667
+          },
+          {
+            "index": 51,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.7
+          },
+          {
+            "index": 52,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.7333333333333334
+          },
+          {
+            "index": 53,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.7666666666666666
+          },
+          {
+            "index": 54,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.8
+          },
+          {
+            "index": 55,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.8333333333333333
+          },
+          {
+            "index": 56,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.8666666666666667
+          },
+          {
+            "index": 57,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.9
+          },
+          {
+            "index": 58,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.9333333333333333
+          },
+          {
+            "index": 59,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 1.9666666666666666
+          },
+          {
+            "index": 60,
+            "score": {
+              "deviation": 0.03326907439364324,
+              "similarity": 0.9667309256063568
+            },
+            "time_secs": 2.0
+          }
+        ],
+        "half_open_native_frames": {
+          "mean_similarity": 0.9667046511432639,
+          "min_frame_similarity": 0.9666785799960296,
+          "range": "[0,2/1)",
+          "unique_frame_count": 60,
+          "worst_time_seconds": 0.0
+        },
+        "metric": "canonical_rgb24_similarity",
+        "quality_threshold": null,
+        "quality_verdict": "not_defined_descriptive_only",
+        "resolution": {
+          "downsampling": false,
+          "height": 180,
+          "max_dimension": 320,
+          "width": 320
+        },
+        "rgb_only": true,
+        "terminal_probe": {
+          "included_by_comparator": true,
+          "note": "The inclusive duration probe repeats the terminal decoded frame and is not a 61st unique frame.",
+          "sample_index": 60,
+          "similarity": 0.9667309256063568,
+          "time_seconds": 2.0,
+          "unique_native_frame": false
+        }
+      },
+      "alpha_fidelity": "unverified",
+      "export_native_readback": "PASS_EDITED_CONTROLS",
+      "export_aep_sha256": "18092b260fd921e0346e0e09560cf97b8d0230638668bddf9c868c8ec0637256",
+      "adobe_readback": {
+        "status": "ok",
+        "error": null,
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "owned_project_closed": true,
+        "result": {
+          "compositions": [
+            {
+              "name": "BevelEmboss",
+              "id": 1,
+              "width": 320,
+              "height": 180,
+              "duration": 2,
+              "fps": 24
+            },
+            {
+              "name": "BevelEmboss",
+              "id": 13,
+              "width": 96,
+              "height": 64,
+              "duration": 2,
+              "fps": 24
+            },
+            {
+              "name": "BevelEmboss Subject",
+              "id": 14,
+              "width": 96,
+              "height": 64,
+              "duration": 2,
+              "fps": 24
+            },
+            {
+              "name": "Source content clock",
+              "id": 15,
+              "width": 96,
+              "height": 64,
+              "duration": 2,
+              "fps": 24
+            }
+          ],
+          "styles": [
+            {
+              "composition": "BevelEmboss",
+              "composition_id": 13,
+              "layer": "BevelEmboss Subject",
+              "style": "bevelEmboss/enabled",
+              "enabled": true,
+              "controls": [
+                {
+                  "match_name": "bevelEmboss/bevelStyle",
+                  "value": 2,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "bevelEmboss/bevelTechnique",
+                  "value": 1,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "bevelEmboss/strengthRatio",
+                  "value": 220,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "bevelEmboss/bevelDirection",
+                  "value": 2,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "bevelEmboss/blur",
+                  "value": 12,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "bevelEmboss/softness",
+                  "value": 3,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "bevelEmboss/useGlobalAngle",
+                  "value": 0,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "bevelEmboss/localLightingAngle",
+                  "value": 75,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "bevelEmboss/localLightingAltitude",
+                  "value": 50,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "bevelEmboss/highlightMode",
+                  "value": 11,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "bevelEmboss/highlightColor",
+                  "value": [
+                    1,
+                    0.8,
+                    0.4,
+                    1
+                  ],
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "bevelEmboss/highlightOpacity",
+                  "value": 90,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "bevelEmboss/shadowMode",
+                  "value": 5,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "bevelEmboss/shadowColor",
+                  "value": [
+                    0.1,
+                    0.2,
+                    0.4,
+                    1
+                  ],
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "bevelEmboss/shadowOpacity",
+                  "value": 70,
+                  "error": null,
+                  "num_keys": 0
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "final_export_hash_equivalence": "UNRUN: user requested no further testing; readbacks apply only to recorded artifact hashes"
+    },
+    {
+      "feature": "Satin",
+      "native_composition_id": 72,
+      "case_id": "aep-layer-styles-styles-static-adobe-c72",
+      "reference": {
+        "fps": 30,
+        "frame_count": 60,
+        "duration_seconds": 2.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "smpte170m",
+        "color_transfer": "smpte170m",
+        "color_primaries": "smpte170m",
+        "audio_streams": [],
+        "render_log_sha256": "af49456b6b8b20cf715e75caf5f9c4f436676519c937b8fd5c8d3f4a666771bf",
+        "path": "tests/references/aep/main/crates/aftereffects_file/tests/fixtures/layer_styles/styles_static_adobe__composition_72.mp4"
+      },
+      "fx_input_path": "crates/aftereffects_file/tests/fixtures/layer_styles/Satin.edited.fx.json",
+      "fx_input_sha256": "797252abcaef9405be66ee38d877a92b323cf838484b0d2739793fba022e6dd0",
+      "export_expected_edited_controls": {
+        "color": [
+          0.2,
+          0.1,
+          0.8,
+          1
+        ],
+        "opacity": 70,
+        "localLightingAngle": 30.96375653207352,
+        "distance": 17.4928556845359,
+        "blur": 11,
+        "invert": 1
+      },
+      "export_render": "UNRUN",
+      "rgb_comparison": {
+        "alpha_fidelity": "unverified",
+        "audio_fidelity": "unverified",
+        "comparator_inclusive": {
+          "mean_similarity": 0.929172847320229,
+          "min_frame_similarity": 0.929160308432248,
+          "sample_count": 61,
+          "worst_time_seconds": 1.0
+        },
+        "critical_frame_schedule_status": "declared",
+        "critical_frames": [
+          {
+            "sample_index": 0,
+            "similarity": 0.9291858030607303,
+            "time": "0",
+            "time_seconds": 0.0
+          },
+          {
+            "sample_index": 30,
+            "similarity": 0.929160308432248,
+            "time": "1",
+            "time_seconds": 1.0
+          },
+          {
+            "sample_index": 59,
+            "similarity": 0.929160308432248,
+            "time": "59/30",
+            "time_seconds": 1.9666666666666666
+          }
+        ],
+        "frame_results": [
+          {
+            "index": 0,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.0
+          },
+          {
+            "index": 1,
+            "score": {
+              "deviation": 0.07081416362689597,
+              "similarity": 0.929185836373104
+            },
+            "time_secs": 0.03333333333333333
+          },
+          {
+            "index": 2,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.06666666666666667
+          },
+          {
+            "index": 3,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.1
+          },
+          {
+            "index": 4,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.13333333333333333
+          },
+          {
+            "index": 5,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.16666666666666666
+          },
+          {
+            "index": 6,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.2
+          },
+          {
+            "index": 7,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.23333333333333334
+          },
+          {
+            "index": 8,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.26666666666666666
+          },
+          {
+            "index": 9,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.3
+          },
+          {
+            "index": 10,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.3333333333333333
+          },
+          {
+            "index": 11,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.36666666666666664
+          },
+          {
+            "index": 12,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.4
+          },
+          {
+            "index": 13,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.43333333333333335
+          },
+          {
+            "index": 14,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.4666666666666667
+          },
+          {
+            "index": 15,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.5
+          },
+          {
+            "index": 16,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.5333333333333333
+          },
+          {
+            "index": 17,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.5666666666666667
+          },
+          {
+            "index": 18,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.6
+          },
+          {
+            "index": 19,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.6333333333333333
+          },
+          {
+            "index": 20,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.6666666666666666
+          },
+          {
+            "index": 21,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.7
+          },
+          {
+            "index": 22,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.7333333333333333
+          },
+          {
+            "index": 23,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.7666666666666666
+          },
+          {
+            "index": 24,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.8
+          },
+          {
+            "index": 25,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.8333333333333334
+          },
+          {
+            "index": 26,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.8666666666666667
+          },
+          {
+            "index": 27,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.9
+          },
+          {
+            "index": 28,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.9333333333333333
+          },
+          {
+            "index": 29,
+            "score": {
+              "deviation": 0.07081419693926971,
+              "similarity": 0.9291858030607303
+            },
+            "time_secs": 0.9666666666666667
+          },
+          {
+            "index": 30,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.0
+          },
+          {
+            "index": 31,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.0333333333333332
+          },
+          {
+            "index": 32,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.0666666666666667
+          },
+          {
+            "index": 33,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.1
+          },
+          {
+            "index": 34,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.1333333333333333
+          },
+          {
+            "index": 35,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.1666666666666667
+          },
+          {
+            "index": 36,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.2
+          },
+          {
+            "index": 37,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.2333333333333334
+          },
+          {
+            "index": 38,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.2666666666666666
+          },
+          {
+            "index": 39,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.3
+          },
+          {
+            "index": 40,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.3333333333333333
+          },
+          {
+            "index": 41,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.3666666666666667
+          },
+          {
+            "index": 42,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.4
+          },
+          {
+            "index": 43,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.4333333333333333
+          },
+          {
+            "index": 44,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.4666666666666666
+          },
+          {
+            "index": 45,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.5
+          },
+          {
+            "index": 46,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.5333333333333332
+          },
+          {
+            "index": 47,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.5666666666666667
+          },
+          {
+            "index": 48,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.6
+          },
+          {
+            "index": 49,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.6333333333333333
+          },
+          {
+            "index": 50,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.6666666666666667
+          },
+          {
+            "index": 51,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.7
+          },
+          {
+            "index": 52,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.7333333333333334
+          },
+          {
+            "index": 53,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.7666666666666666
+          },
+          {
+            "index": 54,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.8
+          },
+          {
+            "index": 55,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.8333333333333333
+          },
+          {
+            "index": 56,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.8666666666666667
+          },
+          {
+            "index": 57,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.9
+          },
+          {
+            "index": 58,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.9333333333333333
+          },
+          {
+            "index": 59,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 1.9666666666666666
+          },
+          {
+            "index": 60,
+            "score": {
+              "deviation": 0.07083969156775205,
+              "similarity": 0.929160308432248
+            },
+            "time_secs": 2.0
+          }
+        ],
+        "half_open_native_frames": {
+          "mean_similarity": 0.9291730563016954,
+          "min_frame_similarity": 0.929160308432248,
+          "range": "[0,2/1)",
+          "unique_frame_count": 60,
+          "worst_time_seconds": 1.0
+        },
+        "metric": "canonical_rgb24_similarity",
+        "quality_threshold": null,
+        "quality_verdict": "not_defined_descriptive_only",
+        "resolution": {
+          "downsampling": false,
+          "height": 180,
+          "max_dimension": 320,
+          "width": 320
+        },
+        "rgb_only": true,
+        "terminal_probe": {
+          "included_by_comparator": true,
+          "note": "The inclusive duration probe repeats the terminal decoded frame and is not a 61st unique frame.",
+          "sample_index": 60,
+          "similarity": 0.929160308432248,
+          "time_seconds": 2.0,
+          "unique_native_frame": false
+        }
+      },
+      "alpha_fidelity": "unverified",
+      "export_native_readback": "PASS_EDITED_CONTROLS",
+      "export_aep_sha256": "c3b58ff2c08a431d6da6cc9b6b37937795e02a4c81f01b08ba2d4678ad58a297",
+      "adobe_readback": {
+        "status": "ok",
+        "error": null,
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "owned_project_closed": true,
+        "result": {
+          "compositions": [
+            {
+              "name": "Satin",
+              "id": 1,
+              "width": 320,
+              "height": 180,
+              "duration": 2,
+              "fps": 24
+            },
+            {
+              "name": "Satin",
+              "id": 13,
+              "width": 96,
+              "height": 64,
+              "duration": 2,
+              "fps": 24
+            },
+            {
+              "name": "Satin Subject",
+              "id": 14,
+              "width": 96,
+              "height": 64,
+              "duration": 2,
+              "fps": 24
+            },
+            {
+              "name": "Source content clock",
+              "id": 15,
+              "width": 96,
+              "height": 64,
+              "duration": 2,
+              "fps": 24
+            }
+          ],
+          "styles": [
+            {
+              "composition": "Satin",
+              "composition_id": 13,
+              "layer": "Satin Subject",
+              "style": "chromeFX/enabled",
+              "enabled": true,
+              "controls": [
+                {
+                  "match_name": "chromeFX/mode2",
+                  "value": 5,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "chromeFX/color",
+                  "value": [
+                    0.2,
+                    0.1,
+                    0.8,
+                    1
+                  ],
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "chromeFX/opacity",
+                  "value": 70,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "chromeFX/localLightingAngle",
+                  "value": 30.9637565320735,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "chromeFX/distance",
+                  "value": 17.4928556845359,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "chromeFX/blur",
+                  "value": 11,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "chromeFX/invert",
+                  "value": 1,
+                  "error": null,
+                  "num_keys": 0
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "final_export_hash_equivalence": "UNRUN: user requested no further testing; readbacks apply only to recorded artifact hashes"
+    },
+    {
+      "feature": "ColorOverlay",
+      "native_composition_id": 86,
+      "case_id": "aep-layer-styles-styles-static-adobe-c86",
+      "reference": {
+        "fps": 30,
+        "frame_count": 60,
+        "duration_seconds": 2.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "smpte170m",
+        "color_transfer": "smpte170m",
+        "color_primaries": "smpte170m",
+        "audio_streams": [],
+        "render_log_sha256": "1ce678815a4615fc0e28a86866d45012d05ec410748ac7a7aaa3746a2f4416a5",
+        "path": "tests/references/aep/main/crates/aftereffects_file/tests/fixtures/layer_styles/styles_static_adobe__composition_86.mp4"
+      },
+      "fx_input_path": "crates/aftereffects_file/tests/fixtures/layer_styles/ColorOverlay.edited.fx.json",
+      "fx_input_sha256": "38b8d28f4dab51905060ff6371c941dd638f4049338f007bebdc9cca7da0339a",
+      "export_expected_edited_controls": {
+        "color": [
+          0.3,
+          0.8,
+          0.2,
+          1
+        ],
+        "opacity": 80
+      },
+      "export_render": "UNRUN",
+      "rgb_comparison": {
+        "alpha_fidelity": "unverified",
+        "audio_fidelity": "unverified",
+        "comparator_inclusive": {
+          "mean_similarity": 0.9999819658710222,
+          "min_frame_similarity": 0.9999815159373813,
+          "sample_count": 61,
+          "worst_time_seconds": 1.0
+        },
+        "critical_frame_schedule_status": "declared",
+        "critical_frames": [
+          {
+            "sample_index": 0,
+            "similarity": 0.9999824308024512,
+            "time": "0",
+            "time_seconds": 0.0
+          },
+          {
+            "sample_index": 30,
+            "similarity": 0.9999815159373813,
+            "time": "1",
+            "time_seconds": 1.0
+          },
+          {
+            "sample_index": 59,
+            "similarity": 0.9999815159373813,
+            "time": "59/30",
+            "time_seconds": 1.9666666666666666
+          }
+        ],
+        "frame_results": [
+          {
+            "index": 0,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.0
+          },
+          {
+            "index": 1,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.03333333333333333
+          },
+          {
+            "index": 2,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.06666666666666667
+          },
+          {
+            "index": 3,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.1
+          },
+          {
+            "index": 4,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.13333333333333333
+          },
+          {
+            "index": 5,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.16666666666666666
+          },
+          {
+            "index": 6,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.2
+          },
+          {
+            "index": 7,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.23333333333333334
+          },
+          {
+            "index": 8,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.26666666666666666
+          },
+          {
+            "index": 9,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.3
+          },
+          {
+            "index": 10,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.3333333333333333
+          },
+          {
+            "index": 11,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.36666666666666664
+          },
+          {
+            "index": 12,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.4
+          },
+          {
+            "index": 13,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.43333333333333335
+          },
+          {
+            "index": 14,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.4666666666666667
+          },
+          {
+            "index": 15,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.5
+          },
+          {
+            "index": 16,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.5333333333333333
+          },
+          {
+            "index": 17,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.5666666666666667
+          },
+          {
+            "index": 18,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.6
+          },
+          {
+            "index": 19,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.6333333333333333
+          },
+          {
+            "index": 20,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.6666666666666666
+          },
+          {
+            "index": 21,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.7
+          },
+          {
+            "index": 22,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.7333333333333333
+          },
+          {
+            "index": 23,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.7666666666666666
+          },
+          {
+            "index": 24,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.8
+          },
+          {
+            "index": 25,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.8333333333333334
+          },
+          {
+            "index": 26,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.8666666666666667
+          },
+          {
+            "index": 27,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.9
+          },
+          {
+            "index": 28,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.9333333333333333
+          },
+          {
+            "index": 29,
+            "score": {
+              "deviation": 1.7569197548805704e-05,
+              "similarity": 0.9999824308024512
+            },
+            "time_secs": 0.9666666666666667
+          },
+          {
+            "index": 30,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.0
+          },
+          {
+            "index": 31,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.0333333333333332
+          },
+          {
+            "index": 32,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.0666666666666667
+          },
+          {
+            "index": 33,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.1
+          },
+          {
+            "index": 34,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.1333333333333333
+          },
+          {
+            "index": 35,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.1666666666666667
+          },
+          {
+            "index": 36,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.2
+          },
+          {
+            "index": 37,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.2333333333333334
+          },
+          {
+            "index": 38,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.2666666666666666
+          },
+          {
+            "index": 39,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.3
+          },
+          {
+            "index": 40,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.3333333333333333
+          },
+          {
+            "index": 41,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.3666666666666667
+          },
+          {
+            "index": 42,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.4
+          },
+          {
+            "index": 43,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.4333333333333333
+          },
+          {
+            "index": 44,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.4666666666666666
+          },
+          {
+            "index": 45,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.5
+          },
+          {
+            "index": 46,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.5333333333333332
+          },
+          {
+            "index": 47,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.5666666666666667
+          },
+          {
+            "index": 48,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.6
+          },
+          {
+            "index": 49,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.6333333333333333
+          },
+          {
+            "index": 50,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.6666666666666667
+          },
+          {
+            "index": 51,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.7
+          },
+          {
+            "index": 52,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.7333333333333334
+          },
+          {
+            "index": 53,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.7666666666666666
+          },
+          {
+            "index": 54,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.8
+          },
+          {
+            "index": 55,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.8333333333333333
+          },
+          {
+            "index": 56,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.8666666666666667
+          },
+          {
+            "index": 57,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.9
+          },
+          {
+            "index": 58,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.9333333333333333
+          },
+          {
+            "index": 59,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 1.9666666666666666
+          },
+          {
+            "index": 60,
+            "score": {
+              "deviation": 1.8484062618728814e-05,
+              "similarity": 0.9999815159373813
+            },
+            "time_secs": 2.0
+          }
+        ],
+        "half_open_native_frames": {
+          "mean_similarity": 0.9999819733699162,
+          "min_frame_similarity": 0.9999815159373813,
+          "range": "[0,2/1)",
+          "unique_frame_count": 60,
+          "worst_time_seconds": 1.0
+        },
+        "metric": "canonical_rgb24_similarity",
+        "quality_threshold": null,
+        "quality_verdict": "not_defined_descriptive_only",
+        "resolution": {
+          "downsampling": false,
+          "height": 180,
+          "max_dimension": 320,
+          "width": 320
+        },
+        "rgb_only": true,
+        "terminal_probe": {
+          "included_by_comparator": true,
+          "note": "The inclusive duration probe repeats the terminal decoded frame and is not a 61st unique frame.",
+          "sample_index": 60,
+          "similarity": 0.9999815159373813,
+          "time_seconds": 2.0,
+          "unique_native_frame": false
+        }
+      },
+      "alpha_fidelity": "unverified",
+      "export_native_readback": "PASS_EDITED_CONTROLS",
+      "export_aep_sha256": "2c2d96ca10baf926475df6cab7f3911d8712ab2773175dc7bc18eb463942a4d3",
+      "adobe_readback": {
+        "status": "ok",
+        "error": null,
+        "adobe_version": "26.5x89",
+        "adobe_build": 89,
+        "owned_project_closed": true,
+        "result": {
+          "compositions": [
+            {
+              "name": "ColorOverlay",
+              "id": 1,
+              "width": 320,
+              "height": 180,
+              "duration": 2,
+              "fps": 24
+            },
+            {
+              "name": "ColorOverlay",
+              "id": 13,
+              "width": 96,
+              "height": 64,
+              "duration": 2,
+              "fps": 24
+            },
+            {
+              "name": "ColorOverlay Subject",
+              "id": 14,
+              "width": 96,
+              "height": 64,
+              "duration": 2,
+              "fps": 24
+            },
+            {
+              "name": "Source content clock",
+              "id": 15,
+              "width": 96,
+              "height": 64,
+              "duration": 2,
+              "fps": 24
+            }
+          ],
+          "styles": [
+            {
+              "composition": "ColorOverlay",
+              "composition_id": 13,
+              "layer": "ColorOverlay Subject",
+              "style": "solidFill/enabled",
+              "enabled": true,
+              "controls": [
+                {
+                  "match_name": "solidFill/mode2",
+                  "value": 1,
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "solidFill/color",
+                  "value": [
+                    0.3,
+                    0.8,
+                    0.2,
+                    1
+                  ],
+                  "error": null,
+                  "num_keys": 0
+                },
+                {
+                  "match_name": "solidFill/opacity",
+                  "value": 80,
+                  "error": null,
+                  "num_keys": 0
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "final_export_hash_equivalence": "UNRUN: user requested no further testing; readbacks apply only to recorded artifact hashes"
+    },
+    {
+      "feature": "GradientOverlay",
+      "native_composition_id": 100,
+      "case_id": "aep-layer-styles-styles-static-adobe-c100",
+      "reference": {
+        "fps": 30,
+        "frame_count": 60,
+        "duration_seconds": 2.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "smpte170m",
+        "color_transfer": "smpte170m",
+        "color_primaries": "smpte170m",
+        "audio_streams": [],
+        "render_log_sha256": "356f1475a6d88808452f7cc148b98e869a0bfe7ea612b802408bda17144dc69d",
+        "path": "tests/references/aep/main/crates/aftereffects_file/tests/fixtures/layer_styles/styles_static_adobe__composition_100.mp4"
+      },
+      "fx_input_path": "crates/aftereffects_file/tests/fixtures/layer_styles/GradientOverlay.edited.fx.json",
+      "fx_input_sha256": "f13af12999ce6a91775d0bb697171231748e59d00fcf50f24a67e6b0a5dbf331",
+      "export_expected_edited_controls": {
+        "opacity": 70,
+        "angle": 18.43494882292201,
+        "type": 1,
+        "scale": 94.86832980505137,
+        "offset": [
+          0,
+          0
+        ]
+      },
+      "export_render": "UNRUN",
+      "rgb_comparison": {
+        "alpha_fidelity": "unverified",
+        "audio_fidelity": "unverified",
+        "comparator_inclusive": {
+          "mean_similarity": 0.8919611131008554,
+          "min_frame_similarity": 0.8919542420420071,
+          "sample_count": 61,
+          "worst_time_seconds": 1.0333333333333332
+        },
+        "critical_frame_schedule_status": "declared",
+        "critical_frames": [
+          {
+            "sample_index": 0,
+            "similarity": 0.8919783468153845,
+            "time": "0",
+            "time_seconds": 0.0
+          },
+          {
+            "sample_index": 30,
+            "similarity": 0.8919631921098982,
+            "time": "1",
+            "time_seconds": 1.0
+          },
+          {
+            "sample_index": 59,
+            "similarity": 0.8919542420420071,
+            "time": "59/30",
+            "time_seconds": 1.9666666666666666
+          }
+        ],
+        "frame_results": [
+          {
+            "index": 0,
+            "score": {
+              "deviation": 0.10802165318461554,
+              "similarity": 0.8919783468153845
+            },
+            "time_secs": 0.0
+          },
+          {
+            "index": 1,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.03333333333333333
+          },
+          {
+            "index": 2,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.06666666666666667
+          },
+          {
+            "index": 3,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.1
+          },
+          {
+            "index": 4,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.13333333333333333
+          },
+          {
+            "index": 5,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.16666666666666666
+          },
+          {
+            "index": 6,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.2
+          },
+          {
+            "index": 7,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.23333333333333334
+          },
+          {
+            "index": 8,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.26666666666666666
+          },
+          {
+            "index": 9,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.3
+          },
+          {
+            "index": 10,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.3333333333333333
+          },
+          {
+            "index": 11,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.36666666666666664
+          },
+          {
+            "index": 12,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.4
+          },
+          {
+            "index": 13,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.43333333333333335
+          },
+          {
+            "index": 14,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.4666666666666667
+          },
+          {
+            "index": 15,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.5
+          },
+          {
+            "index": 16,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.5333333333333333
+          },
+          {
+            "index": 17,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.5666666666666667
+          },
+          {
+            "index": 18,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.6
+          },
+          {
+            "index": 19,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.6333333333333333
+          },
+          {
+            "index": 20,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.6666666666666666
+          },
+          {
+            "index": 21,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.7
+          },
+          {
+            "index": 22,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.7333333333333333
+          },
+          {
+            "index": 23,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.7666666666666666
+          },
+          {
+            "index": 24,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.8
+          },
+          {
+            "index": 25,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.8333333333333334
+          },
+          {
+            "index": 26,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.8666666666666667
+          },
+          {
+            "index": 27,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.9
+          },
+          {
+            "index": 28,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.9333333333333333
+          },
+          {
+            "index": 29,
+            "score": {
+              "deviation": 0.10803244486321795,
+              "similarity": 0.891967555136782
+            },
+            "time_secs": 0.9666666666666667
+          },
+          {
+            "index": 30,
+            "score": {
+              "deviation": 0.10803680789010184,
+              "similarity": 0.8919631921098982
+            },
+            "time_secs": 1.0
+          },
+          {
+            "index": 31,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.0333333333333332
+          },
+          {
+            "index": 32,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.0666666666666667
+          },
+          {
+            "index": 33,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.1
+          },
+          {
+            "index": 34,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.1333333333333333
+          },
+          {
+            "index": 35,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.1666666666666667
+          },
+          {
+            "index": 36,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.2
+          },
+          {
+            "index": 37,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.2333333333333334
+          },
+          {
+            "index": 38,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.2666666666666666
+          },
+          {
+            "index": 39,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.3
+          },
+          {
+            "index": 40,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.3333333333333333
+          },
+          {
+            "index": 41,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.3666666666666667
+          },
+          {
+            "index": 42,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.4
+          },
+          {
+            "index": 43,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.4333333333333333
+          },
+          {
+            "index": 44,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.4666666666666666
+          },
+          {
+            "index": 45,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.5
+          },
+          {
+            "index": 46,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.5333333333333332
+          },
+          {
+            "index": 47,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.5666666666666667
+          },
+          {
+            "index": 48,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.6
+          },
+          {
+            "index": 49,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.6333333333333333
+          },
+          {
+            "index": 50,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.6666666666666667
+          },
+          {
+            "index": 51,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.7
+          },
+          {
+            "index": 52,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.7333333333333334
+          },
+          {
+            "index": 53,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.7666666666666666
+          },
+          {
+            "index": 54,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.8
+          },
+          {
+            "index": 55,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.8333333333333333
+          },
+          {
+            "index": 56,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.8666666666666667
+          },
+          {
+            "index": 57,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.9
+          },
+          {
+            "index": 58,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.9333333333333333
+          },
+          {
+            "index": 59,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 1.9666666666666666
+          },
+          {
+            "index": 60,
+            "score": {
+              "deviation": 0.10804575795799287,
+              "similarity": 0.8919542420420071
+            },
+            "time_secs": 2.0
+          }
+        ],
+        "half_open_native_frames": {
+          "mean_similarity": 0.8919612276185027,
+          "min_frame_similarity": 0.8919542420420071,
+          "range": "[0,2/1)",
+          "unique_frame_count": 60,
+          "worst_time_seconds": 1.0333333333333332
+        },
+        "metric": "canonical_rgb24_similarity",
+        "quality_threshold": null,
+        "quality_verdict": "not_defined_descriptive_only",
+        "resolution": {
+          "downsampling": false,
+          "height": 180,
+          "max_dimension": 320,
+          "width": 320
+        },
+        "rgb_only": true,
+        "terminal_probe": {
+          "included_by_comparator": true,
+          "note": "The inclusive duration probe repeats the terminal decoded frame and is not a 61st unique frame.",
+          "sample_index": 60,
+          "similarity": 0.8919542420420071,
+          "time_seconds": 2.0,
+          "unique_native_frame": false
+        }
+      },
+      "alpha_fidelity": "unverified",
+      "export_native_readback": "TIMED_OUT_BEFORE_REPAIR",
+      "blocker": "Additional Adobe validation blocked by an active GUI session not owned by this task. No attachment or termination attempted.",
+      "final_export_hash_equivalence": "UNRUN: user requested no further testing; readbacks apply only to recorded artifact hashes"
+    },
+    {
+      "feature": "Stroke",
+      "native_composition_id": 114,
+      "case_id": "aep-layer-styles-styles-static-adobe-c114",
+      "reference": {
+        "fps": 30,
+        "frame_count": 60,
+        "duration_seconds": 2.0,
+        "width": 320,
+        "height": 180,
+        "pixel_format": "yuv420p",
+        "color_space": "smpte170m",
+        "color_transfer": "smpte170m",
+        "color_primaries": "smpte170m",
+        "audio_streams": [],
+        "render_log_sha256": "65161c2f63e7ad2cfd61023dcf5a00d392b054c0f8b25714e11c131e5108c8fd",
+        "path": "tests/references/aep/main/crates/aftereffects_file/tests/fixtures/layer_styles/styles_static_adobe__composition_114.mp4"
+      },
+      "fx_input_path": "crates/aftereffects_file/tests/fixtures/layer_styles/Stroke.edited.fx.json",
+      "fx_input_sha256": "fcfd059d94e50b339358ef3cfed08db354d840118ae10f24da184c3a233f6948",
+      "export_expected_edited_controls": {
+        "color": [
+          0.8,
+          0.6,
+          0.1,
+          1
+        ],
+        "opacity": 75,
+        "size": 12,
+        "style": 1
+      },
+      "export_render": "UNRUN",
+      "rgb_comparison": {
+        "alpha_fidelity": "unverified",
+        "audio_fidelity": "unverified",
+        "comparator_inclusive": {
+          "mean_similarity": 0.9183009529924336,
+          "min_frame_similarity": 0.9182878503037237,
+          "sample_count": 61,
+          "worst_time_seconds": 0.0
+        },
+        "critical_frame_schedule_status": "declared",
+        "critical_frames": [
+          {
+            "sample_index": 0,
+            "similarity": 0.9182878503037237,
+            "time": "0",
+            "time_seconds": 0.0
+          },
+          {
+            "sample_index": 30,
+            "similarity": 0.9183136330137657,
+            "time": "1",
+            "time_seconds": 1.0
+          },
+          {
+            "sample_index": 59,
+            "similarity": 0.9183136330137657,
+            "time": "59/30",
+            "time_seconds": 1.9666666666666666
+          }
+        ],
+        "frame_results": [
+          {
+            "index": 0,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.0
+          },
+          {
+            "index": 1,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.03333333333333333
+          },
+          {
+            "index": 2,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.06666666666666667
+          },
+          {
+            "index": 3,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.1
+          },
+          {
+            "index": 4,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.13333333333333333
+          },
+          {
+            "index": 5,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.16666666666666666
+          },
+          {
+            "index": 6,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.2
+          },
+          {
+            "index": 7,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.23333333333333334
+          },
+          {
+            "index": 8,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.26666666666666666
+          },
+          {
+            "index": 9,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.3
+          },
+          {
+            "index": 10,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.3333333333333333
+          },
+          {
+            "index": 11,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.36666666666666664
+          },
+          {
+            "index": 12,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.4
+          },
+          {
+            "index": 13,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.43333333333333335
+          },
+          {
+            "index": 14,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.4666666666666667
+          },
+          {
+            "index": 15,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.5
+          },
+          {
+            "index": 16,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.5333333333333333
+          },
+          {
+            "index": 17,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.5666666666666667
+          },
+          {
+            "index": 18,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.6
+          },
+          {
+            "index": 19,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.6333333333333333
+          },
+          {
+            "index": 20,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.6666666666666666
+          },
+          {
+            "index": 21,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.7
+          },
+          {
+            "index": 22,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.7333333333333333
+          },
+          {
+            "index": 23,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.7666666666666666
+          },
+          {
+            "index": 24,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.8
+          },
+          {
+            "index": 25,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.8333333333333334
+          },
+          {
+            "index": 26,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.8666666666666667
+          },
+          {
+            "index": 27,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.9
+          },
+          {
+            "index": 28,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.9333333333333333
+          },
+          {
+            "index": 29,
+            "score": {
+              "deviation": 0.08171214969627627,
+              "similarity": 0.9182878503037237
+            },
+            "time_secs": 0.9666666666666667
+          },
+          {
+            "index": 30,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.0
+          },
+          {
+            "index": 31,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.0333333333333332
+          },
+          {
+            "index": 32,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.0666666666666667
+          },
+          {
+            "index": 33,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.1
+          },
+          {
+            "index": 34,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.1333333333333333
+          },
+          {
+            "index": 35,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.1666666666666667
+          },
+          {
+            "index": 36,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.2
+          },
+          {
+            "index": 37,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.2333333333333334
+          },
+          {
+            "index": 38,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.2666666666666666
+          },
+          {
+            "index": 39,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.3
+          },
+          {
+            "index": 40,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.3333333333333333
+          },
+          {
+            "index": 41,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.3666666666666667
+          },
+          {
+            "index": 42,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.4
+          },
+          {
+            "index": 43,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.4333333333333333
+          },
+          {
+            "index": 44,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.4666666666666666
+          },
+          {
+            "index": 45,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.5
+          },
+          {
+            "index": 46,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.5333333333333332
+          },
+          {
+            "index": 47,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.5666666666666667
+          },
+          {
+            "index": 48,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.6
+          },
+          {
+            "index": 49,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.6333333333333333
+          },
+          {
+            "index": 50,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.6666666666666667
+          },
+          {
+            "index": 51,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.7
+          },
+          {
+            "index": 52,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.7333333333333334
+          },
+          {
+            "index": 53,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.7666666666666666
+          },
+          {
+            "index": 54,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.8
+          },
+          {
+            "index": 55,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.8333333333333333
+          },
+          {
+            "index": 56,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.8666666666666667
+          },
+          {
+            "index": 57,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.9
+          },
+          {
+            "index": 58,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.9333333333333333
+          },
+          {
+            "index": 59,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 1.9666666666666666
+          },
+          {
+            "index": 60,
+            "score": {
+              "deviation": 0.08168636698623433,
+              "similarity": 0.9183136330137657
+            },
+            "time_secs": 2.0
+          }
+        ],
+        "half_open_native_frames": {
+          "mean_similarity": 0.9183007416587448,
+          "min_frame_similarity": 0.9182878503037237,
+          "range": "[0,2/1)",
+          "unique_frame_count": 60,
+          "worst_time_seconds": 0.0
+        },
+        "metric": "canonical_rgb24_similarity",
+        "quality_threshold": null,
+        "quality_verdict": "not_defined_descriptive_only",
+        "resolution": {
+          "downsampling": false,
+          "height": 180,
+          "max_dimension": 320,
+          "width": 320
+        },
+        "rgb_only": true,
+        "terminal_probe": {
+          "included_by_comparator": true,
+          "note": "The inclusive duration probe repeats the terminal decoded frame and is not a 61st unique frame.",
+          "sample_index": 60,
+          "similarity": 0.9183136330137657,
+          "time_seconds": 2.0,
+          "unique_native_frame": false
+        }
+      },
+      "alpha_fidelity": "unverified",
+      "export_native_readback": "UNRUN",
+      "blocker": "Additional Adobe validation blocked by an active GUI session not owned by this task. No attachment or termination attempted.",
+      "final_export_hash_equivalence": "UNRUN: user requested no further testing; readbacks apply only to recorded artifact hashes"
+    }
+  ],
+  "validation": {
+    "final_scoped_cpu": "22 passed, 928 filtered before final test-only strengthening; final edit not rerun per user instruction",
+    "normal_cpu_checkpoint": "609 passed before native fixes",
+    "reference_publication": "9 long_term Assets freshly downloaded and SHA/size verified",
+    "final_tree": "Not revalidated; user requested immediate PR and no further tests",
+    "gradient_grammar_cpu": "1 passed"
+  }
+}

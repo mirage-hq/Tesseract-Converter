@@ -1,0 +1,20 @@
+{
+  "upstream": "https://github.com/forticheprod/py-aep",
+  "revision": "e12a451c35bacd3f34a080090265f9370e66162b",
+  "license": "MIT (see LICENSE)",
+  "evidence": "Native AEP and upstream AE JSON projection; no Adobe render or UI inspection performed here.",
+  "files": [
+    {
+      "path": "multiple_controllers.aep",
+      "upstream_path": "samples/models/essential_graphics/multiple_controllers.aep",
+      "sha256": "df08145c4be5d3547b1bb5650b48be777f8663d0d88dc472f65990f0ac37c6d3",
+      "size": 141003
+    },
+    {
+      "path": "multiple_controllers.json.gz",
+      "upstream_path": "samples/models/essential_graphics/multiple_controllers.json",
+      "sha256": "467d5e339a4686c3029ba3384c7fe9e1a4b44ee6e8cd297eeb4278c6e052bace",
+      "size": 523479
+    }
+  ]
+}

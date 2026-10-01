@@ -1,0 +1,24 @@
+{
+  "composition_id": 1,
+  "composition_name": "AEP_PROOF_SCALE",
+  "layer_id": 17,
+  "background_layer_id": 15,
+  "fps": 24,
+  "frames": 48,
+  "width": 1920,
+  "height": 1080,
+  "foreground_size": [
+    480,
+    270
+  ],
+  "scale": [
+    150,
+    50,
+    100
+  ],
+  "source_sha256": "678f6146239573b0f20b55688751dc9b3661d4cde7cc28f0cd73f921772e34ef",
+  "source_bytes": 86309,
+  "author": "After Effects JSX DoScriptFile",
+  "ae_version": "26.5x89",
+  "case": "static_scale"
+}

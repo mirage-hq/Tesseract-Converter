@@ -1,0 +1,49 @@
+{
+  "controls": [
+    {
+      "keys": [
+        [
+          0,
+          4
+        ],
+        [
+          0.5,
+          18
+        ],
+        [
+          1,
+          30
+        ]
+      ],
+      "name": "ADBE Gaussian Blur 2-0001",
+      "segments": [
+        "hold",
+        "linear"
+      ],
+      "valueAtTime": [
+        [
+          0,
+          4
+        ],
+        [
+          0.25,
+          4
+        ],
+        [
+          0.5,
+          18
+        ],
+        [
+          0.75,
+          24
+        ],
+        [
+          1,
+          30
+        ]
+      ]
+    }
+  ],
+  "effect": "ADBE Gaussian Blur 2",
+  "enabled": true
+}

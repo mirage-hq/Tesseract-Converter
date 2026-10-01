@@ -1,0 +1,151 @@
+{
+  "note": "Thumbnails only; the measurement uses every frame at full resolution. Rows Adobe / historical FX / integrated FX. Optional frame_scores align one-to-one with frame_indices where critical per-frame metrics are recorded. No crop or reference replacement.",
+  "run": "integrated-477-e9724e878",
+  "samples": [
+    {
+      "image": "gradient-background.png",
+      "case_id": "import_isolated_native_gradients-1cb781c4-c27",
+      "frame_indices": [
+        0,
+        150,
+        299
+      ],
+      "times_seconds": [
+        0.0,
+        5.0,
+        9.966666666666667
+      ],
+      "baseline_minimum_score": 0.010823723841166647,
+      "minimum_score": 0.9898696453170404,
+      "compared_frames": 300,
+      "reference_asset_id": "LFE2JYFgiQglXZdFTxzJ_vid",
+      "reference_sha256": "1abdfad676e34bf6e47fd4085e54e5093696f04ed5fda5c2b39d89c975a88c69",
+      "source_sha256": "1cb781c461114a4044e635c24cae6b0802c386ed13277eae8cfdec8d2d1c4d63"
+    },
+    {
+      "image": "gradient-default.png",
+      "case_id": "import_gradient_controls-5406fe7f-c77",
+      "frame_indices": [
+        0,
+        45,
+        89
+      ],
+      "times_seconds": [
+        0.0,
+        1.5,
+        2.966666666666667
+      ],
+      "baseline_minimum_score": 0.9383633017419718,
+      "minimum_score": 0.9953398306051522,
+      "compared_frames": 90,
+      "reference_asset_id": "KSeXcm60Grt3d79lkigf_vid",
+      "reference_sha256": "f17a5429c1c16a3a82c48f624b2154e2b1e41b5e68a91424bd2d31ad791a70d7",
+      "source_sha256": "5406fe7f92d697e0882d11a8804c436785b51f533d813419364826b5f35ffcce"
+    },
+    {
+      "image": "text-baseline.png",
+      "case_id": "import_full_justification_variants-c182f48a-c17",
+      "frame_indices": [
+        0,
+        45,
+        89
+      ],
+      "times_seconds": [
+        0.0,
+        1.5,
+        2.966666666666667
+      ],
+      "baseline_minimum_score": 0.9329251151390997,
+      "minimum_score": 0.9600764498595338,
+      "compared_frames": 90,
+      "reference_asset_id": "JwqXI8TU7h3MuFDrgicK_vid",
+      "reference_sha256": "99f10da63e31aecb60600a0b92f53f12b1c5392c50361d926170fe27569f9725",
+      "source_sha256": "c182f48ab8577ccbdb1e851674bc43b56f1b73eeb4082b6b989b21b8733ca7fc"
+    },
+    {
+      "image": "solid-anchor.png",
+      "case_id": "native_export_edit_controls-c961d610-c1",
+      "frame_indices": [
+        0,
+        45,
+        89
+      ],
+      "times_seconds": [
+        0.0,
+        1.5,
+        2.966666666666667
+      ],
+      "baseline_minimum_score": 0.9246342886552819,
+      "minimum_score": 0.9999569729963939,
+      "compared_frames": 90,
+      "reference_asset_id": "830NKfCY4AArukAfDh6X_vid",
+      "reference_sha256": "32f0bee4f215df1f49bc57ec6d465ff656fb2fd6b829d464d2c85a46e1d463b0",
+      "source_sha256": "c961d610151a74279f85b3fb54583c90379e870a375e01b65ad5ec0e2b5eb7ee"
+    },
+    {
+      "image": "mask-opacity.png",
+      "case_id": "import_temporal_clock_cases-d80216ea-c57",
+      "frame_indices": [
+        15,
+        40,
+        89
+      ],
+      "times_seconds": [
+        0.5,
+        1.3333333333333333,
+        2.966666666666667
+      ],
+      "baseline_minimum_score": 0.9480404873061891,
+      "minimum_score": 0.997888091319574,
+      "compared_frames": 90,
+      "reference_asset_id": "DmROKiO0rmKIuUwsbJGT_vid",
+      "reference_sha256": "546b9b332069009b0b7a7683edbd35dab075d69eec77b21304feccd56c89ec46",
+      "source_sha256": "d80216eacadb2ba319ea6434184ef6253f3337317e03d67720137edf92ac9cf9"
+    },
+    {
+      "image": "reverse-unresolved.png",
+      "case_id": "import_temporal_clock_cases-d80216ea-c30",
+      "frame_indices": [
+        0,
+        45,
+        89
+      ],
+      "times_seconds": [
+        0.0,
+        1.5,
+        2.966666666666667
+      ],
+      "baseline_minimum_score": 0.9352196582428282,
+      "minimum_score": 0.9352196582428282,
+      "compared_frames": 90,
+      "reference_asset_id": "iidNOIxqrANrdX7DGMjZ_vid",
+      "reference_sha256": "16e482169c1f44c60e8bc6c1416aa906c46c33aded1009d3241dd8c002f88d0b",
+      "source_sha256": "d80216eacadb2ba319ea6434184ef6253f3337317e03d67720137edf92ac9cf9"
+    },
+    {
+      "image": "pixel-motion-unresolved.png",
+      "case_id": "import_audio_media_controls-36920d6b-c139",
+      "frame_indices": [
+        17,
+        18,
+        19
+      ],
+      "times_seconds": [
+        0.5666666666666667,
+        0.6,
+        0.6333333333333333
+      ],
+      "frame_scores": [
+        0.9743010643105838,
+        0.9489544923805896,
+        0.9679148885993947
+      ],
+      "baseline_minimum_score": 0.9489544923805896,
+      "minimum_score": 0.9489544923805896,
+      "compared_frames": 90,
+      "reference_asset_id": "FyiRLrxWfHQjFGXEi35Z_vid",
+      "reference_sha256": "9e2fb302b2825661ae771b3bd9a101d6995e831f9f8d83e072a8add81a7edfea",
+      "source_sha256": "36920d6bdc07dbb6292cc305327ace44efbacacb182dc18da3c979439f5473a8"
+    }
+  ]
+}

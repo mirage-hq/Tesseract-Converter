@@ -1,0 +1,91 @@
+{
+  "total": 477,
+  "scored": 477,
+  "execution_errors": 0,
+  "success": 464,
+  "failure": 13,
+  "policy": "minimum frame similarity >=0.95; execution failures have score=null",
+  "limitations": [
+    "Import measurements from the recorded per-case builds, not yet a single final-build regression run.",
+    "FX->AEP independent Adobe proof remains unrun.",
+    "Fontbyte version vsAdobe unverified for stagedtextfonts."
+  ],
+  "total_compared_frames": 39780,
+  "execution_runs": {
+    "approved-fix-results": {
+      "binary_sha256": {
+        "tesseract-conv": "91947f288fd147eb1d693c67844636e2bb28d6e3f1c390d996491846d3263702",
+        "tsrct": "e1d7a189bed5c18051338799d14dbd4328219cf99d61619f6813bd48fcc97a79",
+        "validation_cli": "de301ef4f3f0bd941ad359639f591a46482f341fc534b3a269d11aa3cdef2f10"
+      },
+      "policy": "No pass threshold; full-resolution canonical RGB24, 30fps every frame. Fonts same hash as baseline, Adobe font version unverified.",
+      "fresh_render_cases": 6,
+      "existing_video_cases": 3,
+      "source_provenance": {
+        "status": "not_recorded",
+        "limitation": "This historical receipt recorded binary hashes but not the exact source revision/worktree state. Do not treat these scores as a reproducible source build. Current authoritative measurements are in integrated-477.json."
+      },
+      "existing_video_case_ids": [
+        "import_media_replacement_cases-271e7ac7-c30",
+        "import_isolated_native_gradients-1cb781c4-c27",
+        "import_isolated_native_gradients-1cb781c4-c14"
+      ],
+      "note": "Six new renders; three original-baseline videos re-compared with fixed selector. No reference changes."
+    },
+    "font-retry-69333c00d": {
+      "baseline": "tmp/aep-validation/import-corpus-69333c00d",
+      "font_sha256": {
+        "Arial.ttf": "525979822591a3447cfc49d943d6f7683508e25543407871c0ed8fed05fd2bd9",
+        "Helvetica.ttc": "25eceb458d4baf628ee0b6a135a9f8ac5ec7b2826646720834bd2bf00dfc825a"
+      },
+      "limitations": [
+        "Same-name local fonts are explicit hashed inputs; Adobe reference manifest does not pin font bytes, so identical Adobe font versions are unverified.",
+        "Font files and packaged documents remain private local artifacts; do not commit/upload them.",
+        "No converter or renderer source changes. Raw measurements, no formal pass/fail policy."
+      ]
+    },
+    "import-corpus-69333c00d": {
+      "commit": "69333c00d8082ea4b04d175aeaa97a8156e80cb0",
+      "manifest_sha256": "7d03d8e1c4cbbf8057a3840f1fbac1dd139ce1f87dcb9cc8ca234a5aa4e83fec",
+      "binary_sha256": {
+        "tesseract-conv": "eecc5cc7095ffaf713b79c2b9795511ad5a261710827a7887050841a788d7e5f",
+        "tsrct": "e1d7a189bed5c18051338799d14dbd4328219cf99d61619f6813bd48fcc97a79",
+        "validation_cli": "f2fd15d79911dde53f487e3ba71f5ccbfa3ba396287a5feb5a5051e10e2afefe"
+      },
+      "policy": {
+        "status": "measurement_only_no_pass_threshold",
+        "algorithm": "rgb-hybrid",
+        "decode": "canonical_rgb24",
+        "resolution": "full",
+        "sample_interval": "1/reference_fps",
+        "frame_limit": "reference_frame_count",
+        "render_concurrency": 1,
+        "command_timeout_seconds": 180
+      }
+    },
+    "old-errors-recovery": {
+      "commit": "e1bcb6a119b8ffb56dfdb806ee4524124bb8ba25",
+      "worktree_status": "M  crates/aftereffects_file/src/structure_document/shapes/bindings.rs\nAM crates/aftereffects_file/src/structure_document/shapes/bindings/tests.rs\nM  crates/aftereffects_file/src/structure_document/shapes/lowering.rs\nM  crates/aftereffects_file/src/structure_document/shapes/program/tests.rs",
+      "manifest_sha256": "263b759c4503a56c4681a9209268d530ee13d2f7813763d09960c5658ff49a7b",
+      "binary_sha256": {
+        "tesseract-conv": "6dbe07cc11a706f078d00f70352baebc67d14f1490d2dab8757f865a751fecf6",
+        "tsrct": "7f4e34775483c55950903a1ee76b724573833ae421b4a35f9b806e03d513fc8f",
+        "validation_cli": "de301ef4f3f0bd941ad359639f591a46482f341fc534b3a269d11aa3cdef2f10"
+      },
+      "policy": "30fps, full resolution, canonical RGB24, rgb-hybrid; minimum frame score >=0.95"
+    },
+    "pr4449-first-run": {
+      "commit": "e1bcb6a119b8ffb56dfdb806ee4524124bb8ba25",
+      "worktree_status": "M  crates/aftereffects_file/src/structure_document/shapes/bindings.rs\nAM crates/aftereffects_file/src/structure_document/shapes/bindings/tests.rs\nM  crates/aftereffects_file/src/structure_document/shapes/lowering.rs\nM  crates/aftereffects_file/src/structure_document/shapes/program/tests.rs",
+      "manifest_sha256": "263b759c4503a56c4681a9209268d530ee13d2f7813763d09960c5658ff49a7b",
+      "binary_sha256": {
+        "tesseract-conv": "6dbe07cc11a706f078d00f70352baebc67d14f1490d2dab8757f865a751fecf6",
+        "tsrct": "7f4e34775483c55950903a1ee76b724573833ae421b4a35f9b806e03d513fc8f",
+        "validation_cli": "de301ef4f3f0bd941ad359639f591a46482f341fc534b3a269d11aa3cdef2f10"
+      },
+      "policy": "30fps, full resolution, canonical RGB24, rgb-hybrid; minimum frame score >=0.95"
+    }
+  },
+  "structural_proof": "Only explicitly reported targeted assertions were executed; this CSV does not promote all registry tests to passed.",
+  "direction_limits": "Import RGB measurement only. No proof of alpha/audio, exact text, Adobe UI controls, or edited FX-to-AEP export."
+}

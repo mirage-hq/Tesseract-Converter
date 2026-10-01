@@ -1,0 +1,26 @@
+{
+  "status": "equivalent",
+  "prior_project": {
+    "bytes": 8437,
+    "sha256": "783ea3cefdc4bc82a10d4ee38056538cc977a95f116f265e78ee161207dd258e",
+    "file": "candidate-9a915008f.prproj"
+  },
+  "candidate_project": {
+    "bytes": 8436,
+    "sha256": "a90c65bdc00662b63d0a2dc8cfda784ea8cabe81793f3e0eb0a04fe95ae7d9b3",
+    "file": "candidate-82979b5b1.prproj"
+  },
+  "sequence_uid": "ba6c3404-11d1-48a3-81fb-823eebbb1f49",
+  "xml_nodes_each": 913,
+  "GUID_renames": 36,
+  "allowed_differences": {
+    "GUID text fields": 20,
+    "GUID attributes": 41,
+    "UTF16 GUID metadata payloads": 2,
+    "absolute media paths": 4
+  },
+  "class_ids_and_all_other_fields": "exactly equal; not normalized",
+  "GUID_consistency": "bijective mapping, including unchanged references and static GUIDs",
+  "ModificationState": "Decoded UTF16 GUIDs agree with the native content state; no payload discarded.",
+  "media": "both files byte-identical"
+}

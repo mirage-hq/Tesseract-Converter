@@ -1,0 +1,39 @@
+{
+  "source_sha256": "6d632ac99c9e081746d51b83a651cb311dc063f0541bbe43ba1a241bd8870fdd",
+  "source_composition": 1011,
+  "source_layers": [
+    1026,
+    1025,
+    1024
+  ],
+  "chunks": [
+    {
+      "offset": 2640132,
+      "bytes": 12794,
+      "sha256": "754d092557d9983c03f764d71ea19ef682feeace2e5ffa6dbe84e7f53d10fd81"
+    },
+    {
+      "offset": 2653170,
+      "bytes": 15632,
+      "sha256": "2a30caa7b405f111cd4d4421841b1a6694351889f94fc93d54618ce4880f8b75"
+    },
+    {
+      "offset": 2669162,
+      "bytes": 15632,
+      "sha256": "5dee17c3ea6eb0128749370e76dd4f93a91e6e0eb8b0d45585216dad463d051e"
+    },
+    {
+      "offset": 7966,
+      "bytes": 2992,
+      "sha256": "8d49295aa3d2e2da774224ca021b578831a0fae5692a92a94ab2b209bc520d31"
+    },
+    {
+      "offset": 67902,
+      "bytes": 1044,
+      "sha256": "e07b023d47c4b3a2832a932e7f6f1e164b138420a753c2fedf2642427ca82bec"
+    }
+  ],
+  "fixture_bytes": 48106,
+  "fixture_sha256": "13013e92c5cb6992449a94cef111cc68d5f482f085ba0580c320b04b6a06695d",
+  "scope": "Unchanged native layer envelopes and same-source plugin declarations pin hard Linear Wipe completion/angle aliases and post-wipe Geometry2 normalized Anchor keys. Structural import proof; angled projection normalization and raster antialiasing remain approximate."
+}

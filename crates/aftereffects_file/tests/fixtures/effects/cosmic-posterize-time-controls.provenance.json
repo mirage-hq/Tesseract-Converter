@@ -1,0 +1,9 @@
+{
+  "source_sha256": "6d632ac99c9e081746d51b83a651cb311dc063f0541bbe43ba1a241bd8870fdd",
+  "source_composition": 883,
+  "source_layer": 891,
+  "fixture": "cosmic-posterize-time-controls.rifx",
+  "fixture_bytes": 12818,
+  "fixture_sha256": "56db9ff911199fe417e7afe8fbb84a008c94ffeeafa4ed2397e109e209a0052a",
+  "description": "Exact native Adjustment property root in a minimal RIFX envelope: Posterize Time24fps at0 and12fps at1/3second with Hold keys plus its saved transform/remap controls. No project/media/creative content. Native source readback is not an Adobe render equivalence claim."
+}

@@ -1,0 +1,214 @@
+{
+  "status": "bounded-import-structure-and-published-native-reference",
+  "source": {
+    "file": "radial_wipe_half_plane.aep",
+    "sha256": "672afb582fa532bff7c4a3c610891da762d962bd66bd22845f147b45cfeb9f6a",
+    "bytes": 195029,
+    "provenance": "Independently authored in Adobe After Effects 26.5x89; no licensed media, converter writer or source-byte replay.",
+    "authoring_script_sha256": "4a3720450b868c79683d9e1a79599b6a8d2fb2d7d2afc759e2bf14220b3c58f6",
+    "readback_receipt_sha256": "e48a456f19aa0351467c64302d28072c7755efa0fb873a7f8875d6a2a277f64c"
+  },
+  "targets": [
+    {
+      "composition_id": 22,
+      "name": "Half-plane Radial Wipe",
+      "feature": "50% hard Radial Wipe",
+      "test": "structure_document::radial_wipe::tests::radial_wipe_native_fresh_import_has_editable_half_plane_not_omission",
+      "execution": "passed; fresh import asserts center, editable guide/mask, exact angle values/times and arriving Hold easing",
+      "canvas": [
+        96,
+        64
+      ],
+      "fps": 24,
+      "duration_seconds": 2,
+      "owner_layer_id": 34,
+      "controller_layer_id": 36
+    },
+    {
+      "composition_id": 1,
+      "name": "Asymmetric quadrants",
+      "role": "supporting source of composition22; not a separately completed feature test"
+    }
+  ],
+  "native_controls": {
+    "completion": 50,
+    "direction": 1,
+    "feather": 0,
+    "center": [
+      35,
+      24
+    ],
+    "angle_expression": "thisComp.layer(\"Angle controller\").transform.rotation+0",
+    "controller_rotation_hold_keys": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        90
+      ]
+    ],
+    "orientation": "0 retains left; 90 retains top",
+    "manual_ui_inspection": false
+  },
+  "independent_reference": {
+    "fps": 30,
+    "decoded_frames": 60,
+    "duration_seconds": 2,
+    "canvas": [
+      96,
+      64
+    ],
+    "renderer": "Adobe Render Queue",
+    "render_settings": "Best Settings; Use this frame rate=30",
+    "output_module": "H.264 - Match Render Settings - 40 Mbps",
+    "publication_status": "published",
+    "fresh_download_verification": "byte count and SHA-256 match",
+    "path": "tests/references/aep/special/radial-wipe-half-plane.mp4"
+  },
+  "alpha_references": {
+    "0": {
+      "file": "alpha-0_00000.tif",
+      "sha256": "8b999e0997bcadf4904b66c1d3e3e30b2dbd6c4e0ee68a2e1291c15e256ab020",
+      "samples": {
+        "10,10": [
+          255,
+          0,
+          0,
+          255
+        ],
+        "60,10": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "10,50": [
+          0,
+          0,
+          255,
+          255
+        ],
+        "60,50": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "34,24": [
+          255,
+          0,
+          0,
+          255
+        ],
+        "35,24": [
+          16,
+          0,
+          0,
+          16
+        ],
+        "36,24": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "35,23": [
+          16,
+          0,
+          0,
+          16
+        ],
+        "35,25": [
+          16,
+          0,
+          0,
+          16
+        ]
+      }
+    },
+    "1": {
+      "file": "alpha-1_00024.tif",
+      "sha256": "87ebaed9109fc0279c395fe82cac8fef1415daaa3cd66e4b107acf623d875f4f",
+      "samples": {
+        "10,10": [
+          255,
+          0,
+          0,
+          255
+        ],
+        "60,10": [
+          0,
+          255,
+          0,
+          255
+        ],
+        "10,50": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "60,50": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "34,24": [
+          16,
+          0,
+          0,
+          16
+        ],
+        "35,24": [
+          16,
+          0,
+          0,
+          16
+        ],
+        "36,24": [
+          16,
+          0,
+          0,
+          16
+        ],
+        "35,23": [
+          255,
+          0,
+          0,
+          255
+        ],
+        "35,25": [
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "video": [
+      {
+        "codec_name": "h264",
+        "width": 96,
+        "height": 64,
+        "r_frame_rate": "30/1",
+        "duration": "2.000000",
+        "nb_read_frames": "60"
+      }
+    ],
+    "source_sha256": "672afb582fa532bff7c4a3c610891da762d962bd66bd22845f147b45cfeb9f6a"
+  },
+  "comparison": {
+    "critical_samples_seconds": [
+      0,
+      1
+    ],
+    "fresh_import": "executed",
+    "quadrant_interior_samples": "retained/removed RGB quadrants agree",
+    "strict_rgb_score": "unmeasured",
+    "alpha_fidelity": "unverified; edge antialiasing differs from ideal half-plane",
+    "export": "bounded native Radial Wipe implemented; independently edited-case export proof is recorded in radial_wipe_edited.provenance.json"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "status": "AUTHORING_REQUEST_UNRUN_UNMEASURED",
+  "caseId": "fx-export-media-static-remap",
+  "assets": [
+    "movie"
+  ],
+  "layers": [
+    "Held Blue Frame"
+  ],
+  "timeRemap": true
+}

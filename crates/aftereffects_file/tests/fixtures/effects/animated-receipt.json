@@ -1,0 +1,3370 @@
+{
+  "version": "26.5x89",
+  "build": 89,
+  "effects": [
+    {
+      "compositionId": 1,
+      "composition": "Effect_0",
+      "matchName": "ADBE Gaussian Blur 2",
+      "properties": [
+        {
+          "matchName": "ADBE Gaussian Blur 2-0001",
+          "type": "6417",
+          "values": [
+            25,
+            30
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Gaussian Blur 2-0002",
+          "type": "6417",
+          "values": [
+            1,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Gaussian Blur 2-0003",
+          "type": "6417",
+          "values": [
+            1,
+            0
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        }
+      ]
+    },
+    {
+      "compositionId": 16,
+      "composition": "Effect_1",
+      "matchName": "ADBE Glo2",
+      "properties": [
+        {
+          "matchName": "ADBE Glo2-0001",
+          "type": "6417",
+          "values": [
+            2,
+            1
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Glo2-0002",
+          "type": "6417",
+          "values": [
+            153,
+            183.600006103516
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Glo2-0003",
+          "type": "6417",
+          "values": [
+            10,
+            12
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Glo2-0004",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Glo2-0005",
+          "type": "6417",
+          "values": [
+            2,
+            3
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Glo2-0006",
+          "type": "6417",
+          "values": [
+            3,
+            4
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Glo2-0007",
+          "type": "6417",
+          "values": [
+            2,
+            3
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Glo2-0008",
+          "type": "6417",
+          "values": [
+            3,
+            4
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Glo2-0009",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Glo2-0010",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Glo2-0011",
+          "type": "6417",
+          "values": [
+            0.5,
+            0.60000002384186
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Glo2-0012",
+          "type": "6418",
+          "values": [
+            [
+              1,
+              1,
+              1,
+              1
+            ],
+            [
+              0.75,
+              0.75,
+              0.75,
+              1
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Glo2-0013",
+          "type": "6418",
+          "values": [
+            [
+              0,
+              0,
+              0,
+              1
+            ],
+            [
+              0.25,
+              0.25,
+              0.25,
+              1
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Glo2-0014",
+          "type": "6417",
+          "values": [
+            1,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        }
+      ]
+    },
+    {
+      "compositionId": 30,
+      "composition": "Effect_2",
+      "matchName": "ADBE Motion Blur",
+      "properties": [
+        {
+          "matchName": "ADBE Motion Blur-0001",
+          "type": "6417",
+          "values": [
+            90,
+            108
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Motion Blur-0002",
+          "type": "6417",
+          "values": [
+            10,
+            12
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        }
+      ]
+    },
+    {
+      "compositionId": 44,
+      "composition": "Effect_3",
+      "matchName": "ADBE OFMotionBlur",
+      "properties": [
+        {
+          "matchName": "ADBE OFMotionBlur-0002",
+          "type": "6417",
+          "values": [
+            180,
+            216
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE OFMotionBlur-0003",
+          "type": "6417",
+          "values": [
+            5,
+            6
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE OFMotionBlur-0004",
+          "type": "6417",
+          "values": [
+            20,
+            24
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        }
+      ]
+    },
+    {
+      "compositionId": 58,
+      "composition": "Effect_4",
+      "matchName": "ADBE Mosaic",
+      "properties": [
+        {
+          "matchName": "ADBE Mosaic-0001",
+          "type": "6417",
+          "values": [
+            10,
+            12
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Mosaic-0002",
+          "type": "6417",
+          "values": [
+            10,
+            12
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Mosaic-0003",
+          "type": "6417",
+          "values": [
+            0,
+            1
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        }
+      ]
+    },
+    {
+      "compositionId": 72,
+      "composition": "Effect_5",
+      "matchName": "ADBE Brightness & Contrast 2",
+      "properties": [
+        {
+          "matchName": "ADBE Brightness & Contrast 2-0001",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Brightness & Contrast 2-0002",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Brightness & Contrast 2-0003",
+          "type": "6417",
+          "values": [
+            0,
+            1
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        }
+      ]
+    },
+    {
+      "compositionId": 86,
+      "composition": "Effect_6",
+      "matchName": "ADBE Shift Channels",
+      "properties": [
+        {
+          "matchName": "ADBE Shift Channels-0001",
+          "type": "6417",
+          "values": [
+            1,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Shift Channels-0002",
+          "type": "6417",
+          "values": [
+            2,
+            3
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Shift Channels-0003",
+          "type": "6417",
+          "values": [
+            3,
+            4
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Shift Channels-0004",
+          "type": "6417",
+          "values": [
+            4,
+            5
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        }
+      ]
+    },
+    {
+      "compositionId": 100,
+      "composition": "Effect_7",
+      "matchName": "ADBE HUE SATURATION",
+      "properties": [
+        {
+          "matchName": "ADBE HUE SATURATION-0008",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE HUE SATURATION-0009",
+          "type": "6417",
+          "values": [
+            25,
+            30
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE HUE SATURATION-0010",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        }
+      ]
+    },
+    {
+      "compositionId": 114,
+      "composition": "Effect_8",
+      "matchName": "ADBE Radial Blur",
+      "properties": [
+        {
+          "matchName": "ADBE Radial Blur-0001",
+          "type": "6417",
+          "values": [
+            10,
+            12
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Radial Blur-0002",
+          "type": "6415",
+          "values": [
+            [
+              60,
+              40
+            ],
+            [
+              72,
+              33
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Radial Blur-0003",
+          "type": "6417",
+          "values": [
+            1,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Radial Blur-0004",
+          "type": "6417",
+          "values": [
+            1,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Radial Blur-0006",
+          "type": "6417",
+          "values": [
+            0,
+            0
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        }
+      ]
+    },
+    {
+      "compositionId": 128,
+      "composition": "Effect_9",
+      "matchName": "ADBE Easy Levels2",
+      "properties": [
+        {
+          "matchName": "ADBE Easy Levels2-0008",
+          "type": "6417",
+          "values": [
+            3,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Easy Levels2-0009",
+          "type": "6417",
+          "values": [
+            3,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        }
+      ]
+    },
+    {
+      "compositionId": 142,
+      "composition": "Effect_10",
+      "matchName": "ADBE Pro Levels2",
+      "properties": [
+        {
+          "matchName": "ADBE Pro Levels2-0004",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0005",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0006",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0007",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0008",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0011",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0012",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0013",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0014",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0015",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0018",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0019",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0020",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0021",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0022",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0025",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0026",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0027",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0028",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0029",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0032",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0033",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0034",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0035",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0036",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0038",
+          "type": "6417",
+          "values": [
+            3,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Pro Levels2-0039",
+          "type": "6417",
+          "values": [
+            3,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        }
+      ]
+    },
+    {
+      "compositionId": 156,
+      "composition": "Effect_11",
+      "matchName": "ADBE Bulge",
+      "properties": [
+        {
+          "matchName": "ADBE Bulge-0001",
+          "type": "6417",
+          "values": [
+            50,
+            60
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Bulge-0002",
+          "type": "6417",
+          "values": [
+            50,
+            60
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Bulge-0003",
+          "type": "6415",
+          "values": [
+            [
+              60,
+              40
+            ],
+            [
+              72,
+              33
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Bulge-0004",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Bulge-0005",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Bulge-0006",
+          "type": "6417",
+          "values": [
+            1,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Bulge-0007",
+          "type": "6417",
+          "values": [
+            0,
+            1
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        }
+      ]
+    },
+    {
+      "compositionId": 170,
+      "composition": "Effect_12",
+      "matchName": "ADBE Corner Pin",
+      "properties": [
+        {
+          "matchName": "ADBE Corner Pin-0001",
+          "type": "6415",
+          "values": [
+            [
+              0,
+              0
+            ],
+            [
+              12,
+              -7
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Corner Pin-0002",
+          "type": "6415",
+          "values": [
+            [
+              120,
+              0
+            ],
+            [
+              132,
+              -7
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Corner Pin-0003",
+          "type": "6415",
+          "values": [
+            [
+              0,
+              80
+            ],
+            [
+              12,
+              73
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Corner Pin-0004",
+          "type": "6415",
+          "values": [
+            [
+              120,
+              80
+            ],
+            [
+              132,
+              73
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        }
+      ]
+    },
+    {
+      "compositionId": 184,
+      "composition": "Effect_13",
+      "matchName": "ADBE Tile",
+      "properties": [
+        {
+          "matchName": "ADBE Tile-0001",
+          "type": "6415",
+          "values": [
+            [
+              60,
+              40
+            ],
+            [
+              72,
+              33
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Tile-0002",
+          "type": "6417",
+          "values": [
+            100,
+            80
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Tile-0003",
+          "type": "6417",
+          "values": [
+            100,
+            80
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Tile-0004",
+          "type": "6417",
+          "values": [
+            100,
+            120
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Tile-0005",
+          "type": "6417",
+          "values": [
+            100,
+            120
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Tile-0006",
+          "type": "6417",
+          "values": [
+            0,
+            1
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Tile-0007",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Tile-0008",
+          "type": "6417",
+          "values": [
+            0,
+            1
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        }
+      ]
+    },
+    {
+      "compositionId": 198,
+      "composition": "Effect_14",
+      "matchName": "ADBE Drop Shadow",
+      "properties": [
+        {
+          "matchName": "ADBE Drop Shadow-0001",
+          "type": "6418",
+          "values": [
+            [
+              0,
+              0,
+              0,
+              1
+            ],
+            [
+              0.25,
+              0.25,
+              0.25,
+              1
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Drop Shadow-0002",
+          "type": "6417",
+          "values": [
+            127.5,
+            153
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Drop Shadow-0003",
+          "type": "6417",
+          "values": [
+            135,
+            162
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Drop Shadow-0004",
+          "type": "6417",
+          "values": [
+            5,
+            6
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Drop Shadow-0005",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Drop Shadow-0006",
+          "type": "6417",
+          "values": [
+            0,
+            1
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        }
+      ]
+    },
+    {
+      "compositionId": 212,
+      "composition": "Effect_15",
+      "matchName": "ADBE Posterize",
+      "properties": [
+        {
+          "matchName": "ADBE Posterize-0001",
+          "type": "6417",
+          "values": [
+            7,
+            8.39999961853027
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        }
+      ]
+    },
+    {
+      "compositionId": 226,
+      "composition": "Effect_16",
+      "matchName": "ADBE Posterize Time",
+      "properties": [
+        {
+          "matchName": "ADBE Posterize Time-0001",
+          "error": "Error: After Effects error: Invalid interpolation type for this property."
+        }
+      ]
+    },
+    {
+      "compositionId": 240,
+      "composition": "Effect_17",
+      "matchName": "CS Vignette",
+      "properties": [
+        {
+          "matchName": "CS Vignette-0001",
+          "type": "6417",
+          "values": [
+            100,
+            120
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "CS Vignette-0002",
+          "type": "6417",
+          "values": [
+            45,
+            54
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "CS Vignette-0003",
+          "type": "6415",
+          "values": [
+            [
+              60,
+              40
+            ],
+            [
+              72,
+              33
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "CS Vignette-0005",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        }
+      ]
+    },
+    {
+      "compositionId": 254,
+      "composition": "Effect_18",
+      "matchName": "ADBE Find Edges",
+      "properties": [
+        {
+          "matchName": "ADBE Find Edges-0001",
+          "type": "6417",
+          "values": [
+            0,
+            1
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Find Edges-0002",
+          "type": "6417",
+          "values": [
+            0,
+            1
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        }
+      ]
+    },
+    {
+      "compositionId": 268,
+      "composition": "Effect_19",
+      "matchName": "ADBE Exposure2",
+      "properties": [
+        {
+          "matchName": "ADBE Exposure2-0001",
+          "type": "6417",
+          "values": [
+            1,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Exposure2-0003",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Exposure2-0004",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Exposure2-0005",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Exposure2-0008",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Exposure2-0009",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Exposure2-0010",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Exposure2-0013",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Exposure2-0014",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Exposure2-0015",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Exposure2-0018",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Exposure2-0019",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Exposure2-0020",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Exposure2-0022",
+          "type": "6417",
+          "values": [
+            0,
+            1
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        }
+      ]
+    },
+    {
+      "compositionId": 282,
+      "composition": "Effect_20",
+      "matchName": "ADBE Vibrance",
+      "properties": [
+        {
+          "matchName": "ADBE Vibrance-0001",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Vibrance-0002",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        }
+      ]
+    },
+    {
+      "compositionId": 296,
+      "composition": "Effect_21",
+      "matchName": "ADBE Twirl",
+      "properties": [
+        {
+          "matchName": "ADBE Twirl-0001",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Twirl-0002",
+          "type": "6417",
+          "values": [
+            30,
+            36
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Twirl-0003",
+          "type": "6415",
+          "values": [
+            [
+              60,
+              40
+            ],
+            [
+              72,
+              33
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        }
+      ]
+    },
+    {
+      "compositionId": 310,
+      "composition": "Effect_22",
+      "matchName": "ADBE Ripple",
+      "properties": [
+        {
+          "matchName": "ADBE Ripple-0001",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Ripple-0002",
+          "type": "6415",
+          "values": [
+            [
+              60,
+              40
+            ],
+            [
+              72,
+              33
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Ripple-0003",
+          "type": "6417",
+          "values": [
+            1,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Ripple-0004",
+          "error": "Error: After Effects error: Invalid interpolation type for this property."
+        },
+        {
+          "matchName": "ADBE Ripple-0005",
+          "type": "6417",
+          "values": [
+            20,
+            24
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Ripple-0006",
+          "type": "6417",
+          "values": [
+            20,
+            24
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Ripple-0007",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        }
+      ]
+    },
+    {
+      "compositionId": 324,
+      "composition": "Effect_23",
+      "matchName": "ADBE Sharpen",
+      "properties": [
+        {
+          "matchName": "ADBE Sharpen-0001",
+          "type": "6417",
+          "values": [
+            0,
+            0
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        }
+      ]
+    },
+    {
+      "compositionId": 338,
+      "composition": "Effect_24",
+      "matchName": "ADBE Luma Key",
+      "properties": [
+        {
+          "matchName": "ADBE Luma Key-0001",
+          "type": "6417",
+          "values": [
+            2,
+            3
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Luma Key-0002",
+          "type": "6417",
+          "values": [
+            0,
+            0
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Luma Key-0003",
+          "type": "6417",
+          "values": [
+            0,
+            0
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Luma Key-0004",
+          "type": "6417",
+          "values": [
+            0,
+            0
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Luma Key-0005",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        }
+      ]
+    },
+    {
+      "compositionId": 352,
+      "composition": "Effect_25",
+      "matchName": "ADBE Simple Choker",
+      "properties": [
+        {
+          "matchName": "ADBE Simple Choker-0001",
+          "type": "6417",
+          "values": [
+            1,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Simple Choker-0002",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        }
+      ]
+    },
+    {
+      "compositionId": 366,
+      "composition": "Effect_26",
+      "matchName": "VISINF Grain Implant",
+      "properties": [
+        {
+          "matchName": "VISINF Grain Implant-0021",
+          "type": "6417",
+          "values": [
+            1,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "VISINF Grain Implant-0027",
+          "type": "6417",
+          "values": [
+            1,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "VISINF Grain Implant-0022",
+          "type": "6415",
+          "values": [
+            [
+              60,
+              40
+            ],
+            [
+              72,
+              33
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0023",
+          "type": "6417",
+          "values": [
+            200,
+            240
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0024",
+          "type": "6417",
+          "values": [
+            200,
+            240
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0028",
+          "type": "6417",
+          "values": [
+            1,
+            0
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "VISINF Grain Implant-0029",
+          "type": "6418",
+          "values": [
+            [
+              1,
+              1,
+              1,
+              1
+            ],
+            [
+              0.75,
+              0.75,
+              0.75,
+              1
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0008",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0007",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0130",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0030",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0002",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0003",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0004",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0032",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0033",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0034",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0005",
+          "type": "6417",
+          "values": [
+            0,
+            1
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "VISINF Grain Implant-0006",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0011",
+          "type": "6417",
+          "values": [
+            100,
+            80
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0010",
+          "type": "6418",
+          "values": [
+            [
+              1,
+              1,
+              1,
+              1
+            ],
+            [
+              0.75,
+              0.75,
+              0.75,
+              1
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0014",
+          "type": "6417",
+          "values": [
+            3,
+            4
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "VISINF Grain Implant-0040",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0041",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0042",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0043",
+          "type": "6417",
+          "values": [
+            0.5,
+            0
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "VISINF Grain Implant-0044",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0045",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0046",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0047",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0048",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0049",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0050",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0051",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0052",
+          "type": "6417",
+          "values": [
+            1,
+            1.20000004768372
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0039",
+          "type": "6417",
+          "values": [
+            1,
+            0
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "VISINF Grain Implant-0038",
+          "type": "6417",
+          "values": [
+            0,
+            1
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "VISINF Grain Implant-0013",
+          "type": "6417",
+          "values": [
+            0,
+            0
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0053",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0063",
+          "type": "6417",
+          "values": [
+            1,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "VISINF Grain Implant-0059",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0057",
+          "type": "6417",
+          "values": [
+            3,
+            4
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "VISINF Grain Implant-0054",
+          "type": "6418",
+          "values": [
+            [
+              0.49803921580315,
+              0.49803921580315,
+              0.49803921580315,
+              0.49803921580315
+            ],
+            [
+              0.74803918600082,
+              0.74803918600082,
+              0.74803918600082,
+              0.49803921580315
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "VISINF Grain Implant-0055",
+          "type": "6417",
+          "values": [
+            0.09999084472656,
+            0
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "VISINF Grain Implant-0056",
+          "type": "6417",
+          "values": [
+            0.09999084472656,
+            0
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "VISINF Grain Implant-0058",
+          "type": "6417",
+          "values": [
+            0,
+            1
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "VISINF Grain Implant-0062",
+          "type": "6417",
+          "values": [
+            1,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "VISINF Grain Implant-0061",
+          "type": "6417",
+          "values": [
+            1,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        }
+      ]
+    },
+    {
+      "compositionId": 380,
+      "composition": "Effect_27",
+      "matchName": "ADBE Wave Warp",
+      "properties": [
+        {
+          "matchName": "ADBE Wave Warp-0001",
+          "type": "6417",
+          "values": [
+            1,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Wave Warp-0002",
+          "type": "6417",
+          "values": [
+            10,
+            12
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Wave Warp-0003",
+          "type": "6417",
+          "values": [
+            40,
+            48
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Wave Warp-0004",
+          "type": "6417",
+          "values": [
+            90,
+            108
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Wave Warp-0005",
+          "error": "Error: After Effects error: Invalid interpolation type for this property."
+        },
+        {
+          "matchName": "ADBE Wave Warp-0006",
+          "type": "6417",
+          "values": [
+            1,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Wave Warp-0007",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Wave Warp-0008",
+          "type": "6417",
+          "values": [
+            1,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        }
+      ]
+    },
+    {
+      "compositionId": 394,
+      "composition": "Effect_28",
+      "matchName": "ADBE Optics Compensation",
+      "properties": [
+        {
+          "matchName": "ADBE Optics Compensation-0001",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Optics Compensation-0002",
+          "type": "6417",
+          "values": [
+            0,
+            1
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Optics Compensation-0003",
+          "type": "6417",
+          "values": [
+            1,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Optics Compensation-0004",
+          "type": "6415",
+          "values": [
+            [
+              60,
+              40
+            ],
+            [
+              72,
+              33
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Optics Compensation-0005",
+          "type": "6417",
+          "values": [
+            0,
+            1
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Optics Compensation-0006",
+          "type": "6417",
+          "values": [
+            1,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        }
+      ]
+    },
+    {
+      "compositionId": 408,
+      "composition": "Effect_29",
+      "matchName": "ADBE Tint",
+      "properties": [
+        {
+          "matchName": "ADBE Tint-0001",
+          "type": "6418",
+          "values": [
+            [
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0.25,
+              0.25,
+              0.25,
+              0
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Tint-0002",
+          "type": "6418",
+          "values": [
+            [
+              1,
+              1,
+              1,
+              0
+            ],
+            [
+              0.75,
+              0.75,
+              0.75,
+              0
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Tint-0003",
+          "type": "6417",
+          "values": [
+            100,
+            80
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        }
+      ]
+    },
+    {
+      "compositionId": 422,
+      "composition": "Effect_30",
+      "matchName": "ADBE Ramp",
+      "properties": [
+        {
+          "matchName": "ADBE Ramp-0001",
+          "type": "6415",
+          "values": [
+            [
+              60,
+              0
+            ],
+            [
+              72,
+              -7
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Ramp-0002",
+          "type": "6418",
+          "values": [
+            [
+              0,
+              0,
+              0,
+              1
+            ],
+            [
+              0.25,
+              0.25,
+              0.25,
+              1
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Ramp-0003",
+          "type": "6415",
+          "values": [
+            [
+              60,
+              80
+            ],
+            [
+              72,
+              73
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Ramp-0004",
+          "type": "6418",
+          "values": [
+            [
+              1,
+              1,
+              1,
+              1
+            ],
+            [
+              0.75,
+              0.75,
+              0.75,
+              1
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Ramp-0005",
+          "type": "6417",
+          "values": [
+            1,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE Ramp-0006",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE Ramp-0007",
+          "type": "6417",
+          "values": [
+            0,
+            1
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        }
+      ]
+    },
+    {
+      "compositionId": 436,
+      "composition": "Effect_31",
+      "matchName": "ADBE AIF Perlin Noise 3D",
+      "properties": [
+        {
+          "matchName": "ADBE AIF Perlin Noise 3D-0001",
+          "type": "6417",
+          "values": [
+            1,
+            2
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE AIF Perlin Noise 3D-0002",
+          "type": "6417",
+          "values": [
+            3,
+            4
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE AIF Perlin Noise 3D-0003",
+          "type": "6417",
+          "values": [
+            0,
+            1
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE AIF Perlin Noise 3D-0004",
+          "type": "6417",
+          "values": [
+            100,
+            120
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE AIF Perlin Noise 3D-0005",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE AIF Perlin Noise 3D-0006",
+          "type": "6417",
+          "values": [
+            4,
+            3
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE AIF Perlin Noise 3D-0008",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE AIF Perlin Noise 3D-0009",
+          "type": "6417",
+          "values": [
+            1,
+            0
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE AIF Perlin Noise 3D-0010",
+          "type": "6417",
+          "values": [
+            100,
+            120
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE AIF Perlin Noise 3D-0011",
+          "type": "6417",
+          "values": [
+            100,
+            120
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE AIF Perlin Noise 3D-0012",
+          "type": "6417",
+          "values": [
+            100,
+            120
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE AIF Perlin Noise 3D-0013",
+          "type": "6415",
+          "values": [
+            [
+              60,
+              40
+            ],
+            [
+              72,
+              33
+            ]
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE AIF Perlin Noise 3D-0027",
+          "type": "6417",
+          "values": [
+            0,
+            1
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE AIF Perlin Noise 3D-0015",
+          "type": "6417",
+          "values": [
+            6,
+            7
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        },
+        {
+          "matchName": "ADBE AIF Perlin Noise 3D-0017",
+          "type": "6417",
+          "values": [
+            70,
+            84
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE AIF Perlin Noise 3D-0018",
+          "type": "6417",
+          "values": [
+            56,
+            67.1999969482422
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE AIF Perlin Noise 3D-0020",
+          "type": "6417",
+          "values": [
+            0,
+            0.10000000149012
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE AIF Perlin Noise 3D-0022",
+          "type": "6417",
+          "values": [
+            1.5,
+            1.79999995231628
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE AIF Perlin Noise 3D-0023",
+          "type": "6417",
+          "values": [
+            0,
+            0
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE AIF Perlin Noise 3D-0025",
+          "type": "6417",
+          "values": [
+            100,
+            80
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": false
+        },
+        {
+          "matchName": "ADBE AIF Perlin Noise 3D-0026",
+          "type": "6417",
+          "values": [
+            2,
+            3
+          ],
+          "times": [
+            0,
+            1
+          ],
+          "hold": true
+        }
+      ]
+    }
+  ]
+}

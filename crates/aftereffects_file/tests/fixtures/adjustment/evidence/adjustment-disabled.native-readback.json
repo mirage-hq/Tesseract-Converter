@@ -1,0 +1,485 @@
+{
+  "compositions": [
+    {
+      "displayStart": 0,
+      "duration": 2,
+      "frameDuration": 0.04166666666667,
+      "frameRate": 24,
+      "height": 180,
+      "id": 1,
+      "layers": [
+        {
+          "effects": [],
+          "flags": {
+            "adjustmentLayer": false,
+            "collapseTransformation": false,
+            "enabled": true,
+            "guideLayer": false,
+            "hasTrackMatte": false,
+            "isTrackMatte": false,
+            "locked": false,
+            "shy": false,
+            "solo": false,
+            "threeDLayer": false
+          },
+          "id": 14,
+          "index": 1,
+          "masks": [],
+          "name": "upper-sentinel-37x23",
+          "parentLayerId": null,
+          "source": {
+            "duration": 0,
+            "height": 23,
+            "id": 13,
+            "kind": "footage",
+            "name": "upper-sentinel-37x23",
+            "width": 37
+          },
+          "timing": {
+            "inPoint": 0,
+            "outPoint": 2,
+            "startTime": 0,
+            "stretch": 100
+          },
+          "trackMatte": {
+            "layerId": null,
+            "type": null
+          },
+          "transform": [
+            {
+              "keys": [],
+              "matchName": "ADBE Anchor Point",
+              "name": "Anchor Point",
+              "propertyIndex": 1,
+              "value": [
+                18.5,
+                11.5,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Position",
+              "name": "Position",
+              "propertyIndex": 2,
+              "value": [
+                287,
+                19,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Scale",
+              "name": "Scale",
+              "propertyIndex": 6,
+              "value": [
+                100,
+                100,
+                100
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Rotate Z",
+              "name": "Rotation",
+              "propertyIndex": 10,
+              "value": 17
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Opacity",
+              "name": "Opacity",
+              "propertyIndex": 11,
+              "value": 100
+            }
+          ]
+        },
+        {
+          "effects": [],
+          "flags": {
+            "adjustmentLayer": true,
+            "collapseTransformation": false,
+            "enabled": true,
+            "guideLayer": false,
+            "hasTrackMatte": false,
+            "isTrackMatte": false,
+            "locked": false,
+            "shy": false,
+            "solo": false,
+            "threeDLayer": false
+          },
+          "id": 16,
+          "index": 2,
+          "masks": [],
+          "name": "enabled-empty-adjustment",
+          "parentLayerId": null,
+          "source": {
+            "duration": 0,
+            "height": 180,
+            "id": 15,
+            "kind": "footage",
+            "name": "enabled-empty-adjustment",
+            "width": 320
+          },
+          "timing": {
+            "inPoint": 0,
+            "outPoint": 2,
+            "startTime": 0,
+            "stretch": 100
+          },
+          "trackMatte": {
+            "layerId": null,
+            "type": null
+          },
+          "transform": [
+            {
+              "keys": [],
+              "matchName": "ADBE Anchor Point",
+              "name": "Anchor Point",
+              "propertyIndex": 1,
+              "value": [
+                160,
+                90,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Position",
+              "name": "Position",
+              "propertyIndex": 2,
+              "value": [
+                160,
+                90,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Scale",
+              "name": "Scale",
+              "propertyIndex": 6,
+              "value": [
+                100,
+                100,
+                100
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Rotate Z",
+              "name": "Rotation",
+              "propertyIndex": 10,
+              "value": 0
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Opacity",
+              "name": "Opacity",
+              "propertyIndex": 11,
+              "value": 100
+            }
+          ]
+        },
+        {
+          "effects": [
+            {
+              "controls": [
+                {
+                  "keys": [],
+                  "matchName": "ADBE Gaussian Blur 2-0001",
+                  "name": "Blurriness",
+                  "propertyIndex": 1,
+                  "value": 27
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Gaussian Blur 2-0002",
+                  "name": "Blur Dimensions",
+                  "propertyIndex": 2,
+                  "value": 1
+                },
+                {
+                  "keys": [],
+                  "matchName": "ADBE Gaussian Blur 2-0003",
+                  "name": "Repeat Edge Pixels",
+                  "propertyIndex": 3,
+                  "value": 1
+                }
+              ],
+              "enabled": true,
+              "index": 1,
+              "matchName": "ADBE Gaussian Blur 2",
+              "name": "Gaussian Blur"
+            }
+          ],
+          "flags": {
+            "adjustmentLayer": true,
+            "collapseTransformation": false,
+            "enabled": false,
+            "guideLayer": false,
+            "hasTrackMatte": false,
+            "isTrackMatte": false,
+            "locked": false,
+            "shy": false,
+            "solo": false,
+            "threeDLayer": false
+          },
+          "id": 18,
+          "index": 3,
+          "masks": [],
+          "name": "disabled-adjustment-with-effect",
+          "parentLayerId": null,
+          "source": {
+            "duration": 0,
+            "height": 180,
+            "id": 17,
+            "kind": "footage",
+            "name": "disabled-adjustment-with-effect",
+            "width": 320
+          },
+          "timing": {
+            "inPoint": 0,
+            "outPoint": 2,
+            "startTime": 0,
+            "stretch": 100
+          },
+          "trackMatte": {
+            "layerId": null,
+            "type": null
+          },
+          "transform": [
+            {
+              "keys": [],
+              "matchName": "ADBE Anchor Point",
+              "name": "Anchor Point",
+              "propertyIndex": 1,
+              "value": [
+                160,
+                90,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Position",
+              "name": "Position",
+              "propertyIndex": 2,
+              "value": [
+                160,
+                90,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Scale",
+              "name": "Scale",
+              "propertyIndex": 6,
+              "value": [
+                100,
+                100,
+                100
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Rotate Z",
+              "name": "Rotation",
+              "propertyIndex": 10,
+              "value": 0
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Opacity",
+              "name": "Opacity",
+              "propertyIndex": 11,
+              "value": 100
+            }
+          ]
+        },
+        {
+          "effects": [],
+          "flags": {
+            "adjustmentLayer": false,
+            "collapseTransformation": false,
+            "enabled": true,
+            "guideLayer": false,
+            "hasTrackMatte": false,
+            "isTrackMatte": false,
+            "locked": false,
+            "shy": false,
+            "solo": false,
+            "threeDLayer": false
+          },
+          "id": 20,
+          "index": 4,
+          "masks": [],
+          "name": "lower-amber-83x117",
+          "parentLayerId": null,
+          "source": {
+            "duration": 0,
+            "height": 117,
+            "id": 19,
+            "kind": "footage",
+            "name": "lower-amber-83x117",
+            "width": 83
+          },
+          "timing": {
+            "inPoint": 0,
+            "outPoint": 2,
+            "startTime": 0,
+            "stretch": 100
+          },
+          "trackMatte": {
+            "layerId": null,
+            "type": null
+          },
+          "transform": [
+            {
+              "keys": [],
+              "matchName": "ADBE Anchor Point",
+              "name": "Anchor Point",
+              "propertyIndex": 1,
+              "value": [
+                41.5,
+                58.5,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Position",
+              "name": "Position",
+              "propertyIndex": 2,
+              "value": [
+                238,
+                108,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Scale",
+              "name": "Scale",
+              "propertyIndex": 6,
+              "value": [
+                100,
+                100,
+                100
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Rotate Z",
+              "name": "Rotation",
+              "propertyIndex": 10,
+              "value": -11
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Opacity",
+              "name": "Opacity",
+              "propertyIndex": 11,
+              "value": 100
+            }
+          ]
+        },
+        {
+          "effects": [],
+          "flags": {
+            "adjustmentLayer": false,
+            "collapseTransformation": false,
+            "enabled": true,
+            "guideLayer": false,
+            "hasTrackMatte": false,
+            "isTrackMatte": false,
+            "locked": false,
+            "shy": false,
+            "solo": false,
+            "threeDLayer": false
+          },
+          "id": 22,
+          "index": 5,
+          "masks": [],
+          "name": "lower-cobalt-127x71",
+          "parentLayerId": null,
+          "source": {
+            "duration": 0,
+            "height": 71,
+            "id": 21,
+            "kind": "footage",
+            "name": "lower-cobalt-127x71",
+            "width": 127
+          },
+          "timing": {
+            "inPoint": 0,
+            "outPoint": 2,
+            "startTime": 0,
+            "stretch": 100
+          },
+          "trackMatte": {
+            "layerId": null,
+            "type": null
+          },
+          "transform": [
+            {
+              "keys": [],
+              "matchName": "ADBE Anchor Point",
+              "name": "Anchor Point",
+              "propertyIndex": 1,
+              "value": [
+                63.5,
+                35.5,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Position",
+              "name": "Position",
+              "propertyIndex": 2,
+              "value": [
+                77,
+                58,
+                0
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Scale",
+              "name": "Scale",
+              "propertyIndex": 6,
+              "value": [
+                100,
+                100,
+                100
+              ]
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Rotate Z",
+              "name": "Rotation",
+              "propertyIndex": 10,
+              "value": 7
+            },
+            {
+              "keys": [],
+              "matchName": "ADBE Opacity",
+              "name": "Opacity",
+              "propertyIndex": 11,
+              "value": 100
+            }
+          ]
+        }
+      ],
+      "name": "adjustment-disabled",
+      "sourceFrameCount": 48,
+      "width": 320,
+      "workAreaDuration": 2,
+      "workAreaStart": 0
+    }
+  ],
+  "schema": "aftereffects-adjustment-export-readback/v1"
+}

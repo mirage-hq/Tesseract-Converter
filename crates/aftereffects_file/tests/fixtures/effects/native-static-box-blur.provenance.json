@@ -1,0 +1,42 @@
+{
+  "source_sha256": "6d632ac99c9e081746d51b83a651cb311dc063f0541bbe43ba1a241bd8870fdd",
+  "source_compositions": [
+    883,
+    907
+  ],
+  "source_layers": [
+    886,
+    919,
+    1033,
+    917
+  ],
+  "fixture_bytes": 59360,
+  "fixture_sha256": "c80528470c53877aa63746ec980fc8edeea0c5ccc652f4e762039f983ee6fa54",
+  "chunks": [
+    {
+      "offset": 1810056,
+      "bytes": 14326,
+      "kind": "Layr",
+      "sha256": "d9124ef6070a89b7e877bbf1492464dd33d88fc49e5d9f6cebe3b78e18f87cac"
+    },
+    {
+      "offset": 2021062,
+      "bytes": 17054,
+      "kind": "Layr",
+      "sha256": "90f6b5e5d83b896dc067a332b8ec49a7cbbebcc95aee5f07cda95d238a015ad6"
+    },
+    {
+      "offset": 2051062,
+      "bytes": 13984,
+      "kind": "Layr",
+      "sha256": "05e3ea478349e6dd4bad5c62c4439eb6aac84889a166dc32e9f014fd48837168"
+    },
+    {
+      "offset": 2065322,
+      "bytes": 13984,
+      "kind": "Layr",
+      "sha256": "45dd09ba4455d2c59855199153e87809b94defa0ff52e051ebf27626690386f1"
+    }
+  ],
+  "scope": "Exact native four layer envelopes retain Fast Box Blur controls/default declarations; structural approximation proof only; no native render or calibration. Host/source dimensions and effect import scaffold are supplied separately."
+}

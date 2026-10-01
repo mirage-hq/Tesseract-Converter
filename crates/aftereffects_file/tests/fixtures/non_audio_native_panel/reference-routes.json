@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "status": "UNRUN_UNMEASURED_REFERENCE_PUBLICATION_PENDING",
+  "source_convention": "crates/aftereffects_file/tests/fixtures/non_audio_native_panel/native/<case_id>.aep",
+  "identity_policy": "Only actual Adobe-authoring receipts may supply source SHA/bytes/composition ID. Only separately inspected and verified 30fps long-term Assets may be enrolled into aep_video_references.json; published_uninspected is not a score oracle.",
+  "cases": [
+    {
+      "case_id": "fx-export-panel-text-document",
+      "composition_name": "panel-text-document",
+      "source_sha256": "91ae007ca9823c1292417d6ace2a92bb1ca56afde3f080e3ef0f609a2e14c1cc",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-panel-scene-stack",
+      "composition_name": "panel-scene-stack",
+      "source_sha256": "5b98b601014f2dd5fd40ceac23bed9ff8d78255dde4ca9e25769f76208c07853",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-panel-text-animation",
+      "composition_name": "panel-text-animation",
+      "source_sha256": "d89cc7b3f74b34fd8cb00c60bc801cf7ac953158e4d7c83132180b183bb980cc",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-panel-gradient-stroke",
+      "composition_name": "panel-gradient-stroke",
+      "source_sha256": "1667e642ec6bd523a4f6570a53f8941dd45cd40cdbac144a7ea2b288273af041",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-panel-text-path",
+      "composition_name": "panel-text-path",
+      "source_sha256": "94c630e2a3b7682b25e777b862c80f713a34f8d93ece0812bbf593a43dc1b95c",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-panel-mask-matte",
+      "composition_name": "panel-mask-matte",
+      "source_sha256": "fa0ac264da20d4dcd9d2baf86737305f914ef37b309803d4c20db092cf11d3bb",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-panel-motion-3d",
+      "composition_name": "panel-motion-3d",
+      "source_sha256": "6b1e70bac4b6031d8f6429a94c56eb1a634f0d6abf182a0a08f5b55aea9c909b",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-panel-modifier-boolean",
+      "composition_name": "panel-modifier-boolean",
+      "source_sha256": "042746a9445467b2fe32fa14c5b08701dab35a3fc46325f387654667f7f2de53",
+      "composition_id": 1
+    },
+    {
+      "case_id": "fx-export-panel-nested-effects",
+      "composition_name": "panel-nested-effects",
+      "source_sha256": "215a0b0f732ab4df6c589db9d8b300278a179766accb4aa8e2e3354b4cf546a0",
+      "composition_id": 1
+    }
+  ]
+}

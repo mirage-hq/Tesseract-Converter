@@ -1,0 +1,206 @@
+{
+  "control": {
+    "source_sha256": "94f6305700ba39905e5030687d4c576595116437477ae8014e5499b6011cdb04",
+    "sequence_uid": "36a36709-c3fe-4aab-baeb-0dedbdef338c",
+    "animated": [
+      {
+        "id": "106",
+        "name": "Position",
+        "type": "PointComponentParam",
+        "keys": [
+          [
+            "254016000000",
+            "0.36458333333333331:0.39814814814814814",
+            "0",
+            "0",
+            "0",
+            "0.16666666666666666",
+            "0",
+            "0.16666666666666666",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ],
+          [
+            "1016064000000",
+            "0.59895833333333337:0.56481481481481477",
+            "0",
+            "0",
+            "0",
+            "0.16666666666666666",
+            "0",
+            "0.16666666666666666",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        ]
+      },
+      {
+        "id": "107",
+        "name": "Scale",
+        "type": "VideoComponentParam",
+        "keys": [
+          [
+            "254016000000",
+            "35.",
+            "0",
+            "0",
+            "0",
+            "0.16666666666666666",
+            "5",
+            "0.16666666666666666"
+          ],
+          [
+            "1016064000000",
+            "50.",
+            "0",
+            "0",
+            "5",
+            "0.16666666666666666",
+            "0",
+            "0.16666666666666666"
+          ]
+        ]
+      },
+      {
+        "id": "110",
+        "name": "Rotation",
+        "type": "VideoComponentParam",
+        "keys": [
+          [
+            "254016000000",
+            "-15.",
+            "0",
+            "0",
+            "0",
+            "0.16666666666666666",
+            "10",
+            "0.16666666666666666"
+          ],
+          [
+            "1016064000000",
+            "15.",
+            "0",
+            "0",
+            "10",
+            "0.16666666666666666",
+            "0",
+            "0.16666666666666666"
+          ]
+        ]
+      }
+    ],
+    "motion_owner": "<VideoFilterComponent ObjectID=\"96\" ClassID=\"d10da199-beea-4dd1-b941-ed3a78766d50\" Version=\"9\">\n\t\t<Component Version=\"7\">\n\t\t\t<Params Version=\"1\">\n\t\t\t\t<Param Index=\"0\" ObjectRef=\"106\" />\n\t\t\t\t<Param Index=\"1\" ObjectRef=\"107\" />\n\t\t\t\t<Param Index=\"2\" ObjectRef=\"108\" />\n\t\t\t\t<Param Index=\"3\" ObjectRef=\"109\" />\n\t\t\t\t<Param Index=\"4\" ObjectRef=\"110\" />\n\t\t\t\t<Param Index=\"5\" ObjectRef=\"111\" />\n\t\t\t\t<Param Index=\"6\" ObjectRef=\"112\" />\n\t\t\t\t<Param Index=\"7\" ObjectRef=\"113\" />\n\t\t\t\t<Param Index=\"8\" ObjectRef=\"114\" />\n\t\t\t\t<Param Index=\"9\" ObjectRef=\"115\" />\n\t\t\t\t<Param Index=\"10\" ObjectRef=\"116\" />\n\t\t\t</Params>\n\t\t\t<ID>1</ID>\n\t\t\t<Intrinsic>true</Intrinsic>\n\t\t\t<DisplayName>Motion</DisplayName>\n\t\t</Component>\n\t\t<PremiereFilterPrivateData Encoding=\"base64\" BinaryHash=\"28023fe8-69ae-65a9-b9b9-f8040000000e\">Af8=\n\t\t</PremiereFilterPrivateData>\n\t\t<VideoFilterType>2</VideoFilterType>\n\t\t<MatchName>AE.ADBE Motion</MatchName>\n\t</VideoFilterComponent>\n\t",
+    "render_copy_sha256": "d1d117bc9d28bebf30e787f7022e3bf040ed67d2b09a14f7aae450a40ac2a527",
+    "path_only": true
+  },
+  "candidate": {
+    "source_sha256": "783ea3cefdc4bc82a10d4ee38056538cc977a95f116f265e78ee161207dd258e",
+    "sequence_uid": "9ae6e3e7-b14f-4ba6-a7f8-c3ceeaad44f6",
+    "animated": [
+      {
+        "id": "91",
+        "name": "Position",
+        "type": "PointComponentParam",
+        "keys": [
+          [
+            "254016000000",
+            "0.3645833333333333:0.39814814814814814",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ],
+          [
+            "1016064000000",
+            "0.5989583333333334:0.5648148148148148",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        ]
+      },
+      {
+        "id": "92",
+        "name": "Scale",
+        "type": "VideoComponentParam",
+        "keys": [
+          [
+            "254016000000",
+            "35",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ],
+          [
+            "1016064000000",
+            "50",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        ]
+      },
+      {
+        "id": "95",
+        "name": "Rotation",
+        "type": "VideoComponentParam",
+        "keys": [
+          [
+            "254016000000",
+            "-15",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ],
+          [
+            "1016064000000",
+            "15",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ]
+        ]
+      }
+    ],
+    "motion_owner": "<VideoFilterComponent ObjectID=\"90\" ClassID=\"d10da199-beea-4dd1-b941-ed3a78766d50\" Version=\"7\">\n\t\t<Component Version=\"5\">\n\t\t\t<Params Version=\"1\">\n\t\t\t\t<Param ObjectRef=\"91\" Index=\"0\" />\n\t\t\t\t<Param ObjectRef=\"92\" Index=\"1\" />\n\t\t\t\t<Param ObjectRef=\"93\" Index=\"2\" />\n\t\t\t\t<Param ObjectRef=\"94\" Index=\"3\" />\n\t\t\t\t<Param ObjectRef=\"95\" Index=\"4\" />\n\t\t\t\t<Param ObjectRef=\"96\" Index=\"5\" />\n\t\t\t\t<Param ObjectRef=\"97\" Index=\"6\" />\n\t\t\t</Params>\n\t\t\t<ID>1</ID>\n\t\t\t<DisplayName>Motion</DisplayName>\n\t\t\t<Bypass>false</Bypass>\n\t\t\t<Intrinsic>true</Intrinsic>\n\t\t</Component>\n\t\t<PremiereFilterPrivateData Encoding=\"base64\" BinaryHash=\"3805854c-243a-c4be-bd40-a8a40000000e\">AQA=</PremiereFilterPrivateData>\n\t\t<MatchName>AE.ADBE Motion</MatchName>\n\t\t<VideoFilterType>2</VideoFilterType>\n\t</VideoFilterComponent>\n\t",
+    "render_copy_sha256": "cd3f35f3406c9f4790a1e3d0fb0199fbce30e4897e8d8cabb8fe014e36d50f0e",
+    "path_only": true
+  }
+}

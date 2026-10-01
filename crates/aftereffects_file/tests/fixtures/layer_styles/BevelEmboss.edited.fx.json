@@ -1,0 +1,256 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "backgroundColor": [
+    0.0,
+    0.0,
+    0.0,
+    1.0
+  ],
+  "composition": {
+    "dynamics": {
+      "entries": []
+    },
+    "id": "main",
+    "layers": [
+      {
+        "activeRange": {
+          "duration": 2000,
+          "start": 0
+        },
+        "blendMode": "normal",
+        "description": "AEP composition 58. Structural import; see docs/after-effects-support.md. No visual fidelity established.",
+        "id": 1,
+        "layers": [
+          {
+            "activeRange": {
+              "duration": 2000,
+              "start": 0
+            },
+            "blendMode": "normal",
+            "description": "AEP comp=58 layer=71 kind=0 source=70 transformParent=0; editable solid with occurrence Transform and separate source clock; other properties best-effort",
+            "effects": [
+              {
+                "effect": {
+                  "altitude": 50,
+                  "angle": 75,
+                  "depth": 2.2,
+                  "direction": "down",
+                  "enabled": true,
+                  "highlightColor": [
+                    1,
+                    0.8,
+                    0.4,
+                    0.9
+                  ],
+                  "shadowColor": [
+                    0.1,
+                    0.2,
+                    0.4,
+                    0.7
+                  ],
+                  "size": 12,
+                  "soften": 3,
+                  "style": "innerBevel",
+                  "technique": "smooth",
+                  "type": "bevelEmboss"
+                },
+                "enabled": true,
+                "id": 4
+              }
+            ],
+            "id": 2,
+            "layers": [
+              {
+                "activeRange": {
+                  "duration": 2000,
+                  "start": 0
+                },
+                "blendMode": "normal",
+                "id": 3,
+                "layers": [
+                  {
+                    "activeRange": {
+                      "duration": 1000000000000,
+                      "start": 0
+                    },
+                    "blendMode": "normal",
+                    "description": "Editable AE solid; static source fill and Transform, no flattened media",
+                    "id": 5,
+                    "name": "Source content clock",
+                    "parent": 3,
+                    "rect": {
+                      "fillColor": [
+                        0.30000001192092896,
+                        0.5,
+                        0.699999988079071,
+                        1.0
+                      ],
+                      "fillEnabled": true,
+                      "position": [
+                        0.0,
+                        0.0
+                      ],
+                      "roundness": 0.0,
+                      "size": [
+                        96.0,
+                        64.0
+                      ],
+                      "strokeEnabled": false,
+                      "strokeWidth": 0.0
+                    },
+                    "transform": {
+                      "anchorPoint": [
+                        0.0,
+                        0.0
+                      ],
+                      "opacity": 100.0,
+                      "orientation": [
+                        0.0,
+                        0.0,
+                        0.0
+                      ],
+                      "position": [
+                        0.0,
+                        0.0
+                      ],
+                      "rotation": 0.0,
+                      "rotationX": 0.0,
+                      "rotationY": 0.0,
+                      "scale": [
+                        100.0,
+                        100.0
+                      ],
+                      "skew": 0.0,
+                      "skewAxis": 0.0
+                    },
+                    "type": "Rect"
+                  }
+                ],
+                "name": "Source content clock",
+                "parent": 2,
+                "playback": {
+                  "after": "inactive",
+                  "before": "inactive",
+                  "keyframes": [
+                    {
+                      "easing": {
+                        "type": "linear"
+                      },
+                      "id": "aep-time-2-0",
+                      "time": 0,
+                      "value": 0
+                    },
+                    {
+                      "easing": {
+                        "type": "linear"
+                      },
+                      "id": "aep-time-2-1",
+                      "time": 2000,
+                      "value": 2000
+                    }
+                  ]
+                },
+                "transform": {
+                  "anchorPoint": [
+                    0.0,
+                    0.0
+                  ],
+                  "opacity": 100.0,
+                  "orientation": [
+                    0.0,
+                    0.0,
+                    0.0
+                  ],
+                  "position": [
+                    0.0,
+                    0.0
+                  ],
+                  "rotation": 0.0,
+                  "rotationX": 0.0,
+                  "rotationY": 0.0,
+                  "scale": [
+                    100.0,
+                    100.0
+                  ],
+                  "skew": 0.0,
+                  "skewAxis": 0.0
+                },
+                "type": "Group"
+              }
+            ],
+            "name": "BevelEmboss Subject",
+            "parent": 1,
+            "transform": {
+              "anchorPoint": [
+                48.0,
+                32.0
+              ],
+              "opacity": 100.0,
+              "orientation": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "position": [
+                160.0,
+                90.0
+              ],
+              "rotation": 0.0,
+              "rotationX": 0.0,
+              "rotationY": 0.0,
+              "scale": [
+                100.0,
+                100.0
+              ],
+              "skew": 0.0,
+              "skewAxis": 0.0
+            },
+            "type": "Group"
+          }
+        ],
+        "name": "BevelEmboss",
+        "transform": {
+          "anchorPoint": [
+            0.0,
+            0.0
+          ],
+          "opacity": 100.0,
+          "orientation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "position": [
+            0.0,
+            0.0
+          ],
+          "rotation": 0.0,
+          "rotationX": 0.0,
+          "rotationY": 0.0,
+          "scale": [
+            100.0,
+            100.0
+          ],
+          "skew": 0.0,
+          "skewAxis": 0.0
+        },
+        "type": "Group"
+      }
+    ],
+    "motionBlur": {
+      "adaptiveSampleLimit": 128.0,
+      "enabled": false,
+      "samplesPerFrame": 16.0,
+      "shutterAngle": 180.0,
+      "shutterPhase": 0.0
+    },
+    "name": "BevelEmboss",
+    "segmentLayerIds": []
+  },
+  "dimensions": {
+    "height": 180,
+    "width": 320
+  },
+  "duration": 2.0,
+  "formatVersion": 1
+}

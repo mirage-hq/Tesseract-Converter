@@ -1,0 +1,46 @@
+{
+  "composition_id": 1,
+  "composition_name": "AEP_PROOF_POSITION_EXPORT",
+  "layer_id": 17,
+  "background_layer_id": 15,
+  "fps": 24,
+  "frames": 48,
+  "width": 1920,
+  "height": 1080,
+  "position": [
+    1072,
+    464,
+    0
+  ],
+  "anchor": [
+    240,
+    135,
+    0
+  ],
+  "scale": [
+    100,
+    100,
+    100
+  ],
+  "rotation": 0,
+  "foreground_rgb": [
+    0.1875,
+    0.625,
+    0.9375
+  ],
+  "foreground_size": [
+    480,
+    270
+  ],
+  "source_sha256": "b4ae7835a8bc0821f2f1c31b0d2bd113d793d45cb76210ba0eef7ef8acf43094",
+  "source_bytes": 86239,
+  "author": "After Effects JSX DoScriptFile",
+  "ae_version": "26.5x89",
+  "author_jsx_sha256": "9ac09b9bfa1eac8a41eb955414dd44aa123ab2832a8dff7428d8e1a654c06566",
+  "author_jsx_current_sha256": "8469b19135c89d4fd8c8df84144ab658bb2110f127463dba5600c7eb68ef8693",
+  "case": "export_static_position",
+  "evidence_scope": "Independent Adobe-native source and retained Adobe reference; import assertions only in this PR, no current conversion or export fidelity result.",
+  "reference_mp4_sha256": "c66aa412585b27abdf3203f24b53e73eb13b179b1abab3bfb6adc451bb794164",
+  "reference_mp4_bytes": 16587,
+  "reference_format": "Adobe aerender H.264/BT.709 YUV420p, 1920x1080 24fps frames 0..47; no alpha/audio"
+}

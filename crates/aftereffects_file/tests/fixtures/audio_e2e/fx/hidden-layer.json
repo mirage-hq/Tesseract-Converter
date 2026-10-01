@@ -1,0 +1,52 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "backgroundColor": [
+    0.0,
+    0.0,
+    0.0,
+    1.0
+  ],
+  "composition": {
+    "dynamics": {
+      "entries": []
+    },
+    "id": "main",
+    "layers": [
+      {
+        "activeRange": {
+          "duration": 2000,
+          "start": 1000
+        },
+        "id": 700,
+        "isHidden": true,
+        "name": "audio-700",
+        "parent": null,
+        "source": {
+          "assetId": "sound"
+        },
+        "sourceIntrinsicDuration": 4000,
+        "sourceRange": {
+          "duration": 1000,
+          "start": 500
+        },
+        "type": "Audio",
+        "volume": 0.5
+      }
+    ],
+    "motionBlur": {
+      "adaptiveSampleLimit": 128.0,
+      "enabled": false,
+      "samplesPerFrame": 16.0,
+      "shutterAngle": 180.0,
+      "shutterPhase": 0.0
+    },
+    "name": "hidden-layer",
+    "segmentLayerIds": []
+  },
+  "dimensions": {
+    "height": 180,
+    "width": 320
+  },
+  "duration": 6.0,
+  "formatVersion": 1
+}

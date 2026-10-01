@@ -1,0 +1,16 @@
+{
+  "status":"AUTHORED_UNRUN_UNMEASURED",
+  "reference":"MISSING_INDEPENDENT_NATIVE_AEP_COMPOSITION_ID_AND_LONG_TERM_30FPS_MP4",
+  "samples_seconds":[0,0.4833333333,0.9666666667,1,1.0333333333,1.5,1.9666666667],
+  "cases":{
+    "panel-text-style-hold":{"layerName":"Hold and Style Text","text":"HOLD","font":"ArialMT","documentKeys":[[0,"HOLD",38],[1,"STYLE",48]],"diagnostic":"PostScript","strokeWidth":2,"strokeOverFill":true},
+    "panel-text-animator-controls":{"layerName":"Sixteen Text Controls","text":"CONTROLS","animatorName":"Sixteen Controls","selectorNames":["Range Selector 1"],"nativeTracks":[
+      ["ADBE Text Anchor Point 3D",[0,0,0],[4,2,0]], ["ADBE Text Position 3D",[0,0,0],[0,20,0]], ["ADBE Text Scale 3D",[100,100,100],[110,90,100]], ["ADBE Text Rotation",[0],[8]], ["ADBE Text Skew",[0],[6]], ["ADBE Text Skew Axis",[0],[15]], ["ADBE Text Tracking Amount",[0],[4]], ["ADBE Text Stroke Width",[1],[2]], ["ADBE Text Blur",[0,0],[2,2]], ["ADBE Text Opacity",[100],[90]], ["ADBE Text Fill Color",[0.2,0.4,0.8,1],[0.7,0.2,0.3,1]], ["ADBE Text Stroke Color",[0.1,0.1,0.1,1],[0.2,0.6,0.2,1]], ["ADBE Text Line Spacing",[0,0],[0,4]], ["ADBE Text Line Anchor",[0],[2]], ["ADBE Text Character Offset",[0],[1]], ["ADBE Text Character Replace",[67],[68]]
+    ]},
+    "panel-text-selectors-more":{"layerName":"Range Wiggly and More","text":"SELECTORS","animatorName":"Selector Controls","selectorNames":["Range Selector 1","Wiggly Selector 1"],"anchorGrouping":"word","randomizeOrder":true,"nativeTracks":[
+      ["ADBE Text Percent Start",[0],[25]], ["ADBE Text Percent End",[75],[100]], ["ADBE Text Percent Offset",[0],[20]], ["ADBE Text Selector Max Amount",[100],[60]], ["ADBE Text Levels Max Ease",[0],[20]], ["ADBE Text Levels Min Ease",[0],[-20]], ["ADBE Text Random Seed",[1],[3]], ["ADBE Text Wiggly Max Amount",[20],[35]], ["ADBE Text Temporal Freq",[1],[2]], ["ADBE Text Wiggly Random Seed",[2],[4]], ["ADBE Text Anchor Point Align",[0,0],[10,-5]]
+    ]},
+    "panel-text-path-controls":{"layerName":"Editable Path Controls","text":"PATH OPTIONS","path":{"firstMargin":5,"lastMargin":10,"reversePath":true,"perpendicularToPath":true,"forceAlignment":true,"maskIndex":1},"nativeTracks":[["ADBE Text First Margin",[5],[20]],["ADBE Text Last Margin",[10],[25]]]},
+    "panel-text-unsupported-layout":{"layerName":"Mixed Runs Native Only","siblingName":"Supported Text Sibling","text":"MIXED STYLE","diagnostics":["Variable-font axes","Underline/strikethrough","Box vertical alignment","scaleBoxTextWithTransform"],"nativeRunStyles":"UNREPRESENTABLE_IN_CURRENT_FX_SOURCE_TEXT_SCHEMA; native authoring requested but no export parity claim"}
+  }
+}

@@ -1,0 +1,13 @@
+<PremiereData Version="3">
+  <Sequence ObjectUID="sequence-1"><Name>Main</Name><TrackGroups><TrackGroup><Second ObjectRef="1"/></TrackGroup></TrackGroups></Sequence>
+  <VideoTrackGroup ObjectID="1"><TrackGroup><Tracks><Track ObjectURef="track-1"/></Tracks><FrameRate>8467200000</FrameRate></TrackGroup><FrameRect>0,0,1920,1080</FrameRect><ComponentOwner><Components ObjectRef="2"/></ComponentOwner></VideoTrackGroup>
+  <VideoComponentChain ObjectID="2"><ComponentChain/></VideoComponentChain>
+  <VideoClipTrack ObjectUID="track-1"><ClipTrack><Track><ID>1</ID></Track><ClipItems><TrackItems><TrackItem ObjectRef="3"/></TrackItems></ClipItems></ClipTrack></VideoClipTrack>
+  <VideoClipTrackItem ObjectID="3"><ClipTrackItem><ComponentOwner><Components ObjectRef="4"/></ComponentOwner><TrackItem><End>1270080000000</End></TrackItem><SubClip ObjectRef="5"/></ClipTrackItem><FrameRect>0,0,1920,1080</FrameRect><PixelAspectRatio>1,1</PixelAspectRatio></VideoClipTrackItem>
+  <VideoComponentChain ObjectID="4"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>
+  <SubClip ObjectID="5"><Clip ObjectRef="6"/><Name>Source</Name></SubClip>
+  <VideoClip ObjectID="6"><Clip><Source ObjectRef="7"/><InPoint>0</InPoint><OutPoint>1270080000000</OutPoint></Clip></VideoClip>
+  <VideoMediaSource ObjectID="7"><MediaSource><Media ObjectURef="media-1"/></MediaSource><OriginalDuration>2540160000000</OriginalDuration></VideoMediaSource>
+  <Media ObjectUID="media-1"><VideoStream ObjectRef="8"/><RelativePath>media/source.mp4</RelativePath></Media>
+  <VideoStream ObjectID="8"><Duration>2540160000000</Duration><FrameRate>8467200000</FrameRate><FrameRect>0,0,1920,1080</FrameRect></VideoStream>
+</PremiereData>

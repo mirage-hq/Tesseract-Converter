@@ -1,0 +1,1 @@
+{"status":"AUTHORED_UNRUN","capabilities":["E14","E15"],"layers":[{"name":"Late Child","kind":"solid","sourceSize":[80,50],"startTime":0.5,"outPoint":1,"properties":[{"name":"ADBE Position","value":[130,85,0]}]},{"name":"Full Sibling","kind":"solid","sourceSize":[40,60],"startTime":0,"outPoint":2}],"omitted":[{"id":504,"name":"Empty Span","message":"no positive active span"}]}

@@ -1,0 +1,236 @@
+{
+  "scope": "46 grouped Adobe-native source files; source presence only, not a conversion result",
+  "count": 46,
+  "files": [
+    {
+      "path": "compositing/import_motion_blur_cases.aep",
+      "bytes": 319063,
+      "sha256": "41f83161f18bb20db35c547c73c15035e4c27c843173406d924ba4a265400c32"
+    },
+    {
+      "path": "compositing/import_remaining_blend_modes.aep",
+      "bytes": 2010019,
+      "sha256": "537c9e21cff85ea10f39dcd9a2c7b3038987495b5b1dfac8ffa60267d5b732d6"
+    },
+    {
+      "path": "compositing/import_track_matte_cases.aep",
+      "bytes": 368321,
+      "sha256": "7f597f51312021b3948472b56b137b9eeb7c7056086a2e95d150508607cb366a"
+    },
+    {
+      "path": "essential/import_color_nested_overrides.aep",
+      "bytes": 292409,
+      "sha256": "b3a989e5cd394594c6780220a78e6454ec2397146ecd2db334e5da0dc3e85688"
+    },
+    {
+      "path": "essential/import_nested_override_precedence.aep",
+      "bytes": 214983,
+      "sha256": "abc4dbd7c1d1efd72ee8d898e4edd40c553a980e582e13b6344acfd03cfa7fbd"
+    },
+    {
+      "path": "essential/import_occurrence_overrides.aep",
+      "bytes": 469095,
+      "sha256": "b61aa16dce1f7a1cbbacdd6301ba569b625782e562cf0300ea0603e449a78ddb"
+    },
+    {
+      "path": "layers/import_layer_switches.aep",
+      "bytes": 372121,
+      "sha256": "f1ea16736ad5779bc27e781adfded6509cab5d09ea41ea827e56637582a093e2"
+    },
+    {
+      "path": "layers/import_precomp_structure.aep",
+      "bytes": 301561,
+      "sha256": "d3ec4d09406d666621b232d84d1bb72387af56f415e072f5754598a271e212bc"
+    },
+    {
+      "path": "layers/import_timing_controls.aep",
+      "bytes": 396537,
+      "sha256": "4760111efc7a5b428e7a534bd66b368c73026614fbefb72660f40edd50048cee"
+    },
+    {
+      "path": "masks/import_mask_controls.aep",
+      "bytes": 1178491,
+      "sha256": "01380c1f8c5ebe486cd068e5dee50447870b86e4864fc842590a99386dd9b417"
+    },
+    {
+      "path": "media-replacement/import_media_replacement_cases.aep",
+      "bytes": 214785,
+      "sha256": "271e7ac78ec451eb237ee88844c0a9008661d9c8fcd693a88a491156a5aed457"
+    },
+    {
+      "path": "media/import_audio_media_controls.aep",
+      "bytes": 776439,
+      "sha256": "36920d6bdc07dbb6292cc305327ace44efbacacb182dc18da3c979439f5473a8"
+    },
+    {
+      "path": "media/import_frame_blend_master_off.aep",
+      "bytes": 86243,
+      "sha256": "878206858032ff8c4e5ee0457e1ce7454bb51508d333a6d6b9f1212f9dd2dde5"
+    },
+    {
+      "path": "media/import_image_source_controls.aep",
+      "bytes": 233425,
+      "sha256": "450f242e0287689989a5b99f2dc67830b43bb2a787dd627f75943b14397e8c04"
+    },
+    {
+      "path": "parenting/import_parenting_cases.aep",
+      "bytes": 472385,
+      "sha256": "3626cf26d4f8aa2e405ec0999b43cc4bf9e2e5f7cb0c2723b35648e0b7771f55"
+    },
+    {
+      "path": "path-animation/import_path_key_cases.aep",
+      "bytes": 239485,
+      "sha256": "363b3f616d2375a92e0f52e8e026dee28a2b8ce3b7c4b63ae8c2dfade6b50f5d"
+    },
+    {
+      "path": "properties/import_numeric_animation_cases.aep",
+      "bytes": 1302753,
+      "sha256": "c8cc89a35b34ff9139f1141f0943b6cf0a1e065989f078b10de21f7cb53c4a98"
+    },
+    {
+      "path": "properties/import_temporal_clock_cases.aep",
+      "bytes": 332969,
+      "sha256": "d80216eacadb2ba319ea6434184ef6253f3337317e03d67720137edf92ac9cf9"
+    },
+    {
+      "path": "properties/import_transform_components.aep",
+      "bytes": 1229663,
+      "sha256": "871c8fba3d0a33fdca8c49f018a97836a6dc6d98a3a6f18a524702ac7b6246e8"
+    },
+    {
+      "path": "shapes/import_boolean_paint_blend.aep",
+      "bytes": 165903,
+      "sha256": "cd215299543670e4a6b1e81c7453ee18b4af8beff3bd59a056aadf3e19663e94"
+    },
+    {
+      "path": "shapes/import_gradient_controls.aep",
+      "bytes": 625839,
+      "sha256": "5406fe7f92d697e0882d11a8804c436785b51f533d813419364826b5f35ffcce"
+    },
+    {
+      "path": "shapes/import_gradient_stroke_details.aep",
+      "bytes": 270693,
+      "sha256": "17fc50911102dec5cde381ab8ef234c62d315e5b9d3d128dd6d5bc3fe43fe919"
+    },
+    {
+      "path": "shapes/import_group_transform_controls.aep",
+      "bytes": 1083591,
+      "sha256": "ea4ba57dc9d672d4e321208298541018464b88a2fce11c25a4ff9ff35d371ed5"
+    },
+    {
+      "path": "shapes/import_isolated_native_gradients.aep",
+      "bytes": 142405,
+      "sha256": "1cb781c461114a4044e635c24cae6b0802c386ed13277eae8cfdec8d2d1c4d63"
+    },
+    {
+      "path": "shapes/import_modifier_controls.aep",
+      "bytes": 866707,
+      "sha256": "5bc36fb8210de9bde79d2313b07c4c677e1c040e1d7764ca3a49ba9ed9fcb7e2"
+    },
+    {
+      "path": "shapes/import_modifier_order_cases.aep",
+      "bytes": 635723,
+      "sha256": "c52c7ff4a2635e2011ba53fc418dcc1363bc32dd20b99138ae928ce1a61dc303"
+    },
+    {
+      "path": "shapes/import_parametric_shape_controls.aep",
+      "bytes": 1086989,
+      "sha256": "828179aee6c82b68c5a866c7dff28aca7a75ab17083a753242396192c243fd6d"
+    },
+    {
+      "path": "shapes/import_path_direction_cases.aep",
+      "bytes": 548289,
+      "sha256": "59946f45a301fd5530522f46e109e38827d69484efdc57f8107a8fda92edf3c6"
+    },
+    {
+      "path": "shapes/import_polygon_animation.aep",
+      "bytes": 330913,
+      "sha256": "f78b9bc9e43cd2402da9e6c0c2710b4c7e2786a60c05d6268ac563daa0fd330f"
+    },
+    {
+      "path": "shapes/import_rectangle_controls.aep",
+      "bytes": 468843,
+      "sha256": "694bb9df366bc23a9a72aaf078497058a65b197eaa19c558cfe69f410b6fd2f6"
+    },
+    {
+      "path": "shapes/import_remaining_mapped_controls.aep",
+      "bytes": 319471,
+      "sha256": "aa080cbb30a474f579c7acfa7ba30bb173afef5b6eb73b7e513c5cdf17bd1c29"
+    },
+    {
+      "path": "shapes/import_shape_blend_ownership.aep",
+      "bytes": 238521,
+      "sha256": "938cc1f441213b28af9ce1d703fc6787536b55692e2bcee377ffe4d86deed8b1"
+    },
+    {
+      "path": "shapes/import_shape_control_animation.aep",
+      "bytes": 1539855,
+      "sha256": "6031e00e3d65852c1a049635da302b5f9ac3cfc3a2fcd5952fbc6eba1f6c9591"
+    },
+    {
+      "path": "shapes/import_shape_flags_order.aep",
+      "bytes": 788663,
+      "sha256": "8946ba3422a3fb93a43583e4aa379dd8b874c6e5885450b234ebcf8f15726727"
+    },
+    {
+      "path": "shapes/import_solid_paint_controls.aep",
+      "bytes": 935211,
+      "sha256": "4c7115020ff2a81da03f205a025688dc1dddf03f963c8fdbaa2dece6cd2650bf"
+    },
+    {
+      "path": "shapes/import_stroke_dash_caps.aep",
+      "bytes": 863673,
+      "sha256": "293603b08abae9bf0eb553e9a3849dd0f11040345cc3ecf791f09b3453388ec2"
+    },
+    {
+      "path": "text/import_full_justification_variants.aep",
+      "bytes": 273441,
+      "sha256": "c182f48ab8577ccbdb1e851674bc43b56f1b73eeb4082b6b989b21b8733ca7fc"
+    },
+    {
+      "path": "text/import_remaining_selector_animation.aep",
+      "bytes": 522423,
+      "sha256": "ac04500b466a07be529cbfdc3c5fd95c412db68c53f8adc3bb74fc56c886d515"
+    },
+    {
+      "path": "text/import_selector_animation.aep",
+      "bytes": 522019,
+      "sha256": "a5765c7fdbc4d6d323d40323ede6af41ee8d6a3d7dd9e1262d06d07ef242ae66"
+    },
+    {
+      "path": "text/import_selector_order_cases.aep",
+      "bytes": 264795,
+      "sha256": "d8c9c8674a4d26ae8903f14648029ae60165f93b41bea7a97cc5a5039c3f07b2"
+    },
+    {
+      "path": "text/import_text_additional_controls.aep",
+      "bytes": 704985,
+      "sha256": "65a5929c222b2d44727adc40f18438adaa5e339a52568dab308f4e58c06b44e1"
+    },
+    {
+      "path": "text/import_text_animator_channels.aep",
+      "bytes": 2780109,
+      "sha256": "56a8b0b4665989d833734a87ad344deedb5d83e7f2b24c9c7e718fd4c69ea289"
+    },
+    {
+      "path": "text/import_text_document_controls.aep",
+      "bytes": 1286167,
+      "sha256": "348aa59a40d708941e9aa0df9a73e9c916dc3379eb75868c0481109fce09eb63"
+    },
+    {
+      "path": "text/import_text_enable_cases.aep",
+      "bytes": 227241,
+      "sha256": "e4d770901943ef5bfc54c7726dcf1ac3ec3888343e0b6254c6930e92903e83a0"
+    },
+    {
+      "path": "text/import_text_path_options.aep",
+      "bytes": 868467,
+      "sha256": "019db8c748e3b306591bdbade1cbb83ed466481abf860c3488db10a0a6d485ec"
+    },
+    {
+      "path": "text/import_text_selector_controls.aep",
+      "bytes": 2791959,
+      "sha256": "7aedddf83a6a2f7afa849d3206d48dab35b6c43b5b66067bc268e1d39821f9b6"
+    }
+  ]
+}

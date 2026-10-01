@@ -1,0 +1,12 @@
+.scratch/
+# Authoring intermediates are not fixture deliverables.
+*.jsx
+*.creation-source.txt
+*.readback.json
+authoring_*receipt*.json
+native_creation_status.json
+authoring_failure.json
+authoring_*_progress.txt
+authoring_*_error.txt
+*.mp4
+*.mov

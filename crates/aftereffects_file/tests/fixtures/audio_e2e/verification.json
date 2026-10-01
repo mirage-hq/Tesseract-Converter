@@ -1,0 +1,189 @@
+{
+  "source_sha256": "799aa17ad253c73edc6c3e9ac8e2f9b1c7cd8bfa9794cdfcd917d4e42c28a72c",
+  "native_source_authoring": {
+    "status": "passed",
+    "adobe": "26.5x89",
+    "operation": "normal GUI DoScript: buildAep, save, readbackAep",
+    "root_compositions": 28,
+    "reference_rendered": true
+  },
+  "offline_tests": {
+    "comparator": 17,
+    "orchestration": 9,
+    "ownership": 5,
+    "status": "passed",
+    "scope": "synthetic/mocked tests, not native audio fidelity"
+  },
+  "explicit_fx_packaging": {
+    "cases": 25,
+    "status": "passed"
+  },
+  "cpu_smoke": [
+    {
+      "case": "wave-static",
+      "direction": "import",
+      "status": "passed",
+      "assertion": "audio_e2e::inspect_import (source bytes, editable gain and occurrence)"
+    },
+    {
+      "case": "mov-audio-only",
+      "direction": "export",
+      "status": "passed",
+      "assertion": "fresh tesseract-conv Write produced project.aep with packaged media; no Adobe acceptance check"
+    }
+  ],
+  "full_e2e_execution": {
+    "case": "wave-static",
+    "directions": [
+      "import",
+      "export"
+    ],
+    "requires_adobe": false,
+    "status": "failed duration contract",
+    "reference_seconds": 6,
+    "actual_audio_seconds": 5.952,
+    "other_cases": "unmeasured"
+  },
+  "audio_scores": "unmeasured",
+  "export_adobe_acceptance": "UNRUN",
+  "reference_asset_publication": {
+    "status": "passed",
+    "cases": 28,
+    "evidence": "reference_provenance.json"
+  },
+  "checks": [
+    "make aep-audio-test-check",
+    "python3 scripts/aep-test.py list",
+    "python3 scripts/test-aep-support-ledger.py",
+    "make fmt",
+    "make clippy"
+  ],
+  "export_structure_panel": [
+    {
+      "case": "affine-playback",
+      "passed": true,
+      "error": ""
+    },
+    {
+      "case": "all-zero-one-key",
+      "passed": false,
+      "error": "Error: \"all-zero-one-key/audio-700/audioLevels.keys.0.outType: actual \\\"6612\\\" != pinned \\\"6614\\\"\""
+    },
+    {
+      "case": "all-zero-two-keys",
+      "passed": true,
+      "error": ""
+    },
+    {
+      "case": "audio-group",
+      "passed": true,
+      "error": ""
+    },
+    {
+      "case": "bezier-gain",
+      "passed": true,
+      "error": ""
+    },
+    {
+      "case": "conflicting-gain-clock",
+      "passed": true,
+      "error": ""
+    },
+    {
+      "case": "constant-zero-nonzero-base",
+      "passed": true,
+      "error": ""
+    },
+    {
+      "case": "constant-zero-zero-base",
+      "passed": true,
+      "error": ""
+    },
+    {
+      "case": "empty-nested-group",
+      "passed": true,
+      "error": ""
+    },
+    {
+      "case": "empty-only-group",
+      "passed": false,
+      "error": "Error: \"empty-only-group/audio-group-701/$count: actual 1 != pinned 0\""
+    },
+    {
+      "case": "eof-tail",
+      "passed": true,
+      "error": ""
+    },
+    {
+      "case": "fractional-duration",
+      "passed": true,
+      "error": ""
+    },
+    {
+      "case": "group-affine-playback",
+      "passed": true,
+      "error": ""
+    },
+    {
+      "case": "hidden-group",
+      "passed": true,
+      "error": ""
+    },
+    {
+      "case": "hidden-layer",
+      "passed": true,
+      "error": ""
+    },
+    {
+      "case": "hold-gain",
+      "passed": true,
+      "error": ""
+    },
+    {
+      "case": "invalid-gain-hull",
+      "passed": true,
+      "error": ""
+    },
+    {
+      "case": "linear-gain",
+      "passed": false,
+      "error": "Error: \"linear-gain/audio-700/audioLevels.keys.0.outType: actual \\\"6613\\\" != pinned \\\"6612\\\"\""
+    },
+    {
+      "case": "mov-audio-only",
+      "passed": true,
+      "error": ""
+    },
+    {
+      "case": "nonlinear-remap",
+      "passed": true,
+      "error": ""
+    },
+    {
+      "case": "source-switch",
+      "passed": true,
+      "error": ""
+    },
+    {
+      "case": "static-zero",
+      "passed": true,
+      "error": ""
+    },
+    {
+      "case": "trim-offset",
+      "passed": true,
+      "error": ""
+    },
+    {
+      "case": "wave-static",
+      "passed": true,
+      "error": ""
+    },
+    {
+      "case": "zero-base-unmute",
+      "passed": true,
+      "error": ""
+    }
+  ],
+  "checks_note": "Recorded prior execution only. No further validation was run after the user reiterated the no-test instruction."
+}

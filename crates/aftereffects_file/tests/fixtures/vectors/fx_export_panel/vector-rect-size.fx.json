@@ -1,0 +1,82 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "backgroundColor": [0, 0, 0, 0],
+  "composition": {
+    "dynamics": {
+      "entries": [
+        {
+          "animator": {
+            "enabled": true,
+            "keyframes": [
+              {
+                "easing": { "type": "linear" },
+                "id": "vector-rect-size-0",
+                "layerTime": 0,
+                "value": { "type": "vector2", "value": [80, 40] }
+              },
+              {
+                "easing": { "type": "linear" },
+                "id": "vector-rect-size-1",
+                "layerTime": 1000,
+                "value": { "type": "vector2", "value": [150, 70] }
+              }
+            ],
+            "type": "keyframes"
+          },
+          "dependencies": [],
+          "layerRefs": {},
+          "target": {
+            "kind": "layer",
+            "layerId": 900,
+            "propertyType": "rectSize"
+          }
+        }
+      ]
+    },
+    "id": "main",
+    "layers": [
+      {
+        "activeRange": { "duration": 2000, "start": 0 },
+        "blendMode": "normal",
+        "effects": [],
+        "id": 900,
+        "name": "Edited Rectangle",
+        "parent": null,
+        "rect": {
+          "fillColor": [0.2, 0.4, 0.6, 1],
+          "fillEnabled": true,
+          "position": [7, -3],
+          "roundness": 2,
+          "size": [80, 40],
+          "strokeEnabled": false,
+          "strokeWidth": 0
+        },
+        "transform": {
+          "anchorPoint": [0, 0],
+          "opacity": 100,
+          "orientation": [0, 0, 0],
+          "position": [100, 70],
+          "rotation": 0,
+          "rotationX": 0,
+          "rotationY": 0,
+          "scale": [100, 100],
+          "skew": 0,
+          "skewAxis": 0
+        },
+        "type": "Rect"
+      }
+    ],
+    "motionBlur": {
+      "adaptiveSampleLimit": 128,
+      "enabled": false,
+      "samplesPerFrame": 16,
+      "shutterAngle": 180,
+      "shutterPhase": 0
+    },
+    "name": "vector-rect-size",
+    "segmentLayerIds": []
+  },
+  "dimensions": { "height": 180, "width": 320 },
+  "duration": 2.0,
+  "formatVersion": 1
+}

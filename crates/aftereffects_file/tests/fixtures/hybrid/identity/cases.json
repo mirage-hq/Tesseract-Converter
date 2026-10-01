@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "case_id": "H-IDENTITY-01",
+  "registry_scope": "Feature-local actual execution; not historical global registry/scoring enrollment",
+  "source": {
+    "path": "linked-compositions.aep",
+    "sha256": "90ba0883e9c54ee006a8e33d8b497666706a2f25297dbeb3cac71e4c2127f3ff"
+  },
+  "targets": [
+    {
+      "case_id": "H-IDENTITY-01-C1",
+      "composition_id": 1,
+      "name": "Hybrid_Duplicate_Name",
+      "dynamic_link_guid": "00000001-0000-0000-0000-000000000000",
+      "reference_asset_id": "nJvJFfZdDt9G3RljQCZW_vid",
+      "test": {
+        "path": "crates/aftereffects_file/src/adapter/linked_import/tests.rs",
+        "symbol": "adapter::linked_import::tests::native_same_name_guids_import_distinct_editable_red_and_blue_compositions",
+        "assertions": [
+          "pinned native AEP and Premiere hashes and exact native GUID payloads",
+          "fresh GUID-selected Check/Write imports item 1, never name or root fallback",
+          "editable Rect fill [1,0,0,1], not flattened media",
+          "1920x1080 canvas,2s duration,center position and anchor,fill/no stroke",
+          "ordinary numeric import diagnostic parity and no external archive assets"
+        ],
+        "execution": "passed in 7-case linked-import panel and final36-case affected panel"
+      }
+    },
+    {
+      "case_id": "H-IDENTITY-01-C16",
+      "composition_id": 16,
+      "name": "Hybrid_Duplicate_Name",
+      "dynamic_link_guid": "00000010-0000-0000-0000-000000000000",
+      "reference_asset_id": "4SofoSLCvGzvcN4VZ11X_vid",
+      "test": {
+        "path": "crates/aftereffects_file/src/adapter/linked_import/tests.rs",
+        "symbol": "adapter::linked_import::tests::native_same_name_guids_import_distinct_editable_red_and_blue_compositions",
+        "assertions": [
+          "pinned native AEP and Premiere hashes and exact native GUID payloads",
+          "fresh GUID-selected Check/Write imports item 16, never name or root fallback",
+          "editable Rect fill [0,0,1,1], not flattened media",
+          "1920x1080 canvas,2s duration,center position and anchor,fill/no stroke",
+          "ordinary numeric import diagnostic parity and no external archive assets"
+        ],
+        "execution": "passed in 7-case linked-import panel and final36-case affected panel"
+      }
+    }
+  ],
+  "supporting_native_sequence": {
+    "source_path": "native-linked.prproj",
+    "source_sha256": "a03b8d06787e500a803fe2b28ebca4df2b3f817a6d91098638acc80ea877ef04",
+    "sequence_uid": "1650b494-2985-4142-8645-626872e29ad7",
+    "reference_asset_id": "tPFucth7V8gDcwsUs9nM_vid",
+    "consumed_by": [
+      "H-IDENTITY-01-C1",
+      "H-IDENTITY-01-C16"
+    ],
+    "assertion": "native Premiere importer payloads select both distinct identities; native rendering changes red to blue at frame30 after AEP names become identical"
+  },
+  "critical_native_samples": {
+    "frame_rate": 30,
+    "frames_checked": "all0..59 inclusive",
+    "cut_neighbors": [
+      29,
+      30
+    ],
+    "last_frame": 59
+  },
+  "directions": {
+    "import": "AE-owned file/GUID selected editable import implemented and CPU-asserted; ordinary Premiere conversion embeds both linked pictures (premiere_file tests::linked_compositions::native_links_import_editable_same_name_compositions_by_exact_guid); linked-audio occurrence import unimplemented",
+    "export": "unchanged; no new generated export acceptance or fidelity proof"
+  },
+  "unmeasured": [
+    "fresh-converter RGB comparison",
+    "alpha fidelity",
+    "audio fidelity/ownership",
+    "source-clock visual proof (static colors)",
+    "generated hybrid acceptance",
+    "edit propagation",
+    "relocation"
+  ]
+}
