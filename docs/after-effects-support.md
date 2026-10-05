@@ -1070,10 +1070,13 @@ video sources through the existing media engine, then recheck native AE admissio
 Exact H.264 and ProRes-alpha packet clocks remux to video-only MOV without edit
 lists; eligible opaque sources use the existing H.264 encoder. Unverified alpha
 precision, audio/timecode and unsupported timing, colour or topology reject the
-complete selected scope, retaining its native Premiere fallback. An enabled
-unmapped effect prevents video preparation for that scope; archive integrity and
-ordinary media interpretation still run. I/O, cancellation and malformed backend
-results remain fatal. Ordinary standalone export admission is unchanged.
+complete selected scope, retaining its native Premiere fallback. Source-media
+preparation is independent of omitted effects; unsupported effects are diagnosed
+locally with supported owners retained. Complete media/matte scope checks, source
+clocks, archive integrity and `PreserveOriginal` remain unchanged. I/O, cancellation
+and malformed backend results remain fatal. Ordinary standalone export admission
+is unchanged. Focused structural checks cover this retention boundary; new native
+acceptance and original-project fidelity remain unrun/unmeasured.
 
 Verified QuickTime sources retain exact 24576 Hz duration when representable.
 Floor-millisecond intrinsic aliases additionally require remap keys/control hulls,

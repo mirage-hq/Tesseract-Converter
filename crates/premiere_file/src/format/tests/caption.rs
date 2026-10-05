@@ -1002,22 +1002,6 @@ fn unsupported_caption_structure_is_omitted_without_failing_the_sequence() {
             item("TranscriptClip:204: caption retiming is unsupported"),
         ),
         (
-            one()
-                .replace(
-                    &format!("<Start>{}</Start>", 30 * FRAME),
-                    &format!("<Start>{}</Start>", 30 * FRAME + 1),
-                )
-                .replace(
-                    &format!("<End>{}</End>", 90 * FRAME),
-                    &format!("<End>{}</End>", 90 * FRAME + 1),
-                ),
-            omitted(
-                OmissionScope::Occurrence,
-                "CaptionDataClipTrackItem:200",
-                "C1 caption 1: invalid Premiere project: timeline start must align to a 30 fps sequence frame boundary",
-            ),
-        ),
-        (
             one().replace(
                 "<OriginalDuration>10973491200000000</OriginalDuration>",
                 "<OriginalDuration>2540160000000</OriginalDuration>",
@@ -1731,4 +1715,33 @@ fn object_mask_sampling_preserves_native_caption_admission() {
     );
     let doc = crate::tests::support::project_document_with_media(sequence, &project.media);
     assert!(doc.to_string().contains("Native caption"));
+}
+
+#[test]
+fn fractional_sequence_clock_retains_caption_text_and_timing() {
+    let xml = captions_xml(&[vec![cue(200, 30..90, "Clock cue")]])
+        .replace(
+            &format!("<Start>{}</Start>", 30 * FRAME),
+            &format!("<Start>{}</Start>", 30 * FRAME + 1),
+        )
+        .replace(
+            &format!("<End>{}</End>", 90 * FRAME),
+            &format!("<End>{}</End>", 90 * FRAME + 1),
+        );
+    let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let (sequences, media) = project.into_parts();
+    let document = crate::tests::support::project_document_with_media(&sequences[0], &media);
+    let cue = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["sourceText"]["text"] == "Clock cue")
+        .unwrap();
+    assert_eq!(cue["type"], "Text");
+    assert_eq!(cue["sourceText"]["fontSize"], 48.0);
+    assert_eq!(
+        *crate::test_support::layer_range(cue),
+        serde_json::json!({"start":1000,"duration":2000})
+    );
 }

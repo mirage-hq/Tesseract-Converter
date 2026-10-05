@@ -446,6 +446,167 @@ fn masked_clips(document: &Value) -> Vec<(i64, Value, Vec<Value>, Vec<Value>)> {
 }
 
 /// The one sequence of both native Mask Path fixtures.
+/// A two-picture closure of the native keyed-mask fixture. Only record
+/// metadata (including inactive `IsLocked` and `DiscontinuousInterpolate`),
+/// Feather and the inactive path-selection controls differ; the native
+/// picture, source clock and path keys remain unchanged.
+#[test]
+fn native_opacity_mask_record_metadata_keeps_editable_masked_picture() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    for inverted in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for name in [
+            "feature_linked_av_source.mp4",
+            "feature_timecoded_source.mp4",
+        ] {
+            std::fs::copy(fixtures.join(name), root.join(name)).unwrap();
+        }
+        let mut xml = include_str!("../fixtures/opacity-mask-records.xml").to_owned();
+        if inverted {
+            edit_record(
+                &mut xml,
+                "<VideoComponentParam ObjectID=\"1199\"",
+                "</VideoComponentParam>",
+                |record| {
+                    record.replace(
+                        "-91445760000000000,false,0,0,0,0,0,0",
+                        "-91445760000000000,true,0,0,0,0,0,0",
+                    )
+                },
+            );
+        }
+        let source = root.join("project.prproj");
+        write_prproj(&source, &xml);
+        let output = root.join("converted");
+        let omissions =
+            premiere_to_tesseract(&source, &output, Some(KEYED_MASK_SEQUENCE), false).unwrap();
+        assert!(
+            omissions
+                .iter()
+                .all(|omission| omission.scope != OmissionScope::Occurrence),
+            "{omissions:?}"
+        );
+        assert!(omissions
+            .iter()
+            .any(|omission| omission.reason == FEATHER_REPORT));
+        let file = TesseractFile::open(first_project(&output)).unwrap();
+        let document = file.project_json().unwrap();
+        let layers = document["composition"]["layers"].as_array().unwrap();
+        assert_eq!(
+            layers
+                .iter()
+                .filter(|layer| layer["type"] == "Video")
+                .count(),
+            2
+        );
+        let picture = layers
+            .iter()
+            .find(|layer| {
+                layer["type"] == "Video"
+                    && layer["masks"]
+                        .as_array()
+                        .is_some_and(|masks| !masks.is_empty())
+            })
+            .unwrap();
+        assert_eq!(crate::test_support::layer_range(picture)["start"], 0);
+        assert_eq!(crate::test_support::layer_range(picture)["duration"], 3000);
+        assert_eq!(picture["masks"].as_array().unwrap().len(), 1);
+        let mask = &picture["masks"][0];
+        assert_eq!(mask["mode"], "add");
+        assert_eq!(mask["inverted"], inverted);
+        assert_eq!(mask["opacity"], 1.0);
+        assert_eq!(mask["feather"], json!([321.0, 321.0]));
+        let guide = layers
+            .iter()
+            .find(|layer| layer["id"] == mask["layer"])
+            .unwrap();
+        assert_eq!(guide["type"], "Shape");
+        assert_eq!(guide["transform"], picture["transform"]);
+        assert!(guide["shape"]["fills"].as_array().is_none_or(Vec::is_empty));
+        assert!(guide["shape"]["strokes"]
+            .as_array()
+            .is_none_or(Vec::is_empty));
+        assert_eq!(
+            rounded(&guide["shape"]["path"]["commands"]),
+            json!(mask_rectangle(480.0, 960.0))
+        );
+        let clips = keyed_mask_clips(&document);
+        assert_eq!(clips.len(), 1);
+        let keys = clips[0]["keys"].as_array().unwrap();
+        assert_eq!(
+            keys.iter()
+                .map(|key| key[0].as_i64().unwrap())
+                .collect::<Vec<_>>(),
+            [500, 1500, 2000]
+        );
+        assert_eq!(keys[1][2], json!(mask_rectangle(960.0, 1440.0)));
+        assert_eq!(keys[2][1], "hold");
+        let asset = file
+            .asset(picture["source"]["assetId"].as_str().unwrap())
+            .unwrap();
+        let expected = std::fs::read(fixtures.join("feature_timecoded_source.mp4")).unwrap();
+        assert_eq!(
+            asset.read_verified_bytes(expected.len() as u64).unwrap(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn native_opacity_mask_malformed_required_path_keeps_only_unmasked_sibling() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    for name in [
+        "feature_linked_av_source.mp4",
+        "feature_timecoded_source.mp4",
+    ] {
+        std::fs::copy(fixtures.join(name), root.join(name)).unwrap();
+    }
+    let mut xml = include_str!("../fixtures/opacity-mask-records.xml").to_owned();
+    edit_record(
+        &mut xml,
+        "<ArbVideoComponentParam ObjectID=\"1195\"",
+        "</ArbVideoComponentParam>",
+        |record| {
+            record.replace(
+                "<ParameterID>6</ParameterID>",
+                "<ParameterID>99</ParameterID>",
+            )
+        },
+    );
+    let source = root.join("project.prproj");
+    write_prproj(&source, &xml);
+    let output = root.join("converted");
+    let omissions =
+        premiere_to_tesseract(&source, &output, Some(KEYED_MASK_SEQUENCE), false).unwrap();
+    assert!(
+        omissions
+            .iter()
+            .any(|omission| omission.scope == OmissionScope::Occurrence
+                && omission
+                    .reason
+                    .contains("ArbVideoComponentParam:1195: unknown mask parameter")),
+        "{omissions:?}"
+    );
+    let file = TesseractFile::open(first_project(&output)).unwrap();
+    let document = file.project_json().unwrap();
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    let videos = video_layers(&document);
+    assert_eq!(videos.len(), 1);
+    assert!(videos[0]["masks"].as_array().is_none_or(Vec::is_empty));
+    assert!(layers.iter().all(|layer| layer["type"] != "Shape"));
+    let expected = std::fs::read(fixtures.join("feature_linked_av_source.mp4")).unwrap();
+    let asset = file
+        .asset(videos[0]["source"]["assetId"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(
+        asset.read_verified_bytes(expected.len() as u64).unwrap(),
+        expected
+    );
+}
+
 const KEYED_MASK_SEQUENCE: &str = "5fe2e712-90a9-4044-b93a-7a75b79b1320";
 
 /// Each masked video of `document` by start: its mask's fields, its guide's

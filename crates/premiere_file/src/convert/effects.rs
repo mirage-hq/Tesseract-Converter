@@ -501,6 +501,69 @@ fn gradient_ramp(ramp: PrRamp) -> LayerEffect {
     }
 }
 
+/// Retain a graphic's leading Ramps on its editable picture group. Its bounds
+/// replace the native generator frame; coverage admission remains conservative.
+pub(super) fn import_graphic_ramps(
+    graphic: &crate::schema::PrGraphic,
+    layer_id: LayerId,
+    ids: &mut EffectIdAllocator,
+    omissions: &mut Vec<Omission>,
+) -> (
+    Vec<EffectRecord>,
+    Vec<(PropertyTarget, PropertyKeyframeTrack)>,
+) {
+    let mut effects = Vec::new();
+    let mut tracks = Vec::new();
+    let Some(loss) = &graphic.effect_loss else {
+        return (effects, tracks);
+    };
+    // Ramp bindings are saved frame fractions, colors and blend, independent
+    // of the similarity fields used by Directional Blur.
+    let host = ImportHost {
+        similarity: Ok(ClipToComposition {
+            scale: 1.0,
+            rotation: 0.0,
+        }),
+        off_canvas: None,
+        staged: false,
+        own_frame: Ok(()),
+    };
+    // Native graphic chains list the last applied component first.
+    for effect in loss.mapped_ramps.iter().rev() {
+        let PrEffectParams::Ramp(ramp) = effect.params else {
+            continue;
+        };
+        let id = ids.take();
+        let record = EffectRecord::from_data(&EffectData::Identified {
+            id,
+            enabled: effect.enabled,
+            effect: EffectPayload::Known(gradient_ramp(ramp)),
+        });
+        match record {
+            Ok(record) => effects.push(record),
+            Err(error) => {
+                omit(
+                    omissions,
+                    OmissionScope::Feature,
+                    graphic.id().unwrap_or("graphic"),
+                    format!("graphic Ramp replacement was not imported: {error}"),
+                );
+                continue;
+            }
+        }
+        for animation in &effect.animations {
+            match param_tracks(animation, id, graphic.in_ticks, layer_id, &host) {
+                Ok(keys) => tracks.extend(keys),
+                Err(reason) => omit(omissions, OmissionScope::Feature, graphic.id().unwrap_or("graphic"),
+                    format!("graphic Ramp {} keys were omitted; retained its static control and other keys: {reason}", animation.param.label)),
+            }
+        }
+        approximate(omissions, graphic.id().unwrap_or("graphic"),
+            "graphic Ramp retained as editable gradientRamp with saved endpoints, colors, blend and supported generator-clock keys; FX picture-group bounds replace the native generator frame, so gradient placement/falloff can differ. Native graphic-host alpha and matte luma remain unverified; dependent mask/provider coverage is not admitted");
+    }
+    (effects, tracks)
+}
+
 /// Whether `param` is a Legacy or current Directional Blur parameter, whose
 /// values map through the clip's static similarity.
 fn is_directional_blur_param(param: &EffectParamSpec) -> bool {

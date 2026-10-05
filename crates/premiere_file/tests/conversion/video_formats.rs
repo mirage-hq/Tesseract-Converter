@@ -17,6 +17,7 @@
 //! Premiere 26.5.1 saved for 10-bit HLG `hvc1` sources.
 
 mod avcc;
+mod movie_metadata;
 
 use super::support::*;
 use fx_conv::{
@@ -666,7 +667,10 @@ fn subtitle_tracks_reject_in_both_directions() {
     let error = tesseract_to_premiere(&archive, export_root.join("native"), true)
         .unwrap_err()
         .to_string();
-    assert!(error.contains(expected), "{error}");
+    assert!(
+        error.contains("subtitle or caption tracks are unsupported"),
+        "{error}"
+    );
 }
 
 #[test]

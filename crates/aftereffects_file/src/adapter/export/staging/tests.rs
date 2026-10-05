@@ -312,21 +312,45 @@ fn selected_picture_prunes_rgb_when_its_native_matte_owner_fails() {
     );
 }
 
+fn primary_grade_value() -> Value {
+    serde_json::to_value(fx_schema::LayerEffect::PrimaryGrade(
+        fx_schema::PrimaryGrade {
+            exposure: 1.0,
+            contrast: 0.5,
+            ..Default::default()
+        },
+    ))
+    .unwrap()
+}
+
 #[cfg(feature = "ffmpeg-library")]
 #[test]
-fn selected_picture_prepared_movie_pair_retains_bound_alpha_matte() {
+fn selected_picture_prepared_movie_pair_retains_bound_alpha_matte_and_unmapped_effect_owner() {
     let parent = tempfile::tempdir().unwrap();
     let mut value = prepared_video_value();
+    value["composition"]["layers"][0]["sourceIntrinsicDuration"] = json!(1000);
     let mut matte = value["composition"]["layers"][0].clone();
     matte["id"] = json!(901);
     matte["name"] = json!("Retained alpha provider");
     matte["source"]["assetId"] = json!("matte");
     value["composition"]["layers"][0]["trackMatte"] = json!({"layer":901,"mode":"alpha"});
-    value["composition"]["layers"]
-        .as_array_mut()
-        .unwrap()
-        .insert(0, matte);
-    let source = premiere_media("video-24fps.mp4");
+    value["composition"]["layers"][0]["effects"] = json!([
+        {"id":100,"enabled":true,"effect":primary_grade_value()},
+        {"id":101,"enabled":true,"effect":{
+            "type":"exposure","exposure":0.5,"offset":0,"gammaCorrection":1
+        }}
+    ]);
+    let mut sibling: Value = serde_json::from_str(RECT).unwrap();
+    sibling = sibling["composition"]["layers"][0].take();
+    sibling["id"] = json!(902);
+    sibling["name"] = json!("Retained unrelated rectangle");
+    sibling["activeRange"] = json!({"start":0,"duration":200});
+    let roots = value["composition"]["layers"].as_array_mut().unwrap();
+    roots.insert(0, matte);
+    roots.push(sibling);
+    // This public 30-frame QTRLE fixture requires ordinary whole-source
+    // preparation; no effect output or rendered layer is used as its source.
+    let source = premiere_media("alpha-media/animation.mov");
     let archive = TesseractFileBuilder::try_new(document(value))
         .unwrap()
         .add_asset("rgb", &source, AssetKind::Video)
@@ -336,20 +360,43 @@ fn selected_picture_prepared_movie_pair_retains_bound_alpha_matte() {
         .write(parent.path().join("input.tsrct"))
         .unwrap();
     let original = archive.project().to_json_value().unwrap();
+    let source_hash = fx_conv::sha256_file(&source).unwrap();
+    let archive_bytes = fs::read(parent.path().join("input.tsrct")).unwrap();
     let stage = AfterEffects
         .stage_picture_layers(
             &archive,
             archive.project(),
-            0..2,
+            0..3,
             parent.path(),
             &AfterEffectsExportOptions { fps: 30.0 },
         )
         .unwrap();
     assert!(stage.omitted_layer_ids().is_empty(), "{:?}", stage.report());
+    assert!(stage.report().diagnostics.iter().any(|d| {
+        d.layer_id == Some(LayerId::new(900))
+            && d.message.contains("Effect primaryGrade:")
+            && d.message.contains("omitted, owner retained")
+    }));
+    assert_eq!(
+        stage
+            .report()
+            .diagnostics
+            .iter()
+            .filter(|d| d.message.contains("AE destination media Transcode"))
+            .count(),
+        2,
+        "both bound sources are prepared despite the omitted grade"
+    );
     let native = read_project(&fs::read(stage.directory().join("project.aep")).unwrap()).unwrap();
     let ItemKind::Composition(root) = &native.item(1).unwrap().kind else {
         panic!("native root")
     };
+    assert_eq!(root.layers.len(), 3);
+    assert!(
+        root.layers
+            .iter()
+            .any(|layer| layer.name.as_ref() == "Retained unrelated rectangle")
+    );
     let matte = root
         .layers
         .iter()
@@ -362,6 +409,69 @@ fn selected_picture_prepared_movie_pair_retains_bound_alpha_matte() {
         .unwrap();
     assert_eq!(rgb.record.matte_layer_id(), Some(matte.record.id()));
     assert_eq!(rgb.record.track_matte_type(), 1);
+    assert_eq!(rgb.record.in_point(), Some(0.0));
+    assert_eq!(rgb.record.out_point(), Some(0.2));
+    let (_, remap) = crate::properties::root_runs(&rgb.content)
+        .unwrap()
+        .into_iter()
+        .find(|(name, _)| *name == "ADBE Time Remapping")
+        .unwrap();
+    let remap =
+        crate::properties::read_numeric(crate::properties::unique_list(remap, *b"tdbs").unwrap())
+            .unwrap();
+    assert_eq!(
+        remap
+            .keyframes
+            .iter()
+            .map(|key| (key.time_secs, key.values[0]))
+            .collect::<Vec<_>>(),
+        [(0.0, 0.0), (0.1, 0.05), (0.2, 0.2)]
+    );
+    let (effects, warnings) = crate::effects::native::read_effects(&rgb.content, [16.0, 16.0]);
+    // The existing source-free Exposure export control has the same canonical
+    // custom/UI default diagnostics. They must not be confused with failed
+    // media preparation or permission to lose supported Exposure controls.
+    let baseline_input = document(
+        serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/effects/fx_export_panel/exposure-master.fx.json"
+        ))
+        .unwrap(),
+    );
+    let baseline_output = crate::export_document::to_aep(&baseline_input).unwrap();
+    assert!(baseline_output.omitted_layer_ids.is_empty());
+    let baseline = read_project(&baseline_output.bytes).unwrap();
+    let ItemKind::Composition(baseline) = &baseline.item(1).unwrap().kind else {
+        panic!("source-free Exposure control composition")
+    };
+    assert_eq!(baseline.layers.len(), 1);
+    let (baseline_effects, baseline_warnings) =
+        crate::effects::native::read_effects(&baseline.layers[0].content, [320.0, 180.0]);
+    assert_eq!(baseline_effects.len(), 1);
+    assert_eq!(baseline_effects[0].match_name, "ADBE Exposure2");
+    assert!(baseline_effects[0].enabled);
+    for (parameter, expected) in [("0003", 1.25), ("0004", 0.125), ("0005", 0.8)] {
+        let property = baseline_effects[0]
+            .parameters
+            .iter()
+            .find(|property| property.match_name == format!("ADBE Exposure2-{parameter}"))
+            .unwrap();
+        assert_eq!(property.numeric.as_ref().unwrap().values, [expected]);
+    }
+    let expected_warnings = ["0002", "0006", "0007", "0011", "0012", "0016", "0017", "0021"]
+        .map(|suffix| format!("ADBE Exposure2/ADBE Exposure2-{suffix}: unsupported or malformed property: unsupported effect default kind"));
+    assert_eq!(baseline_warnings, expected_warnings);
+    assert_eq!(warnings, baseline_warnings, "no new readback diagnostic");
+    assert_eq!(effects.len(), 1, "only the supported effect is emitted");
+    assert_eq!(effects[0].match_name, "ADBE Exposure2");
+    assert!(effects[0].enabled);
+    for (parameter, expected) in [("0003", 0.5), ("0004", 0.0), ("0005", 1.0)] {
+        let property = effects[0]
+            .parameters
+            .iter()
+            .find(|property| property.match_name == format!("ADBE Exposure2-{parameter}"))
+            .unwrap();
+        assert_eq!(property.numeric.as_ref().unwrap().values, [expected]);
+    }
     assert_eq!(
         stage
             .report()
@@ -372,6 +482,11 @@ fn selected_picture_prepared_movie_pair_retains_bound_alpha_matte() {
         2
     );
     assert_eq!(archive.project().to_json_value().unwrap(), original);
+    assert_eq!(fx_conv::sha256_file(&source).unwrap(), source_hash);
+    assert_eq!(
+        fs::read(parent.path().join("input.tsrct")).unwrap(),
+        archive_bytes
+    );
 }
 
 /// Selected video 900 with an unmapped shader on it, or on unselected root 902.
@@ -401,15 +516,23 @@ fn unmapped_shader_value(enabled: bool, in_selected_scope: bool) -> Value {
     value
 }
 
-/// Original admission sends this WebM to preparation. Any media-engine call on
-/// it fails fatally, with or without the FFmpeg library feature, so a
-/// recoverable result proves that no preparation ran. Hardware encoder
-/// availability cannot affect the result.
+/// Original admission sends these invalid WebM bytes to preparation, where
+/// probing fails fatally with or without the FFmpeg library feature. This
+/// distinguishes source validation from a recoverable optional-effect veto.
 const UNPREPARABLE_VIDEO: &[u8] = b"WebM bytes outside native AE admission";
 
 #[test]
-fn selected_picture_unmapped_effect_rejects_unsupported_video_before_preparation() {
-    for (enabled, in_selected_scope) in [(true, true), (false, true), (true, false)] {
+fn selected_picture_unmapped_effect_does_not_withhold_source_preparation() {
+    for (effect, enabled, in_selected_scope) in [
+        (primary_grade_value(), true, true),
+        (primary_grade_value(), false, true),
+        (primary_grade_value(), true, false),
+        (
+            json!({"type":"chromaticAberration", "amount":0.3, "direction":90}),
+            true,
+            true,
+        ),
+    ] {
         let parent = tempfile::tempdir().unwrap();
         let source = parent.path().join("source.webm");
         fs::write(&source, UNPREPARABLE_VIDEO).unwrap();
@@ -418,8 +541,7 @@ fn selected_picture_unmapped_effect_rejects_unsupported_video_before_preparation
         for layer in value["composition"]["layers"].as_array_mut().unwrap() {
             if let Some(records) = layer.get_mut("effects").and_then(Value::as_array_mut) {
                 for record in records {
-                    record["effect"] =
-                        json!({"type":"chromaticAberration", "amount":0.3, "direction":90});
+                    record["effect"] = effect.clone();
                 }
             }
         }
@@ -446,43 +568,20 @@ fn selected_picture_unmapped_effect_rejects_unsupported_video_before_preparation
                 Progress::new(&callback),
             )
             .unwrap_err();
-        if enabled && in_selected_scope {
-            assert_eq!(
-                *events.lock().unwrap_or_else(|e| e.into_inner()),
-                vec![
-                    preparation_event(0, 1, true),
-                    preparation_event(1, 1, false),
-                ]
-            );
-            let omissions = error.picture_scope_omissions().unwrap_or_else(|| {
-                panic!("a known effect rejection must retain the native scope: {error}")
-            });
-            assert!(
-                omissions.iter().any(|d| {
-                    d.layer_id == Some(LayerId::new(900))
-                        && d.message.contains("chromaticAberration")
-                        && d.message
-                            .contains("complete selected picture dependency scope rejected")
-                }),
-                "{omissions:?}"
-            );
-            assert!(
-                !omissions.iter().any(|d| d.message.contains("Asset rgb")),
-                "{omissions:?}"
-            );
-        } else {
-            // Disabled and unselected effects leave preparation enabled, so
-            // the engine runs and rejects these bytes.
-            assert!(
-                matches!(
-                    error,
-                    AepConversionError::MediaPreparation(
-                        media_transcode::TranscodeError::Backend { .. }
-                    )
-                ),
-                "{error}"
-            );
-        }
+        assert_eq!(
+            *events.lock().unwrap_or_else(|e| e.into_inner()),
+            vec![preparation_event(0, 1, true)],
+            "a failed source probe is not a completed asset"
+        );
+        assert!(
+            matches!(
+                error,
+                AepConversionError::MediaPreparation(
+                    media_transcode::TranscodeError::Backend { .. }
+                )
+            ),
+            "ordinary source preparation must run regardless of its omitted effect: {error}"
+        );
         assert_eq!(fs::read_dir(parent.path()).unwrap().count(), 2);
         assert_eq!(fs::read(&input).unwrap(), archive_bytes);
     }
@@ -547,21 +646,15 @@ fn selected_picture_admitted_shader_movie_retains_owner_and_picture() {
 }
 
 #[test]
-fn selected_picture_known_effect_rejection_still_verifies_later_assets() {
-    // Asset order puts each later failure after the video withheld for the
-    // effect: archive integrity first, then the native QuickTime parser.
+fn selected_picture_unmapped_effect_still_verifies_later_assets() {
+    // The admitted first source has an omitted effect; later source integrity
+    // and malformed-container failures must remain fatal.
     let payload = b"later selected QuickTime payload";
     for corrupt_archive in [true, false] {
         let parent = tempfile::tempdir().unwrap();
         let mut value = unmapped_shader_value(true, true);
-        // Custom shaders are deliberately dropped and no longer withhold media
-        // preparation. Use a known unsupported native effect for this contract.
-        value["composition"]["layers"][0]["effects"][0]["effect"] =
-            serde_json::to_value(fx_schema::LayerEffect::ChromaticAberration {
-                amount: Some(0.1),
-                direction: None,
-            })
-            .unwrap();
+        value["composition"]["layers"][0]["sourceIntrinsicDuration"] = json!(8000);
+        value["composition"]["layers"][0]["effects"][0]["effect"] = primary_grade_value();
         let mut later = value["composition"]["layers"][0].clone();
         later["id"] = json!(901);
         later.as_object_mut().unwrap().remove("effects");
@@ -570,9 +663,9 @@ fn selected_picture_known_effect_rejection_still_verifies_later_assets() {
             .as_array_mut()
             .unwrap()
             .push(later);
-        let video = parent.path().join("source.webm");
+        let video =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audio_e2e/movie.mov");
         let movie = parent.path().join("later.mov");
-        fs::write(&video, UNPREPARABLE_VIDEO).unwrap();
         fs::write(&movie, payload).unwrap();
         let input = parent.path().join("input.tsrct");
         let archive = TesseractFileBuilder::try_new(document(value))

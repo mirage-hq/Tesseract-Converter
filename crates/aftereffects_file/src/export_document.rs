@@ -173,39 +173,6 @@ impl<'a> ExportDocumentViews<'a> {
         source_variants::discover_layer_media_requests(self.prepared, self.roots)
             .map_err(|error| AepWriteError::InvalidDocument(error.to_string()))
     }
-
-    /// Media preparation must not promote a source whose unavailable effect
-    /// output could supply its alpha or another owner's pixels. Reuse ordinary
-    /// mapping classification without inspecting shader code or evaluating FX.
-    pub(crate) fn unmapped_enabled_effects(&self) -> Vec<ExportDiagnostic> {
-        fn collect(layers: &[Layer], diagnostics: &mut Vec<ExportDiagnostic>) {
-            for layer in layers {
-                for effect in layer.data().effects() {
-                    if matches!(effect.data(), EffectData::Identified { enabled: false, .. })
-                        || effects::has_custom_shader(std::slice::from_ref(effect))
-                    {
-                        // Dropped shaders do not block ordinary source-media
-                        // preparation; their named diagnostics come from lowering.
-                        continue;
-                    }
-                    if let Some(reason) = effects::unmapped_warning(effect) {
-                        diagnostics.push(ExportDiagnostic {
-                            layer_id: Some(layer.id()),
-                            message: format!(
-                                "Unmapped enabled effect prevents safe prepared-media promotion; complete selected picture dependency scope rejected. Existing AE mapping limitation: {reason}"
-                            ),
-                        });
-                    }
-                }
-                if let Some(children) = layer.child_layers() {
-                    collect(children, diagnostics);
-                }
-            }
-        }
-        let mut diagnostics = Vec::new();
-        collect(self.roots, &mut diagnostics);
-        diagnostics
-    }
 }
 
 #[cfg(test)]

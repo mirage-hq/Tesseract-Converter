@@ -266,23 +266,17 @@ fn only_timeline_boundaries_require_sequence_frame_alignment() {
 }
 
 #[test]
-fn timeline_end_may_follow_the_last_occurrence_but_not_precede_it_or_leave_the_frame_grid() {
+fn timeline_end_may_follow_the_last_occurrence_between_samples_but_not_precede_it() {
     let media = video_media();
-    for (end, expected) in [
-        (
-            4 * TICKS,
-            "timeline end 4000 ms precedes the last media occurrence end 5000 ms; trim or delete the occurrences past the timeline end",
-        ),
-        (
-            5 * TICKS + 1,
-            "timeline end must align to a 30 fps sequence frame boundary",
-        ),
-    ] {
-        let mut sequence = video_sequence();
-        sequence.timeline_end_ticks = end;
-        let error = sequence.validate_timeline(&media).unwrap_err();
-        assert!(error.to_string().contains(expected), "{end}: {error}");
-    }
+    let mut sequence = video_sequence();
+    sequence.timeline_end_ticks = 4 * TICKS;
+    let error = sequence.validate_timeline(&media).unwrap_err();
+    assert!(error.to_string().contains(
+        "timeline end 4000 ms precedes the last media occurrence end 5000 ms; trim or delete the occurrences past the timeline end"
+    ), "{error}");
+    let mut sequence = video_sequence();
+    sequence.timeline_end_ticks = 5 * TICKS + 1;
+    sequence.validate_timeline(&media).unwrap();
     // A trailing tail is valid; it is the last gap.
     let mut sequence = video_sequence();
     sequence.timeline_end_ticks = 5 * TICKS + 3 * THIRTY_FPS_TICKS;

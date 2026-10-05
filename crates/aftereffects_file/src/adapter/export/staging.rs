@@ -463,20 +463,13 @@ fn prepare_with_writer(
     control.check_cancelled()?;
     let prepared_document = documents.prepared();
     let requests = documents.media_requests()?;
-    // Prepared media cannot be promoted under an unmapped enabled effect. This
-    // depends only on the selected documents, so decide it before media work.
-    let unmapped_effects = if prepare_media {
-        documents.unmapped_enabled_effects()
-    } else {
-        Vec::new()
-    };
+    // Preparation consumes archive source bytes, not effect output. Unmapped
+    // effects remain local lowering diagnostics and cannot veto source media.
     let prepared = if prepare_media {
         let preparation = if control.preserve_video_assets {
             package::VideoPreparation::PreserveOriginal
-        } else if unmapped_effects.is_empty() {
-            package::VideoPreparation::Run
         } else {
-            package::VideoPreparation::Withhold
+            package::VideoPreparation::Run
         };
         package::prepare_picture_scope_media(
             archive,
@@ -495,7 +488,8 @@ fn prepare_with_writer(
         )?
     };
     control.check_cancelled()?;
-    let incomplete_scope = prepare_media && !prepared.unsupported.is_empty();
+    let incomplete_scope =
+        prepare_media && (!prepared.unsupported.is_empty() || prepared.preparation_withheld);
     let mut diagnostics = baked.diagnostics;
     for (asset_id, reason) in prepared.approximations {
         diagnostics.push(ExportDiagnostic {
@@ -517,12 +511,6 @@ fn prepare_with_writer(
     // A dependency-closed picture scope cannot promote one prepared half of an
     // RGB/matte pair. The coordinator retains its complete native scope instead.
     if incomplete_scope {
-        return Err(crate::writer::AepWriteError::NoConvertiblePicture(diagnostics).into());
-    }
-    // Only a video that original admission sends to preparation rejects the
-    // scope here; already-admitted media keep ordinary effect lowering.
-    if prepared.preparation_withheld {
-        diagnostics.extend(unmapped_effects);
         return Err(crate::writer::AepWriteError::NoConvertiblePicture(diagnostics).into());
     }
     for (asset_id, reason) in prepared.preparations {

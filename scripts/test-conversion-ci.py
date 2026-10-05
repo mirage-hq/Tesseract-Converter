@@ -106,6 +106,52 @@ class WorkflowIntegrityTests(unittest.TestCase):
         self.assertFalse((SOURCE_ROOT / "licenses").exists())
 
 
+class WorkflowStructureTests(unittest.TestCase):
+    def job(self, name):
+        workflow = (SOURCE_ROOT / '.github/workflows/ci.yml').read_text()
+        match = re.search(r'^  ' + re.escape(name) + r':\n(.*?)(?=^  [\w-]+:\n|\Z)',
+                          workflow, re.MULTILINE | re.DOTALL)
+        self.assertIsNotNone(match, f'missing CI job: {name}')
+        return match.group(1)
+
+    def test_lightweight_checks_do_not_build_native_dependencies(self):
+        checks = self.job('test')
+        self.assertIn('make fmt', checks)
+        self.assertIn('make test-release-archive', checks)
+        self.assertIn('audit-dependency-boundary.py', checks)
+        self.assertNotIn('scripts/ffmpeg.py', checks)
+        self.assertNotIn('cargo build', checks)
+        self.assertNotRegex(checks, r'(?m)^\s*run: make (?:clippy|test)$')
+
+    def test_all_platforms_build_and_smoke_independently_of_checks(self):
+        build = self.job('platform-build')
+        self.assertEqual(set(re.findall(r'- runner: (\S+)', build)),
+                         {'ubuntu-22.04', 'macos-15', 'macos-15-intel', 'windows-2022'})
+        self.assertNotRegex(build, r'(?m)^    needs:')
+        self.assertIn('fail-fast: false', build)
+        smoke = build.split('      - name: Build and smoke CLI\n', 1)[1].split(
+            '\n      - ', 1)[0]
+        self.assertNotIn('if: runner.os', smoke)
+        self.assertIn('cargo build --locked -p tsrct-conv', smoke)
+        self.assertIn('"$binary" --version', smoke)
+        self.assertIn('"$binary" --help', smoke)
+
+    def test_linux_build_precedes_clippy_and_tests_with_one_ffmpeg_setup(self):
+        build = self.job('platform-build')
+        setup = build.split('      - name: Build pinned inspection libraries (Linux)\n', 1)[1].split(
+            '\n      - ', 1)[0]
+        self.assertIn("if: runner.os == 'Linux'", setup)
+        self.assertEqual(setup.count('python3 scripts/ffmpeg.py "$prefix"'), 1)
+        self.assertIn('patchelf', setup)
+        self.assertIn('CARGO_BUILD_JOBS=2', setup)
+        self.assertLess(build.index('name: Build and smoke CLI'), build.index('name: Clippy'))
+        self.assertLess(build.index('name: Clippy'), build.index('name: Rust tests'))
+        for name, command in (('Clippy', 'make clippy'), ('Rust tests', 'make test')):
+            step = build.split(f'      - name: {name}\n', 1)[1].split('\n      - ', 1)[0]
+            self.assertIn("if: runner.os == 'Linux'", step)
+            self.assertIn(f'run: {command}', step)
+
+
 class SourceInputBoundaryTests(unittest.TestCase):
     @contextlib.contextmanager
     def fixture(self, extra_manifest='', rust=''):

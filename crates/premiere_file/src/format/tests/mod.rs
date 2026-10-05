@@ -9,6 +9,7 @@ pub(super) mod graphic;
 pub(super) mod mask;
 pub(super) mod nested;
 mod reader;
+mod sequence_clocks;
 mod source_graphic;
 pub(super) mod still;
 mod time_remap;

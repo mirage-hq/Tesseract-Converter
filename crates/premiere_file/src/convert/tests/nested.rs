@@ -1335,7 +1335,38 @@ fn nested_boundaries_round_once_like_top_level_boundaries() {
             nests: vec![nest_of(mid, FRAME..91 * FRAME, 0)],
         }],
     );
-    let document = import(&outer);
+    let (_, media) = nested_sequence();
+    let mut omissions = Vec::new();
+    let document = premiere_to_tesseract(
+        &outer,
+        &media,
+        &asset_ids_in_order(&outer, &media),
+        &mut omissions,
+    )
+    .unwrap()
+    .to_json_value()
+    .unwrap();
+    assert_eq!(omissions.len(), 2, "{omissions:?}");
+    for (report, record, origin, normalized) in [
+        (
+            &omissions[0],
+            "nested sequence \"Mid\"",
+            8_467_200_000_i64,
+            8_382_528_000_i64,
+        ),
+        (
+            &omissions[1],
+            "nested sequence \"Leaf\"",
+            8_551_872_000_i64,
+            8_636_544_000_i64,
+        ),
+    ] {
+        assert_eq!(report.kind, OmissionKind::Approximated);
+        assert_eq!(report.record, record);
+        assert_eq!(report.reason, format!(
+            "nested placement origin {origin} ticks is normalized to {normalized} ticks on the editable millisecond clock; child tick bounds retain the residual phase without snapping to sequence frames"
+        ));
+    }
     let mid = &document["composition"]["layers"][0];
     let leaf = &mid["layers"][0];
     let clip = &leaf["layers"][0];

@@ -2885,7 +2885,7 @@ fn inline_copies_past_1024_expanded_layers_validate() {
 }
 
 #[test]
-fn nested_placements_share_their_track_order_and_frame_grid() {
+fn nested_placements_keep_track_order_without_requiring_a_frame_grid() {
     let (outer, media) = nested_sequence();
     outer.validate_timeline(&media).unwrap();
     let mut overlapping = outer.clone();
@@ -2902,11 +2902,9 @@ fn nested_placements_share_their_track_order_and_frame_grid() {
     let mut off_frame = outer;
     off_frame.video_tracks[1].nests[0].in_ticks += 1;
     off_frame.video_tracks[1].nests[0].out_ticks += 1;
-    let error = off_frame.validate_timeline(&media).unwrap_err().to_string();
-    assert!(
-        error.contains("nested sequence in point must align"),
-        "{error}"
-    );
+    off_frame.validate_timeline(&media).unwrap();
+    assert_eq!(off_frame.video_tracks[1].nests[0].in_ticks, TICKS + 1);
+    assert_eq!(off_frame.video_tracks[1].nests[0].out_ticks, 4 * TICKS + 1);
 }
 
 #[test]

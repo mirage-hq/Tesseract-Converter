@@ -1803,12 +1803,11 @@ fn selected_picture_retains_unused_audio_streams_but_consumed_audio_stays_strict
     .is_err());
 }
 
-/// iPhone captures write a QuickTime `meta` atom in `moov`. Unlike the ISO
-/// full box, it has no version and flags: its payload starts with `hdlr`.
-/// Telling the layouts apart never reads past the box or hides a failed read.
+/// Descriptive tags affect neither picture nor sound. Their payload layouts
+/// and missing optional fields must not gate otherwise validated media.
 #[cfg(feature = "ffmpeg-library")]
 #[test]
-fn quicktime_metadata_without_full_box_header_admits_and_keeps_tag_checks() {
+fn optional_movie_metadata_payloads_do_not_gate_picture_or_sound() {
     use super::audio_media::FailingReader;
     use crate::{error::BuildError, media::unsupported_media_reason};
     fn mp4_box(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
@@ -1846,10 +1845,6 @@ fn quicktime_metadata_without_full_box_header_admits_and_keeps_tag_checks() {
         [video, sound].map(|result| result.map_err(|error| error.to_string()))
     };
     let admitted = [Ok(true), Ok(true)];
-    let rejected = |reason: &str| {
-        let error: Result<bool, String> = Err(format!("unsupported conversion: {reason}"));
-        [error.clone(), error]
-    };
     for (parent, path) in [("moov", &[b"moov"][..]), ("udta", &[b"moov", b"udta"][..])] {
         // Both parents end the file, so a read past the `meta` would fail.
         let with_meta = |payload: &[u8]| {
@@ -1866,49 +1861,34 @@ fn quicktime_metadata_without_full_box_header_admits_and_keeps_tag_checks() {
             let payload = |list: &[u8]| [version_and_flags, handler, &keys, list].concat();
             let bytes = with_meta(&payload(&tags));
             assert_eq!(admission(&bytes), admitted, "{layout} {parent}");
-            for (list, reason) in [
-                (&truncated, "truncated MP4 metadata data header"),
-                (&oversized, "MP4 metadata box exceeds its parent"),
-            ] {
+            for list in [&truncated, &oversized] {
                 let bytes = with_meta(&payload(list));
-                assert_eq!(admission(&bytes), rejected(reason), "{layout} {parent}");
-            }
-            // A failed read of the word that tells the layouts apart stays an
-            // I/O failure, which stops conversion, in both callers.
-            let peek = bytes.len() - payload(&tags).len() + 4;
-            let failing = || FailingReader {
-                bytes: Cursor::new(bytes.clone()),
-                fail_at: peek as u64,
-            };
-            let size = bytes.len() as u64;
-            for error in [
-                inspect_video_media(Cursor::new(&bytes), failing(), size).unwrap_err(),
-                crate::audio_media::inspect_audio_media(failing(), size, "mp4").unwrap_err(),
-            ] {
-                assert!(
-                    matches!(
-                        unsupported_media_reason(error),
-                        Err(BuildError::Io(ref error)) if error.kind() == std::io::ErrorKind::Other
-                    ),
-                    "{layout} {parent}"
-                );
+                assert_eq!(admission(&bytes), admitted, "{layout} {parent}");
             }
         }
-        // Payloads too short to hold a child box of either layout.
-        for (payload, expected) in [
-            (&[0; 2][..], rejected("truncated MP4 metadata header")),
-            (&[0; 4][..], admitted.clone()),
-            (
-                &[0; 6][..],
-                rejected("invalid or excessive MP4 metadata boxes"),
-            ),
-        ] {
+        for payload in [&[0; 2][..], &[0; 4][..], &[0; 6][..]] {
             assert_eq!(
                 admission(&with_meta(payload)),
-                expected,
+                admitted,
                 "{parent} {payload:?}"
             );
         }
+    }
+    // Required outer framing still propagates failed reads, rather than
+    // treating an unavailable movie as an optional descriptive tag.
+    let failing = || FailingReader {
+        bytes: Cursor::new(original.to_vec()),
+        fail_at: 0,
+    };
+    for error in [
+        inspect_video_media(Cursor::new(original), failing(), original.len() as u64).unwrap_err(),
+        crate::audio_media::inspect_audio_media(failing(), original.len() as u64, "mp4")
+            .unwrap_err(),
+    ] {
+        assert!(matches!(
+            unsupported_media_reason(error),
+            Err(BuildError::Io(ref error)) if error.kind() == std::io::ErrorKind::Other
+        ));
     }
 }
 

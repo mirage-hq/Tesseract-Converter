@@ -77,13 +77,14 @@ fn read_movie_metadata_with_colour(
 ) -> Result<MovieMetadata> {
     let roots = boxes(&mut reader, 0..size)?;
     ensure!(
-        !roots.iter().any(|(kind, _)| kind == b"moof"),
+        roots.find(&mut reader, &[*b"moof"])?.is_none(),
         "fragmented MP4 media is unsupported"
     );
-    let moov = exactly_one(&roots, *b"moov", "movie")?;
+    let moov = exactly_one(&mut reader, &roots, *b"moov", "movie")?;
     let moov_boxes = boxes(&mut reader, moov)?;
-    validate_user_metadata(&mut reader, &moov_boxes)?;
-    let mvhd = exactly_one(&moov_boxes, *b"mvhd", "movie header")?;
+    // Descriptive meta/udta payloads are not consumed by FX. Their outer
+    // ranges remain checked, but their tag grammar cannot gate the picture.
+    let mvhd = exactly_one(&mut reader, &moov_boxes, *b"mvhd", "movie header")?;
     let version = bytes::<1>(&mut reader, mvhd.start)?[0];
     let timescale_offset = match version {
         0 => 12,
@@ -92,8 +93,19 @@ fn read_movie_metadata_with_colour(
     };
     let timescale = be_u32(&mut reader, checked_add(mvhd.start, timescale_offset)?)?;
     let mut tracks = Vec::new();
-    for (_, trak) in moov_boxes.iter().filter(|(kind, _)| kind == b"trak") {
-        tracks.push(read_track(&mut reader, trak.clone())?);
+    let mut track_ranges = Vec::new();
+    let mut scan = moov_boxes;
+    while let Some((kind, trak)) = scan.next(&mut reader)? {
+        if kind == *b"trak" {
+            tracks
+                .try_reserve(1)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::OutOfMemory, error))?;
+            track_ranges
+                .try_reserve(1)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::OutOfMemory, error))?;
+            tracks.push(read_track(&mut reader, trak.clone())?);
+            track_ranges.push(trak);
+        }
     }
     if validate_video {
         ensure!(
@@ -106,12 +118,9 @@ fn read_movie_metadata_with_colour(
         );
         // Classify handlers before interpreting sample entries: data tracks
         // mislabeled as a second picture must still fail the stream-count gate.
-        for (track, (_, trak)) in tracks
-            .iter_mut()
-            .zip(moov_boxes.iter().filter(|(kind, _)| kind == b"trak"))
-        {
+        for (track, trak) in tracks.iter_mut().zip(track_ranges) {
             if track.handler == *b"vide" {
-                let track_boxes = boxes(&mut reader, trak.clone())?;
+                let track_boxes = boxes(&mut reader, trak)?;
                 let (description, timing) =
                     read_video_description(&mut reader, &track_boxes, export_colour)?;
                 track.sample_description = Some(description);
@@ -122,61 +131,13 @@ fn read_movie_metadata_with_colour(
     Ok(MovieMetadata { timescale, tracks })
 }
 
-// libavformat intentionally skips malformed descriptive tags. Preserve the
-// existing admission rule that their nested box ranges and data headers are valid.
-fn validate_user_metadata(reader: &mut (impl Read + Seek), movie: &[MediaBox]) -> Result<()> {
-    let mut metadata = movie
-        .iter()
-        .filter(|(kind, _)| kind == b"meta")
-        .cloned()
-        .collect::<Vec<_>>();
-    for (_, range) in movie.iter().filter(|(kind, _)| kind == b"udta") {
-        metadata.extend(
-            boxes(reader, range.clone())?
-                .into_iter()
-                .filter(|(kind, _)| kind == b"meta"),
-        );
-    }
-    for (_, range) in metadata {
-        ensure!(
-            range.end - range.start >= 4,
-            "truncated MP4 metadata header"
-        );
-        // An ISO full box stores its version and flags before the children. A
-        // QuickTime metadata atom has neither and starts with its `hdlr` child.
-        let quicktime =
-            range.end - range.start >= 8 && bytes::<4>(reader, range.start + 4)? == *b"hdlr";
-        let children = if quicktime {
-            range
-        } else {
-            range.start + 4..range.end
-        };
-        for (_, list) in boxes(reader, children)?
-            .into_iter()
-            .filter(|(kind, _)| kind == b"ilst")
-        {
-            for (_, item) in boxes(reader, list)? {
-                for (kind, data) in boxes(reader, item)? {
-                    if kind == *b"data" {
-                        ensure!(
-                            data.end - data.start >= 8,
-                            "truncated MP4 metadata data header"
-                        );
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 fn read_track(reader: &mut (impl Read + Seek), trak: Range<u64>) -> Result<TrackMetadata> {
     let track_boxes = boxes(reader, trak)?;
-    let mdia = exactly_one(&track_boxes, *b"mdia", "media")?;
+    let mdia = exactly_one(reader, &track_boxes, *b"mdia", "media")?;
     let media_boxes = boxes(reader, mdia)?;
-    let hdlr = exactly_one(&media_boxes, *b"hdlr", "handler")?;
+    let hdlr = exactly_one(reader, &media_boxes, *b"hdlr", "handler")?;
     let handler = bytes::<4>(reader, checked_add(hdlr.start, 8)?)?;
-    let mdhd = exactly_one(&media_boxes, *b"mdhd", "media header")?;
+    let mdhd = exactly_one(reader, &media_boxes, *b"mdhd", "media header")?;
     let version = bytes::<1>(reader, mdhd.start)?[0];
     let (timescale_offset, duration_offset, wide) = match version {
         0 => (12, 16, false),
@@ -202,13 +163,13 @@ fn read_track(reader: &mut (impl Read + Seek), trak: Range<u64>) -> Result<Track
 
 fn read_edit(
     reader: &mut (impl Read + Seek),
-    track_boxes: &[MediaBox],
+    track_boxes: &BoxCursor,
 ) -> Result<Option<Vec<EditEntry>>> {
-    let Some((_, edts)) = track_boxes.iter().find(|(kind, _)| kind == b"edts") else {
+    let Some((_, edts)) = track_boxes.find(reader, &[*b"edts"])? else {
         return Ok(None);
     };
-    let entries = boxes(reader, edts.clone())?;
-    let elst = exactly_one(&entries, *b"elst", "edit list")?;
+    let entries = boxes(reader, edts)?;
+    let elst = exactly_one(reader, &entries, *b"elst", "edit list")?;
     let header = bytes::<8>(reader, elst.start)?;
     let version = header[0];
     ensure!(
@@ -254,10 +215,10 @@ fn read_edit(
 
 fn read_video_description(
     reader: &mut (impl Read + Seek),
-    track_boxes: &[MediaBox],
+    track_boxes: &BoxCursor,
     export_colour: bool,
 ) -> Result<(SampleDescription, SampleTiming)> {
-    let tkhd = exactly_one(track_boxes, *b"tkhd", "track header")?;
+    let tkhd = exactly_one(reader, track_boxes, *b"tkhd", "track header")?;
     let tkhd_version = bytes::<1>(reader, tkhd.start)?[0];
     let matrix_offset = match tkhd_version {
         0 => 40,
@@ -268,27 +229,28 @@ fn read_video_description(
     let display_width = be_u32(reader, tkhd.start + matrix_offset + 36)?;
     let display_height = be_u32(reader, tkhd.start + matrix_offset + 40)?;
 
-    let mdia = exactly_one(track_boxes, *b"mdia", "media")?;
+    let mdia = exactly_one(reader, track_boxes, *b"mdia", "media")?;
     let mdia_boxes = boxes(reader, mdia)?;
-    let minf = exactly_one(&mdia_boxes, *b"minf", "media information")?;
+    let minf = exactly_one(reader, &mdia_boxes, *b"minf", "media information")?;
     let minf_boxes = boxes(reader, minf)?;
-    let stbl = exactly_one(&minf_boxes, *b"stbl", "sample table")?;
+    let stbl = exactly_one(reader, &minf_boxes, *b"stbl", "sample table")?;
     let stbl_boxes = boxes(reader, stbl)?;
     let timing = validate_sample_tables(reader, &stbl_boxes)?;
-    let stsd = exactly_one(&stbl_boxes, *b"stsd", "sample description")?;
+    let stsd = exactly_one(reader, &stbl_boxes, *b"stsd", "sample description")?;
     let header = bytes::<8>(reader, stsd.start)?;
     ensure!(
         header[..4] == [0; 4]
             && u32::from_be_bytes(header[4..].try_into().expect("four bytes")) == 1,
         "multiple or versioned MP4 sample descriptions unsupported"
     );
-    let entries = boxes(reader, stsd.start + 8..stsd.end)?;
-    let [(entry, payload)] = entries.as_slice() else {
+    let mut entries = boxes(reader, stsd.start + 8..stsd.end)?;
+    let entry = entries.next(reader)?;
+    let second = entries.next(reader)?;
+    let Some((entry, mut payload)) = entry.filter(|_| second.is_none()) else {
         return Err(unsupported(
             "MP4 must contain one unambiguous visual sample description",
         ));
     };
-    let mut payload = payload.clone();
     ensure!(
         payload.end - payload.start >= 78,
         "truncated MP4 sample description"
@@ -300,12 +262,13 @@ fn read_video_description(
     // ProRes 4444 writers set for an alpha picture.
     let depth = u16::from_be_bytes(bytes::<2>(reader, payload.start + 74)?);
     payload.start += 78;
-    let children = boxes(reader, payload)?;
+    let mut scan = boxes(reader, payload)?;
+    let mut children = Vec::new();
     let mut colour = None;
     let mut full_range = None;
     let mut pixel_aspect = None;
     let mut seen = BTreeSet::new();
-    for (kind, payload) in children.iter().cloned() {
+    while let Some((kind, payload)) = scan.next(reader)? {
         if [*b"pasp", *b"colr", *b"clap", *b"fiel"].contains(&kind) && !seen.insert(kind) {
             return Err(unsupported("duplicate MP4 display metadata"));
         }
@@ -377,11 +340,23 @@ fn read_video_description(
             ),
             _ => {}
         }
+        // Retain only codec configuration records, after checking every
+        // child's outer bounds. Unknown sample-entry identities above are
+        // never filtered, and unused atoms never occupy this collection.
+        if matches!(
+            &kind,
+            b"avcC" | b"hvcC" | b"dvcC" | b"dvvC" | b"dvwC" | b"lhvC"
+        ) {
+            children
+                .try_reserve(1)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::OutOfMemory, error))?;
+            children.push((kind, payload));
+        }
     }
     let orientation = video_orientation(matrix, width, height)?;
     Ok((
         SampleDescription {
-            entry: *entry,
+            entry,
             width,
             height,
             depth,
@@ -398,9 +373,9 @@ fn read_video_description(
 
 fn validate_sample_tables(
     reader: &mut (impl Read + Seek),
-    boxes_: &[MediaBox],
+    boxes_: &BoxCursor,
 ) -> Result<SampleTiming> {
-    let stts = exactly_one(boxes_, *b"stts", "sample timing")?;
+    let stts = exactly_one(reader, boxes_, *b"stts", "sample timing")?;
     let header = bytes::<8>(reader, stts.start)?;
     let run_count = u32::from_be_bytes(header[4..].try_into().expect("four bytes"));
     ensure!(
@@ -442,7 +417,7 @@ fn validate_sample_tables(
     }
     let mut zero_composition_offsets = true;
     let mut legacy_signed_ctts = false;
-    if let Some((_, ctts)) = boxes_.iter().find(|(kind, _)| kind == b"ctts") {
+    if let Some((_, ctts)) = boxes_.find(reader, &[*b"ctts"])? {
         let header = bytes::<8>(reader, ctts.start)?;
         let version = header[0];
         let run_count = u32::from_be_bytes(header[4..].try_into().expect("four bytes"));
@@ -479,8 +454,8 @@ fn validate_sample_tables(
         );
     }
     if let (Some((_, stsc)), Some((_, stsz))) = (
-        boxes_.iter().find(|(kind, _)| kind == b"stsc"),
-        boxes_.iter().find(|(kind, _)| kind == b"stsz"),
+        boxes_.find(reader, &[*b"stsc"])?,
+        boxes_.find(reader, &[*b"stsz"])?,
     ) {
         let header = bytes::<8>(reader, stsc.start)?;
         let count = u32::from_be_bytes(header[4..].try_into().expect("four bytes"));
@@ -509,8 +484,7 @@ fn validate_sample_tables(
             previous = first;
         }
         let chunk_box = boxes_
-            .iter()
-            .find(|(kind, _)| kind == b"stco" || kind == b"co64")
+            .find(reader, &[*b"stco", *b"co64"])?
             .ok_or_else(|| unsupported("packaged MP4 has no chunk offsets"))?;
         let chunk_header = bytes::<8>(reader, chunk_box.1.start)?;
         let chunk_count = u32::from_be_bytes(chunk_header[4..].try_into().expect("four bytes"));
@@ -775,6 +749,8 @@ pub(crate) struct ColourDescription {
     primaries: u16,
     transfer: u16,
     matrix: u16,
+    /// Original unmapped declaration, retained for the import diagnostic.
+    unmapped: Option<(u16, u16, u16)>,
 }
 const UNSPECIFIED: u16 = 2;
 const PRIMARIES: [(u16, &str); 4] = [
@@ -818,15 +794,22 @@ impl ColourDescription {
             primaries,
             transfer,
             matrix,
+            unmapped: first.unmapped.or(later.unmapped),
         });
         Ok(())
     }
-    pub(crate) fn passes_through(&self) -> bool {
+    fn is_default_sdr(&self) -> bool {
         [self.primaries, self.transfer, self.matrix]
             .iter()
-            .any(|c| ![1, UNSPECIFIED].contains(c))
+            .all(|c| [1, UNSPECIFIED].contains(c))
+    }
+    pub(crate) fn passes_through(&self) -> bool {
+        self.unmapped.is_some() || !self.is_default_sdr()
     }
     pub(crate) fn passthrough_warning(&self) -> String {
+        if let Some((primaries, transfer, matrix)) = self.unmapped {
+            return format!("unmapped video colour metadata {primaries}/{transfer}/{matrix}: unmapped fields treated as unspecified; reconciled known colour {self}; original bytes retained without a colour transform; absent known declarations use the existing decoder/default SDR interpretation, not verified colour fidelity");
+        }
         format!("video colour {self} passes through unchanged; display depends on the player")
     }
 }
@@ -871,29 +854,70 @@ fn validate_color_for_use(
     export_picture: bool,
 ) -> Result<Option<ColourDescription>> {
     let listed = |t: &[(u16, &str)], c| t.iter().any(|(x, _)| *x == c);
-    ensure!(listed(&PRIMARIES,primaries)&&listed(&TRANSFERS,transfer)&&listed(&MATRICES,matrix)
-        && (transfer != 13 || export_picture && primaries == 1 && [1, 2].contains(&matrix)),
-        "explicit media colour metadata {primaries}/{transfer}/{matrix} is unsupported; conversion passes through BT.709, BT.2020 PQ/HLG and P3 declarations");
-    Ok((![primaries, transfer, matrix]
-        .iter()
-        .all(|c| *c == UNSPECIFIED))
-    .then_some(ColourDescription {
-        primaries,
-        transfer,
-        matrix,
-    }))
+    // A mapped sRGB transfer remains export-only: recovering unknown tags
+    // must not add a colour interpretation to the Tesseract decoder.
+    if !export_picture {
+        ensure!(
+            transfer != 13,
+            "sRGB video colour transfer is unsupported by the Tesseract decoder"
+        );
+    }
+    if export_picture {
+        ensure!(listed(&PRIMARIES,primaries)&&listed(&TRANSFERS,transfer)&&listed(&MATRICES,matrix)
+            && (transfer != 13 || primaries == 1 && [1, 2].contains(&matrix)),
+            "explicit media colour metadata {primaries}/{transfer}/{matrix} is unsupported; conversion passes through BT.709, BT.2020 PQ/HLG and P3 declarations");
+    }
+    // Unmapped metadata is not a pixel-format failure. Keep the declaration
+    // for diagnosis, while known bitstream fields can resolve unspecified ones.
+    let interpreted = (
+        if listed(&PRIMARIES, primaries) {
+            primaries
+        } else {
+            UNSPECIFIED
+        },
+        if listed(&TRANSFERS, transfer) {
+            transfer
+        } else {
+            UNSPECIFIED
+        },
+        if listed(&MATRICES, matrix) {
+            matrix
+        } else {
+            UNSPECIFIED
+        },
+    );
+    let unmapped =
+        (interpreted != (primaries, transfer, matrix)).then_some((primaries, transfer, matrix));
+    Ok(
+        (unmapped.is_some() || interpreted != (UNSPECIFIED, UNSPECIFIED, UNSPECIFIED)).then_some(
+            ColourDescription {
+                primaries: interpreted.0,
+                transfer: interpreted.1,
+                matrix: interpreted.2,
+                unmapped,
+            },
+        ),
+    )
 }
 
-fn exactly_one(boxes: &[MediaBox], kind: [u8; 4], name: &str) -> Result<Range<u64>> {
-    let mut found = boxes.iter().filter(|(candidate, _)| *candidate == kind);
-    let Some((_, range)) = found.next() else {
-        return Err(unsupported(format!("missing MP4 {name}")));
-    };
-    ensure!(
-        found.next().is_none(),
-        "MP4 must contain one unambiguous {name}"
-    );
-    Ok(range.clone())
+fn exactly_one(
+    reader: &mut (impl Read + Seek),
+    boxes: &BoxCursor,
+    kind: [u8; 4],
+    name: &str,
+) -> Result<Range<u64>> {
+    let mut scan = boxes.clone();
+    let mut found = None;
+    let mut duplicate = false;
+    while let Some((candidate, range)) = scan.next(reader)? {
+        if candidate == kind {
+            duplicate |= found.is_some();
+            found = Some(range);
+        }
+    }
+    let range = found.ok_or_else(|| unsupported(format!("missing MP4 {name}")))?;
+    ensure!(!duplicate, "MP4 must contain one unambiguous {name}");
+    Ok(range)
 }
 fn checked_add(base: u64, offset: u64) -> Result<u64> {
     base.checked_add(offset)
@@ -920,37 +944,62 @@ fn be_i64(r: &mut (impl Read + Seek), p: u64) -> Result<i64> {
 fn be_i16(r: &mut (impl Read + Seek), p: u64) -> Result<i16> {
     Ok(i16::from_be_bytes(bytes(r, p)?))
 }
-fn boxes(reader: &mut (impl Read + Seek), range: Range<u64>) -> Result<Vec<MediaBox>> {
-    let mut cursor = range.start;
-    let mut result = Vec::new();
-    ensure!(cursor <= range.end, "truncated MP4 sample description");
-    while cursor < range.end {
-        if range.end - cursor == 4 && bytes::<4>(reader, cursor)? == [0; 4] {
-            break;
+/// Only the unvisited range is retained; atom count never grows scan storage.
+#[derive(Debug, Clone)]
+struct BoxCursor {
+    range: Range<u64>,
+}
+
+impl BoxCursor {
+    fn next(&mut self, reader: &mut (impl Read + Seek)) -> Result<Option<MediaBox>> {
+        let cursor = self.range.start;
+        let end = self.range.end;
+        if cursor == end {
+            return Ok(None);
         }
-        ensure!(
-            range.end - cursor >= 8 && result.len() < 4096,
-            "invalid or excessive MP4 metadata boxes"
-        );
+        if end - cursor == 4 && bytes::<4>(reader, cursor)? == [0; 4] {
+            self.range.start = end;
+            return Ok(None);
+        }
+        ensure!(end - cursor >= 8, "invalid or excessive MP4 metadata boxes");
         let header = bytes::<8>(reader, cursor)?;
         let short = u32::from_be_bytes(header[..4].try_into().expect("four bytes"));
         let (size, header_size) = match short {
-            0 => (range.end - cursor, 8),
-            1 if range.end - cursor >= 16 => (be_u64(reader, cursor + 8)?, 16),
+            0 => (end - cursor, 8),
+            1 if end - cursor >= 16 => (be_u64(reader, cursor + 8)?, 16),
             1 => return Err(unsupported("truncated extended MP4 box")),
             n => (u64::from(n), 8),
         };
         ensure!(
-            size >= header_size && size <= range.end - cursor,
+            size >= header_size && size <= end - cursor,
             "MP4 metadata box exceeds its parent"
         );
-        result.push((
+        self.range.start += size;
+        Ok(Some((
             header[4..].try_into().expect("four bytes"),
             cursor + header_size..cursor + size,
-        ));
-        cursor += size;
+        )))
     }
-    Ok(result)
+
+    fn find(&self, reader: &mut (impl Read + Seek), kinds: &[[u8; 4]]) -> Result<Option<MediaBox>> {
+        let mut scan = self.clone();
+        while let Some(item) = scan.next(reader)? {
+            if kinds.contains(&item.0) {
+                return Ok(Some(item));
+            }
+        }
+        Ok(None)
+    }
+}
+
+fn boxes(reader: &mut (impl Read + Seek), range: Range<u64>) -> Result<BoxCursor> {
+    ensure!(range.start <= range.end, "truncated MP4 sample description");
+    let cursor = BoxCursor { range };
+    // Check the complete container before consumers interpret its fields,
+    // including malformed unknown atoms after the fields they need.
+    let mut validation = cursor.clone();
+    while validation.next(reader)?.is_some() {}
+    Ok(cursor)
 }
 
 fn video_orientation(
@@ -1006,6 +1055,136 @@ pub(crate) fn merge_video_range(current: &mut Option<bool>, declared: Option<boo
     Ok(())
 }
 
+#[cfg(all(test, feature = "ffmpeg-library"))]
+#[test]
+fn optional_movie_metadata_unused_atom_scan_has_constant_storage_and_editable_bytes() {
+    use std::{fs, io::Cursor, mem::size_of_val, path::Path};
+    use tesseract_file::TesseractFile;
+
+    const PROJECT: &str = "feature_video_formats_strict.prproj";
+    const H264: &str = "video-30fps-10s.mp4";
+    const HEVC: &str = "feature_video_formats_hevc.mp4";
+    const COUNT: usize = 8220;
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let original = fs::read(fixtures.join(HEVC)).unwrap();
+    let mut reader = Cursor::new(&original);
+    let roots = boxes(&mut reader, 0..original.len() as u64).unwrap();
+    let moov = exactly_one(&mut reader, &roots, *b"moov", "movie").unwrap();
+    assert_eq!(moov.end, original.len() as u64);
+    let mut parents = vec![moov.clone()];
+    for kind in [*b"trak", *b"mdia", *b"minf", *b"stbl", *b"stsd"] {
+        let parent = parents.last().unwrap().clone();
+        let scan = boxes(&mut reader, parent).unwrap();
+        parents.push(exactly_one(&mut reader, &scan, kind, "fixture container").unwrap());
+    }
+    let stsd = parents.last().unwrap();
+    let mut entries = boxes(&mut reader, stsd.start + 8..stsd.end).unwrap();
+    let (_, entry) = entries.next(&mut reader).unwrap().unwrap();
+    assert!(entries.next(&mut reader).unwrap().is_none());
+    parents.push(entry.clone());
+    let unused = [8_u32.to_be_bytes().as_slice(), b"free"]
+        .concat()
+        .repeat(COUNT);
+    let growth = u32::try_from(unused.len()).unwrap();
+    let mut input = original.clone();
+    for parent in parents {
+        let at = usize::try_from(parent.start - 8).unwrap();
+        let size = u32::from_be_bytes(input[at..at + 4].try_into().unwrap());
+        assert_eq!(u64::from(size), parent.end - parent.start + 8);
+        input[at..at + 4].copy_from_slice(&size.checked_add(growth).unwrap().to_be_bytes());
+    }
+    input.splice(entry.end as usize..entry.end as usize, unused.clone());
+    let at = usize::try_from(moov.start - 8).unwrap();
+    let size = u32::from_be_bytes(input[at..at + 4].try_into().unwrap());
+    input[at..at + 4].copy_from_slice(&size.checked_add(growth).unwrap().to_be_bytes());
+    input.extend(unused);
+
+    let mut reader = Cursor::new(&input);
+    let mut scan = boxes(&mut reader, moov.start..input.len() as u64).unwrap();
+    // The cursor's complete state is two offsets, not a per-atom collection.
+    assert_eq!(size_of_val(&scan), size_of_val(&scan.range));
+    let mut unused_count = 0;
+    while let Some((kind, _)) = scan.next(&mut reader).unwrap() {
+        unused_count += usize::from(kind == *b"free");
+    }
+    assert_eq!(unused_count, COUNT);
+    let before = read_movie_metadata(Cursor::new(&original), original.len() as u64, true).unwrap();
+    let after = read_movie_metadata(Cursor::new(&input), input.len() as u64, true).unwrap();
+    assert_eq!(after.tracks.len(), before.tracks.len());
+    assert_eq!(
+        after.tracks[0]
+            .sample_description
+            .as_ref()
+            .unwrap()
+            .children
+            .len(),
+        before.tracks[0]
+            .sample_description
+            .as_ref()
+            .unwrap()
+            .children
+            .len()
+    );
+
+    let directory = tempfile::tempdir().unwrap();
+    for name in [PROJECT, H264] {
+        fs::copy(fixtures.join(name), directory.path().join(name)).unwrap();
+    }
+    fs::write(directory.path().join(HEVC), &input).unwrap();
+    let output = directory.path().join("import");
+    let omissions = crate::premiere_to_tesseract(
+        directory.path().join(PROJECT),
+        &output,
+        Some("c8acf9c1-34b2-4086-9f55-d528950a7059"),
+        false,
+    )
+    .unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let archive = TesseractFile::open(output.join("project.tsrct")).unwrap();
+    let document = archive.project_json().unwrap();
+    let videos: Vec<_> = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|layer| layer["type"] == "Video")
+        .collect();
+    assert_eq!(videos.len(), 2);
+    assert_eq!(archive.metadata().assets.len(), 2);
+    for (layer, (name, start, source_start)) in
+        videos.into_iter().zip([(H264, 0, 2000), (HEVC, 2000, 0)])
+    {
+        assert_eq!(
+            *crate::test_support::layer_range(layer),
+            serde_json::json!({"start": start, "duration": 2000})
+        );
+        assert_eq!(
+            layer["sourceRange"],
+            serde_json::json!({"start": source_start, "duration": 2000})
+        );
+        assert_eq!(layer["transform"]["opacity"].as_f64(), Some(100.0));
+        let id = layer["source"]["assetId"].as_str().unwrap();
+        assert_eq!(
+            Path::new(&archive.metadata().assets[id].path)
+                .file_name()
+                .unwrap(),
+            name
+        );
+        let expected = if name == HEVC {
+            input.clone()
+        } else {
+            fs::read(fixtures.join(name)).unwrap()
+        };
+        assert_eq!(
+            archive
+                .asset(id)
+                .unwrap()
+                .read_verified_bytes(expected.len() as u64)
+                .unwrap(),
+            expected
+        );
+    }
+}
+
 /// Reconciles the `container` range flag of the `colr` box with the
 /// `bitstream` flag of the parameter sets, and checks that a full-range
 /// result is supported. The decoder derives range from the bitstream, so a
@@ -1025,7 +1204,7 @@ pub(crate) fn validate_video_range(
     let mut full_range = bitstream;
     merge_video_range(&mut full_range, container)?;
     if full_range == Some(true)
-        && (bit_depth != 8 || colour.is_some_and(|colour| colour.passes_through()))
+        && (bit_depth != 8 || colour.is_some_and(|colour| !colour.is_default_sdr()))
     {
         return Err(unsupported(
             "full-range video requires supported 8-bit BT.709 or unspecified SDR colour",

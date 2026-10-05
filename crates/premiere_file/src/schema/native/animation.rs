@@ -293,7 +293,7 @@ pub(crate) struct EncodedValue {
 
 /// An arbitrary-data parameter, such as a graphic's Source Text.
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "PascalCase", deny_unknown_fields)]
+#[serde(rename_all = "PascalCase")]
 pub(crate) struct ArbVideoComponentParam {
     #[serde(rename = "@ObjectID")]
     pub(crate) object_id: ObjectId<MotionParamId>,

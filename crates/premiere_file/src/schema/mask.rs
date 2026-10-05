@@ -1,5 +1,5 @@
 //! Premiere's mask records: the Opacity mask that converts, the
-//! four saved record forms and the Mask Path value with its keys.
+//! saved parameter layouts and the Mask Path value with its keys.
 //!
 //! A mask is a standard-shaped `VideoFilterComponent` that its owner names in
 //! `SubComponents`. Two forms are `AE.ADBE AEMask` from the corpus (57 masks in
@@ -16,6 +16,10 @@
 //! 26.5.1 layout without its sharpness and levels controls (`ParameterID` 30
 //! to 37), observed on both masks of one native project last saved by 26.3
 //! (no public fixture); the parameter count tells the two forms apart.
+//! The older path layout also occurs with three inactive path-selection
+//! controls (IDs 16 to 18). Their saved values are retained as defaults; an
+//! active extra path is not represented by the single-outline mapping.
+//! Record versions and display labels do not select a parameter layout.
 //!
 //! Mask Path, Feather, Opacity, Expansion and Inverted convert directly.
 //! Saved affine Tracker samples also lower to Path keys over an unchanged
@@ -332,11 +336,9 @@ pub(crate) fn mask_numeric_easing(easing: PrKeyframeEasing) -> bool {
 const SLIDER_RANGE_V7: &str = "1000";
 const SLIDER_RANGE_WIDE: &str = "5000";
 
-/// One saved mask record form: its match and display names, the
-/// `VideoFilterComponent` and `Component` versions, its parameters (the first
-/// `param_count` of `params`), the Feather upper bound (also the Expansion
-/// magnitude) and its Mask Path value. The 26.5.1 and 26.3 forms share their
-/// names and versions and differ only in their parameters.
+/// One supported mask parameter layout and path codec. Names and versions
+/// are also kept for native writing, but record versions and display labels
+/// do not constrain import.
 pub(crate) struct MaskForm {
     pub(crate) match_name: &'static str,
     pub(crate) display_name: &'static str,
@@ -380,6 +382,13 @@ pub(crate) const MASK_FORM_V8: MaskForm = MaskForm {
     decode_path: decode_mask_path,
 };
 
+/// The older path layout with inactive path-selection controls.
+pub(crate) const MASK_FORM_WITH_SELECTION: MaskForm = MaskForm {
+    params: &MASK_PARAMS_WITH_SELECTION,
+    param_count: MASK_PARAMS_WITH_SELECTION.len(),
+    ..MASK_FORM_V8
+};
+
 /// The form Premiere 26.5.1 saves (fixture `feature_opacity_masks_26_5_strict`,
 /// masks A to E).
 pub(crate) const MASK_FORM_26_5: MaskForm = MaskForm {
@@ -407,33 +416,18 @@ impl MaskForm {
         &self.params[..self.param_count]
     }
 
-    /// The form with this match name and these record versions that holds
-    /// `param_count` parameters, or else the first form with them, whose
-    /// layout the reader then rejects; `None` if no form has them.
-    pub(crate) fn of(
-        match_name: Option<&str>,
-        component_version: Option<&str>,
-        body_version: Option<&str>,
-        param_count: usize,
-    ) -> Option<&'static Self> {
-        let generation: Vec<&'static Self> = [
+    /// Select the layout by mask identity and parameter count. The reader
+    /// then validates every parameter's ID, type, control and required value.
+    pub(crate) fn of(match_name: Option<&str>, param_count: usize) -> Option<&'static Self> {
+        [
             &MASK_FORM_V7,
             &MASK_FORM_V8,
+            &MASK_FORM_WITH_SELECTION,
             &MASK_FORM_26_5,
             &MASK_FORM_26_3,
         ]
         .into_iter()
-        .filter(|form| {
-            match_name == Some(form.match_name)
-                && component_version == Some(form.component_version)
-                && body_version == Some(form.body_version)
-        })
-        .collect();
-        generation
-            .iter()
-            .find(|form| form.params().len() == param_count)
-            .or(generation.first())
-            .copied()
+        .find(|form| match_name == Some(form.match_name) && form.params().len() == param_count)
     }
 }
 
@@ -698,6 +692,40 @@ pub(crate) const MASK_PARAMS: [MaskParamSpec; 15] = [
     tracking(14, "16", "true"),
     tracking(15, "16", "true"),
 ];
+
+/// The older path controls plus the saved inactive path-selection records.
+/// Additional Paths holds sixteen zero bytes; Selection Data holds the
+/// static eight-byte value 2, 0. These opaque controls are not replayed or
+/// interpreted as extra outlines. Another value cannot establish the single
+/// Mask Path's coverage, so it must not reveal an unmasked source.
+const MASK_PARAMS_WITH_SELECTION: [MaskParamSpec; 18] = {
+    let mut params = [MASK_PARAMS[0]; 18];
+    let mut index = 0;
+    while index < MASK_PARAMS.len() {
+        params[index] = MASK_PARAMS[index];
+        index += 1;
+    }
+    params[15] = slider(
+        16,
+        Some("Active Path Index"),
+        SLIDER_CLASS_ID,
+        Some("8"),
+        "0",
+        "100",
+        MaskParamRole::Control(MaskControl::Default("0")),
+    );
+    params[16] = binary(
+        17,
+        "Additional Paths",
+        MaskParamRole::Binary("AAAAAAAAAAAAAAAAAAAAAA=="),
+    );
+    params[17] = binary(
+        18,
+        "Selection Data Param",
+        MaskParamRole::Binary("AgAAAAAAAAA="),
+    );
+    params
+};
 
 /// A 26.5.1 unnamed boolean at `false`.
 const fn boolean_26_5(
@@ -1467,16 +1495,14 @@ mod tests {
                 )
             );
         }
-        // The parameter count tells the two forms of one record generation
-        // apart; another count meets the 26.5.1 layout check.
         let form = |count| {
-            super::MaskForm::of(Some("AE.ADBE AEMask2"), Some("9"), Some("7"), count)
+            super::MaskForm::of(Some("AE.ADBE AEMask2"), count)
                 .unwrap()
                 .params()
                 .len()
         };
-        assert_eq!([form(27), form(35), form(28)], [27, 35, 35]);
-        assert!(super::MaskForm::of(Some("AE.ADBE AEMask2"), Some("8"), Some("6"), 27).is_none());
+        assert_eq!([form(27), form(35)], [27, 35]);
+        assert!(super::MaskForm::of(Some("AE.ADBE AEMask2"), 28).is_none());
     }
 
     #[test]

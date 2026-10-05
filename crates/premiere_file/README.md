@@ -136,6 +136,17 @@ describe the detailed mappings and limitations.
 | Multicam cuts | Bounded unit-speed cuts from the saved selected camera, as ordinary video clips. | Ordinary edited clips, not multicam editing state or unused cameras. |
 | Proxy attachments | Primary media remains the source; preview attachments are not substituted. | Current primary media; attachment and preview-preference state is not reconstructed. |
 
+### Descriptive movie metadata
+
+Optional ISO/QuickTime `meta` and `udta` tags are not interpreted as FX content
+and their payload grammar does not gate picture or sound admission. The packaged
+asset retains the original tags and media bytes. Box headers use a constant-size
+cursor rather than retaining unused atom ranges. Optional atom counts have no
+fixed converter cap; actual allocation failure for consumed facts remains fatal.
+Required box framing, sample identity, picture facts, source clocks and I/O checks remain.
+This is editable-content retention, not validation of those tags or a new native
+render-fidelity claim.
+
 ### Intrinsic Opacity metadata
 
 Import accepts the saved legacy Blend Mode enumeration bounds 26 and 27,
@@ -262,6 +273,13 @@ and source clocks are kept separate.
 | --- | --- |
 | Premiere to Tesseract | Round absolute timeline endpoints to milliseconds, nearest with ties forward. Each endpoint moves at most 0.5 ms. Duration is the difference of rounded endpoints. |
 | Tesseract to Premiere | Snap absolute timeline endpoints to the nearest output frame, ties forward. Each moves at most half a frame. Source-in remains exact in milliseconds; unit-speed source-out follows the snapped duration. |
+
+Placement boundaries and sequence ends need not coincide with native frame
+samples. Import retains coherent tick ranges without frame snapping; fractional
+bounds alone do not reject graphics, captions or nested children. Inline
+nests retain the residual phase when a parent origin is rounded to milliseconds,
+with a contextual normalization diagnostic. Source bounds, key-clock consistency
+and the existing reverse-source endpoint restrictions remain checked.
 
 Shared cuts remain shared. Rounding can change which source frame a decoder
 selects near a boundary, even when durations and adjacent cuts agree.

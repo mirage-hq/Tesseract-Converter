@@ -615,14 +615,9 @@ fn non_bt709_colour_passes_through_once_per_file_or_rejects() {
     };
     for (name, bytes, expected) in [
         (
-            "BT.601",
-            with_colr(HEVC, 5, 6, 6),
-            "explicit media colour metadata 5/6/6 is unsupported; conversion passes through BT.709, BT.2020 PQ/HLG and P3 declarations".to_owned(),
-        ),
-        (
-            "BT.2020 SDR transfer",
+            "BT.2020 colr with unmapped transfer over BT.709 VUI",
             with_colr(HEVC, 9, 14, 9),
-            "explicit media colour metadata 9/14/9 is unsupported; conversion passes through BT.709, BT.2020 PQ/HLG and P3 declarations".to_owned(),
+            conflict("BT.2020/unspecified/BT.2020nc", BT709),
         ),
         // Explicit BT.709 is a declaration, not a default: it conflicts with
         // HDR or P3 in the other place, in either order.
@@ -658,12 +653,22 @@ fn non_bt709_colour_passes_through_once_per_file_or_rejects() {
         ),
         (
             "HLG and PQ parameter sets",
-            with_colr(&with_hevc_configuration(&with_second_sps(MAIN10_HLG, MAIN10_PQ)), 2, 2, 2),
+            with_colr(
+                &with_hevc_configuration(&with_second_sps(MAIN10_HLG, MAIN10_PQ)),
+                2,
+                2,
+                2,
+            ),
             conflict(HLG_COLOUR, PQ_COLOUR),
         ),
         (
             "BT.709 and HLG parameter sets",
-            with_colr(&with_hevc_configuration(&with_second_sps(MAIN10, MAIN10_HLG)), 2, 2, 2),
+            with_colr(
+                &with_hevc_configuration(&with_second_sps(MAIN10, MAIN10_HLG)),
+                2,
+                2,
+                2,
+            ),
             conflict(BT709, HLG_COLOUR),
         ),
     ] {
@@ -673,6 +678,129 @@ fn non_bt709_colour_passes_through_once_per_file_or_rejects() {
             "{name}"
         );
     }
+}
+
+#[test]
+fn container_colour_recovery_keeps_known_fields_and_export_admission() {
+    use crate::media_metadata::{validate_color, validate_export_color, ColourDescription};
+
+    for declaration in [(0, 0, 1), (u16::MAX, u16::MAX, 1), (5, 6, 6)] {
+        let mut colour = validate_color(declaration.0, declaration.1, declaration.2).unwrap();
+        assert!(colour.unwrap().passes_through());
+        ColourDescription::merge(&mut colour, validate_color(1, 1, 1).unwrap()).unwrap();
+        assert_eq!(colour.unwrap().codes(), (1, 1, 1));
+        assert!(colour.unwrap().passthrough_warning().contains("unmapped"));
+        assert!(validate_export_color(declaration.0, declaration.1, declaration.2).is_err());
+    }
+    for declaration in [(1, 13, 1), (9, 13, 9)] {
+        assert!(validate_color(declaration.0, declaration.1, declaration.2).is_err());
+    }
+    assert!(validate_export_color(1, 13, 1).is_ok());
+    assert!(validate_export_color(9, 13, 9).is_err());
+    assert!(validate_color(2, 2, 2).unwrap().is_none());
+    let mut colour = validate_color(0, 0, 1).unwrap();
+    assert!(ColourDescription::merge(&mut colour, validate_color(9, 16, 9).unwrap()).is_err());
+    // Missing declarations alone do not invent a measured HDR profile.
+    assert_eq!(validate_color(0, 0, 0).unwrap().unwrap().codes(), (2, 2, 2));
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn container_colour_recovery_preserves_native_write_video_bytes_and_clocks() {
+    use tesseract_file::TesseractFile;
+
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let original = std::fs::read(fixtures.join("feature_linked_av_source.mp4")).unwrap();
+    let baseline = inspect(&original).unwrap();
+    for declaration in [(0, 0, 1), (u16::MAX, u16::MAX, 1)] {
+        // Supplementary container-tag edit only; the native source, samples,
+        // configuration and clocks remain the public linked A/V fixture's.
+        let bytes = with_colr(&original, declaration.0, declaration.1, declaration.2);
+        let inspected = inspect(&bytes).unwrap();
+        assert_eq!(inspected.codec, baseline.codec);
+        assert_eq!(inspected.bit_depth, 8);
+        assert_eq!(inspected.timing.sample_count, baseline.timing.sample_count);
+        assert_eq!(inspected.timing.timescale, baseline.timing.timescale);
+        assert!(inspected.hdr_profile().is_none());
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("feature_linked_av_source.mp4"), &bytes).unwrap();
+        let source = temp.path().join("linked.prproj");
+        std::fs::copy(fixtures.join("feature_linked_av_strict.prproj"), &source).unwrap();
+        let (native, _) = crate::format::PrProjectFile::load(&source).unwrap();
+        assert_eq!(native.sequences[0].frame_rate, FrameRate::Fps30);
+        let output = temp.path().join("converted");
+        let omissions = crate::premiere_to_tesseract(
+            &source,
+            &output,
+            Some("80acdd81-0a96-4677-b17f-b2ffe2dff738"),
+            false,
+        )
+        .unwrap();
+        let warnings: Vec<_> = omissions
+            .iter()
+            .filter(|note| note.reason.contains("unmapped video colour metadata"))
+            .collect();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].kind, crate::OmissionKind::Approximated);
+        assert!(warnings[0]
+            .reason
+            .contains("original bytes retained without a colour transform"));
+        let file = TesseractFile::open(output.join("project.tsrct")).unwrap();
+        let document = file.project_json().unwrap();
+        let layers = document["composition"]["layers"].as_array().unwrap();
+        assert_eq!(
+            layers
+                .iter()
+                .filter(|layer| matches!(layer["type"].as_str(), Some("Video" | "Audio")))
+                .count(),
+            2
+        );
+        for kind in ["Video", "Audio"] {
+            let layer = layers.iter().find(|layer| layer["type"] == kind).unwrap();
+            assert_eq!(
+                layer["sourceRange"],
+                serde_json::json!({"start": 0, "duration": 5000})
+            );
+            assert_eq!(
+                crate::test_support::layer_range(layer),
+                &serde_json::json!({"start": 0, "duration": 5000})
+            );
+            let id = layer["source"]["assetId"].as_str().unwrap();
+            assert_eq!(
+                file.asset(id)
+                    .unwrap()
+                    .read_verified_bytes(bytes.len() as u64)
+                    .unwrap(),
+                bytes
+            );
+        }
+        let picture = layers
+            .iter()
+            .find(|layer| layer["type"] == "Video")
+            .unwrap();
+        assert_eq!(picture["volume"], 0.0);
+    }
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn container_colour_recovery_keeps_required_format_and_range_bounds() {
+    let bytes = with_colr(HEVC, 0, 0, 1);
+    assert!(rejection(&with_full_range_colr(&bytes)).contains("full-range container requires"));
+    let mut dimensions = bytes.clone();
+    let entry = sample_entry(&dimensions);
+    dimensions[entry + 32..entry + 34].copy_from_slice(&1800_u16.to_be_bytes());
+    assert!(rejection(&dimensions).contains("HEVC picture size"));
+    let mut truncated = bytes;
+    truncated.pop();
+    assert!(inspect(&truncated).is_err());
+    let full = with_colr(
+        &with_full_range_colr(&with_hevc_configuration(&hex(FULL_RANGE))),
+        0,
+        0,
+        1,
+    );
+    assert!(inspect(&full).is_ok());
 }
 
 /// A `DolbyVisionConfigurationRecord` for the given profile, level 6, an RPU,

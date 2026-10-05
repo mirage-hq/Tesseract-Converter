@@ -239,20 +239,6 @@ impl PrSequence {
             nearest_millisecond(self.end_ticks()),
             nearest_millisecond(occurrence_end)
         );
-        ensure_valid!(
-            self.end_ticks()
-                % self
-                    .native_frame_ticks
-                    .unwrap_or(self.frame_rate.ticks_per_frame())
-                == 0
-                || self
-                    .audio
-                    .iter()
-                    .any(|clip| clip.end_ticks == self.end_ticks()),
-            "sequence {:?}: timeline end must align to a {} sequence frame boundary",
-            self.name,
-            self.frame_rate
-        );
         Ok(())
     }
 }
@@ -492,20 +478,12 @@ impl PrGraphic {
         Ok(())
     }
 
-    pub(crate) fn validate(&self, sequence_rate: FrameRate) -> Result<()> {
+    // Cadence selects samples; it does not constrain a graphic's tick bounds.
+    pub(crate) fn validate(&self, _sequence_rate: FrameRate) -> Result<()> {
         ensure_valid!(
             self.start_ticks >= 0 && self.end_ticks > self.start_ticks,
             "invalid graphic timeline range"
         );
-        for (name, ticks) in [
-            ("timeline start", self.start_ticks),
-            ("timeline end", self.end_ticks),
-        ] {
-            ensure_valid!(
-                ticks % sequence_rate.ticks_per_frame() == 0,
-                "{name} must align to a {sequence_rate} sequence frame boundary"
-            );
-        }
         if let Some(motion) = &self.vector_motion {
             motion.validate()?;
         }

@@ -1231,47 +1231,49 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let source = directory.path().join("coarse.mov");
         let target = directory.path().join("prepared.mp4");
-        let codec = encoder::find_by_name("libx264").unwrap();
+        let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../premiere_file/tests/fixtures/feature_rate_24_blue.mp4");
+        let mut fixture = open_local_input(&fixture_path).unwrap();
+        let fixture_stream = fixture.streams().best(media::Type::Video).unwrap();
+        assert_eq!(fixture_stream.parameters().id(), codec::Id::H264);
+        let fixture_index = fixture_stream.index();
         let mut output = format::output_as(&source, "mov").unwrap();
-        let mut stream = output.add_stream(codec).unwrap();
-        let mut context = codec::Context::new_with_codec(codec).encoder().video().unwrap();
-        context.set_width(64);
-        context.set_height(48);
-        context.set_format(format::Pixel::YUV420P);
-        context.set_time_base(time_base);
-        context.set_frame_rate(Some(Rational(30, 1)));
-        context.set_max_b_frames(0);
-        context.set_gop(30);
-        context.set_flags(codec::Flags::GLOBAL_HEADER);
-        let mut encoder = context.open().unwrap();
-        stream.set_parameters(&encoder);
+        let mut stream = output.add_stream(encoder::find(codec::Id::None)).unwrap();
+        stream.set_parameters(fixture_stream.parameters());
         stream.set_time_base(time_base);
+        stream.set_avg_frame_rate(Rational(30, 1));
+        // Repeating a pinned key packet isolates muxed timing without requiring
+        // an encoder that the controlled LGPL build deliberately excludes.
+        let template = fixture
+            .packets()
+            .find(|(stream, packet)| stream.index() == fixture_index && packet.is_key())
+            .unwrap()
+            .1;
         let mut options = Dictionary::new();
         options.set("video_track_timescale", &time_base.1.to_string());
         output.write_header_with(options).unwrap();
         assert_eq!(output.stream(0).unwrap().time_base(), time_base);
         let cancelled = AtomicBool::new(false);
-        let drain = |encoder: &mut encoder::video::Encoder, output: &mut format::context::Output| {
-            let mut packet = Packet::empty();
-            while encoder.receive_packet(&mut packet).is_ok() {
-                let index = clock.window_pts.iter().position(|pts| Some(*pts) == packet.pts()).unwrap();
-                let duration = clock.window_pts.get(index + 1)
-                    .map_or(clock.window_final_duration, |next| next - clock.window_pts[index]);
-                packet.set_duration(duration);
-                write_packet(&mut packet, 0, time_base, time_base, output, &cancelled).unwrap();
-            }
-        };
         for (index, pts) in clock.window_pts.iter().enumerate() {
-            let mut frame = frame::Video::new(format::Pixel::YUV420P, 64, 48);
-            frame.set_pts(Some(*pts));
-            for plane in 0..3 {
-                frame.data_mut(plane).fill(if plane == 0 { 16 + index as u8 * 7 } else { 128 });
-            }
-            encoder.send_frame(&frame).unwrap();
-            drain(&mut encoder, &mut output);
+            let mut packet = template.clone();
+            packet.set_pts(Some(*pts));
+            packet.set_dts(Some(*pts));
+            packet.set_duration(
+                clock
+                    .window_pts
+                    .get(index + 1)
+                    .map_or(clock.window_final_duration, |next| next - pts),
+            );
+            write_packet(
+                &mut packet,
+                0,
+                time_base,
+                time_base,
+                &mut output,
+                &cancelled,
+            )
+            .unwrap();
         }
-        encoder.send_eof().unwrap();
-        drain(&mut encoder, &mut output);
         output.write_trailer().unwrap();
         drop(output);
         let result = crate::run(

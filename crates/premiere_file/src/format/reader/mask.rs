@@ -3,8 +3,9 @@
 //! counterpart or no measurement converts only at its saved default, mask
 //! Position and Anchor Point only as one centre (`MaskControl::Centre`), and
 //! numeric Feather/Expansion/Opacity keys use bounded scalar timing. Any other
-//! changing control, or any record outside the four saved forms, omits
-//! the occurrence with its reason. Affine Tracker samples become Path keys;
+//! changing control, or a missing required parameter, omits the occurrence
+//! with its reason. Record versions and display labels are not admission
+//! criteria. Affine Tracker samples become Path keys;
 //! redundant scalar keys at supported defaults remain those defaults.
 
 use super::{
@@ -47,21 +48,21 @@ pub(super) fn read_opacity_mask(
         .component
         .as_ref()
         .ok_or_else(|| unsupported(format!("{}: missing mask Component", mask.identity)))?;
-    let form = MaskForm::of(
-        mask.value.match_name.as_deref(),
-        mask.value.version.as_deref(),
-        body.version.as_deref(),
-        body.params.as_ref().map_or(0, |params| params.items.len()),
-    )
-    .ok_or_else(|| {
-        unsupported(format!(
-            "{}: unsupported mask record form (MatchName {:?}, VideoFilterComponent {:?}, Component {:?})",
-            mask.identity, mask.value.match_name, mask.value.version, body.version
-        ))
-    })?;
+    let params = body
+        .params
+        .as_ref()
+        .ok_or_else(|| unsupported(format!("{}: missing mask Params", mask.identity)))?;
+    let form =
+        MaskForm::of(mask.value.match_name.as_deref(), params.items.len()).ok_or_else(|| {
+            unsupported(format!(
+                "{}: unsupported mask parameter layout (MatchName {:?}, {} parameters)",
+                mask.identity,
+                mask.value.match_name,
+                params.items.len()
+            ))
+        })?;
     ensure!(
-        body.display_name.as_deref() == Some(form.display_name)
-            && body.intrinsic.as_deref() == form.flags_written.then_some("false")
+        body.intrinsic.as_deref() == form.flags_written.then_some("false")
             && mask.value.sub_components.is_none(),
         "{}: unsupported mask component",
         mask.identity
@@ -84,15 +85,6 @@ pub(super) fn read_opacity_mask(
             )));
         }
     }
-    let params = body
-        .params
-        .as_ref()
-        .ok_or_else(|| unsupported(format!("{}: missing mask Params", mask.identity)))?;
-    ensure!(
-        params.items.len() == form.params().len(),
-        "{}: unsupported mask parameter layout",
-        mask.identity
-    );
     // Type must be inspected before the opaque Tracker values: an Object
     // Mask stores selection/propagation there, not a vector Mask Path. Retain
     // typed references for source-bound raster recovery; never substitute
@@ -260,8 +252,7 @@ pub(super) fn read_opacity_mask(
         };
         let input = graph.decode::<VideoComponentParam>(record)?;
         ensure!(
-            input.value.name.as_deref() == spec.name
-                && input.value.class_id.as_deref() == Some(spec.class_id)
+            input.value.class_id.as_deref() == Some(spec.class_id)
                 && input.value.parameter_control_type.as_deref() == spec.control
                 && (
                     input.value.lower_bound.clone(),

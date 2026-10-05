@@ -1053,6 +1053,16 @@ fn reverse_nest(
 /// moves so; a still or graphic keeps its source clock with its in-point.
 fn visible_content(nest: &PrNestOccurrence, omissions: &mut Vec<Omission>) -> Result<PrSequence> {
     let origin = ticks_from_time(time_from_ticks(nest.start_ticks)?, "nested sequence start")?;
+    if origin != nest.start_ticks {
+        approximate(
+            omissions,
+            nest.record(),
+            format!(
+                "nested placement origin {} ticks is normalized to {origin} ticks on the editable millisecond clock; child tick bounds retain the residual phase without snapping to sequence frames",
+                nest.start_ticks
+            ),
+        );
+    }
     let shift = i128::from(nest.start_ticks) - i128::from(nest.in_ticks) - i128::from(origin);
     let window = nest.in_ticks..nest.out_ticks;
     let mut content = nest.sequence.clone();

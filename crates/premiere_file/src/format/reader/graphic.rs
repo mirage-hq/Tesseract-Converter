@@ -315,7 +315,7 @@ pub(super) fn read_graphic(
         "{}: SubGroups in a shared Source Graphic are unverified",
         content.identity
     );
-    let (mut objects, effect_loss) = read_objects(
+    let (mut objects, mut effect_loss) = read_objects(
         graph,
         object_references,
         content,
@@ -360,10 +360,25 @@ pub(super) fn read_graphic(
         "{}: keys in Source Graphic shared content are not converted: their clock is unmeasured",
         content.identity
     );
+    if let (Some(_), Some(loss)) = (&shared, &mut effect_loss) {
+        for effect in &mut loss.mapped_ramps {
+            if !effect.animations.is_empty() {
+                effect.animations.clear();
+                approximate(omissions, &identity,
+                    "graphic Ramp keys in shared Source Graphic content have an unmeasured clock; retained saved static controls and independent content");
+            }
+        }
+    }
+    let ramp_keys = effect_loss.as_ref().is_some_and(|loss| {
+        loss.mapped_ramps
+            .iter()
+            .any(|effect| !effect.animations.is_empty())
+    });
     let content_is_static = group
         .as_ref()
         .is_none_or(|motion| motion.animations.is_empty())
-        && objects.iter().all(object_is_static);
+        && objects.iter().all(object_is_static)
+        && !ramp_keys;
     // Premiere can save a still graphic with a source span different from its
     // displayed placement (100% speed, no reverse). With no keys anywhere in
     // the accepted graphic, generator time cannot change its content. Keep the
@@ -379,7 +394,10 @@ pub(super) fn read_graphic(
     );
     let vector_motion = match group {
         Some(motion)
-            if motion.animations.is_empty()
+            if effect_loss
+                .as_ref()
+                .is_none_or(|loss| loss.mapped_ramps.is_empty())
+                && motion.animations.is_empty()
                 && objects.len() == 1
                 && objects[0].compose_static_vector_motion_in_range(&motion, frame) =>
         {
@@ -535,6 +553,7 @@ fn match_name(graph: &Graph<'_>, reference: &Reference, from: &str) -> Option<St
 
 enum ReadObject {
     Kept(Box<PrGraphicObject>),
+    MappedEffect,
     Omitted { reason: String, masks_below: bool },
 }
 
@@ -556,8 +575,9 @@ struct OpenGroup {
 /// must name a member and a SubGroup of this chain, once, and a member must
 /// follow its SubGroup inside the SubGroup's run of members. A component
 /// that cannot convert still omits the graphic, except Ramp, which leaves the
-/// saved paints and retains its loss for coverage admission. A mask or SubGroup
-/// form that no render covers omits only its part ([`admit`]).
+/// saved paints and carries supported leading Ramp controls without certifying
+/// native coverage. A mask or SubGroup form that no render covers omits only
+/// its part ([`admit`]).
 fn read_objects(
     graph: &Graph<'_>,
     references: &[Reference],
@@ -576,8 +596,14 @@ fn read_objects(
     let mut ids = BTreeSet::new();
     let mut groups = BTreeSet::new();
     let mut effect_loss = None;
+    let mut leading_ramps = true;
     for reference in references {
-        let component = graph.follow::<VideoFilterComponent>(reference, &chain.identity)?;
+        let native_record = graph.locate(reference, &chain.identity)?;
+        let component = graph.decode::<VideoFilterComponent>(native_record)?;
+        let is_ramp = component.value.match_name.as_deref() == Some("AE.ADBE Ramp");
+        let ramp = (leading_ramps && open.is_empty() && is_ramp)
+            .then(|| super::effects::read_graphic_ramp(graph, native_record));
+        leading_ramps &= is_ramp;
         let id = component
             .value
             .component
@@ -632,9 +658,18 @@ fn read_objects(
             ordinary || component.value.sub_components.is_none(),
             "{identity}: a mask on a graphic object is not converted"
         );
-        let object = read_object(graph, component, frame, record, omissions, &mut effect_loss)?;
+        let object = read_object(
+            graph,
+            component,
+            frame,
+            record,
+            omissions,
+            &mut effect_loss,
+            ramp,
+        )?;
         let mask = match &object {
             ReadObject::Kept(object) => object.mask_source().is_some(),
+            ReadObject::MappedEffect => false,
             ReadObject::Omitted { masks_below, .. } => *masks_below,
         };
         ensure!(
@@ -752,6 +787,7 @@ fn admit(
     let mut objects = objects.into_iter();
     while let Some((identity, object)) = objects.next() {
         match object {
+            ReadObject::MappedEffect => continue,
             ReadObject::Kept(object) => {
                 if matches!(object.as_ref(), PrGraphicObject::Group(group) if group.objects.is_empty())
                 {
@@ -866,8 +902,8 @@ fn read_subgroup(
     ))
 }
 
-/// Read one graphic object. Ramp has no graphic-host mapping: omit only that
-/// effect, retaining a coverage-loss fact for masks and Track Matte consumers.
+/// Read one graphic object or carry its supported leading Ramp controls.
+/// Native graphic-host coverage stays unproved for masks/Track Matte consumers.
 /// Unknown effects and misplaced transforms retain their existing guards.
 fn read_object(
     graph: &Graph<'_>,
@@ -876,6 +912,7 @@ fn read_object(
     record: &str,
     omissions: &mut Vec<Omission>,
     effect_loss: &mut Option<PrGraphicEffectLoss>,
+    ramp: Option<Result<crate::schema::PrEffect>>,
 ) -> Result<ReadObject> {
     let pixels = frame_pixels(frame);
     let identity = component.identity.clone();
@@ -984,16 +1021,26 @@ fn read_object(
                 bypassed || attached.is_none(),
                 "{identity}: graphic Ramp with an attached mask is not converted"
             );
+            let mut limitation = None;
             if !bypassed {
-                effect_loss.get_or_insert_with(|| PrGraphicEffectLoss {
+                let loss = effect_loss.get_or_insert_with(|| PrGraphicEffectLoss {
                     ramp_component: identity.clone(),
+                    mapped_ramps: Vec::new(),
                 });
+                match ramp {
+                    Some(Ok(effect)) => {
+                        loss.mapped_ramps.push(effect);
+                        return Ok(ReadObject::MappedEffect);
+                    }
+                    Some(Err(error)) => limitation = Some(super::effects::reason(error)),
+                    None => limitation = Some("the Ramp is inside or between graphic objects; its effect scope cannot be replaced by the whole graphic".to_owned()),
+                }
             }
             return Ok(ReadObject::Omitted {
                 reason: if bypassed {
                     format!("{identity}: bypassed graphic Ramp omitted")
                 } else {
-                    format!("{identity}: graphic Ramp is unsupported; saved base paints retained without the effect")
+                    format!("{identity}: graphic Ramp is unsupported; saved base paints retained without the effect: {}", limitation.unwrap_or_default())
                 },
                 masks_below: false,
             });

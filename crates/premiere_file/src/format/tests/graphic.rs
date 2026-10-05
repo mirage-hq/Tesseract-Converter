@@ -1,6 +1,9 @@
 //! Type-tool graphic reading from native XML. Records follow a Premiere 26.5
 //! save; each case mutates one native field of that shape.
 
+#[path = "graphic_ramp.rs"]
+mod graphic_ramp;
+
 use crate::format::{
     inspect_project, inspect_project_with_omissions,
     shape_payload::tests::{CENTRED, FILL, GRADIENT_B, RECTANGLE},

@@ -315,9 +315,8 @@ impl PrNestOccurrence {
             .unwrap_or_else(|| format!("nested sequence {:?}", self.sequence.name))
     }
 
-    /// Checks one placement against the frame rate of its outer sequence. The
-    /// In and Out of a placement on the inner clock
-    /// ([`Self::plays_inner_clock`]) may lie off both frame grids.
+    /// Checks bounded, coherent placement/source clocks. Tick bounds can lie
+    /// between samples, including after a parent origin is rounded to milliseconds.
     pub(crate) fn validate(
         &self,
         frame_rate: FrameRate,
@@ -350,21 +349,6 @@ impl PrNestOccurrence {
                     && self.track_matte.is_none() && self.playback_rate == 1.0
                     && self.time_remap.is_none() && self.sequence.frame_rate == frame_rate,
                 "nested Opacity mask requires a static vector outline, a unit-forward matching clock and no other masks"
-            );
-        }
-        // The placement stays on sequence frames. A window that the nest
-        // trims its inner clips at stays on them too, so no inner clip is
-        // clipped to a sliver shorter than one frame.
-        let inner_clock = self.plays_inner_clock(frame_rate);
-        for (name, ticks, framed) in [
-            ("timeline start", self.start_ticks, true),
-            ("timeline end", self.end_ticks, true),
-            ("nested sequence in point", self.in_ticks, !inner_clock),
-            ("nested sequence out point", self.out_ticks, !inner_clock),
-        ] {
-            ensure_valid!(
-                !framed || ticks % frame_rate.ticks_per_frame() == 0,
-                "{name} must align to a {frame_rate} sequence frame boundary"
             );
         }
         let inner = &self.sequence;

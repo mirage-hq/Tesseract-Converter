@@ -328,6 +328,11 @@ fn h264_ae_planning_does_not_remux_high422_with_a_direct_clock() {
         cancelled: &cancelled,
     };
     let mut source = backend::probe(&Backend::Library, &input, &cancelled).unwrap();
+    let capabilities = backend::capabilities(&Backend::Library, &cancelled).unwrap();
+    let can_encode_h264 = capabilities
+        .encoders
+        .iter()
+        .any(|encoder| matches!(encoder.as_str(), "h264_videotoolbox" | "h264_mf"));
     // Keep real packet timing so the direct-clock check cannot hide the pixel gate.
     for (pixel_format, expected) in [
         ("yuv422p10le", Operation::Transcode),
@@ -335,8 +340,13 @@ fn h264_ae_planning_does_not_remux_high422_with_a_direct_clock() {
         ("yuvj420p", Operation::Remux),
     ] {
         source.video.as_mut().unwrap().pixel_format = pixel_format.into();
-        let selected = plan_after_effects(&request, &input, &source).unwrap();
-        assert_eq!(selected.operation, expected);
+        let selected = plan_after_effects(&request, &input, &source);
+        if expected == Operation::Transcode && !can_encode_h264 {
+            assert!(matches!(selected, Err(TranscodeError::Backend { stderr })
+                if stderr == "selected native backend has no approved H.264 encoder"));
+        } else {
+            assert_eq!(selected.unwrap().operation, expected);
+        }
     }
 }
 

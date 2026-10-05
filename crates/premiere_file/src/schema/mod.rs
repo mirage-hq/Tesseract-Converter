@@ -366,8 +366,8 @@ pub struct PrGraphic {
     pub(crate) in_ticks: i64,
     /// Keyed Vector Motion, which moves the whole graphic. A static Vector
     /// Motion is composed into a graphic's one object instead, unless that
-    /// would take the object outside its native ranges; a graphic with
-    /// several objects keeps it here.
+    /// would take the object outside its native ranges or move it before a
+    /// retained Ramp; a graphic with several objects keeps it here.
     pub(crate) vector_motion: Option<text::PrVectorMotion>,
     /// The clip's own static Motion (`AE.ADBE Motion`), which moves the whole
     /// graphic after its Vector Motion. Only a Source Graphic placement, whose
@@ -398,11 +398,14 @@ pub struct PrGraphic {
     pub(crate) enabled: bool,
 }
 
-/// An active Ramp omitted from a graphic. Saved paints retain editable content,
-/// but its luma changes and unchanged graphic-host alpha has not been established.
+/// Native Ramp coverage still unproved on a graphic. An editable replacement
+/// may retain its controls, but cannot certify native alpha or matte luma.
 #[derive(Debug, Clone)]
 pub(crate) struct PrGraphicEffectLoss {
     pub(crate) ramp_component: String,
+    /// Leading, representable Ramps, in native chain order. Other Ramp parts
+    /// remain diagnosed losses; this transport does not clear coverage admission.
+    pub(crate) mapped_ramps: Vec<PrEffect>,
 }
 
 impl PrGraphic {

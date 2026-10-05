@@ -1532,6 +1532,12 @@ fn read_black_white(
 /// A Ramp converts only as a linear ramp without scatter whose axis stays
 /// aligned with the frame ([`PrRamp::ensure_aligned`]); the converter adds the
 /// host rule (a frame-size clip at identity Motion).
+/// Read the same saved controls for a graphic's leading Ramp. Its caller
+/// retains the independent graphic-host coverage limitation.
+pub(super) fn read_graphic_ramp(graph: &Graph<'_>, record: Record<'_>) -> Result<PrEffect> {
+    read_ramp(graph, record, &NativeEffect::inspect(record))
+}
+
 fn read_ramp(graph: &Graph<'_>, record: Record<'_>, native: &NativeEffect<'_>) -> Result<PrEffect> {
     let enabled = native.enabled()?;
     let values = param_values(graph, record, &RAMP)?;

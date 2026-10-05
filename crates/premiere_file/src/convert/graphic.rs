@@ -197,6 +197,10 @@ pub(super) fn import_graphic(
             && block.documents.iter().all(|document| document.shadow.is_none())
     );
     let grouped = graphic.objects.len() > 1
+        || graphic
+            .effect_loss
+            .as_ref()
+            .is_some_and(|loss| !loss.mapped_ramps.is_empty())
         || graphic.objects.iter().any(|object| {
             object.mask_source().is_some()
                 || matches!(object, PrGraphicObject::Group(_))
@@ -277,7 +281,14 @@ pub(super) fn import_graphic(
             omissions,
         ));
     }
+    let (effects, effect_tracks) =
+        super::effects::import_graphic_ramps(graphic, group_id, scope.effect_ids, omissions);
     set_tracks(dynamics, tracks)?;
+    for (target, track) in effect_tracks {
+        dynamics
+            .set_property(target, PropertyAnimator::keyframes(track), Vec::new())
+            .map_err(super::premiere_to_tesseract::map_animation_graph_error)?;
+    }
     let opacity = PercentageProperty::new(graphic.opacity)
         .ok_or_else(|| unsupported("Premiere opacity must be between 0 and 100"))?;
     // A static Vector Motion that folds within one object's ranges is already composed into it.
@@ -318,7 +329,7 @@ pub(super) fn import_graphic(
             0,
         )
         .map_err(unsupported)?,
-        effects: Vec::new(),
+        effects,
         motion_blur: false,
         padding_top: padding,
         padding_right: padding,

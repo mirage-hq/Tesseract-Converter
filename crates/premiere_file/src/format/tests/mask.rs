@@ -254,6 +254,116 @@ fn corpus_opacity_masks_import_in_both_record_forms() {
 }
 
 #[test]
+fn opacity_mask_record_versions_and_display_labels_do_not_drop_picture() {
+    for (version, body) in [("7", "5"), ("9", "6"), ("42", "19")] {
+        let records = mask(300, true)
+            .replace(
+                "Version=\"8\"><Component Version=\"6\">",
+                &format!("Version=\"{version}\"><Component Version=\"{body}\">"),
+            )
+            .replace(
+                "<DisplayName>Mask</DisplayName>",
+                "<DisplayName>Outline</DisplayName>",
+            )
+            .replace(
+                "<Name>Mask Feather</Name>",
+                "<Name>Saved feather label</Name>",
+            );
+        let (clip, omissions) = read(&masked_clip(records, &[]));
+        assert!(omissions.is_empty(), "{version}/{body}: {omissions:?}");
+        assert_eq!(clip.opacity, 50.0);
+        let mask = clip.opacity_mask.unwrap();
+        assert_eq!(mask.path.vertices, pen_path());
+        assert_eq!(
+            (mask.feather, mask.opacity, mask.inverted),
+            (30.0, 100.0, false)
+        );
+    }
+}
+
+const MASK_RECORDS: &str = include_str!("../../../tests/fixtures/opacity-mask-records.xml");
+
+#[test]
+fn native_opacity_mask_selection_defaults_keep_picture_and_path_keys() {
+    let (project, omissions) =
+        inspect_project_with_omissions(MASK_RECORDS, Some(KEYED_MASK_SEQUENCE)).unwrap();
+    assert!(
+        omissions
+            .iter()
+            .all(|omission| omission.scope != OmissionScope::Occurrence),
+        "{omissions:?}"
+    );
+    assert_eq!(project.sequences[0].video_occurrences().count(), 2);
+    let clip = project.sequences[0]
+        .video_occurrences()
+        .find(|clip| clip.id.as_deref() == Some("VideoClipTrackItem:86"))
+        .unwrap();
+    let mask = clip.opacity_mask.as_ref().unwrap();
+    assert_eq!(
+        (mask.feather, mask.opacity, mask.expansion, mask.inverted),
+        (321.0, 100.0, 0.0, false)
+    );
+    assert_eq!(
+        mask.path
+            .vertices
+            .iter()
+            .map(|vertex| vertex.point)
+            .collect::<Vec<_>>(),
+        [[0.25, 0.25], [0.5, 0.25], [0.5, 0.75], [0.25, 0.75]]
+    );
+    assert!(mask.path.closed);
+    assert_eq!(
+        mask.path_keys
+            .iter()
+            .map(|key| key.source_ticks)
+            .collect::<Vec<_>>(),
+        [TICKS / 2, TICKS * 3 / 2, TICKS * 2]
+    );
+    assert_eq!(mask.path_keys[2].path.vertices.len(), 5);
+}
+
+#[test]
+fn native_opacity_mask_required_record_and_additional_coverage_fail_closed() {
+    for (xml, reason) in [
+        (
+            edit_start(
+                MASK_RECORDS.to_owned(),
+                1195,
+                "<ParameterID>6</ParameterID>",
+                "<ParameterID>99</ParameterID>",
+            ),
+            "unknown mask parameter",
+        ),
+        (
+            edit_start(
+                MASK_RECORDS.to_owned(),
+                2102,
+                "AAAAAAAAAAAAAAAAAAAAAA==",
+                "AQAAAAAAAAAAAAAAAAAAAA==",
+            ),
+            "mask control 17 (Additional Paths) holds an unknown value",
+        ),
+    ] {
+        let (project, omissions) =
+            inspect_project_with_omissions(&xml, Some(KEYED_MASK_SEQUENCE)).unwrap();
+        assert_eq!(
+            project.sequences[0]
+                .video_occurrences()
+                .map(|clip| clip.id.as_deref())
+                .collect::<Vec<_>>(),
+            [Some("VideoClipTrackItem:77")]
+        );
+        assert!(
+            omissions
+                .iter()
+                .any(|omission| omission.scope == OmissionScope::Occurrence
+                    && omission.reason.contains(reason)),
+            "{omissions:?}"
+        );
+    }
+}
+
+#[test]
 fn opacity_mask_counts_every_converted_effect_as_applied_before_it() {
     // A blur at `Index` 0 applies after the Crop that a Crop's classifier
     // would stage it under, but every effect applies before Opacity.
@@ -353,11 +463,7 @@ fn opacity_masks_outside_the_supported_form_omit_the_occurrence() {
         "<ParameterID>15</ParameterID>",
         "<ParameterID>-1</ParameterID>",
     );
-    // A v7 record with the v8 parameters, and a v8 record with v7 bounds.
-    let v7_with_15 = mask(300, true).replace(
-        "Version=\"8\"><Component Version=\"6\">",
-        "Version=\"7\"><Component Version=\"5\">",
-    );
+    // The saved numeric bounds still identify the parameter contract.
     let v8_v7_bounds = mask(300, true).replace(
         "<UpperBound>5000</UpperBound><ParameterID>7</ParameterID>",
         "<UpperBound>1000</UpperBound><ParameterID>7</ParameterID>",
@@ -432,17 +538,12 @@ fn opacity_masks_outside_the_supported_form_omit_the_occurrence() {
             "VideoComponentParam:315: unknown mask parameter",
         ),
         (
-            "v7 record with 15 parameters",
-            masked_clip(v7_with_15, &[]),
-            "VideoFilterComponent:300: unsupported mask parameter layout",
-        ),
-        (
             "v8 record with the 26.5.1 match name",
             masked_clip(
                 mask(300, true).replace("AE.ADBE AEMask<", "AE.ADBE AEMask2<"),
                 &[],
             ),
-            "VideoFilterComponent:300: unsupported mask record form (MatchName Some(\"AE.ADBE AEMask2\"), VideoFilterComponent Some(\"8\"), Component Some(\"6\"))",
+            "VideoFilterComponent:300: unsupported mask parameter layout (MatchName Some(\"AE.ADBE AEMask2\"), 15 parameters)",
         ),
         (
             "v8 record with v7 bounds",
@@ -902,7 +1003,7 @@ fn premiere_26_5_masks_off_their_saved_defaults_omit_the_occurrence() {
             masked_clip_26_5(157, |records| {
                 records.replacen("AE.ADBE AEMask2<", "AE.ADBE AEMask<", 1)
             }),
-            "VideoFilterComponent:157: unsupported mask record form (MatchName Some(\"AE.ADBE AEMask\"), VideoFilterComponent Some(\"9\"), Component Some(\"7\"))",
+            "VideoFilterComponent:157: unsupported mask parameter layout (MatchName Some(\"AE.ADBE AEMask\"), 35 parameters)",
         ),
 
     ] {
