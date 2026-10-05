@@ -41,7 +41,7 @@ pub(super) fn tracks(
     transition: &PrVideoTransition,
     track: &PrVideoTrack,
     frame_rate: FrameRate,
-    scope: &LayerScope<'_, '_, '_>,
+    scope: &LayerScope<'_, '_>,
     track_index: usize,
     layers: &[Layer],
     media: &BTreeMap<MediaId, PrMedia>,
@@ -223,7 +223,7 @@ struct GraphicHalf<'a> {
 pub(super) fn import_graphics(
     track: &PrVideoTrack,
     frame_rate: FrameRate,
-    scope: &LayerScope<'_, '_, '_>,
+    scope: &LayerScope<'_, '_>,
     track_index: usize,
     layers: &[Layer],
     dynamics: &mut fx_schema::AnimationGraph,
@@ -277,7 +277,7 @@ fn graphic_halves<'a>(
     transition: &'a PrVideoTransition,
     track: &'a PrVideoTrack,
     frame_rate: FrameRate,
-    scope: &LayerScope<'_, '_, '_>,
+    scope: &LayerScope<'_, '_>,
     track_index: usize,
     layers: &'a [Layer],
 ) -> Result<[GraphicHalf<'a>; 2]> {
@@ -304,7 +304,7 @@ fn graphic_half<'a>(
     incoming: bool,
     track: &'a PrVideoTrack,
     frame_rate: FrameRate,
-    scope: &LayerScope<'_, '_, '_>,
+    scope: &LayerScope<'_, '_>,
     track_index: usize,
     layers: &'a [Layer],
 ) -> Result<GraphicHalf<'a>> {
@@ -336,6 +336,12 @@ fn graphic_half<'a>(
                 .as_ref()
                 .is_none_or(|motion| motion.animations.is_empty()),
         "graphic Pop requires static 2D geometry, Normal blend and the document clock"
+    );
+    // The group pops, while its clip Opacity mask's guide, its sibling,
+    // stays in the sequence frame.
+    ensure!(
+        graphic.opacity_mask.is_none(),
+        "graphic Pop of a graphic with a clip Opacity mask is unsupported: the mask's guide would not move with the graphic"
     );
     let placement = static_point_text(&graphic.objects).ok_or_else(|| {
         unsupported(
@@ -476,7 +482,8 @@ fn static_point_text(
     };
     match objects {
         [PrGraphicObject::Text(text)]
-            if text.animations.is_empty()
+            if text.mask_source.is_none()
+                && text.animations.is_empty()
                 && text.source_text_keys.is_empty()
                 && point(&text.document) =>
         {

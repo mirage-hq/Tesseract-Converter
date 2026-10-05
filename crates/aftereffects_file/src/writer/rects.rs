@@ -18,6 +18,9 @@ use super::{AepWriteError, NativeLayerOptions, StrokeDashes, layer_options, root
 use super::{CompositionSpec, checked_duration};
 use solids::{SolidLayerSpec, SolidTransform, TransformAnimations};
 
+#[cfg(test)]
+mod p024_scale;
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct RectAnimations {
     pub transform: TransformAnimations,
@@ -568,12 +571,15 @@ fn write_composition_at_rate_with_audio_policy(
 pub(crate) fn validate_layer_payload(
     layer: &LayerSpec,
     duration: Duration24,
+    frame_rate: crate::timing::FrameRate,
 ) -> Result<(), AepWriteError> {
-    build_timeline_with_scope(
+    build_timeline_with_scope_at_rate(
         std::slice::from_ref(layer),
         duration,
         ReferenceScope::PayloadOnly,
         [1, 1],
+        frame_rate,
+        AudioSwitchPolicy::Preserve,
     )
     .map(|_| ())
 }
@@ -583,8 +589,9 @@ pub(crate) fn validate_layer_payload(
 pub(crate) fn validate_layers(
     layers: &[LayerSpec],
     duration: Duration24,
+    frame_rate: crate::timing::FrameRate,
 ) -> Result<(), AepWriteError> {
-    build_timeline(layers, duration, [1, 1]).map(|_| ())
+    build_timeline_at_rate(layers, duration, [1, 1], frame_rate).map(|_| ())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -621,6 +628,7 @@ struct NativeSourceKey {
     frame_rate_fractional: u16,
     audio_sample_rate_bits: u64,
     wave_metadata: Option<(u32, u32)>,
+    native_duration: Option<(u32, u32)>,
 }
 
 impl From<&super::footage::NativeSource> for NativeSourceKey {
@@ -629,6 +637,9 @@ impl From<&super::footage::NativeSource> for NativeSourceKey {
             super::footage::NativeSourceFormat::OpenExr => 0,
             super::footage::NativeSourceFormat::Wave => 1,
             super::footage::NativeSourceFormat::QuickTime => 2,
+            super::footage::NativeSourceFormat::QuickTimeProRes4444 => 3,
+            super::footage::NativeSourceFormat::PngRgb => 4,
+            super::footage::NativeSourceFormat::PngRgba => 5,
         };
         Self {
             path: source.path.clone(),
@@ -647,6 +658,9 @@ impl From<&super::footage::NativeSource> for NativeSourceKey {
             wave_metadata: source
                 .wave_metadata
                 .map(|metadata| (metadata.sample_frames, metadata.file_length)),
+            native_duration: source
+                .native_duration
+                .map(|duration| (duration.numerator, duration.denominator)),
         }
     }
 }
@@ -674,6 +688,7 @@ struct EmissionState {
     audio_switch_policy: AudioSwitchPolicy,
 }
 
+#[cfg(test)]
 fn build_timeline(
     layers: &[LayerSpec],
     duration: Duration24,
@@ -716,22 +731,6 @@ fn build_timeline_at_rate_with_audio_policy(
         composition_size,
         frame_rate,
         audio_switch_policy,
-    )
-}
-
-fn build_timeline_with_scope(
-    layers: &[LayerSpec],
-    duration: Duration24,
-    scope: ReferenceScope,
-    composition_size: [u16; 2],
-) -> Result<root::Timeline, AepWriteError> {
-    build_timeline_with_scope_at_rate(
-        layers,
-        duration,
-        scope,
-        composition_size,
-        crate::timing::FrameRate::new(24.0)?,
-        AudioSwitchPolicy::Preserve,
     )
 }
 
@@ -813,13 +812,22 @@ fn reserve_timeline(
                     "source-clock occurrence cannot also use a generic timed envelope",
                 ));
             }
-            if !matches!(layer, LayerSpec::Precomposition(_)) {
+            if !matches!(layer, LayerSpec::Precomposition(_) | LayerSpec::Null(_)) {
                 return Err(AepWriteError::Invalid(
-                    "typed source clock is only valid on a precomposition occurrence",
+                    "typed source clock is only valid on a precomposition or affine Null occurrence",
+                ));
+            }
+            if matches!(layer, LayerSpec::Null(_))
+                && options
+                    .and_then(|value| value.source_clock.as_ref())
+                    .is_some_and(super::source_clock::SourceClockPlan::has_time_remap)
+            {
+                return Err(AepWriteError::Invalid(
+                    "Null occurrence cannot use native Time Remap",
                 ));
             }
         }
-        validate_base_layer(layer, duration)?;
+        validate_base_layer(layer)?;
         let mut nested = None;
         let source_id = match layer {
             LayerSpec::Solid(_) | LayerSpec::AnimatedSolid(_, _) | LayerSpec::Null(_) => {
@@ -887,14 +895,14 @@ fn reserve_timeline(
     Ok(TimelinePlan { layers: plans })
 }
 
-fn validate_base_layer(layer: &LayerSpec, duration: Duration24) -> Result<(), AepWriteError> {
+fn validate_base_layer(layer: &LayerSpec) -> Result<(), AepWriteError> {
     match layer {
         LayerSpec::Solid(solid) | LayerSpec::AnimatedSolid(solid, _) => solids::validate(solid),
         LayerSpec::Rect(rect) | LayerSpec::AnimatedRect(rect, _) => validate(rect),
         LayerSpec::Shape(shape) => super::shapes::validate(shape),
         LayerSpec::Boolean(boolean) => super::shapes::validate_boolean(boolean),
         LayerSpec::VectorProgram(program) => super::shapes::validate_program(program),
-        LayerSpec::Footage(footage, _) => super::footage::validate(footage, duration),
+        LayerSpec::Footage(footage, _) => super::footage::validate(footage),
         LayerSpec::Text(text) => super::text::validate(text),
         LayerSpec::Null(null) => validate_null(null),
         LayerSpec::Camera(camera) => camera.validate(),
@@ -978,7 +986,9 @@ fn emit_timeline(
         let mut output = emit_layer(layer, planned, duration, frame_rate, state)?;
         if let Some(options) = &planned.options {
             if let Some((transform, animations)) = &options.transform_3d {
-                let mut animations = finalized_transform3d_animations(layer, options, animations)?;
+                let property_clock = super::keyframes::PropertyClock::for_rate(frame_rate)?;
+                let (mut animations, key_units) =
+                    finalized_transform3d_animations(layer, options, animations, property_clock)?;
                 let mut transform = transform.clone();
                 let source_dimensions = match layer {
                     LayerSpec::Precomposition(precomposition) => {
@@ -997,11 +1007,12 @@ fn emit_timeline(
                         animations.anchor.as_mut(),
                     );
                 }
-                super::transform3d::replace_fresh_layer_transform_with_clock(
+                super::transform3d::replace_fresh_layer_transform_with_key_units(
                     &mut output,
                     &transform,
                     &animations,
-                    super::keyframes::PropertyClock::for_rate(frame_rate)?,
+                    property_clock,
+                    &key_units,
                 )?;
             }
             super::masks::apply_with_clock(
@@ -1059,7 +1070,14 @@ fn finalized_transform3d_animations(
     layer: &LayerSpec,
     options: &NativeLayerOptions,
     animations: &super::Transform3dAnimations,
-) -> Result<super::Transform3dAnimations, AepWriteError> {
+    property_clock: super::keyframes::PropertyClock,
+) -> Result<
+    (
+        super::Transform3dAnimations,
+        super::transform3d::TransformKeyUnits,
+    ),
+    AepWriteError,
+> {
     let mut animations = animations.clone();
     let Some((clock, nonlinear_occurrence_transform)) = (match layer {
         LayerSpec::Footage(footage, _) => match &footage.clock {
@@ -1074,7 +1092,7 @@ fn finalized_transform3d_animations(
             .map(|clock| (clock, clock.has_time_remap())),
         _ => None,
     }) else {
-        return Ok(animations);
+        return Ok((animations, super::transform3d::TransformKeyUnits::default()));
     };
 
     if nonlinear_occurrence_transform && transform3d_has_keys(&animations) {
@@ -1082,6 +1100,44 @@ fn finalized_transform3d_animations(
             "native Time Remap cannot drive occurrence-owned 3D Transform keys",
         ));
     }
+    // The sidecar replaces the freshly emitted footage Transform. Keep only
+    // the independently authored planar Video Linear/Hold Scale and separated
+    // Position profiles on source ticks; other components require exact source ms.
+    let native_planar_video = matches!(layer, LayerSpec::Footage(footage, _)
+        if footage.kind == super::footage::FootageKind::Video
+            && footage.static_source_time_secs.is_none())
+        && !clock.has_time_remap()
+        && options
+            .transform_3d
+            .as_ref()
+            .is_some_and(|(transform, _)| !transform.is_three_d);
+    let step_track = |track: &super::NumericTrack, dimensions| {
+        track.keys.iter().enumerate().all(|(index, key)| {
+            key.values.len() == dimensions
+                && key.spatial_in.is_empty()
+                && key.spatial_out.is_empty()
+                && key.easing.len() == dimensions
+                && (index == 0
+                    || key
+                        .easing
+                        .iter()
+                        .all(|e| matches!(e, super::keyframes::Easing::Linear))
+                    || key
+                        .easing
+                        .iter()
+                        .all(|e| matches!(e, super::keyframes::Easing::Hold)))
+        })
+    };
+    let native_scale = native_planar_video
+        && animations
+            .scale
+            .as_ref()
+            .is_some_and(|track| step_track(track, 3));
+    let scale = if native_scale {
+        animations.scale.take()
+    } else {
+        None
+    };
     for track in [
         &mut animations.anchor,
         &mut animations.position,
@@ -1097,12 +1153,30 @@ fn finalized_transform3d_animations(
     {
         clock.rebase_track_times(track)?;
     }
+    let source_units = |track: &super::NumericTrack| {
+        track
+            .keys
+            .iter()
+            .map(|key| clock.affine_property_source_units(key.time_millis, property_clock))
+            .collect::<Result<Vec<_>, _>>()
+    };
+    let mut key_units = super::transform3d::TransformKeyUnits::default();
     if let Some(followers) = &mut animations.position_separated {
-        for track in followers.iter_mut().flatten() {
-            clock.rebase_track_times(track)?;
+        for (axis, follower) in followers.iter_mut().enumerate() {
+            if let Some(track) = follower {
+                if native_planar_video && axis < 2 && step_track(track, 1) {
+                    key_units.position_separated[axis] = Some(source_units(track)?);
+                } else {
+                    clock.rebase_track_times(track)?;
+                }
+            }
         }
     }
-    Ok(animations)
+    key_units.scale = scale.as_ref().map(source_units).transpose()?;
+    if let Some(scale) = scale {
+        animations.scale = Some(scale);
+    }
+    Ok((animations, key_units))
 }
 
 fn transform3d_has_keys(animations: &super::Transform3dAnimations) -> bool {
@@ -1245,7 +1319,9 @@ fn emit_layer(
                 &null.name,
                 (&transform, &animations),
                 LayerRecord::null_ae26(id, source, duration)?,
-                None,
+                plan.options
+                    .as_ref()
+                    .and_then(|options| options.source_clock.as_ref()),
                 super::keyframes::PropertyClock::for_rate(frame_rate)?,
             )
         }
@@ -2706,6 +2782,18 @@ mod hierarchy_writer_tests {
         LayerSpec::Footage(footage, animations)
     }
 
+    #[test]
+    fn distinct_quicktime_codecs_do_not_share_a_native_source_id() {
+        let LayerSpec::Footage(mut footage, _) = planned_video([1920, 1080], 0.0) else {
+            unreachable!("planned_video always returns footage")
+        };
+        footage.source.format = super::super::footage::NativeSourceFormat::QuickTime;
+        let h264 = NativeSourceKey::from(&footage.source);
+        footage.source.format = super::super::footage::NativeSourceFormat::QuickTimeProRes4444;
+        let prores = NativeSourceKey::from(&footage.source);
+        assert_ne!(h264, prores);
+    }
+
     fn referenced_layer(
         layer: LayerSpec,
         fx_id: u64,
@@ -2791,7 +2879,11 @@ mod hierarchy_writer_tests {
             referenced_layer(planned_video([1920, 1080], 0.0), 10, None, None),
         ];
         assert!(matches!(
-            validate_layers(&layers, Duration24::from_frames(48).unwrap()),
+            validate_layers(
+                &layers,
+                Duration24::from_frames(48).unwrap(),
+                crate::timing::FrameRate::new(24.0).unwrap()
+            ),
             Err(AepWriteError::Invalid(
                 "duplicate FX layer identity in native composition plan"
             ))
@@ -2845,6 +2937,101 @@ mod hierarchy_writer_tests {
     }
 
     #[test]
+    fn empty_controls_null_affine_clock_reaches_record() {
+        let spec = CompositionSpec {
+            name: "Root".into(),
+            width: 320,
+            height: 180,
+            duration_frames: 96,
+        };
+        let layer = LayerSpec::Options(
+            Box::new(LayerSpec::Null(NullLayerSpec {
+                name: "Controls".into(),
+                transform: identity_transform(),
+                transform_animations: TransformAnimations::default(),
+            })),
+            native_options(Some(source_clock())),
+        );
+        let bytes = write_composition(&spec, &[layer]).unwrap();
+        let project = crate::structure::read_project(&bytes).unwrap();
+        let crate::structure::ItemKind::Composition(root) = &project.item(1).unwrap().kind else {
+            panic!("root must be a composition");
+        };
+        let record = &root.layers[0].record;
+        assert!(record.flags().null_layer);
+        assert_eq!(record.stretch_fraction(), (2, 1));
+        assert_eq!(record.start_time_fraction(), (0, 1));
+        assert_eq!(record.in_point_fraction(), (1, 2));
+        assert_eq!(record.out_point_fraction(), (3, 2));
+    }
+
+    #[test]
+    fn empty_controls_null_rejects_time_remap_and_generic_timing() {
+        use fx_schema::{
+            KeyframeId, PropertyKeyframeEasing, Time, TimeRangeProperty, TimeRemapExtrapolation,
+            TimeRemapKeyframe, TimeRemapProperty,
+        };
+        let duration = Duration24::from_frames(96).unwrap();
+        let null = LayerSpec::Null(NullLayerSpec {
+            name: "Controls".into(),
+            transform: identity_transform(),
+            transform_animations: TransformAnimations::default(),
+        });
+        let property = TimeRemapProperty::new(
+            [(0, 0), (500, 250), (1_000, 1_000)]
+                .into_iter()
+                .map(|(time, value)| TimeRemapKeyframe {
+                    id: KeyframeId::new(format!("key-{time}")),
+                    time: Time::from_millis(time),
+                    value: Time::from_millis(value),
+                    easing: PropertyKeyframeEasing::Linear,
+                })
+                .collect(),
+            TimeRemapExtrapolation::Inactive,
+            TimeRemapExtrapolation::Inactive,
+        )
+        .unwrap();
+        let remap = super::super::source_clock::SourceClockPlan::time_remap(
+            TimeRangeProperty::new(Time::ZERO, fx_schema::Duration::from_millis(1_000)),
+            &property,
+            1_000,
+        )
+        .unwrap();
+        assert!(remap.has_time_remap());
+        let layer = LayerSpec::Options(Box::new(null), native_options(Some(remap)));
+        assert!(
+            validate_layer_payload(
+                &layer,
+                duration,
+                crate::timing::FrameRate::new(24.0).unwrap()
+            )
+            .is_err()
+        );
+        let layer = LayerSpec::Options(
+            Box::new(LayerSpec::Timed(
+                Box::new(LayerSpec::Null(NullLayerSpec {
+                    name: "Controls".into(),
+                    transform: identity_transform(),
+                    transform_animations: TransformAnimations::default(),
+                })),
+                LayerTiming {
+                    start_millis: 1_000,
+                    end_millis: 3_000,
+                },
+            )),
+            native_options(Some(source_clock())),
+        );
+        assert!(
+            validate_layer_payload(
+                &layer,
+                duration,
+                crate::timing::FrameRate::new(24.0).unwrap()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn precomposition_source_clock_reaches_the_emitted_layer_record() {
         let spec = CompositionSpec {
             name: "Root".into(),
@@ -2886,7 +3073,14 @@ mod hierarchy_writer_tests {
             native_options(Some(source_clock())),
         );
 
-        assert!(validate_layer_payload(&layer, duration).is_err());
+        assert!(
+            validate_layer_payload(
+                &layer,
+                duration,
+                crate::timing::FrameRate::new(24.0).unwrap()
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -2912,9 +3106,30 @@ mod hierarchy_writer_tests {
             child_options,
         );
 
-        assert!(validate_layer_payload(&child, duration).is_ok());
-        assert!(validate_layers(std::slice::from_ref(&child), duration).is_err());
-        assert!(validate_layers(&[parent, child], duration).is_ok());
+        assert!(
+            validate_layer_payload(
+                &child,
+                duration,
+                crate::timing::FrameRate::new(24.0).unwrap()
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_layers(
+                std::slice::from_ref(&child),
+                duration,
+                crate::timing::FrameRate::new(24.0).unwrap()
+            )
+            .is_err()
+        );
+        assert!(
+            validate_layers(
+                &[parent, child],
+                duration,
+                crate::timing::FrameRate::new(24.0).unwrap()
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -2936,7 +3151,14 @@ mod hierarchy_writer_tests {
             ..empty_precomposition(duration)
         });
 
-        assert!(validate_layer_payload(&precomposition, duration).is_err());
+        assert!(
+            validate_layer_payload(
+                &precomposition,
+                duration,
+                crate::timing::FrameRate::new(24.0).unwrap()
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -2967,7 +3189,18 @@ mod hierarchy_writer_tests {
         let duration = Duration24::from_frames(48).unwrap();
         let layer = LayerSpec::Precomposition(empty_precomposition(duration));
         let options = native_options(Some(source_clock()));
-        let rebased = finalized_transform3d_animations(&layer, &options, &animations).unwrap();
+        let (rebased, key_units) = finalized_transform3d_animations(
+            &layer,
+            &options,
+            &animations,
+            super::super::keyframes::PropertyClock::DEFAULT,
+        )
+        .unwrap();
+        assert!(
+            key_units.scale.is_none(),
+            "precomposition retains its exact-ms path"
+        );
+        assert!(key_units.position_separated.iter().all(Option::is_none));
 
         for track in [
             rebased.anchor,
@@ -2995,9 +3228,11 @@ mod hierarchy_writer_tests {
             format: super::super::footage::NativeSourceFormat::QuickTime,
             dimensions: [1920, 1080],
             duration_millis: 1_000,
+            duration_native_ticks: None,
             frame_rate: super::super::footage::NativeFrameRate::integer(24),
             audio_sample_rate: 0.0,
             wave_metadata: None,
+            native_duration: None,
         };
         LayerSpec::Footage(
             super::super::footage::FootageSpec {
@@ -3033,6 +3268,22 @@ mod hierarchy_writer_tests {
             },
             TransformAnimations::default(),
         )
+    }
+
+    #[test]
+    fn native_source_dedup_includes_exact_movie_duration() {
+        let LayerSpec::Footage(mut footage, _) = frame_blended_video() else {
+            panic!("footage fixture");
+        };
+        let approximate = NativeSourceKey::from(&footage.source);
+        footage.source.native_duration = Some(crate::media::MediaDuration {
+            numerator: 3000,
+            denominator: 2997,
+        });
+        let exact = NativeSourceKey::from(&footage.source);
+        assert_ne!(approximate, exact);
+        footage.source.native_duration.as_mut().unwrap().numerator += 1;
+        assert_ne!(exact, NativeSourceKey::from(&footage.source));
     }
 
     #[test]

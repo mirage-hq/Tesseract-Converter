@@ -22190,6 +22190,16 @@
               "source_anchor": "adjustment-scope"
             }
           ]
+        },
+        {
+          "path": "crates/aftereffects_file/src/structure_document/tests/adjustment.rs",
+          "symbol": "adjustment_import_diagnostics_do_not_claim_retained_effects_were_omitted",
+          "assertions": [
+            {
+              "description": "retained editable Gaussian Blur and successful direct Adjustment lowering must not also claim the Adjustment contribution was omitted",
+              "source_anchor": "retained native Adjustment effects must not be diagnosed as omitted"
+            }
+          ]
         }
       ],
       "execution": {
@@ -22751,6 +22761,496 @@
       "limitations": [
         "Independent 30fps reference is published and hash-verified. Selected CaseBatch assertions passed; adobe-test RGB similarity 0.9899770117468304 is descriptive only, with no quality threshold. See docs/after-effects-support.md for execution evidence; registry execution/visual fields are reset-at-run sentinels, not historical results.",
         "Fill mask, invert, feather, alpha-kernel behavior and original native control linkage remain diagnosed Tint approximations."
+      ]
+    },
+    {
+      "case_id": "aep-expression-samples-wiggle-coverage-c1",
+      "direction": "import",
+      "feature": "Eased spatial Auto Bezier Position read through an AE `value` expression imports as editable Position keys whose evaluated base matches Adobe pre-expression samples",
+      "requirement": "required",
+      "supported_by": [],
+      "source_path": "crates/aftereffects_file/tests/fixtures/expression_samples/wiggle_coverage.aep",
+      "composition_id": 1,
+      "critical_frames": [
+        "0",
+        "1/2",
+        "1",
+        "3/2",
+        "59/30"
+      ],
+      "tests": [
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/wiggle_coverage_tests.rs",
+          "symbol": "wiggle_coverage_base_values_track_adobe_pre_expression_samples",
+          "assertions": [
+            {
+              "description": "Assert the evaluator's pre-expression value matches Adobe valueAtTime(t,true) at all 61 frames within 0.25 source units for spatial Position and 1e-3 otherwise",
+              "source_anchor": "max_error <= tolerance"
+            }
+          ]
+        }
+      ],
+      "execution": {
+        "status": "UNRUN"
+      },
+      "visual": {
+        "status": "unmeasured"
+      },
+      "limitations": [
+        "Independent 30fps Adobe reference is committed under tests/references/aep. The base value follows the converter's existing editable key mapping (spatial Position within the 0.25 source-unit refinement; measured max 0.205); wiggle uses the converter's deterministic approximation, not Adobe's kernel, so wiggle frames are not expected to match Adobe pixels.",
+        "The live expression is replaced by baked editable keys; FX\u2192AEP exports those keys, not the expression."
+      ]
+    },
+    {
+      "case_id": "aep-expression-samples-wiggle-coverage-c16",
+      "direction": "import",
+      "feature": "wiggle(3,20) on eased spatial keyed Position imports as varying editable Position X/Y tracks with an approximation diagnostic",
+      "requirement": "required",
+      "supported_by": [],
+      "source_path": "crates/aftereffects_file/tests/fixtures/expression_samples/wiggle_coverage.aep",
+      "composition_id": 16,
+      "critical_frames": [
+        "0",
+        "1/2",
+        "1",
+        "3/2",
+        "59/30"
+      ],
+      "tests": [
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/wiggle_coverage_tests.rs",
+          "symbol": "wiggle_coverage_base_values_track_adobe_pre_expression_samples",
+          "assertions": [
+            {
+              "description": "Assert the evaluator's pre-expression value matches Adobe valueAtTime(t,true) at all 61 frames within 0.25 source units for spatial Position and 1e-3 otherwise",
+              "source_anchor": "max_error <= tolerance"
+            }
+          ]
+        },
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/wiggle_coverage_tests.rs",
+          "symbol": "wiggle_coverage_native_wiggle_lowers_to_editable_varying_tracks",
+          "assertions": [
+            {
+              "description": "Assert a fresh import emits the wiggle approximation diagnostic, no evaluation denial, varying validated editable tracks on the named FX targets and no JsScript",
+              "source_anchor": "AE expression wiggle approximated"
+            }
+          ]
+        }
+      ],
+      "execution": {
+        "status": "UNRUN"
+      },
+      "visual": {
+        "status": "unmeasured"
+      },
+      "limitations": [
+        "Independent 30fps Adobe reference is committed under tests/references/aep. The base value follows the converter's existing editable key mapping (spatial Position within the 0.25 source-unit refinement; measured max 0.205); wiggle uses the converter's deterministic approximation, not Adobe's kernel, so wiggle frames are not expected to match Adobe pixels.",
+        "The live expression is replaced by baked editable keys; FX\u2192AEP exports those keys, not the expression."
+      ]
+    },
+    {
+      "case_id": "aep-expression-samples-wiggle-coverage-c30",
+      "direction": "import",
+      "feature": "wiggle(2,15) on eased separated X Position imports as a varying editable Position X track",
+      "requirement": "required",
+      "supported_by": [],
+      "source_path": "crates/aftereffects_file/tests/fixtures/expression_samples/wiggle_coverage.aep",
+      "composition_id": 30,
+      "critical_frames": [
+        "0",
+        "1/2",
+        "1",
+        "3/2",
+        "59/30"
+      ],
+      "tests": [
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/wiggle_coverage_tests.rs",
+          "symbol": "wiggle_coverage_base_values_track_adobe_pre_expression_samples",
+          "assertions": [
+            {
+              "description": "Assert the evaluator's pre-expression value matches Adobe valueAtTime(t,true) at all 61 frames within 0.25 source units for spatial Position and 1e-3 otherwise",
+              "source_anchor": "max_error <= tolerance"
+            }
+          ]
+        },
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/wiggle_coverage_tests.rs",
+          "symbol": "wiggle_coverage_native_wiggle_lowers_to_editable_varying_tracks",
+          "assertions": [
+            {
+              "description": "Assert a fresh import emits the wiggle approximation diagnostic, no evaluation denial, varying validated editable tracks on the named FX targets and no JsScript",
+              "source_anchor": "AE expression wiggle approximated"
+            }
+          ]
+        }
+      ],
+      "execution": {
+        "status": "UNRUN"
+      },
+      "visual": {
+        "status": "unmeasured"
+      },
+      "limitations": [
+        "Independent 30fps Adobe reference is committed under tests/references/aep. The base value follows the converter's existing editable key mapping (spatial Position within the 0.25 source-unit refinement; measured max 0.205); wiggle uses the converter's deterministic approximation, not Adobe's kernel, so wiggle frames are not expected to match Adobe pixels.",
+        "The live expression is replaced by baked editable keys; FX\u2192AEP exports those keys, not the expression."
+      ]
+    },
+    {
+      "case_id": "aep-expression-samples-wiggle-coverage-c44",
+      "direction": "import",
+      "feature": "wiggle on eased 3D X Rotation and on Orientation imports as varying editable RotationX and Orientation X/Y/Z tracks",
+      "requirement": "required",
+      "supported_by": [],
+      "source_path": "crates/aftereffects_file/tests/fixtures/expression_samples/wiggle_coverage.aep",
+      "composition_id": 44,
+      "critical_frames": [
+        "0",
+        "1/2",
+        "1",
+        "3/2",
+        "59/30"
+      ],
+      "tests": [
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/wiggle_coverage_tests.rs",
+          "symbol": "wiggle_coverage_base_values_track_adobe_pre_expression_samples",
+          "assertions": [
+            {
+              "description": "Assert the evaluator's pre-expression value matches Adobe valueAtTime(t,true) at all 61 frames within 0.25 source units for spatial Position and 1e-3 otherwise",
+              "source_anchor": "max_error <= tolerance"
+            }
+          ]
+        },
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/wiggle_coverage_tests.rs",
+          "symbol": "wiggle_coverage_native_wiggle_lowers_to_editable_varying_tracks",
+          "assertions": [
+            {
+              "description": "Assert a fresh import emits the wiggle approximation diagnostic, no evaluation denial, varying validated editable tracks on the named FX targets and no JsScript",
+              "source_anchor": "AE expression wiggle approximated"
+            }
+          ]
+        }
+      ],
+      "execution": {
+        "status": "UNRUN"
+      },
+      "visual": {
+        "status": "unmeasured"
+      },
+      "limitations": [
+        "Independent 30fps Adobe reference is committed under tests/references/aep. The base value follows the converter's existing editable key mapping (spatial Position within the 0.25 source-unit refinement; measured max 0.205); wiggle uses the converter's deterministic approximation, not Adobe's kernel, so wiggle frames are not expected to match Adobe pixels.",
+        "The live expression is replaced by baked editable keys; FX\u2192AEP exports those keys, not the expression."
+      ]
+    },
+    {
+      "case_id": "aep-expression-samples-wiggle-coverage-c58",
+      "direction": "import",
+      "feature": "wiggle whose frequency reads a Bezier-keyed Slider imports as a varying editable Rotation track",
+      "requirement": "required",
+      "supported_by": [],
+      "source_path": "crates/aftereffects_file/tests/fixtures/expression_samples/wiggle_coverage.aep",
+      "composition_id": 58,
+      "critical_frames": [
+        "0",
+        "1/2",
+        "1",
+        "3/2",
+        "59/30"
+      ],
+      "tests": [
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/wiggle_coverage_tests.rs",
+          "symbol": "wiggle_coverage_base_values_track_adobe_pre_expression_samples",
+          "assertions": [
+            {
+              "description": "Assert the evaluator's pre-expression value matches Adobe valueAtTime(t,true) at all 61 frames within 0.25 source units for spatial Position and 1e-3 otherwise",
+              "source_anchor": "max_error <= tolerance"
+            }
+          ]
+        },
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/wiggle_coverage_tests.rs",
+          "symbol": "wiggle_coverage_native_wiggle_lowers_to_editable_varying_tracks",
+          "assertions": [
+            {
+              "description": "Assert a fresh import emits the wiggle approximation diagnostic, no evaluation denial, varying validated editable tracks on the named FX targets and no JsScript",
+              "source_anchor": "AE expression wiggle approximated"
+            }
+          ]
+        }
+      ],
+      "execution": {
+        "status": "UNRUN"
+      },
+      "visual": {
+        "status": "unmeasured"
+      },
+      "limitations": [
+        "Independent 30fps Adobe reference is committed under tests/references/aep. The base value follows the converter's existing editable key mapping (spatial Position within the 0.25 source-unit refinement; measured max 0.205); wiggle uses the converter's deterministic approximation, not Adobe's kernel, so wiggle frames are not expected to match Adobe pixels.",
+        "The live expression is replaced by baked editable keys; FX\u2192AEP exports those keys, not the expression."
+      ]
+    },
+    {
+      "case_id": "aep-expression-samples-wiggle-targets-c1",
+      "direction": "import",
+      "feature": "Shape contents on a 0.5s start-offset layer: eased Ellipse Size and Trim End `value` expressions plus wiggle on Group Position, Stroke Width and Fill Opacity import as editable tracks on the layer-local clock",
+      "requirement": "required",
+      "supported_by": [],
+      "source_path": "crates/aftereffects_file/tests/fixtures/expression_samples/wiggle_targets.aep",
+      "composition_id": 1,
+      "critical_frames": [
+        "0",
+        "1/2",
+        "1",
+        "3/2",
+        "59/30"
+      ],
+      "tests": [
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/wiggle_targets_tests.rs",
+          "symbol": "wiggle_targets_base_values_track_adobe_pre_expression_samples",
+          "assertions": [
+            {
+              "description": "Assert every Shape/Mask/Text Animator target is modelled and its pre-expression value matches Adobe valueAtTime(t,true) at all 61 frames (0.25 for spatial Vector Position, 1e-3 otherwise)",
+              "source_anchor": "max_error <= tolerance"
+            }
+          ]
+        },
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/wiggle_targets_tests.rs",
+          "symbol": "wiggle_targets_lower_to_editable_tracks_on_existing_targets",
+          "assertions": [
+            {
+              "description": "Assert fresh import lowers each target to a varying editable track on the keyed-import FX target, and deterministic `value` tracks match Adobe evaluated values within half a millisecond of motion",
+              "source_anchor": "max_error <= tolerance"
+            }
+          ]
+        },
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/wiggle_targets_tests.rs",
+          "symbol": "wiggle_targets_wiggle_diagnostics_are_contextual",
+          "assertions": [
+            {
+              "description": "Assert per-owner wiggle approximation diagnostics and the once-per-layer Text Animator diagnostic",
+              "source_anchor": "AE expression wiggle approximated"
+            }
+          ]
+        }
+      ],
+      "execution": {
+        "status": "UNRUN"
+      },
+      "visual": {
+        "status": "unmeasured"
+      },
+      "limitations": [
+        "Independent 30fps Adobe reference is committed under tests/references/aep. Wiggle uses the converter's deterministic approximation, not Adobe's kernel. Text Animator expressions are evaluated once per layer, not per character.",
+        "The live expression is replaced by baked editable keys; FX\u2192AEP exports those keys, not the expression."
+      ]
+    },
+    {
+      "case_id": "aep-expression-samples-wiggle-targets-c14",
+      "direction": "import",
+      "feature": "Mask Feather/Expansion eased `value` expressions and Mask Opacity wiggle import as editable mask tracks",
+      "requirement": "required",
+      "supported_by": [],
+      "source_path": "crates/aftereffects_file/tests/fixtures/expression_samples/wiggle_targets.aep",
+      "composition_id": 14,
+      "critical_frames": [
+        "0",
+        "1/2",
+        "1",
+        "3/2",
+        "59/30"
+      ],
+      "tests": [
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/wiggle_targets_tests.rs",
+          "symbol": "wiggle_targets_base_values_track_adobe_pre_expression_samples",
+          "assertions": [
+            {
+              "description": "Assert every Shape/Mask/Text Animator target is modelled and its pre-expression value matches Adobe valueAtTime(t,true) at all 61 frames (0.25 for spatial Vector Position, 1e-3 otherwise)",
+              "source_anchor": "max_error <= tolerance"
+            }
+          ]
+        },
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/wiggle_targets_tests.rs",
+          "symbol": "wiggle_targets_lower_to_editable_tracks_on_existing_targets",
+          "assertions": [
+            {
+              "description": "Assert fresh import lowers each target to a varying editable track on the keyed-import FX target, and deterministic `value` tracks match Adobe evaluated values within half a millisecond of motion",
+              "source_anchor": "max_error <= tolerance"
+            }
+          ]
+        },
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/wiggle_targets_tests.rs",
+          "symbol": "wiggle_targets_wiggle_diagnostics_are_contextual",
+          "assertions": [
+            {
+              "description": "Assert per-owner wiggle approximation diagnostics and the once-per-layer Text Animator diagnostic",
+              "source_anchor": "AE expression wiggle approximated"
+            }
+          ]
+        }
+      ],
+      "execution": {
+        "status": "UNRUN"
+      },
+      "visual": {
+        "status": "unmeasured"
+      },
+      "limitations": [
+        "Independent 30fps Adobe reference is committed under tests/references/aep. Wiggle uses the converter's deterministic approximation, not Adobe's kernel. Text Animator expressions are evaluated once per layer, not per character.",
+        "The live expression is replaced by baked editable keys; FX\u2192AEP exports those keys, not the expression."
+      ]
+    },
+    {
+      "case_id": "aep-expression-samples-wiggle-targets-c29",
+      "direction": "import",
+      "feature": "Text Animator Opacity eased `value` expression and Position wiggle import as editable animator tracks, evaluated once per layer",
+      "requirement": "required",
+      "supported_by": [],
+      "source_path": "crates/aftereffects_file/tests/fixtures/expression_samples/wiggle_targets.aep",
+      "composition_id": 29,
+      "critical_frames": [
+        "0",
+        "1/2",
+        "1",
+        "3/2",
+        "59/30"
+      ],
+      "tests": [
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/wiggle_targets_tests.rs",
+          "symbol": "wiggle_targets_base_values_track_adobe_pre_expression_samples",
+          "assertions": [
+            {
+              "description": "Assert every Shape/Mask/Text Animator target is modelled and its pre-expression value matches Adobe valueAtTime(t,true) at all 61 frames (0.25 for spatial Vector Position, 1e-3 otherwise)",
+              "source_anchor": "max_error <= tolerance"
+            }
+          ]
+        },
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/wiggle_targets_tests.rs",
+          "symbol": "wiggle_targets_lower_to_editable_tracks_on_existing_targets",
+          "assertions": [
+            {
+              "description": "Assert fresh import lowers each target to a varying editable track on the keyed-import FX target, and deterministic `value` tracks match Adobe evaluated values within half a millisecond of motion",
+              "source_anchor": "max_error <= tolerance"
+            }
+          ]
+        },
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/wiggle_targets_tests.rs",
+          "symbol": "wiggle_targets_wiggle_diagnostics_are_contextual",
+          "assertions": [
+            {
+              "description": "Assert per-owner wiggle approximation diagnostics and the once-per-layer Text Animator diagnostic",
+              "source_anchor": "AE expression wiggle approximated"
+            }
+          ]
+        }
+      ],
+      "execution": {
+        "status": "UNRUN"
+      },
+      "visual": {
+        "status": "unmeasured"
+      },
+      "limitations": [
+        "Independent 30fps Adobe reference is committed under tests/references/aep. Wiggle uses the converter's deterministic approximation, not Adobe's kernel. Text Animator expressions are evaluated once per layer, not per character.",
+        "The live expression is replaced by baked editable keys; FX\u2192AEP exports those keys, not the expression."
+      ]
+    },
+    {
+      "case_id": "aep-expression-samples-expression-apis-c1",
+      "direction": "import",
+      "feature": "Deterministic AE expression APIs (ease/easeIn/easeOut, velocity/speed, parented toComp/fromComp, loopOutDuration, smooth, loops/%/helpers, content()/mask() lookups, layer width/active/index, rgbToHsl/hslToRgb, lookAt) evaluate to Adobe's values and import as editable keys",
+      "requirement": "required",
+      "supported_by": [],
+      "source_path": "crates/aftereffects_file/tests/fixtures/expression_samples/expression_apis.aep",
+      "composition_id": 1,
+      "critical_frames": [
+        "0",
+        "1/2",
+        "1",
+        "3/2",
+        "59/30"
+      ],
+      "tests": [
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/expression_apis_tests.rs",
+          "symbol": "expression_apis_match_adobe_evaluated_values",
+          "assertions": [
+            {
+              "description": "Assert converter evaluation of every probe expression matches Adobe evaluated values at all 61 frames (1e-3; 0.25 for reads of spatial Position paths; lookAt roll excluded)",
+              "source_anchor": "max_error > tolerance"
+            }
+          ]
+        }
+      ],
+      "execution": {
+        "status": "UNRUN"
+      },
+      "visual": {
+        "status": "unmeasured"
+      },
+      "limitations": [
+        "lookAt's third (roll) component is not reproduced. Reads of spatial Position paths inherit the keyed import's 0.25-unit refinement (velocity of an eased spatial Position measured 0.069 deg error).",
+        "The live expressions are replaced by baked editable keys; FX\u2192AEP exports those keys, not the expressions."
+      ]
+    },
+    {
+      "case_id": "aep-expression-samples-expression-apis2-c1",
+      "direction": "import",
+      "feature": "Source Text string expressions, 3D toComp/fromComp through AE's default camera and Shape sourceRectAtTime evaluate to Adobe's values; Source Text imports as held editable text",
+      "requirement": "required",
+      "supported_by": [],
+      "source_path": "crates/aftereffects_file/tests/fixtures/expression_samples/expression_apis2.aep",
+      "composition_id": 1,
+      "critical_frames": [
+        "0",
+        "1/2",
+        "1",
+        "3/2",
+        "59/30"
+      ],
+      "tests": [
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/expression_apis2_tests.rs",
+          "symbol": "expression_apis2_match_adobe_evaluated_values",
+          "assertions": [
+            {
+              "description": "Assert exact Source Text strings and 1e-3 numeric equality with Adobe at all 61 frames",
+              "source_anchor": "max_error <= 1e-3"
+            }
+          ]
+        },
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/expression_apis2_tests.rs",
+          "symbol": "source_text_expressions_import_as_held_text_segments",
+          "assertions": [
+            {
+              "description": "Assert every Adobe Source Text string becomes held editable text with a diagnostic and no JsScript",
+              "source_anchor": "missing held text"
+            }
+          ]
+        }
+      ],
+      "execution": {
+        "status": "UNRUN"
+      },
+      "visual": {
+        "status": "unmeasured"
+      },
+      "limitations": [
+        "Text-layer sourceRectAtTime, camera-layer projection, per-character expressions and createPath are not modelled.",
+        "Live expressions are replaced by held text / baked keys."
       ]
     }
   ]

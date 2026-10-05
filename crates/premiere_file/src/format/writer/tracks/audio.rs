@@ -3,7 +3,8 @@
 //! Each placement gets its own track, so overlapping sounds need no mixing.
 //! Every fader stays at unity: a placement stores its level in Premiere's
 //! intrinsic clip Volume, as Premiere 26.5.1 writes it, with Clip Gain for the
-//! part above the Volume's +15 dB range.
+//! part above the Volume's +15 dB range. Its fades become one-sided audio
+//! transitions on its own track.
 
 use super::{animation, clip_track, scalar_start_keyframe, MediaKind};
 use crate::format::{
@@ -14,7 +15,8 @@ use crate::format::{
     Result,
 };
 use crate::schema::{
-    native::*, records, AudioChannels, PrAudioOccurrence, PrMedia, PrScalarKeyframe, PrVolumeLayout,
+    native::*, records, AudioChannels, PrAudioFade, PrAudioOccurrence, PrFadeCurve, PrMedia,
+    PrScalarKeyframe, PrVolumeLayout,
 };
 
 /// A chain without components: Premiere's serialization of untouched volume.
@@ -58,17 +60,26 @@ fn audio_clip_track(
     strip: &MixerStripIds,
     track_uid: String,
     placement: Option<ObjectId<AudioClipTrackItem>>,
+    transitions: Vec<ObjectId<AudioTransitionTrackItem>>,
 ) -> Record {
+    let mut clip_track = clip_track(
+        MediaKind::Audio,
+        index + 2,
+        index,
+        IndexedRef::list(placement),
+    );
+    if let Some(items) = clip_track
+        .transition_items
+        .as_mut()
+        .filter(|_| !transitions.is_empty())
+    {
+        items.track_items = Some(TrackItems::from_indexed(IndexedRef::list(transitions)));
+    }
     Record::AudioClipTrack(Box::new(AudioClipTrack {
         object_uid: Some(uid.as_native_string()),
         class_id: Some(records::AUDIO_CLIP_TRACK.class_id.into()),
         version: Some(records::AUDIO_CLIP_TRACK.version.into()),
-        clip_track: clip_track(
-            MediaKind::Audio,
-            index + 2,
-            index,
-            IndexedRef::list(placement),
-        ),
+        clip_track,
         audio_track: AudioTrack {
             version: Some(records::AUDIO_TRACK_VERSION.into()),
             component_owner: ComponentOwner::audio(strip.chain),
@@ -236,6 +247,10 @@ fn clip_volume_records(
             })
         })
         .collect();
+    crate::format::ensure_valid!(
+        native_volume.is_finite() && keys.iter().all(|key| key.value.is_finite()),
+        "audio mono normalization produced a nonfinite gain"
+    );
     let peak = keys
         .iter()
         .map(|key| key.value)
@@ -245,6 +260,10 @@ fn clip_volume_records(
     } else {
         (peak > 1.0).then_some(peak)
     };
+    crate::format::ensure_valid!(
+        clip_gain.is_none_or(f64::is_finite),
+        "audio Clip Gain is nonfinite"
+    );
     let level = |gain: f64| gain * unity / clip_gain.unwrap_or(1.0);
     let level_keys: Vec<_> = keys
         .into_iter()
@@ -254,6 +273,10 @@ fn clip_volume_records(
         })
         .collect();
     let static_level = level(native_volume);
+    crate::format::ensure_valid!(
+        static_level.is_finite() && level_keys.iter().all(|key| key.value.is_finite()),
+        "audio Level is nonfinite"
+    );
     let level_param = if level_keys.is_empty() {
         clip_level_param(ids.level, Some(records::LEVEL_NAME), static_level)
     } else {
@@ -316,12 +339,18 @@ pub(in crate::format::writer) fn records(ids: &SequenceGraphIds) -> Vec<Record> 
     let mut output = Vec::new();
     let items = ids.audio_items();
     for (index, strip) in ids.mixer.strips.iter().enumerate() {
+        // The sequence's sounds come first in `audio_items`, on their own tracks.
+        let transitions = ids
+            .audio_placements
+            .get(index)
+            .map_or_else(Vec::new, AudioPlacementIds::transitions);
         output.push(audio_clip_track(
             ids.sequence.audio_tracks[index],
             index,
             strip,
             ids.sequence.audio_track_uids[index].clone(),
             items.get(index).copied(),
+            transitions,
         ));
     }
 
@@ -457,7 +486,7 @@ pub(in crate::format::writer) fn placement_records(
     let mut output = vec![super::super::media::audio_clip(
         placement.clip,
         ids,
-        Some(occurrence.in_ticks..occurrence.out_ticks),
+        Some(occurrence),
         &placement.secondary,
         channels,
         clip_gain,
@@ -492,13 +521,21 @@ pub(in crate::format::writer) fn placement_records(
                     end: occurrence.end_ticks.to_string(),
                 }),
                 sub_clip: Some(Reference::object(placement.subclip)),
-                head_transition: None,
-                tail_transition: None,
+                head_transition: placement.fade_in.map(Reference::object),
+                tail_transition: placement.fade_out.map(Reference::object),
                 is_muted: None,
                 original_sub_clip_time_offset: None,
             },
         }),
     ]);
+    for (id, fade, fade_in) in [
+        (placement.fade_in, &occurrence.fade_in, true),
+        (placement.fade_out, &occurrence.fade_out, false),
+    ] {
+        if let (Some(id), Some(fade)) = (id, fade) {
+            output.push(fade_transition(id, occurrence, fade, fade_in)?);
+        }
+    }
     output.extend(
         placement
             .secondary
@@ -507,4 +544,82 @@ pub(in crate::format::writer) fn placement_records(
             .map(|(index, id)| secondary_content(*id, Reference::object(source.source), index)),
     );
     Ok(output)
+}
+
+/// A fade as the one-sided transition that Premiere 26.5.1 writes: inside
+/// its placement, from the placement start (a fade-in, Alignment 0) or to its
+/// end (a fade-out, Alignment its span), with no `Start` at 0.
+fn fade_transition(
+    object_id: ObjectId<AudioTransitionTrackItem>,
+    occurrence: &PrAudioOccurrence,
+    fade: &PrAudioFade,
+    fade_in: bool,
+) -> Result<Record> {
+    if matches!(fade.curve, PrFadeCurve::Custom(_)) {
+        return Err(crate::format::invalid(
+            "Custom Fade must export from editable Volume keys, not native transition replay",
+        ));
+    }
+    let (start, end) = if fade_in {
+        (
+            occurrence.start_ticks,
+            occurrence.start_ticks + fade.duration_ticks,
+        )
+    } else {
+        (
+            occurrence.end_ticks - fade.duration_ticks,
+            occurrence.end_ticks,
+        )
+    };
+    let name = fade.curve.match_name();
+    let shape = fade.curve.fade_shape();
+    Ok(Record::AudioTransitionTrackItem(AudioTransitionTrackItem {
+        object_id,
+        class_id: Some(records::AUDIO_TRANSITION_TRACK_ITEM.class_id.into()),
+        version: Some(records::AUDIO_TRANSITION_TRACK_ITEM.version.into()),
+        transition_track_item: TransitionTrackItem {
+            version: Some("3".into()),
+            track_item: Some(TrackItemRange {
+                version: Some("4".into()),
+                _node: None,
+                _item_type: None,
+                _media_type: None,
+                _track_index: None,
+                _track_ref_count: None,
+                start: (start != 0).then(|| start.to_string()),
+                end: end.to_string(),
+            }),
+            has_outgoing_clip: Some((!fade_in).to_string()),
+            has_incoming_clip: Some(fade_in.to_string()),
+            display_name: Some(name.into()),
+            match_name: Some(name.into()),
+            alignment: Some(if fade_in { 0 } else { end - start }.to_string()),
+        },
+        audio_channel_layout: records::STEREO.into(),
+        channel_type: None,
+        frame_rate: None,
+        fade_shape_type: shape.map(|(kind, _)| kind.to_string()),
+        fade_shape_value: shape.map(|(_, value)| value.to_string()),
+        crossfade_symmetry: None,
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_writer_rejects_custom_replay() {
+        let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/feature_audio_custom_fades_strict.prproj");
+        let (project, _) = crate::format::PrProjectFile::load(source).unwrap();
+        let clip = &project.sequences[0].audio[0];
+        let mut fade = clip.fade_in.as_ref().unwrap().clone();
+        assert!(fade_transition(ObjectId::new(1), clip, &fade, true)
+            .unwrap_err()
+            .to_string()
+            .contains("not native transition replay"));
+        fade.curve = PrFadeCurve::ConstantGain;
+        assert!(fade_transition(ObjectId::new(1), clip, &fade, true).is_ok());
+    }
 }

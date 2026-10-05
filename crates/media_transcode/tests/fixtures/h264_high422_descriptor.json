@@ -1,0 +1,13 @@
+{
+  "codec": "h264",
+  "pixel_format": "yuv422p10le",
+  "width": 3840,
+  "height": 2160,
+  "frame_rate": { "num": 30000, "den": 1001 },
+  "color": {
+    "range": "tv",
+    "space": "bt709",
+    "transfer": "bt709",
+    "primaries": "bt709"
+  }
+}

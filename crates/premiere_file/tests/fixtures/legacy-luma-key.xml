@@ -1,0 +1,33 @@
+<PremiereData>
+<!-- Source: human-inputs-20261004.prproj; SHA-256: e74d088116570ddb7178b127129036755be2f8e553dea80f98aa59b601585b76; sequence UID: b3aecac7-c452-48ba-a5e1-737807cb32ee; object IDs: 543, 719, 720. -->
+<VideoFilterComponent ObjectID="543" ClassID="d10da199-beea-4dd1-b941-ed3a78766d50" Version="9">
+		<Component Version="7">
+			<Params Version="1">
+				<Param Index="0" ObjectRef="719"/>
+				<Param Index="1" ObjectRef="720"/>
+			</Params>
+			<ID>3</ID>
+			<DisplayName>Luma Key</DisplayName>
+		</Component>
+		<VideoFilterType>2</VideoFilterType>
+		<MatchName>AE.ADBE Legacy Key Luma</MatchName>
+	</VideoFilterComponent>
+<VideoComponentParam ObjectID="719" ClassID="fe47129e-6c94-4fc0-95d5-c056a517aaf3" Version="10">
+		<Name>Threshold</Name>
+		<IsTimeVarying>true</IsTimeVarying>
+		<ParameterID>1</ParameterID>
+		<StartKeyframe>-91445760000000000,40.,0,0,0,0,0,0</StartKeyframe>
+		<Keyframes>0,40.,0,0,0,0.16666666666666666,12.435323880789742,0.16666666666666666;612809129304,70.,0,0,12.435323880789742,0.16666666666666666,0,0.16666666666666666;</Keyframes>
+		<CurrentValue>70</CurrentValue>
+		<LowerBound>0</LowerBound>
+		<UpperBound>100</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="720" ClassID="fe47129e-6c94-4fc0-95d5-c056a517aaf3" Version="10">
+		<Name>Cutoff</Name>
+		<ParameterID>2</ParameterID>
+		<StartKeyframe>-91445760000000000,20.,0,0,0,0,0,0</StartKeyframe>
+		<CurrentValue>20</CurrentValue>
+		<LowerBound>0</LowerBound>
+		<UpperBound>100</UpperBound>
+	</VideoComponentParam>
+</PremiereData>

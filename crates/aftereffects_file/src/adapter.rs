@@ -1,7 +1,7 @@
 //! Best-effort AEP import and experimental editable native export boundaries.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     fs::{self, File},
     io::{self, Read},
     path::{Path, PathBuf},
@@ -27,13 +27,18 @@ use crate::{
 
 mod diagnostics;
 mod export;
+mod fonts;
 mod linked_import;
 mod media;
+mod publication;
 
-pub use export::{StagedAfterEffectsExport, StagedAfterEffectsPictureExport};
+pub use export::{
+    AepPreparationControl, StagedAfterEffectsExport, StagedAfterEffectsPictureExport,
+};
 pub use linked_import::{
-    DynamicLinkImportError, ImportedAfterEffectsComposition, LinkedMedia, LinkedPicture,
-    LinkedPictureTarget, PreparedAfterEffectsImport, ResolvedAfterEffectsComposition,
+    DynamicLinkImportError, ImportedAfterEffectsComposition, LinkedAudio, LinkedMedia,
+    LinkedPicture, LinkedPictureTarget, PreparedAfterEffectsImport,
+    ResolvedAfterEffectsComposition,
 };
 
 const OUTPUT_NAME: &str = "project.tsrct";
@@ -49,12 +54,16 @@ pub struct AfterEffectsImportOptions {
     pub composition: Option<u32>,
     /// Explicit AE-evaluated expression values, bound to the source AEP hash.
     pub expression_samples: Option<PathBuf>,
+    /// Authoritative available PostScript face names. None preserves authored identities.
+    /// This declares availability; it does not package or fetch font binaries.
+    pub available_fonts: Option<BTreeSet<String>>,
 }
 
 /// Output sampling rate for an edited FX composition. FX timestamps remain in seconds.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AfterEffectsExportOptions {
     /// Requested nominal frames per second; defaults to 24 for legacy callers.
+    /// FX scripts are sampled at four times this rate, plus owner endpoints.
     pub fps: f64,
 }
 
@@ -67,6 +76,9 @@ impl Default for AfterEffectsExportOptions {
 /// An AEP conversion failed before success was reported.
 #[derive(Debug, Error)]
 pub enum AepConversionError {
+    /// Caller requested cancellation; owned preparation files have been dropped.
+    #[error("AEP preparation cancelled")]
+    Cancelled,
     /// The source is not a regular file or has invalid input metadata.
     #[error("invalid AEP input: {0}")]
     Input(&'static str),
@@ -106,6 +118,9 @@ pub enum AepConversionError {
     /// A prepared-media sidecar is invalid, stale, or bound to another source/target.
     #[error(transparent)]
     MediaMap(#[from] MediaMapError),
+    /// Destination preparation failed outside the recoverable unsupported-media policy.
+    #[error(transparent)]
+    MediaPreparation(#[from] media_transcode::TranscodeError),
     /// Framing or required structural records could not be read safely.
     #[error(transparent)]
     Read(#[from] StructureError),
@@ -121,6 +136,15 @@ pub enum AepConversionError {
     /// Archive validation or writing failed.
     #[error(transparent)]
     Archive(#[from] TesseractFileError),
+    /// The selected audio preparation failed before media publication.
+    #[error("cannot prepare audio asset {asset_id} for AEP: {source}")]
+    AudioPreparation {
+        /// Referenced archive asset identity.
+        asset_id: String,
+        /// Decoder or destination failure, never a successful omission.
+        #[source]
+        source: media_transcode::TranscodeError,
+    },
     /// Encoding normalized still-image media failed, including output I/O.
     #[error("cannot encode normalized AEP image: {0}")]
     Image(#[from] image::ImageError),
@@ -229,6 +253,7 @@ impl AfterEffects {
             &expression_samples,
             media_map,
             progress,
+            options.available_fonts.as_ref(),
         )?;
         if let Some(media_map) = media_map {
             media_map.validate_for(input, "after-effects", &target)?;
@@ -282,14 +307,27 @@ impl ImportToTesseract for AfterEffects {
     }
 }
 
-// Avoid whitespace inflation in deeply nested editable tracks while preserving
-// every key and the exact editable model. The byte constructor revalidates the
-// same schema and preserves these compact bytes when publishing.
+// Avoid whitespace inflation in deeply nested editable tracks. The optional
+// font policy runs before the byte constructor revalidates the resulting model
+// and preserves these compact bytes when publishing.
 fn compact_archive(
     document: fx_schema::EditableFxCompositionDocument,
+    available_fonts: Option<&BTreeSet<String>>,
+    diagnostics: &mut Vec<ImportDiagnostic>,
 ) -> Result<TesseractFileBuilder, TesseractFileError> {
-    let bytes = serde_json::to_vec(&document).map_err(fx_schema::EditableFxDocumentError::from)?;
-    drop(document);
+    let bytes = if available_fonts.is_some() {
+        let mut value =
+            serde_json::to_value(document).map_err(fx_schema::EditableFxDocumentError::from)?;
+        diagnostics.extend(fonts::apply(&mut value, available_fonts));
+        serde_json::to_vec(&value).map_err(fx_schema::EditableFxDocumentError::from)?
+    } else {
+        // Preserve the original compact serialization when no inventory was supplied.
+        let bytes =
+            serde_json::to_vec(&document).map_err(fx_schema::EditableFxDocumentError::from)?;
+        // Release the original tree before the archive constructor reparses it.
+        drop(document);
+        bytes
+    };
     TesseractFileBuilder::from_project_json(&bytes)
 }
 
@@ -314,6 +352,7 @@ fn import_builder<'a>(
         expression_samples,
         None,
         Progress::default(),
+        None,
     )
 }
 
@@ -324,6 +363,7 @@ fn import_builder_with_media_map<'a>(
     expression_samples: &ExpressionSamples,
     media_map: Option<&'a ValidatedMediaMap>,
     progress: Progress<'_>,
+    available_fonts: Option<&BTreeSet<String>>,
 ) -> Result<ImportBuild<'a>, AepConversionError> {
     let mut preflight = media::MediaPreflight::with_project(input, media_map, project);
     for reference in native_media_references(project, composition)? {
@@ -339,7 +379,11 @@ fn import_builder_with_media_map<'a>(
     if let Some(error) = preflight.failure.take() {
         return Err(error);
     }
-    let builder = compact_archive(converted.document)?;
+    let builder = compact_archive(
+        converted.document,
+        available_fonts,
+        &mut converted.diagnostics,
+    )?;
     let builder = preflight.add_used_assets(builder, &converted.assets)?;
     converted.diagnostics.append(&mut preflight.diagnostics);
     builder.validate()?;
@@ -685,9 +729,9 @@ fn write_project_checked(
     publish(&source, destination)
 }
 
-// Match the existing conversion publisher: reserve a fresh directory, then link
-// without replacement. This is not crash-atomic directory publication. A crash
-// can leave staging or an empty destination; ordinary errors clean up owned data.
+// Reserve a fresh directory, then link or exclusively copy without replacement.
+// This is not crash-atomic directory publication: a crash can leave staging or
+// partial output; ordinary errors clean up owned data.
 fn publish(source: &Path, destination: &Path) -> Result<(), AepConversionError> {
     publish_named(source, destination, OUTPUT_NAME)
 }
@@ -696,7 +740,7 @@ fn publish_named(source: &Path, destination: &Path, name: &str) -> Result<(), Ae
     fs::create_dir(destination)
         .map_err(|source| AepConversionError::io("create output directory", destination, source))?;
     let target = destination.join(name);
-    if let Err(source) = fs::hard_link(source, &target) {
+    if let Err(source) = publication::publish_file(source, &target, fs::hard_link) {
         // Never recurse: if another actor created entries, leave them untouched.
         let _ = fs::remove_dir(destination);
         return Err(AepConversionError::io(

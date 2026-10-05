@@ -12,15 +12,282 @@ use crate::{
         TRANSFORM_SHUTTER_ANGLE,
     },
     tests::support::{
-        clip_of, left_crop, nested_sequence, opacity_mask, project_document, sequence_of,
-        text_graphic, transform_effect, video_media, video_sequence, DEFAULT_PR_TRANSFORM,
+        clip_of, keyed_opacity_mask, left_crop, nested_sequence, opacity_mask, project_document,
+        sequence_of, text_graphic, transform_effect, video_media, video_sequence,
+        DEFAULT_PR_TRANSFORM,
     },
 };
-use fx_schema::AssetId;
+use fx_schema::{
+    animator::{PropertyKeyframe, PropertyKeyframeTrack},
+    AssetId,
+};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, io::Read};
 
 const THIRTY_FPS_TICKS: i64 = FrameRate::Fps30.ticks_per_frame();
+
+// The strict fixture retains the Adobe-authored point values and resolved
+// handles, with its source clock relocated to 0.5–3.5 seconds.
+fn native_straight_position_keys() -> Vec<PrPointKeyframe> {
+    let (sequence, _) = native_fixture(
+        "feature_motion_position_path_strict.prproj",
+        "c8acf9c1-34b2-4086-9f55-d528950a7059",
+    );
+    sequence.video_tracks[0].clip(0).animations[0]
+        .point_keys()
+        .unwrap()
+        .to_vec()
+}
+
+// Match fx_composition::animator::keyframes: spatial handles select a
+// parametric cubic, not arc-length traversal. These samples have Linear timing.
+fn sample_linear_fx_point_segment(
+    left: &PropertyKeyframe,
+    right: &PropertyKeyframe,
+    layer_ms: i64,
+) -> f64 {
+    assert_eq!(right.easing(), fx_schema::PropertyKeyframeEasing::Linear);
+    let fx_schema::PropertyValue::Float(from) = left.value() else {
+        panic!("expected a float point axis");
+    };
+    let fx_schema::PropertyValue::Float(to) = right.value() else {
+        panic!("expected a float point axis");
+    };
+    let progress = (layer_ms - left.layer_time().as_millis()) as f64
+        / (right.layer_time().as_millis() - left.layer_time().as_millis()) as f64;
+    let outgoing = left.spatial_out_tangent();
+    let incoming = right.spatial_in_tangent();
+    if outgoing.is_none() && incoming.is_none() {
+        return from + (to - from) * progress;
+    }
+    let first = from + outgoing.unwrap_or((to - from) / 3.0);
+    let second = to + incoming.unwrap_or((from - to) / 3.0);
+    let inverse = 1.0 - progress;
+    inverse.powi(3) * from
+        + 3.0 * inverse * inverse * progress * first
+        + 3.0 * inverse * progress * progress * second
+        + progress.powi(3) * to
+}
+
+#[test]
+fn straight_position_native_handles_follow_temporal_traversal() {
+    let keys = native_straight_position_keys();
+    assert_eq!(keys.len(), 2);
+    assert_eq!(keys[0].source_ticks, TICKS / 2);
+    assert_eq!(keys[1].source_ticks, 7 * TICKS / 2);
+    assert_eq!(keys[0].easing, PrKeyframeEasing::Linear);
+    assert_eq!(keys[1].easing, PrKeyframeEasing::Linear);
+    assert_eq!(
+        keys[0].spatial_out_tangent,
+        Some([0.06640624987582365, -7.064254126110115e-9])
+    );
+    assert_eq!(
+        keys[1].spatial_in_tangent,
+        Some([-0.06640624987582365, 7.064254126110115e-9])
+    );
+    let dimensions = [1920, 1080];
+    let (x, y) = super::position_tracks(
+        &PrPropertyAnimation::Position(keys.clone()),
+        TICKS,
+        fx_schema::LayerId::new(1),
+        dimensions,
+    )
+    .unwrap();
+    for (axis, track) in [x, y].iter().enumerate() {
+        let converted = track.keyframes();
+        assert_eq!(converted[0].layer_time().as_millis(), -500);
+        assert_eq!(converted[1].layer_time().as_millis(), 2500);
+        for (native, fx) in keys.iter().zip(converted) {
+            assert_eq!(
+                fx.value(),
+                &fx_schema::PropertyValue::Float(native.value[axis] * f64::from(dimensions[axis]))
+            );
+            assert_eq!(
+                fx.easing(),
+                crate::convert::keyframes::fx_easing(native.easing)
+            );
+        }
+        let expected = (keys[0].value[axis] + (keys[1].value[axis] - keys[0].value[axis]) / 4.0)
+            * f64::from(dimensions[axis]);
+        let actual = sample_linear_fx_point_segment(&converted[0], &converted[1], 250);
+        assert!(
+            (actual - expected).abs() < 1e-6,
+            "axis {axis}: {actual} != {expected}"
+        );
+        assert!(!track.has_spatial_tangents());
+    }
+}
+
+#[test]
+fn straight_position_normalization_keeps_curved_neighbor_sides() {
+    // Supplemental edits to the parsed native straight pair: curved paths on
+    // either side, and non-Linear arrival easing on the straight segment.
+    let mut keys = native_straight_position_keys();
+    let mut before = keys[0].clone();
+    before.source_ticks -= TICKS;
+    before.value[0] -= 0.2;
+    before.spatial_out_tangent = Some([0.04, 0.08]);
+    keys[0].spatial_in_tangent = Some([-0.03, 0.01]);
+    keys[0].easing = PrKeyframeEasing::Hold;
+    keys[1].easing = PrKeyframeEasing::CubicBezier {
+        x1: 0.25,
+        y1: 0.1,
+        x2: 0.75,
+        y2: 0.9,
+    };
+    keys[1].spatial_out_tangent = Some([0.04, 0.08]);
+    let mut after = keys[1].clone();
+    after.source_ticks += TICKS;
+    after.value[0] += 0.2;
+    after.spatial_in_tangent = Some([-0.03, -0.01]);
+    after.spatial_out_tangent = None;
+    keys.insert(0, before);
+    keys.push(after);
+    let dimensions = [1920, 1080];
+    let (x, y) = super::position_tracks(
+        &PrPropertyAnimation::Position(keys.clone()),
+        TICKS,
+        fx_schema::LayerId::new(1),
+        dimensions,
+    )
+    .unwrap();
+    for (axis, track) in [x, y].iter().enumerate() {
+        let converted = track.keyframes();
+        assert_eq!(converted[0].spatial_in_tangent(), None);
+        assert_eq!(converted[1].spatial_out_tangent(), None);
+        assert_eq!(converted[2].spatial_in_tangent(), None);
+        assert_eq!(converted[3].spatial_out_tangent(), None);
+        for index in [0, 2] {
+            assert_eq!(
+                converted[index].spatial_out_tangent(),
+                keys[index]
+                    .spatial_out_tangent
+                    .map(|t| t[axis] * f64::from(dimensions[axis]))
+            );
+            assert_eq!(
+                converted[index + 1].spatial_in_tangent(),
+                keys[index + 1]
+                    .spatial_in_tangent
+                    .map(|t| t[axis] * f64::from(dimensions[axis]))
+            );
+        }
+        for (native, fx) in keys.iter().zip(converted) {
+            assert_eq!(
+                fx.layer_time().as_millis(),
+                (native.source_ticks - TICKS) / TICKS_PER_MILLISECOND
+            );
+            assert_eq!(
+                fx.value(),
+                &fx_schema::PropertyValue::Float(native.value[axis] * f64::from(dimensions[axis]))
+            );
+            assert_eq!(
+                fx.easing(),
+                crate::convert::keyframes::fx_easing(native.easing)
+            );
+        }
+    }
+}
+
+#[test]
+fn straight_position_edited_export_keeps_linear_traversal() {
+    let keys = native_straight_position_keys();
+    let dimensions = [1920, 1080];
+    let (x, y) = super::position_tracks(
+        &PrPropertyAnimation::Position(keys.clone()),
+        TICKS,
+        fx_schema::LayerId::new(1),
+        dimensions,
+    )
+    .unwrap();
+    let edited: Vec<_> = [x, y]
+        .into_iter()
+        .zip([120.0, 60.0])
+        .map(|(track, shift)| {
+            let keys = track
+                .keyframes()
+                .iter()
+                .enumerate()
+                .map(|(index, key)| {
+                    let fx_schema::PropertyValue::Float(value) = key.value() else {
+                        panic!("expected float axis");
+                    };
+                    PropertyKeyframe::new(
+                        key.id().clone(),
+                        key.layer_time(),
+                        fx_schema::PropertyValue::Float(
+                            value + if index == 1 { shift } else { 0.0 },
+                        ),
+                        key.easing(),
+                    )
+                    .with_spatial_tangents(key.spatial_in_tangent(), key.spatial_out_tangent())
+                })
+                .collect();
+            PropertyKeyframeTrack::new(keys).unwrap()
+        })
+        .collect();
+    let native =
+        tesseract_to_premiere::export_position_keys(&edited[0], &edited[1], TICKS, dimensions)
+            .unwrap();
+    assert_eq!(native[0].value, keys[0].value);
+    assert_eq!(
+        native[1].value,
+        [
+            keys[1].value[0] + 120.0 / 1920.0,
+            keys[1].value[1] + 60.0 / 1080.0
+        ]
+    );
+    assert!(native
+        .iter()
+        .all(|key| key.spatial_in_tangent.is_none() && key.spatial_out_tangent.is_none()));
+    let mut sequence = video_sequence();
+    sequence.video_tracks[0].clip_mut(0).animations =
+        vec![PrPropertyAnimation::Position(native.clone())];
+    let mut media = video_media();
+    let source = media.values_mut().next().unwrap();
+    source.relative_path = Some("./media/source.mp4".into());
+    source.absolute_paths = vec![(
+        crate::schema::records::MediaPathField::FilePath,
+        "/media/source.mp4".into(),
+    )];
+    source.video.as_mut().unwrap().kind = crate::schema::PrMediaKind::Video {
+        codec: Some(crate::schema::VideoCodec::H264),
+        hdr_profile: None,
+    };
+    let project = crate::format::PrProjectFile::from_sequences(vec![sequence], media);
+    let temp = tempfile::tempdir().unwrap();
+    let output = temp.path().join("edited.prproj");
+    crate::format::PremiereProjectXml::new(&project)
+        .unwrap()
+        .write_new(&output)
+        .unwrap();
+    let (readback, omissions) = crate::format::PrProjectFile::load(&output).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let readback = readback.single_sequence().unwrap().video_tracks[0]
+        .clip(0)
+        .animations[0]
+        .point_keys()
+        .unwrap();
+    assert_eq!(readback, native);
+    let (x, y) = super::position_tracks(
+        &PrPropertyAnimation::Position(readback.to_vec()),
+        TICKS,
+        fx_schema::LayerId::new(1),
+        dimensions,
+    )
+    .unwrap();
+    for (axis, track) in [x, y].iter().enumerate() {
+        assert!(!track.has_spatial_tangents());
+        let expected = (native[0].value[axis]
+            + (native[1].value[axis] - native[0].value[axis]) / 4.0)
+            * f64::from(dimensions[axis]);
+        let actual =
+            sample_linear_fx_point_segment(&track.keyframes()[0], &track.keyframes()[1], 250);
+        assert!(
+            (actual - expected).abs() < 1e-6,
+            "axis {axis}: {actual} != {expected}"
+        );
+    }
+}
 
 #[test]
 fn defaults_and_explicit_silent_audio_policy() {
@@ -54,6 +321,610 @@ fn frame_interpolation_remains_editable_on_import() {
         sequence.video_tracks[0].clip_mut(0).frame_blending = Some(mode);
         let document = project_document(&sequence);
         assert_eq!(document["composition"]["layers"][0]["frameBlending"], wire);
+    }
+}
+
+fn two_sided_dissolve_sequence() -> PrSequence {
+    let mut outgoing = clip_of("source", 0..2 * TICKS, 0);
+    outgoing.id = Some("outgoing".into());
+    outgoing.opacity = 80.0;
+    let mut incoming = clip_of("source", 2 * TICKS..5 * TICKS, 3 * TICKS);
+    incoming.id = Some("incoming".into());
+    incoming.opacity = 65.0;
+    let mut sequence = sequence_of("Dissolve", vec![PrVideoTrack::media([outgoing, incoming])]);
+    let start = 3 * TICKS / 2 - 1892;
+    let end = 5 * TICKS / 2 - 1892;
+    sequence.video_tracks[0]
+        .transitions
+        .push(PrVideoTransition {
+            id: "two-sided".into(),
+            kind: PrVideoTransitionKind::CrossDissolve,
+            start_ticks: start,
+            cut_ticks: 2 * TICKS,
+            end_ticks: end,
+            outgoing_clip: Some("outgoing".into()),
+            incoming_clip: Some("incoming".into()),
+        });
+    sequence
+}
+
+#[test]
+fn two_sided_cross_dissolve_keeps_handles_and_weighted_picture_opacity() {
+    let sequence = two_sided_dissolve_sequence();
+    let start = sequence.video_tracks[0].transitions[0].start_ticks;
+    let end = sequence.video_tracks[0].transitions[0].end_ticks;
+    let media = video_media();
+    let ids = crate::tesseract_output::asset_ids_in_order(&sequence, &media);
+    let mut omissions = Vec::new();
+    let document = premiere_to_tesseract(&sequence, &media, &ids, &mut omissions).unwrap();
+    assert!(
+        !omissions.iter().any(|item| {
+            item.record == "two-sided" && item.kind == crate::OmissionKind::Omitted
+        }),
+        "{omissions:?}"
+    );
+    let value = document.to_json_value().unwrap();
+    let composite = value["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Group")
+        .unwrap();
+    assert_eq!(composite["blendMode"], "normal");
+    assert!(!composite["masks"].as_array().unwrap().is_empty());
+    let pictures: Vec<_> = composite["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|layer| layer["type"] == "Group")
+        .collect();
+    assert_eq!(pictures.len(), 2);
+    let progress_at_cut = (2 * TICKS - start) as f64 / (end - start) as f64;
+    for (index, picture) in pictures.into_iter().enumerate() {
+        assert_eq!(picture["blendMode"], "add");
+        let video = picture["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["type"] == "Video")
+            .unwrap();
+        let (window, source, opacity, weights) = if index == 0 {
+            (
+                (0, 2500),
+                (0, 2500),
+                80.0,
+                [100.0, 100.0 * (1.0 - progress_at_cut), 0.0],
+            )
+        } else {
+            (
+                (1500, 3500),
+                (2500, 3500),
+                65.0,
+                [0.0, 100.0 * progress_at_cut, 100.0],
+            )
+        };
+        assert_eq!(
+            crate::test_support::layer_range(video),
+            &json!({"start": window.0, "duration": window.1})
+        );
+        assert_eq!(
+            video["sourceRange"],
+            json!({"start": source.0, "duration": source.1})
+        );
+        assert_eq!(video["transform"]["opacity"].as_f64(), Some(opacity));
+        let animation = value["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| {
+                entry["target"]["layerId"] == picture["id"]
+                    && entry["target"]["propertyType"] == "opacity"
+            })
+            .unwrap();
+        let keys = animation["animator"]["keyframes"].as_array().unwrap();
+        assert_eq!(keys.len(), 3);
+        for ((key, time), weight) in keys.iter().zip([1500, 2000, 2500]).zip(weights) {
+            assert_eq!(key["layerTime"], time);
+            assert!((key["value"]["value"].as_f64().unwrap() - weight).abs() < 1e-10);
+        }
+    }
+}
+
+#[test]
+fn two_sided_cross_dissolve_exports_current_ramps_and_native_links() {
+    let sequence = two_sided_dissolve_sequence();
+    let media = video_media();
+    let ids = crate::tesseract_output::asset_ids_in_order(&sequence, &media);
+    let document = premiere_to_tesseract(&sequence, &media, &ids, &mut Vec::new()).unwrap();
+    let facts = BTreeMap::from([(
+        ids.values().next().unwrap().as_str().to_owned(),
+        MediaFacts::Video(VideoMedia {
+            pixel_aspect: Default::default(),
+            orientation: crate::schema::VideoOrientation::Identity,
+            codec: crate::schema::VideoCodec::H264,
+            bit_depth: 8,
+            colour: None,
+            width: 1920,
+            height: 1080,
+            timing: crate::media::VideoTiming::for_test(FrameRate::Fps30, 10 * TICKS),
+        }),
+    )]);
+    for (edited, without_canvas) in [(false, false), (true, false), (false, true), (true, true)] {
+        let mut value = document.to_json_value().unwrap();
+        if without_canvas {
+            let layers = value["composition"]["layers"].as_array_mut().unwrap();
+            assert_eq!(
+                layers
+                    .iter()
+                    .filter(|layer| layer["type"] == "Rect")
+                    .count(),
+                1
+            );
+            layers.retain(|layer| layer["type"] != "Rect");
+            value["duration"] = json!(6);
+        }
+        if edited {
+            for entry in value["composition"]["dynamics"]["entries"]
+                .as_array_mut()
+                .unwrap()
+            {
+                if entry["target"]["propertyType"] == "opacity" {
+                    let keys = entry["animator"]["keyframes"].as_array_mut().unwrap();
+                    keys[0]["layerTime"] = json!(1600);
+                    keys[1]["value"]["value"] = json!(50.0);
+                    keys[2]["layerTime"] = json!(2400);
+                }
+            }
+        }
+        let mut omissions = Vec::new();
+        let edited_document =
+            fx_schema::EditableFxCompositionDocument::from_json_value(value).unwrap();
+        let lowered = super::super::tesseract_to_premiere::lower_document(
+            &edited_document,
+            &facts,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            FrameRate::Fps30,
+            &mut omissions,
+        )
+        .unwrap();
+        assert!(lowered.packing.is_complete());
+        let mut exported = lowered.project.unwrap();
+        if without_canvas {
+            // Keep the existing last-occurrence duration diagnostic, not a gap rejection.
+            assert_eq!(
+                omissions,
+                [crate::Omission {
+                    scope: crate::OmissionScope::Feature,
+                    kind: crate::OmissionKind::Omitted,
+                    record: "document.duration".into(),
+                    reason: format!(
+                        "duration differs from the last occurrence; exported duration is {} ticks",
+                        5 * TICKS
+                    ),
+                }]
+            );
+        } else {
+            assert!(
+                !omissions
+                    .iter()
+                    .any(|o| o.kind == crate::OmissionKind::Omitted),
+                "{omissions:?}"
+            );
+        }
+        let native = exported.single_sequence().unwrap();
+        assert_eq!(
+            native.end_ticks(),
+            if without_canvas { 6 * TICKS } else { 5 * TICKS }
+        );
+        assert_eq!(
+            native.gaps(&exported.media),
+            if without_canvas {
+                Vec::from_iter(Some(5 * TICKS..6 * TICKS))
+            } else {
+                Vec::new()
+            }
+        );
+        assert_eq!(
+            native
+                .video_occurrences()
+                .map(|clip| (
+                    clip.start_ticks,
+                    clip.end_ticks,
+                    clip.in_ticks,
+                    clip.out_ticks,
+                    clip.opacity,
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (0, 2 * TICKS, 0, 2 * TICKS, 80.0),
+                (2 * TICKS, 5 * TICKS, 3 * TICKS, 6 * TICKS, 65.0)
+            ]
+        );
+        let transition = native
+            .video_tracks
+            .iter()
+            .flat_map(|track| &track.transitions)
+            .next()
+            .unwrap();
+        let expected = if edited {
+            (8 * TICKS / 5, 12 * TICKS / 5)
+        } else {
+            (3 * TICKS / 2 - 1892, 5 * TICKS / 2 - 1892)
+        };
+        assert_eq!(
+            (
+                transition.start_ticks,
+                transition.cut_ticks,
+                transition.end_ticks
+            ),
+            (expected.0, 2 * TICKS, expected.1)
+        );
+        for (index, source) in exported.media.values_mut().enumerate() {
+            source.name = format!("source-{index}.mp4");
+            source.relative_path = Some(format!("./media/{}", source.name));
+            source.absolute_paths = vec![(
+                crate::schema::records::MediaPathField::FilePath,
+                format!("/media/{}", source.name).into(),
+            )];
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let output = temp.path().join("dissolve.prproj");
+        crate::format::PremiereProjectXml::new(&exported)
+            .unwrap()
+            .write_new(&output)
+            .unwrap();
+        let (readback, omissions) = crate::format::PrProjectFile::load(&output).unwrap();
+        assert!(
+            !omissions
+                .iter()
+                .any(|o| o.kind == crate::OmissionKind::Omitted),
+            "{omissions:?}"
+        );
+        let readback = readback.single_sequence().unwrap();
+        let track = readback
+            .video_tracks
+            .iter()
+            .find(|track| !track.transitions.is_empty())
+            .unwrap();
+        assert_eq!(
+            track.transitions[0].kind,
+            PrVideoTransitionKind::CrossDissolve
+        );
+        assert_eq!(
+            (
+                track.transitions[0].start_ticks,
+                track.transitions[0].cut_ticks,
+                track.transitions[0].end_ticks
+            ),
+            (expected.0, 2 * TICKS, expected.1)
+        );
+        assert_eq!(
+            (track.clip(0).end_ticks, track.clip(1).start_ticks),
+            (2 * TICKS, 2 * TICKS)
+        );
+        assert_eq!((track.clip(0).opacity, track.clip(1).opacity), (80.0, 65.0));
+    }
+}
+
+#[test]
+fn one_sided_cross_dissolve_exports_edited_head_and_tail_opacity() {
+    for tail in [false, true] {
+        let mut sequence = video_sequence();
+        let clip = sequence.video_tracks[0].clip_mut(0);
+        clip.id = Some("picture".into());
+        clip.in_ticks = TICKS;
+        clip.out_ticks = 6 * TICKS;
+        clip.opacity = 80.0;
+        sequence.video_tracks[0]
+            .transitions
+            .push(PrVideoTransition {
+                id: "edge".into(),
+                kind: PrVideoTransitionKind::CrossDissolve,
+                start_ticks: if tail { 4 * TICKS } else { 0 },
+                cut_ticks: if tail { 5 * TICKS } else { 0 },
+                end_ticks: if tail { 5 * TICKS } else { TICKS },
+                outgoing_clip: tail.then(|| "picture".into()),
+                incoming_clip: (!tail).then(|| "picture".into()),
+            });
+        let media = video_media();
+        let ids = crate::tesseract_output::asset_ids_in_order(&sequence, &media);
+        let mut omissions = Vec::new();
+        let document = premiere_to_tesseract(&sequence, &media, &ids, &mut omissions).unwrap();
+        assert!(
+            !omissions
+                .iter()
+                .any(|o| o.kind == crate::OmissionKind::Omitted),
+            "{omissions:?}"
+        );
+        let mut value = document.to_json_value().unwrap();
+        let entry = value["composition"]["dynamics"]["entries"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|entry| entry["target"]["propertyType"] == "opacity")
+            .unwrap();
+        entry["animator"]["keyframes"][usize::from(!tail)]["value"]["value"] = json!(65.0);
+        let facts = BTreeMap::from([(
+            ids.values().next().unwrap().as_str().to_owned(),
+            MediaFacts::Video(VideoMedia {
+                pixel_aspect: Default::default(),
+                orientation: crate::schema::VideoOrientation::Identity,
+                codec: crate::schema::VideoCodec::H264,
+                bit_depth: 8,
+                colour: None,
+                width: 1920,
+                height: 1080,
+                timing: crate::media::VideoTiming::for_test(FrameRate::Fps30, 10 * TICKS),
+            }),
+        )]);
+        omissions.clear();
+        let edited_document =
+            fx_schema::EditableFxCompositionDocument::from_json_value(value).unwrap();
+        let exported = tesseract_to_premiere(
+            &edited_document,
+            &facts,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            FrameRate::Fps30,
+            &mut omissions,
+        )
+        .unwrap();
+        assert!(
+            !omissions
+                .iter()
+                .any(|o| o.kind == crate::OmissionKind::Omitted),
+            "{omissions:?}"
+        );
+        let track = exported
+            .single_sequence()
+            .unwrap()
+            .video_tracks
+            .iter()
+            .find(|track| !track.transitions.is_empty())
+            .unwrap();
+        assert_eq!(track.clip(0).opacity, 65.0);
+        assert_eq!(track.clip(0).in_ticks, TICKS);
+        assert!(track.clip(0).animations.is_empty());
+        let actual = &track.transitions[0];
+        let expected = &sequence.video_tracks[0].transitions[0];
+        assert_eq!(
+            (actual.start_ticks, actual.cut_ticks, actual.end_ticks),
+            (expected.start_ticks, expected.cut_ticks, expected.end_ticks)
+        );
+        assert_eq!(actual.outgoing_clip.is_some(), tail);
+        assert_eq!(actual.incoming_clip.is_some(), !tail);
+    }
+}
+
+#[test]
+fn cross_dissolve_noncanonical_edits_do_not_restore_pictures_or_abort_sibling() {
+    fn counts(
+        sequence: &PrSequence,
+        media: &BTreeMap<MediaId, PrMedia>,
+        source: &MediaId,
+    ) -> (usize, usize) {
+        let mut total = (
+            sequence
+                .video_occurrences()
+                .filter(|clip| {
+                    &clip.media == source
+                        || media
+                            .get(&clip.media)
+                            .and_then(|media| media.video.as_ref())
+                            .is_some_and(|video| {
+                                matches!(&video.kind,
+                                crate::schema::PrMediaKind::ColorMatte(matte)
+                                    if matte.fill_color() == [1.0, 0.0, 0.0, 1.0]
+                                        || matte.fill_color() == [0.0, 1.0, 0.0, 1.0])
+                            })
+                })
+                .count(),
+            sequence
+                .video_tracks
+                .iter()
+                .map(|track| track.transitions.len())
+                .sum(),
+        );
+        for nest in sequence.nest_occurrences() {
+            let child = counts(&nest.sequence, media, source);
+            total.0 += child.0;
+            total.1 += child.1;
+        }
+        total
+    }
+    let sequence = two_sided_dissolve_sequence();
+    let media = video_media();
+    let ids = crate::tesseract_output::asset_ids_in_order(&sequence, &media);
+    let document = premiere_to_tesseract(&sequence, &media, &ids, &mut Vec::new()).unwrap();
+    let asset = ids.values().next().unwrap().as_str().to_owned();
+    let facts = BTreeMap::from([(
+        asset.clone(),
+        MediaFacts::Video(VideoMedia {
+            pixel_aspect: Default::default(),
+            orientation: crate::schema::VideoOrientation::Identity,
+            codec: crate::schema::VideoCodec::H264,
+            bit_depth: 8,
+            colour: None,
+            width: 1920,
+            height: 1080,
+            timing: crate::media::VideoTiming::for_test(FrameRate::Fps30, 10 * TICKS),
+        }),
+    )]);
+    for edit in [
+        "trim-out",
+        "trim-in",
+        "screen",
+        "matte-normal",
+        "matte-screen",
+        "matte-binding",
+        "speed",
+    ] {
+        let mut value = document.to_json_value().unwrap();
+        let layers = value["composition"]["layers"].as_array_mut().unwrap();
+        let matte_template = layers
+            .iter()
+            .find(|layer| layer["type"] == "Rect")
+            .unwrap()
+            .clone();
+        let composite = layers
+            .iter_mut()
+            .find(|layer| layer["type"] == "Group")
+            .unwrap();
+        let mut sibling = composite["layers"][0]["layers"][0].clone();
+        sibling["id"] = json!(5000);
+        sibling.as_object_mut().unwrap().remove("parent");
+        if matches!(edit, "matte-normal" | "matte-screen" | "matte-binding") {
+            for (side, color) in [[1.0, 0.0, 0.0, 1.0], [0.0, 1.0, 0.0, 1.0]]
+                .into_iter()
+                .enumerate()
+            {
+                let picture = &mut composite["layers"][side]["layers"][0];
+                let mut matte = matte_template.clone();
+                matte["id"] = picture["id"].clone();
+                assert!(picture["parent"].is_number());
+                matte["parent"] = picture["parent"].clone();
+                matte["activeRange"] = picture["playback"]["inputRange"].clone();
+                matte["transform"]["opacity"] = json!(100.0);
+                matte["rect"]["fillColor"] = json!(color);
+                *picture = matte;
+            }
+        }
+        let side = usize::from(edit == "trim-in");
+        let picture = &mut composite["layers"][side]["layers"][0];
+        if edit == "screen" || edit == "matte-screen" {
+            picture["blendMode"] = json!("screen");
+        } else if edit == "matte-binding" {
+            // A flat dissolve picture cannot borrow a matte outside its fade group.
+            picture["trackMatte"] = json!({"mode": "alpha", "layer": matte_template["id"]});
+        } else if edit != "matte-normal" {
+            let (start, duration, source_start, source_duration) = match edit {
+                "trim-out" => (0, 2300, 0, 2300),
+                "trim-in" => (1700, 3300, 2700, 3300),
+                "speed" => (0, 2500, 0, 5000),
+                _ => unreachable!(),
+            };
+            let window = json!({"start": start, "duration": duration});
+            let source = json!({"start": source_start, "duration": source_duration});
+            picture["playback"] = crate::test_support::linear_playback(window, source.clone());
+            picture["sourceRange"] = source;
+        }
+        // The Normal/Screen matte controls differ only in the outgoing blend.
+        // Screen must not escape isolation and start sampling this blue backing.
+        if edit == "screen" || edit == "matte-normal" || edit == "matte-screen" {
+            let backing = layers
+                .iter_mut()
+                .find(|layer| layer["type"] == "Rect")
+                .unwrap();
+            backing["rect"]["fillColor"] = json!([0.0, 0.0, 1.0, 1.0]);
+        }
+        layers.push(sibling);
+        let document = fx_schema::EditableFxCompositionDocument::from_json_value(value).unwrap();
+        let mut omissions = Vec::new();
+        let exported = tesseract_to_premiere(
+            &document,
+            &facts,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            FrameRate::Fps30,
+            &mut omissions,
+        )
+        .unwrap();
+        let sequence = exported.single_sequence().unwrap();
+        let (pictures, transitions) = counts(sequence, &exported.media, &MediaId(asset.clone()));
+        if edit == "matte-normal" {
+            assert_eq!((pictures, transitions), (3, 1), "{edit}: {omissions:?}");
+            assert!(
+                !omissions
+                    .iter()
+                    .any(|o| o.kind == crate::OmissionKind::Omitted),
+                "{omissions:?}"
+            );
+        } else {
+            assert_eq!(transitions, 0, "{edit}: {omissions:?}");
+        }
+        let sibling = sequence
+            .video_occurrences()
+            .find(|clip| clip.media.as_str() == asset)
+            .unwrap();
+        assert_eq!(
+            (
+                sibling.start_ticks,
+                sibling.end_ticks,
+                sibling.in_ticks,
+                sibling.out_ticks,
+                sibling.opacity
+            ),
+            (0, 5 * TICKS / 2, 0, 5 * TICKS / 2, 80.0),
+            "{edit}"
+        );
+        // Generic nest export can reject a trailing transparent window. That
+        // must remain a scoped occurrence loss, not silent handle restoration
+        // or failure to publish the independent picture above.
+        if pictures < 3 {
+            assert!(
+                omissions
+                    .iter()
+                    .any(|o| o.scope == crate::OmissionScope::Occurrence
+                        && o.kind == crate::OmissionKind::Omitted),
+                "{edit}: {omissions:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn cross_dissolve_does_not_overwrite_an_existing_film_impact_opacity_owner() {
+    for reverse in [false, true] {
+        let mut sequence = video_sequence();
+        sequence.video_tracks[0].clip_mut(0).id = Some("picture".into());
+        sequence.video_tracks[0].transitions = vec![
+            PrVideoTransition {
+                id: "cross".into(),
+                kind: PrVideoTransitionKind::CrossDissolve,
+                start_ticks: 0,
+                cut_ticks: 0,
+                end_ticks: TICKS,
+                outgoing_clip: None,
+                incoming_clip: Some("picture".into()),
+            },
+            PrVideoTransition {
+                id: "impact".into(),
+                kind: PrVideoTransitionKind::FilmImpactDissolve,
+                start_ticks: 4 * TICKS,
+                cut_ticks: 5 * TICKS,
+                end_ticks: 5 * TICKS,
+                outgoing_clip: Some("picture".into()),
+                incoming_clip: None,
+            },
+        ];
+        if reverse {
+            sequence.video_tracks[0].transitions.reverse();
+        }
+        let media = video_media();
+        let ids = crate::tesseract_output::asset_ids_in_order(&sequence, &media);
+        let mut omissions = Vec::new();
+        let document = premiere_to_tesseract(&sequence, &media, &ids, &mut omissions).unwrap();
+        assert!(
+            omissions
+                .iter()
+                .any(|o| o.record == "cross" && o.kind == crate::OmissionKind::Omitted),
+            "{omissions:?}"
+        );
+        assert!(
+            omissions
+                .iter()
+                .any(|o| o.record == "impact" && o.kind == crate::OmissionKind::Approximated),
+            "{omissions:?}"
+        );
+        let value = document.to_json_value().unwrap();
+        let entry = &value["composition"]["dynamics"]["entries"][0];
+        assert_eq!(entry["animator"]["keyframes"][0]["layerTime"], 4000);
+        assert_eq!(entry["animator"]["keyframes"][1]["layerTime"], 5000);
+        assert_eq!(
+            entry["animator"]["keyframes"][1]["easing"]["type"],
+            "cubicBezier"
+        );
     }
 }
 
@@ -231,6 +1102,8 @@ fn static_crop_uses_source_dimensions_and_follows_motion_across_aspect_ratios() 
         video["source"]["sourceRect"],
         json!({"x": 0.0, "y": 0.0, "width": 1080.0, "height": 1920.0})
     );
+    assert_eq!(guide["rect"]["fillEnabled"], false);
+    assert_eq!(guide["rect"]["strokeEnabled"], false);
     assert_eq!(guide["rect"]["position"], json!([75.6, 0.0]));
     assert_eq!(guide["rect"]["size"], json!([1004.4, 1920.0]));
     assert_eq!(guide["transform"], video["transform"]);
@@ -315,6 +1188,7 @@ fn crop_guide_repeats_the_keyed_motion_of_its_video() {
 /// An enabled static Gaussian Blur.
 fn blur(blurriness: f64) -> PrEffect {
     PrEffect {
+        mask: None,
         enabled: true,
         params: PrEffectParams::GaussianBlur(PrGaussianBlur {
             blurriness,
@@ -641,7 +1515,7 @@ fn transforms_that_stage_nothing_keep_the_clip_flat_with_a_reason() {
             }),
             [1920, 1080],
             vec![
-                "Transform effect at stack position 1 was not imported: another active Transform on the same clip is not converted with this one: Oracle run E11 measured one Transform per clip, and Premiere's composition of two is unmeasured",
+                "Transform effect at stack position 1 was not imported: another active Transform on the same clip is not converted with this one: native measurements cover one Transform per clip, and Premiere's composition of two is unmeasured",
             ],
             false,
         ),
@@ -653,7 +1527,7 @@ fn transforms_that_stage_nothing_keep_the_clip_flat_with_a_reason() {
             }),
             [1920, 1080],
             vec![
-                "Transform effect at stack position 1 was not imported: a Transform with a Crop, Linear Wipe or Opacity mask on one clip is not converted: the mask keeps its stage group, which carries one shape (supervisor decision D22-6)",
+                "Transform effect at stack position 1 was not imported: a Transform with a Crop, Linear Wipe or Opacity mask on one clip is not converted: the mask keeps its stage group, which carries one shape",
             ],
             false,
         ),
@@ -670,7 +1544,7 @@ fn transforms_that_stage_nothing_keep_the_clip_flat_with_a_reason() {
             }),
             [1920, 1080],
             vec![
-                "Transform effect at stack position 1 was not imported: a Transform with a Crop, Linear Wipe or Opacity mask on one clip is not converted: the mask keeps its stage group, which carries one shape (supervisor decision D22-6)",
+                "Transform effect at stack position 1 was not imported: a Transform with a Crop, Linear Wipe or Opacity mask on one clip is not converted: the mask keeps its stage group, which carries one shape",
             ],
             true,
         ),
@@ -679,7 +1553,7 @@ fn transforms_that_stage_nothing_keep_the_clip_flat_with_a_reason() {
             Box::new(|clip| clip.effects = vec![transform()]),
             [1080, 1920],
             vec![
-                "Transform effect at stack position 1 was not imported: a Transform on media that is not sequence-sized is not converted: the frame that Premiere normalizes its Position to is unmeasured there (Oracle run E11 measured 1920 x 1080 media on a 1920 x 1080 sequence; supervisor decision D22-4)",
+                "Transform effect at stack position 1 was not imported: a Transform on media that is not sequence-sized is not converted: the frame that Premiere normalizes its Position to is unmeasured there (native measurements cover 1920 x 1080 media on a 1920 x 1080 sequence)",
             ],
             false,
         ),
@@ -955,8 +1829,9 @@ fn moved_linear_wipe_stages_and_omits_the_effects_below_it() {
             key(TICKS, 15.0),
         ])];
     };
-    // A Corner Pin (JRB-2008) is a converted effect, omitted the same way.
+    // A Corner Pin is a converted effect, omitted the same way.
     let pin = PrEffect {
+        mask: None,
         enabled: true,
         params: PrEffectParams::CornerPin(PrCornerPin {
             corners: [[0.1, 0.05], [0.95, 0.0], [0.0, 1.0], [0.85, 0.9]],
@@ -1055,6 +1930,185 @@ fn staged_clip_keeps_its_playback_on_the_group_clock() {
         let video = &staged["composition"]["layers"][0]["layers"][0];
         assert_eq!(keys(video, 0), keys(flat_video, 1000), "{playback_rate}");
         assert_eq!(video["sourceRange"], flat_video["sourceRange"]);
+    }
+}
+
+#[test]
+fn staged_clip_from_a_trimmed_in_moves_its_remap_offset_to_the_group_clock() {
+    // A clip at 1 to 3 s plays a curve from In 0.4 s at 0.8x; its keys, at
+    // input 0 and 2 s, are reached 0.5 s before and 2 s after the clip start.
+    let mut sequence = video_sequence();
+    let clip = sequence.video_tracks[0].clip_mut(0);
+    (clip.start_ticks, clip.end_ticks) = (TICKS, 3 * TICKS);
+    (clip.in_ticks, clip.out_ticks) = (2 * TICKS / 5, 2 * TICKS);
+    clip.playback_rate = 0.8;
+    clip.time_remap = Some(crate::schema::PrTimeRemap {
+        keys: [(-2 * TICKS / 5, 0), (8 * TICKS / 5, 4 * TICKS)]
+            .map(
+                |(timeline_ticks, source_ticks)| crate::schema::PrTimeRemapKeyframe {
+                    timeline_ticks,
+                    source_ticks,
+                    easing: PrKeyframeEasing::Linear,
+                },
+            )
+            .into(),
+    });
+    clip.crop.left = 20.0;
+    clip.effects = vec![blur(40.0)];
+    let (flat, _) = import_with_frame(&sequence, [1920, 1080]);
+    sequence.video_tracks[0].clip_mut(0).effects_above_mask = 1;
+    let (staged, omissions) = import_with_frame(&sequence, [1920, 1080]);
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let group = &staged["composition"]["layers"][0];
+    assert_eq!(
+        *crate::test_support::layer_range(group),
+        json!({"start": 1000, "duration": 2000})
+    );
+    // On the sequence clock the keys are at 0.5 and 3 s. The group clock
+    // starts at the clip, so there the first precedes zero and the keys and
+    // input move 500 ms later together; both show source 1.6 s at sequence
+    // time 1.5 s.
+    let placements: [(&Value, u64, u64, [u64; 2]); 2] = [
+        (&flat["composition"]["layers"][0], 1000, 0, [500, 3000]),
+        (&group["layers"][0], 0, 500, [0, 2500]),
+    ];
+    for (video, start, offset, times) in placements {
+        let playback = &video["playback"];
+        assert_eq!(
+            playback["inputRange"],
+            json!({"start": start, "duration": 2000})
+        );
+        assert_eq!(playback["inputOffsetMs"], offset);
+        let keys = playback["mapping"]["property"]["keyframes"]
+            .as_array()
+            .unwrap();
+        assert_eq!(
+            keys.iter()
+                .map(|key| (
+                    key["time"].as_u64().unwrap(),
+                    key["value"].as_u64().unwrap()
+                ))
+                .collect::<Vec<_>>(),
+            times.into_iter().zip([0, 4000]).collect::<Vec<_>>()
+        );
+        assert!(keys.iter().all(|key| key["easing"]["type"] == "linear"));
+        let input = 500 + start + offset;
+        assert_eq!((input - times[0]) * 4000 / (times[1] - times[0]), 1600);
+    }
+}
+
+#[test]
+fn time_remap_parent_times_round_once_to_the_millisecond() {
+    use crate::schema::{PrTimeRemap, PrTimeRemapKeyframe};
+    // In, speed and two key times in input ticks after In; then the input
+    // offset and key times in milliseconds, or `None` when the curve fails.
+    type Case = (i64, f64, [i64; 2], Option<(i64, [u64; 2])>);
+    let ms = TICKS_PER_MILLISECOND;
+    let cases: [Case; 5] = [
+        // A key one tick before zero moves the curve and its input 1 ms
+        // later, where 1.5 ms then rounds forward.
+        (ms, 1.0, [-1, ms / 2], Some((1, [1, 2]))),
+        // At 2.5x the clip reaches input 63821519999 ticks 100.4999999984 ms
+        // after its start: 100 ms, where rounding to a tick first gives 101.
+        (0, 2.5, [0, 63_821_519_999], Some((0, [0, 100]))),
+        // Untrimmed at unit speed, as before, a key less than 0.5 ms before
+        // the start rounds to it and one 0.5 ms before fails, without offset.
+        (0, 1.0, [1 - ms / 2, ms], Some((0, [0, 1]))),
+        (0, 1.0, [-ms / 2, ms], None),
+        // Times that round to one millisecond fail; they do not merge.
+        (ms, 1.0, [0, ms / 4], None),
+    ];
+    for (in_ticks, playback_rate, times, expected) in cases {
+        // The clip plays the curve, as an imported occurrence does.
+        let mut clip = clip_of("source", 0..TICKS, in_ticks);
+        clip.playback_rate = playback_rate;
+        clip.time_remap = Some(PrTimeRemap {
+            keys: times
+                .into_iter()
+                .zip([0, TICKS])
+                .map(|(timeline_ticks, source_ticks)| PrTimeRemapKeyframe {
+                    timeline_ticks,
+                    source_ticks,
+                    easing: PrKeyframeEasing::Linear,
+                })
+                .collect(),
+        });
+        let remap = clip.time_remap.as_ref().unwrap();
+        let converted = super::time_remap_property(
+            remap,
+            0,
+            clip.playback_rate,
+            clip.remaps_from_in_or_speed(),
+        )
+        .ok();
+        let actual = converted.map(|(property, offset)| {
+            let keys = property.keyframes().iter();
+            (offset, keys.map(|key| key.time.as_millis()).collect())
+        });
+        let expected = expected.map(|(offset, times)| (offset, times.to_vec()));
+        assert_eq!(actual, expected, "{times:?}");
+    }
+}
+
+#[test]
+fn slow_time_remap_past_its_covering_keys_once_rounded_omits_only_its_clip() {
+    use crate::schema::{PrTimeRemap, PrTimeRemapKeyframe};
+    // A 2 s clip plays input 3 to 4 ticks at speed 2^-38, a span that In to
+    // Out matches within the tolerance; its keys, at input 0, 1, 2, 4 and 5
+    // ticks, are 1082.1 ms apart on the parent clock. Moved 3247 ms later, it
+    // plays 3247 to 5247 ms, past the key at 4329 ms: into the segment before
+    // a last key at the media end, or after an ordinary last key.
+    let media = video_media();
+    let facts = &media[&MediaId("source".into())];
+    // Source seconds of each key, with and without the media-end key.
+    let curves: [&[i64]; 2] = [&[0, 1, 3, 5, 10], &[0, 1, 3, 5]];
+    for seconds in curves {
+        let mut sequence = video_sequence();
+        let mut sibling = sequence.video_tracks[0].clip(0).clone();
+        (sibling.start_ticks, sibling.end_ticks) = (5 * TICKS, 7 * TICKS);
+        (sibling.in_ticks, sibling.out_ticks) = (0, 2 * TICKS);
+        let clip = sequence.video_tracks[0].clip_mut(0);
+        clip.end_ticks = 2 * TICKS;
+        (clip.in_ticks, clip.out_ticks) = (3, 4);
+        clip.playback_rate = 1.0 / (1_u64 << 38) as f64;
+        clip.time_remap = Some(PrTimeRemap {
+            keys: [-3, -2, -1, 1, 2]
+                .into_iter()
+                .zip(seconds)
+                .map(|(timeline_ticks, source)| PrTimeRemapKeyframe {
+                    timeline_ticks,
+                    source_ticks: source * TICKS,
+                    easing: PrKeyframeEasing::Linear,
+                })
+                .collect(),
+        });
+        // Native validation, which checks the saved In and Out, admits it.
+        clip.validate(FrameRate::Fps30, facts).unwrap();
+        sequence.video_tracks[0]
+            .items
+            .push(PrVideoItem::Media(sibling));
+        let ids = crate::tesseract_output::asset_ids_in_order(&sequence, &media);
+        let mut omissions = Vec::new();
+        let wire = premiere_to_tesseract(&sequence, &media, &ids, &mut omissions)
+            .unwrap()
+            .to_json_value()
+            .unwrap();
+        let reason = "clip was not imported: unsupported conversion: TimeRemapping from a source In or at another speed plays input 3247 to 5247 ms, outside its covering keys at 1 to 4329 ms";
+        let occurrences: Vec<_> = omissions
+            .iter()
+            .filter(|omission| omission.scope == crate::OmissionScope::Occurrence)
+            .map(|omission| omission.reason.as_str())
+            .collect();
+        assert_eq!(occurrences, [reason], "{omissions:?}");
+        // The sibling still converts.
+        let videos: Vec<_> = wire["composition"]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|layer| layer["type"] == "Video")
+            .collect();
+        assert_eq!(videos.len(), 1, "{seconds:?}");
+        assert_eq!(videos[0]["playback"]["inputRange"]["start"], 5000);
     }
 }
 
@@ -1251,6 +2305,188 @@ fn opacity_mask_over_effects_stages_the_disabled_clip() {
 }
 
 #[test]
+fn mask_path_keys_import_on_the_trimmed_owner_clock_at_unit_speed() {
+    // The rectangle in the source frame's pixels, `left` px from its edge.
+    let outline = |left: f64| {
+        json!({"type": "path", "value": {"commands": [
+            {"type": "moveTo", "x": left, "y": 270.0},
+            {"type": "lineTo", "x": left + 960.0, "y": 270.0},
+            {"type": "lineTo", "x": left + 960.0, "y": 810.0},
+            {"type": "lineTo", "x": left, "y": 810.0},
+            {"type": "close"}
+        ]}})
+    };
+    let outline_keys = (
+        json!("shapePath"),
+        vec![(json!(-500), outline(480.0)), (json!(500), outline(960.0))],
+    );
+    let rotation = |source_ticks, value| PrScalarKeyframe {
+        source_ticks,
+        value,
+        easing: PrKeyframeEasing::Linear,
+    };
+    // Flat, the guide repeats the clip's Rotation keys beside its outline
+    // keys, all on the clip clock; staged, it holds the outline keys alone.
+    for staged in [false, true] {
+        let mut sequence = video_sequence();
+        let clip = sequence.video_tracks[0].clip_mut(0);
+        (clip.in_ticks, clip.out_ticks) = (TICKS, 6 * TICKS);
+        clip.opacity_mask = Some(keyed_opacity_mask());
+        clip.animations = vec![PrPropertyAnimation::Rotation(vec![
+            rotation(TICKS, 0.0),
+            rotation(2 * TICKS, 20.0),
+        ])];
+        if staged {
+            clip.effects = vec![blur(40.0)];
+            clip.effects_above_mask = 1;
+        }
+        let (wire, omissions) = import_with_frame(&sequence, [1920, 1080]);
+        assert!(
+            omissions
+                .iter()
+                .all(|omission| omission.reason == crate::schema::MASK_FEATHER_APPROXIMATION),
+            "{omissions:?}"
+        );
+        let root = &wire["composition"]["layers"][0];
+        let (owner, layers) = if staged {
+            (root, &root["layers"])
+        } else {
+            (root, &wire["composition"]["layers"])
+        };
+        let guide = layers
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["id"] == owner["masks"][0]["layer"])
+            .unwrap();
+        assert_eq!(guide["shape"]["path"], outline(480.0)["value"], "{staged}");
+        let mut guide_tracks = layer_tracks(&wire, guide);
+        let position = guide_tracks
+            .iter()
+            .position(|track| *track == outline_keys)
+            .unwrap_or_else(|| panic!("{staged}: {guide_tracks:?}"));
+        guide_tracks.remove(position);
+        let repeated = if staged {
+            Vec::new()
+        } else {
+            layer_tracks(&wire, &layers[0])
+        };
+        assert_eq!(guide_tracks, repeated, "{staged}");
+    }
+    // The typed mapper also keeps still masks static; it must not freeze
+    // a keyed outline when called without the native reader's host check.
+    let mut sequence = video_sequence();
+    sequence.video_tracks[0].clip_mut(0).opacity_mask = Some(keyed_opacity_mask());
+    let mut media = video_media();
+    media
+        .values_mut()
+        .next()
+        .unwrap()
+        .video
+        .as_mut()
+        .unwrap()
+        .kind = crate::schema::PrMediaKind::Still { alpha: false };
+    let ids = crate::tesseract_output::asset_ids_in_order(&sequence, &media);
+    let mut omissions = Vec::new();
+    let wire = premiere_to_tesseract(&sequence, &media, &ids, &mut omissions)
+        .unwrap()
+        .to_json_value()
+        .unwrap();
+    assert!(wire["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|layer| layer["type"] == "Rect"));
+    assert!(omissions.iter().any(|omission| omission.reason
+        == "Mask Path keys on a still are not converted; only a video clip's Opacity mask converts keyed"));
+    // A reverse or a hold needs a non-unit mapping from the source clock.
+    // Neither can use the signed source-In translation tested above.
+    type Clip = crate::format::PrVideoOccurrence;
+    type Case = (&'static str, fn(&mut Clip), &'static str);
+    let retimed = "they are on the source clock, which a retimed, reversed, held or time-remapped clip does not play at unit speed from its start";
+    let cases: [Case; 2] = [
+        (
+            "reverse",
+            |clip: &mut Clip| clip.playback_rate = -1.0,
+            retimed,
+        ),
+        (
+            "Frame Hold",
+            |clip: &mut Clip| {
+                clip.time_remap = Some(crate::schema::PrTimeRemap::frame_hold(TICKS, 5 * TICKS));
+            },
+            retimed,
+        ),
+    ];
+    for (case, edit, reason) in cases {
+        let mut sequence = video_sequence();
+        let clip = sequence.video_tracks[0].clip_mut(0);
+        clip.opacity_mask = Some(keyed_opacity_mask());
+        edit(clip);
+        let (wire, omissions) = import_with_frame(&sequence, [1920, 1080]);
+        let types: Vec<_> = wire["composition"]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|layer| layer["type"].as_str().unwrap())
+            .collect();
+        assert_eq!(types, ["Rect"], "{case}");
+        assert!(
+            omissions.iter().any(
+                |omission| omission.scope == crate::OmissionScope::Occurrence
+                    && omission.reason.contains(&format!(
+                        "Mask Path keys were not imported: {reason}; occurrence omitted"
+                    ))
+            ),
+            "{case}: {omissions:?}"
+        );
+    }
+}
+
+#[test]
+fn numeric_opacity_masks_do_not_freeze_on_static_still_import() {
+    for control in ["Feather", "Opacity", "Expansion", "static Expansion"] {
+        let mut sequence = video_sequence();
+        let mut mask = opacity_mask();
+        let keys = vec![PrScalarKeyframe {
+            source_ticks: 0,
+            value: 20.0,
+            easing: PrKeyframeEasing::Linear,
+        }];
+        match control {
+            "Feather" => mask.feather_keys = keys,
+            "Opacity" => mask.opacity_keys = keys,
+            "Expansion" => mask.expansion_keys = keys,
+            _ => mask.expansion = 20.0,
+        }
+        sequence.video_tracks[0].clip_mut(0).opacity_mask = Some(mask);
+        let mut media = video_media();
+        let stream = media.values_mut().next().unwrap().video.as_mut().unwrap();
+        stream.kind = crate::schema::PrMediaKind::Still { alpha: false };
+        let ids = crate::tesseract_output::asset_ids_in_order(&sequence, &media);
+        let mut omissions = Vec::new();
+        let wire = premiere_to_tesseract(&sequence, &media, &ids, &mut omissions)
+            .unwrap()
+            .to_json_value()
+            .unwrap();
+        assert!(wire["composition"]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|layer| layer["type"] == "Rect"));
+        let reason = if control == "static Expansion" {
+            "Mask Expansion on a still is not converted"
+        } else {
+            "numeric Opacity mask keys on a still are not converted; this host has no admitted numeric mask clock"
+        };
+        assert!(
+            omissions.iter().any(|omission| omission.reason == reason),
+            "{control}: {omissions:?}"
+        );
+    }
+}
+
+#[test]
 fn a_clips_blend_converts_on_its_root_layer_both_ways() {
     use crate::{schema::PrBlendMode, OmissionKind};
     let dissolve = PrBlendMode::Unmeasured {
@@ -1328,6 +2564,7 @@ fn a_clips_blend_converts_on_its_root_layer_both_ways() {
         let facts = BTreeMap::from([(
             "premiere-video-1".to_owned(),
             MediaFacts::Video(VideoMedia {
+                pixel_aspect: Default::default(),
                 orientation: crate::schema::VideoOrientation::Identity,
                 codec: crate::schema::VideoCodec::H264,
                 bit_depth: 8,
@@ -1548,6 +2785,7 @@ fn focused_native_reverse_fixture_imports_as_editable_time_remap() {
     let facts = BTreeMap::from([(
         ids[&clips[0].media].as_str().to_owned(),
         MediaFacts::Video(VideoMedia {
+            pixel_aspect: Default::default(),
             orientation: crate::schema::VideoOrientation::Identity,
             codec: crate::schema::VideoCodec::H264,
             bit_depth: 8,
@@ -1583,7 +2821,76 @@ fn focused_native_reverse_fixture_imports_as_editable_time_remap() {
         .next()
         .unwrap();
     assert_eq!(roundtrip_clip.playback_rate, -0.905);
-    assert_eq!(roundtrip_clip.source_ticks(), clips[0].source_ticks());
+    // Export preserves the edited FX frame convention, not the former native
+    // control tuple. The selected last frame needs its own native Frame Hold.
+    let frame = crate::format::FrameRate::Fps30.ticks_per_frame();
+    let boundary = frame - 1;
+    assert_eq!(
+        roundtrip_clip.source_ticks(),
+        (clips[0].in_ticks - boundary)..(clips[0].out_ticks - boundary - frame * 905 / 1000)
+    );
+    assert_eq!(roundtrip_clip.end_ticks, clips[0].end_ticks - frame);
+    let exported: Vec<_> = roundtrip
+        .single_sequence()
+        .unwrap()
+        .video_occurrences()
+        .collect();
+    assert_eq!(exported.len(), 2);
+    assert_eq!(exported[1].start_ticks, roundtrip_clip.end_ticks);
+    assert_eq!(exported[1].end_ticks, clips[0].end_ticks);
+    assert_eq!(
+        exported[1]
+            .time_remap
+            .as_ref()
+            .unwrap()
+            .held_source_ticks(frame),
+        Some(9 * frame)
+    );
+}
+
+#[test]
+fn remapped_rotation_keeps_unmeasured_properties_and_hosts_closed() {
+    let (sequence, media) = native_fixture(
+        "feature_time_remap_rotation_26_5_strict.prproj",
+        "9a10a3b7-a83b-47d9-a68c-91d06d937738",
+    );
+    let original = sequence.video_tracks[0].clip(0);
+    assert!(original.has_media_clock_rotation());
+    let PrPropertyAnimation::Rotation(keys) = &original.animations[0] else {
+        panic!("native fixture must contain Rotation keys");
+    };
+    let mut opacity = original.clone();
+    opacity.animations = vec![PrPropertyAnimation::Opacity(keys.clone())];
+    let mut held_key = original.clone();
+    let PrPropertyAnimation::Rotation(keys) = &mut held_key.animations[0] else {
+        unreachable!();
+    };
+    keys[0].easing = PrKeyframeEasing::Hold;
+    let mut held_media = original.clone();
+    held_media.time_remap = Some(crate::schema::PrTimeRemap::frame_hold(0, 2 * TICKS));
+    let mut masked = original.clone();
+    masked.crop = left_crop();
+    for clip in [opacity, held_key, held_media, masked] {
+        assert!(!clip.has_media_clock_rotation());
+        assert!(clip
+            .validate(FrameRate::Fps30, &media[&clip.media])
+            .is_err());
+    }
+    // A Transform moves Motion to a stage group without the video's remap.
+    // Keep that Rotation static rather than silently use the stage clock.
+    let mut staged = sequence;
+    staged.video_tracks[0].clip_mut(0).effects =
+        vec![transform_effect(DEFAULT_PR_TRANSFORM, Vec::new())];
+    let (wire, omissions) = import(&staged, &media);
+    assert!(animated_properties(&wire).is_empty());
+    assert!(
+        omissions.iter().any(|omission| {
+            omission
+                .reason
+                .contains("Rotation animation was not imported")
+        }),
+        "{omissions:?}"
+    );
 }
 
 #[test]
@@ -2067,6 +3374,7 @@ fn audio_placements_become_audio_layers_below_the_picture() {
             absolute_paths: Vec::new(),
             video: None,
             audio: Some(PrAudioStream {
+                prepared_clock: None,
                 intrinsic_ticks: 8 * TICKS,
                 channels: AudioChannels::Stereo,
                 sample_rate: 44_100,
@@ -2075,6 +3383,9 @@ fn audio_placements_become_audio_layers_below_the_picture() {
     );
     // Sound past the last picture extends the document and its canvas.
     sequence.audio.push(PrAudioOccurrence {
+        source_channel: None,
+        preserve_audio_pitch: false,
+        playback_rate: 1.0,
         id: None,
         media: MediaId("music".into()),
         start_ticks: TICKS,
@@ -2083,6 +3394,8 @@ fn audio_placements_become_audio_layers_below_the_picture() {
         out_ticks: 5 * TICKS + TICKS / 2 + TICKS / 1000,
         volume: fx_schema::LinearGain::new(0.5).unwrap(),
         volume_keys: None,
+        fade_in: None,
+        fade_out: None,
     });
     let doc = project_document_with_media(&sequence, &media);
     assert_eq!(doc["duration"], 6.001);
@@ -2127,6 +3440,7 @@ fn keyed_clip_volume_becomes_editable_volume_keys() {
             absolute_paths: Vec::new(),
             video: None,
             audio: Some(PrAudioStream {
+                prepared_clock: None,
                 intrinsic_ticks: 8 * TICKS,
                 channels: AudioChannels::Stereo,
                 sample_rate: 48_000,
@@ -2141,6 +3455,9 @@ fn keyed_clip_volume_becomes_editable_volume_keys() {
         easing,
     };
     sequence.audio.push(PrAudioOccurrence {
+        source_channel: None,
+        preserve_audio_pitch: false,
+        playback_rate: 1.0,
         id: None,
         media: MediaId("music".into()),
         start_ticks: 0,
@@ -2156,6 +3473,8 @@ fn keyed_clip_volume_becomes_editable_volume_keys() {
             ],
             gain: 0.25,
         }),
+        fade_in: None,
+        fade_out: None,
     });
     let doc = project_document_with_media(&sequence, &media);
     let layers = doc["composition"]["layers"].as_array().unwrap();
@@ -2174,20 +3493,259 @@ fn keyed_clip_volume_becomes_editable_volume_keys() {
     );
     // The Linear segment's curve comes from its own Level values: scaled into
     // -12..0 dB, it would take Premiere's other fader branch.
-    let fitted = super::super::audio::fitted_level_easing(1.0, 4.0);
-    assert_ne!(fitted, super::super::audio::fitted_level_easing(0.25, 1.0));
+    let keys = entries[0]["animator"]["keyframes"].as_array().unwrap();
+    let at = |millis: i64| keys.iter().find(|key| key["layerTime"] == millis).unwrap();
+    for (millis, gain, easing) in [
+        (-500, 0.25, "linear"),
+        (1000, 1.0, "cubicBezier"),
+        (2000, 0.125, "hold"),
+    ] {
+        assert_eq!(at(millis)["value"], json!({"type": "float", "value": gain}));
+        assert_eq!(at(millis)["easing"]["type"], easing);
+    }
+    // The first subdivision is halfway through the native 0..+12 dB curve,
+    // before the other stages scale its gain, not halfway through -12..0 dB.
+    let expected = ((1.0 + 4_f64.powf(-0.4475)) * 0.5).powf(-1.0 / 0.4475) * 0.25;
+    assert!((at(250)["value"]["value"].as_f64().unwrap() - expected).abs() < 1e-9);
     let id = audio["id"].as_u64().unwrap();
-    assert_eq!(
-        entries[0]["animator"]["keyframes"],
-        json!([
-            {"id": format!("premiere-volume-{id}-0"), "layerTime": -500,
-             "value": {"type": "float", "value": 0.25}, "easing": {"type": "linear"}},
-            {"id": format!("premiere-volume-{id}-1"), "layerTime": 1000,
-             "value": {"type": "float", "value": 1.0}, "easing": serde_json::to_value(fitted).unwrap()},
-            {"id": format!("premiere-volume-{id}-2"), "layerTime": 2000,
-             "value": {"type": "float", "value": 0.125}, "easing": {"type": "hold"}},
-        ])
+    for (index, key) in keys.iter().enumerate() {
+        assert_eq!(key["id"], format!("premiere-volume-{id}-{index}"));
+    }
+}
+
+#[test]
+fn audio_fades_become_eased_volume_keys_around_the_clip_level() {
+    use crate::{
+        format::{MediaId, PrMedia},
+        schema::{
+            AudioChannels, PrAudioFade, PrAudioOccurrence, PrAudioStream, PrFadeCurve, PrVolumeKeys,
+        },
+        tests::support::project_document_with_media,
+    };
+    let mut sequence = video_sequence();
+    let mut media = video_media();
+    media.insert(
+        MediaId("music".into()),
+        PrMedia {
+            name: "music.wav".into(),
+            relative_path: None,
+            relative_paths: Vec::new(),
+            absolute_paths: Vec::new(),
+            video: None,
+            audio: Some(PrAudioStream {
+                prepared_clock: None,
+                intrinsic_ticks: 8 * TICKS,
+                channels: AudioChannels::Stereo,
+                sample_rate: 48_000,
+            }),
+        },
     );
+    let fade = |curve, millis: i64| PrAudioFade {
+        id: None,
+        curve,
+        duration_ticks: millis * TICKS_PER_MILLISECOND,
+    };
+    let key = |seconds: f64, value: f64| PrScalarKeyframe {
+        source_ticks: (seconds * TICKS as f64) as i64,
+        value,
+        easing: PrKeyframeEasing::Linear,
+    };
+    // A 0.3 s Exponential Fade in before the Level keys (0 dB at 1 s, +6 dB
+    // at 1.5 s) and a 2 s Constant Power fade out after them, under -12 dB of
+    // other stages.
+    sequence.audio.push(PrAudioOccurrence {
+        source_channel: None,
+        preserve_audio_pitch: false,
+        playback_rate: 1.0,
+        id: None,
+        media: MediaId("music".into()),
+        start_ticks: 0,
+        end_ticks: 4 * TICKS,
+        in_ticks: TICKS,
+        out_ticks: 5 * TICKS,
+        volume: fx_schema::LinearGain::new(0.25).unwrap(),
+        volume_keys: Some(PrVolumeKeys {
+            keys: vec![key(2.0, 1.0), key(2.5, 2.0)],
+            gain: 0.25,
+        }),
+        fade_in: Some(fade(PrFadeCurve::ExponentialFade, 300)),
+        fade_out: Some(fade(PrFadeCurve::ConstantPower, 2000)),
+    });
+    // Touching Constant Gain fades share their full-level key.
+    sequence.audio.push(PrAudioOccurrence {
+        source_channel: None,
+        preserve_audio_pitch: false,
+        playback_rate: 1.0,
+        id: None,
+        media: MediaId("music".into()),
+        start_ticks: 0,
+        end_ticks: 2 * TICKS,
+        in_ticks: 0,
+        out_ticks: 2 * TICKS,
+        volume: fx_schema::LinearGain::new(0.5).unwrap(),
+        volume_keys: None,
+        fade_in: Some(fade(PrFadeCurve::ConstantGain, 1000)),
+        fade_out: Some(fade(PrFadeCurve::ConstantGain, 1000)),
+    });
+    let doc = project_document_with_media(&sequence, &media);
+    let layers = doc["composition"]["layers"].as_array().unwrap();
+    let entries = doc["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    assert_eq!(entries.len(), 2);
+    let keys = |layer: &Value| {
+        let entry = entries
+            .iter()
+            .find(|entry| entry["target"]["layerId"] == layer["id"])
+            .unwrap();
+        entry["animator"]["keyframes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .map(|(index, key)| {
+                assert_eq!(
+                    key["id"],
+                    format!("premiere-volume-{}-{index}", layer["id"])
+                );
+                (
+                    key["layerTime"].as_i64().unwrap(),
+                    key["value"]["value"].as_f64().unwrap(),
+                    key["easing"]["type"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let faded = keys(&layers[1]);
+    // Fade-in 0-300 ms at the first key's level (0.25), with its inner key at
+    // 0.441 of the span; the Level keys; the fade-out from the last key's
+    // level (0.5), with its inner keys at 0.807 and 0.987 of 2 s.
+    let times: Vec<_> = faded.iter().map(|key| key.0).collect();
+    assert_eq!(times, [0, 132, 300, 1000, 1500, 2000, 3614, 3974, 4000]);
+    let gains: Vec<_> = faded.iter().map(|key| key.1).collect();
+    assert_eq!(
+        [gains[0], gains[2], gains[3], gains[4], gains[5], gains[8]],
+        [0.0, 0.25, 0.25, 0.5, 0.5, 0.0]
+    );
+    let exponential = |progress: f64| (3.5 * progress).exp_m1() / 3.5_f64.exp_m1();
+    assert!((gains[1] - 0.25 * exponential(132.0 / 300.0)).abs() < 1e-12);
+    let easings: Vec<_> = faded.iter().map(|key| key.2.as_str()).collect();
+    assert_eq!(
+        easings,
+        [
+            "linear",
+            "cubicBezier",
+            "cubicBezier",
+            "linear",
+            "cubicBezier",
+            "linear",
+            "cubicBezier",
+            "cubicBezier",
+            "cubicBezier"
+        ]
+    );
+    assert_eq!(
+        keys(&layers[2]),
+        [
+            (0, 0.0, "linear".to_owned()),
+            (1000, 0.5, "linear".to_owned()),
+            (2000, 0.0, "linear".to_owned())
+        ]
+    );
+}
+
+#[test]
+fn a_level_key_at_a_fade_edge_shares_the_fade_key_off_the_millisecond_grid() {
+    use crate::{
+        format::{MediaId, PrMedia},
+        schema::{
+            AudioChannels, PrAudioFade, PrAudioOccurrence, PrAudioStream, PrFadeCurve, PrVolumeKeys,
+        },
+        tests::support::project_document_with_media,
+    };
+    let mut sequence = video_sequence();
+    let mut media = video_media();
+    media.insert(
+        MediaId("music".into()),
+        PrMedia {
+            name: "music.wav".into(),
+            relative_path: None,
+            relative_paths: Vec::new(),
+            absolute_paths: Vec::new(),
+            video: None,
+            audio: Some(PrAudioStream {
+                prepared_clock: None,
+                intrinsic_ticks: 8 * TICKS,
+                channels: AudioChannels::Stereo,
+                sample_rate: 48_000,
+            }),
+        },
+    );
+    // A placement one 30 fps frame into the sequence, with a 31-frame
+    // Constant Power fade-in. Its end, at 1066.67 ms, rounds to layer 1034 ms
+    // as a clip boundary but to 1033 ms relative to the In point, where the
+    // Level key at the fade's edge goes; the Level then falls to 0.5.
+    let frame = TICKS / 30;
+    let edge = 31 * frame;
+    let key = |source_ticks: i64, value: f64| PrScalarKeyframe {
+        source_ticks,
+        value,
+        easing: PrKeyframeEasing::Linear,
+    };
+    sequence.audio.push(PrAudioOccurrence {
+        source_channel: None,
+        preserve_audio_pitch: false,
+        playback_rate: 1.0,
+        id: None,
+        media: MediaId("music".into()),
+        start_ticks: frame,
+        end_ticks: frame + 2 * TICKS,
+        in_ticks: 0,
+        out_ticks: 2 * TICKS,
+        volume: fx_schema::LinearGain::new(1.0).unwrap(),
+        volume_keys: Some(PrVolumeKeys {
+            keys: vec![key(edge, 1.0), key(9 * TICKS / 5, 0.5)],
+            gain: 1.0,
+        }),
+        fade_in: Some(PrAudioFade {
+            id: None,
+            curve: PrFadeCurve::ConstantPower,
+            duration_ticks: edge,
+        }),
+        fade_out: None,
+    });
+    let doc = project_document_with_media(&sequence, &media);
+    let entries = doc["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+    let keys: Vec<_> = entries[0]["animator"]["keyframes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|key| {
+            (
+                key["layerTime"].as_i64().unwrap(),
+                key["value"]["value"].as_f64().unwrap(),
+                key["easing"]["type"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    // The Level key joins the fade's full-level key at 1034 ms, which keeps
+    // the fade's own last easing; the Level falls from there.
+    let times: Vec<_> = keys.iter().map(|key| key.0).collect();
+    assert_eq!(times, [0, 13, 200, 1034, 1800]);
+    let power = |progress: f64| {
+        (std::f64::consts::FRAC_PI_2 * progress.powf(0.6457))
+            .sin()
+            .powi(2)
+    };
+    for index in [1, 2] {
+        let progress = keys[index].0 as f64 / 1034.0;
+        assert!((keys[index].1 - power(progress)).abs() < 1e-12, "{keys:?}");
+    }
+    assert_eq!(keys[3], (1034, 1.0, "cubicBezier".to_owned()));
+    assert_eq!(keys[4], (1800, 0.5, "cubicBezier".to_owned()));
 }
 
 #[test]
@@ -2889,6 +4447,148 @@ fn track_matte_keys_import_flat_or_staged_with_the_matte_under_the_stage() {
 }
 
 #[test]
+fn source_effects_stage_a_track_matte_key_unless_its_matte_is_shared() {
+    use crate::schema::{PrMatteChannel, PrSourceEffects, PrTrackMatte};
+    // Supplementary: the master clip of the keyed clip owns a blur.
+    let master = "MasterClip:master-1";
+    let source = || {
+        Some(PrSourceEffects {
+            master: master.to_owned(),
+            effects: vec![blur(40.0)],
+            active_transforms: 0,
+        })
+    };
+    let matte_track = || PrVideoTrack::media([clip_of("source", 0..5 * TICKS, 0)]);
+    let reports = |omissions: &[crate::Omission]| -> Vec<(String, String)> {
+        omissions
+            .iter()
+            .map(|omission| (omission.record.clone(), omission.reason.clone()))
+            .collect()
+    };
+    // An unmoved keyed clip without effects keys flat. Its source effects
+    // apply before the key, so it stages as for a blur before the key (G7):
+    // the group takes the matte under it, and the video the source blur.
+    let sequence = keyed_sequence(PrMatteChannel::Alpha, matte_track(), |clip| {
+        clip.source_effects = source();
+    });
+    let (staged, omissions) = import(&sequence, &video_media());
+    assert_eq!(layer_types(&staged), ["Group", "Rect"]);
+    let group = &staged["composition"]["layers"][0];
+    let [video, matte] = group["layers"].as_array().unwrap().as_slice() else {
+        panic!("expected the video and its matte under the group");
+    };
+    assert_eq!(
+        group["trackMatte"],
+        json!({"mode": "alpha", "layer": matte["id"]})
+    );
+    assert!(video.get("trackMatte").is_none());
+    assert_eq!(video["effects"][0]["effect"]["type"], "gaussianBlur");
+    assert_eq!(
+        reports(&omissions),
+        [(
+            master.to_owned(),
+            super::effects::LINKED_SOURCE_EDITING_REASON.to_owned()
+        )]
+    );
+    // A matte that another clip keys too stays the sibling of both, where no
+    // stage group can take it: the clip converts flat, as without its source
+    // effects, which are reported.
+    let mut pair = keyed_sequence(PrMatteChannel::Alpha, matte_track(), |clip| {
+        clip.source_effects = source();
+    });
+    let mut other = clip_of("source", 0..5 * TICKS, 0);
+    other.track_matte = Some(PrTrackMatte {
+        track_index: 2,
+        channel: PrMatteChannel::Alpha,
+    });
+    pair.video_tracks.insert(1, PrVideoTrack::media([other]));
+    pair.video_tracks[0]
+        .clip_mut(0)
+        .track_matte
+        .as_mut()
+        .unwrap()
+        .track_index = 2;
+    let (flat, omissions) = import(&pair, &video_media());
+    assert_eq!(layer_types(&flat), ["Video", "Video", "Video", "Rect"]);
+    let layers = flat["composition"]["layers"].as_array().unwrap();
+    for fill in &layers[1..3] {
+        assert_eq!(
+            fill["trackMatte"],
+            json!({"mode": "alpha", "layer": layers[0]["id"]})
+        );
+        assert!(fill.get("effects").is_none(), "{fill}");
+    }
+    assert_eq!(
+        reports(&omissions),
+        [
+            (
+                "source".to_owned(),
+                "source effects of MasterClip:master-1 were not imported: a Track Matte Key whose matte keys another clip too is not converted on a clip that its Motion or effects stage".to_owned()
+            ),
+            (
+                master.to_owned(),
+                crate::schema::SOURCE_CHAIN_NOT_CONVERTED.to_owned()
+            ),
+        ]
+    );
+}
+
+#[test]
+fn source_effects_on_a_clip_keyed_by_a_retimed_matte_convert_without_them() {
+    use crate::schema::{PrMatteChannel, PrSourceEffects};
+    // Supplementary: the keyed clip's master clip owns a blur, which would
+    // stage it; its matte plays at 2x. A stage group's child reads the group
+    // clock, where the matte's playback keys, on the sequence clock, would
+    // be late, so the clip keys flat without its source effects, as it does
+    // without any, and they are reported.
+    let mut matte = clip_of("source", 0..5 * TICKS, 0);
+    matte.out_ticks = 10 * TICKS;
+    matte.playback_rate = 2.0;
+    let sequence = keyed_sequence(
+        PrMatteChannel::Alpha,
+        PrVideoTrack::media([matte]),
+        |clip| {
+            clip.source_effects = Some(PrSourceEffects {
+                master: "MasterClip:master-1".to_owned(),
+                effects: vec![blur(40.0)],
+                active_transforms: 0,
+            });
+        },
+    );
+    let (flat, omissions) = import(&sequence, &video_media());
+    assert_eq!(layer_types(&flat), ["Video", "Video", "Rect"]);
+    let [matte, video, _] = flat["composition"]["layers"].as_array().unwrap().as_slice() else {
+        panic!("expected the matte, the keyed video and the canvas");
+    };
+    assert!(matte.get("playback").is_some(), "{matte}");
+    assert_eq!(
+        video["trackMatte"],
+        json!({"mode": "alpha", "layer": matte["id"]})
+    );
+    assert!(video.get("effects").is_none(), "{video}");
+    let reports: Vec<_> = omissions
+        .iter()
+        .map(|omission| (omission.record.as_str(), omission.reason.clone()))
+        .collect();
+    assert_eq!(
+        reports,
+        [
+            (
+                "source",
+                format!(
+                    "source effects of MasterClip:master-1 were not imported: {}",
+                    super::STAGED_RETIMED_MATTE_REASON
+                )
+            ),
+            (
+                "MasterClip:master-1",
+                crate::schema::SOURCE_CHAIN_NOT_CONVERTED.to_owned()
+            ),
+        ]
+    );
+}
+
+#[test]
 fn a_retimed_matte_clip_does_not_move_under_a_delayed_stage_group() {
     use crate::schema::{PrMatteChannel, PrTimeRemap, PrTimeRemapKeyframe, PrTrackMatte};
     // The keyed clip at Scale 50 over 5-10 s stages; its matte over the same
@@ -2977,6 +4677,181 @@ fn a_retimed_matte_clip_does_not_move_under_a_delayed_stage_group() {
             "{case}"
         );
     }
+}
+
+fn animated_nested_matte_sequence() -> (PrSequence, Vec<PrPointKeyframe>) {
+    use crate::schema::{PrMatteChannel, PrTrackMatte};
+    let keys = native_straight_position_keys();
+    let mut inner = video_sequence();
+    (inner.width, inner.height) = (960, 540);
+    inner.name = "Matte picture".into();
+    let mut matte = crate::tests::support::nest_of(inner, TICKS..4 * TICKS, TICKS / 2);
+    matte.id = Some("nested-matte".into());
+    matte.transform.position = keys[0].value;
+    matte.animations = vec![PrPropertyAnimation::Position(keys.clone())];
+    let mut consumer = clip_of("source", TICKS..4 * TICKS, 0);
+    consumer.id = Some("matte-consumer".into());
+    consumer.track_matte = Some(PrTrackMatte {
+        track_index: 1,
+        channel: PrMatteChannel::Alpha,
+    });
+    let sequence = sequence_of(
+        "Outer",
+        vec![
+            PrVideoTrack::media([consumer]),
+            PrVideoTrack {
+                items: Vec::new(),
+                nests: vec![matte],
+                transitions: Vec::new(),
+            },
+        ],
+    );
+    (sequence, keys)
+}
+
+#[test]
+fn nested_matte_motion_keeps_source_guide_children_and_native_position_keys() {
+    let (sequence, native_keys) = animated_nested_matte_sequence();
+    sequence.validate_timeline(&video_media()).unwrap();
+    let (document, omissions) = import(&sequence, &video_media());
+    assert!(
+        omissions
+            .iter()
+            .all(|item| item.scope != crate::OmissionScope::Occurrence),
+        "{omissions:?}"
+    );
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    let matte = layers
+        .iter()
+        .find(|layer| layer["name"] == "Matte picture")
+        .unwrap();
+    let consumer = layers
+        .iter()
+        .find(|layer| layer["trackMatte"]["layer"] == matte["id"])
+        .unwrap();
+    assert_eq!(consumer["trackMatte"]["mode"], "alpha");
+    let children = matte["layers"].as_array().unwrap();
+    assert!(children.iter().any(|layer| layer["type"] == "Video"));
+    let guide = children
+        .iter()
+        .find(|layer| layer["name"] == "Nested sequence frame")
+        .unwrap();
+    assert_eq!(guide["rect"]["size"], json!([960.0, 540.0]));
+    assert_eq!(guide["parent"], matte["id"]);
+    assert_eq!(matte["masks"][0]["layer"], guide["id"]);
+    assert_eq!(matte["transform"]["anchorPoint"], json!([480.0, 270.0]));
+    let entries = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    for (axis, property) in ["positionX", "positionY"].iter().enumerate() {
+        let entry = entries
+            .iter()
+            .find(|entry| {
+                entry["target"]["layerId"] == matte["id"]
+                    && entry["target"]["propertyType"] == *property
+            })
+            .unwrap();
+        let keys = entry["animator"]["keyframes"].as_array().unwrap();
+        assert_eq!(keys.len(), native_keys.len());
+        for (native, key) in native_keys.iter().zip(keys) {
+            assert_eq!(
+                key["layerTime"],
+                (native.source_ticks - TICKS / 2) / TICKS_PER_MILLISECOND
+            );
+            assert_eq!(
+                key["value"]["value"],
+                native.value[axis] * [1920.0, 1080.0][axis]
+            );
+        }
+    }
+}
+
+#[test]
+fn nested_matte_motion_diagnostic_covers_new_opacity_keys_not_unchanged_frames() {
+    let (mut sequence, _) = animated_nested_matte_sequence();
+    let matte = &mut sequence.video_tracks[1].nests[0];
+    matte.transform = crate::schema::PrStaticTransform::default();
+    matte.animations.clear();
+    let (_, omissions) = import(&sequence, &video_media());
+    assert!(
+        !omissions
+            .iter()
+            .any(|item| item.reason.contains("nested matte Motion")),
+        "{omissions:?}"
+    );
+    sequence.video_tracks[1].nests[0]
+        .animations
+        .push(PrPropertyAnimation::Opacity(vec![
+            PrScalarKeyframe {
+                source_ticks: TICKS / 2,
+                value: 100.0,
+                easing: PrKeyframeEasing::Linear,
+            },
+            PrScalarKeyframe {
+                source_ticks: 7 * TICKS / 2,
+                value: 50.0,
+                easing: PrKeyframeEasing::Linear,
+            },
+        ]));
+    let (document, omissions) = import(&sequence, &video_media());
+    assert!(
+        omissions
+            .iter()
+            .all(|item| item.scope != crate::OmissionScope::Occurrence),
+        "{omissions:?}"
+    );
+    assert!(
+        omissions.iter().any(|item| item.record == "nested-matte"
+            && item.kind == crate::OmissionKind::Approximated
+            && item.reason.contains("nested matte Motion/Opacity")),
+        "{omissions:?}"
+    );
+    let entries = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["target"]["propertyType"], "opacity");
+    let keys = entries[0]["animator"]["keyframes"].as_array().unwrap();
+    assert_eq!(keys[0]["layerTime"], 0);
+    assert_eq!(keys[0]["value"]["value"], 100.0);
+    assert_eq!(keys[1]["layerTime"], 3000);
+    assert_eq!(keys[1]["value"]["value"], 50.0);
+}
+
+#[test]
+fn nested_matte_motion_key_collision_omits_coverage_not_the_independent_picture() {
+    let (mut sequence, _) = animated_nested_matte_sequence();
+    let matte = &mut sequence.video_tracks[1].nests[0];
+    let PrPropertyAnimation::Position(keys) = &mut matte.animations[0] else {
+        unreachable!()
+    };
+    keys[1].source_ticks = keys[0].source_ticks + 1;
+    let mut sibling = clip_of("source", 5 * TICKS..6 * TICKS, 0);
+    sibling.id = Some("independent-picture".into());
+    sequence.video_tracks.push(PrVideoTrack::media([sibling]));
+    let (document, omissions) = import(&sequence, &video_media());
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    assert!(!layers.iter().any(|layer| layer["type"] == "Group"));
+    assert_eq!(
+        layers
+            .iter()
+            .filter(|layer| layer["type"] == "Video")
+            .count(),
+        1
+    );
+    assert!(
+        omissions
+            .iter()
+            .any(|item| item.record == "nested-matte" && item.reason.contains("matte Motion keys")),
+        "{omissions:?}"
+    );
+    assert!(
+        omissions.iter().any(|item| item.record == "matte-consumer"
+            && item
+                .reason
+                .contains("matte clip on track 1 was not converted")),
+        "{omissions:?}"
+    );
 }
 
 #[test]
@@ -3087,7 +4962,7 @@ fn native_film_impact_tail_becomes_two_editable_smoothstep_opacity_keys() {
         .unwrap_err()
         .to_string();
     assert!(
-        writer_error.contains("writer cannot encode native video transitions"),
+        writer_error.contains("writer supports only native Cross Dissolve New video transitions"),
         "{writer_error}"
     );
 }
@@ -3300,7 +5175,7 @@ fn native_film_impact_pop_preserves_center_source_clock_and_dissolve() {
 #[test]
 fn native_film_impact_pop_rejects_retained_motion_dependent_effects() {
     use crate::{
-        schema::{PrColour, PrRamp},
+        schema::{PrColour, PrMediaKind, PrRamp},
         tests::support::{current_blur_export, directional_blur},
     };
     let (project, _) = crate::format::inspect_project_with_omissions(
@@ -3309,6 +5184,7 @@ fn native_film_impact_pop_rejects_retained_motion_dependent_effects() {
     )
     .unwrap();
     let ramp = PrEffect {
+        mask: None,
         enabled: true,
         params: PrEffectParams::Ramp(PrRamp {
             start: [0.5, 0.0],
@@ -3321,39 +5197,49 @@ fn native_film_impact_pop_rejects_retained_motion_dependent_effects() {
         }),
         animations: Vec::new(),
     };
-    for effect in [
-        directional_blur(true, 30.0, 12.0),
-        current_blur_export(directional_blur(true, 30.0, 12.0)),
-        ramp,
-    ] {
-        for enabled in [true, false] {
-            let mut sequence = project.single_sequence().unwrap().clone();
-            let mut effect = effect.clone();
-            effect.enabled = enabled;
-            sequence.video_tracks[0].clip_mut(0).effects.push(effect);
-            let ids = crate::tesseract_output::asset_ids_in_order(&sequence, &project.media);
-            let mut omissions = Vec::new();
-            let doc = premiere_to_tesseract(&sequence, &project.media, &ids, &mut omissions)
-                .unwrap()
-                .to_json_value()
-                .unwrap();
-            let layer = &doc["composition"]["layers"][0];
-            assert_eq!(layer["type"], "Video");
-            assert_eq!(layer["effects"].as_array().unwrap().len(), 1);
-            assert_eq!(layer["effects"][0]["enabled"], enabled);
-            let tracks = doc["composition"]["dynamics"]["entries"]
-                .as_array()
-                .map_or(0, Vec::len);
-            assert_eq!(tracks, if enabled { 0 } else { 4 }, "{omissions:?}");
-            assert_eq!(
-                omissions.iter().any(|omission| {
-                    omission.record == sequence.video_tracks[0].transitions[0].id
-                        && omission.kind == crate::OmissionKind::Omitted
-                        && omission.reason.contains("Pop")
-                }),
-                enabled,
-                "{omissions:?}"
-            );
+    // A still imports its effects as a video clip does, so they hold its Pop
+    // back alike.
+    for still in [false, true] {
+        let mut media = project.media.clone();
+        if still {
+            for source in media.values_mut() {
+                source.video.as_mut().unwrap().kind = PrMediaKind::Still { alpha: true };
+            }
+        }
+        for effect in [
+            directional_blur(true, 30.0, 12.0),
+            current_blur_export(directional_blur(true, 30.0, 12.0)),
+            ramp.clone(),
+        ] {
+            for enabled in [true, false] {
+                let mut sequence = project.single_sequence().unwrap().clone();
+                let mut effect = effect.clone();
+                effect.enabled = enabled;
+                sequence.video_tracks[0].clip_mut(0).effects.push(effect);
+                let ids = crate::tesseract_output::asset_ids_in_order(&sequence, &media);
+                let mut omissions = Vec::new();
+                let doc = premiere_to_tesseract(&sequence, &media, &ids, &mut omissions)
+                    .unwrap()
+                    .to_json_value()
+                    .unwrap();
+                let layer = &doc["composition"]["layers"][0];
+                assert_eq!(layer["type"], if still { "Image" } else { "Video" });
+                assert_eq!(layer["effects"].as_array().unwrap().len(), 1);
+                assert_eq!(layer["effects"][0]["enabled"], enabled);
+                let tracks = doc["composition"]["dynamics"]["entries"]
+                    .as_array()
+                    .map_or(0, Vec::len);
+                assert_eq!(tracks, if enabled { 0 } else { 4 }, "{omissions:?}");
+                assert_eq!(
+                    omissions.iter().any(|omission| {
+                        omission.record == sequence.video_tracks[0].transitions[0].id
+                            && omission.kind == crate::OmissionKind::Omitted
+                            && omission.reason.contains("Pop")
+                    }),
+                    enabled,
+                    "{omissions:?}"
+                );
+            }
         }
     }
 }
@@ -3369,20 +5255,18 @@ fn native_film_impact_pop_keeps_color_effects_and_omitted_native_effects() {
         None,
     )
     .unwrap();
+    let levels = PrEffect {
+        mask: None,
+        enabled: true,
+        params: PrEffectParams::Levels(PrLevels::Master {
+            rgb: [10.0, 245.0, 0.0, 255.0, 1.0],
+        }),
+        animations: Vec::new(),
+    };
+    // A still keeps its color effect beside its Pop, as a video does.
     for (still, scale, effect, retained) in [
-        (
-            false,
-            [100.0; 2],
-            PrEffect {
-                enabled: true,
-                params: PrEffectParams::Levels(PrLevels {
-                    rgb: [10.0, 245.0, 0.0, 255.0, 1.0],
-                }),
-                animations: Vec::new(),
-            },
-            true,
-        ),
-        (true, [100.0; 2], directional_blur(true, 30.0, 12.0), false),
+        (false, [100.0; 2], levels.clone(), true),
+        (true, [100.0; 2], levels, true),
         (
             false,
             [50.0, 80.0],
@@ -3812,6 +5696,7 @@ fn native_film_impact_stroke_remains_import_only_and_rejects_nonvideo_hosts() {
         let mut sequence = project.single_sequence().unwrap().clone();
         if layer_type == "Adjustment" {
             sequence.video_tracks[0].clip_mut(0).effects.push(PrEffect {
+                mask: None,
                 enabled: true,
                 params: PrEffectParams::GaussianBlur(PrGaussianBlur {
                     blurriness: 12.0,
@@ -3903,4 +5788,261 @@ fn native_film_impact_stroke_measured_99_start_95_cache_is_only_frame99() {
             "{omissions:?}"
         );
     }
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn interpretation_staged_origin_and_zero_duration_preserve_sibling() {
+    use crate::schema::{SourceFrameRate, SourceInterpretation};
+    use std::io::Cursor;
+    let bytes = include_bytes!("../../../tests/fixtures/video-120000-over-1001fps.mp4");
+    for (zero_duration, safe_origin) in [(false, false), (true, false), (false, true)] {
+        let mut facts = crate::media::inspect_video_media(
+            Cursor::new(bytes),
+            Cursor::new(bytes),
+            bytes.len() as u64,
+        )
+        .unwrap();
+        let mut media = video_media();
+        let mut interpreted = media[&MediaId("source".into())].clone();
+        let source = interpreted.video.as_mut().unwrap();
+        source.frame_rate = SourceFrameRate::from_ticks_per_frame(2_118_936_594).unwrap();
+        source.intrinsic_ticks = 6 * 2_118_936_594;
+        source.interpretation = SourceInterpretation::Rate(FrameRate::Fps30.into());
+        if zero_duration {
+            facts.timing.clock = crate::media::SampleClock::Constant { sample_duration: 1 };
+            source.frame_rate = SourceFrameRate::from_ticks_per_frame(TICKS / 120000).unwrap();
+            source.intrinsic_ticks = 6 * source.frame_rate.ticks_per_frame();
+        }
+        let id = MediaId("interpreted".into());
+        let clocks = BTreeMap::from([(
+            id.clone(),
+            crate::media::InterpretedPictureClock::bind(source, &facts)
+                .map(crate::media::PictureClock::Interpreted),
+        )]);
+        if zero_duration {
+            assert!(
+                clocks[&id].is_err(),
+                "zero-ms physical duration must not bind"
+            );
+        }
+        media.insert(id.clone(), interpreted);
+        let mut sequence = video_sequence();
+        let mut interpreted = sequence.video_tracks[0].clip(0).clone();
+        interpreted.media = id.clone();
+        interpreted.start_ticks = if safe_origin {
+            3 * THIRTY_FPS_TICKS
+        } else {
+            THIRTY_FPS_TICKS
+        };
+        interpreted.end_ticks = interpreted.start_ticks + 3 * THIRTY_FPS_TICKS;
+        interpreted.in_ticks = 0;
+        interpreted.out_ticks = 3 * THIRTY_FPS_TICKS;
+        let mut transform = DEFAULT_PR_TRANSFORM;
+        transform.rotation = 20.0;
+        interpreted.effects = vec![transform_effect(transform, Vec::new())];
+        interpreted.active_transforms = 1;
+        sequence.video_tracks.push(PrVideoTrack {
+            items: vec![PrVideoItem::Media(interpreted)],
+            nests: Vec::new(),
+            transitions: Vec::new(),
+        });
+        let ids = BTreeMap::from([
+            (MediaId("source".into()), AssetId::new("ordinary").unwrap()),
+            (id, AssetId::new("interpreted").unwrap()),
+        ]);
+        let mut omissions = Vec::new();
+        let document = crate::convert::sequence_document_with_progress(
+            &sequence,
+            &media,
+            &ids,
+            &clocks,
+            &mut Default::default(),
+            &mut omissions,
+            Default::default(),
+        )
+        .unwrap()
+        .to_json_value()
+        .unwrap();
+        let layers = document["composition"]["layers"].as_array().unwrap();
+        assert_eq!(
+            layers.iter().filter(|l| l["type"] == "Video").count(),
+            1,
+            "{omissions:?}"
+        );
+        if safe_origin {
+            let stage = layers
+                .iter()
+                .find(|l| l["type"] == "Group")
+                .expect("exact static staging retained");
+            assert_eq!(
+                stage["layers"][0]["playback"]["mapping"]["output"],
+                json!({"start":0,"duration":1001})
+            );
+            assert_eq!(stage["layers"][0]["playback"]["inputOffsetMs"], 0);
+            continue;
+        }
+        assert!(
+            !layers.iter().any(|l| l["type"] == "Group"),
+            "unsafe staged picture retained: {layers:?}"
+        );
+        assert!(
+            omissions
+                .iter()
+                .any(|o| o
+                    .reason
+                    .contains(if zero_duration { "duration" } else { "origin" })),
+            "{omissions:?}"
+        );
+    }
+}
+
+#[test]
+fn time_remap_unused_tail_checks_rounded_window_and_preserves_sibling() {
+    use crate::schema::{PrTimeRemap, PrTimeRemapKeyframe};
+    // A frame-aligned 3 s placement plays an identity source curve at a rate
+    // reaching exactly 3000.8 ms of media. Its emitted tail keys land at
+    // 1999/3999 ms, mapping the end to 3001 ms: beyond the exact media end,
+    // even though intrinsic duration rounds up to 3001. At 3000.6 ms the
+    // keys land at 2000/3999 ms and the played endpoint remains in bounds.
+    // With only 0/4000 ms keys, the rounded tail ends at 3999 ms and
+    // plays through 3000.75... ms: safe for 3000.8, unsafe for 3000.6.
+    for (times, fraction, expected_videos) in [
+        (vec![0, 1000, 2000, 4000], 6, 2),
+        (vec![0, 1000, 2000, 4000], 8, 1),
+        (vec![0, 4000], 8, 2),
+        (vec![0, 4000], 6, 1),
+    ] {
+        let ms = TICKS_PER_MILLISECOND;
+        let end = 3000 * ms + fraction * ms / 10;
+        let mut media = video_media();
+        let facts = media.get_mut(&MediaId("source".into())).unwrap();
+        facts.video.as_mut().unwrap().intrinsic_ticks = end;
+        let mut clip = clip_of("source", 0..3 * TICKS, 0);
+        clip.out_ticks = end;
+        clip.playback_rate = end as f64 / (3 * TICKS) as f64;
+        clip.time_remap = Some(PrTimeRemap {
+            keys: times
+                .into_iter()
+                .map(|time| PrTimeRemapKeyframe {
+                    timeline_ticks: time * ms,
+                    source_ticks: time * ms,
+                    easing: PrKeyframeEasing::Linear,
+                })
+                .collect(),
+        });
+        clip.validate(FrameRate::Fps30, facts).unwrap();
+        let sibling = clip_of("source", 4 * TICKS..5 * TICKS, 0);
+        let sequence = sequence_of("bounded tail", vec![PrVideoTrack::media([clip, sibling])]);
+        let ids = crate::tesseract_output::asset_ids_in_order(&sequence, &media);
+        let mut omissions = Vec::new();
+        let wire = premiere_to_tesseract(&sequence, &media, &ids, &mut omissions)
+            .unwrap()
+            .to_json_value()
+            .unwrap();
+        let videos: Vec<_> = wire["composition"]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|layer| layer["type"] == "Video")
+            .collect();
+        assert_eq!(videos.len(), expected_videos);
+        assert!(videos
+            .iter()
+            .any(|layer| layer["playback"]["inputRange"]["start"] == 4000));
+        let occurrences: Vec<_> = omissions
+            .iter()
+            .filter(|omission| omission.scope == crate::OmissionScope::Occurrence)
+            .map(|omission| omission.reason.as_str())
+            .collect();
+        if expected_videos == 1 {
+            assert_eq!(occurrences, ["clip was not imported: unsupported conversion: TimeRemapping rounded playback window reaches outside the media bounds"]);
+        } else {
+            assert!(occurrences.is_empty(), "{omissions:?}");
+        }
+    }
+}
+
+#[test]
+fn delayed_audio_rebases_gain_and_in_flight_fades_without_refitting() {
+    use crate::schema::{PrAudioFade, PrAudioOccurrence, PrFadeCurve, PrVolumeKeys};
+    let ms = TICKS / 1000;
+    let clip = PrAudioOccurrence {
+        id: None,
+        media: MediaId("sound".into()),
+        source_channel: None,
+        preserve_audio_pitch: false,
+        playback_rate: 1.0,
+        start_ticks: 1000 * ms,
+        end_ticks: 2000 * ms,
+        in_ticks: 0,
+        out_ticks: 1000 * ms,
+        volume: fx_schema::LinearGain::new(0.5).unwrap(),
+        volume_keys: Some(PrVolumeKeys {
+            keys: vec![
+                PrScalarKeyframe {
+                    source_ticks: 200 * ms,
+                    value: 0.5,
+                    easing: PrKeyframeEasing::Linear,
+                },
+                PrScalarKeyframe {
+                    source_ticks: 800 * ms,
+                    value: 1.0,
+                    easing: PrKeyframeEasing::Linear,
+                },
+            ],
+            gain: 0.5,
+        }),
+        fade_in: Some(PrAudioFade {
+            id: None,
+            curve: PrFadeCurve::ConstantPower,
+            duration_ticks: 200 * ms,
+        }),
+        fade_out: Some(PrAudioFade {
+            id: None,
+            curve: PrFadeCurve::ConstantGain,
+            duration_ticks: 200 * ms,
+        }),
+    };
+    let mut omissions = Vec::new();
+    let track = super::placement_volume_track(
+        &clip,
+        fx_schema::LayerId::new(1),
+        10 * TICKS,
+        &mut omissions,
+    )
+    .unwrap()
+    .unwrap();
+    let rebased = super::rebase_audio_track(
+        track.clone(),
+        super::tick_range(1000 * ms, 2000 * ms).unwrap(),
+        super::tick_range(1100 * ms, 1900 * ms).unwrap(),
+    )
+    .unwrap();
+    // Both cuts pass through fades. Keep outside support keys to preserve the
+    // exact incoming easing and values, while the active window clips playback.
+    assert!(
+        rebased
+            .keyframes()
+            .first()
+            .unwrap()
+            .layer_time()
+            .as_millis()
+            <= 0
+    );
+    assert!(rebased.keyframes().last().unwrap().layer_time().as_millis() >= 800);
+    for shifted in rebased.keyframes() {
+        let original = track
+            .keyframes()
+            .iter()
+            .find(|key| key.id() == shifted.id())
+            .unwrap();
+        assert_eq!(
+            shifted.layer_time().as_millis(),
+            original.layer_time().as_millis() - 100
+        );
+        assert_eq!(shifted.value(), original.value());
+        assert_eq!(shifted.easing(), original.easing());
+    }
+    assert!(omissions.is_empty(), "{omissions:?}");
 }

@@ -70,6 +70,7 @@ struct Selection {
     selected: Option<PathBuf>,
     codec: Option<String>,
     unavailable_reason: Option<String>,
+    unavailable_status: Option<MediaStatus>,
 }
 
 pub(super) struct MediaPreflight<'a> {
@@ -150,7 +151,7 @@ impl<'a> MediaPreflight<'a> {
             .unwrap_or_default();
         let (status, reason, remediation) = match failure {
             None if matches!(resolution, Ok(MediaResolution::Unavailable)) => (
-                MediaStatus::Missing,
+                selection.unavailable_status.unwrap_or(MediaStatus::Unassessed),
                 selection.unavailable_reason.clone(),
                 MediaRemediation::Unknown,
             ),
@@ -195,12 +196,10 @@ impl<'a> MediaPreflight<'a> {
                 };
                 (status, Some(reason.clone()), remediation)
             }
+            // Initial native-path absence is an unavailable resolution, not an
+            // I/O failure. A later NotFound can mean a selected source changed.
             Some(AepConversionError::Io { source, .. }) => (
-                if is_missing(source) {
-                    MediaStatus::Missing
-                } else {
-                    MediaStatus::Unreadable
-                },
+                MediaStatus::Unreadable,
                 Some(source.to_string()),
                 MediaRemediation::Unknown,
             ),
@@ -292,53 +291,113 @@ impl<'a> MediaPreflight<'a> {
         let spelling = &request.authored_path;
         let windows_drive = spelling.as_bytes().get(1) == Some(&b':')
             && spelling.as_bytes()[0].is_ascii_alphabetic();
+        let foreign_drive = windows_drive && !cfg!(windows);
+        let foreign_relative = foreign_drive
+            && matches!(
+                request.kind,
+                MediaAssetKind::Image | MediaAssetKind::Video | MediaAssetKind::Audio
+            )
+            && request.relative_location.is_some();
         if spelling.is_empty()
             || spelling.contains('\0')
             || spelling.contains("://")
             || spelling.starts_with("\\\\")
             || spelling.starts_with("//")
-            || (windows_drive && !cfg!(windows))
+            || (foreign_drive
+                && !foreign_relative
+                && (!matches!(request.kind, MediaAssetKind::Image)
+                    || collected::foreign_image_basename(spelling).is_none()))
         {
             self.omit(request, "not a native local-file path; no URL, network-share or platform-path guessing was attempted");
             return Ok(MediaResolution::Unavailable);
         }
-        let authored = Path::new(spelling);
+        // A foreign drive has no host-native authored candidate. Only its native
+        // relative hint or exact collected identity may resolve it; never probe the spelling.
+        let authored = (!foreign_drive).then(|| Path::new(spelling));
         self.selections.insert(
             request.logical_id.clone(),
             Selection {
-                authored: Some(authored.to_owned()),
+                authored: authored.map(Path::to_owned),
                 ..Selection::default()
             },
         );
-        let mut path = if authored.is_absolute() {
-            authored.to_owned()
+        let mut located = authored.map(|authored| {
+            let path = if authored.is_absolute() {
+                authored.to_owned()
+            } else {
+                self.base.join(authored)
+            };
+            let metadata = fs::metadata(&path);
+            (path, metadata)
+        });
+        let mut native_relative_alias = None;
+        let (mut missing, mut missing_status) = if request.relative_hint_malformed {
+            (
+                "local source is missing; native alias relative counts are malformed; media content omitted".to_owned(),
+                MediaStatus::Unassessed,
+            )
         } else {
-            self.base.join(authored)
+            (
+                "local source is missing; media content omitted".to_owned(),
+                MediaStatus::Missing,
+            )
         };
-        let mut metadata = fs::metadata(&path);
-        let mut missing = "local source is missing; media content omitted".to_owned();
         let mut missing_paths = Vec::new();
         // An existing authored file always wins. AE relinks a moved project
         // from its alias hint only when that absolute file is missing.
-        if authored.is_absolute()
-            && metadata.as_ref().is_err_and(is_missing)
+        if (foreign_relative || authored.is_some_and(Path::is_absolute))
+            && located
+                .as_ref()
+                .is_none_or(|(_, metadata)| metadata.as_ref().is_err_and(is_missing))
             && let Some(location) = request.relative_location
         {
-            match self.relocated(authored, location) {
-                Ok(candidate) => {
+            match self.relocated(Path::new(spelling), location, foreign_drive) {
+                Ok(Some((mut candidate, ancestor))) => {
                     missing = format!(
                         "local source is missing at its authored path and at its native relative location {candidate:?}; media content omitted"
                     );
-                    metadata = fs::metadata(&candidate);
-                    missing_paths.push(path);
-                    path = candidate;
+                    let metadata = fs::metadata(&candidate);
+                    if foreign_drive && metadata.is_ok() {
+                        let canonical = fs::canonicalize(&candidate).map_err(|error| {
+                            AepConversionError::io(
+                                "resolve native relative media",
+                                &candidate,
+                                error,
+                            )
+                        })?;
+                        if !canonical.starts_with(ancestor) {
+                            self.omit(
+                                request,
+                                "native relative media escapes its AEP ancestor; content omitted",
+                            );
+                            return Ok(MediaResolution::Unavailable);
+                        }
+                        // Read the contained physical target, but retain the native
+                        // alias for format admission rather than adopting the
+                        // symlink target's extension.
+                        native_relative_alias = Some(candidate);
+                        candidate = canonical;
+                    }
+                    if let Some((previous, _)) = located.replace((candidate, metadata)) {
+                        missing_paths.push(previous);
+                    }
+                }
+                Ok(None) => {
+                    missing = format!(
+                        "local source is missing; its native relative location (ascend {}, {} trailing components) does not fit this AEP's location; media content omitted",
+                        location.ascend(),
+                        location.components()
+                    );
                 }
                 Err(reason) => {
+                    missing_status = MediaStatus::Unassessed;
                     missing = format!("local source is missing; {reason}; media content omitted");
                 }
             }
         }
-        if metadata.as_ref().is_err_and(is_missing)
+        if located
+            .as_ref()
+            .is_none_or(|(_, metadata)| metadata.as_ref().is_err_and(is_missing))
             && let Some(collected) = self.collected.candidate(request)
         {
             match collected {
@@ -354,27 +413,33 @@ impl<'a> MediaPreflight<'a> {
                                 AepConversionError::io("resolve collected directory", &root, error)
                             })?;
                             if actual_root != root || !canonical.starts_with(&root) {
+                                missing_status = MediaStatus::Unassessed;
                                 missing = format!(
                                     "collected source {candidate:?} escapes its adjacent directory; media content omitted"
                                 );
                             } else {
-                                missing_paths.push(path);
-                                path = candidate;
-                                metadata = fs::metadata(&path);
+                                let metadata = fs::metadata(&candidate);
                                 missing = format!(
-                                    "collected source missing at {path:?}; media content omitted"
+                                    "collected source missing at {candidate:?}; media content omitted"
                                 );
                                 if metadata.as_ref().is_ok_and(|metadata| metadata.is_file()) {
                                     self.diagnostics.push(ImportDiagnostic {
                                         limitation: Limitation::Placeholder,
                                         composition_id: None,
                                         layer_id: None,
-                                        message: format!("media {} at {:?}: resolved at adjacent collected path {path:?} from native project folders; file identity and rendering against Adobe are unverified", request.logical_id, request.authored_path),
+                                        message: format!("media {} at {:?}: resolved at adjacent collected path {candidate:?} from native project folders; file identity and rendering against Adobe are unverified", request.logical_id, request.authored_path),
                                     });
+                                }
+                                if let Some((previous, _)) = located.replace((candidate, metadata))
+                                {
+                                    missing_paths.push(previous);
                                 }
                             }
                         }
                         Err(error) if is_missing(&error) => {
+                            if error.kind() != io::ErrorKind::NotFound {
+                                missing_status = MediaStatus::Unassessed;
+                            }
                             missing = format!(
                                 "{missing}; collected source also missing at {candidate:?}"
                             );
@@ -388,13 +453,25 @@ impl<'a> MediaPreflight<'a> {
                         }
                     }
                 }
-                Err(reason) => missing = format!("{missing}; collected source rejected: {reason}"),
+                Err(reason) => {
+                    missing_status = MediaStatus::Unassessed;
+                    missing = format!("{missing}; collected source rejected: {reason}");
+                }
             }
         }
+        let Some((mut path, metadata)) = located else {
+            self.omit(request, &missing);
+            return Ok(MediaResolution::Unavailable);
+        };
         let metadata = match metadata {
             Ok(metadata) => metadata,
             Err(error) if is_missing(&error) => {
-                self.omit(request, &missing);
+                let status = if error.kind() == io::ErrorKind::NotFound {
+                    missing_status
+                } else {
+                    MediaStatus::Unassessed
+                };
+                self.omit_with_status(request, &missing, status);
                 return Ok(MediaResolution::Unavailable);
             }
             Err(error) if error.kind() == io::ErrorKind::InvalidFilename => {
@@ -451,7 +528,7 @@ impl<'a> MediaPreflight<'a> {
             }
         }
         if request.kind == MediaAssetKind::SequenceImage {
-            let reader = image::ImageReader::new(BufReader::new(file))
+            let mut reader = image::ImageReader::new(BufReader::new(file))
                 .with_guessed_format()
                 .map_err(|error| AepConversionError::io("identify sequence image", &path, error))?;
             if reader.format() != Some(image::ImageFormat::Png) {
@@ -461,6 +538,7 @@ impl<'a> MediaPreflight<'a> {
                 );
                 return Ok(MediaResolution::Unavailable);
             }
+            reader.no_limits();
             let dimensions = match reader.into_dimensions() {
                 Ok((width, height)) if width > 0 && height > 0 => [width, height],
                 Ok(_) => {
@@ -515,6 +593,7 @@ impl<'a> MediaPreflight<'a> {
             );
             return Ok(MediaResolution::AssetDimensions(dimensions));
         }
+        let format_path = native_relative_alias.as_deref().unwrap_or(&path);
         if request.kind == MediaAssetKind::Image {
             let mut signature = [0; 4];
             let identified = match file.read_exact(&mut signature) {
@@ -524,7 +603,25 @@ impl<'a> MediaPreflight<'a> {
             };
             file.rewind()
                 .map_err(|error| AepConversionError::io("rewind image", &path, error))?;
-            let psd_path = path
+            let pdf_ai = identified
+                && signature == *b"%PDF"
+                && format_path
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("ai"));
+            if foreign_drive
+                && (request.photoshop_source.is_some()
+                    || !identified
+                    || (signature != *b"\x89PNG"
+                        && !signature.starts_with(&[0xff, 0xd8])
+                        && !pdf_ai))
+            {
+                self.omit(
+                    request,
+                    "foreign Image supports only PNG/JPEG or PDF-compatible AI bytes without Photoshop selection; no normalization or substitute content emitted",
+                );
+                return Ok(MediaResolution::Unavailable);
+            }
+            let psd_path = format_path
                 .extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("psd"));
             if request.photoshop_source.is_some()
@@ -542,7 +639,7 @@ impl<'a> MediaPreflight<'a> {
                     });
             }
         }
-        let is_ai = path
+        let is_ai = format_path
             .extension()
             .and_then(|extension| extension.to_str())
             .is_some_and(|extension| extension.eq_ignore_ascii_case("ai"));
@@ -633,8 +730,15 @@ impl<'a> MediaPreflight<'a> {
 
     /// Where AE finds `authored` in this moved project: `location`'s ancestor
     /// of the AEP joined with the authored path's last components. Or why the
-    /// hint names no such path; nothing else is searched.
-    fn relocated(&self, authored: &Path, location: RelativeLocation) -> Result<PathBuf, String> {
+    /// hint names no such path; nothing else is searched. `None` is a valid
+    /// hint whose ancestor is unavailable after moving the AEP, not unsafe
+    /// authored path metadata.
+    fn relocated(
+        &self,
+        authored: &Path,
+        location: RelativeLocation,
+        foreign_drive: bool,
+    ) -> Result<Option<(PathBuf, PathBuf)>, String> {
         let unfit = || {
             format!(
                 "its native relative location (ascend {}, {} trailing components) does not fit this AEP's location",
@@ -648,16 +752,34 @@ impl<'a> MediaPreflight<'a> {
             )
         })?;
         let levels = usize::try_from(location.ascend() - 1).map_err(|_| unfit())?;
-        let ancestor = directory.ancestors().nth(levels).ok_or_else(unfit)?;
-        let components: Vec<_> = authored.components().collect();
         let count = usize::try_from(location.components()).map_err(|_| unfit())?;
-        let tail = components
-            .len()
-            .checked_sub(count)
-            .map(|start| &components[start..])
-            .filter(|tail| tail.iter().all(|part| matches!(part, Component::Normal(_))))
-            .ok_or_else(unfit)?;
-        Ok(ancestor.join(tail.iter().collect::<PathBuf>()))
+        let tail = if foreign_drive {
+            let spelling = authored.to_str().ok_or_else(unfit)?;
+            if !matches!(spelling.as_bytes().get(2), Some(b'/' | b'\\')) {
+                return Err(unfit());
+            }
+            let components: Vec<_> = spelling[3..].split(['/', '\\']).collect();
+            if components.iter().any(|part| {
+                part.is_empty() || matches!(*part, "." | "..") || part.contains([':', '\0'])
+            }) {
+                return Err(unfit());
+            }
+            let start = components.len().checked_sub(count).ok_or_else(unfit)?;
+            components[start..].iter().collect::<PathBuf>()
+        } else {
+            let components: Vec<_> = authored.components().collect();
+            let tail = components
+                .len()
+                .checked_sub(count)
+                .map(|start| &components[start..])
+                .filter(|tail| tail.iter().all(|part| matches!(part, Component::Normal(_))))
+                .ok_or_else(unfit)?;
+            tail.iter().collect::<PathBuf>()
+        };
+        Ok(directory
+            .ancestors()
+            .nth(levels)
+            .map(|ancestor| (ancestor.join(tail), ancestor.to_owned())))
     }
 
     fn normalize_psd(
@@ -719,10 +841,16 @@ impl<'a> MediaPreflight<'a> {
     }
 
     fn omit(&mut self, request: &MediaAssetRequest, reason: &str) {
-        self.selections
+        self.omit_with_status(request, reason, MediaStatus::Unassessed);
+    }
+
+    fn omit_with_status(&mut self, request: &MediaAssetRequest, reason: &str, status: MediaStatus) {
+        let selection = self
+            .selections
             .entry(request.logical_id.clone())
-            .or_default()
-            .unavailable_reason = Some(reason.to_owned());
+            .or_default();
+        selection.unavailable_reason = Some(reason.to_owned());
+        selection.unavailable_status = Some(status);
         self.missing
             .insert(request.logical_id.clone(), request.clone());
         self.diagnostics.push(ImportDiagnostic {

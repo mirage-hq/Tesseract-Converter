@@ -41,12 +41,18 @@ struct ConversionOptions {
     /// AE-evaluated expression values for this exact source AEP.
     #[arg(long, value_name = "JSON")]
     expression_samples: Option<PathBuf>,
-    /// Source-bound replacements prepared separately; import never transcodes.
+    /// Available PostScript font names (JSON array); missing AE faces become Inter.
+    #[arg(long, value_name = "JSON")]
+    available_fonts: Option<PathBuf>,
+    /// Source-bound replacements prepared separately from conversion.
     #[arg(long, value_name = "JSON")]
     media_map: Option<PathBuf>,
+    /// Explicit source/sequence/Media-UID-bound Premiere file relocation.
+    #[arg(long, value_name = "JSON", conflicts_with = "media_map")]
+    media_relink: Option<PathBuf>,
     /// Frame rate of the export: a Premiere sequence at 23.976, 24, 25, 29.97,
-    /// 30 or 59.94 fps (default 30), or an After Effects composition at any rate
-    /// up to 240 fps (default 24).
+    /// 30, 50, 59.94 or 60 fps (default 30), or an After Effects composition at
+    /// any rate up to 240 fps (default 24).
     #[arg(long, value_name = "FPS")]
     fps: Option<String>,
     /// Validate the complete conversion without publishing output.
@@ -158,7 +164,9 @@ fn convert(
         sequence: options.sequence.as_deref(),
         composition: options.composition,
         expression_samples: options.expression_samples.as_deref(),
+        available_fonts: options.available_fonts.as_deref(),
         media_map: options.media_map.as_deref(),
+        media_relink: options.media_relink.as_deref(),
         fps: options.fps.as_deref(),
         mode: if options.check {
             ConversionMode::Check
@@ -292,6 +300,94 @@ mod tests {
     }
 
     #[test]
+    fn available_fonts_cli_publishes_inter_and_original_font_warning() {
+        use fx_conv::ImportToTesseract as _;
+        let input = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/aftereffects_file/tests/fixtures/pr4442_native/sources/text_document_point.aep");
+        let target = aftereffects_file::AfterEffects
+            .list_import_targets(&input)
+            .unwrap()
+            .remove(0);
+        let root = tempfile::tempdir().unwrap();
+        let inventory = root.path().join("fonts.json");
+        std::fs::write(&inventory, r#"["Inter-Regular"]"#).unwrap();
+        let output = root.path().join("converted");
+        let cli = Cli::try_parse_from([
+            "tsrct-conv",
+            "convert",
+            input.to_str().unwrap(),
+            "--to",
+            "tesseract",
+            "--composition",
+            &target.id,
+            "--available-fonts",
+            inventory.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+            "--json",
+        ])
+        .unwrap();
+        let report = run(cli).unwrap();
+        assert!(report.contains("available-font inventory"));
+        assert!(report.contains("ArialMT"));
+        assert!(report.contains("Inter-Regular"));
+        let archive = tesseract_file::TesseractFile::open(output.join("project.tsrct")).unwrap();
+        assert!(archive
+            .project_json()
+            .unwrap()
+            .to_string()
+            .contains("\"fontFamily\":\"Inter-Regular\""));
+    }
+
+    #[test]
+    fn available_fonts_parses_for_aep_and_rejects_other_routes_before_io() {
+        let cli = Cli::try_parse_from([
+            "tsrct-conv",
+            "convert",
+            "missing.aep",
+            "--to",
+            "tesseract",
+            "--available-fonts",
+            "fonts.json",
+            "-o",
+            "out",
+        ])
+        .unwrap();
+        let Command::Convert(args) = cli.command else {
+            panic!("convert command");
+        };
+        assert_eq!(
+            args.options.available_fonts,
+            Some(PathBuf::from("fonts.json"))
+        );
+        let root = tempfile::tempdir().unwrap();
+        for (input, target) in [
+            ("missing.prproj", "tesseract"),
+            ("missing.tsrct", "after-effects"),
+        ] {
+            let cli = Cli::try_parse_from([
+                "tsrct-conv",
+                "convert",
+                input,
+                "--to",
+                target,
+                "--available-fonts",
+                "missing.json",
+                "-o",
+                root.path().join("out").to_str().unwrap(),
+            ])
+            .unwrap();
+            let error = run(cli).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("--available-fonts is only supported"),
+                "{error:#}"
+            );
+        }
+    }
+
+    #[test]
     fn parses_expression_samples_for_after_effects_import() {
         let cli = Cli::try_parse_from([
             "tsrct-conv",
@@ -313,6 +409,47 @@ mod tests {
             .as_deref(),
             Some(std::path::Path::new("samples.json"))
         );
+    }
+
+    #[test]
+    fn media_relink_is_explicit_premiere_only_and_distinct_from_prepared_media() {
+        for input in ["missing.tsrct", "missing.aep"] {
+            let to = if input.ends_with("aep") {
+                "tesseract"
+            } else {
+                "premiere"
+            };
+            let cli = Cli::try_parse_from([
+                "tsrct-conv",
+                "convert",
+                input,
+                "--to",
+                to,
+                "--output",
+                "converted",
+                "--media-relink",
+                "bindings.json",
+            ])
+            .unwrap();
+            assert_eq!(
+                run(cli).unwrap_err().to_string(),
+                "--media-relink is only supported for Premiere to Tesseract import"
+            );
+        }
+        assert!(Cli::try_parse_from([
+            "tsrct-conv",
+            "convert",
+            "source.prproj",
+            "--to",
+            "tesseract",
+            "--output",
+            "converted",
+            "--media-relink",
+            "bindings.json",
+            "--media-map",
+            "prepared.json"
+        ])
+        .is_err());
     }
 
     #[test]
@@ -376,6 +513,43 @@ mod tests {
             error.to_string(),
             "--expression-samples is only supported for After Effects to Tesseract conversion"
         );
+    }
+
+    #[test]
+    fn removed_fast_aep_bake_flag_is_not_accepted() {
+        for source in ["missing.aep", "missing.prproj"] {
+            let error = Cli::try_parse_from([
+                "tsrct-conv",
+                "convert",
+                source,
+                "--to",
+                "tesseract",
+                "--output",
+                "converted",
+                "--fast-aep-bake",
+            ])
+            .err()
+            .expect("removed flag must be rejected");
+            assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+        }
+        let error = Cli::try_parse_from([
+            "tsrct-conv",
+            "convert",
+            "missing.tsrct",
+            "--to",
+            "after-effects",
+            "--output",
+            "converted",
+            "--fast-aep-bake",
+        ])
+        .err()
+        .expect("removed flag must be rejected");
+        assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+        let help = Cli::try_parse_from(["tsrct-conv", "convert", "--help"])
+            .err()
+            .expect("help should be displayed")
+            .to_string();
+        assert!(!help.contains("fast-aep-bake"));
     }
 
     #[test]

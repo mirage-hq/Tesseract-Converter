@@ -18,6 +18,7 @@
 
 mod adapter;
 mod audio_media;
+mod capsule;
 mod convert;
 mod error;
 mod export_loss;
@@ -25,9 +26,10 @@ mod format;
 mod hash;
 mod image_media;
 mod linked_compositions;
-mod linked_import;
 mod media;
 mod media_metadata;
+mod media_relink;
+mod numbered_images;
 mod premiere_package;
 mod publication;
 mod schema;
@@ -47,14 +49,11 @@ pub use export_loss::{
     ExportField, ExportLoss, ExportLossDomain, ExportLossKind, ExportLossReport, ExportLossSource,
 };
 pub use format::{
-    FrameRate, MediaId, PrGraphic, PrMedia, PrProjectFile, PrSequence, PrVideoItem,
-    PrVideoOccurrence,
+    FrameRate, MediaId, NativeFrameRate, PrGraphic, PrMedia, PrProjectFile, PrSequence,
+    PrVideoItem, PrVideoOccurrence,
 };
-pub use linked_import::{LinkedComposition, LinkedCompositionResolver};
-pub use premiere_package::{
-    prepared::{PreparedPremiereExport, StagedNativePremiereExport, StagedPicturePremiereExport},
-    staging::{AfterEffectsOverlay, StagedPremiereExport},
-};
+pub use media_relink::{MediaRelink, MediaRelinkBinding, ValidatedMediaRelink};
+pub use premiere_package::prepared::{PreparedPremiereExport, StagedPicturePremiereExport};
 pub use schema::PrAfterEffectsComposition;
 
 /// The source content that a partial Premiere conversion did not include, or
@@ -146,6 +145,42 @@ fn push_omission(omissions: &mut Vec<Omission>, omission: Omission) {
 #[error(transparent)]
 pub struct ConversionError(#[from] BuildError);
 
+impl ConversionError {
+    /// Whether conversion rejected an unsupported input or operation.
+    /// Feature omissions in a successful conversion are not errors.
+    pub fn is_unsupported(&self) -> bool {
+        matches!(self.root_cause(), BuildError::Unsupported(_))
+    }
+
+    /// Whether required source media could not be resolved.
+    /// File-read failures remain I/O errors, including a file removed after resolution.
+    pub fn is_missing_media(&self) -> bool {
+        matches!(self.root_cause(), BuildError::MissingMedia(_))
+    }
+
+    /// Whether this error's source chain contains a filesystem I/O failure.
+    pub fn is_io(&self) -> bool {
+        let mut source: &dyn std::error::Error = &self.0;
+        loop {
+            if source.is::<std::io::Error>() {
+                return true;
+            }
+            match source.source() {
+                Some(next) => source = next,
+                None => return false,
+            }
+        }
+    }
+
+    fn root_cause(&self) -> &BuildError {
+        let mut error = &self.0;
+        while let BuildError::Context { source, .. } = error {
+            error = source;
+        }
+        error
+    }
+}
+
 /// Convert one Premiere sequence into `project.tsrct` in a new directory.
 ///
 /// `sequence` selects an exact GUID. It may be omitted only when the project has
@@ -213,7 +248,9 @@ fn validate_paths(input: &Path, output: &Path) -> Result<(), ConversionError> {
 }
 
 #[cfg(test)]
-#[path = "../tests/support/mod.rs"]
-mod test_support;
+mod test_support {
+    include!("../tests/support/mod.rs");
+    include!("../tests/support/media.rs");
+}
 #[cfg(test)]
 mod tests;

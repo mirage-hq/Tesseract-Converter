@@ -10,6 +10,7 @@ use crate::{
 use async_zip::base::read1::{seek::ZipArchiveReader, ZipOptions};
 use async_zip::spec::headers1::Compression;
 use futures_lite::io::{AsyncRead, AsyncSeek, BufReader};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::future::Future;
 use std::io::{self, Cursor, Read, SeekFrom, Write};
@@ -181,14 +182,24 @@ impl BrowserTesseractFile {
             )?;
             let blob = &self.assets[id];
             let mut start = 0;
+            // Asset bytes are Blob slices of the opened file and were never
+            // verified on open; check them against the recorded digest so a
+            // save cannot republish corrupt bytes under the original SHA-256.
+            let mut digest = Sha256::new();
             while start < descriptor.byte_length {
                 let end = (start + CHUNK_BYTES as u64).min(descriptor.byte_length);
                 let bytes = read_slice(blob, start, end).await.at(&descriptor.path)?;
                 if bytes.len() as u64 != end - start {
                     return Err(invalid("asset file changed while saving"));
                 }
+                digest.update(&bytes);
                 zip.write_all(&bytes).at(&descriptor.path)?;
                 start = end;
+            }
+            if !format!("{:x}", digest.finalize()).eq_ignore_ascii_case(&descriptor.sha256) {
+                return Err(invalid(
+                    "asset bytes do not match metadata integrity fields",
+                ));
             }
         }
         let output = zip

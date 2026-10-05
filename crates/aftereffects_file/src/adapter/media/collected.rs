@@ -111,10 +111,16 @@ fn collected_source(
         return Err("collected image sequences require a native folder alias");
     }
     let authored = Path::new(&descriptor.authored_path);
-    let basename = authored
-        .file_name()
-        .filter(|name| safe_component(name))
-        .ok_or("unsafe collected filename")?;
+    let foreign_drive = !cfg!(windows)
+        && descriptor.authored_path.as_bytes().get(1) == Some(&b':')
+        && descriptor.authored_path.as_bytes()[0].is_ascii_alphabetic();
+    let basename = if foreign_drive {
+        foreign_image_basename(&descriptor.authored_path).map(OsStr::new)
+    } else {
+        authored.file_name()
+    }
+    .filter(|name| safe_component(name))
+    .ok_or("unsafe collected filename")?;
     let mut parts = Vec::new();
     let mut current = item.parent_folder;
     let mut seen = HashSet::new();
@@ -139,6 +145,27 @@ fn collected_source(
         relative,
         sequence_folder,
     })
+}
+
+// This extracts a native filename, never a host path or a guessed suffix.
+// Foreign collected admission is limited to these image formats; validation remains downstream.
+pub(super) fn foreign_image_basename(spelling: &str) -> Option<&str> {
+    let bytes = spelling.as_bytes();
+    if !bytes.first()?.is_ascii_alphabetic()
+        || bytes.get(1) != Some(&b':')
+        || !matches!(bytes.get(2), Some(b'/' | b'\\'))
+        || spelling.contains('\0')
+        || spelling.contains("://")
+    {
+        return None;
+    }
+    let name = spelling.rsplit(['/', '\\']).next()?;
+    let extension = Path::new(name).extension()?.to_str()?;
+    (safe_component(OsStr::new(name))
+        && ["png", "jpg", "jpeg", "ai"]
+            .iter()
+            .any(|candidate| extension.eq_ignore_ascii_case(candidate)))
+    .then_some(name)
 }
 
 fn safe_component(value: &OsStr) -> bool {

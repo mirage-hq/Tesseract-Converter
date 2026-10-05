@@ -1,0 +1,300 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "backgroundColor": [
+    0.2,
+    0.4,
+    0.6,
+    1.0
+  ],
+  "composition": {
+    "dynamics": {
+      "entries": [
+        {
+          "animator": {
+            "enabled": true,
+            "keyframes": [
+              {
+                "easing": {
+                  "type": "linear"
+                },
+                "id": "native-test-LayerId(8990)-Opacity-0",
+                "layerTime": 0,
+                "value": {
+                  "type": "float",
+                  "value": 0.0
+                }
+              },
+              {
+                "easing": {
+                  "type": "linear"
+                },
+                "id": "native-test-LayerId(8990)-Opacity-1",
+                "layerTime": 40,
+                "value": {
+                  "type": "float",
+                  "value": 50.0
+                }
+              },
+              {
+                "easing": {
+                  "type": "linear"
+                },
+                "id": "native-test-LayerId(8990)-Opacity-2",
+                "layerTime": 80,
+                "value": {
+                  "type": "float",
+                  "value": 100.0
+                }
+              }
+            ],
+            "type": "keyframes"
+          },
+          "dependencies": [],
+          "layerRefs": {},
+          "target": {
+            "kind": "layer",
+            "layerId": 8990,
+            "propertyType": "opacity"
+          }
+        },
+        {
+          "animator": {
+            "enabled": true,
+            "keyframes": [
+              {
+                "easing": {
+                  "type": "linear"
+                },
+                "id": "native-test-LayerId(8992)-Opacity-0",
+                "layerTime": 0,
+                "value": {
+                  "type": "float",
+                  "value": 54.0
+                }
+              },
+              {
+                "easing": {
+                  "type": "linear"
+                },
+                "id": "native-test-LayerId(8992)-Opacity-1",
+                "layerTime": 2500,
+                "value": {
+                  "type": "float",
+                  "value": 54.0
+                }
+              },
+              {
+                "easing": {
+                  "type": "linear"
+                },
+                "id": "native-test-LayerId(8992)-Opacity-2",
+                "layerTime": 5500,
+                "value": {
+                  "type": "float",
+                  "value": 320.0
+                }
+              },
+              {
+                "easing": {
+                  "type": "linear"
+                },
+                "id": "native-test-LayerId(8992)-Opacity-3",
+                "layerTime": 16000,
+                "value": {
+                  "type": "float",
+                  "value": 320.0
+                }
+              }
+            ],
+            "type": "keyframes"
+          },
+          "dependencies": [],
+          "layerRefs": {},
+          "target": {
+            "effectId": 8991,
+            "kind": "effectProperty",
+            "paramName": "horizontalBlocks"
+          }
+        },
+        {
+          "animator": {
+            "enabled": true,
+            "keyframes": [
+              {
+                "easing": {
+                  "type": "linear"
+                },
+                "id": "native-test-LayerId(8993)-Opacity-0",
+                "layerTime": 0,
+                "value": {
+                  "type": "float",
+                  "value": 30.0
+                }
+              },
+              {
+                "easing": {
+                  "type": "linear"
+                },
+                "id": "native-test-LayerId(8993)-Opacity-1",
+                "layerTime": 2500,
+                "value": {
+                  "type": "float",
+                  "value": 30.0
+                }
+              },
+              {
+                "easing": {
+                  "type": "linear"
+                },
+                "id": "native-test-LayerId(8993)-Opacity-2",
+                "layerTime": 5500,
+                "value": {
+                  "type": "float",
+                  "value": 180.0
+                }
+              },
+              {
+                "easing": {
+                  "type": "linear"
+                },
+                "id": "native-test-LayerId(8993)-Opacity-3",
+                "layerTime": 16000,
+                "value": {
+                  "type": "float",
+                  "value": 180.0
+                }
+              }
+            ],
+            "type": "keyframes"
+          },
+          "dependencies": [],
+          "layerRefs": {},
+          "target": {
+            "effectId": 8991,
+            "kind": "effectProperty",
+            "paramName": "verticalBlocks"
+          }
+        }
+      ]
+    },
+    "id": "main",
+    "layers": [
+      {
+        "effects": [
+          {
+            "effect": {
+              "horizontalBlocks": 54,
+              "sharpColors": false,
+              "type": "mosaic",
+              "verticalBlocks": 30
+            },
+            "enabled": true,
+            "id": 8991
+          }
+        ],
+        "id": 8990,
+        "name": "video-8990",
+        "parent": null,
+        "playback": {
+          "inputOffsetMs": 0,
+          "inputRange": {
+            "duration": 15150,
+            "start": 2850
+          },
+          "mapping": {
+            "property": {
+              "after": "hold",
+              "before": "inactive",
+              "keyframes": [
+                {
+                  "easing": {
+                    "type": "linear"
+                  },
+                  "id": "a",
+                  "time": 2850,
+                  "value": 0
+                },
+                {
+                  "easing": {
+                    "type": "linear"
+                  },
+                  "id": "b",
+                  "time": 7750,
+                  "value": 5500
+                },
+                {
+                  "easing": {
+                    "type": "linear"
+                  },
+                  "id": "c",
+                  "time": 11450,
+                  "value": 8200
+                },
+                {
+                  "easing": {
+                    "type": "linear"
+                  },
+                  "id": "d",
+                  "time": 17950,
+                  "value": 14958
+                }
+              ]
+            },
+            "type": "timeRemap"
+          },
+          "type": "windowed"
+        },
+        "source": {
+          "assetId": "public-timecoded-source",
+          "fit": "contain"
+        },
+        "sourceIntrinsicDuration": 16000,
+        "sourceRange": {
+          "duration": 16000,
+          "start": 0
+        },
+        "transform": {
+          "anchorPoint": [
+            0.0,
+            0.0
+          ],
+          "opacity": 100.0,
+          "orientation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "position": [
+            0.0,
+            0.0
+          ],
+          "rotation": 0.0,
+          "rotationX": 0.0,
+          "rotationY": 0.0,
+          "scale": [
+            100.0,
+            100.0
+          ],
+          "skew": 0.0,
+          "skewAxis": 0.0
+        },
+        "type": "Video"
+      }
+    ],
+    "motionBlur": {
+      "adaptiveSampleLimit": 128.0,
+      "enabled": false,
+      "samplesPerFrame": 16.0,
+      "shutterAngle": 180.0,
+      "shutterPhase": 0.0
+    },
+    "name": "Comp 1",
+    "segmentLayerIds": []
+  },
+  "dimensions": {
+    "height": 180,
+    "width": 320
+  },
+  "duration": 18.0,
+  "formatVersion": 1
+}

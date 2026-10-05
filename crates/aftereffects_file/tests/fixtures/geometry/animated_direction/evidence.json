@@ -1,0 +1,373 @@
+{
+  "source": {
+    "path": "native.aep",
+    "sha256": "579b5b9aec9f8f35f8c0782170e4840440f0096771e90273234e274ab2da5d42",
+    "composition_id": 1,
+    "canvas": [
+      320,
+      240
+    ],
+    "fps": [
+      24,
+      1
+    ],
+    "duration_seconds": 2,
+    "application_version": "26.5x89",
+    "request_id": "w06-animated-bezier-direction-author-v1",
+    "job_id": "6495529b991c475b8c191abbf6f72304",
+    "native_saved_reopened_controls": {
+      "composition_id": 1,
+      "direction": 3,
+      "keys": [
+        {
+          "closed": true,
+          "inTangents": [
+            [
+              15,
+              -20
+            ],
+            [
+              -25,
+              -15
+            ],
+            [
+              20,
+              10
+            ]
+          ],
+          "outTangents": [
+            [
+              30,
+              10
+            ],
+            [
+              10,
+              30
+            ],
+            [
+              -25,
+              -15
+            ]
+          ],
+          "time": 0,
+          "vertices": [
+            [
+              -80,
+              -40
+            ],
+            [
+              70,
+              -20
+            ],
+            [
+              20,
+              70
+            ]
+          ]
+        },
+        {
+          "closed": true,
+          "inTangents": [
+            [
+              15,
+              -20
+            ],
+            [
+              -25,
+              -15
+            ],
+            [
+              20,
+              10
+            ]
+          ],
+          "outTangents": [
+            [
+              30,
+              10
+            ],
+            [
+              10,
+              30
+            ],
+            [
+              -25,
+              -15
+            ]
+          ],
+          "time": 1,
+          "vertices": [
+            [
+              -80,
+              -20
+            ],
+            [
+              70,
+              -20
+            ],
+            [
+              20,
+              70
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  "acceptance": {
+    "request_id": "w06-animated-bezier-direction-acceptance-v1",
+    "job_id": "8c46678793ea4e118d703aba3fdeb1f1",
+    "application_version": "26.5x89",
+    "controls": {
+      "controls": [
+        {
+          "checked": 2,
+          "name": "exported",
+          "paths": [
+            [
+              {
+                "closed": true,
+                "inTangents": [
+                  [
+                    30,
+                    10
+                  ],
+                  [
+                    -25,
+                    -15
+                  ],
+                  [
+                    10,
+                    30
+                  ]
+                ],
+                "outTangents": [
+                  [
+                    15,
+                    -20
+                  ],
+                  [
+                    20,
+                    10
+                  ],
+                  [
+                    -25,
+                    -15
+                  ]
+                ],
+                "time": 0,
+                "vertices": [
+                  [
+                    -80,
+                    -40
+                  ],
+                  [
+                    20,
+                    70
+                  ],
+                  [
+                    70,
+                    -20
+                  ]
+                ]
+              },
+              {
+                "closed": true,
+                "inTangents": [
+                  [
+                    30,
+                    10
+                  ],
+                  [
+                    -25,
+                    -15
+                  ],
+                  [
+                    10,
+                    30
+                  ]
+                ],
+                "outTangents": [
+                  [
+                    15,
+                    -20
+                  ],
+                  [
+                    20,
+                    10
+                  ],
+                  [
+                    -25,
+                    -15
+                  ]
+                ],
+                "time": 1,
+                "vertices": [
+                  [
+                    -80,
+                    -20
+                  ],
+                  [
+                    20,
+                    70
+                  ],
+                  [
+                    70,
+                    -20
+                  ]
+                ]
+              }
+            ]
+          ]
+        },
+        {
+          "checked": 2,
+          "name": "edited",
+          "paths": [
+            [
+              {
+                "closed": true,
+                "inTangents": [
+                  [
+                    30,
+                    10
+                  ],
+                  [
+                    -25,
+                    -15
+                  ],
+                  [
+                    10,
+                    30
+                  ]
+                ],
+                "outTangents": [
+                  [
+                    15,
+                    -20
+                  ],
+                  [
+                    20,
+                    10
+                  ],
+                  [
+                    -25,
+                    -15
+                  ]
+                ],
+                "time": 0,
+                "vertices": [
+                  [
+                    -50,
+                    -40
+                  ],
+                  [
+                    50,
+                    70
+                  ],
+                  [
+                    100,
+                    -20
+                  ]
+                ]
+              },
+              {
+                "closed": true,
+                "inTangents": [
+                  [
+                    30,
+                    10
+                  ],
+                  [
+                    -25,
+                    -15
+                  ],
+                  [
+                    10,
+                    30
+                  ]
+                ],
+                "outTangents": [
+                  [
+                    15,
+                    -20
+                  ],
+                  [
+                    20,
+                    10
+                  ],
+                  [
+                    -25,
+                    -15
+                  ]
+                ],
+                "time": 1,
+                "vertices": [
+                  [
+                    -50,
+                    -20
+                  ],
+                  [
+                    50,
+                    70
+                  ],
+                  [
+                    100,
+                    -20
+                  ]
+                ]
+              }
+            ]
+          ]
+        }
+      ]
+    },
+    "exports": {
+      "exported": "fa1400115a24d3c3206771863384dba413385fa05d760113a50f59c98c88ead1",
+      "edited": "44ce433aa5ba35eb7d25bcc3a244d6057f6871ae33369e77d716383bddefd3ef"
+    }
+  },
+  "build": {
+    "queue_job": 1501,
+    "commit": "a05d922fdba474bf3e5283c832c1be45b56f4216",
+    "binary_sha256": "96f6294891a164de84aec7db25dfbfb03f685aad235dc93fb7d88d5e3040b383"
+  },
+  "tests": {
+    "red_job": 1493,
+    "green_job": 1495,
+    "symbol": "native_reversed_bezier_keys_keep_vertex_and_tangent_correspondence_through_export_and_edit"
+  },
+  "proof": {
+    "editable_import": "passed",
+    "full_export_and_input_edit": "passed",
+    "native_generated_acceptance": "passed",
+    "native_30fps_reference": "unrun",
+    "asset_publication_download": "unrun",
+    "rgb": "unmeasured",
+    "alpha": "unverified",
+    "audio": "unverified"
+  },
+  "scripts": {
+    "author.jsx": "24d0c679bf9e8736dab8e5c783dd723f09bd1213fdfa5ff9b9f5f4a4525f52d1",
+    "readback.jsx": "01c6b88e02efb1966be0baf679ff24a13ee456863cd291b72362889fd5097555"
+  },
+  "validation": {
+    "candidate_job": 1513,
+    "candidate_result": {
+      "passed": 1659,
+      "failed": 12,
+      "ignored": 410
+    },
+    "baseline_job": 1519,
+    "baseline_commit": "4b53ce4c9820dd26cf24246b7ded2fc2cfb4cb60",
+    "baseline_result": {
+      "passed": 1658,
+      "failed": 12,
+      "ignored": 410
+    },
+    "same_failed_tests": true,
+    "clippy": "passed",
+    "fmt": "passed",
+    "full_gate": "failed; inherited baseline failures"
+  }
+}

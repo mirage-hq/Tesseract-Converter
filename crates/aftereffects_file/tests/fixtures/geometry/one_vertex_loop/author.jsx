@@ -1,0 +1,13 @@
+app.newProject();
+var comp=app.project.items.addComp('W06 One Vertex Bezier',320,240,1,2,24);
+var layer=comp.layers.addShape();layer.name='One vertex loop';
+layer.property('ADBE Transform Group').property('ADBE Position').setValue([160,160]);
+var group=layer.property('ADBE Root Vectors Group').addProperty('ADBE Vector Group');
+var contents=group.property('ADBE Vectors Group');
+var p=contents.addProperty('ADBE Vector Shape - Group').property('ADBE Vector Shape');
+var s=new Shape();s.vertices=[[0,0]];s.inTangents=[[90,-100]];s.outTangents=[[-90,-100]];s.closed=true;p.setValue(s);
+var fill=contents.addProperty('ADBE Vector Graphic - Fill');fill.property('ADBE Vector Fill Color').setValue([0,0.8,1]);
+var stroke=contents.addProperty('ADBE Vector Graphic - Stroke');stroke.property('ADBE Vector Stroke Color').setValue([1,1,1]);stroke.property('ADBE Vector Stroke Width').setValue(4);
+app.project.save(new File(context.output_path));app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES);app.open(new File(context.output_path));
+comp=app.project.item(1);layer=comp.layer(1);p=layer.property('ADBE Root Vectors Group').property(1).property('ADBE Vectors Group').property(1).property('ADBE Vector Shape');s=p.value;
+return {result:{vertices:s.vertices,inTangents:s.inTangents,outTangents:s.outTangents,closed:s.closed,composition_id:comp.id},targets:[{id:'main',name:comp.name,native_id:String(comp.id)}]};

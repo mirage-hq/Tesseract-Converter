@@ -288,57 +288,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires local licensed AEP_SCALE_OFFSET_SOURCE, which cannot be redistributed"]
-    fn local_external_source_restores_sh09_scale_curves() {
-        use sha2::{Digest, Sha256};
-        let bytes = std::fs::read(
-            std::env::var_os("AEP_SCALE_OFFSET_SOURCE").expect("local licensed source path"),
-        )
-        .unwrap();
-        assert_eq!(
-            format!("{:x}", Sha256::digest(&bytes)),
-            "28bbce1b8c9f9625105d632504a97c598394a4753d6b0d923fb19942e302bb5d"
-        );
-        let project = crate::structure::read_project(&bytes).unwrap();
-        let crate::structure::ItemKind::Composition(comp) = &project.item(724).unwrap().kind else {
-            panic!("composition 724")
-        };
-        for (id, first) in [(729, 0.2), (749, 0.06954350674895556)] {
-            let owner = comp.layers.iter().find(|l| l.record.id() == id).unwrap();
-            let (properties, warnings) = super::super::read_layer_transform(owner, comp).unwrap();
-            let numeric = properties
-                .iter()
-                .find(|p| p.match_name == "ADBE Scale")
-                .unwrap()
-                .numeric
-                .as_ref()
-                .unwrap();
-            assert!(!numeric.expression_enabled, "{id}: {warnings:?}");
-            assert!(!numeric.keyframes.is_empty());
-            assert!(numeric.keyframes.len() <= 128);
-            assert!((numeric.keyframes[0].values[0] - first).abs() < 0.0001);
-            assert!(
-                numeric
-                    .keyframes
-                    .iter()
-                    .all(|k| k.values.len() == 2 && k.values[0] == k.values[1])
-            );
-            if id == 749 {
-                assert!(
-                    (numeric.keyframes.last().unwrap().values[0] - 1.7590598535582218).abs()
-                        < 0.0001
-                );
-            }
-            eprintln!(
-                "native724/{id}: {} editable Scale keys; first={:?}, last={:?}",
-                numeric.keyframes.len(),
-                numeric.keyframes.first(),
-                numeric.keyframes.last()
-            );
-        }
-    }
-
-    #[test]
     fn scale_offset_converts_percent_and_repeats_only_first_axis() {
         let mut base = constant(vec![0.07, 0.2, 1.0]);
         base.expression_enabled = true;

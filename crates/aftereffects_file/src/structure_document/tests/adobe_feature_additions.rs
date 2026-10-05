@@ -260,8 +260,9 @@ fn native_adjustment_omits_cross_layer_pixels_but_keeps_effect_and_sibling() {
         assert_eq!(gaussian_blurriness(owner), [serde_json::json!(22.0)]);
         assert!(!has_editable_rect(owner), "do not substitute opaque white pixels for omitted adjustment");
         assert!(has_editable_rect(named_group(root(&converted), "RED_EDITABLE_SIBLING")));
-        assert!(converted.diagnostics.iter().any(|item| item.message.contains("adjustment-layer cross-layer compositing")),
-            "diagnose omitted below-layer semantics");
+        assert!(!converted.diagnostics.iter().any(|item| item.message.contains("adjustment contribution omitted")
+            || item.message.contains("adjustment-layer cross-layer compositing has no existing FX equivalent")),
+            "do not falsely diagnose retained Adjustment effects as omitted");
     });
     cases.finish();
 }

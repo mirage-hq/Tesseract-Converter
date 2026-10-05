@@ -42,18 +42,22 @@ macro_rules! ensure_valid {
 pub(crate) use ensure_valid;
 
 mod graph;
+pub(crate) mod object_mask;
 mod reader;
 pub(crate) mod shape_payload;
 mod text_payload;
 mod writer;
 
 pub use crate::schema::{
-    FrameRate, MediaId, PrGraphic, PrMedia, PrProjectFile, PrSequence, PrVideoItem,
-    PrVideoOccurrence,
+    FrameRate, MediaId, NativeFrameRate, PrGraphic, PrMedia, PrProjectFile, PrSequence,
+    PrVideoItem, PrVideoOccurrence,
 };
-use graph::{cyclic_sequences, sequences, Graph, Located, Record};
+use graph::{cyclic_sequences, sequences, Located, Record};
+pub(crate) use graph::{Element, Graph};
 #[cfg(test)]
 pub(crate) use reader::read_xml;
+#[cfg(test)]
+pub(crate) use text_payload::tests::with_explicit_white_stroke;
 pub(crate) use writer::PremiereProjectXml;
 
 #[cfg(test)]

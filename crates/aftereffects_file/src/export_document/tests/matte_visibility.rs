@@ -2,6 +2,90 @@
 
 use super::*;
 
+#[test]
+fn review_temporal_image_matte_hides_wrapper_only() {
+    use crate::writer::footage::{NativeFrameRate, NativeSourceFormat, RelativeMediaPath};
+    for mode in ["alpha", "luma"] {
+        let mut value = imported();
+        let provider = json!({
+            "type":"Image", "id":700, "name":"review matte", "parent":null,
+            "activeRange":{"start":0,"duration":1000},
+            "transform":identity_fx_transform(),
+            "source":{"assetId":"first","fit":"contain"}
+        });
+        let mut owner = rect(&value, 701);
+        owner["trackMatte"] = json!({"mode":mode,"layer":700});
+        value["composition"]["layers"] = json!([provider, owner, rect(&value, 702)]);
+        // Build a typed Hold track rather than depending on serialized easing shape.
+        let keys = ["first", "second"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, asset)| {
+                fx_schema::animator::PropertyKeyframe::new(
+                    fx_schema::animator::KeyframeId::new(format!("review-source-{index}")),
+                    fx_schema::TimeOffset::from_millis(index as i64 * 500),
+                    PropertyValue::String(asset.to_owned()),
+                    PropertyKeyframeEasing::Hold,
+                )
+            })
+            .collect();
+        value["composition"]["dynamics"] = json!({"entries":[AnimationGraphEntry {
+            target: fx_schema::PropertyTarget::layer(LayerId::new(700), PropType::MediaSourceAssetId),
+            animator: fx_schema::animator::PropertyAnimator::keyframes(
+                fx_schema::animator::PropertyKeyframeTrack::new(keys).unwrap()
+            ),
+            dependencies: Vec::new(), random_seed_target: None, layer_refs: Default::default(),
+        }]});
+        let sources = ["first", "second"]
+            .into_iter()
+            .map(|asset| {
+                (
+                    asset.to_owned(),
+                    media::ResolvedMediaSource {
+                        asset_id: fx_schema::AssetId::new(asset).unwrap(),
+                        path: RelativeMediaPath::new(format!("media/{asset}.exr")).unwrap(),
+                        format: NativeSourceFormat::OpenExr,
+                        dimensions: [320, 180],
+                        duration_millis: 0,
+                        duration_millis_floor: 0,
+                        duration_native_ticks: None,
+                        frame_rate: NativeFrameRate::integer(0),
+                        audio_sample_rate: 0.0,
+                        wave_metadata: None,
+                        native_duration: None,
+                    },
+                )
+            })
+            .collect();
+        let output = to_aep_with_media(
+            &EditableFxCompositionDocument::from_json_value(value).unwrap(),
+            &sources,
+        )
+        .unwrap();
+        let native = read_project(&output.bytes).unwrap();
+        let provider = named(&native, "review matte");
+        assert!(!provider.record.flags().enabled);
+        let ItemKind::Composition(source) = &native.item(provider.record.source_id()).unwrap().kind
+        else {
+            panic!("temporal matte requires an editable source composition");
+        };
+        assert_eq!(source.layers.len(), 2);
+        assert!(
+            source
+                .layers
+                .iter()
+                .all(|child| child.record.flags().enabled)
+        );
+        let owner = named(&native, "Current solid 701");
+        assert_eq!(owner.record.matte_layer_id(), Some(provider.record.id()));
+        assert_eq!(
+            owner.record.track_matte_type(),
+            if mode == "alpha" { 1 } else { 3 }
+        );
+        assert!(named(&native, "Current solid 702").record.flags().enabled);
+    }
+}
+
 fn all_layers(native: &StructuralProject) -> impl Iterator<Item = &crate::structure::Layer> {
     native.items.iter().flat_map(|item| match &item.kind {
         ItemKind::Composition(comp) => comp.layers.as_slice(),

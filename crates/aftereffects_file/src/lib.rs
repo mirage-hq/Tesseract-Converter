@@ -15,7 +15,9 @@ mod effects;
 mod essential;
 mod export_document;
 mod export_identity;
+mod expression_eval;
 pub mod expression_samples;
+pub mod graphic_template;
 mod layer_styles;
 mod media;
 pub mod properties;
@@ -34,10 +36,10 @@ mod adobe_test_support;
 mod test_fixtures;
 
 pub use adapter::{
-    AepConversionError, AfterEffects, AfterEffectsExportOptions, AfterEffectsImportOptions,
-    DynamicLinkImportError, ImportedAfterEffectsComposition, LinkedMedia, LinkedPicture,
-    LinkedPictureTarget, PreparedAfterEffectsImport, ResolvedAfterEffectsComposition,
-    StagedAfterEffectsExport, StagedAfterEffectsPictureExport,
+    AepConversionError, AepPreparationControl, AfterEffects, AfterEffectsExportOptions,
+    AfterEffectsImportOptions, DynamicLinkImportError, ImportedAfterEffectsComposition,
+    LinkedAudio, LinkedMedia, LinkedPicture, LinkedPictureTarget, PreparedAfterEffectsImport,
+    ResolvedAfterEffectsComposition, StagedAfterEffectsExport, StagedAfterEffectsPictureExport,
 };
 pub use diagnostic::{ImportDiagnostic, Limitation};
 pub use export_document::ExportDiagnostic;

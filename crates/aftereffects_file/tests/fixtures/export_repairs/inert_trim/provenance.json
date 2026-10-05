@@ -1,0 +1,161 @@
+{
+  "profile": "Shape without Trim modifier; authored scalar Trim controls are inert in FX playback",
+  "direction": "FX -> AEP; import unchanged",
+  "native_application": "26.5x89",
+  "native_job_id": "a280ab82a5874fc793cef89dca69eac8",
+  "native_request_id": "w06-inert-trim-native-control-generated-edit-v2",
+  "native_result": {
+    "edited": {
+      "counts": {
+        "paths": 1,
+        "strokes": 1,
+        "trims": 0
+      },
+      "position": [
+        80,
+        40,
+        0
+      ],
+      "vertices": [
+        [
+          0,
+          0
+        ],
+        [
+          100,
+          0
+        ],
+        [
+          140,
+          80
+        ]
+      ],
+      "width": 12
+    },
+    "generated": {
+      "counts": {
+        "paths": 1,
+        "strokes": 1,
+        "trims": 0
+      },
+      "position": [
+        80,
+        40,
+        0
+      ],
+      "vertices": [
+        [
+          0,
+          0
+        ],
+        [
+          100,
+          0
+        ],
+        [
+          100,
+          80
+        ]
+      ],
+      "width": 6
+    },
+    "independent": {
+      "counts": {
+        "paths": 1,
+        "strokes": 1,
+        "trims": 0
+      },
+      "position": [
+        80,
+        40,
+        0
+      ],
+      "vertices": [
+        [
+          0,
+          0
+        ],
+        [
+          100,
+          0
+        ],
+        [
+          100,
+          80
+        ]
+      ],
+      "width": 6
+    },
+    "numericChecks": 20
+  },
+  "native_outputs": {
+    "control.fx.json": {
+      "sha256": "990f2c7e21fcb00154690310ca2dfa1daef32fef06a05ae86cdd9910be7621f1",
+      "bytes": 2851
+    },
+    "accept.jsx": {
+      "sha256": "e0c6ef63dc5c47581547474c735146898743b78de5caf4ef75d769109e8dc91b",
+      "bytes": 3040
+    },
+    "edited.fx.json": {
+      "sha256": "d0d819a3365a8dc4edb128bdd814fd710f3db21fb011fd34557602d22bf750cf",
+      "bytes": 2852
+    },
+    "source.aep": {
+      "sha256": "3a3e9d481df56a5c2d92ff9193a98d27fc3236283e58f190fec4777a1a90948e",
+      "bytes": 73767
+    }
+  },
+  "rgb_minimal_reference": "unmeasured; no video or Asset published",
+  "alpha_audio": "unmeasured",
+  "native_calls_used": 3,
+  "failed_call": "5bae4be37cb34b57ad3d88b188ee400c; syntax error; READY verified",
+  "actual_case_render_job": "53cd04e8f63345cdad9a85648f514757",
+  "actual_case_before_after": {
+    "before": {
+      "score": {
+        "similarity": 0.16723525426915142,
+        "deviation": 0.8327647457308486
+      },
+      "compared_frames": 128,
+      "min_frame_similarity": 8.168827055770724e-05,
+      "left": {
+        "width": 1080,
+        "height": 1920,
+        "duration_secs": 31.966666,
+        "frame_count": 959,
+        "fps": 30.000000625651733
+      },
+      "right": {
+        "width": 1080,
+        "height": 1920,
+        "duration_secs": 32.0,
+        "frame_count": 960,
+        "fps": 30.0
+      }
+    },
+    "after": {
+      "score": {
+        "similarity": 0.1672271134622293,
+        "deviation": 0.8327728865377707
+      },
+      "compared_frames": 128,
+      "min_frame_similarity": 8.168827055770724e-05,
+      "left": {
+        "width": 1080,
+        "height": 1920,
+        "duration_secs": 31.966666,
+        "frame_count": 959,
+        "fps": 30.000000625651733
+      },
+      "right": {
+        "width": 1080,
+        "height": 1920,
+        "duration_secs": 31.966666,
+        "frame_count": 959,
+        "fps": 30.000000625651733
+      }
+    },
+    "limitation": "Historical-before and fresh-after converter bases differ; no causal improvement; both below0.95"
+  }
+}

@@ -4,6 +4,12 @@
     "source_sha256": "7519496eb44f5ebc0eff5c2ad78476afdd738303cfb18449ac4f3596e82070c2",
     "receipt": "catalog-receipt.json: independent Adobe ExtendScript parameter readout",
     "receipt_sha256": "3f5aeab2710950e954a9e749b62b8747a1defc2092e6f46c2cee8a3030e4a780",
+    "invert": {
+      "source": "cosmic-invert-controls.rifx: existing pinned native parameter declarations",
+      "fixture_sha256": "bfa10111574878a08e46668505e5758b599077c54660be3caa148c780bfcc4e4",
+      "provenance": "tests/fixtures/effects/cosmic-controls.provenance.json",
+      "defaults": "Native pard popup RGB=1 and signed 16:16 Blend With Original=0; binary descriptor evidence, not new Adobe UI readback"
+    },
     "radial_wipe": {
       "source": "radial_wipe_half_plane.aep: independently authored Adobe 26.5x89",
       "source_sha256": "672afb582fa532bff7c4a3c610891da762d962bd66bd22845f147b45cfeb9f6a",
@@ -12,6 +18,56 @@
     }
   },
   "effects": [
+    {
+      "match_name": "ADBE Invert",
+      "name": "Invert",
+      "parameters": [
+        {
+          "match_name": "ADBE Invert-0000",
+          "label": "",
+          "header_flags": [0, 0, 0],
+          "kind": 0,
+          "reserved": [2, 0],
+          "payload_words": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4294967295, 0, 0, 0, 0],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Invert-0001",
+          "label": "Channel",
+          "header_flags": [0, 0, 0],
+          "kind": 7,
+          "reserved": [0, 0],
+          "payload_words": [1, 1048577, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          "popup": "RGB|Red|Green|Blue|(-|HLS|Hue|Lightness|Saturation|(-|YIQ|Luminance|In Phase Chrominance|Quadrature Chrominance|(-|Alpha",
+          "defaults": [1.0],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Invert-0002",
+          "label": "Blend With Original",
+          "header_flags": [0, 0, 0],
+          "kind": 2,
+          "reserved": [0, 0],
+          "payload_words": [0, 268435712, 2153151916, 2013265920, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6553600, 0, 6553600, 0, 1],
+          "popup": null,
+          "defaults": [0.0],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Effect Built In Params",
+          "label": "",
+          "header_flags": [0, 0, 0],
+          "kind": 9,
+          "reserved": [0, 0],
+          "payload_words": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        }
+      ]
+    },
     {
       "match_name": "ADBE Gaussian Blur 2",
       "name": "Gaussian Blur",

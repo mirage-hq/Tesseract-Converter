@@ -158,7 +158,12 @@ def fetch_source(sources, work, name, url, sha256):
 def build_zlib(sources, work, prefix, env):
     """Build zlib statically with MSVC; returns the configure flags that point FFmpeg at it."""
     source = fetch_source(sources, work, f"zlib-{ZLIB_VERSION}.tar.gz", ZLIB_URL, ZLIB_SHA256)
-    subprocess.run(["nmake", "-f", "win32/Makefile.msc", "zlib.lib"], cwd=source, env=env, check=True)
+    # GNU make exports MAKEFLAGS (including `--` and command-line variables),
+    # which NMake parses as its own incompatible options. Keep the parent's
+    # environment intact for the subsequent GNU make FFmpeg build.
+    nmake_env = env.copy()
+    nmake_env.pop("MAKEFLAGS", None)
+    subprocess.run(["nmake", "-f", "win32/Makefile.msc", "zlib.lib"], cwd=source, env=nmake_env, check=True)
     staging = prefix / "zlib"
     shutil.rmtree(staging, ignore_errors=True)
     (staging / "include").mkdir(parents=True)

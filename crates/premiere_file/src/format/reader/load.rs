@@ -38,7 +38,7 @@ impl PrProjectFile {
         path: &Path,
         selection: Option<&str>,
     ) -> Result<(Self, Vec<Omission>)> {
-        Self::load_xml(&read_xml(path)?, selection)
+        Self::load_xml(&read_xml(path)?, selection, path.parent())
     }
 
     /// Lists all sequences that have a stable GUID and nonempty name.
@@ -53,8 +53,16 @@ impl PrProjectFile {
         path: &Path,
         selection: Option<&str>,
     ) -> Result<(Self, Vec<Omission>)> {
-        let xml = read_xml(path)?;
-        let graph = Graph::parse(&xml)?;
+        Self::load_import_with_media_relink(path, selection, None)
+    }
+
+    pub(crate) fn load_import_with_media_relink(
+        path: &Path,
+        selection: Option<&str>,
+        relink: Option<&crate::ValidatedMediaRelink>,
+    ) -> Result<(Self, Vec<Omission>)> {
+        let xml = super::read_xml_with_media_relink(path, relink)?;
+        let graph = Graph::parse(&xml)?.with_source_dir(path.parent());
         let targets = native_import_targets(&graph);
         let guid = match selection {
             Some(guid) => {
@@ -79,6 +87,10 @@ impl PrProjectFile {
                 }
             },
         };
+        if let Some(relink) = relink {
+            relink.validate_for(path, guid)?;
+        }
+        let graph = graph.with_media_relink(relink)?;
         Self::load_one(&graph, guid)
     }
 
@@ -105,8 +117,12 @@ impl PrProjectFile {
     }
 
     /// Loads the selected timelines of `xml`.
-    fn load_xml(xml: &str, selection: Option<&str>) -> Result<(Self, Vec<Omission>)> {
-        let graph = Graph::parse(xml)?;
+    fn load_xml(
+        xml: &str,
+        selection: Option<&str>,
+        source_dir: Option<&Path>,
+    ) -> Result<(Self, Vec<Omission>)> {
+        let graph = Graph::parse(xml)?.with_source_dir(source_dir);
         let mut omissions = Vec::new();
         let topology = sequences(&graph, &mut omissions);
         // Every read omits the placements of these timelines.
@@ -506,7 +522,7 @@ mod tests {
 
     #[test]
     fn all_selected_timelines_are_retained_without_an_aggregate_byte_quota() {
-        let (project, omissions) = PrProjectFile::load_xml(&roots_xml(), None).unwrap();
+        let (project, omissions) = PrProjectFile::load_xml(&roots_xml(), None, None).unwrap();
         assert!(omissions.is_empty(), "{omissions:?}");
         assert_eq!(
             names(&project),

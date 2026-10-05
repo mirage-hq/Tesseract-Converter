@@ -1,7 +1,13 @@
 //! Bounded decoding of AE's native Effect Parade, including sparse plugin defaults.
 //! A project's EfdG contains definitions; a layer-side `sspc` repeats its `parT`.
 
+mod corner_pin;
+mod hue_saturation;
+#[cfg(test)]
+mod hue_saturation_tests;
 mod levels;
+
+use std::collections::{HashMap, HashSet};
 
 use super::definitions::{self, ParameterDefinition};
 use crate::{
@@ -115,6 +121,19 @@ pub(crate) fn read_effects(content: &[Chunk], size: [f64; 2]) -> (Vec<DecodedEff
         } else {
             None
         };
+        let packed_hue = if match_name == "ADBE HUE SATURATION" {
+            match hue_saturation::read(&explicit, &mut warnings) {
+                Ok(master) => master,
+                Err(error) => {
+                    warnings.push(format!(
+                        "{match_name}: packed Hue/Saturation {error}; effect omitted, siblings retained"
+                    ));
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
         let tables: Vec<_> = sspc
             .iter()
             .filter(|chunk| chunk.list_kind() == Some(*b"parT"))
@@ -144,6 +163,23 @@ pub(crate) fn read_effects(content: &[Chunk], size: [f64; 2]) -> (Vec<DecodedEff
             }
         };
         let canonical = definitions::definition(match_name);
+        // Index every table once: untrusted plugins can declare thousands of
+        // parameters, and per-name linear scans would make import quadratic.
+        let mut declared_by_name: HashMap<&str, (&[Chunk], bool)> = HashMap::new();
+        for (name, definition) in &local_definitions {
+            declared_by_name
+                .entry(*name)
+                .and_modify(|(_, duplicate)| *duplicate = true)
+                .or_insert((*definition, false));
+        }
+        let mut explicit_by_name: HashMap<&str, (&[Chunk], usize)> = HashMap::new();
+        for (name, run) in &explicit {
+            explicit_by_name
+                .entry(*name)
+                .and_modify(|(_, count)| *count += 1)
+                .or_insert((*run, 1));
+        }
+        let mut seen = HashSet::new();
         let mut names = Vec::new();
         for name in local_definitions
             .iter()
@@ -157,12 +193,14 @@ pub(crate) fn read_effects(content: &[Chunk], size: [f64; 2]) -> (Vec<DecodedEff
             .chain(explicit.iter().map(|(name, _)| *name))
             .chain(super::toner::parameter_names(match_name).iter().copied())
         {
-            if packed_levels.is_some() && name == levels::HISTOGRAM {
+            if (packed_levels.is_some() && name == levels::HISTOGRAM)
+                || (packed_hue.is_some() && name == hue_saturation::CHANNEL_RANGE)
+            {
                 continue;
             }
             if name != "ADBE Effect Built In Params"
                 && !name.ends_with("-0000")
-                && !names.contains(&name)
+                && seen.insert(name)
             {
                 names.push(name);
             }
@@ -170,13 +208,10 @@ pub(crate) fn read_effects(content: &[Chunk], size: [f64; 2]) -> (Vec<DecodedEff
         let parameters = names
             .into_iter()
             .map(|name| {
-                let mut declared = local_definitions
-                    .iter()
-                    .filter(|(candidate, _)| *candidate == name)
-                    .map(|(_, definition)| *definition);
-                let local = declared.next();
+                let declared = declared_by_name.get(name).copied();
+                let local = declared.map(|(definition, _)| definition);
                 let first_kind = local.map(declaration_kind);
-                let declared_kind = if declared.next().is_some() {
+                let declared_kind = if declared.is_some_and(|(_, duplicate)| duplicate) {
                     Err(PropertyError::Layout("duplicate effect declaration"))
                 } else {
                     first_kind.clone().transpose()
@@ -184,6 +219,7 @@ pub(crate) fn read_effects(content: &[Chunk], size: [f64; 2]) -> (Vec<DecodedEff
                 if let Some(numeric) = packed_levels
                     .as_ref()
                     .and_then(|master| master.numeric(name))
+                    .or_else(|| packed_hue.as_ref().and_then(|master| master.numeric(name)))
                 {
                     // UI slots describe a selected channel, not the render master.
                     // Their cache values/type hints cannot override packed floats.
@@ -204,16 +240,17 @@ pub(crate) fn read_effects(content: &[Chunk], size: [f64; 2]) -> (Vec<DecodedEff
                 let kind = first_kind
                     .and_then(Result::ok)
                     .or_else(|| canonical.map(|parameter| parameter.kind));
-                let explicit_run = explicit.iter().find(|(id, _)| *id == name);
+                let explicit_entry = explicit_by_name.get(name).copied();
+                let explicit_run = explicit_entry.map(|(run, _)| run);
                 let duplicate = duplicate_record_error(match_name)
-                    .filter(|_| explicit.iter().filter(|(id, _)| *id == name).count() > 1);
+                    .filter(|_| explicit_entry.is_some_and(|(_, count)| count > 1));
                 let unset_path = explicit_run.is_none()
                     && declared_kind.is_ok()
                     && local.is_some_and(unset_path_default);
                 let mut relative_point = false;
                 let numeric = if let Some(error) = duplicate {
                     Err(PropertyError::Layout(error))
-                } else if let Some((_, run)) = explicit_run {
+                } else if let Some(run) = explicit_run {
                     match properties::unique_list(run, *b"tdbs") {
                         Ok(leaf) => {
                             relative_point = (kind == Some(6)
@@ -246,6 +283,13 @@ pub(crate) fn read_effects(content: &[Chunk], size: [f64; 2]) -> (Vec<DecodedEff
                 // Adobe's plugin Points (type flag 4) store fractions of source
                 // bounds. Legacy independent-component records already use pixels.
                 if relative_point && let Ok(point) = &mut numeric {
+                    if match_name == "ADBE Corner Pin"
+                        && corner_pin::normalize_straight_zero_speed(point)
+                    {
+                        warnings.push(format!(
+                            "{match_name}/{name}: monotone straight spatial path with zero temporal speeds normalized to editable scalar keys; collinearity accepted only within floating-point roundoff"
+                        ));
+                    }
                     scale_relative_point(point, size);
                 }
                 // PF_Param_SLIDER exposes integral values in Adobe even when its
@@ -285,12 +329,13 @@ fn duplicate_record_error(match_name: &str) -> Option<&'static str> {
     match match_name {
         super::keylight::MATCH_NAME => Some("duplicate effect control record"),
         "CC Toner" => Some("duplicate Toner control"),
+        "ADBE Invert" => Some("duplicate Invert control"),
         _ => None,
     }
 }
 
 /// The parameter type of one well-formed 148-byte `pard` declaration.
-fn declaration_kind(definition: &[Chunk]) -> Result<u32, PropertyError> {
+pub(crate) fn declaration_kind(definition: &[Chunk]) -> Result<u32, PropertyError> {
     let bytes = properties::data(definition, *b"pard")?;
     if bytes.len() != 148 {
         return Err(PropertyError::Layout("effect pard length"));
@@ -332,7 +377,7 @@ fn canonical_numeric(
     }))
 }
 
-fn scale_relative_point(point: &mut NumericProperty, size: [f64; 2]) {
+pub(super) fn scale_relative_point(point: &mut NumericProperty, size: [f64; 2]) {
     for (component, value) in point.values.iter_mut().enumerate() {
         *value *= size[component];
     }
@@ -392,7 +437,12 @@ fn default_numeric(definition: &[Chunk], size: [f64; 2]) -> Result<NumericProper
                 NumericValueKind::Continuous,
             )
         }
-        1 | 4 | 7 => (vec![f64::from(value)], NumericValueKind::Integer),
+        // PF_Param_SLIDER holds a signed A_long; checkbox and popup are unsigned.
+        1 => (
+            vec![f64::from(i32::from_be_bytes(value.to_be_bytes()))],
+            NumericValueKind::Integer,
+        ),
+        4 | 7 => (vec![f64::from(value)], NumericValueKind::Integer),
         6 => {
             if size.iter().any(|v| !v.is_finite() || *v <= 0.0) {
                 return Err(PropertyError::Layout(

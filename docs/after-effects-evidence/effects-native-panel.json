@@ -2,7 +2,7 @@
   "scope": "Eight explicitly authored FX documents freshly exported by Rust, opened/read back and rendered in Adobe26.5x89. Current controls,enable,keytimes,values and interpolation verified. This is not an AEP/FX visual or alpha comparison, nor proof for untested mappings.",
   "adobe_version": "26.5x89",
   "adobe_build": 89,
-  "generator": "AEP_EFFECTS_FX_PANEL_DIR=<ignored-dir> make -f Makefile -f <wrapper> aep-effects-test filter=export_document::tests::effects_native_panel",
+  "generator": "make -f Makefile -f <wrapper> aep-effects-test filter=export_document::tests::effects_native_panel (artifacts: target/adobe-test/fx_exports/)",
   "validation": {
     "scope": "Native control/key values/types verified; valueAtTime sample deltas retained, not a render-fidelity score. Scalar cubic manual values are rounded to two decimals; analytic cubic uses explicit authored4->20 with handles(0.25,0,0.75,1). Point subpixel deltas are not rounded away.",
     "static_key_value_tolerance": 1e-05,

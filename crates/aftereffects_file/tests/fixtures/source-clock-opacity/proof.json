@@ -1,0 +1,201 @@
+{
+  "status": "BLOCKED_FIDELITY_NOT_READY",
+  "native_version": "26.5x89",
+  "author_job": "3d534b131e3b48a29630e6f878ebc0da",
+  "source_files": {
+    "independent.aep": {
+      "sha256": "f612d3b48b93c3c17956a288f394348b9dca8be13dab8d0c57f0010f96cb8ea5",
+      "bytes": 156483
+    },
+    "primary-input.mp4": {
+      "sha256": "d54833c618c2d5b1b013939f154859a19164838469d3e6356c0c2122ea21af6c",
+      "bytes": 235970
+    },
+    "author.jsx": {
+      "sha256": "53c7af3a3234771e56e053ad5479b1c10afa39d4b8a8a4c62937a7e23333a97b",
+      "bytes": 6661
+    },
+    "input.json": {
+      "sha256": "efd795a9e2c39f8984297d328886063c33adf0a8e64a79b2eb8a2b40b7aed462",
+      "bytes": 7625
+    }
+  },
+  "native_target": {
+    "composition_id": 15,
+    "name": "P019 public dual-clock occurrence",
+    "width": 320,
+    "height": 180,
+    "fps": 30,
+    "duration_seconds": 18
+  },
+  "reference": {
+    "job": "20f1b14e4caf4e34a365528086a3d5e2",
+    "sha256": "84938009156b7dd6cf8a421380fad4a72a2bda9b4f64c661a8ac979901b49a9d",
+    "renderer": "managed Client.render_aep format=mp4 native30fps fullcanvas/fullbounds",
+    "asset_publication": "UNPUBLISHED, local immutable artifact only"
+  },
+  "generated": {
+    "original_job": "c226e49f0a61417182f7ffe214bb6fae",
+    "original_sha256": "265bba4c9d4af6aac2c8a2fb158736e0bee0d5374354b1d384f21d80dc66762a",
+    "edited_job": "fec691a9db7e41ad9d17a9f7e63188c3",
+    "edited_sha256": "97694b0358be16103c2694c4a83b67728e8de6c54685a6cbf5d68ef0a87e2e2b",
+    "build_receipt_commit": "5bce1b08b",
+    "fresh_input_edit": "Opacity values 0/50/100 -> 0/25/50; all other authored controls and media bytes unchanged"
+  },
+  "public_comparison": {
+    "count": 73,
+    "mean": 0.9147157880215652,
+    "minimum": 0.8403558543914308,
+    "worst_time": 11.0,
+    "acceptance_floor": 0.95,
+    "mean_pass": false,
+    "critical_count": 96,
+    "critical_mean": 0.9908259407443262,
+    "critical_minimum": 0.9302052434415802,
+    "settings": "full-resolution canonical RGB24/rgb-hybrid/.25s plus0..3.1667s native30fps critical onset grid",
+    "input_edit": [
+      {
+        "time": 2.833333333333,
+        "means": {
+          "reference": 0,
+          "original": 0,
+          "edited": 0
+        },
+        "edited_original_ratio": null,
+        "half_opacity_rgb_pass": true
+      },
+      {
+        "time": 2.866666666667,
+        "means": {
+          "reference": 27.962278911564624,
+          "original": 28.193792517006802,
+          "edited": 13.588639455782314
+        },
+        "edited_original_ratio": 0.48197274089980974,
+        "half_opacity_rgb_pass": false
+      },
+      {
+        "time": 2.9,
+        "means": {
+          "reference": 85.77207482993197,
+          "original": 85.93738095238095,
+          "edited": 42.37673469387755
+        },
+        "edited_original_ratio": 0.4931117777182326,
+        "half_opacity_rgb_pass": true
+      },
+      {
+        "time": 2.933333333333,
+        "means": {
+          "reference": 122.40942176870749,
+          "original": 122.60951530612245,
+          "edited": 61.01344387755102
+        },
+        "edited_original_ratio": 0.4976240524662146,
+        "half_opacity_rgb_pass": true
+      },
+      {
+        "time": 3,
+        "means": {
+          "reference": 122.23434523809524,
+          "original": 122.39748299319727,
+          "edited": 60.996054421768704
+        },
+        "edited_original_ratio": 0.49834402579306963,
+        "half_opacity_rgb_pass": true
+      },
+      {
+        "time": 5,
+        "means": {
+          "reference": 122.08090986394558,
+          "original": 122.20227040816326,
+          "edited": 60.85408163265306
+        },
+        "edited_original_ratio": 0.4979783225745038,
+        "half_opacity_rgb_pass": true
+      },
+      {
+        "time": 7.75,
+        "means": {
+          "reference": 121.50716836734694,
+          "original": 121.64602891156463,
+          "edited": 60.590178571428574
+        },
+        "edited_original_ratio": 0.4980859557320773,
+        "half_opacity_rgb_pass": true
+      },
+      {
+        "time": 11.5,
+        "means": {
+          "reference": 123.23831632653061,
+          "original": 123.33977891156462,
+          "edited": 61.405680272108846
+        },
+        "edited_original_ratio": 0.4978578753261516,
+        "half_opacity_rgb_pass": true
+      },
+      {
+        "time": 17.9,
+        "means": {
+          "reference": 118.51285714285714,
+          "original": 118.70686224489796,
+          "edited": 59.09681972789116
+        },
+        "edited_original_ratio": 0.4978382766614754,
+        "half_opacity_rgb_pass": true
+      }
+    ],
+    "input_edit_pass": false
+  },
+  "actual_cases": {
+    "P019": {
+      "before_mean": 0.11589991427039896,
+      "after_mean": 0.7338091732117448,
+      "after_minimum": 0.2958843523035987,
+      "sample_count": 73,
+      "source_sha256": "a425fa5e221a546697391be8c8684921ebf089c830b6c7cfef12f5df58aa6a1c",
+      "render_sha256": "71af76d66aee6dd841ab2f4d4442a7ff0879a814c22f9cd45b7d3d372a6f9d23",
+      "before_provenance": "preserved historical repair02 native movie, not fresh same-head before render",
+      "settings": "unchanged rgb-hybrid/full-resolution RGB24/.25s/.99"
+    },
+    "P028": {
+      "before_mean": 0.1114717505536546,
+      "after_mean": 0.8241671068309631,
+      "after_minimum": 0.2015791594435784,
+      "sample_count": 73,
+      "source_sha256": "1f2676ddce6f6e27eb72d29b1a32213b4802215e3e3d3bccf6aca93dc6e550e8",
+      "render_sha256": "a7d292f112ce63dd6050d086867d4db12db0c7e3e614c3d6b044de302dd6de8d",
+      "before_provenance": "preserved historical repair02 native movie, not fresh same-head before render",
+      "settings": "unchanged rgb-hybrid/full-resolution RGB24/.25s/.99"
+    }
+  },
+  "probe_budget": {
+    "allowed": 3,
+    "used": 3,
+    "model_calls": 0,
+    "operations": [
+      {
+        "job": "5ee805c848a04380829566c7dc9dc6a0",
+        "status": "FAILED non-JSON non-leaf effect getter; READY"
+      },
+      {
+        "job": "87e324c10a424ff4b4255c2d144d129d",
+        "status": "PARTIAL saved/reopened original controls returned; auxiliary JSON undefined; READY"
+      },
+      {
+        "job": "555ace4a33424084b862c91ee7180538",
+        "status": "FAILED fixed edited-fixture inspector unbound media alias; READY"
+      }
+    ]
+  },
+  "limits": [
+    "full public RGB mean below0.95",
+    "earliest visible input edit ratio misses unchanged .49..51",
+    "native edited-key readback unproved",
+    "independent alpha sampleImage discriminator invalid; alpha/audio unproved",
+    "long-term Asset reference publication incomplete",
+    "historical actual-case before not same-head native causal comparison",
+    "import implementation unchanged; independent source editable import assertions only",
+    "FX fixture lacks independent native green helper sibling; matched-input full-frame proof incomplete"
+  ]
+}

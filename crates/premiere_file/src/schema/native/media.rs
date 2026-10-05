@@ -29,10 +29,18 @@ pub(crate) struct VideoStream {
     pub(crate) frame_rect: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) pixel_aspect_ratio: Option<String>,
+    #[serde(rename = "OriginalPAR", skip_serializing_if = "Option::is_none")]
+    pub(crate) original_par: Option<String>,
+    #[serde(rename = "IsPAROverridden", skip_serializing_if = "Option::is_none")]
+    pub(crate) is_par_overridden: Option<String>,
+    #[serde(rename = "OverriddenPAR", skip_serializing_if = "Option::is_none")]
+    pub(crate) overridden_par: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) codec_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) is_still: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) is_numbered_stills: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) is_continuous_time: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

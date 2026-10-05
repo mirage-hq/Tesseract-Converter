@@ -1,4 +1,4 @@
-//! Gzip/XML decoding into the shared Premiere schema.
+//! Plain or gzip-compressed XML decoding into the shared Premiere schema.
 //!
 //! `load` selects timelines and assembles a `PrProjectFile`; `sequence`,
 //! `video`, and `audio` decode one selected sequence from the record graph.
@@ -12,7 +12,7 @@ use crate::schema::{
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::File,
-    io::Read,
+    io::{BufRead, BufReader, Read},
     path::Path,
 };
 
@@ -40,12 +40,38 @@ mod video;
 mod visibility;
 
 pub(crate) fn read_xml(path: &Path) -> FormatResult<String> {
-    let input = File::open(path)?;
-    let mut decoder = flate2::read::MultiGzDecoder::new(input);
+    read_xml_input(BufReader::new(File::open(path)?))
+}
+
+fn read_xml_with_media_relink(
+    path: &Path,
+    relink: Option<&crate::ValidatedMediaRelink>,
+) -> Result<String> {
+    let Some(relink) = relink else {
+        return Ok(read_xml(path)?);
+    };
+    // Hash exactly the encoded bytes decoded below, not a separate pathname
+    // read that could observe another revision of the project.
+    let bytes = std::fs::read(path)?;
+    relink.validate_source_bytes(&bytes)?;
+    Ok(read_xml_input(BufReader::new(bytes.as_slice()))?)
+}
+
+fn read_xml_input(mut input: impl BufRead) -> FormatResult<String> {
+    // Legacy saves can be plain XML. A gzip header selects decoding without
+    // retrying a corrupt compressed project as a different input format.
+    if input.fill_buf()?.starts_with(&[0x1f, 0x8b]) {
+        read_xml_from(flate2::read::MultiGzDecoder::new(input))
+    } else {
+        read_xml_from(input)
+    }
+}
+
+fn read_xml_from(mut input: impl Read) -> FormatResult<String> {
     let mut data = Vec::new();
     let mut buffer = [0_u8; 64 * 1024];
     loop {
-        let count = decoder.read(&mut buffer)?;
+        let count = input.read(&mut buffer)?;
         if count == 0 {
             break;
         }
@@ -53,7 +79,7 @@ pub(crate) fn read_xml(path: &Path) -> FormatResult<String> {
         // Reserve only after decoding real bytes; never trust gzip size hints.
         data.try_reserve(count)
             .map_err(|source| FormatError::Allocation {
-                context: "decompressed XML",
+                context: "Premiere XML",
                 source,
             })?;
         data.extend_from_slice(&buffer[..count]);
@@ -151,7 +177,7 @@ fn required_integer(value: Option<&str>, context: &str, field: &str) -> Result<i
 /// The sequence or stream frame rate that a native `FrameRate` (ticks per
 /// frame) names, on the record `context`.
 fn frame_rate(ticks_per_frame: i64, context: &str) -> Result<FrameRate> {
-    FrameRate::from_ticks_per_frame(ticks_per_frame).ok_or_else(|| {
+    FrameRate::from_sequence_ticks(ticks_per_frame).ok_or_else(|| {
         unsupported(format!(
             "{context}: unsupported video frame rate ({ticks_per_frame} ticks per frame)"
         ))

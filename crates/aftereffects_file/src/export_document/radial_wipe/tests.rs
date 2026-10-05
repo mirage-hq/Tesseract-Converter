@@ -60,13 +60,6 @@ pub(super) fn edited_half_plane() -> Value {
 #[test]
 fn edited_fx_half_plane_writes_native_wipe_before_effects_without_painting_guide() {
     let input = edited_half_plane();
-    if let Ok(path) = std::env::var("AEP_RADIAL_EXPORT_PROOF_DIR") {
-        std::fs::write(
-            std::path::Path::new(&path).join("explicit-fx.json"),
-            serde_json::to_vec_pretty(&input).unwrap(),
-        )
-        .unwrap();
-    }
     let output = to_aep(&EditableFxCompositionDocument::from_json_value(input).unwrap()).unwrap();
     let project = read_project(&output.bytes).unwrap();
     let ItemKind::Composition(root) = &project.item(1).unwrap().kind else {
@@ -164,5 +157,50 @@ fn finite_half_plane_that_does_not_cover_source_falls_back_without_consuming_gui
             .0
             .iter()
             .all(|e| e.match_name != "ADBE Radial Wipe")
+    );
+}
+
+#[test]
+fn warp_nested_static_half_plane_keeps_native_masks() {
+    let mut input = edited_half_plane();
+    input["composition"]["dynamics"] = json!({"entries": []});
+    let mut child = input["composition"]["layers"][0].clone();
+    child["parent"] = json!(900);
+    child["transform"]["scale"] = json!([-100, 100]);
+    child["transform"]["rotation"] = json!(80);
+    let mut outer = child.clone();
+    outer["id"] = json!(900);
+    outer["parent"] = Value::Null;
+    outer["name"] = json!("Unrelated nested mask owner");
+    outer["transform"] = serde_json::to_value(identity_fx_transform()).unwrap();
+    outer["masks"] = json!([]);
+    outer["layers"] = json!([child]);
+    input["composition"]["layers"] = json!([outer]);
+    let output = to_aep(&EditableFxCompositionDocument::from_json_value(input).unwrap()).unwrap();
+    let project = read_project(&output.bytes).unwrap();
+    let reopened = crate::structure_document::to_structural_fx_document(&project, Some(1)).unwrap();
+    fn find_owner(value: &Value) -> Option<&Value> {
+        if value.get("name").and_then(Value::as_str) == Some("Edited canvas") {
+            return Some(value);
+        }
+        value.get("layers")?.as_array()?.iter().find_map(find_owner)
+    }
+    let json = reopened.document.to_json_value().unwrap();
+    let owner = find_owner(&json["composition"]).expect("nested owner survives");
+    let mask = &owner["masks"][0];
+    assert_eq!(mask["mode"], "add", "{owner}");
+    assert_eq!(mask["opacity"], 1.0);
+    assert_eq!(mask["inverted"], false);
+    assert!(
+        mask["layer"].as_u64().is_some(),
+        "native editable mask guide"
+    );
+    assert!(
+        !reopened
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.message.contains("Radial Wipe omitted") }),
+        "{:?}",
+        reopened.diagnostics
     );
 }

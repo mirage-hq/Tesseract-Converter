@@ -1,10 +1,13 @@
-//! Static Fractal generators combined with editable source-stage blends.
+//! Fractal generators combined with editable source-stage blends.
+
+use fx_schema::animator::AnimationGraphEntry;
 
 use fx_schema::{
     BlendMode, EffectData, EffectPayload, EffectRecord, GroupLayer, LayerData, LayerEffect,
     LayerId, PercentageProperty, TimeRangeProperty,
 };
 
+use super::animation_budget::{AnimationBudget, committed_entry_reservation_bytes};
 use super::{MAX_GROUP_DEPTH, group, reserve_ids, shapes::OutputBudget, stored_layers, transform};
 use crate::structure::SolidSource;
 
@@ -12,6 +15,8 @@ use crate::structure::SolidSource;
 pub(super) struct Stage {
     pub native_ordinal: usize,
     pub generator: EffectRecord,
+    /// Validated parent-clock tracks, reserved and published only with the wrappers.
+    pub animations: Vec<AnimationGraphEntry>,
     pub blend_mode: BlendMode,
     pub opacity: PercentageProperty,
 }
@@ -32,6 +37,8 @@ pub(super) struct Context<'a> {
 pub(super) struct State<'a> {
     pub next: &'a mut u64,
     pub budget: &'a mut OutputBudget,
+    pub animation_budget: &'a mut AnimationBudget,
+    pub animations: &'a mut Vec<AnimationGraphEntry>,
 }
 
 pub(super) fn apply(
@@ -155,8 +162,20 @@ pub(super) fn apply(
     }
     fx_schema::Layer::from_data(&LayerData::Group(candidate.clone()))
         .map_err(|error| error.to_string())?;
+    let reservations = stages
+        .iter()
+        .flat_map(|stage| &stage.animations)
+        .map(committed_entry_reservation_bytes)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let animation_checkpoint = state.animation_budget.checkpoint();
+    state
+        .animation_budget
+        .reserve_all(reservations)
+        .map_err(|error| error.to_string())?;
     let checkpoint = state.budget.checkpoint();
     if !state.budget.reserve(&candidate) {
+        state.animation_budget.rollback(animation_checkpoint);
         state.budget.restore(checkpoint);
         return Err(
             "Fractal helper output serialization failed or its byte count overflowed".into(),
@@ -164,6 +183,11 @@ pub(super) fn apply(
     }
     *owner = candidate;
     *state.next = cursor;
+    state.animations.extend(
+        stages
+            .iter()
+            .flat_map(|stage| stage.animations.iter().cloned()),
+    );
     Ok(true)
 }
 

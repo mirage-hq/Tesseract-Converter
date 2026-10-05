@@ -1,0 +1,39 @@
+{
+  "sourceSha256": "40b3cb3d93261addfae28ad888e9cb7f3bf6203549e8a4f5f4fb89b8e458ce6e",
+  "authorSha256": "442a660249b30b1848ef70bfade8f4033417fd12cd07da10cefddba1780825b2",
+  "mediaSha256": "b65cf47d5350ad5e9bdf9d7305ee1adf2f638252c21542c0d0e5406b6eb10e75",
+  "application": "Premiere Pro",
+  "version": "26.5.2",
+  "sequenceUID": "55d61ac1-cb6e-454b-8f9c-5b7954fc0e1d",
+  "clipObjectId": 63,
+  "componentObjectId": 86,
+  "matchName": "AE.ADBE Invert",
+  "parameters": {
+    "1": 15,
+    "2": 0
+  },
+  "rgbaCells": [
+    [
+      204,
+      51,
+      26,
+      0
+    ],
+    [
+      26,
+      179,
+      77,
+      64
+    ],
+    [
+      51,
+      102,
+      230,
+      255
+    ]
+  ],
+  "endTicks": "508540032000",
+  "path_sanitization_original_sha256": {
+    "source/native.prproj": "2a0be9bd9151dd15d6e79ae96fd503b03f12284b7f889b3244d8e6a549d821cf"
+  }
+}

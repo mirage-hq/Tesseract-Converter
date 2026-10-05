@@ -56,7 +56,7 @@ use crate::{
         text_shadow::PrTextShadow,
         PrAnimatedProperty, PrPropertyAnimation,
     },
-    {omit, Omission, OmissionScope},
+    {approximate, omit, Omission, OmissionScope},
 };
 use fx_schema::{
     AnimationGraph, BlendMode, DropShadow, EffectData, EffectId, EffectPayload, EffectRecord,
@@ -94,6 +94,9 @@ pub(super) fn import_text_shadow(
         return Ok(None);
     };
     let reason = unsupported_shadow_reason(text, motion);
+    if let Some(reason) = nonuniform_shadow_approximation(text, motion) {
+        approximate(omissions, record, format!("editable text DropShadow approximation: {reason}; saved shadow parameters are kept in frame-pixel units rather than a proven native per-axis shadow transform"));
+    }
     import_shadow(shadow, "text", reason, record, effect_ids, omissions)
 }
 
@@ -140,11 +143,25 @@ fn import_shadow(
         );
         return Ok(None);
     }
+    let effect = drop_shadow(shadow)?;
+    if let Some(reason) = colored_shadow_blend_approximation(&shadow) {
+        approximate(omissions, record, format!("{owner} DropShadow {reason}"));
+    }
     Ok(Some(EffectRecord::from_data(&EffectData::Identified {
         id: effect_ids.take(),
         enabled: true,
-        effect: EffectPayload::Known(LayerEffect::DropShadow(drop_shadow(shadow)?)),
+        effect: EffectPayload::Known(LayerEffect::DropShadow(effect)),
     })?))
+}
+
+/// The opacity mapping is calibrated for a black shadow, whose linear-light
+/// blend one encoded alpha reproduces. A translucent shadow of another color
+/// blends in linear light against whatever paint is beneath it, which no single
+/// alpha expresses, so that conversion is reported as an approximation.
+fn colored_shadow_blend_approximation(shadow: &PrTextShadow) -> Option<&'static str> {
+    (shadow.color != PrRgb([0, 0, 0]) && shadow.opacity > 0.0 && shadow.opacity < 100.0).then_some(
+        "approximation: a translucent non-black shadow blends in linear light in Premiere but with one encoded alpha in FX; the black-shadow opacity calibration is applied and the color error depends on the paint beneath (unmeasured)",
+    )
 }
 
 fn drop_shadow(shadow: PrTextShadow) -> Result<DropShadow> {
@@ -204,6 +221,26 @@ fn unsupported_shadow_reason(
     {
         return Some("its text has a Source Text key without a fill");
     }
+    if text.horizontal_scale.is_some() {
+        None
+    } else {
+        scaled_or_rotated_text(text).or_else(|| motion_shadow_reason(motion))
+    }
+}
+
+fn nonuniform_shadow_approximation(
+    text: &PrText,
+    motion: Option<&PrVectorMotion>,
+) -> Option<&'static str> {
+    if text.horizontal_scale.is_none()
+        || text.document.fill.is_none()
+        || text
+            .source_text_keys
+            .iter()
+            .any(|key| key.document.fill.is_none())
+    {
+        return None;
+    }
     scaled_or_rotated_text(text).or_else(|| motion_shadow_reason(motion))
 }
 
@@ -212,7 +249,10 @@ fn unsupported_shadow_reason(
 /// scaled or rotated, statically or with keys.
 pub(super) fn scaled_or_rotated_text(text: &PrText) -> Option<&'static str> {
     let transform = &text.transform;
-    if transform.scale != 100.0 || transform.rotation != 0.0 {
+    if transform.scale != 100.0
+        || text.horizontal_scale.is_some_and(|scale| scale != 100.0)
+        || transform.rotation != 0.0
+    {
         return Some("its text is scaled or rotated");
     }
     if scales_or_rotates(&text.animations) {
@@ -292,12 +332,16 @@ pub(super) fn export_text_effects(
     record: &str,
 ) -> Option<PrTextShadow> {
     let (effect, label, shadow) = one_drop_shadow(effects, "text", omissions, record)?;
-    exported_shadow(
-        premiere_shadow(effect, shadow, layer_id, dynamics, text, motion),
-        &label,
-        omissions,
-        record,
-    )
+    let exported = premiere_shadow(effect, shadow, layer_id, dynamics, text, motion);
+    if let Ok(native) = &exported {
+        if let Some(reason) = nonuniform_shadow_approximation(text, motion) {
+            approximate(omissions, record, format!("editable native text shadow approximation: {reason}; frame-pixel DropShadow parameters are exported without a proven native per-axis shadow transform"));
+        }
+        if let Some(reason) = colored_shadow_blend_approximation(native) {
+            approximate(omissions, record, format!("native text shadow {reason}"));
+        }
+    }
+    exported_shadow(exported, &label, omissions, record)
 }
 
 /// Export the effect stack of an FX shape layer as [`export_text_effects`]
@@ -321,6 +365,13 @@ pub(super) fn export_shape_effects(
                 ..shadow
             }),
         });
+    if let Some(reason) = exported
+        .as_ref()
+        .ok()
+        .and_then(colored_shadow_blend_approximation)
+    {
+        approximate(omissions, record, format!("native shape shadow {reason}"));
+    }
     exported_shadow(exported, &label, omissions, record)
 }
 
@@ -355,7 +406,7 @@ fn one_drop_shadow<'e>(
 ) -> Option<(&'e EffectRecord, String, &'e DropShadow)> {
     let mut shadows = Vec::new();
     for (position, effect) in (1..).zip(effects) {
-        let (id, _, payload) = record_parts(effect);
+        let (id, enabled, payload) = record_parts(effect);
         let label = match id {
             Some(id) => id.to_string(),
             None => format!("at stack position {position}"),
@@ -379,8 +430,34 @@ fn one_drop_shadow<'e>(
                 }
             }
         };
-        omit(omissions, OmissionScope::Feature, record, reason);
+        let coverage = super::effects::omitted_coverage_consequence(enabled, payload);
+        omit(
+            omissions,
+            OmissionScope::Feature,
+            record,
+            format!("{reason}{coverage}"),
+        );
     }
+    // A disabled shadow draws nothing, so it must not displace the one active
+    // shadow that Premiere can keep; it is reported on its own.
+    let (active, disabled): (Vec<_>, Vec<_>) = shadows
+        .into_iter()
+        .partition(|(effect, _, shadow)| record_parts(effect).1 && shadow.enabled);
+    let mut shadows = if active.is_empty() {
+        disabled
+    } else {
+        for (_, label, _) in &disabled {
+            omit(
+                omissions,
+                OmissionScope::Feature,
+                record,
+                format!(
+                    "drop shadow {label} was not exported: unsupported conversion: it is disabled"
+                ),
+            );
+        }
+        active
+    };
     if shadows.len() > 1 {
         omit(
             omissions,
@@ -449,7 +526,7 @@ fn shadow_from_effect(
     ensure!(enabled && shadow.enabled, "it is disabled");
     ensure!(
         !is_animated(dynamics, layer_id, effect),
-        "animated {owner} shadows are unsupported (JRB-1990)"
+        "animated {owner} shadows are unsupported"
     );
     ensure!(
         shadow.blend_mode == BlendMode::Normal,

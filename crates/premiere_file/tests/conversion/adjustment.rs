@@ -14,19 +14,23 @@
 //! `premiere_isolated_adjustment_layer_26_5`, `tests/README.md`).
 
 use super::support::*;
-use premiere_file::{OmissionScope, PrProjectFile, PrSequence, PrVideoItem};
-use serde_json::{json, Value};
+use premiere_file::{OmissionScope, PrProjectFile};
+#[cfg(feature = "ffmpeg-library")]
+use premiere_file::{PrSequence, PrVideoItem};
+use serde_json::json;
+#[cfg(feature = "ffmpeg-library")]
+use serde_json::Value;
 use std::path::Path;
 use tesseract_file::TesseractFile;
 
 #[test]
-fn native_adjustment_motion_changes_effect_coverage_without_moving_picture() {
+fn native_adjustment_motion_imports_and_exports_edited_coverage() {
     use sha2::{Digest, Sha256};
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     for (name, digest) in [
         (
             "feature_adjustment_motion_wipe_26_5_strict.prproj",
-            "9c9fa7f466400f8977da6f224ab172430cb6b6a9ad8db22ddf2fee237e0f8dcb",
+            "a215535f7e21efac7fca84edc572f7b1d2814b5858f90c49a97044b1bc600a2e",
         ),
         (
             "a3_base_grid.png",
@@ -149,6 +153,11 @@ fn native_adjustment_motion_changes_effect_coverage_without_moving_picture() {
     assert_eq!(file.metadata().assets.len(), 1);
     let pictures = layers
         .iter()
+        .flat_map(|layer| {
+            layer["layers"]
+                .as_array()
+                .map_or(std::slice::from_ref(layer), Vec::as_slice)
+        })
         .filter(|layer| layer["type"] == "Image")
         .collect::<Vec<_>>();
     assert_eq!(pictures.len(), 2);
@@ -156,21 +165,107 @@ fn native_adjustment_motion_changes_effect_coverage_without_moving_picture() {
         .iter()
         .all(|layer| layer["transform"]["scale"] == json!([100.0, 100.0])
             && layer["transform"]["position"] == json!([960.0, 540.0])));
-    // The independently rendered J5 wipe remains outside this bounded mapping.
+    // J5 now clips the effected lower composite in its own editable group.
     assert!(
-        omissions
+        !omissions
             .iter()
             .any(|omission| omission.scope == OmissionScope::Occurrence
                 && (omission.reason.contains("Linear Wipe")
                     || omission.reason.contains("Transition Completion"))),
         "{omissions:?}"
     );
+
+    // Change the current guide, not the imported adjustment transform. The
+    // edited rectangle covers 720..1680 x 405..945 canvas pixels.
+    let guide_id = adjustments[1]["masks"][0]["layer"].clone();
+    let mut edited = document.clone();
+    let guide = edited["composition"]["layers"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|layer| layer["id"] == guide_id)
+        .unwrap();
+    guide["name"] = json!("Edited coverage");
+    guide["rect"]["position"] = json!([240.0, 135.0]);
+    guide["rect"]["size"] = json!([960.0, 540.0]);
+    guide["transform"]["position"] = json!([480.0, 270.0]);
+    guide["transform"]["anchorPoint"] = json!([0.0, 0.0]);
+    guide["transform"]["scale"] = json!([100.0, 100.0]);
+    let mut builder = tesseract_file::TesseractFileBuilder::from_project_json(
+        &serde_json::to_vec(&edited).unwrap(),
+    )
+    .unwrap();
+    for (id, asset) in &file.metadata().assets {
+        let source = fixtures.join(Path::new(&asset.path).file_name().unwrap());
+        builder = builder.add_asset(id.as_str(), source, asset.kind).unwrap();
+    }
+    let archive = directory.path().join("edited.tsrct");
+    builder.write(&archive).unwrap();
+    let exported = directory.path().join("exported");
+    let omissions = tesseract_to_premiere(&archive, &exported, false).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let native = exported.join("project.prproj");
+    let (project, omissions) = PrProjectFile::load(&native).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let adjustment_clips: Vec<_> = project
+        .sequences()
+        .next()
+        .unwrap()
+        .video_occurrences()
+        .filter(|clip| project.media(clip).unwrap().name() == "Adjustment Layer")
+        .collect();
+    assert_eq!(adjustment_clips.len(), 4);
+    let moved = adjustment_clips
+        .iter()
+        .find(|clip| clip.timeline_ticks().start == 1500 * MILLI)
+        .unwrap();
+    assert_eq!(moved.timeline_ticks().end, 3000 * MILLI);
+    let reimported = directory.path().join("reimported");
+    let root = exported_root_sequence(&native);
+    let omissions = premiere_to_tesseract(&native, &reimported, Some(&root), false).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let again = TesseractFile::open(first_project(&reimported))
+        .unwrap()
+        .project_json()
+        .unwrap();
+    let layers = again["composition"]["layers"].as_array().unwrap();
+    let moved = layers
+        .iter()
+        .find(|layer| {
+            layer["type"] == "Adjustment"
+                && crate::test_support::layer_range(layer)["start"] == 1500
+        })
+        .unwrap();
+    let guide = layers
+        .iter()
+        .find(|layer| layer["id"] == moved["masks"][0]["layer"])
+        .unwrap();
+    assert_eq!(guide["transform"]["position"], json!([1200.0, 675.0]));
+    assert_eq!(guide["transform"]["scale"], json!([50.0, 50.0]));
+    assert_eq!(guide["rect"]["fillEnabled"], false);
+    assert_eq!(moved["transform"]["scale"], json!([100.0, 100.0]));
+    assert_eq!(
+        moved["effects"][0]["effect"],
+        adjustments[1]["effects"][0]["effect"]
+    );
+    assert_eq!(
+        layers
+            .iter()
+            .flat_map(|layer| layer["layers"]
+                .as_array()
+                .map_or(std::slice::from_ref(layer), Vec::as_slice))
+            .filter(|layer| layer["type"] == "Image")
+            .count(),
+        2
+    );
 }
 
 /// The 30 fps generator in-point, one hour into the synthetic clock.
+#[cfg(feature = "ffmpeg-library")]
 const IN_TICKS: i64 = 3600 * TICKS;
 const MILLI: i64 = TICKS / 1000;
 
+#[cfg(feature = "ffmpeg-library")]
 const ADJUSTMENT_TRACK: &str = r#"<VideoClipTrack ObjectUID="track-2"><ClipTrack><Track><ID>2</ID><Index>1</Index></Track><ClipItems><TrackItems><TrackItem ObjectRef="40"/></TrackItems><Index>1</Index></ClipItems></ClipTrack></VideoClipTrack>
 <VideoClipTrackItem ObjectID="40"><ClipTrackItem><ComponentOwner><Components ObjectRef="41"/></ComponentOwner><TrackItem><Start>50803200000</Start><End>203212800000</End></TrackItem><SubClip ObjectRef="42"/></ClipTrackItem><FrameRect>0,0,1920,1080</FrameRect><PixelAspectRatio>1,1</PixelAspectRatio></VideoClipTrackItem>
 <VideoComponentChain ObjectID="41"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain><Components><Component Index="0" ObjectRef="60"/></Components></ComponentChain></VideoComponentChain>
@@ -188,6 +283,7 @@ const ADJUSTMENT_TRACK: &str = r#"<VideoClipTrack ObjectUID="track-2"><ClipTrack
 "#;
 
 /// `(track, start ms, end ms, media name)` for every occurrence.
+#[cfg(feature = "ffmpeg-library")]
 fn placements(project: &PrProjectFile, sequence: &PrSequence) -> Vec<(usize, i64, i64, String)> {
     sequence
         .video_tracks()
@@ -209,6 +305,7 @@ fn placements(project: &PrProjectFile, sequence: &PrSequence) -> Vec<(usize, i64
         .collect()
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn synthetic_adjustment_layer_round_trips_as_an_fx_adjustment_layer() {
     let dir = tempfile::tempdir().unwrap();
@@ -308,6 +405,7 @@ fn synthetic_adjustment_layer_round_trips_as_an_fx_adjustment_layer() {
 }
 
 /// `(type, name, start ms, duration ms, effects)` of every layer.
+#[cfg(feature = "ffmpeg-library")]
 fn layer_rows(document: &Value) -> Vec<(String, String, i64, i64, Value)> {
     document["composition"]["layers"]
         .as_array()
@@ -330,7 +428,7 @@ fn layer_rows(document: &Value) -> Vec<(String, String, i64, i64, Value)> {
 }
 
 /// `premiere_isolated_adjustment_layer_26_5`, Premiere 26.5.1's save of the
-/// Oracle's sequence: V1 S1/S2 (linked A/V, 0–5/5–10 s), V2 P (timecoded at
+/// Native sequence: V1 S1/S2 (linked A/V, 0–5/5–10 s), V2 P (timecoded at
 /// Scale 50, 4–8 s), V3 adjustments A Levels 0–3 s, B Gaussian Blur repeat
 /// edge 3–5 s, C the same without repeat edge 5–7 s, D Levels output white
 /// 180 with Opacity keys 100 → 20 at 7.5/8.75 s, then held, 7–9 s, F Crop
@@ -338,6 +436,7 @@ fn layer_rows(document: &Value) -> Vec<(String, String, i64, i64, Value)> {
 /// converts; F is omitted by name (Premiere renders its cropped region black,
 /// so that second differs). The adjustments then export as five flagged
 /// placements of one flagged item and reimport unchanged.
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn native_adjustment_layers_import_over_their_lower_tracks_and_round_trip() {
     const SEQUENCE: &str = "b500144a-c795-484c-9717-e8e826f53f95";

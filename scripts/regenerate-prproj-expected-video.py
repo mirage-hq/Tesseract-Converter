@@ -26,6 +26,8 @@ import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 import zlib
 
+import adobe_native
+
 REPO = Path(__file__).resolve().parents[1]
 MANIFEST = REPO / "tests/manifest.json"
 CACHE = Path.home() / ".cache/jerboa/conversion"
@@ -259,11 +261,7 @@ def await_ame_exit(app, timeout=25):
 
 
 def launch_ame(app, jsx):
-    try:
-        subprocess.run(["open", "-a", str(app), "--args", "--console", "es.processFile", str(jsx)],
-                       capture_output=True, text=True, timeout=20, check=True)
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise ExportError("could not launch AME script host (requires a logged-in macOS GUI session)") from exc
+    raise ExportError('Independent AME script launch is retired; use the typed headless-adobe operation')
 
 
 def wait_for_status(status_path, job_id, timeout):
@@ -321,8 +319,6 @@ def exclusive_export(cache):
 def regenerate(case_id, preset, cache, sequence, timeout, app):
     with exclusive_export(cache):
         case, project, xml, selected = preflight(case_id, preset, cache, sequence)
-        if ame_running(app):
-            raise ExportError("AME is already running; finish/quit it before this cold-launch command (no job was submitted)")
         job_id = uuid.uuid4().hex
         job_dir = cache / "export-jobs" / job_id
         job_dir.mkdir(parents=True, exist_ok=False)
@@ -331,17 +327,20 @@ def regenerate(case_id, preset, cache, sequence, timeout, app):
         if output.exists():
             raise ExportError(f"refusing to overwrite existing export: {output}")
         work_project, referenced = prepare_package(case, project, xml, cache, job_dir)
-        status_path = job_dir / "status.txt"
-        jsx = job_dir / "export.jsx"
-        jsx.write_text(generate_jsx(job_id, work_project.resolve(), output.resolve(),
-                                    preset.resolve(), selected["name"], status_path.resolve()))
-        print(f"AME export {case_id} / {selected['name']} ({job_id}); timeout {timeout}s", flush=True)
-        launch_ame(app, jsx)
-        try:
-            status = wait_for_status(status_path, job_id, timeout)
-        except KeyboardInterrupt:
-            raise ExportError("interrupted; AME may still be encoding; output is incomplete") from None
-        await_ame_exit(app)
+        dependencies = {}
+        for index, relative in enumerate(referenced):
+            path = (job_dir / 'package' / relative).resolve()
+            dependencies[f'media-{index}'] = {'path': str(path), 'sha256': size_and_sha(path)[1]}
+        print(f"Central AME export {case_id} / {selected['name']} ({job_id}); timeout {timeout}s", flush=True)
+        artifact = adobe_native.execute('render_premiere_ame', {
+            'source': adobe_native.source_ref(work_project, dependencies), 'sequence_id': selected['uid'],
+            'preset': {'path': str(preset.resolve()), 'sha256': size_and_sha(preset)[1]},
+            'request_id': 'premiere-reference-' + job_id,
+        }, job_dir / 'worker', timeout=timeout, ame_app=app)
+        metadata = artifact.get('metadata', {})
+        if not metadata.get('build') or not metadata.get('completion'):
+            raise ExportError('Central AME artifact lacks native build/completion provenance')
+        adobe_native.copy_artifact(artifact, output)
         duration, videos = probe_mp4(output)
         record = {"case_id": case_id, "job_id": job_id, "sequence_name": selected["name"],
                   "sequence_uid": selected["uid"], "source_project_sha256": size_and_sha(project)[1],
@@ -349,8 +348,9 @@ def regenerate(case_id, preset, cache, sequence, timeout, app):
                   "media_paths_checked": referenced,
                   "media_link_verified": "absolute_media_paths_checked",
                   "preset_path": str(preset), "preset_sha256": size_and_sha(preset)[1],
-                  "ame_app": str(app), "ame_build": status["ame_build"],
-                  "ame_result": status["message"], "duration_seconds": duration,
+                  "ame_app": str(app), "ame_build": metadata['build'],
+                  "ame_result": metadata['completion'], 'headless_adobe': artifact,
+                  "duration_seconds": duration,
                   "video_streams": videos, "output_sha256": size_and_sha(output)[1],
                   "output_size_bytes": output.stat().st_size, "output_path": str(output),
                   "proof": "AME native Premiere sequence export"}
@@ -393,6 +393,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except ExportError as exc:
+    except (ExportError, adobe_native.NativeAdobeError, OSError) as exc:
         print(f"Premiere expected-video export: {exc}", file=sys.stderr)
         sys.exit(1)

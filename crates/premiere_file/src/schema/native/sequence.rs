@@ -25,8 +25,26 @@ pub(crate) struct Content {
     pub(crate) _boundaries_are_hard: Option<IgnoredAny>,
     #[serde(rename = "ProxyEnabled", skip_serializing)]
     pub(crate) _proxy_enabled: Option<IgnoredAny>,
+    /// NativeMediaScope validates this alternate edge; playback still requires
+    /// MediaSource/Media. Admission here must not select or export proxy content.
+    #[serde(rename = "ProxyMedia", skip_serializing)]
+    pub(crate) _proxy_media: Option<Reference>,
+    /// Like ProxyMedia, these are alternate edges, not the original channel
+    /// selectors. NativeMediaScope resolves their AudioProxy/ProxyMedia targets.
+    #[serde(skip_serializing)]
+    pub(crate) audio_proxies: Option<AudioProxies>,
     #[serde(rename = "Node", skip_serializing)]
     pub(crate) _node: Option<IgnoredAny>,
+}
+
+/// Saved audio preview attachments. Their indices do not select primary sound.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AudioProxies {
+    #[serde(rename = "@Version")]
+    pub(crate) _version: Option<String>,
+    #[serde(rename = "AudioProxyItem", default)]
+    pub(crate) items: Vec<Reference>,
 }
 
 impl Content {
@@ -38,6 +56,8 @@ impl Content {
             end_boundary: None,
             _boundaries_are_hard: None,
             _proxy_enabled: None,
+            _proxy_media: None,
+            audio_proxies: None,
             _node: None,
         }
     }

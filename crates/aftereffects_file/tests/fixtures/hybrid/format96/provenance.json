@@ -1,0 +1,413 @@
+{
+  "case": "COEDITOR-FORMAT96-IDENTITY",
+  "source_aep": {
+    "name": "250915_Coeditor Launch-Process_VFX.aep",
+    "bytes": 109480087,
+    "sha256": "04119f0da297ceeb2da292ae267816af7a901f47bb757333781e1ed2bf1330f6",
+    "head_hex": "006000060f8a06568000000000000f0a0906396e"
+  },
+  "source_premiere": {
+    "name": "250915_Coeditor Launch-Process Edit-0917_2_simplified-oneseq.prproj",
+    "sha256": "dff8bc0a167fb5882413a1190d819f9e530cc038334d04f9676a749b11806721",
+    "decompressed_xml_sha256": "af7dce057ab5ec45ef16438a95a0b83e48af609ae3ddf5131c0d8ddbcd885c05"
+  },
+  "fixture": {
+    "file": "coeditor-format96.rifx",
+    "bytes": 231456,
+    "sha256": "6a59f9a84c674795fc24e8d585f0d4a12bb6679a0d18c10eff46c3a3be4bdf4c"
+  },
+  "occurrences": [
+    {
+      "occurrence": "943",
+      "subclip": "1128",
+      "video_clip": "1290",
+      "video_media_source": "411",
+      "media_uid": "cfbf7805-c966-49aa-8d45-3849320666eb",
+      "importer_prefs": "MAAwADAAMAAwADgANwA1AC0AMAAwADAAMAAtADAAMAAwADAALQAwADAAMAAwAC0AMAAwADAAMAAwADAAMAAwADAAMAAwADAA",
+      "guid": "00000875-0000-0000-0000-000000000000",
+      "item_id": 2165,
+      "item_name": "composite-split screen end v2",
+      "item_offset": 28486522,
+      "item_type": 4,
+      "title": "composite-split screen end v2/250915_Coeditor Launch-Process_VFX.aep",
+      "start_ticks": "8094262176000",
+      "end_ticks": "10467448992000",
+      "in_ticks": "0",
+      "out_ticks": "2373186816000"
+    },
+    {
+      "occurrence": "1131",
+      "subclip": "1293",
+      "video_clip": "1563",
+      "video_media_source": "399",
+      "media_uid": "8762807a-aa71-4102-a26d-6920de4999a8",
+      "importer_prefs": "MAAwADAAMAAwADAAMgA5AC0AMAAwADAAMAAtADAAMAAwADAALQAwADAAMAAwAC0AMAAwADAAMAAwADAAMAAwADAAMAAwADAA",
+      "guid": "00000029-0000-0000-0000-000000000000",
+      "item_id": 41,
+      "item_name": "composite-boris phone split",
+      "item_offset": 27645188,
+      "item_type": 4,
+      "title": "composite-boris phone split/250915_Coeditor Launch-Process_VFX.aep",
+      "start_ticks": "0",
+      "end_ticks": "296648352000",
+      "in_ticks": "0",
+      "out_ticks": "296648352000"
+    },
+    {
+      "occurrence": "1134",
+      "subclip": "1299",
+      "video_clip": "1570",
+      "video_media_source": "397",
+      "media_uid": "c9691e93-7067-405e-81d9-473ecfa21b15",
+      "importer_prefs": "MAAwADAAMAAwADAAMAAxAC0AMAAwADAAMAAtADAAMAAwADAALQAwADAAMAAwAC0AMAAwADAAMAAwADAAMAAwADAAMAAwADAA",
+      "guid": "00000001-0000-0000-0000-000000000000",
+      "item_id": 1,
+      "item_name": "composite-split screen roel footage",
+      "item_offset": 28621824,
+      "item_type": 4,
+      "title": "composite-split screen roel footage/250915_Coeditor Launch-Process_VFX.aep",
+      "start_ticks": "695004710400",
+      "end_ticks": "1034031398400",
+      "in_ticks": "0",
+      "out_ticks": "339026688000"
+    },
+    {
+      "occurrence": "1171",
+      "subclip": "1373",
+      "video_clip": "1670",
+      "video_media_source": "407",
+      "media_uid": "35d76a6b-8c1e-4d41-a3a3-99d637dd6c7b",
+      "importer_prefs": "MAAwADAAMAAwADAANQBjAC0AMAAwADAAMAAtADAAMAAwADAALQAwADAAMAAwAC0AMAAwADAAMAAwADAAMAAwADAAMAAwADAA",
+      "guid": "0000005c-0000-0000-0000-000000000000",
+      "item_id": 92,
+      "item_name": "composite-callie export split",
+      "item_offset": 27915886,
+      "item_type": 4,
+      "title": "composite-callie export split/250915_Coeditor Launch-Process_VFX.aep",
+      "start_ticks": "7382306131200",
+      "end_ticks": "7662003148800",
+      "in_ticks": "0",
+      "out_ticks": "279697017600"
+    },
+    {
+      "occurrence": "1276",
+      "subclip": "1535",
+      "video_clip": "1880",
+      "video_media_source": "409",
+      "media_uid": "9e6ad795-8eb2-4c15-9f46-0a176bbe94af",
+      "importer_prefs": "MAAwADAAMAAwADAANwA5AC0AMAAwADAAMAAtADAAMAAwADAALQAwADAAMAAwAC0AMAAwADAAMAAwADAAMAAwADAAMAAwADAA",
+      "guid": "00000079-0000-0000-0000-000000000000",
+      "item_id": 121,
+      "item_name": "title-final results",
+      "item_offset": 28934650,
+      "item_type": 4,
+      "title": "title-final results/250915_Coeditor Launch-Process_VFX.aep",
+      "start_ticks": "0",
+      "end_ticks": "432259027200",
+      "in_ticks": "0",
+      "out_ticks": "432259027200"
+    }
+  ],
+  "extraction": {
+    "native_layers": {
+      "1": [
+        302,
+        280,
+        14,
+        279
+      ],
+      "41": [
+        65,
+        54
+      ],
+      "92": [
+        115,
+        113
+      ],
+      "121": [
+        141,
+        139,
+        138,
+        134
+      ],
+      "2165": [
+        2184,
+        2183,
+        2209
+      ]
+    },
+    "native_sources": [
+      13,
+      53,
+      59,
+      64,
+      133,
+      140,
+      278,
+      301,
+      2208
+    ],
+    "changes": [
+      "Five native composition idta/Utf8/cdta records and selected complete native Layr records are retained in a flat Fold; original folders, unselected layers/items, project settings, preview caches and XMP are omitted.",
+      "Source items keep native idta/Utf8/Pin records. File alas fullpath values become missing/<native basename>; alias counts become 0/2. No media bytes are included.",
+      "Container LIST and RIFX lengths are recalculated. The complete 20-byte head and svap are unchanged.",
+      "This is a reduced offline parser/import fixture, not an Adobe-openable project or independent render oracle."
+    ],
+    "unchanged_identity_and_layer_chunks": [
+      {
+        "tag": "idta",
+        "offset": 28621864,
+        "bytes": 92,
+        "sha256": "5480a10bc2e5662acc4229fa058992be6d6905e17526f946fc9c8e50c537c3fa"
+      },
+      {
+        "tag": "Utf8",
+        "offset": 28621956,
+        "bytes": 44,
+        "sha256": "875b194525b7d864e0e0a1110a4162d5c6e60d4c7fb2e0981304082e68cb5593"
+      },
+      {
+        "tag": "cdta",
+        "offset": 28622024,
+        "bytes": 212,
+        "sha256": "6cf4a85b74fad2e037c4b79503f587cc77625bf7dab1395a12bbc3ec691802d8"
+      },
+      {
+        "tag": "Layr",
+        "offset": 28622400,
+        "bytes": 11602,
+        "sha256": "2394030cf4d092e6fc751243f90230f5310d9f0926c09e3e777caa4d53c865a0"
+      },
+      {
+        "tag": "Layr",
+        "offset": 28661070,
+        "bytes": 14218,
+        "sha256": "6b0fdcc01c8e17d03623c9fd1bfa0cc26895bf8cbaa1bb2410005dd697b197a9"
+      },
+      {
+        "tag": "Layr",
+        "offset": 28675500,
+        "bytes": 12214,
+        "sha256": "e6bb1ea034f7c6f1b201971345d86d8836c7fb36f402963c793aeebe18eff49b"
+      },
+      {
+        "tag": "Layr",
+        "offset": 28726516,
+        "bytes": 11216,
+        "sha256": "9d51f38bf0b1be59f2d646351729b3e50aa90519d164cde0de5846defa7bddb2"
+      },
+      {
+        "tag": "idta",
+        "offset": 27645240,
+        "bytes": 92,
+        "sha256": "2b785dc5610d3659aaf7a670a4ec4b3af4024fd2f76b5b19f2f6ce859631e2c8"
+      },
+      {
+        "tag": "Utf8",
+        "offset": 27645332,
+        "bytes": 36,
+        "sha256": "32b98b1b049443cfbd7637e8b4dd796454b60e54a2a053d98abf8ca2ddad07a4"
+      },
+      {
+        "tag": "cdta",
+        "offset": 27645392,
+        "bytes": 212,
+        "sha256": "8f372274586945151d9c2f8b62b6d3b36a2f32078e069f62075ab9f3d9615688"
+      },
+      {
+        "tag": "Layr",
+        "offset": 27840268,
+        "bytes": 11908,
+        "sha256": "cf42ca5f845e8039540804f0ebe8917b0f694f1e575e393e6171ba2a1552a8e8"
+      },
+      {
+        "tag": "Layr",
+        "offset": 27852388,
+        "bytes": 11602,
+        "sha256": "edcf6b3b0c21e6f3f9e0e12294be5de467f900d0b95cfe3b0fa413b751f4fafc"
+      },
+      {
+        "tag": "idta",
+        "offset": 27915926,
+        "bytes": 92,
+        "sha256": "3c3756b7d534c3f056505782077a177ba07277570a673b2b5b469c70faac4ed7"
+      },
+      {
+        "tag": "Utf8",
+        "offset": 27916018,
+        "bytes": 38,
+        "sha256": "84a777fbfc4a4c49609631177a9203c841db5be023126647887a6a3907e3b5b8"
+      },
+      {
+        "tag": "cdta",
+        "offset": 27916080,
+        "bytes": 212,
+        "sha256": "bbfba81b411daa68701ed708fbabf508368a23ce5f7132f419829f7f1d5d4e22"
+      },
+      {
+        "tag": "Layr",
+        "offset": 27927884,
+        "bytes": 12182,
+        "sha256": "e22e7667ea3f0ebdecce487480bee87387d6f763257b1f1c40fd3aa52a6450f1"
+      },
+      {
+        "tag": "Layr",
+        "offset": 27964470,
+        "bytes": 12182,
+        "sha256": "1776819de13f262a6795111b567d6cd32d289b209d54b1c6a0202c6c84559488"
+      },
+      {
+        "tag": "idta",
+        "offset": 28934690,
+        "bytes": 92,
+        "sha256": "2c7aba3b7871504180c8340441709c8141a85bca751173b8939fb5f9bcddb337"
+      },
+      {
+        "tag": "Utf8",
+        "offset": 28934782,
+        "bytes": 28,
+        "sha256": "493e76543f0f67bbb6bf9aa268d1cbe477a4cbc8febb1b02489b7de31da31244"
+      },
+      {
+        "tag": "cdta",
+        "offset": 28934834,
+        "bytes": 212,
+        "sha256": "0557edfa5b95909b91e39c7dd4a92bb3c4ce24d5609bad39306ecbeaaf737665"
+      },
+      {
+        "tag": "Layr",
+        "offset": 28935210,
+        "bytes": 11908,
+        "sha256": "75a758a195034a2e383a60f9a5f64a50845a20e6bbf8b42b0602e2b45cfd0b83"
+      },
+      {
+        "tag": "Layr",
+        "offset": 28947330,
+        "bytes": 30072,
+        "sha256": "db75e680b9c8ecac70e8d94bda3f5475f89357a61f323d5bc0473e4956ce91aa"
+      },
+      {
+        "tag": "Layr",
+        "offset": 28977662,
+        "bytes": 21590,
+        "sha256": "4f61e7886c7bbc9f775d77958c6f144a975980bab466a4a5d06f2c68205264f2"
+      },
+      {
+        "tag": "Layr",
+        "offset": 28999512,
+        "bytes": 11602,
+        "sha256": "16cd69824e81bc8e36d740e673611ff0dcab06e38d46dca0d1ca0767459dd73d"
+      },
+      {
+        "tag": "idta",
+        "offset": 28486586,
+        "bytes": 92,
+        "sha256": "14f4c708a1961a051275ed2cceae9f2462d4a53378a9c30eeef3c5fe08b475f4"
+      },
+      {
+        "tag": "Utf8",
+        "offset": 28486678,
+        "bytes": 38,
+        "sha256": "2025c8a4f6d593a431a1b7ba7b335432d6186279c007b6f07c318e357052767e"
+      },
+      {
+        "tag": "cdta",
+        "offset": 28486740,
+        "bytes": 212,
+        "sha256": "fd8667ebf95b60ac8db207ea827714c2dce7d00db28c25b1c906762b08105d7a"
+      },
+      {
+        "tag": "Layr",
+        "offset": 28487116,
+        "bytes": 13626,
+        "sha256": "57a6416abc9f7472bac403f36d347699f66ed98e49f2cead58b8d0172f530958"
+      },
+      {
+        "tag": "Layr",
+        "offset": 28517104,
+        "bytes": 13628,
+        "sha256": "af6639d7455419df5caba92f7dc3ae8f1a8dfc9dfa9a7b1a95e125eeda9402e9"
+      },
+      {
+        "tag": "Layr",
+        "offset": 28558498,
+        "bytes": 11216,
+        "sha256": "106a8c08ae5e8950fa08624fb6e2b44b7473422b962f97c12a0080a107e18c16"
+      },
+      {
+        "tag": "svap",
+        "offset": 12,
+        "bytes": 12,
+        "sha256": "73c305af220b404c0bb1df7ce8e9797320e065758ffb753ce2d9b8a414dd3216"
+      },
+      {
+        "tag": "head",
+        "offset": 24,
+        "bytes": 28,
+        "sha256": "7f7d2f4ae5ac86ab18cad8c20a25f6f27e3bc9a17f1c660ceb0a10e566b2f173"
+      }
+    ],
+    "source_item_chunks": [
+      {
+        "id": 13,
+        "offset": 74659986,
+        "bytes": 1498,
+        "sha256": "f00f83422a2c9c0bd9f614fa46490449f74d1dffbe829884e093d5e78673588c"
+      },
+      {
+        "id": 53,
+        "offset": 75028288,
+        "bytes": 2580,
+        "sha256": "713b6b88bfc225e45f4e6834124fe55350a13402cd8648a4d2a6c4ac33ef1fe4"
+      },
+      {
+        "id": 59,
+        "offset": 109382782,
+        "bytes": 1050,
+        "sha256": "a0a69a9ab5be55b740939a1b043b9306e6bc71a5365d38cf4ecfc534c0dcdf08"
+      },
+      {
+        "id": 64,
+        "offset": 109373774,
+        "bytes": 1050,
+        "sha256": "542c37d2f99f2bd4de62fad585cc771ddf49df8feafd7c98416e961bb374abd9"
+      },
+      {
+        "id": 133,
+        "offset": 75052470,
+        "bytes": 10370,
+        "sha256": "24d621c109867178e6a1bb0e7799f631e53a11db1356b457247e50b26f80626f"
+      },
+      {
+        "id": 140,
+        "offset": 109389538,
+        "bytes": 1050,
+        "sha256": "12b42aab1c0fe8ec286c523f2eb471a68c9b2b6e6492cf70f2642ce495d7c38b"
+      },
+      {
+        "id": 278,
+        "offset": 109377152,
+        "bytes": 1050,
+        "sha256": "3d9230e3e036b839573b3e453548dda0790f2f632a5653875bdda35cfe941884"
+      },
+      {
+        "id": 301,
+        "offset": 109383908,
+        "bytes": 1050,
+        "sha256": "ff0321441bf9169c7adcb337be355260ec62426e5a7a7ae8e164ae1d9dbba8a2"
+      },
+      {
+        "id": 2208,
+        "offset": 109380530,
+        "bytes": 1050,
+        "sha256": "5acf1ac3c3e3707b8b375515efc4924a83de43b844334e023a2944f2dbded5d7"
+      }
+    ]
+  },
+  "proof": {
+    "identity": "Independent Premiere ImporterPrefs UTF-16 GUIDs matched to native AEP idta IDs and Utf8 names by offline binary/XML traversal. No display-name selection.",
+    "adobe_readback": "not run for this increment",
+    "render_fidelity": "unmeasured",
+    "export": "out of scope (import-only defect)"
+  }
+}

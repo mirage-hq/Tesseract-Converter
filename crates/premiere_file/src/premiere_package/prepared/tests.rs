@@ -1,7 +1,11 @@
 //! Operation reuse/ownership tests, not Adobe acceptance or complete coverage.
 
+mod black_canvas;
+mod export_media;
+
 use std::{fs, io::Read};
 
+#[cfg(feature = "ffmpeg-library")]
 use fx_schema::animator::AnimatorData;
 use serde_json::{json, Value};
 use tesseract_file::{AssetKind, TesseractFileBuilder};
@@ -31,6 +35,7 @@ fn scripted(code: &str) -> Value {
     value
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn calls() -> usize {
     crate::convert::PREPARATION_CALLS.with(|count| count.get())
 }
@@ -46,16 +51,7 @@ fn read_native(path: &Path) -> PrProjectFile {
     project
 }
 
-fn overlay() -> AfterEffectsOverlay {
-    AfterEffectsOverlay {
-        composition_guid: "00000001-0000-0000-0000-000000000000".into(),
-        dimensions: [1920, 1080],
-        frame_rate: FrameRate::Fps30,
-        intrinsic_duration_secs: 1.0,
-        timeline_secs: 0.0..1.0,
-    }
-}
-
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn natural_video_frame_uses_active_media_and_preserves_the_original_view() {
     let root = tempfile::tempdir().unwrap();
@@ -114,9 +110,10 @@ fn natural_video_frame_uses_active_media_and_preserves_the_original_view() {
     assert_eq!((source.width, source.height), (64, 36));
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
-fn omitted_long_group_does_not_claim_its_child_script_keys_were_written() {
-    for (duration, written) in [(500, 1), (1000, 0)] {
+fn a_long_plain_group_keeps_child_script_keys_but_an_omitted_effect_group_does_not() {
+    for (duration, effect, written) in [(500, false, 1), (1000, false, 1), (1000, true, 0)] {
         let root = tempfile::tempdir().unwrap();
         let mut value = scripted("return 100 - 20 * input.time.seconds;");
         let mut child = value["composition"]["layers"][0].clone();
@@ -132,10 +129,30 @@ fn omitted_long_group_does_not_claim_its_child_script_keys_were_written() {
             "transform": value["composition"]["layers"][1]["transform"],
             "layers": [child]
         });
+        if effect {
+            value["composition"]["layers"][0]["effects"] = json!([{
+                "id": 100, "effect": {"type": "gaussianBlur", "blurriness": 5}
+            }]);
+        }
         let file = archive(root.path(), &value);
         let prepared = Premiere
             .prepare_export(&file, file.project(), &Default::default())
             .unwrap();
+        assert_eq!(
+            prepared.original_document().to_json_value().unwrap(),
+            file.project_json().unwrap()
+        );
+        if duration == 1000 && !effect {
+            assert!(
+                prepared.losses().losses.iter().any(|loss| loss.source
+                    == crate::ExportLossSource::Layer(10.into())
+                    && loss.domain == crate::ExportLossDomain::Picture
+                    && loss.kind == crate::ExportLossKind::Field(crate::ExportField::Placement)
+                    && loss.omission.kind == crate::OmissionKind::Approximated),
+                "{:?}",
+                prepared.losses().losses
+            );
+        }
         let expected =
             format!("{written} of 1 baked JS animation tracks were written as native keys");
         assert!(
@@ -150,53 +167,96 @@ fn omitted_long_group_does_not_claim_its_child_script_keys_were_written() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
-fn final_native_and_incomplete_overlay_still_reject_uncovered_gaps() {
+fn uncovered_leading_internal_and_trailing_gaps_export_without_changing_content() {
     let root = tempfile::tempdir().unwrap();
     let mut value = crate::test_support::editable_document();
-    value["composition"]["layers"]
-        .as_array_mut()
-        .unwrap()
-        .truncate(1);
-    value["composition"]["layers"][0]["playback"] = crate::test_support::linear_playback(
-        json!({"start": value["composition"]["layers"][0]["playback"]["inputRange"]["start"], "duration": 500}),
-        json!({"start": value["composition"]["layers"][0]["sourceRange"]["start"], "duration": 500}),
+    let layers = value["composition"]["layers"].as_array_mut().unwrap();
+    layers.truncate(1);
+    layers[0]["playback"] = crate::test_support::linear_playback(
+        json!({"start": 200, "duration": 200}),
+        json!({"start": 0, "duration": 200}),
     );
-    value["composition"]["layers"][0]["sourceRange"]["duration"] = json!(500);
+    layers[0]["sourceRange"] = json!({"start": 0, "duration": 200});
+    let mut second = layers[0].clone();
+    second["id"] = json!(3);
+    second["name"] = json!("Second cut");
+    second["playback"] = crate::test_support::linear_playback(
+        json!({"start": 600, "duration": 200}),
+        json!({"start": 200, "duration": 200}),
+    );
+    second["sourceRange"] = json!({"start": 200, "duration": 200});
+    layers.push(second);
     let file = archive(root.path(), &value);
+    let input = root.path().join("input.tsrct");
+    let before = fs::read(&input).unwrap();
+    let original = file.project_json().unwrap();
     let prepare = || {
         Premiere
             .prepare_export(&file, file.project(), &Default::default())
             .unwrap()
     };
-    let error = prepare().into_native().unwrap_err().to_string();
-    assert!(
-        error.contains("gaps require an explicit bottommost opaque black canvas"),
-        "{error}"
+    let assert_content = |project: &PrProjectFile| {
+        let ms = crate::schema::TICKS_PER_MILLISECOND;
+        let sequence = project.single_sequence().unwrap();
+        assert_eq!(sequence.occurrence_end_ticks(), 800 * ms);
+        assert_eq!(sequence.video_tracks.len(), 1);
+        assert_eq!(sequence.video_items().count(), 2, "no background inserted");
+        assert_eq!(project.media.len(), 1);
+        assert_eq!(
+            sequence
+                .video_occurrences()
+                .map(|clip| (clip.timeline_ticks(), clip.source_ticks(), clip.enabled))
+                .collect::<Vec<_>>(),
+            [
+                (200 * ms..400 * ms, 0..200 * ms, true),
+                (600 * ms..800 * ms, 200 * ms..400 * ms, true),
+            ]
+        );
+    };
+    // The reader still ends at the last occurrence, so check the declared tail
+    // in the lowered model and independently in the written native work area.
+    let assert_work_area = |path: &Path| {
+        let bytes = fs::read(path).unwrap();
+        let mut xml = String::new();
+        flate2::read::GzDecoder::new(bytes.as_slice())
+            .read_to_string(&mut xml)
+            .unwrap();
+        assert!(xml.contains("<MZ.WorkOutPoint>254016000000</MZ.WorkOutPoint>"));
+    };
+    let (native, _) = prepare().into_native().unwrap();
+    assert_content(&native);
+    let ms = crate::schema::TICKS_PER_MILLISECOND;
+    let sequence = native.single_sequence().unwrap();
+    assert_eq!(sequence.end_ticks(), 1000 * ms);
+    assert_eq!(
+        sequence.gaps(&native.media),
+        [0..200 * ms, 400 * ms..600 * ms, 800 * ms..1000 * ms]
     );
     let output = root.path().join("output");
-    let error = prepare()
-        .stage_native(root.path(), &output)
-        .unwrap_err()
-        .to_string();
-    assert!(
-        error.contains("gaps require an explicit bottommost opaque black canvas"),
-        "{error}"
-    );
-    let mut partial = overlay();
-    partial.timeline_secs.end = 0.5;
-    let error = prepare()
-        .stage_with_after_effects_overlay(root.path(), &output, &partial)
-        .unwrap_err()
-        .to_string();
-    assert!(
-        error.contains("gaps require an explicit bottommost opaque black canvas"),
-        "{error}"
-    );
+    let staged = prepare()
+        .stage_with_picture_replacements(root.path(), &output, &[])
+        .unwrap();
+    assert_content(&read_native(&staged.directory().join("project.prproj")));
+    assert_work_area(&staged.directory().join("project.prproj"));
+    let temporary = staged.directory().to_owned();
+    drop(staged);
+    assert!(!temporary.exists());
     assert!(!output.exists());
     assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+
+    let checked = crate::tesseract_to_premiere(&input, &output, true).unwrap();
+    assert!(!output.exists());
+    let written = crate::tesseract_to_premiere(&input, &output, false).unwrap();
+    assert_eq!(checked, written);
+    assert_content(&read_native(&output.join("project.prproj")));
+    assert_work_area(&output.join("project.prproj"));
+    assert_eq!(fs::read(&input).unwrap(), before);
+    assert_eq!(file.project_json().unwrap(), original);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn inspect_then_stage_uses_one_real_preparation_and_keeps_original_script() {
     let root = tempfile::tempdir().unwrap();
@@ -234,7 +294,9 @@ fn inspect_then_stage_uses_one_real_preparation_and_keeps_original_script() {
     let report = operation.losses().clone();
     assert_eq!(operation.losses(), &report);
     let output = root.path().join("final");
-    let staged = operation.stage_native(root.path(), &output).unwrap();
+    let staged = operation
+        .stage_with_picture_replacements(root.path(), &output, &[])
+        .unwrap();
     assert_eq!(calls(), count + 1, "inspection/emission must not rebake");
     assert_eq!(staged.report().diagnostics, report.diagnostics);
     let native = read_native(&staged.directory().join("project.prproj"));
@@ -255,6 +317,7 @@ fn inspect_then_stage_uses_one_real_preparation_and_keeps_original_script() {
     assert!(!temporary.exists());
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn source_slot_stage_reuses_preparation_and_retains_native_audio() {
     let root = tempfile::tempdir().unwrap();
@@ -348,6 +411,7 @@ fn source_slot_stage_reuses_preparation_and_retains_native_audio() {
     assert!(!root.path().join("final").exists());
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn rejected_video_picture_keeps_embedded_sound_once_through_replacement() {
     let root = tempfile::tempdir().unwrap();
@@ -434,6 +498,7 @@ fn rejected_video_picture_keeps_embedded_sound_once_through_replacement() {
     assert!((sounds[0].volume.as_f64() - 0.5).abs() < 1e-6);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn retained_static_motion_values_are_written_without_repreparation() {
     let root = tempfile::tempdir().unwrap();
@@ -448,7 +513,7 @@ fn retained_static_motion_values_are_written_without_repreparation() {
         .prepare_export(&file, file.project(), &Default::default())
         .unwrap();
     let staged = operation
-        .stage_native(root.path(), &root.path().join("final"))
+        .stage_with_picture_replacements(root.path(), &root.path().join("final"), &[])
         .unwrap();
     assert_eq!(calls(), count + 1);
     let native = read_native(&staged.directory().join("project.prproj"));
@@ -464,6 +529,7 @@ fn retained_static_motion_values_are_written_without_repreparation() {
     assert_eq!(clip.opacity, 75.0);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn nested_blended_picture_and_skew_omission_keep_native_sibling() {
     for skewed in [false, true] {
@@ -492,7 +558,7 @@ fn nested_blended_picture_and_skew_omission_keep_native_sibling() {
             .prepare_export(&file, file.project(), &Default::default())
             .unwrap();
         let staged = operation
-            .stage_native(root.path(), &root.path().join("final"))
+            .stage_with_picture_replacements(root.path(), &root.path().join("final"), &[])
             .unwrap();
         let path = staged.directory().join("project.prproj");
         let target = PrProjectFile::import_targets(&path)
@@ -514,6 +580,7 @@ fn nested_blended_picture_and_skew_omission_keep_native_sibling() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn unsupported_motion_keeps_native_sibling() {
     let root = tempfile::tempdir().unwrap();
@@ -531,7 +598,7 @@ fn unsupported_motion_keeps_native_sibling() {
         .prepare_export(&file, file.project(), &Default::default())
         .unwrap();
     let staged = operation
-        .stage_native(root.path(), &root.path().join("final"))
+        .stage_with_picture_replacements(root.path(), &root.path().join("final"), &[])
         .unwrap();
     let native = read_native(&staged.directory().join("project.prproj"));
     assert_eq!(
@@ -544,6 +611,7 @@ fn unsupported_motion_keeps_native_sibling() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn rejected_script_is_not_retried_during_emission() {
     let root = tempfile::tempdir().unwrap();
@@ -555,7 +623,7 @@ fn rejected_script_is_not_retried_during_emission() {
     let diagnostics = operation.losses().diagnostics.clone();
     assert!(!diagnostics.is_empty());
     let staged = operation
-        .stage_native(root.path(), &root.path().join("final"))
+        .stage_with_picture_replacements(root.path(), &root.path().join("final"), &[])
         .unwrap();
     assert_eq!(calls(), count + 1);
     assert_eq!(staged.report().diagnostics, diagnostics);
@@ -565,39 +633,6 @@ fn rejected_script_is_not_retried_during_emission() {
         .unwrap()
         .video_occurrences()
         .all(|clip| clip.animations.is_empty()));
-}
-
-#[test]
-fn prepared_overlay_preserves_diagnostics_and_does_not_stage_foreign_bytes() {
-    let root = tempfile::tempdir().unwrap();
-    let file = archive(
-        root.path(),
-        &scripted("return 100 - 20 * input.time.seconds;"),
-    );
-    let count = calls();
-    let operation = Premiere
-        .prepare_export(&file, file.project(), &Default::default())
-        .unwrap();
-    let diagnostics = operation.losses().diagnostics.clone();
-    let staged = operation
-        .stage_with_after_effects_overlay(root.path(), &root.path().join("final"), &overlay())
-        .unwrap();
-    assert_eq!(calls(), count + 1);
-    assert_eq!(staged.report().diagnostics, diagnostics);
-    assert!(!staged
-        .directory()
-        .join(staged.after_effects_path())
-        .exists());
-    let native = read_native(&staged.directory().join("project.prproj"));
-    assert_eq!(
-        native
-            .media
-            .values()
-            .filter(|media| media.after_effects_composition().is_some())
-            .count(),
-        1
-    );
-    assert_eq!(staged.report().artifacts.len(), 2);
 }
 
 #[test]
@@ -635,12 +670,83 @@ fn no_native_content_retains_inspection_but_keeps_the_old_emission_error() {
     )
     .unwrap_err();
     let error = operation
-        .stage_native(root.path(), &root.path().join("final"))
+        .stage_with_picture_replacements(root.path(), &root.path().join("final"), &[])
         .unwrap_err();
     assert_eq!(error.to_string(), old.to_string());
     assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
 }
 
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn empty_root_link_checks_original_content_and_full_clock_before_staging() {
+    let ticks = crate::schema::TICKS;
+    for (has_layers, partial, emptied_view) in [
+        (false, false, false),
+        (true, false, false),
+        (false, true, false),
+        (true, false, true),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let mut value = crate::test_support::editable_document();
+        if !has_layers {
+            value["composition"]["layers"] = json!([]);
+        }
+        let file = archive(root.path(), &value);
+        if emptied_view {
+            value["composition"]["layers"] = json!([]);
+        }
+        let view =
+            EditableFxCompositionDocument::from_json_slice(&serde_json::to_vec(&value).unwrap())
+                .unwrap();
+        let prepared = Premiere
+            .prepare_export(&file, &view, &Default::default())
+            .unwrap();
+        let picture = AfterEffectsPicture {
+            composition_guid: "00000001-0000-0000-0000-000000000000".into(),
+            relative_path: "media/ae-0001/compositions.aep".into(),
+            dimensions: [1920, 1080],
+            frame_rate: FrameRate::Fps30,
+            intrinsic_duration_ticks: ticks,
+            timeline_ticks: 0..if partial { ticks / 2 } else { ticks },
+            source_ticks: 0..if partial { ticks / 2 } else { ticks },
+            enabled: true,
+        };
+        let output = root.path().join("output");
+        let result = prepared.stage_empty_root_with_after_effects(root.path(), &output, &picture);
+        if has_layers || partial {
+            let error = result.unwrap_err();
+            assert!(error.is_unsupported());
+            let error = error.to_string();
+            assert!(
+                error.contains(if has_layers {
+                    "originally empty"
+                } else {
+                    "full source and sequence clocks"
+                }),
+                "{error}"
+            );
+        } else {
+            let stage = result.unwrap();
+            assert_eq!(
+                stage.report().artifacts.len(),
+                1,
+                "unused source media is not copied"
+            );
+            assert_eq!(
+                stage.after_effects_paths(),
+                [PathBuf::from("media/ae-0001/compositions.aep")]
+            );
+        }
+        assert!(!output.exists());
+        assert_eq!(
+            fs::read_dir(root.path()).unwrap().count(),
+            1,
+            "private staging cleaned"
+        );
+    }
+}
+
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn writer_rejection_cleans_private_staging() {
     let root = tempfile::tempdir().unwrap();
@@ -652,12 +758,13 @@ fn writer_rejection_cleans_private_staging() {
         .unwrap();
     assert!(operation.losses().has_native_content);
     let error = operation
-        .stage_native(root.path(), &root.path().join("final"))
+        .stage_with_picture_replacements(root.path(), &root.path().join("final"), &[])
         .unwrap_err();
     assert!(error.to_string().contains("sequence name"), "{error}");
     assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn destination_collision_keeps_user_files_and_does_not_reprepare() {
     let root = tempfile::tempdir().unwrap();
@@ -669,12 +776,15 @@ fn destination_collision_keeps_user_files_and_does_not_reprepare() {
     let output = root.path().join("final");
     fs::create_dir(&output).unwrap();
     fs::write(output.join("user"), b"keep").unwrap();
-    assert!(operation.stage_native(root.path(), &output).is_err());
+    assert!(operation
+        .stage_with_picture_replacements(root.path(), &output, &[])
+        .is_err());
     assert_eq!(calls(), count);
     assert_eq!(fs::read(output.join("user")).unwrap(), b"keep");
     assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn changed_media_payload_cannot_supply_staged_native_media() {
     let root = tempfile::tempdir().unwrap();
@@ -696,11 +806,12 @@ fn changed_media_payload_cannot_supply_staged_native_media() {
     bytes[start + media.len() / 2] ^= 1;
     fs::write(source, bytes).unwrap();
     assert!(operation
-        .stage_native(root.path(), &root.path().join("final"))
+        .stage_with_picture_replacements(root.path(), &root.path().join("final"), &[])
         .is_err());
     assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn ordinary_check_and_write_each_prepare_once_with_legacy_diagnostics() {
     let root = tempfile::tempdir().unwrap();
@@ -765,6 +876,7 @@ fn ordinary_check_and_write_each_prepare_once_with_legacy_diagnostics() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn supplied_view_not_archive_document_is_retained_and_emitted() {
     let root = tempfile::tempdir().unwrap();
@@ -783,7 +895,7 @@ fn supplied_view_not_archive_document_is_retained_and_emitted() {
         .unwrap();
     assert!(std::ptr::eq(operation.original_document(), &view));
     let staged = operation
-        .stage_native(root.path(), &root.path().join("final"))
+        .stage_with_picture_replacements(root.path(), &root.path().join("final"), &[])
         .unwrap();
     let native = read_native(&staged.directory().join("project.prproj"));
     assert_eq!(native.single_sequence().unwrap().name, "Caller view");

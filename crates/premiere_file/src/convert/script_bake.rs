@@ -352,7 +352,7 @@ thread_local! {
     pub(crate) static PREPARATION_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "ffmpeg-library"))]
 fn bake<'a>(
     document: &'a EditableFxCompositionDocument,
     omissions: &mut dyn OmissionSink,

@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 
 use fx_schema::{
     Dimensions, ImageSource, Layer, LayerData, LayerId, MediaFit, MediaPlacement, PositiveRect,
-    RectBounds, animator::AnimationGraphEntry,
+    RectBounds,
 };
 
 use crate::{
@@ -63,7 +63,7 @@ pub(super) struct TakeoverPlan {
 pub(super) fn lower_image_takeover(
     layer: &Layer,
     source: &media::ResolvedMediaSource,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     canvas: Dimensions,
     duration: Duration24,
     composition_end_millis: i64,
@@ -205,7 +205,7 @@ pub(super) fn lower_image_takeover(
         position: pan.clone(),
         ..TransformAnimations::default()
     };
-    media::validate_native(&footage, duration)
+    media::validate_native(&footage)
         .map_err(|_| invalid("native footage validation rejected the takeover image"))?;
 
     let mut composition_record = CompositionRecord::empty_ae26(width, viewport_height, duration)?;

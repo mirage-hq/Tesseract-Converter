@@ -1,4 +1,6 @@
 mod collected;
+#[cfg(not(windows))]
+mod native_relative_foreign;
 mod psd;
 
 use std::{fs, io, path::Path};

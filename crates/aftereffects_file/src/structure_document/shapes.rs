@@ -7,7 +7,7 @@ pub(crate) mod gradient;
 pub(super) mod path;
 mod rectangle_animation;
 
-mod bindings;
+pub(super) mod bindings;
 mod blend;
 mod budget;
 pub(super) use budget::OutputBudget;
@@ -37,6 +37,9 @@ use fx_schema::{
 };
 
 use crate::{
+    expression_samples::{
+        EvaluatedProperty, ExpressionSamples, PropertyIdentity, ShapePathSegment,
+    },
     properties::{NumericProperty, PropertyError, read_numeric, root_runs, runs, unique_list},
     rifx::Chunk,
     structure::{Composition, Layer, ProjectItem},
@@ -46,6 +49,48 @@ use super::{
     animation::{NumericAnimationClock, NumericAnimationTarget, numeric_entries},
     animation_budget::AnimationBudget,
 };
+
+/// Resolve a native Shape leaf identity without confusing omitted named
+/// defaults with indexed Contents occurrences. Indices follow the expression
+/// model: the Adobe-captured Scale family, otherwise the native one-based
+/// position. No pointer is dereferenced: the returned resident slice is an
+/// occurrence-local lookup key for this import.
+fn resolve_shape_run<'a>(layer: &'a Layer, path: &[ShapePathSegment]) -> Option<&'a [Chunk]> {
+    let first = path.first()?;
+    if first.index != 2 || first.match_name != "ADBE Root Vectors Group" || path.len() > 64 {
+        return None;
+    }
+    let root = root_runs(&layer.content).ok()?;
+    let matches = root
+        .iter()
+        .filter(|(name, _)| *name == first.match_name)
+        .collect::<Vec<_>>();
+    let [(_, first_run)] = matches.as_slice() else {
+        return None;
+    };
+    let mut run = *first_run;
+    let mut parent = first.match_name.as_str();
+    for segment in &path[1..] {
+        let group = unique_list(run, *b"tdgp").ok()?;
+        let children = runs(group).ok()?;
+        let matches = children
+            .iter()
+            .enumerate()
+            .filter(|(ordinal, (name, _))| {
+                *name == segment.match_name
+                    && crate::properties::shape_scale_index(parent, name, *ordinal)
+                        .or_else(|| u32::try_from(ordinal + 1).ok())
+                        == Some(segment.index)
+            })
+            .collect::<Vec<_>>();
+        let [(_, (_, child))] = matches.as_slice() else {
+            return None;
+        };
+        run = child;
+        parent = &segment.match_name;
+    }
+    Some(run)
+}
 
 #[derive(Clone, Default)]
 struct Decorations {
@@ -63,6 +108,7 @@ pub(super) struct ShapeImport {
     /// Whether a committed caption lowered the layer's `Fade In+Out - frames`
     /// preset onto its paint Group, so the occurrence owner must not.
     pub(super) frame_fade_lowered: bool,
+    pub(super) mapped_expressions: Vec<PropertyIdentity>,
 }
 
 struct Collector<'a> {
@@ -73,6 +119,9 @@ struct Collector<'a> {
     warnings: Vec<String>,
     /// Set only after a caption output with its paint-Group fade commits.
     frame_fade_lowered: bool,
+    evaluated_shapes: HashMap<usize, EvaluatedProperty>,
+    /// Lowered expression identities with every FX target they must keep.
+    mapped_expressions: Vec<(PropertyIdentity, Vec<(LayerId, PropType)>)>,
 }
 
 #[cfg(test)]
@@ -94,12 +143,14 @@ pub(super) fn import(
         next_id,
         budget,
         animation_budget,
+        None,
     )
 }
 
+#[cfg(test)]
 #[allow(
     clippy::too_many_arguments,
-    reason = "Native source lookup is separate from destination and output budgets"
+    reason = "Preserve the existing native fixture entry point"
 )]
 pub(super) fn import_with_composition<'items>(
     layer: &Layer,
@@ -122,6 +173,37 @@ pub(super) fn import_with_composition<'items>(
         next_id,
         budget,
         animation_budget,
+        None,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Occurrence-local expression samples are separate from native controls and budgets"
+)]
+pub(super) fn import_with_evaluations<'items>(
+    layer: &Layer,
+    composition: &Composition,
+    evaluations: (u32, &ExpressionSamples),
+    source_items: &'items HashMap<u32, &'items ProjectItem>,
+    includes_occurrence_pipeline: bool,
+    occurrence: &fx_schema::GroupLayer,
+    remaining_group_depth: usize,
+    next_id: &mut u64,
+    budget: &mut OutputBudget,
+    animation_budget: &mut AnimationBudget,
+) -> Result<ShapeImport, serde_json::Error> {
+    import_with_control_context(
+        layer,
+        Some((layer, composition)),
+        Some(source_items),
+        includes_occurrence_pipeline,
+        occurrence,
+        remaining_group_depth,
+        next_id,
+        budget,
+        animation_budget,
+        Some(evaluations),
     )
 }
 
@@ -139,7 +221,38 @@ fn import_with_control_context<'items>(
     next_id: &mut u64,
     budget: &mut OutputBudget,
     animation_budget: &mut AnimationBudget,
+    evaluations: Option<(u32, &ExpressionSamples)>,
 ) -> Result<ShapeImport, serde_json::Error> {
+    let mut clock_warnings = Vec::new();
+    let evaluated_shapes = evaluations
+        .into_iter()
+        .flat_map(|(comp_id, samples)| {
+            samples.properties().iter().filter(move |sample| {
+                sample.composition_id() == comp_id && sample.layer_id() == layer.record.id()
+            })
+        })
+        .filter_map(|sample| {
+            let PropertyIdentity::Shape { path } = sample.property() else {
+                return None;
+            };
+            let run = resolve_shape_run(layer, path)?;
+            // Shape contents use the layer's local clock; samples use the parent's.
+            match super::animation::rebased_samples(
+                sample,
+                layer,
+                NumericAnimationClock::source_local(),
+            ) {
+                Ok(rebased) => Some((run.as_ptr() as usize, rebased)),
+                Err(error) => {
+                    clock_warnings.push(format!(
+                        "{:?}: {error}; expression samples not lowered",
+                        sample.property()
+                    ));
+                    None
+                }
+            }
+        })
+        .collect();
     let mut collector = Collector {
         includes_occurrence_pipeline,
         next_id,
@@ -147,7 +260,10 @@ fn import_with_control_context<'items>(
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes,
+        mapped_expressions: Vec::new(),
     };
+    collector.warnings.append(&mut clock_warnings);
     let roots = match root_runs(&layer.content) {
         Ok(roots) => roots,
         Err(error) => {
@@ -156,6 +272,7 @@ fn import_with_control_context<'items>(
                 animations: Vec::new(),
                 warnings: vec![format!("shape property root ignored: {error}")],
                 frame_fade_lowered: false,
+                mapped_expressions: Vec::new(),
             });
         }
     };
@@ -183,11 +300,28 @@ fn import_with_control_context<'items>(
             source_items,
         )?);
     }
+    // Lowering can roll back an entire generated group after fitting its tracks.
+    // Only retained X/Y entries count as consumed capture identities.
+    let mapped_expressions = collector
+        .mapped_expressions
+        .into_iter()
+        .filter(|(_, kept)| {
+            kept.iter().all(|(id, kind)| {
+                collector.animations.iter().any(|entry| {
+                    entry.target.as_property().is_some_and(|target| {
+                        target.layer_id() == *id && target.property_type() == *kind
+                    })
+                })
+            })
+        })
+        .map(|(identity, _)| identity)
+        .collect();
     Ok(ShapeImport {
         layers,
         animations: collector.animations,
         warnings: collector.warnings,
         frame_fade_lowered: collector.frame_fade_lowered,
+        mapped_expressions,
     })
 }
 
@@ -426,8 +560,49 @@ impl Collector<'_> {
                     )
                 })
                 .collect();
-            self.add_numeric(name, &numeric, &targets);
+            self.add_leaf_numeric(&leaves, name, &numeric, &targets);
         }
+    }
+
+    /// Lower converter/Adobe expression samples of this exact native leaf onto
+    /// the same editable targets ordinary keyed import uses; otherwise import
+    /// its native keys. A partially lowered target set falls back atomically.
+    fn add_leaf_numeric(
+        &mut self,
+        leaves: &[(&str, &[Chunk])],
+        name: &str,
+        numeric: &NumericProperty,
+        targets: &[NumericAnimationTarget],
+    ) {
+        let samples = leaves
+            .iter()
+            .find(|(leaf_name, _)| *leaf_name == name)
+            .and_then(|(_, run)| self.evaluated_shapes.get(&(run.as_ptr() as usize)))
+            .cloned();
+        let Some(samples) = samples else {
+            self.add_numeric(name, numeric, targets);
+            return;
+        };
+        let (entries, warnings) = super::animation::evaluated_numeric_entries(
+            name,
+            &samples,
+            targets,
+            &[],
+            self.animation_budget,
+        );
+        if entries.len() == targets.len() {
+            let kept = targets
+                .iter()
+                .filter_map(|target| target.property_target().as_property())
+                .map(|target| (target.layer_id(), target.property_type()))
+                .collect();
+            self.mapped_expressions
+                .push((samples.property().clone(), kept));
+            self.animations.extend(entries);
+        } else {
+            self.add_numeric(name, numeric, targets);
+        }
+        self.warnings.extend(warnings);
     }
 
     fn add_source_entries(
@@ -533,15 +708,16 @@ impl Collector<'_> {
                     "{property_name}: Slider control lowered to independent editable values/keys; controller edit linkage is not retained"
                 ));
             }
-            self.add_numeric(
-                property_name,
-                &numeric,
-                &[NumericAnimationTarget::vector2(
-                    PropertyTarget::layer(target_id, *property),
-                    *components,
-                    *scale,
-                )],
-            );
+            let target = [NumericAnimationTarget::vector2(
+                PropertyTarget::layer(target_id, *property),
+                *components,
+                *scale,
+            )];
+            if linked {
+                self.add_numeric(property_name, &numeric, &target);
+            } else {
+                self.add_leaf_numeric(&leaves, property_name, &numeric, &target);
+            }
         }
         if name == "ADBE Vector Shape - Star" {
             let scalar_mappings = [
@@ -575,7 +751,8 @@ impl Collector<'_> {
                 {
                     self.warnings.push("Star/Polygon point counts are floored to integers after clamping to 3..1000 when generating outlines; fractional values, including between keys, are approximated. Authored values and keyframes remain editable".into());
                 }
-                self.add_numeric(
+                self.add_leaf_numeric(
+                    &leaves,
                     property_name,
                     &numeric,
                     &[NumericAnimationTarget::float(
@@ -630,8 +807,22 @@ impl Collector<'_> {
         control_context: Option<(&Layer, &Composition)>,
     ) -> Decorations {
         let mut result = decorations(entries, &mut self.warnings);
+        let mut fill_index = 0;
         let mut stroke_index = 0;
         for (name, run) in entries {
+            if *name == "ADBE Vector Graphic - Fill" {
+                if let Ok(fill) = self.solid_fill(run, control_context)
+                    && let Some(destination) = result.fills.get_mut(fill_index)
+                {
+                    destination.paint = fill.paint;
+                    fill_index += 1;
+                }
+                continue;
+            }
+            if *name == "ADBE Vector Graphic - G-Fill" {
+                fill_index += decorations(&[(*name, *run)], &mut Vec::new()).fills.len();
+                continue;
+            }
             if !matches!(
                 *name,
                 "ADBE Vector Graphic - Stroke" | "ADBE Vector Graphic - G-Stroke"
@@ -641,6 +832,17 @@ impl Collector<'_> {
             let count = decorations(&[(*name, *run)], &mut Vec::new()).strokes.len();
             if count == 0 {
                 continue;
+            }
+            if *name == "ADBE Vector Graphic - Stroke" {
+                match self.static_color_alias(run, "ADBE Vector Stroke Color", control_context) {
+                    Ok(Some(color)) => {
+                        if let Some(stroke) = result.strokes.get_mut(stroke_index) {
+                            stroke.paint = ShapePaint::Solid { color };
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => self.warnings.push(error),
+                }
             }
             if let Ok(Some((numeric, true))) =
                 self.shape_control_numeric(run, "ADBE Vector Stroke Width", control_context, false)
@@ -652,6 +854,57 @@ impl Collector<'_> {
             stroke_index += count;
         }
         result
+    }
+
+    fn solid_fill(
+        &mut self,
+        run: &[Chunk],
+        control_context: Option<(&Layer, &Composition)>,
+    ) -> Result<ShapeFillStyle, String> {
+        let mut fill = solid_fill(run)?;
+        if let Some(color) =
+            self.static_color_alias(run, "ADBE Vector Fill Color", control_context)?
+        {
+            fill.paint = ShapePaint::Solid { color };
+        }
+        Ok(fill)
+    }
+
+    fn static_color_alias(
+        &mut self,
+        run: &[Chunk],
+        property_name: &str,
+        control_context: Option<(&Layer, &Composition)>,
+    ) -> Result<Option<[f64; 4]>, String> {
+        let leaves = property_group(run, "paint")?;
+        let Some(numeric) = numeric_leaf(&leaves, property_name, &mut self.warnings) else {
+            return Ok(None);
+        };
+        if !numeric.expression_enabled {
+            return Ok(None);
+        }
+        let resolved = (|| {
+            let (_, composition) =
+                control_context.ok_or(PropertyError::Layout("Color Control scope missing"))?;
+            let property = super::control_links::unique_run(&leaves, property_name)?;
+            super::control_links::lower_static_color_control(
+                unique_list(property, *b"tdbs")?,
+                composition,
+                None,
+            )
+        })();
+        match resolved {
+            Ok(color) => {
+                self.warnings.push(format!("{property_name}: complete static sibling Color Control alias copied into editable paint; live controller linkage is lost"));
+                Ok(Some(color))
+            }
+            Err(error) => {
+                self.warnings.push(format!(
+                    "{property_name}: unsupported expression retained at authored color: {error}"
+                ));
+                Ok(None)
+            }
+        }
     }
 
     fn add_scope_entries(
@@ -969,15 +1222,16 @@ impl Collector<'_> {
             ));
         }
         for target_id in targets {
-            self.add_numeric(
-                name,
-                &numeric,
-                &[NumericAnimationTarget::float(
-                    PropertyTarget::layer(*target_id, property),
-                    0,
-                    scale,
-                )],
-            );
+            let target = [NumericAnimationTarget::float(
+                PropertyTarget::layer(*target_id, property),
+                0,
+                scale,
+            )];
+            if linked {
+                self.add_numeric(name, &numeric, &target);
+            } else {
+                self.add_leaf_numeric(leaves, name, &numeric, &target);
+            }
         }
     }
 
@@ -993,7 +1247,8 @@ impl Collector<'_> {
             return;
         };
         for target_id in targets {
-            self.add_numeric(
+            self.add_leaf_numeric(
+                leaves,
                 name,
                 &numeric,
                 &[NumericAnimationTarget::float(
@@ -1788,6 +2043,7 @@ fn collect_shape_target_ids(layers: &[FxLayer], output: &mut Vec<LayerId>) {
 
 #[cfg(test)]
 mod tests {
+    mod stroke_color;
     use super::*;
     use crate::structure::{ItemKind, read_project};
     use fx_schema::PropertyValue;
@@ -1803,6 +2059,8 @@ mod tests {
             animations: Vec::new(),
             warnings: Vec::new(),
             frame_fade_lowered: false,
+            evaluated_shapes: Default::default(),
+            mapped_expressions: Vec::new(),
         };
         assert!(collector.allocate().is_some());
         assert!(collector.allocate().is_none());
@@ -1877,6 +2135,8 @@ mod tests {
             animations: Vec::new(),
             warnings: Vec::new(),
             frame_fade_lowered: false,
+            evaluated_shapes: Default::default(),
+            mapped_expressions: Vec::new(),
         };
         let source_items: HashMap<u32, &ProjectItem> =
             project.items.iter().map(|item| (item.id, item)).collect();
@@ -2002,6 +2262,598 @@ mod tests {
                 .children_mut()
                 .is_some_and(|children| replace_property(children, target, replacement.clone()))
         })
+    }
+
+    fn test_color(values: [f64; 4], expression: &str) -> Chunk {
+        let mut property = test_numeric(&values, expression);
+        let meta = property
+            .children_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|chunk| chunk.id() == *b"tdb4")
+            .unwrap();
+        let mut bytes = meta.data_payload().unwrap().to_vec();
+        bytes[59] = 1;
+        *meta = test_data(b"tdb4", bytes);
+        property
+    }
+
+    fn color_alias_probe(expression: &str, source_expression: &str) -> (Composition, Layer) {
+        let (mut composition, mut owner) = probe_rectangle();
+        // Supplementary minimal native chunks; the licensed original source is
+        // tested separately and is not replaced by this synthetic route probe.
+        owner.content = vec![test_list(
+            b"tdgp",
+            vec![
+                test_match_name("ADBE Root Vectors Group"),
+                test_list(
+                    b"tdgp",
+                    vec![
+                        test_match_name("ADBE Vector Shape - Rect"),
+                        test_list(
+                            b"tdgp",
+                            vec![
+                                test_match_name("ADBE Vector Rect Size"),
+                                test_numeric(&[1920.0, 1080.0], ""),
+                            ],
+                        ),
+                        test_match_name("ADBE Vector Graphic - Fill"),
+                        test_list(
+                            b"tdgp",
+                            vec![
+                                test_match_name("ADBE Vector Fill Color"),
+                                test_color([255.0, 255.0, 0.0, 0.0], expression),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )];
+        let mut controller = owner.clone();
+        controller.name = "Color Controller".into();
+        controller.content = vec![test_list(
+            b"tdgp",
+            vec![
+                test_match_name("ADBE Effect Parade"),
+                test_list(
+                    b"tdgp",
+                    vec![
+                        test_match_name("ADBE Color Control"),
+                        test_list(
+                            b"sspc",
+                            vec![test_list(
+                                b"tdgp",
+                                vec![
+                                    test_name("Background"),
+                                    test_match_name("ADBE Color Control-0001"),
+                                    test_color([255.0, 0.0, 0.0, 0.0], source_expression),
+                                ],
+                            )],
+                        ),
+                    ],
+                ),
+            ],
+        )];
+        composition.layers = vec![controller];
+        (composition, owner)
+    }
+
+    #[test]
+    fn static_sibling_color_control_alias_keeps_editable_rect_fill() {
+        let (composition, owner) = color_alias_probe(
+            "thisComp.layer(\"Color Controller\").effect(\"Background\")(\"Color\")",
+            "",
+        );
+        let imported = import_owner(&owner, &composition);
+        assert_eq!(
+            imported_rect(&imported.layers).unwrap().rect.fill_color,
+            [0.0, 0.0, 0.0, 1.0]
+        );
+        assert!(
+            imported
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("live controller linkage is lost"))
+        );
+        assert!(
+            imported.animations.is_empty(),
+            "a static alias must not create animation or scripts"
+        );
+    }
+
+    #[test]
+    fn numeric_color_control_index_one_keeps_editable_rect_fill() {
+        let indexed = "thisComp.layer(\"Color Controller\").effect(\"Background\")(1)";
+        let (composition, owner) = color_alias_probe(indexed, "");
+        let imported = import_owner(&owner, &composition);
+        assert_eq!(
+            imported_rect(&imported.layers).unwrap().rect.fill_color,
+            [0.0, 0.0, 0.0, 1.0]
+        );
+        assert!(imported.animations.is_empty());
+
+        for selector in ["0", "2", "1.0", "1 + 0", "\"1\""] {
+            let expression = indexed.replace("(1)", &format!("({selector})"));
+            let (composition, owner) = color_alias_probe(&expression, "");
+            let imported = import_owner(&owner, &composition);
+            assert_eq!(
+                imported_rect(&imported.layers).unwrap().rect.fill_color,
+                [1.0, 0.0, 0.0, 1.0]
+            );
+        }
+    }
+
+    fn pseudo_color_alias_probe(source_expression: &str) -> (Composition, Layer) {
+        let (mut composition, owner) = color_alias_probe(
+            "thisComp.layer(\"Color Controller\").effect(\"Background\")(\"Texts Color\")",
+            "",
+        );
+        let mut color = test_color([255.0, 0.0, 0.0, 0.0], source_expression);
+        color
+            .children_mut()
+            .unwrap()
+            .insert(0, test_name("Texts Color"));
+        composition.layers[0].content = vec![test_list(
+            b"tdgp",
+            vec![
+                test_match_name("ADBE Effect Parade"),
+                test_list(
+                    b"tdgp",
+                    vec![
+                        test_match_name("Pseudo/NX291ee23e92k"),
+                        test_list(
+                            b"sspc",
+                            vec![test_list(
+                                b"tdgp",
+                                vec![
+                                    test_name("Background"),
+                                    test_match_name("Pseudo/NX291ee23e92k-0001"),
+                                    color,
+                                    test_match_name("ADBE Effect Built In Params"),
+                                    test_list(b"tdgp", Vec::new()),
+                                ],
+                            )],
+                        ),
+                    ],
+                ),
+            ],
+        )];
+        (composition, owner)
+    }
+
+    #[test]
+    fn static_pseudo_color_alias_keeps_editable_rect_fill() {
+        let (composition, owner) = pseudo_color_alias_probe("");
+        let imported = import_owner(&owner, &composition);
+        assert_eq!(
+            imported_rect(&imported.layers).unwrap().rect.fill_color,
+            [0.0, 0.0, 0.0, 1.0]
+        );
+        assert!(imported.animations.is_empty());
+        assert!(
+            imported
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("live controller linkage is lost"))
+        );
+    }
+
+    #[test]
+    fn ambiguous_or_non_color_pseudo_alias_keeps_authored_fill() {
+        for duplicate in [false, true] {
+            let (mut composition, owner) = pseudo_color_alias_probe("");
+            let root = composition.layers[0].content[0].children_mut().unwrap();
+            let parade = root[1].children_mut().unwrap();
+            let plugin = parade[1].children_mut().unwrap();
+            let body = plugin[0].children_mut().unwrap();
+            if duplicate {
+                let color = body[2].clone();
+                body.push(test_match_name("Pseudo/NX291ee23e92k-0002"));
+                body.push(color);
+            } else {
+                let storage = body[2].children_mut().unwrap();
+                let meta = storage
+                    .iter_mut()
+                    .find(|chunk| chunk.id() == *b"tdb4")
+                    .unwrap();
+                let mut bytes = meta.data_payload().unwrap().to_vec();
+                bytes[59] = 0;
+                *meta = test_data(b"tdb4", bytes);
+            }
+            let imported = import_owner(&owner, &composition);
+            assert_eq!(
+                imported_rect(&imported.layers).unwrap().rect.fill_color,
+                [1.0, 0.0, 0.0, 1.0]
+            );
+            assert!(
+                imported
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.contains(if duplicate {
+                        "ambiguous pseudo Color Control parameter"
+                    } else {
+                        "native color storage"
+                    }))
+            );
+        }
+    }
+
+    #[test]
+    fn expression_backed_pseudo_color_alias_keeps_authored_fill() {
+        let (composition, owner) = pseudo_color_alias_probe("value * 0.5");
+        let imported = import_owner(&owner, &composition);
+        assert_eq!(
+            imported_rect(&imported.layers).unwrap().rect.fill_color,
+            [1.0, 0.0, 0.0, 1.0]
+        );
+        assert!(
+            imported
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("static and expression-free"))
+        );
+    }
+
+    #[test]
+    fn tint_color_alias_uses_occurrence_composition_without_changing_named_comp_scope() {
+        use sha2::{Digest, Sha256};
+
+        // Supplementary occurrence-context regression built on a native probe.
+        // The pinned Intro source remains separate native-source evidence.
+        let (mut original, mut owner) = color_alias_probe("", "");
+        assert!(replace_property(
+            &mut original.layers[0].content,
+            "ADBE Color Control-0001",
+            test_color([255.0, 0.0, 0.0, 255.0], ""),
+        ));
+        let tint = test_list(
+            b"tdgp",
+            vec![
+                test_match_name("ADBE Tint"),
+                test_list(
+                    b"sspc",
+                    vec![
+                        test_data(b"tdsb", [0, 0, 0, 1]),
+                        test_list(
+                            b"tdgp",
+                            vec![
+                                test_match_name("ADBE Tint-0001"),
+                                test_color([255.0, 255.0, 0.0, 0.0], ""),
+                                test_match_name("ADBE Tint-0002"),
+                                test_color([255.0; 4], ""),
+                                test_match_name("ADBE Tint-0003"),
+                                test_numeric(&[100.0], ""),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        );
+        owner.content[0]
+            .children_mut()
+            .unwrap()
+            .extend([test_match_name("ADBE Effect Parade"), tint]);
+        let mut project = read_project(include_bytes!(
+            "../../tests/fixtures/geometry/geometry_probe.aep"
+        ))
+        .unwrap();
+        let item = project.items.iter_mut().find(|item| item.id == 14).unwrap();
+        item.name = "Original color composition".into();
+        item.kind = ItemKind::Composition(Box::new(original.clone()));
+        let items = project.items.iter().map(|item| (item.id, item)).collect();
+        let mut local = original.clone();
+        assert!(replace_property(
+            &mut local.layers[0].content,
+            "ADBE Color Control-0001",
+            test_color([255.0, 0.0, 255.0, 0.0], ""),
+        ));
+        let mut nonopaque = local.clone();
+        assert!(replace_property(
+            &mut nonopaque.layers[0].content,
+            "ADBE Color Control-0001",
+            test_color([127.0, 0.0, 255.0, 0.0], ""),
+        ));
+        let mut expressed = local.clone();
+        assert!(replace_property(
+            &mut expressed.layers[0].content,
+            "ADBE Color Control-0001",
+            test_color([255.0, 0.0, 255.0, 0.0], "[0, 1, 0, 1]"),
+        ));
+        for (composition, scope, expected, rejected) in [
+            (&local, "thisComp", [0.0, 1.0, 0.0], false),
+            (&original, "thisComp", [0.0, 0.0, 1.0], false),
+            (
+                &local,
+                "comp(\"Original color composition\")",
+                [0.0, 0.0, 1.0],
+                false,
+            ),
+            (&nonopaque, "thisComp", [1.0, 0.0, 0.0], true),
+            (&expressed, "thisComp", [1.0, 0.0, 0.0], true),
+        ] {
+            let expression = format!(
+                "{scope}.layer(\"Color Controller\").effect(\"Background\")(\"ADBE Color Control-0001\")"
+            );
+            assert!(replace_property(
+                &mut owner.content,
+                "ADBE Tint-0001",
+                test_color([255.0, 255.0, 0.0, 0.0], &expression),
+            ));
+            let imported = super::super::effects::import_with_context(
+                super::super::effects::ImportContext {
+                    evaluations: &crate::expression_samples::ExpressionSamples::default(),
+                    composition_id: 14,
+                    composition: Some(composition),
+                    items: Some(&items),
+                },
+                &owner,
+                [1920, 1080],
+                [1920, 1080],
+                &mut 10_000,
+                &mut AnimationBudget::default(),
+            );
+            assert_eq!(imported.effects.len(), 1, "{:?}", imported.warnings);
+            let effect = serde_json::to_value(&imported.effects[0]).unwrap();
+            assert_eq!(effect["effect"]["type"], "tintTritone");
+            for (field, value) in ["blackR", "blackG", "blackB"].into_iter().zip(expected) {
+                assert_eq!(
+                    effect["effect"][field], value,
+                    "scope {scope}, expected {expected:?}, effect {effect}, warnings {:?}",
+                    imported.warnings,
+                );
+            }
+            assert_eq!(effect["effect"]["amount"], 100.0);
+            assert!(imported.animations.is_empty());
+
+            // Exercise the actual Converter plumbing, not only ImportContext.
+            // The borrowed project map stays blue while this occurrence is green.
+            let mut occurrence = project.item(14).unwrap().clone();
+            let mut occurrence_comp = composition.clone();
+            occurrence_comp.layers.push(owner.clone());
+            occurrence.kind = ItemKind::Composition(Box::new(occurrence_comp));
+            let samples = crate::expression_samples::ExpressionSamples::default();
+            let mut resolver =
+                |_: &super::super::MediaAssetRequest| super::super::MediaResolution::Unavailable;
+            let mut converter = super::super::Converter {
+                expression_samples: &samples,
+                items: project.items.iter().map(|item| (item.id, item)).collect(),
+                camera_normalizations: Default::default(),
+                diagnostics: Vec::new(),
+                next_id: 10_000,
+                linked: false,
+                asset_namespace: super::super::AssetNamespace::STANDALONE,
+                stack: Vec::new(),
+                visited_compositions: Default::default(),
+                animations: Vec::new(),
+                animation_budget: Default::default(),
+                committed_inline_remap_bytes: 0,
+                unavailable_cutouts: 0,
+                overrides: Vec::new(),
+                media_resolver: &mut resolver,
+                assets: Vec::new(),
+                shape_budget: Default::default(),
+                mapped_shape_expressions: Default::default(),
+                root_progress: fx_conv::Progress::default().phase("alias occurrence", "layers", 0),
+            };
+            let layers = converter
+                .composition_layers(&occurrence, LayerId::from(9_999), 0)
+                .unwrap();
+            fn find_tint(value: &serde_json::Value) -> Option<&serde_json::Value> {
+                match value {
+                    serde_json::Value::Object(fields) => {
+                        if fields.get("type").and_then(serde_json::Value::as_str)
+                            == Some("tintTritone")
+                        {
+                            Some(value)
+                        } else {
+                            fields.values().find_map(find_tint)
+                        }
+                    }
+                    serde_json::Value::Array(values) => values.iter().find_map(find_tint),
+                    _ => None,
+                }
+            }
+            let converted = serde_json::to_value(&layers).unwrap();
+            let tint = find_tint(&converted).expect("Converter retains editable Tint");
+            for (field, value) in ["blackR", "blackG", "blackB"].into_iter().zip(expected) {
+                assert_eq!(tint[field], value, "Converter scope {scope}");
+            }
+            assert_eq!(
+                imported
+                    .warnings
+                    .iter()
+                    .any(|warning| { warning.contains("static Color Control alias not lowered") }),
+                rejected,
+                "{:?}",
+                imported.warnings,
+            );
+        }
+
+        // Synthetic sidecar samples retain precedence over the local alias.
+        let source = include_bytes!("../../tests/fixtures/geometry/geometry_probe.aep");
+        let sidecar = serde_json::json!({
+            "version": 2,
+            "source_sha256": format!("{:x}", Sha256::digest(source)),
+            "sample_interval_ms": 1,
+            "capture_scope": {"mode": "selected_composition", "root_composition_id": 14},
+            "properties": [{
+                "composition_id": 14,
+                "layer_id": owner.record.id(),
+                "property": {"kind": "effect", "index": 1, "match_name": "ADBE Tint-0001"},
+                "start_ms": 0,
+                "sample_times_seconds": [0.0, 0.001],
+                "values": [[1.0, 1.0, 0.0, 1.0], [1.0, 1.0, 0.0, 1.0]],
+            }],
+            "errors": [],
+        });
+        let samples = crate::expression_samples::ExpressionSamples::from_json_for_source(
+            &serde_json::to_vec(&sidecar).unwrap(),
+            source,
+        )
+        .unwrap();
+        let sampled = super::super::effects::import_with_context(
+            super::super::effects::ImportContext {
+                evaluations: &samples,
+                composition_id: 14,
+                composition: Some(&local),
+                items: Some(&items),
+            },
+            &owner,
+            [1920, 1080],
+            [1920, 1080],
+            &mut 10_000,
+            &mut AnimationBudget::default(),
+        );
+        let effect = serde_json::to_value(&sampled.effects[0]).unwrap();
+        // The authored red remains the base value; captured yellow is carried
+        // by editable animation keys, not copied into the static effect fields.
+        assert_eq!(effect["effect"]["blackR"], 1.0);
+        assert_eq!(effect["effect"]["blackG"], 0.0);
+        assert_eq!(effect["effect"]["blackB"], 0.0);
+        let fx_schema::EffectData::Identified { id, .. } = sampled.effects[0].data() else {
+            panic!("imported Tint has an editable effect identity");
+        };
+        for (field, expected) in [("blackR", 1.0), ("blackG", 1.0), ("blackB", 0.0)] {
+            let target = fx_schema::PropertyTarget::effect_param(*id, field);
+            let entry = sampled
+                .animations
+                .iter()
+                .find(|entry| entry.target == target)
+                .expect("captured color has editable channel keys");
+            let track = entry
+                .animator
+                .keyframe_track()
+                .expect("captured color keyframes");
+            assert!(!track.keyframes().is_empty());
+            for key in track.keyframes() {
+                assert_eq!(key.value(), &fx_schema::PropertyValue::Float(expected));
+            }
+        }
+        assert!(
+            !sampled
+                .warnings
+                .iter()
+                .any(|warning| { warning.contains("static Color Control alias copied") })
+        );
+    }
+
+    #[test]
+    fn static_cross_comp_color_control_alias_keeps_editable_effect_fill() {
+        let (source_composition, mut owner) = color_alias_probe("", "");
+        let mut project = read_project(include_bytes!(
+            "../../tests/fixtures/geometry/geometry_probe.aep"
+        ))
+        .unwrap();
+        let mut source = project.item(14).unwrap().clone();
+        source.id = 99_999;
+        source.name = "Color Source".into();
+        source.kind = ItemKind::Composition(Box::new(source_composition));
+        project.items.push(source);
+        let effect = test_list(
+            b"tdgp",
+            vec![
+                test_match_name("ADBE Fill"),
+                test_list(
+                    b"sspc",
+                    vec![
+                        test_data(b"tdsb", [0, 0, 0, 1]),
+                        test_list(
+                            b"tdgp",
+                            vec![
+                                test_match_name("ADBE Fill-0002"),
+                                test_color([255.0, 255.0, 0.0, 0.0], ""),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        );
+        owner
+            .content
+            .iter_mut()
+            .find(|chunk| chunk.list_kind() == Some(*b"tdgp"))
+            .unwrap()
+            .children_mut()
+            .unwrap()
+            .extend([test_match_name("ADBE Effect Parade"), effect]);
+        assert!(replace_property(
+            &mut owner.content,
+            "ADBE Fill-0002",
+            test_color(
+                [255.0, 255.0, 0.0, 0.0],
+                "comp(\"Color Source\").layer(\"Color Controller\").effect(\"Background\")(\"ADBE Color Control-0001\")",
+            )
+        ));
+        let ItemKind::Composition(composition) = &mut project
+            .items
+            .iter_mut()
+            .find(|item| item.id == 14)
+            .unwrap()
+            .kind
+        else {
+            panic!("probe composition")
+        };
+        composition.layers = vec![owner.clone()];
+        let ItemKind::Composition(composition) = &project.item(14).unwrap().kind else {
+            panic!("probe composition")
+        };
+        let items = project.items.iter().map(|item| (item.id, item)).collect();
+        let imported = super::super::effects::import_with_context(
+            super::super::effects::ImportContext {
+                evaluations: &crate::expression_samples::ExpressionSamples::default(),
+                composition_id: 14,
+                composition: Some(composition),
+                items: Some(&items),
+            },
+            &owner,
+            [1920, 1080],
+            [1920, 1080],
+            &mut 10_000,
+            &mut AnimationBudget::default(),
+        );
+        let effect = serde_json::to_value(&imported.effects[0]).unwrap();
+        assert_eq!(effect["effect"]["blackR"], 0.0);
+        assert_eq!(effect["effect"]["blackG"], 0.0);
+        assert_eq!(effect["effect"]["blackB"], 0.0);
+        assert_eq!(effect["effect"]["whiteR"], 0.0);
+        assert!(
+            imported
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("live controller linkage is lost")),
+            "{:?}",
+            imported.warnings
+        );
+        assert!(imported.animations.is_empty());
+    }
+
+    #[test]
+    fn unsupported_sibling_color_control_alias_keeps_authored_fill_and_diagnostic() {
+        let direct = "thisComp.layer(\"Color Controller\").effect(\"Background\")(\"Color\")";
+        for (expression, source_expression, duplicate) in [
+            (format!("{direct} + [1,0,0,0]"), "", false),
+            (direct.into(), "value", false),
+            (direct.into(), "", true),
+        ] {
+            let (mut composition, owner) = color_alias_probe(&expression, source_expression);
+            if duplicate {
+                composition.layers.push(composition.layers[0].clone());
+            }
+            let imported = import_owner(&owner, &composition);
+            assert_eq!(
+                imported_rect(&imported.layers).unwrap().rect.fill_color,
+                [1.0, 0.0, 0.0, 1.0]
+            );
+            assert!(
+                imported
+                    .warnings
+                    .iter()
+                    .any(|warning| warning
+                        .contains("unsupported expression retained at authored color")),
+                "{:?}",
+                imported.warnings
+            );
+        }
     }
 
     /// One Slider Control effect named `label` whose value leaf is `storage`.
@@ -2173,6 +3025,8 @@ mod tests {
             animations: Vec::new(),
             warnings: Vec::new(),
             frame_fade_lowered: false,
+            evaluated_shapes: Default::default(),
+            mapped_expressions: Vec::new(),
         };
         let result = collector.decorations(
             &[
@@ -3231,6 +4085,8 @@ mod tests {
                 animations: Vec::new(),
                 warnings: Vec::new(),
                 frame_fade_lowered: false,
+                evaluated_shapes: Default::default(),
+                mapped_expressions: Vec::new(),
             };
             let lowered = native_rect::lower_with_context(
                 &mut collector,
@@ -3431,6 +4287,8 @@ mod tests {
             animations: Vec::new(),
             warnings: Vec::new(),
             frame_fade_lowered: false,
+            evaluated_shapes: Default::default(),
+            mapped_expressions: Vec::new(),
         };
         collector.add_dash_entries(&malformed_dash, &[LayerId::new(2)]);
 

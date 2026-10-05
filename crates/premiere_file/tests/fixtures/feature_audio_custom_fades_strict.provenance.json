@@ -1,0 +1,87 @@
+{
+  "fixture_sha256": "f9176ad7920d4f3aa333511423e23d3e2c3e94ed555c73786ba64c32efbe68b7",
+  "base_fixture": "feature_audio_transitions_strict.prproj",
+  "native_save_sha256": "356dc9b61f334826d14af12b8b717e1b2f8982139486b35074fbfa71402bdd23",
+  "normalization": "XML serialization, media relocation and private project/cache paths scrubbed; native control fields unchanged",
+  "application": "Premiere Pro 26.5.2",
+  "sequence_uid": "991a9ef8-4b28-4e6f-9815-0d534a178462",
+  "direction": "incoming only",
+  "fade_seconds": 2,
+  "reference_pcm_sha256": "b230ff16b1e31f695a45a082a8a9206b749fb8c0e85dedeaebabe5f4af5d9af6",
+  "reference_duration_seconds": 10,
+  "sample_rate": 48000,
+  "channels": 2,
+  "sample_type": "PCM16",
+  "media_sha256": "8059af68f7e13afb3c8d5e9a7834be80d5cdce6cfb11c291d209bd2848c985b1",
+  "gain_sample_method": "Unshifted 10ms right-channel least-squares windows; no normalization or resampling. Coordinates are window-center transition progress.",
+  "controls": [
+    {
+      "shape": -23,
+      "incoming_gain_samples": [
+        [
+          0.2025,
+          0.010785116692038983
+        ],
+        [
+          0.6025,
+          0.3802123360429702
+        ],
+        [
+          0.7025,
+          0.5767220490171598
+        ]
+      ]
+    },
+    {
+      "shape": -6,
+      "incoming_gain_samples": [
+        [
+          0.2025,
+          0.06168957726299378
+        ],
+        [
+          0.6025,
+          0.5920799891036413
+        ],
+        [
+          0.7025,
+          0.750052518123416
+        ]
+      ]
+    },
+    {
+      "shape": 0,
+      "incoming_gain_samples": [
+        [
+          0.2025,
+          0.0977917107439008
+        ],
+        [
+          0.6025,
+          0.6582516399793735
+        ],
+        [
+          0.7025,
+          0.7970479400098944
+        ]
+      ]
+    },
+    {
+      "shape": 29,
+      "incoming_gain_samples": [
+        [
+          0.2025,
+          0.40762869852284067
+        ],
+        [
+          0.6025,
+          0.8762353401889004
+        ],
+        [
+          0.7025,
+          0.9337746055019718
+        ]
+      ]
+    }
+  ]
+}

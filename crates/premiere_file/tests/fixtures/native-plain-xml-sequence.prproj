@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PremiereData Version="3">
+	<Sequence ObjectUID="5944a579-ddf0-4cd0-a38a-aab6bf1f2819" ClassID="6a15d903-8739-11d5-af2d-9b7855ad8974" Version="11" Index="4294967295">
+		<PreviewFormatIdentifier>6a510242-df6d-116c-cf28-fb6e000000f2</PreviewFormatIdentifier>
+		<TrackGroups Version="1">
+			<TrackGroup Version="1" Index="0">
+				<Second ObjectRef="7"/>
+				<First>228cda18-3625-4d2d-951e-348879e4ed93</First>
+			</TrackGroup>
+			<TrackGroup Version="1" Index="1">
+				<Second ObjectRef="11"/>
+				<First>80b8e3d5-6dca-4195-aefb-cb5f407ab009</First>
+			</TrackGroup>
+		</TrackGroups>
+		<PersistentGroupContainer Version="1">
+			<LinkContainer Version="1">
+			</LinkContainer>
+		</PersistentGroupContainer>
+		<MarkerOwner Version="1">
+			<Markers ObjectRef="5"/>
+		</MarkerOwner>
+		<DVDMarkerOwner Version="1">
+			<DVDMarkers ObjectRef="6"/>
+		</DVDMarkerOwner>
+		<Node Version="1">
+			<Properties Version="1">
+				<TL.SQAudioVisibleBase>0</TL.SQAudioVisibleBase>
+				<TL.SQVideoVisibleBase>0</TL.SQVideoVisibleBase>
+				<TL.SQVisibleBaseTime>0</TL.SQVisibleBaseTime>
+				<TL.SQTimePerPixel>0.483091787439613510000000</TL.SQTimePerPixel>
+				<TL.SQAVDividerPosition>0.500000000000</TL.SQAVDividerPosition>
+				<TL.SQHideShyTracks>0</TL.SQHideShyTracks>
+				<TL.SQHeaderWidth>164</TL.SQHeaderWidth>
+				<MZ.Sequence.PreviewFrameSizeHeight>480</MZ.Sequence.PreviewFrameSizeHeight>
+				<MZ.Sequence.PreviewFrameSizeWidth>720</MZ.Sequence.PreviewFrameSizeWidth>
+				<MZ.Sequence.AudioTimeDisplayFormat>200</MZ.Sequence.AudioTimeDisplayFormat>
+				<MZ.Sequence.VideoTimeDisplayFormat>104</MZ.Sequence.VideoTimeDisplayFormat>
+				<MZ.Sequence.PreviewRenderingClassID>1061109567</MZ.Sequence.PreviewRenderingClassID>
+				<MZ.Sequence.PreviewRenderingPresetCodec>1129730893</MZ.Sequence.PreviewRenderingPresetCodec>
+				<MZ.Sequence.PreviewRenderingPresetPath>EncoderPresets\SequencePreview\9678af98-a7b7-4bdb-b477-7ac9c8df4a4e\Microsoft AVI.epr</MZ.Sequence.PreviewRenderingPresetPath>
+				<MZ.Sequence.PreviewUseMaxRenderQuality>false</MZ.Sequence.PreviewUseMaxRenderQuality>
+				<MZ.Sequence.PreviewUseMaxBitDepth>false</MZ.Sequence.PreviewUseMaxBitDepth>
+				<MZ.Sequence.EditingModeGUID>9678af98-a7b7-4bdb-b477-7ac9c8df4a4e</MZ.Sequence.EditingModeGUID>
+				<MZ.WorkOutPoint>15240960000000</MZ.WorkOutPoint>
+				<MZ.WorkInPoint>0</MZ.WorkInPoint>
+			</Properties>
+		</Node>
+		<ID>1</ID>
+		<Name>Sequence 01</Name>
+	</Sequence>
+</PremiereData>

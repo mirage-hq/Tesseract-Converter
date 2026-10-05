@@ -34,6 +34,10 @@ input_record!(AudioTrackGroup, records::AUDIO_TRACK_GROUP);
 input_record!(AudioClipTrack, records::AUDIO_CLIP_TRACK);
 input_record!(AudioMixTrack, records::AUDIO_MIX_TRACK);
 input_record!(AudioClipTrackItem, records::AUDIO_CLIP_TRACK_ITEM);
+input_record!(
+    AudioTransitionTrackItem,
+    records::AUDIO_TRANSITION_TRACK_ITEM
+);
 input_record!(AudioClip, records::AUDIO_CLIP);
 input_record!(AudioMediaSource, records::AUDIO_MEDIA_SOURCE);
 input_record!(AudioStream, records::AUDIO_STREAM);

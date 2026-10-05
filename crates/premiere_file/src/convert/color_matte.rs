@@ -12,21 +12,25 @@ use super::{
     background::identity_transform,
     graphic::{export_object, unexported_gradient, ObjectLayer},
     nested::LayerExport,
+    premiere_to_tesseract::{crop_rect, guide_layer, guide_mask},
+    tesseract_to_premiere::{canonical_matte_source, unplaced_track_matte},
 };
 use crate::{
     approximate,
     error::{ensure, unsupported, Result},
     export_loss::OmissionSink,
     format::{MediaId, PrMedia, PrSequence, PrVideoItem, PrVideoOccurrence},
+    omit,
     schema::{
         color_matte::{COLOR_MATTE_INTRINSIC_TICKS, COLOR_MATTE_NAME},
-        PrBlendMode, PrColorMatte, PrMediaKind,
+        PrBlendMode, PrColorMatte, PrMediaKind, PrStaticCrop,
     },
+    OmissionScope,
 };
 use fx_schema::{
-    BlendMode, LayerId, Position, RectLayer, RectShape, ShapeContent, ShapeFillStyle,
-    ShapeGradientType, ShapeLayer, ShapePaint, ShapePath, ShapePathCommand, ShapeStrokeStyle,
-    TimeRangeProperty, Transform,
+    BlendMode, FxItemId, Layer, LayerId, Position, RectLayer, RectShape, ShapeContent,
+    ShapeFillStyle, ShapeGradientType, ShapeLayer, ShapePaint, ShapePath, ShapePathCommand,
+    ShapeStrokeStyle, TimeRangeProperty, Transform,
 };
 use std::collections::BTreeSet;
 
@@ -53,9 +57,9 @@ fn neutral_transforms(width: u32, height: u32) -> [Transform; 2] {
     [identity_transform(), centered]
 }
 
-/// Build an editable rectangle for one matte occurrence's timeline range. The
-/// reader admits only mattes without keys or edited static values other than
-/// Opacity, which the caller sets on the rectangle's transform. A head Cross
+/// Build the neutral filled owner for one matte occurrence's timeline range.
+/// The caller sets its static Opacity and binds any admitted sharp Crop.
+/// A head Cross
 /// Dissolve (Legacy) on the matte later keys that Opacity up from zero
 /// (`import_transitions`).
 pub(super) fn rect_layer(
@@ -83,6 +87,31 @@ pub(super) fn rect_layer(
     }
 }
 
+/// Bind a validated sharp Crop before the matte's Opacity. The neutral sibling
+/// guide stays opaque and nonpainting even when its filled owner is disabled.
+pub(super) fn bind_sharp_crop(
+    owner: &mut RectLayer,
+    crop: &PrStaticCrop,
+    canvas: [u32; 2],
+    guide_id: LayerId,
+    mask_id: FxItemId,
+) -> Result<RectLayer> {
+    ensure!(
+        crop.edge_feather == 0.0,
+        "Color Matte Crop must have zero feather"
+    );
+    let guide = guide_layer(
+        guide_id,
+        format!("{} Crop guide", owner.name),
+        owner.parent,
+        owner.active_range,
+        identity_transform(),
+        crop_rect(crop, canvas),
+    );
+    owner.masks.push(guide_mask(mask_id, guide_id, 0.0));
+    Ok(guide)
+}
+
 /// The colour of a rectangle that a Color Matte carries unchanged: a static,
 /// plain, canvas-sized solid fill with a neutral transform, whose blend mode
 /// the matte's Opacity writes ([`PrBlendMode::from_fx_mode`]). Any other
@@ -100,7 +129,6 @@ fn solid_fill_matte(
 ) -> Option<PrColorMatte> {
     let plain = !animated
         && rect.parent == parent
-        && rect.track_matte.is_none()
         && rect.masks.is_empty()
         && rect.effects.is_empty()
         && !rect.motion_blur
@@ -110,6 +138,28 @@ fn solid_fill_matte(
         return None;
     }
     PrColorMatte::from_fill_color(rect.rect.fill_color).ok()
+}
+
+/// The Color Matte that `rect`, a layer of `parent`'s list, exports as, if it
+/// exports as one ([`export_rect_layer`]): a plain solid fill without keys
+/// ([`solid_fill_matte`]) that no layer in `consumed` uses as its track matte
+/// or mask.
+pub(super) fn exported_matte(
+    rect: &RectLayer,
+    parent: Option<LayerId>,
+    consumed: &BTreeSet<LayerId>,
+    context: &LayerExport<'_, '_>,
+    [width, height]: [u32; 2],
+) -> Option<PrColorMatte> {
+    let animated = context.property_tracks.contains_key(&rect.id);
+    let dissolve = super::cross_dissolve::matte_animation(rect, context).is_some();
+    let mut normalized = rect.clone();
+    if dissolve {
+        normalized.transform.opacity = identity_transform().opacity;
+        normalized.rect.fill_color[3] = 1.0;
+    }
+    solid_fill_matte(&normalized, parent, width, height, animated && !dissolve)
+        .filter(|_| !consumed.contains(&rect.id))
 }
 
 /// The handle length of a cubic quarter circle as a fraction of its radius,
@@ -132,6 +182,14 @@ const MIN_CORNER_RADIUS: f32 = 1e-6;
 /// circles then meet smoothly, where a stroke has no corner to join. Every
 /// corner is square below [`MIN_CORNER_RADIUS`], and for a size or
 /// roundness that is not finite in f32.
+pub(super) fn rounded_rect_outline(position: [f64; 2], size: [f64; 2], radius: f64) -> ShapePath {
+    let mut shape = solid_shape(0, 0, [0.0; 4]);
+    shape.position = position;
+    shape.size = size;
+    shape.roundness = radius;
+    rect_outline(&shape)
+}
+
 fn rect_outline(shape: &RectShape) -> ShapePath {
     let [x, y] = shape.position.map(|value| value as f32);
     let [w, h] = shape.size.map(|value| value as f32);
@@ -221,7 +279,7 @@ fn rect_outline(shape: &RectShape) -> ShapePath {
 /// and the butt-capped stroke with the rectangle's join, miter limit and
 /// dashes while it is enabled, coloured and wider than 0. FX draws an
 /// undashed stroke whatever its dash offset.
-fn rect_as_shape(rect: &RectLayer) -> ShapeLayer {
+pub(super) fn rect_as_shape(rect: &RectLayer) -> ShapeLayer {
     let shape = &rect.rect;
     let fill = shape.fill_enabled.then(|| ShapeFillStyle {
         paint: shape.fill_paint.clone().unwrap_or(ShapePaint::Solid {
@@ -331,15 +389,13 @@ pub(super) fn export_rect_layer(
     rect: &RectLayer,
     parent: Option<LayerId>,
     consumed: &BTreeSet<LayerId>,
+    layers: &[Layer],
     context: &mut LayerExport<'_, '_>,
     omissions: &mut dyn OmissionSink,
     record: &str,
 ) -> Result<Option<PrVideoItem>> {
     let (width, height, frame_rate) = (context.width, context.height, context.frame_rate);
-    let animated = context.property_tracks.contains_key(&rect.id);
-    let Some(matte) = solid_fill_matte(rect, parent, width, height, animated)
-        .filter(|_| !consumed.contains(&rect.id))
-    else {
+    let Some(matte) = exported_matte(rect, parent, consumed, context, [width, height]) else {
         let mut shape = rect_as_shape(rect);
         let approximation = approximate_unexported_gradient(&mut shape, &rect.rect);
         let graphic = export_object(
@@ -355,6 +411,36 @@ pub(super) fn export_rect_layer(
         }
         return Ok(graphic.map(PrVideoItem::Graphic));
     };
+    let mask = match rect
+        .track_matte
+        .as_ref()
+        .map(|matte| {
+            if rect.is_hidden || rect.blend_mode != BlendMode::Normal {
+                return Err("a keyed Color Matte requires an enabled Normal-blend fill".to_owned());
+            }
+            canonical_matte_source(
+                matte,
+                layers,
+                parent,
+                rect.active_range,
+                context.dynamics,
+                [width, height],
+                false,
+            )
+        })
+        .transpose()
+    {
+        Ok(mask) => mask,
+        Err(reason) => {
+            omit(
+                omissions,
+                OmissionScope::Occurrence,
+                record,
+                format!("Color Matte track matte was not exported: {reason}"),
+            );
+            return Ok(None);
+        }
+    };
     let media = MediaId(format!("color-matte:{}", matte.hex()));
     if context.media_facts.contains_key(media.as_str()) {
         return Err(unsupported(format!(
@@ -367,7 +453,7 @@ pub(super) fn export_rect_layer(
         .checked_add_duration(rect.active_range.duration)
         .ok_or_else(|| unsupported("activeRange end exceeds Premiere's tick range"))?;
     let start_ticks = context.frame_ticks(rect.active_range.start, "activeRange.start")?;
-    let end_ticks = context.frame_ticks(active_end, "activeRange.end")?;
+    let end_ticks = context.picture_end_ticks(active_end, mask.as_ref())?;
     ensure!(
         end_ticks > start_ticks,
         "activeRange {}..{} ms collapses to zero duration on the {frame_rate} sequence grid",
@@ -379,7 +465,13 @@ pub(super) fn export_rect_layer(
         .checked_add(end_ticks - start_ticks)
         .filter(|out| *out <= COLOR_MATTE_INTRINSIC_TICKS)
         .ok_or_else(|| unsupported("solid fill outlasts the Color Matte generator"))?;
+    let animation = super::cross_dissolve::matte_animation(rect, context);
     let occurrence = PrVideoOccurrence {
+        animations: animation
+            .into_iter()
+            .map(crate::schema::PrPropertyAnimation::Opacity)
+            .collect(),
+        track_matte: unplaced_track_matte(mask.as_ref()),
         blend_mode: PrBlendMode::from_fx_mode(rect.blend_mode),
         enabled: !rect.is_hidden,
         ..PrVideoOccurrence::unedited(media, start_ticks..end_ticks, in_ticks..out_ticks)
@@ -390,6 +482,8 @@ pub(super) fn export_rect_layer(
         relative_paths: Vec::new(),
         absolute_paths: Vec::new(),
         video: Some(crate::schema::PrVideoStream {
+            pixel_aspect: Default::default(),
+            interpretation: Default::default(),
             orientation: crate::schema::VideoOrientation::Identity,
             intrinsic_ticks: COLOR_MATTE_INTRINSIC_TICKS,
             frame_rate: frame_rate.into(),
@@ -405,6 +499,12 @@ pub(super) fn export_rect_layer(
         .or_insert(media);
     if let Some(warning) = PrBlendMode::export_approximation(rect.blend_mode) {
         approximate(omissions, record, warning);
+    }
+    if !occurrence.animations.is_empty() {
+        context
+            .written
+            .record(rect.id, fx_schema::PropType::Opacity);
+        context.property_tracks.remove(&rect.id);
     }
     Ok(Some(PrVideoItem::Media(occurrence)))
 }

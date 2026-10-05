@@ -1,0 +1,14 @@
+<!-- Unchanged VideoStream1036 from a Premiere-saved project, SHA-256
+     dff8bc0a167fb5882413a1190d819f9e530cc038334d04f9676a749b11806721.
+     The timing test uses generated MOV pictures, not the original media. -->
+<VideoStream ObjectID="1036" ClassID="a36e4719-3ec6-4a0c-ab11-8b4aab377aa5" Version="22">
+    <CodecType>1212503619</CodecType>
+    <OriginalColorSpace>{"baseColorProfile":{"colorProfileData":"AQAAAP////8=","colorProfileName":"BT.709,8-bit,Display-Referred"},"baseProfileType":1}</OriginalColorSpace>
+    <FieldTypeIsUncertain>true</FieldTypeIsUncertain>
+    <OriginalImageOrientationType>6</OriginalImageOrientationType>
+    <FrameRate>8500340621</FrameRate>
+    <Duration>9137866167575</Duration>
+    <FrameRect>0,0,1920,1080</FrameRect>
+    <AlphaType>3</AlphaType>
+    <IgnoreAlpha>true</IgnoreAlpha>
+</VideoStream>

@@ -25,6 +25,124 @@ const COLOR_MATTE_SOURCE_IN_TICKS: i64 = crate::format::FrameRate::Fps30.generat
 const SEQUENCE_UID: &str = "c8acf9c1-34b2-4086-9f55-d528950a7059";
 const RED: PrColorMatte = PrColorMatte { rgb: [255, 0, 0] };
 const BLUE: PrColorMatte = PrColorMatte { rgb: [0, 0, 255] };
+const BLACK_VIDEO: &str = include_str!("../../../tests/fixtures/black-video/occurrence-1172.xml");
+const BLACK_VIDEO_SEQUENCE: &str = "d40c25d5-0359-473e-974e-24f423007763";
+
+fn assert_black_video_feature_notes(omissions: &[Omission]) {
+    assert!(omissions
+        .iter()
+        .all(|note| note.scope == OmissionScope::Feature));
+    assert_eq!(
+        omissions
+            .iter()
+            .map(|note| note.reason.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "IsCreatedWithNewColorManagement not converted",
+            "nondefault tone mapping not converted"
+        ]
+    );
+}
+
+#[test]
+fn native_black_video_reads_as_a_black_solid_with_its_source_clock() {
+    use sha2::{Digest, Sha256};
+    assert_eq!(
+        format!("{:x}", Sha256::digest(BLACK_VIDEO.as_bytes())),
+        "826f4a1f034272a74b6f5f545f7ce427f294cf90a25439c92cbfe9ee3affcdb7"
+    );
+    let (project, omissions) =
+        inspect_project_with_omissions(BLACK_VIDEO, Some(BLACK_VIDEO_SEQUENCE)).unwrap();
+    assert_black_video_feature_notes(&omissions);
+    let sequence = project.single_sequence().unwrap();
+    assert_eq!([sequence.width, sequence.height], [2160, 3840]);
+    assert_eq!(sequence.frame_rate, FrameRate::Fps30000Over1001);
+    let clip = sequence.video_occurrences().next().unwrap();
+    assert_eq!(clip.timeline_ticks(), 7_662_003_148_800..8_094_262_176_000);
+    assert_eq!(
+        clip.source_ticks(),
+        914_456_685_542_400..914_888_944_569_600
+    );
+    assert_eq!(clip.transform, Default::default());
+    assert_eq!(clip.opacity, 100.0);
+    assert!(clip.enabled);
+    let media = project.media(clip).unwrap();
+    assert_eq!(media.name(), "Black Video");
+    assert!(media.is_generator() && !media.is_adjustment());
+    assert!(media.relative_paths.is_empty() && media.absolute_paths.is_empty());
+    assert!(media.audio.is_none());
+    let stream = media.video.as_ref().unwrap();
+    assert_eq!(
+        stream.kind,
+        PrMediaKind::ColorMatte(PrColorMatte { rgb: [0; 3] })
+    );
+    assert_eq!(stream.intrinsic_ticks, COLOR_MATTE_INTRINSIC_TICKS);
+    assert_eq!(stream.frame_rate.ticks_per_frame(), 8_475_667_200);
+    assert_eq!([stream.width, stream.height], [2160, 3840]);
+}
+
+#[test]
+fn black_video_retains_static_opacity_and_rejects_malformed_generator_records() {
+    // Supplemental control mutation: the pinned placement has default Opacity.
+    let xml = BLACK_VIDEO
+        .replace("<DefaultOpacity>true</DefaultOpacity>", "")
+        .replace(
+            "</ComponentChain>",
+            "<Components><Component ObjectRef=\"50\"/></Components></ComponentChain>",
+        );
+    let xml = xml.replace(
+        "</PremiereData>",
+        &format!("{}\n</PremiereData>", opacity("45.", "")),
+    );
+    let (project, omissions) =
+        inspect_project_with_omissions(&xml, Some(BLACK_VIDEO_SEQUENCE)).unwrap();
+    assert_black_video_feature_notes(&omissions);
+    let document = project_document_with_media(project.single_sequence().unwrap(), &project.media);
+    let solid = &document["composition"]["layers"][0];
+    assert_eq!(solid["type"], "Rect");
+    assert_eq!(solid["rect"]["fillColor"], json!([0.0, 0.0, 0.0, 1.0]));
+    assert_eq!(solid["transform"]["opacity"], 45.0);
+
+    for (from, to, expected) in [
+        (
+            "<Infinite>true</Infinite>",
+            "",
+            "Black Video media must be Infinite",
+        ),
+        (
+            "<IsStill>true</IsStill>",
+            "",
+            "Black Video media must be an IsStill stream",
+        ),
+        (
+            "<Title>Black Video</Title>",
+            "<Title>Black Video</Title><RelativePath>black.mp4</RelativePath>",
+            "Black Video media must not reference files or audio",
+        ),
+        (
+            "<Title>Black Video</Title>",
+            "<Title>Black Video</Title><ImporterPrefs Encoding=\"base64\" BinaryHash=\"prefs\"/>",
+            "Black Video media must not carry ImporterPrefs",
+        ),
+        (
+            "<ActualMediaFilePath>1112293707</ActualMediaFilePath>",
+            "<ActualMediaFilePath>1129270354</ActualMediaFilePath>",
+            "unexpected graphic generator media",
+        ),
+        (
+            "<FrameRect>0,0,2160,3840</FrameRect>\n\t</VideoStream>",
+            "<FrameRect>0,0,1920,1080</FrameRect>\n\t</VideoStream>",
+            "a Color Matte of 1920x1080 on a 2160x3840 sequence",
+        ),
+    ] {
+        let xml = BLACK_VIDEO.replace(from, to);
+        assert_ne!(xml, BLACK_VIDEO);
+        let error = inspect_project_with_omissions(&xml, Some(BLACK_VIDEO_SEQUENCE))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(expected), "{expected}: {error}");
+    }
+}
 
 /// The one-clip fixture `xml` with its file media replaced by a Color Matte
 /// whose stream is `IsStill`, as on every corpus matte.
@@ -57,7 +175,7 @@ fn as_matte(xml: &str, prefs_base64: &str) -> String {
     matte
 }
 
-fn matte_xml(prefs_base64: &str) -> String {
+pub(in crate::format) fn matte_xml(prefs_base64: &str) -> String {
     as_matte(SOURCE, prefs_base64)
 }
 
@@ -125,8 +243,8 @@ fn malformed_animated_or_non_colr_generator_media_is_omitted_precisely() {
         "{COLOR_MATTE_SOURCE_IN_TICKS},0.,0,0,0,0,0,0;{},90.,0,0,0,0,0,0;",
         COLOR_MATTE_SOURCE_IN_TICKS + TICKS
     );
-    // Non-COLR generators keep the graphic reader's fail-closed validation;
-    // an absent or mismatched marker is no matte.
+    // Other generators keep fail-closed validation; an absent or mismatched
+    // marker is no matte. BLAK has no colour preferences.
     for (xml, expected) in [
         (matte_xml("AAAAAAEAAAA"), "invalid ImporterPrefs"),
         (matte_xml("/wAAAAEAAA=="), "must be 8 bytes"),
@@ -161,7 +279,7 @@ fn malformed_animated_or_non_colr_generator_media_is_omitted_precisely() {
         ),
         (
             generator_xml(Some(BLACK_VIDEO), Some(BLACK_VIDEO)),
-            "unexpected graphic generator media",
+            "Black Video media must not carry ImporterPrefs",
         ),
         (
             generator_xml(None, Some(COLR)),
@@ -631,7 +749,7 @@ fn a_head_cross_dissolve_fades_its_matte_in_to_the_static_opacity_once() {
             scope: OmissionScope::Feature,
             kind: OmissionKind::Approximated,
             record: "VideoTransitionTrackItem:60".into(),
-            reason: "Cross Dissolve (Legacy) head retained as editable linear opacity from 0 to the Color Matte's static Opacity; the native Legacy curve, frame phase and compositing space are unmeasured".into(),
+            reason: "Cross Dissolve New retained as editable linear opacity at the picture boundary; opaque SDR controls follow the measured linear ramp, while alpha and general edited native fidelity remain unmeasured".into(),
         }]
     );
     let rect = &document["composition"]["layers"][0];
@@ -673,64 +791,83 @@ fn a_head_cross_dissolve_fades_its_matte_in_to_the_static_opacity_once() {
     );
 }
 
-/// Export keeps the existing rectangle rules: the faded matte is a keyed
-/// rectangle, so neither a Color Matte nor a native transition is written,
-/// and the Shape fallback omits it with its reason.
+/// Current peak opacity and fill alpha must survive a native head or tail.
 #[test]
-fn a_faded_matte_is_omitted_on_export_as_a_keyed_shape_without_a_native_transition() {
+fn cross_dissolve_matte_exports_edited_translucent_head_and_tail() {
     let (project, _) =
         inspect_project_with_omissions(&matte_with_head_dissolve(), Some("sequence-1")).unwrap();
-    let (document, _) = import(project.single_sequence().unwrap(), &project.media);
-    let document = fx_schema::EditableFxCompositionDocument::from_json_value(document).unwrap();
-    let mut omissions = Vec::new();
-    // The matte is this document's only content, so nothing is published.
-    let error = crate::convert::tesseract_to_premiere(
-        &document,
-        &BTreeMap::new(),
-        &BTreeMap::new(),
-        &BTreeMap::new(),
-        FrameRate::Fps30,
-        &mut omissions,
-    )
-    .unwrap_err()
-    .to_string();
-    assert!(error.contains("no Premiere project published"), "{error}");
-    assert_eq!(
-        omissions,
-        [Omission {
-            scope: OmissionScope::Occurrence,
-            kind: OmissionKind::Omitted,
-            record: "layer 1 (\"Premiere color matte 1\")".into(),
-            reason: "shape layer was not exported: unsupported conversion: keyed graphic shapes are unsupported".into(),
-        }]
-    );
+    for tail in [false, true] {
+        let mut sequence = project.single_sequence().unwrap().clone();
+        if tail {
+            let end = sequence.video_tracks[0].clip(0).end_ticks;
+            let transition = &mut sequence.video_tracks[0].transitions[0];
+            transition.outgoing_clip = transition.incoming_clip.take();
+            transition.start_ticks = end - TICKS / 2;
+            transition.cut_ticks = end;
+            transition.end_ticks = end;
+        }
+        let (mut document, _) = import(&sequence, &project.media);
+        document["composition"]["layers"][0]["rect"]["fillColor"][3] = json!(0.5);
+        document["composition"]["dynamics"]["entries"][0]["animator"]["keyframes"]
+            [usize::from(!tail)]["value"]["value"] = json!(65.0);
+        let document = fx_schema::EditableFxCompositionDocument::from_json_value(document).unwrap();
+        let mut omissions = Vec::new();
+        let exported = crate::convert::tesseract_to_premiere(
+            &document,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            FrameRate::Fps30,
+            &mut omissions,
+        )
+        .unwrap();
+        assert!(
+            !omissions.iter().any(|o| o.kind == OmissionKind::Omitted),
+            "{omissions:?}"
+        );
+        let track = exported
+            .single_sequence()
+            .unwrap()
+            .video_tracks
+            .iter()
+            .find(|track| !track.transitions.is_empty())
+            .unwrap();
+        assert_eq!(track.clip(0).opacity, 32.5);
+        assert!(track.clip(0).animations.is_empty());
+        assert!(matches!(
+            exported.media[&track.clip(0).media]
+                .video
+                .as_ref()
+                .unwrap()
+                .kind,
+            PrMediaKind::ColorMatte(_)
+        ));
+        let actual = &track.transitions[0];
+        let expected = &sequence.video_tracks[0].transitions[0];
+        assert_eq!(
+            (actual.start_ticks, actual.cut_ticks, actual.end_ticks),
+            (expected.start_ticks, expected.cut_ticks, expected.end_ticks)
+        );
+        assert_eq!(actual.outgoing_clip.is_some(), tail);
+        assert_eq!(actual.incoming_clip.is_some(), !tail);
+    }
 }
 
 /// A matte dissolve outside the bounded profile is reported with its reason
 /// and keys nothing; the matte keeps its colour, Opacity and lifetime.
 #[test]
-fn matte_dissolves_outside_the_incoming_only_static_head_are_reported_not_keyed() {
+fn unsafe_matte_dissolve_clocks_and_bindings_are_reported_not_keyed() {
     const FRAME: i64 = FrameRate::Fps30.ticks_per_frame();
     let (read, _) =
         inspect_project_with_omissions(&matte_with_head_dissolve(), Some("sequence-1")).unwrap();
     type Mutation = fn(&mut PrSequence);
-    let cases: [(Mutation, &str); 10] = [
-        (
-            |sequence| {
-                let track = &mut sequence.video_tracks[0];
-                let end = track.clip(0).end_ticks;
-                let tail = &mut track.transitions[0];
-                tail.outgoing_clip = tail.incoming_clip.take();
-                (tail.start_ticks, tail.cut_ticks, tail.end_ticks) = (end - 15 * FRAME, end, end);
-            },
-            "only an incoming-only head converts",
-        ),
+    let cases: [(Mutation, &str); 9] = [
         (
             |sequence| {
                 sequence.video_tracks[0].transitions[0].outgoing_clip =
                     Some("VideoClipTrackItem:2".into());
             },
-            "only an incoming-only head converts",
+            "a linked physical picture was not retained",
         ),
         (
             |sequence| {
@@ -922,5 +1059,41 @@ fn a_track_matte_key_source_gets_no_head_dissolve_whether_its_keyed_clip_convert
                 "{omissions:?}"
             );
         }
+    }
+}
+
+#[test]
+fn color_matte_resolves_shared_binary_value() {
+    // Supplemental wire mutation, not an independently Adobe-authored dedup case.
+    let xml = matte_xml("").replace(
+        "</PremiereData>",
+        r#"<Shared Encoding="base64" BinaryHash="8faeedf7-eb02-d2a5-c178-492000000014">ZEGlAAEAAAA=</Shared></PremiereData>"#,
+    );
+    let project = inspect_project_with_media(&xml, Some("sequence-1")).unwrap();
+    let sequence = project.sequences().next().unwrap();
+    let clip = sequence.video_occurrences().next().unwrap();
+    let video = project.media(clip).unwrap().video.as_ref().unwrap();
+    assert_eq!(
+        video.kind,
+        PrMediaKind::ColorMatte(PrColorMatte {
+            rgb: [0x64, 0x41, 0xa5]
+        })
+    );
+    assert_eq!(
+        clip.source_ticks(),
+        COLOR_MATTE_SOURCE_IN_TICKS..COLOR_MATTE_SOURCE_IN_TICKS + 5 * TICKS
+    );
+}
+
+#[test]
+fn color_matte_missing_and_conflicting_binary_values_are_rejected() {
+    for xml in [
+        matte_xml(""),
+        matte_xml("ZEGlAAEAAAA=").replace(
+            "</PremiereData>",
+            r#"<Shared BinaryHash="8faeedf7-eb02-d2a5-c178-492000000014">AAAAAAEAAAA=</Shared></PremiereData>"#,
+        ),
+    ] {
+        assert!(inspect_project_with_media(&xml, Some("sequence-1")).is_err());
     }
 }

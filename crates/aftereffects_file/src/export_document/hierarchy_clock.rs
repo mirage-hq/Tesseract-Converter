@@ -5,8 +5,8 @@
 //! source-backed-precomposition requirement.
 
 use fx_schema::{
-    Duration, GroupLayer, LayerId, LayerPlayback, LayerPlaybackMapping, PropType, Time,
-    TimeRangeProperty, animator::AnimationGraphEntry,
+    Duration, GroupLayer, LayerData, LayerId, LayerPlayback, LayerPlaybackMapping, PropType, Time,
+    TimeRangeProperty,
 };
 
 use super::effective_constant;
@@ -32,6 +32,8 @@ pub(crate) struct HierarchyClockPlan {
     pub(crate) occurrence_clock: SourceClockPlan,
     pub(crate) source_duration: Duration24,
     pub(crate) source_duration_millis: u64,
+    /// Exact affine source interval visited by this occurrence, if proved.
+    pub(crate) visible_source_interval: Option<TimeRangeProperty>,
 }
 
 impl HierarchyClockPlan {
@@ -42,11 +44,81 @@ impl HierarchyClockPlan {
     }
 }
 
+/// Restricts a direct, full-source media remap to its enclosing precomposition's
+/// reachable input clock. Intrinsic media duration, not child extent, certifies
+/// the source domain; ordinary Groups and edited source selections stay unchanged.
+pub(crate) fn finite_media_remap_view(
+    group: &GroupLayer,
+    enclosing_end: Time,
+) -> Option<(GroupLayer, ChildClockDomains)> {
+    let LayerPlaybackMapping::TimeRemap { property } = group.playback.mapping() else {
+        return None;
+    };
+    if group.playback.input_offset_ms() != 0 || group.layers.is_empty() {
+        return None;
+    }
+    let mut source_identity = None;
+    for layer in &group.layers {
+        let (asset, duration, selection, playback, parent) = match layer.data() {
+            LayerData::Video(media) => (
+                &media.source.asset_id,
+                media.source_intrinsic_duration,
+                media.source_range,
+                &media.playback,
+                media.parent,
+            ),
+            LayerData::Audio(media) => (
+                &media.source.asset_id,
+                media.source_intrinsic_duration,
+                media.source_range,
+                &media.playback,
+                media.parent,
+            ),
+            _ => return None,
+        };
+        let full_source = TimeRangeProperty::new(Time::ZERO, duration);
+        if duration.as_millis() == 0
+            || selection != full_source
+            || playback.input_range() != full_source
+            || playback.input_offset_ms() != 0
+            || !matches!(playback.mapping(), LayerPlaybackMapping::Linear { input, output }
+                if *input == full_source && *output == full_source)
+            || parent != Some(group.id)
+        {
+            return None;
+        }
+        if source_identity.is_some_and(|identity| identity != (asset, duration)) {
+            return None;
+        }
+        source_identity = Some((asset, duration));
+    }
+    let range = group.playback.input_range();
+    let end = range.end().min(enclosing_end);
+    if end <= range.start {
+        return None;
+    }
+    let reachable = TimeRangeProperty::new(
+        range.start,
+        Duration::from_millis(end.as_millis() - range.start.as_millis()),
+    );
+    let mut view = group.clone();
+    view.playback = LayerPlayback::remapped(reachable, property.clone(), 0).ok()?;
+    let (_, duration) = source_identity?;
+    let source_domain = TimeRangeProperty::new(Time::ZERO, duration);
+    Some((
+        view,
+        ChildClockDomains {
+            default_domain: source_domain,
+            lifetime_domain: source_domain,
+        },
+    ))
+}
+
 /// Separates the Group's source clock from geometry without changing child
 /// clocks; identity occurrences need only their finite reachable source domain.
 pub(crate) fn plan(
     group: &GroupLayer,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     domains: ChildClockDomains,
     audio_only: bool,
 ) -> Result<HierarchyClockPlan, AepWriteError> {
@@ -133,6 +205,9 @@ pub(crate) fn plan(
         occurrence_clock,
         source_duration,
         source_duration_millis,
+        visible_source_interval: affine_source_interval(&group.playback, active_range)
+            .ok()
+            .flatten(),
     })
 }
 
@@ -140,6 +215,38 @@ fn linear_endpoints(
     playback: &LayerPlayback,
     input: TimeRangeProperty,
     output: TimeRangeProperty,
+) -> Result<(Time, Time), AepWriteError> {
+    linear_window_endpoints(playback, input, output, playback.input_range())
+}
+
+/// Restrict only checked affine clocks. Fractional or remapped intervals keep
+/// the existing all-time geometry enclosure instead of guessing local phase.
+pub(super) fn affine_source_interval(
+    playback: &LayerPlayback,
+    window: TimeRangeProperty,
+) -> Result<Option<TimeRangeProperty>, AepWriteError> {
+    let LayerPlaybackMapping::Linear { input, output } = playback.mapping() else {
+        return Ok(None);
+    };
+    let (start, end) = linear_window_endpoints(playback, *input, *output, window)?;
+    let duration = end
+        .as_millis()
+        .checked_sub(start.as_millis())
+        .filter(|duration| *duration > 0)
+        .ok_or(AepWriteError::Invalid(
+            "visible affine source interval is not positive",
+        ))?;
+    Ok(Some(TimeRangeProperty::new(
+        start,
+        Duration::from_millis(duration),
+    )))
+}
+
+fn linear_window_endpoints(
+    playback: &LayerPlayback,
+    input: TimeRangeProperty,
+    output: TimeRangeProperty,
+    window: TimeRangeProperty,
 ) -> Result<(Time, Time), AepWriteError> {
     let map = |sample: Time| -> Result<Time, AepWriteError> {
         let shifted = i128::from(sample.as_millis()) + i128::from(playback.input_offset_ms());
@@ -158,10 +265,7 @@ fn linear_endpoints(
             .map_err(|_| AepWriteError::Invalid("linear playback maps before source zero"))?;
         Ok(Time::from_millis(mapped))
     };
-    Ok((
-        map(playback.input_range().start)?,
-        map(playback.input_range().end())?,
-    ))
+    Ok((map(window.start)?, map(window.end())?))
 }
 
 fn checked_source_duration(domains: ChildClockDomains) -> Result<u64, AepWriteError> {
@@ -183,7 +287,8 @@ fn checked_source_duration(domains: ChildClockDomains) -> Result<u64, AepWriteEr
     Ok(duration)
 }
 
-fn duration24(milliseconds: u64) -> Result<Duration24, AepWriteError> {
+/// Enclose an explicit source domain without rounding it to whole native frames.
+pub(super) fn duration24(milliseconds: u64) -> Result<Duration24, AepWriteError> {
     const TICKS_PER_SECOND: u64 = 24_576;
     const MILLIS_PER_SECOND: u64 = 1_000;
 
@@ -203,8 +308,11 @@ fn duration24(milliseconds: u64) -> Result<Duration24, AepWriteError> {
     Ok(Duration24::from_ticks(ticks)?)
 }
 
-fn has_dynamic_own_transform(entries: &[AnimationGraphEntry], owner: LayerId) -> bool {
-    entries.iter().any(|entry| {
+fn has_dynamic_own_transform(
+    entries: &crate::export_document::AnimationIndex<'_>,
+    owner: LayerId,
+) -> bool {
+    entries.for_layer(owner).any(|entry| {
         entry.target.layer_id() == Some(owner)
             && entry.target.as_property().is_some_and(|property| {
                 matches!(
@@ -225,8 +333,11 @@ fn has_dynamic_own_transform(entries: &[AnimationGraphEntry], owner: LayerId) ->
 
 /// [`has_dynamic_own_transform`] over every Transform channel, including the 3D
 /// and skew channels that the writer checks only for native Time Remap.
-fn has_any_dynamic_own_transform(entries: &[AnimationGraphEntry], owner: LayerId) -> bool {
-    entries.iter().any(|entry| {
+fn has_any_dynamic_own_transform(
+    entries: &crate::export_document::AnimationIndex<'_>,
+    owner: LayerId,
+) -> bool {
+    entries.for_layer(owner).any(|entry| {
         entry.target.layer_id() == Some(owner)
             && entry
                 .target
@@ -239,6 +350,7 @@ fn has_any_dynamic_own_transform(entries: &[AnimationGraphEntry], owner: LayerId
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fx_schema::animator::AnimationGraphEntry;
 
     #[test]
     fn identity_keys_with_input_offset_preserve_source_clock() {
@@ -264,7 +376,7 @@ mod tests {
         let domain = TimeRangeProperty::new(Time::ZERO, Duration::from_millis(2000));
         let planned = plan(
             &group,
-            &[],
+            &crate::export_document::AnimationIndex::new(&[]),
             ChildClockDomains {
                 default_domain: domain,
                 lifetime_domain: domain,
@@ -311,6 +423,7 @@ mod tests {
         let window = TimeRangeProperty::new(Time::ZERO, Duration::from_millis(1_001));
         let playback = LayerPlayback::linear(window, input, output, 0).unwrap();
         assert!(linear_endpoints(&playback, input, output).is_err());
+        assert!(affine_source_interval(&playback, window).is_err());
     }
 
     #[test]
@@ -386,6 +499,9 @@ mod tests {
             layer_refs: Default::default(),
         };
 
-        assert!(!has_dynamic_own_transform(&[entry], owner));
+        assert!(!has_dynamic_own_transform(
+            &crate::export_document::AnimationIndex::new(&[entry]),
+            owner
+        ));
     }
 }

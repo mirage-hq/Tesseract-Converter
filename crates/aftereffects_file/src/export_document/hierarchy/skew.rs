@@ -1,8 +1,6 @@
 //! Exact two-transform lowering for static planar Group skew.
 
-use fx_schema::{
-    GroupLayer, LayerId, Position, PropType, Transform, animator::AnimationGraphEntry,
-};
+use fx_schema::{GroupLayer, LayerId, Position, PropType, Transform};
 
 use crate::writer::{NativeLayerOptions, NullLayerSpec, SolidTransform, TransformAnimations};
 
@@ -43,7 +41,7 @@ pub(super) fn validate_source(group: &GroupLayer) -> Result<(), &'static str> {
 
 pub(super) fn lower(
     group: &GroupLayer,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     helper_id: LayerId,
 ) -> Result<Lowering, &'static str> {
     if !is_present(&group.transform) {
@@ -125,29 +123,25 @@ pub(super) fn lower(
 
 fn uniform_scale_animations(
     group: &GroupLayer,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     factored_scale: [f64; 2],
 ) -> Result<TransformAnimations, &'static str> {
     if !super::super::has_transform_entries(dynamics, group.id) {
         return Ok(TransformAnimations::default());
     }
     let unsupported = "Animated Group skew or Transform requires an exact animated affine lowering; only identical uniform Scale curves and planar Position/Opacity are supported";
-    if dynamics
-        .iter()
-        .filter(|entry| entry.target.layer_id() == Some(group.id))
-        .any(|entry| {
-            entry.target.as_property().is_none_or(|property| {
-                !matches!(
-                    property.property_type(),
-                    PropType::ScaleX
-                        | PropType::ScaleY
-                        | PropType::PositionX
-                        | PropType::PositionY
-                        | PropType::Opacity
-                )
-            })
+    if dynamics.for_layer(group.id).any(|entry| {
+        entry.target.as_property().is_none_or(|property| {
+            !matches!(
+                property.property_type(),
+                PropType::ScaleX
+                    | PropType::ScaleY
+                    | PropType::PositionX
+                    | PropType::PositionY
+                    | PropType::Opacity
+            )
         })
-    {
+    }) {
         return Err(unsupported);
     }
     let mut animations =
@@ -190,7 +184,59 @@ fn uniform_scale_animations(
     Ok(animations)
 }
 
-pub(super) fn helper_options(helper_id: LayerId) -> NativeLayerOptions {
+/// Factor a static drawable's affine transform without inventing source bounds.
+/// Null parenting carries geometry, not opacity: this profile requires full opacity.
+pub(in crate::export_document) fn lower_static_text(
+    transform: &Transform,
+    name: &str,
+) -> Result<(SolidTransform, NullLayerSpec), &'static str> {
+    let Position::TwoD(position) = transform.position else {
+        return Err("Static Text skew requires a planar position");
+    };
+    if transform.rotation_x != 0.0
+        || transform.rotation_y != 0.0
+        || transform.orientation != [0.0; 3]
+        || transform.opacity.value() != 100.0
+    {
+        return Err(
+            "Static Text skew requires planar full-opacity geometry; Null parents do not inherit opacity",
+        );
+    }
+    if transform
+        .anchor_point
+        .into_iter()
+        .chain(position)
+        .any(|value| !value.is_finite())
+    {
+        return Err("Static Text skew Transform is non-finite");
+    }
+    let matrix = matrix(transform)?;
+    let factors = Factors::from_matrix(matrix)?;
+    factors.verify(matrix)?;
+    let anchor = transform.anchor_point;
+    Ok((
+        SolidTransform {
+            anchor,
+            position,
+            scale: [factors.first * 100.0, factors.second * 100.0],
+            rotation: factors.outer_rotation.to_degrees(),
+            opacity: 100.0,
+        },
+        NullLayerSpec {
+            name: format!("{name} — Skew basis"),
+            transform: SolidTransform {
+                anchor,
+                position: anchor,
+                scale: [100.0; 2],
+                rotation: factors.inner_rotation.to_degrees(),
+                opacity: 100.0,
+            },
+            transform_animations: TransformAnimations::default(),
+        },
+    ))
+}
+
+pub(in crate::export_document) fn helper_options(helper_id: LayerId) -> NativeLayerOptions {
     NativeLayerOptions {
         fx_id: helper_id,
         parent: None,
@@ -359,6 +405,84 @@ mod tests {
                 factors.first.signum() * factors.second.signum(),
                 (matrix[0] * matrix[3] - matrix[1] * matrix[2]).signum()
             );
+        }
+    }
+
+    #[test]
+    fn static_text_skew_helpers_preserve_full_anchor_position_and_affine_mapping() {
+        let map = |transform: &SolidTransform, point: [f64; 2]| {
+            let angle = transform.rotation.to_radians();
+            let x = (point[0] - transform.anchor[0]) * transform.scale[0] / 100.0;
+            let y = (point[1] - transform.anchor[1]) * transform.scale[1] / 100.0;
+            [
+                transform.position[0] + angle.cos() * x - angle.sin() * y,
+                transform.position[1] + angle.sin() * x + angle.cos() * y,
+            ]
+        };
+        for skew in [1.0, -0.5, -2.5] {
+            let mut source = crate::export_document::identity_fx_transform();
+            source.anchor_point = [39.032, -32.125];
+            source.position = Position::TwoD([540.575, 1064.583]);
+            source.scale = [116.63, 97.804];
+            source.rotation = 13.0;
+            source.skew = skew;
+            let (outer, inner) = lower_static_text(&source, "n").unwrap();
+            let expected_matrix = matrix(&source).unwrap();
+            for point in [[0.0, 0.0], [39.032, -32.125], [700.25, -49.5]] {
+                let actual = map(&outer, map(&inner.transform, point));
+                let delta = [
+                    point[0] - source.anchor_point[0],
+                    point[1] - source.anchor_point[1],
+                ];
+                let Position::TwoD(position) = source.position else {
+                    panic!("planar");
+                };
+                let expected = [
+                    position[0] + expected_matrix[0] * delta[0] + expected_matrix[1] * delta[1],
+                    position[1] + expected_matrix[2] * delta[0] + expected_matrix[3] * delta[1],
+                ];
+                assert!(
+                    actual
+                        .into_iter()
+                        .zip(expected)
+                        .all(|(a, b)| (a - b).abs() < 1e-9)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fixed_shear_factorization_is_exact_with_zero_overshoot_and_signed_nonuniform_scale() {
+        let multiply = |a: [f64; 4], b: [f64; 4]| {
+            [
+                a[0] * b[0] + a[1] * b[2],
+                a[0] * b[1] + a[1] * b[3],
+                a[2] * b[0] + a[3] * b[2],
+                a[2] * b[1] + a[3] * b[3],
+            ]
+        };
+        for skew in [1.0, -0.5, -2.5] {
+            let mut shear = crate::export_document::identity_fx_transform();
+            shear.skew = skew;
+            shear.skew_axis = 27.0;
+            let (first, second) = lower_static_text(&shear, "fixed K").unwrap();
+            let factors = multiply(
+                matrix_components(first.scale, first.rotation, 0.0, 0.0).unwrap(),
+                matrix_components(second.transform.scale, second.transform.rotation, 0.0, 0.0)
+                    .unwrap(),
+            );
+            for scale in [[0.0, 0.0], [0.0, 180.0], [137.0, 82.0], [-40.0, 110.0]] {
+                for rotation in [-14.0, -6.25, 0.0, 33.0] {
+                    let actual = multiply(
+                        matrix_components([100.0; 2], rotation, 0.0, 0.0).unwrap(),
+                        multiply(factors, matrix_components(scale, 0.0, 0.0, 0.0).unwrap()),
+                    );
+                    assert_matrix_close(
+                        actual,
+                        matrix_components(scale, rotation, skew, 27.0).unwrap(),
+                    );
+                }
+            }
         }
     }
 

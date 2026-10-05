@@ -13,7 +13,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from aep_audio_adobe import run_adobe
+import adobe_native
 from aep_audio_test import decode, require_hash, sha256
 from aep_feature_proof import atomic_write
 from aep_feature_proof_publish import _validate_video, utc_now
@@ -61,47 +61,60 @@ def validate_audio(video, case):
             'critical_windows': measured, 'scope': 'native reference content sanity, not conversion fidelity'}
 
 
-def render(case, work, owned_pid, settings_only=False):
+def render(case, work, owned_pid=None, settings_only=False):
+    if owned_pid is not None:
+        raise RuntimeError('Borrowed Adobe PIDs are retired; the central worker owns its session')
     if case['reference'] is not None:
         raise RuntimeError('reference already pinned; never overwrite an oracle')
     require_hash(FIXTURE / case['source']['path'], case['source']['sha256'], 'native source')
+    # The shared native source imports every case's footage, not only this target.
+    manifest = json.loads(MANIFEST.read_text())
+    media_by_path = {}
+    for sibling in manifest['cases']:
+        if sibling['source']['sha256'] == case['source']['sha256']:
+            for media in sibling['primary']:
+                previous = media_by_path.setdefault(media['path'], media)
+                if previous['sha256'] != media['sha256']:
+                    raise RuntimeError('conflicting same-source primary media pins')
     for media in case['primary']:
-        require_hash(FIXTURE / media['path'], media['sha256'], 'primary source media')
+        media_by_path.setdefault(media['path'], media)
+    dependencies = {}
+    for index, media in enumerate(media_by_path.values()):
+        path = FIXTURE / media['path']
+        require_hash(path, media['sha256'], 'primary source media')
+        dependencies[str(index)] = {'path': str(path.resolve()), 'sha256': media['sha256'],
+                                    'source_path': str(path.resolve())}
     work.mkdir(parents=True, exist_ok=False)
     source = work / 'source.aep'
     shutil.copyfile(FIXTURE / case['source']['path'], source)
     output = work / 'reference.mp4'
-    body = '''function runAudioCase(project) {
- var c=null;
- for(var i=1;i<=project.numItems;i++) if(project.item(i) instanceof CompItem && project.item(i).id===COMP_ID) c=project.item(i);
- if(!c || c.name!==COMP_NAME || c.width!==320 || c.height!==180 || c.frameRate!==24 || Math.abs(c.duration-6)>0.000001) throw new Error('pinned composition identity/settings drift');
- for(var j=1;j<=project.numItems;j++) { var item=project.item(j); if(item instanceof FootageItem && item.footageMissing) throw new Error('offline primary media: '+item.name); }
- if(project.renderQueue.numItems!==0) throw new Error('unexpected preexisting render queue');
- var q=project.renderQueue.items.add(c);
- q.timeSpanStart=0; q.timeSpanDuration=6;
- q.setSettings({'Use this frame rate':'30','Quality':'Best','Resolution':'Full'});
- var om=q.outputModule(1); om.applyTemplate(OUTPUT_TEMPLATE);
- var f=new File(OUTPUT_FILE); if(f.exists) throw new Error('existing reference output');
- om.file=f;
- var settings=om.getSettings(GetSettingsFormat.STRING_SETTABLE);
- AUDIO_OVERRIDE
- var observed=om.getSettings(GetSettingsFormat.STRING);
- RENDER_OPERATION
- return {compositionId:c.id,compositionName:c.name,sourceFps:c.frameRate,duration:c.duration,
-         renderSettings:q.getSettings(GetSettingsFormat.STRING),outputSettings:observed,
-         settableSettings:settings,rendered:RENDERED,outputExists:f.exists};
-}'''
-    body = body.replace('COMP_ID', str(case['source']['composition_id']))
-    body = body.replace('COMP_NAME', json.dumps(case['source']['composition_name']))
-    body = body.replace('OUTPUT_TEMPLATE', json.dumps(TEMPLATE)).replace('OUTPUT_FILE', json.dumps(str(output)))
-    body = body.replace('AUDIO_OVERRIDE', '' if settings_only else "om.setSettings({'Output Audio':'On','Include Project Link':'false'});")
-    body = body.replace('RENDER_OPERATION', '' if settings_only else "project.renderQueue.render(); if(q.status!==RQItemStatus.DONE) throw new Error('native render did not complete');")
-    body = body.replace('RENDERED', 'false' if settings_only else 'true')
-    receipt = run_adobe(body, work / 'native', project=source, timeout=300,
-                        owned_pid=owned_pid, quit_after=False)
+    source_input = adobe_native.source_ref(source, dependencies)
+    inspection = adobe_native.execute('inspect_aep', {
+        'source': source_input, 'composition_id': str(case['source']['composition_id']),
+        'profile': 'audio_render_settings'}, work / 'native-settings', timeout=300)
+    settings = adobe_native.read_json(inspection)
+    if (settings.get('compositionId') != case['source']['composition_id']
+            or settings.get('compositionName') != case['source']['composition_name']
+            or settings.get('width') != 320 or settings.get('height') != 180
+            or settings.get('sourceFps') != 24
+            or abs(settings.get('duration', 0) - 6) > 0.000001
+            or settings.get('rendered') is not False
+            or settings.get('outputExists') is not False
+            or not isinstance(settings.get('settableSettings'), dict)
+            or not isinstance(settings.get('outputSettings'), dict)
+            or settings.get('renderSettings', {}).get('Use this frame rate') != '30'):
+        raise RuntimeError('pinned composition identity/settings drift')
+    write_json(work / 'settings.json', {'native_settings': settings, 'native_artifact': inspection})
     if settings_only:
-        print(json.dumps(receipt['result']['settableSettings'], indent=2))
+        print(json.dumps(settings['settableSettings'], indent=2))
         return
+    receipt = adobe_native.execute('render_aep', {
+        'source': source_input, 'composition_id': str(case['source']['composition_id']),
+        'settings': {'format': 'mp4', 'fps': 30, 'audio': 'on'}},
+        work / 'native-render', timeout=300)
+    adobe_native.copy_artifact(receipt, output)
+    require_hash(source, case['source']['sha256'], 'native source copy')
+    require_hash(FIXTURE / case['source']['path'], case['source']['sha256'], 'native source')
     native = _validate_video(output, {'duration_numerator':6,'duration_denominator':1,
                                      'width':320,'height':180}, shutil.which('ffprobe'), shutil.which('ffmpeg'))
     audio = validate_audio(output, case)
@@ -109,6 +122,7 @@ def render(case, work, owned_pid, settings_only=False):
     write_json(work / 'validated.json', {'case_id':case['id'], 'source':case['source'],
         'decoded_frame_inspection':frames,
         'reference':native, 'audio_inspection':audio, 'native_receipt':receipt,
+        'native_settings':settings, 'settings_artifact':inspection,
         'source_copy_sha256':sha256(source), 'validated_at':utc_now()})
     print(case['id'], 'native reference validated:', native['bytes'], native['sha256'])
 
@@ -162,7 +176,6 @@ def main():
     case=next(c for c in json.loads(MANIFEST.read_text())['cases'] if c['id']==args.case)
     if args.command=='publish': publish(case,args.work.resolve())
     else:
-        if not args.owned_pid: p.error('reviewed owned Adobe PID is required')
         render(case,args.work.resolve(),args.owned_pid,args.command=='settings')
 
 

@@ -1,3 +1,5 @@
+#![cfg(feature = "ffmpeg-library")]
+
 //! Text shadow and stroke on the Adobe-scaffold fixture: editable import, an
 //! edit in the Tesseract document, and export read back by the crate reader.
 
@@ -151,8 +153,14 @@ fn adobe_scaffold_text_shadow_and_stroke_stay_editable_in_both_directions() {
     let reimported = root.join("reimported");
     let omissions =
         premiere_to_tesseract(native.join("project.prproj"), &reimported, None, false).unwrap();
-    assert_eq!(omissions.len(), 1, "{omissions:?}");
-    assert_eq!(omissions[0].reason, "font \"Arial-BoldMT\" is not packaged in this document; import it with tsrct project import-font before preview or export.");
+    // The edited shadows are translucent and non-black, which the black-shadow
+    // opacity calibration only approximates; that is reported, not hidden.
+    let (shadow_approximations, other): (Vec<_>, Vec<_>) = omissions
+        .iter()
+        .partition(|omission| omission.reason.contains("translucent non-black shadow"));
+    assert!(!shadow_approximations.is_empty(), "{omissions:?}");
+    assert_eq!(other.len(), 1, "{omissions:?}");
+    assert_eq!(other[0].reason, "font \"Arial-BoldMT\" is not packaged in this document; import it with tsrct project import-font before preview or export.");
     let document = TesseractFile::open(first_project(&reimported))
         .unwrap()
         .project_json()

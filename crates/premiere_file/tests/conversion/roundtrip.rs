@@ -1,17 +1,23 @@
 use super::support::*;
+#[cfg(feature = "ffmpeg-library")]
 use fx_conv::{ConversionMode, ExportFromTesseract, ImportToTesseract};
-use premiere_file::{
-    Omission, OmissionKind, OmissionScope, PrProjectFile, PrSequence, PrVideoItem, Premiere,
-    PremiereImportOptions,
-};
+use premiere_file::{Omission, PrProjectFile, PrVideoItem};
+#[cfg(feature = "ffmpeg-library")]
+use premiere_file::{OmissionKind, OmissionScope, PrSequence, Premiere, PremiereImportOptions};
 use serde_json::{json, Value};
-use std::{fs, io::Read, path::Path};
-use tesseract_file::{AssetKind, TesseractFile, TesseractFileBuilder};
+#[cfg(feature = "ffmpeg-library")]
+use std::io::Read;
+use std::{fs, path::Path};
+#[cfg(feature = "ffmpeg-library")]
+use tesseract_file::AssetKind;
+use tesseract_file::{TesseractFile, TesseractFileBuilder};
 
 const CLIP_A: &[u8] = include_bytes!("../fixtures/feature_two_tracks_gap_clip_a.mp4");
 const CLIP_B: &[u8] = include_bytes!("../fixtures/feature_two_tracks_gap_clip_b.mp4");
 /// The two root sequences of `two-video-tracks.prproj`.
+#[cfg(feature = "ffmpeg-library")]
 const TWO_TRACKS_OVERLAP: &str = "1592feef-89df-4c40-ba9d-fe9088c8f4a5";
+#[cfg(feature = "ffmpeg-library")]
 const TWO_TRACKS_GAP: &str = "c8acf9c1-34b2-4086-9f55-d528950a7059";
 
 // This Adobe-authored two-track fixture has only its absolute media aliases removed.
@@ -31,6 +37,7 @@ fn two_video_tracks_fixture(root: &Path) -> std::path::PathBuf {
     path
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn sequence_table(project: &PrProjectFile, sequence: &PrSequence) -> Value {
     let occurrences: Vec<_> = sequence
         .video_tracks()
@@ -61,6 +68,7 @@ fn sequence_table(project: &PrProjectFile, sequence: &PrSequence) -> Value {
     })
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn converted_adobe_sequence(root: &Path, sequence: &str) -> TesseractFile {
     let output = root.join("converted");
     premiere_to_tesseract(
@@ -73,6 +81,7 @@ fn converted_adobe_sequence(root: &Path, sequence: &str) -> TesseractFile {
     TesseractFile::open(first_project(&output)).unwrap()
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn layer_uses_media(file: &TesseractFile, layer: &Value, file_name: &str) -> bool {
     let asset_id = layer["source"]["assetId"].as_str().unwrap();
     Path::new(&file.metadata().assets[asset_id].path)
@@ -81,6 +90,7 @@ fn layer_uses_media(file: &TesseractFile, layer: &Value, file_name: &str) -> boo
         == Some(file_name)
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn premiere_to_tesseract_preserves_trimmed_source_range() {
     let dir = tempfile::tempdir().unwrap();
@@ -101,6 +111,7 @@ fn premiere_to_tesseract_preserves_trimmed_source_range() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn premiere_to_tesseract_preserves_cut_gap_for_reused_media() {
     let dir = tempfile::tempdir().unwrap();
@@ -139,6 +150,7 @@ fn premiere_to_tesseract_preserves_cut_gap_for_reused_media() {
     assert_eq!(occurrences[0].4, occurrences[1].4);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn isolated_red_blue_sources_preserve_the_editable_gap_without_overlap() {
     let dir = tempfile::tempdir().unwrap();
@@ -227,6 +239,7 @@ fn isolated_red_blue_sources_preserve_the_editable_gap_without_overlap() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_red_blue_video_tracks_preserve_overlap_and_layer_precedence() {
     let dir = tempfile::tempdir().unwrap();
@@ -282,6 +295,7 @@ fn adobe_red_blue_video_tracks_preserve_overlap_and_layer_precedence() {
     assert_editable_feature_roundtrip(dir.path(), fixture, "Two tracks overlap color", &converted);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn lightening_22_10_blend_pair_converts_as_screen_both_ways_and_reimports() {
     // AME renders this fixture's (22, 10) brighter than both layers, a lightening
@@ -353,7 +367,7 @@ fn lightening_22_10_blend_pair_converts_as_screen_both_ways_and_reimports() {
 
 #[test]
 fn adobe_blend_code_chart_imports_each_measured_mode_and_writes_it_back() {
-    // Tile q plays in five 1 s slots from 1 s, one pair each; the Oracle's AME
+    // Tile q plays in five 1 s slots from 1 s, one pair each; the independent AME
     // render measures every slot's mode (tests/README.md). Parameter 2 selects
     // the mode, so (22, 0) is Screen and (1, 0) Color Burn; Premiere saved the
     // (18, 10) slot with its default Opacity.
@@ -447,6 +461,7 @@ fn adobe_blend_code_chart_imports_each_measured_mode_and_writes_it_back() {
     assert_eq!(slots(&reimported), chart);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_normal_pair_18_0_preserves_static_opacity_without_omission() {
     // AME renders this fixture's (18, 0) at 50% as a mix of the two layers.
@@ -492,6 +507,7 @@ fn adobe_normal_pair_18_0_preserves_static_opacity_without_omission() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn isolated_feature(root: &Path, fixture: &str) -> (TesseractFile, std::path::PathBuf) {
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
@@ -513,6 +529,7 @@ fn isolated_feature(root: &Path, fixture: &str) -> (TesseractFile, std::path::Pa
     )
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn assert_editable_feature_roundtrip(
     root: &Path,
     fixture: &str,
@@ -580,6 +597,7 @@ fn assert_editable_feature_roundtrip(
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_quicktime_media_keeps_original_mov_asset_editable() {
     let dir = tempfile::tempdir().unwrap();
@@ -614,6 +632,7 @@ fn adobe_quicktime_media_keeps_original_mov_asset_editable() {
 /// 1080x1920 sequence, which AME rendered as the case's pinned reference. This
 /// test checks the editable structure of a fresh conversion and export; the
 /// render comparison and a Premiere reopen of the export are not run here.
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn derived_vertical_canvas_converts_at_its_own_size_in_both_directions() {
     const FIXTURE: &str = "feature_custom_canvas_vertical_strict.prproj";
@@ -694,6 +713,7 @@ fn derived_vertical_canvas_converts_at_its_own_size_in_both_directions() {
 /// 1080x1920 source on V1 for 2 s. The save keeps its absolute media paths;
 /// its package-local `RelativePath` names the committed media. Its only report
 /// is the 26.5 save-form track item `Node`, at feature scope: the clip converts.
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn premiere_26_5_vertical_canvas_imports_at_its_own_size() {
     const FIXTURE: &str = "feature_custom_canvas_vertical_26_5_strict.prproj";
@@ -761,6 +781,7 @@ fn premiere_26_5_vertical_canvas_imports_at_its_own_size() {
     assert_eq!(packaged, SOURCE_MEDIA);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_adjacent_cut_keeps_distinct_editable_sources() {
     let dir = tempfile::tempdir().unwrap();
@@ -816,6 +837,7 @@ fn adobe_adjacent_cut_keeps_distinct_editable_sources() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_linear_wipe_preserves_editable_overlap_mask_and_source_handles() {
     let dir = tempfile::tempdir().unwrap();
@@ -906,6 +928,7 @@ fn adobe_linear_wipe_preserves_editable_overlap_mask_and_source_handles() {
     assert!(xml.contains("<Name>Feather</Name>"));
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_nonzero_source_trim_keeps_timecoded_source_offset() {
     let dir = tempfile::tempdir().unwrap();
@@ -936,6 +959,7 @@ fn adobe_nonzero_source_trim_keeps_timecoded_source_offset() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_exported_linear_rotation_keeps_editable_source_clock_keys() {
     let dir = tempfile::tempdir().unwrap();
@@ -1000,6 +1024,7 @@ fn adobe_exported_linear_rotation_keeps_editable_source_clock_keys() {
 /// Rotation keys. It is a structural derivative of the pinned
 /// `feature_nested_second_sequence_strict` and
 /// `feature_motion_rotation_linear_strict` projects, not saved by Premiere.
+#[cfg(feature = "ffmpeg-library")]
 fn keyframe_ids_fixture(root: &Path) -> std::path::PathBuf {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     fs::create_dir_all(root.join("media")).unwrap();
@@ -1018,14 +1043,17 @@ fn keyframe_ids_fixture(root: &Path) -> std::path::PathBuf {
     project
 }
 
+#[cfg(feature = "ffmpeg-library")]
 type RotationRow = (u64, Option<String>, Value, Vec<(i64, f64, String)>);
 
 /// A layer's id, document start, holding group and source range.
+#[cfg(feature = "ffmpeg-library")]
 type LayerPlace = (Value, u64, Option<String>, Value);
 
 /// Each Rotation track by the document start of its layer: the group holding
 /// the layer, the layer's source range and the (layer time, value, easing) of
 /// its keys. Every keyframe id must name its own layer and be unique.
+#[cfg(feature = "ffmpeg-library")]
 fn rotation_rows(document: &Value) -> Vec<RotationRow> {
     fn place(layers: &Value, offset: u64, group: Option<&str>, places: &mut Vec<LayerPlace>) {
         for layer in layers.as_array().unwrap() {
@@ -1072,6 +1100,7 @@ fn rotation_rows(document: &Value) -> Vec<RotationRow> {
     rows
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_derived_rotation_keys_stay_unique_across_layers_and_nest_copies() {
     let dir = tempfile::tempdir().unwrap();
@@ -1145,6 +1174,7 @@ fn adobe_derived_rotation_keys_stay_unique_across_layers_and_nest_copies() {
 /// range, holding group, media, static Motion and Opacity, blend mode and the
 /// (layer time, value, easing) keys of each animated property. Every keyframe
 /// id must be unique.
+#[cfg(feature = "ffmpeg-library")]
 fn motion_opacity_layers(file: &TesseractFile) -> Vec<Value> {
     fn visit(layers: &Value, offset: u64, group: Option<&str>, found: &mut Vec<(Value, u64)>) {
         for layer in layers.as_array().unwrap() {
@@ -1216,6 +1246,7 @@ fn motion_opacity_layers(file: &TesseractFile) -> Vec<Value> {
         .collect()
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn premiere_26_5_motion_and_opacity_stay_editable_in_both_directions() {
     // Premiere 26.5.1 saved `feature_motion_opacity_26_5_strict.prproj`
@@ -1323,6 +1354,114 @@ fn premiere_26_5_motion_and_opacity_stay_editable_in_both_directions() {
     assert_eq!(motion_opacity_layers(&again), expected);
 }
 
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn premiere_26_5_static_motion_crop_imports_as_a_crop_guide_and_exports_as_a_crop_effect() {
+    // A derived edit, not an Adobe save: clip S1 (0-1 s, static Position
+    // 0.625:0.65) of the Premiere 26.5.1 save
+    // `feature_motion_opacity_26_5_strict.prproj` with Motion Crop Left 25
+    // and Right 12.5 (`VideoComponentParam:245` and `:247`).
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    for media in [
+        "feature_multi_sequence_blue_10s.mp4",
+        "feature_multi_sequence_red_10s.mp4",
+    ] {
+        fs::copy(fixtures.join(media), root.join(media)).unwrap();
+    }
+    let mut xml = read_xml(&fixtures.join("feature_motion_opacity_26_5_strict.prproj"));
+    for (record, value) in [("245", "25."), ("247", "12.5")] {
+        let start = xml
+            .find(&format!("<VideoComponentParam ObjectID=\"{record}\""))
+            .unwrap();
+        let zero = "<StartKeyframe>-91445760000000000,0.,";
+        let at = start + xml[start..].find(zero).unwrap();
+        xml.replace_range(
+            at..at + zero.len(),
+            &format!("<StartKeyframe>-91445760000000000,{value},"),
+        );
+    }
+    let source = root.join("motion-crop.prproj");
+    write_prproj(&source, &xml);
+    let omissions = premiere_to_tesseract(
+        &source,
+        root.join("converted"),
+        Some("aad89517-456c-4cbf-8d97-c54bf5af8eb2"),
+        false,
+    )
+    .unwrap();
+    // The fixture's only reports: the nest's audio parts and the track item `Node`.
+    assert!(
+        omissions.iter().all(
+            |omission| omission.reason.contains("found AudioSequenceSource")
+                || omission.reason == "ClipTrackItem/TrackItem/Node not converted"
+        ),
+        "{omissions:?}"
+    );
+    // S1's video keeps its place and transform, and its Crop guide, beside it,
+    // shares them and draws the Motion Crop in source pixels.
+    let crop_of = |document: &Value| {
+        let layers = document["composition"]["layers"].as_array().unwrap();
+        let masked: Vec<_> = layers
+            .iter()
+            .filter(|layer| {
+                layer["masks"]
+                    .as_array()
+                    .is_some_and(|masks| !masks.is_empty())
+            })
+            .collect();
+        assert_eq!(masked.len(), 1, "{layers:#?}");
+        let video = masked[0];
+        let guide = layers
+            .iter()
+            .find(|layer| layer["id"] == video["masks"][0]["layer"])
+            .unwrap();
+        assert_eq!(guide["type"], "Rect");
+        assert_eq!(guide["transform"], video["transform"]);
+        // A video's range is its windowed playback's input range.
+        assert_eq!(guide["activeRange"], video["playback"]["inputRange"]);
+        json!({
+            "range": video["playback"]["inputRange"],
+            "position": video["transform"]["position"],
+            "rect": [guide["rect"]["position"], guide["rect"]["size"]],
+        })
+    };
+    let expected = json!({
+        "range": {"start": 0, "duration": 1000},
+        "position": [1200.0, 702.0],
+        "rect": [[480.0, 0.0], [1200.0, 1080.0]],
+    });
+    let archive = first_project(&root.join("converted"));
+    let imported = TesseractFile::open(&archive)
+        .unwrap()
+        .project_json()
+        .unwrap();
+    assert_eq!(crop_of(&imported), expected);
+
+    // Export writes the existing Crop effect in the 26.3 layout, whose Motion
+    // has no Motion Crop; it reads back as the same guide.
+    let omissions = tesseract_to_premiere(&archive, root.join("native"), false).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let native = root.join("native/project.prproj");
+    let written = read_xml(&native);
+    assert_eq!(
+        written
+            .matches("<MatchName>AE.ADBE AECrop</MatchName>")
+            .count(),
+        1
+    );
+    assert!(!written.contains("<Name>Crop Left</Name>"));
+    let root_sequence = exported_root_sequence(&native);
+    premiere_to_tesseract(&native, root.join("again"), Some(&root_sequence), false).unwrap();
+    let again = TesseractFile::open(first_project(&root.join("again")))
+        .unwrap()
+        .project_json()
+        .unwrap();
+    assert_eq!(crop_of(&again), expected);
+}
+
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_derived_static_motion_keeps_independent_position_anchor_and_axis_scales() {
     // Adobe exported this source separately, but this structural assertion does
@@ -1363,10 +1502,12 @@ fn adobe_derived_static_motion_keeps_independent_position_anchor_and_axis_scales
 /// anchor, within 0.8 px (an independent measurement; no FX render is
 /// compared here). Source and canvas are both 1920 x 1080; see the fixture's
 /// provenance file.
+#[cfg(feature = "ffmpeg-library")]
 const ANCHOR_SCALE_WIDTH_PROBE: &str = "feature_motion_anchor_scale_width_probe.prproj";
 
 /// `[id, layer time, value, easing]` of every key of each property that
 /// `document` animates on `layer`, by property.
+#[cfg(feature = "ffmpeg-library")]
 fn layer_keys(document: &Value, layer: &Value) -> Value {
     let entries = document["composition"]["dynamics"]["entries"]
         .as_array()
@@ -1394,6 +1535,7 @@ fn layer_keys(document: &Value, layer: &Value) -> Value {
     Value::Object(tracks)
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn native_probe_anchor_point_and_scale_width_keys_import_as_editable_axis_tracks() {
     use sha2::{Digest, Sha256};
@@ -1470,6 +1612,7 @@ fn native_probe_anchor_point_and_scale_width_keys_import_as_editable_axis_tracks
 }
 
 /// One intrinsic Motion parameter as a generated project writes it.
+#[cfg(feature = "ffmpeg-library")]
 struct WrittenParam {
     name: String,
     /// The value of its `StartKeyframe`.
@@ -1480,6 +1623,7 @@ struct WrittenParam {
 
 /// The parameters of the one intrinsic Motion of the generated `project`,
 /// read from its XML, by `ParameterID`.
+#[cfg(feature = "ffmpeg-library")]
 fn written_motion(project: &Path) -> std::collections::BTreeMap<String, WrittenParam> {
     use std::collections::HashMap;
     let xml = read_xml(project);
@@ -1530,6 +1674,7 @@ fn written_motion(project: &Path) -> std::collections::BTreeMap<String, WrittenP
         .collect()
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn edited_anchor_point_and_scale_width_keys_export_as_native_motion_keys() {
     let dir = tempfile::tempdir().unwrap();
@@ -1674,6 +1819,7 @@ fn edited_anchor_point_and_scale_width_keys_export_as_native_motion_keys() {
     assert_eq!(transform["anchorPoint"], json!([480.0, 270.0]));
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_derived_media_fit_crop_stays_editable_in_both_directions() {
     // The native Crop parameter IDs and record classes come from the pinned
@@ -1688,7 +1834,7 @@ fn adobe_derived_media_fit_crop_stays_editable_in_both_directions() {
     assert_eq!(layers.len(), 3);
     let video = &layers[0];
     let guide = &layers[1];
-    assert_eq!(video["source"]["fit"], json!("contain"));
+    assert_eq!(video["source"]["fit"], json!("stretch"));
     assert_eq!(
         video["source"]["sourceRect"],
         json!({"x": 0.0, "y": 0.0, "width": 1080.0, "height": 1920.0})
@@ -1717,6 +1863,7 @@ fn adobe_derived_media_fit_crop_stays_editable_in_both_directions() {
     assert_eq!(layers[1]["rect"]["size"], json!([702.0, 1440.0]));
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn unsupported_crop_mask_omits_its_video_and_keeps_siblings() {
     let dir = tempfile::tempdir().unwrap();
@@ -1747,14 +1894,19 @@ fn unsupported_crop_mask_omits_its_video_and_keeps_siblings() {
     assert_eq!(sequence.video_occurrences().count(), 1, "the sibling");
 }
 
+#[cfg(feature = "ffmpeg-library")]
 const STAGE_ORDER_FIXTURE: &str = "feature_stage_order_26_5_strict.prproj";
+#[cfg(feature = "ffmpeg-library")]
 const STAGE_ORDER_SEQUENCE: &str = "82b6b2a3-0b54-4e98-ba50-d874e9be10ce";
+#[cfg(feature = "ffmpeg-library")]
 const STAGE_MOTION_FIXTURE: &str = "feature_stage_motion_26_5_strict.prproj";
+#[cfg(feature = "ffmpeg-library")]
 const STAGE_MOTION_SEQUENCE: &str = "a6a1d3c8-6481-4e34-a8cb-132545d69b7b";
 
-/// Imports an Oracle run C6 stage fixture, Premiere 26.5.1's save as saved,
+/// Imports a native stage fixture, Premiere 26.5.1's save as saved,
 /// and returns its path, the document and its archive. The only omissions are
 /// UI nodes and a master clip's `TimeDisplay`.
+#[cfg(feature = "ffmpeg-library")]
 fn import_stage_fixture(
     root: &Path,
     fixture: &str,
@@ -1783,6 +1935,7 @@ fn import_stage_fixture(
 
 /// Each masked clip of a stage fixture document (a stage group, or a video
 /// with a mask), by start: its type and the effects of its video.
+#[cfg(feature = "ffmpeg-library")]
 fn stage_clips(document: &Value) -> Vec<(i64, String, Value)> {
     document["composition"]["layers"]
         .as_array()
@@ -1816,6 +1969,7 @@ fn stage_clips(document: &Value) -> Vec<(i64, String, Value)> {
 }
 
 /// The layer of `document`, at the top level or in a group, with `id`.
+#[cfg(feature = "ffmpeg-library")]
 fn layer_by_id(document: &Value, id: &Value) -> Value {
     fn find(layers: &Value, id: &Value) -> Option<Value> {
         layers.as_array()?.iter().find_map(|layer| {
@@ -1828,6 +1982,7 @@ fn layer_by_id(document: &Value, id: &Value) -> Value {
 }
 
 /// The guide of the mask on the layer that starts at `start`.
+#[cfg(feature = "ffmpeg-library")]
 fn stage_guide(document: &Value, start: i64) -> Value {
     let masked = document["composition"]["layers"]
         .as_array()
@@ -1842,6 +1997,7 @@ fn stage_guide(document: &Value, start: i64) -> Value {
 }
 
 /// The keyed properties of layer `id`: each property's layer times and values.
+#[cfg(feature = "ffmpeg-library")]
 fn layer_tracks(document: &Value, id: &Value) -> Vec<(String, Vec<(i64, f64)>)> {
     let mut tracks: Vec<_> = document["composition"]["dynamics"]["entries"]
         .as_array()
@@ -1873,6 +2029,7 @@ fn layer_tracks(document: &Value, id: &Value) -> Vec<(String, Vec<(i64, f64)>)> 
 /// The standard effects of each video clip of a native project that has any,
 /// by start ticks: their match names in chain `Index` order (Premiere applies
 /// them from the highest Index to the lowest).
+#[cfg(feature = "ffmpeg-library")]
 fn standard_chains(project: &Path) -> Vec<(i64, Vec<String>)> {
     use std::collections::HashMap;
     let xml = read_xml(project);
@@ -1932,6 +2089,7 @@ fn standard_chains(project: &Path) -> Vec<(i64, Vec<String>)> {
 
 /// Exports `archive`, checks that the written chains are the fixture's, and
 /// that the export reimports as `document`. Returns the export's omissions.
+#[cfg(feature = "ffmpeg-library")]
 fn assert_stage_fixture_round_trip(
     root: &Path,
     source: &Path,
@@ -1971,9 +2129,10 @@ fn assert_stage_fixture_round_trip(
     omissions
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_stage_order_fixture_converts_each_order_and_writes_it_back() {
-    // `premiere_isolated_stage_order_26_5` (Oracle run C6, F1): four timecoded
+    // `premiere_isolated_stage_order_26_5`: four timecoded
     // clips from source In 1 s. AME renders A and C sharp (the blur at chain
     // Index 1 applies before the Crop or wipe at Index 0) and B and D soft.
     let dir = tempfile::tempdir().unwrap();
@@ -2034,9 +2193,10 @@ fn adobe_stage_order_fixture_converts_each_order_and_writes_it_back() {
     assert!(omissions.is_empty(), "{omissions:?}");
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_stage_motion_fixture_keeps_motion_masks_and_keys_and_writes_them_back() {
-    // `premiere_isolated_stage_motion_26_5` (Oracle run C6, F1m): Premiere
+    // `premiere_isolated_stage_motion_26_5`: Premiere
     // applies the effects in the clip's frame and then Motion (Index 0).
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -2141,10 +2301,158 @@ fn adobe_stage_motion_fixture_keeps_motion_masks_and_keys_and_writes_them_back()
     assert!(omissions.is_empty(), "{omissions:?}");
 }
 
+/// The stage-motion fixture with clip H's Crop effect (`VideoFilterComponent:128`:
+/// Left 10, Top 20, Right 10, Bottom 5, which applies before H's Gaussian
+/// Blur) moved onto H's Motion Crop (`VideoComponentParam` 198-201), and H's
+/// Position moved off centre to 0.3:0.62 (`PointComponentParam:191`): a
+/// derived edit, not an Adobe save. H plays `feature_crop_portrait.mp4`, a
+/// 1080x1920 picture, at Scale 50 in the 1920x1080 sequence from 6 s.
+#[cfg(feature = "ffmpeg-library")]
+fn stage_motion_with_motion_crop(root: &Path) -> std::path::PathBuf {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let mut xml = read_xml(&fixtures.join(STAGE_MOTION_FIXTURE));
+    let mut edit = |record: &str, from: &str, to: &str| {
+        let start = xml.find(record).unwrap_or_else(|| panic!("no {record}"));
+        let at = start
+            + xml[start..]
+                .find(from)
+                .unwrap_or_else(|| panic!("{record}: no {from}"));
+        assert!(
+            !xml[start + record.len()..at].contains("ObjectID="),
+            "{from} is not in {record}"
+        );
+        xml.replace_range(at..at + from.len(), to);
+    };
+    let start_key = |value: &str| format!("<StartKeyframe>-91445760000000000,{value},");
+    for (crop_edge, motion_edge, value) in [
+        ("205", "198", "10."),
+        ("206", "199", "20."),
+        ("207", "200", "10."),
+        ("208", "201", "5."),
+    ] {
+        edit(
+            &format!("<VideoComponentParam ObjectID=\"{crop_edge}\""),
+            &start_key(value),
+            &start_key("0."),
+        );
+        edit(
+            &format!("<VideoComponentParam ObjectID=\"{motion_edge}\""),
+            &start_key("0."),
+            &start_key(value),
+        );
+    }
+    edit(
+        "<PointComponentParam ObjectID=\"191\"",
+        &start_key("0.5:0.5"),
+        &start_key("0.3:0.62"),
+    );
+    for media in [
+        "video-30fps-10s.mp4",
+        "feature_timecoded_source.mp4",
+        "feature_crop_portrait.mp4",
+    ] {
+        fs::copy(fixtures.join(media), root.join(media)).unwrap();
+    }
+    let source = root.join("stage-motion-crop.prproj");
+    write_prproj(&source, &xml);
+    source
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn a_motion_crop_crops_its_portrait_media_frame_after_its_effects_and_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    // As saved, H's Crop effect applies before its blur: one video whose
+    // sibling guide crops its own 1080x1920 frame, not the sequence frame.
+    let (_, saved, _) = import_stage_fixture(root, STAGE_MOTION_FIXTURE, STAGE_MOTION_SEQUENCE);
+    let saved_h = stage_clips(&saved)
+        .into_iter()
+        .find(|(start, ..)| *start == 6000)
+        .unwrap();
+    assert_eq!(saved_h.1, "Video");
+    let cropped_rect = json!([[108.0, 384.0], [864.0, 1440.0]]);
+    let rect = |guide: &Value| json!([guide["rect"]["position"], guide["rect"]["size"]]);
+    assert_eq!(rect(&stage_guide(&saved, 6000)), cropped_rect);
+
+    // The same edges as H's Motion Crop apply with Motion, after the blur, so
+    // the clip stages: the group carries the off-centre Motion of the
+    // portrait frame and its guide, a child in that frame, crops the same
+    // part; the blur stays on the video inside it.
+    let source = stage_motion_with_motion_crop(root);
+    let imported = root.join("motion-crop-imported");
+    let omissions =
+        premiere_to_tesseract(&source, &imported, Some(STAGE_MOTION_SEQUENCE), false).unwrap();
+    assert!(
+        omissions.iter().all(|omission| {
+            omission.reason.contains("ClipTrackItem/TrackItem/Node")
+                || omission.reason.contains("TimeDisplay")
+        }),
+        "{omissions:?}"
+    );
+    let staged_h = |document: &Value| {
+        let (_, kind, effects) = stage_clips(document)
+            .into_iter()
+            .find(|(start, ..)| *start == 6000)
+            .unwrap();
+        let group = document["composition"]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| {
+                layer["type"] == "Group"
+                    && (*crate::test_support::layer_range(layer))["start"] == json!(6000)
+            })
+            .cloned()
+            .unwrap_or(Value::Null);
+        json!({
+            "kind": kind,
+            "effects": effects,
+            "anchor": group["transform"]["anchorPoint"],
+            "position": group["transform"]["position"],
+            "scale": group["transform"]["scale"],
+            "guide": rect(&stage_guide(document, 6000)),
+        })
+    };
+    let expected = json!({
+        "kind": "Group",
+        "effects": [{"type": "gaussianBlur", "blurriness": 30.0, "repeatEdgePixels": true}],
+        "anchor": [540.0, 960.0],
+        "position": [576.0, 669.6],
+        "scale": [50.0, 50.0],
+        "guide": cropped_rect,
+    });
+    let document = TesseractFile::open(first_project(&imported))
+        .unwrap()
+        .project_json()
+        .unwrap();
+    assert_eq!(staged_h(&document), expected);
+
+    // Export writes the stage as one clip whose Crop effect applies after the
+    // blur, which reads back as the same stage.
+    let native = root.join("motion-crop-native");
+    tesseract_to_premiere(first_project(&imported), &native, false).unwrap();
+    let project = native.join("project.prproj");
+    let again = root.join("motion-crop-again");
+    premiere_to_tesseract(
+        &project,
+        &again,
+        Some(&exported_root_sequence(&project)),
+        false,
+    )
+    .unwrap();
+    let reread = TesseractFile::open(first_project(&again))
+        .unwrap()
+        .project_json()
+        .unwrap();
+    assert_eq!(staged_h(&reread), expected);
+}
+
 /// Moves the first layer of `document`, a video, and its Crop guide, the
 /// second, under a stage group 10 that takes the video's range, transform and
 /// mask, as import stages a clip. The third layer is the black canvas, at the
 /// identity.
+#[cfg(feature = "ffmpeg-library")]
 fn stage_first_video(document: &mut Value) {
     let layers = document["composition"]["layers"].as_array_mut().unwrap();
     let identity = layers[2]["transform"].clone();
@@ -2178,6 +2486,7 @@ fn stage_first_video(document: &mut Value) {
     layers.insert(0, group);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn stage_group_round_trips_as_one_native_clip() {
     let dir = tempfile::tempdir().unwrap();
@@ -2222,6 +2531,7 @@ fn stage_group_round_trips_as_one_native_clip() {
     assert_eq!(stage["layers"][1]["rect"], guide["rect"]);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn media_of_a_clip_omitted_for_its_mask_is_not_inspected() {
     let dir = tempfile::tempdir().unwrap();
@@ -2299,11 +2609,13 @@ fn media_of_a_clip_omitted_for_its_mask_is_not_inspected() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn media_of_an_image_omitted_for_its_mask_is_not_inspected() {
-    // A still exports no Crop or Linear Wipe, so an image with a mask is
-    // omitted whole, and its asset, whose bytes are not an image, is never
-    // opened. An unmasked image and the video beside it export.
+    // A still exports a mask only as one Crop or Opacity mask, which an
+    // inverted rectangle is not, so the image is omitted whole, and its asset,
+    // whose bytes are not an image, is never opened. An unmasked image and the
+    // video beside it export.
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let mut document = document(root);
@@ -2328,7 +2640,7 @@ fn media_of_an_image_omitted_for_its_mask_is_not_inspected() {
         })
     };
     let mut masked = image(30, "Masked", "broken-image");
-    masked["masks"] = json!([{"id": 32, "mode": "add", "layer": 31}]);
+    masked["masks"] = json!([{"id": 32, "mode": "add", "layer": 31, "inverted": true}]);
     let guide = json!({
         "type": "Rect",
         "id": 31,
@@ -2359,9 +2671,11 @@ fn media_of_an_image_omitted_for_its_mask_is_not_inspected() {
     let output = root.join("native");
     let omissions = tesseract_to_premiere(&edited, &output, false).unwrap();
     assert!(
-        omissions.iter().any(|omission| omission.record == "layer 30 (\"Masked\")"
-            && omission.reason
-                == "masks cannot be exported: a still image exports no Crop, Linear Wipe or Track Matte Key; occurrence omitted"),
+        omissions
+            .iter()
+            .any(|omission| omission.record == "layer 30 (\"Masked\")"
+                && omission.reason
+                    == "masks cannot be exported: the mask is inverted; occurrence omitted"),
         "{omissions:?}"
     );
     let project = PrProjectFile::load(output.join("project.prproj"))
@@ -2376,9 +2690,121 @@ fn media_of_an_image_omitted_for_its_mask_is_not_inspected() {
     assert_eq!(stills, [false, true], "the video and the unmasked image");
 }
 
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn media_of_a_nested_still_is_inspected_only_when_its_mask_exports() {
+    // Inside a group that exports as a nest, a still with one Crop guide
+    // (Top 15%) exports with that Crop, and a still with one Opacity mask, on
+    // an asset of its own, with that mask, so the media of both is inspected;
+    // a still whose rectangle is inverted is omitted whole, and its asset,
+    // whose bytes are not an image, is never opened.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut document = document(root);
+    let broken = root.join("broken.png");
+    fs::write(&broken, b"not an image").unwrap();
+    let still =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/feature_still_opaque.jpg");
+    let identity = document["composition"]["layers"][0]["transform"].clone();
+    let whole = json!({"start": 0, "duration": 1000});
+    let masked = |id: u64, name: &str, asset: &str, inverted: bool| {
+        json!({
+            "type": "Image", "id": id, "parent": 20, "name": name,
+            "activeRange": whole, "transform": identity,
+            "masks": [{"id": id + 100, "mode": "add", "layer": id + 1, "inverted": inverted}],
+            "source": {
+                "assetId": asset, "fit": "contain",
+                "sourceRect": {"x": 0, "y": 0, "width": 1920, "height": 1080},
+            },
+        })
+    };
+    let guide = |id: u64| {
+        json!({
+            "type": "Rect", "id": id, "parent": 20, "name": "Premiere Crop guide",
+            "activeRange": whole, "transform": identity,
+            "rect": {"position": [0.0, 162.0], "size": [1920.0, 918.0], "fillColor": [0, 0, 0, 1]},
+        })
+    };
+    // The Opacity mask's guide: a triangle of the still's frame.
+    let triangle = json!({
+        "type": "Shape", "id": 35, "parent": 20, "name": "Premiere Opacity mask",
+        "activeRange": whole, "transform": identity,
+        "shape": {"path": {"commands": [
+            {"type": "moveTo", "x": 480.0, "y": 270.0},
+            {"type": "lineTo", "x": 1440.0, "y": 270.0},
+            {"type": "lineTo", "x": 960.0, "y": 810.0},
+            {"type": "close"}
+        ]}},
+    });
+    let group = json!({
+        "type": "Group", "id": 20, "name": "Inner", "blendMode": "normal",
+        "playback": crate::test_support::linear_playback(whole.clone(), whole.clone()),
+        "transform": identity,
+        "layers": [
+            masked(30, "Cropped", "still", false),
+            guide(31),
+            masked(32, "Inverted", "broken-image", true),
+            guide(33),
+            masked(34, "Opacity masked", "masked-still", false),
+            triangle,
+        ],
+    });
+    document["composition"]["layers"]
+        .as_array_mut()
+        .unwrap()
+        .insert(0, group);
+    let edited = root.join("edited.tsrct");
+    TesseractFileBuilder::from_project_json(&serde_json::to_vec(&document).unwrap())
+        .unwrap()
+        .add_asset(
+            "premiere-video-1",
+            root.join("source.mp4"),
+            AssetKind::Video,
+        )
+        .unwrap()
+        .add_asset("broken-image", &broken, AssetKind::Image)
+        .unwrap()
+        .add_asset("still", &still, AssetKind::Image)
+        .unwrap()
+        .add_asset("masked-still", &still, AssetKind::Image)
+        .unwrap()
+        .write(&edited)
+        .unwrap();
+    let output = root.join("native");
+    let omissions = tesseract_to_premiere(&edited, &output, false).unwrap();
+    let occurrences: Vec<_> = omissions
+        .iter()
+        .filter(|omission| omission.scope == premiere_file::OmissionScope::Occurrence)
+        .map(|omission| (omission.record.as_str(), omission.reason.as_str()))
+        .collect();
+    assert_eq!(
+        occurrences,
+        [(
+            "layer 32 (\"Inverted\")",
+            "masks cannot be exported: the mask is inverted; occurrence omitted"
+        )]
+    );
+    let xml = read_xml(&output.join("project.prproj"));
+    // The nest's two stills: one with its Crop effect of Top 15, one with its
+    // Opacity mask.
+    assert_eq!(xml.matches("<IsStill>true</IsStill>").count(), 2);
+    assert_eq!(
+        xml.matches("<MatchName>AE.ADBE AECrop</MatchName>").count(),
+        1
+    );
+    assert!(xml.contains("<Name>Top</Name>"));
+    assert!(xml.contains("<StartKeyframe>-91445760000000000,15,0,0,0,0,0,0</StartKeyframe>"));
+    assert_eq!(
+        xml.matches("<MatchName>AE.ADBE AEMask</MatchName>").count(),
+        1
+    );
+    assert_eq!(fs::read_dir(output.join("media")).unwrap().count(), 3);
+}
+
 /// The 100 ms from 100 ms into the 200 ms `video-with-audio.mp4`, placed at
 /// 500 ms at volume 1 with a Crop (Top 15%): the video, its Crop guide and the
 /// black canvas.
+#[cfg(feature = "ffmpeg-library")]
 fn audible_cropped_document() -> Value {
     let mut document = crate::test_support::editable_document();
     document["duration"] = json!(0.6);
@@ -2409,6 +2835,7 @@ fn audible_cropped_document() -> Value {
 /// The timeline Start and End and the source In of each sound clip of a
 /// native project: its `TrackItem`, and the `InPoint` of the `AudioClip` that
 /// its `SubClip` references. Premiere leaves out a zero Start.
+#[cfg(feature = "ffmpeg-library")]
 fn sound_clip_ticks(document: &roxmltree::Document<'_>) -> Vec<[i64; 3]> {
     fn child<'a, 'input>(
         node: roxmltree::Node<'a, 'input>,
@@ -2450,6 +2877,7 @@ fn sound_clip_ticks(document: &roxmltree::Document<'_>) -> Vec<[i64; 3]> {
         .collect()
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn stage_group_exports_the_sound_of_its_video_as_a_flat_clip_does() {
     let dir = tempfile::tempdir().unwrap();
@@ -2488,6 +2916,7 @@ fn stage_group_exports_the_sound_of_its_video_as_a_flat_clip_does() {
 /// that its only keys are `keys` (layer time in ms, value and easing type) on
 /// each of `properties`. The archive round-trips as `evidence` expects.
 /// Returns each property's keys, for checks beyond their type.
+#[cfg(feature = "ffmpeg-library")]
 fn assert_center_clip_motion_keys(
     fixture: &str,
     evidence: &str,
@@ -2549,8 +2978,10 @@ fn assert_center_clip_motion_keys(
     per_property
 }
 
+#[cfg(feature = "ffmpeg-library")]
 const SCALE_AXES: [&str; 2] = ["scaleX", "scaleY"];
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_hold_rotation_keeps_editable_source_clock_keys() {
     assert_center_clip_motion_keys(
@@ -2562,6 +2993,7 @@ fn adobe_hold_rotation_keeps_editable_source_clock_keys() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_trimmed_source_rotation_retains_source_clock_keys() {
     // Native source keys at 3.5/4.5 s must follow the 3 s source trim.
@@ -2574,6 +3006,7 @@ fn adobe_trimmed_source_rotation_retains_source_clock_keys() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_trimmed_source_scale_keeps_two_editable_source_clock_axes() {
     assert_center_clip_motion_keys(
@@ -2585,6 +3018,7 @@ fn adobe_trimmed_source_scale_keeps_two_editable_source_clock_axes() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_hold_scale_keeps_two_editable_axis_keys() {
     assert_center_clip_motion_keys(
@@ -2596,6 +3030,7 @@ fn adobe_hold_scale_keeps_two_editable_axis_keys() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_exported_asymmetric_bezier_scale_keeps_editable_handles() {
     let axes = assert_center_clip_motion_keys(
@@ -2614,6 +3049,7 @@ fn adobe_exported_asymmetric_bezier_scale_keeps_editable_handles() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn source_aligned_asymmetric_bezier_scale_imports_exact_native_controls() {
     const LEGACY_FIXTURE: &str = "feature_motion_scale_bezier_asymmetric_strict.prproj";
@@ -2672,16 +3108,19 @@ fn source_aligned_asymmetric_bezier_scale_imports_exact_native_controls() {
 /// fixtures round-trip as the `feature_motion_scale_linear_strict` evidence
 /// expects; the derived graph failed Adobe export, so only its editable
 /// structure is asserted.
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn native_derived_uniform_scale_preserves_two_editable_axes_and_center_pivot() {
     assert_uniform_scale_keys("feature_motion_scale_linear_strict.prproj");
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_exported_uniform_scale_preserves_two_editable_axes_and_center_pivot() {
     assert_uniform_scale_keys("feature_motion_scale_linear_private_strict.prproj");
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn assert_uniform_scale_keys(fixture: &str) {
     assert_center_clip_motion_keys(
         fixture,
@@ -2692,6 +3131,7 @@ fn assert_uniform_scale_keys(fixture: &str) {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_repeated_adjacent_source_keeps_one_asset_with_two_in_points() {
     let dir = tempfile::tempdir().unwrap();
@@ -2741,6 +3181,7 @@ fn adobe_repeated_adjacent_source_keeps_one_asset_with_two_in_points() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn premiere_to_tesseract_preserves_cross_track_overlap() {
     let dir = tempfile::tempdir().unwrap();
@@ -2765,6 +3206,7 @@ fn premiere_to_tesseract_preserves_cross_track_overlap() {
     assert!(ranges[0].0 + ranges[0].1 > ranges[1].0);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn premiere_to_tesseract_selects_only_the_requested_sequence_guid() {
     let dir = tempfile::tempdir().unwrap();
@@ -2785,6 +3227,7 @@ fn premiere_to_tesseract_selects_only_the_requested_sequence_guid() {
     assert_eq!(video_layers(&selected.project_json().unwrap()).len(), 3);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_nested_second_sequence_is_selectable_by_guid() {
     let dir = tempfile::tempdir().unwrap();
@@ -2850,6 +3293,7 @@ fn adobe_nested_second_sequence_is_selectable_by_guid() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_second_sequence_selects_only_its_distinct_color_sources() {
     let dir = tempfile::tempdir().unwrap();
@@ -2921,6 +3365,7 @@ fn adobe_second_sequence_selects_only_its_distinct_color_sources() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn tesseract_to_premiere_adds_and_moves_clips_with_exact_source_ranges() {
     let dir = tempfile::tempdir().unwrap();
@@ -2973,6 +3418,7 @@ fn tesseract_to_premiere_adds_and_moves_clips_with_exact_source_ranges() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn tesseract_to_premiere_omits_a_deleted_middle_clip() {
     let dir = tempfile::tempdir().unwrap();
@@ -3049,6 +3495,7 @@ fn native_media_is_shared_across_project_sequences() {
         .all(|clip| project.media(clip).is_some()));
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_video_tracks_round_trip_with_order_and_ranges() {
     let dir = tempfile::tempdir().unwrap();
@@ -3144,6 +3591,7 @@ fn adobe_video_tracks_round_trip_with_order_and_ranges() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn edited_distinct_video_layers_export_overlap_and_reused_source_without_flattening() {
     let dir = tempfile::tempdir().unwrap();
@@ -3226,6 +3674,7 @@ fn shared_premiere_model_loads_the_supported_subset() {
     assert_eq!(project.media(clip).unwrap().name(), "source.mp4");
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn premiere_lists_duplicate_names_and_requires_one_target() {
     let dir = tempfile::tempdir().unwrap();
@@ -3261,6 +3710,7 @@ fn premiere_lists_duplicate_names_and_requires_one_target() {
     assert_eq!(project_files(&output), [output.join("project.tsrct")]);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn premiere_adapter_preserves_check_publication_and_legacy_reports() {
     let dir = tempfile::tempdir().unwrap();
@@ -3309,15 +3759,46 @@ fn premiere_adapter_preserves_check_publication_and_legacy_reports() {
     assert!(output.join("project.prproj").is_file());
 }
 
+/// `MOV` with a `moov/meta` atom laid out as iPhone captures write it. QuickTime
+/// metadata has no ISO full-box version and flags, so the atom starts with its
+/// `hdlr`; one `mdta` key and the item list holding its value follow.
+#[cfg(feature = "ffmpeg-library")]
+fn mov_with_quicktime_metadata() -> Vec<u8> {
+    fn mp4_box(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+        let size = u32::try_from(payload.len() + 8).unwrap().to_be_bytes();
+        [size.as_slice(), kind, payload].concat()
+    }
+    let hdlr = mp4_box(b"hdlr", &[&[0; 8][..], b"mdta", &[0; 14]].concat());
+    let key = mp4_box(b"mdta", b"com.example.title");
+    let keys = mp4_box(b"keys", &[&[0, 0, 0, 0, 0, 0, 0, 1][..], &key].concat());
+    let data = mp4_box(b"data", b"\0\0\0\x01\0\0\0\0clip");
+    let item = mp4_box(&1_u32.to_be_bytes(), &data);
+    let meta = mp4_box(b"meta", &[hdlr, keys, mp4_box(b"ilst", &item)].concat());
+    // `moov` is the fixture's last box, so only its size changes.
+    let moov = MOV.windows(4).position(|kind| kind == b"moov").unwrap() - 4;
+    let size = u32::from_be_bytes(MOV[moov..moov + 4].try_into().unwrap()) as usize;
+    assert_eq!(moov + size, MOV.len());
+    let mut bytes = [MOV, &meta].concat();
+    let grown = u32::try_from(size + meta.len()).unwrap();
+    bytes[moov..moov + 4].copy_from_slice(&grown.to_be_bytes());
+    bytes
+}
+
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn quicktime_mov_survives_checks_and_both_conversion_directions_without_transcoding() {
     assert_eq!(&MOV[4..12], b"ftypqt  ");
-    for extension in ["mov", "MOV"] {
+    let iphone_metadata = mov_with_quicktime_metadata();
+    for (extension, media) in [
+        ("mov", MOV),
+        ("MOV", MOV),
+        ("mov", iphone_metadata.as_slice()),
+    ] {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let name = format!("source.{extension}");
         fixture(root, &one_second().replace("source.mp4", &name));
-        fs::write(root.join("media").join(&name), MOV).unwrap();
+        fs::write(root.join("media").join(&name), media).unwrap();
         for check in [true, false] {
             let result = premiere_to_tesseract(
                 root.join("project.prproj"),
@@ -3349,7 +3830,7 @@ fn quicktime_mov_survives_checks_and_both_conversion_directions_without_transcod
         }
         assert_eq!(
             fs::read(root.join("premiere_output/media").join(&name)).unwrap(),
-            MOV
+            media
         );
         premiere_to_tesseract(
             root.join("premiere_output/project.prproj"),
@@ -3371,10 +3852,11 @@ fn quicktime_mov_survives_checks_and_both_conversion_directions_without_transcod
             .unwrap()
             .read_to_end(&mut bytes)
             .unwrap();
-        assert_eq!(bytes, MOV);
+        assert_eq!(bytes, media);
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn explicit_guid_selection_and_hostile_names_cannot_escape_output() {
     let dir = tempfile::tempdir().unwrap();
@@ -3410,6 +3892,7 @@ fn explicit_guid_selection_and_hostile_names_cannot_escape_output() {
     assert!(!root.join("wrong").exists());
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn current_edited_document_builds_premiere_cuts_gaps_and_deleted_state() {
     let dir = tempfile::tempdir().unwrap();
@@ -3504,6 +3987,7 @@ fn current_edited_document_builds_premiere_cuts_gaps_and_deleted_state() {
         .contains("already exists"));
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn repeated_media_survives_premiere_tesseract_roundtrip_with_one_packaged_asset() {
     let dir = tempfile::tempdir().unwrap();
@@ -3564,6 +4048,7 @@ fn repeated_media_survives_premiere_tesseract_roundtrip_with_one_packaged_asset(
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn distinct_original_media_with_colliding_names_receive_unique_package_paths() {
     check_media_name_collisions("mp4", MEDIA, ["source", "source"]);
@@ -3571,6 +4056,7 @@ fn distinct_original_media_with_colliding_names_receive_unique_package_paths() {
     check_media_name_collisions("mp4", MEDIA, ["é", "e\u{301}"]);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn distinct_same_byte_files_keep_independent_identity_after_package_relocation() {
     let dir = tempfile::tempdir().unwrap();
@@ -3634,6 +4120,7 @@ fn distinct_same_byte_files_keep_independent_identity_after_package_relocation()
     assert_ne!(media[0], media[1]);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn explicit_selection_handles_uncertain_nesting() {
     let dir = tempfile::tempdir().unwrap();
@@ -3680,6 +4167,7 @@ fn explicit_selection_handles_uncertain_nesting() {
     assert!(!root.join("invalid").exists());
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn explicit_selection_converts_a_nested_sequence() {
     let dir = tempfile::tempdir().unwrap();
@@ -3707,6 +4195,7 @@ fn explicit_selection_converts_a_nested_sequence() {
     assert_eq!(file.project().composition().name(), "Main");
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn check_media_name_collisions(extension: &str, bytes: &[u8], names: [&str; 2]) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -3858,6 +4347,7 @@ fn adobe_native_point_text_stays_editable_without_media() {
     assert_eq!(source_text["fontStyle"], "");
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn single_style_text_survives_premiere_export_and_reimport() {
     let dir = tempfile::tempdir().unwrap();

@@ -4,7 +4,7 @@
 //! Rectangle Position at its center, so every Size key owns a coupled Position
 //! key. Layer/group Transform and anchor tracks remain outside this helper.
 
-use fx_schema::{LayerId, PropType, RectLayer, animator::AnimationGraphEntry};
+use fx_schema::{LayerId, PropType, RectLayer};
 
 use crate::writer::{GeometryAnimations, VectorGeometry};
 
@@ -22,7 +22,7 @@ pub(super) struct RectGeometryOutput {
 /// Only exact property targets owned by `layer.id` are considered.
 pub(super) fn lower(
     layer: &RectLayer,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
 ) -> Result<RectGeometryOutput, &'static str> {
     let origin = layer.rect.position;
     let size = layer.rect.size;
@@ -105,12 +105,12 @@ pub(super) fn lower(
 }
 
 fn owned_track<'a>(
-    dynamics: &'a [AnimationGraphEntry],
+    dynamics: &'a crate::export_document::AnimationIndex<'_>,
     owner: LayerId,
     property: PropType,
 ) -> Result<Option<super::NativeTrack<'a>>, &'static str> {
     let count = dynamics
-        .iter()
+        .for_layer(owner)
         .filter(|entry| {
             entry.target.as_property().is_some_and(|target| {
                 target.layer_id() == owner && target.property_type() == property
@@ -125,6 +125,7 @@ fn owned_track<'a>(
 
 #[cfg(test)]
 mod tests {
+    use fx_schema::animator::AnimationGraphEntry;
     use std::collections::BTreeMap;
 
     use fx_schema::{
@@ -221,7 +222,8 @@ mod tests {
     #[test]
     fn static_constant_and_enabled_size_keep_top_left_origin_coupled_to_center() {
         let layer = rect();
-        let static_output = lower(&layer, &[]).expect("static Rectangle");
+        let static_output = lower(&layer, &crate::export_document::AnimationIndex::new(&[]))
+            .expect("static Rectangle");
         assert_eq!(static_output.animations, GeometryAnimations::default());
 
         let constant = entry(
@@ -230,7 +232,11 @@ mod tests {
             PropertyAnimator::constant(PropertyValue::Vector2([100.0, 60.0]))
                 .expect("valid constant"),
         );
-        let output = lower(&layer, &[constant]).expect("constant Rectangle size");
+        let output = lower(
+            &layer,
+            &crate::export_document::AnimationIndex::new(&[constant]),
+        )
+        .expect("constant Rectangle size");
         assert_eq!(
             output.animations.rect_size.unwrap().keys[0].values,
             [100.0, 60.0]
@@ -245,7 +251,11 @@ mod tests {
             PropType::RectSize,
             keyed([[80.0, 40.0], [140.0, 60.0]]),
         );
-        let output = lower(&layer, &[animated]).expect("animated Rectangle size");
+        let output = lower(
+            &layer,
+            &crate::export_document::AnimationIndex::new(&[animated]),
+        )
+        .expect("animated Rectangle size");
         let positions: Vec<_> = output
             .animations
             .rect_position
@@ -289,9 +299,12 @@ mod tests {
                     .expect("valid constant"),
             ),
         ];
-        let animations = lower(&layer, &entries)
-            .expect("unrelated tracks are ignored")
-            .animations;
+        let animations = lower(
+            &layer,
+            &crate::export_document::AnimationIndex::new(&entries),
+        )
+        .expect("unrelated tracks are ignored")
+        .animations;
         let size = animations
             .rect_size
             .expect("disabledValue is emitted as one native constant key");

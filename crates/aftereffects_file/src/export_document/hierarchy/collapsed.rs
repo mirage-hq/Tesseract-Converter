@@ -6,13 +6,16 @@
 use std::collections::BTreeSet;
 
 use fx_schema::effect::{EffectData, EffectPayload, EffectRecord, LayerEffect};
-use fx_schema::{GroupLayer, Layer, LayerData, LayerId, animator::AnimationGraphEntry};
+use fx_schema::{GroupLayer, Layer, LayerData, LayerId};
 
 use super::Bounds;
 
-pub(super) fn eligible(group: &GroupLayer, dynamics: &[AnimationGraphEntry]) -> bool {
-    // A vector source keeps the canonical identity clock; the export caller
-    // also rejects any normalized occurrence clock for collapsed vectors.
+pub(super) fn eligible(
+    group: &GroupLayer,
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+) -> bool {
+    // A vector source keeps the canonical identity clock. The export caller
+    // allows its checked short visibility plan, but rejects nonidentity playback.
     if !super::super::playback_is_identity(&group.playback)
         || !collapsible_owner(group, dynamics)
         || !effects_supported(&group.effects)
@@ -29,14 +32,20 @@ pub(super) fn eligible(group: &GroupLayer, dynamics: &[AnimationGraphEntry]) -> 
 
 /// Plain 2D Text in plain Groups. FX Text has no glyph bounds, so a required
 /// precomposition cannot prove a finite canvas; collapse keeps the Text in
-/// parent space instead. Anything that would rasterize or re-blend the
-/// collapsed layer (effects, masks, mattes, blend modes, motion blur) or needs
-/// projection is rejected, as is mixed content. Nested Group clocks are allowed:
+/// parent space instead. Disabled or diagnosed omitted source effects create
+/// no native effects; every retained effect, mask, matte, blend mode, motion
+/// blur or projection still rejects collapse, as does mixed content. Nested Group clocks are allowed:
 /// each nested Group is classified on its own. The owner clock is validated
 /// upstream: classification admits only a full-span identity clock, and the
 /// export caller moves a supported occurrence clock onto the occurrence record.
-pub(super) fn text_only(group: &GroupLayer, dynamics: &[AnimationGraphEntry]) -> bool {
-    if !collapsible_owner(group, dynamics) || !group.effects.is_empty() || group.layers.is_empty() {
+pub(super) fn text_only(
+    group: &GroupLayer,
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+) -> bool {
+    if !collapsible_owner(group, dynamics)
+        || !native_effects_absent(&group.effects)
+        || group.layers.is_empty()
+    {
         return false;
     }
     let mut ids = BTreeSet::from([group.id]);
@@ -49,7 +58,10 @@ pub(super) fn text_only(group: &GroupLayer, dynamics: &[AnimationGraphEntry]) ->
 
 /// Owner switches that native collapse transformations keep exact. The owner
 /// clock rule differs by source, so it is not part of this shared check.
-fn collapsible_owner(group: &GroupLayer, dynamics: &[AnimationGraphEntry]) -> bool {
+fn collapsible_owner(
+    group: &GroupLayer,
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+) -> bool {
     !(group.motion_blur
         || super::has_skew(group)
         || group.transform.opacity.value() != 100.0
@@ -67,7 +79,10 @@ fn collapsible_owner(group: &GroupLayer, dynamics: &[AnimationGraphEntry]) -> bo
 /// Validate the complete input geometry before calling this function. This is
 /// the support of the *masked output*, never permission to crop Glow's input.
 /// Effects on the mask owner run after the mask and therefore invalidate it.
-pub(super) fn mask_output(group: &GroupLayer, dynamics: &[AnimationGraphEntry]) -> Option<Bounds> {
+pub(super) fn mask_output(
+    group: &GroupLayer,
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+) -> Option<Bounds> {
     if !group.effects.is_empty() || !eligible(group, dynamics) {
         return None;
     }
@@ -85,7 +100,11 @@ fn collect_ids(layers: &[Layer], ids: &mut BTreeSet<LayerId>) {
     }
 }
 
-fn vector(layer: &Layer, dynamics: &[AnimationGraphEntry], ids: &BTreeSet<LayerId>) -> bool {
+fn vector(
+    layer: &Layer,
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+    ids: &BTreeSet<LayerId>,
+) -> bool {
     let (transform, motion_blur, effects, masks, matte, children) = match layer.data() {
         LayerData::Rect(value) => (
             &value.transform,
@@ -136,7 +155,11 @@ fn vector(layer: &Layer, dynamics: &[AnimationGraphEntry], ids: &BTreeSet<LayerI
         && children.iter().all(|child| vector(child, dynamics, ids))
 }
 
-fn plain_text(layer: &Layer, dynamics: &[AnimationGraphEntry], ids: &BTreeSet<LayerId>) -> bool {
+fn plain_text(
+    layer: &Layer,
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+    ids: &BTreeSet<LayerId>,
+) -> bool {
     let (transform, blend_mode, motion_blur, effects, masks, matte, children) = match layer.data() {
         LayerData::Text(value) => (
             &value.transform,
@@ -160,7 +183,7 @@ fn plain_text(layer: &Layer, dynamics: &[AnimationGraphEntry], ids: &BTreeSet<La
     };
     blend_mode == Default::default()
         && !motion_blur
-        && effects.is_empty()
+        && native_effects_absent(effects)
         && masks.is_empty()
         && matte.is_none()
         && !super::super::transform3d::requires_native_3d(dynamics, transform, layer.id())
@@ -168,6 +191,13 @@ fn plain_text(layer: &Layer, dynamics: &[AnimationGraphEntry], ids: &BTreeSet<La
         && children
             .iter()
             .all(|child| plain_text(child, dynamics, ids))
+}
+
+fn native_effects_absent(effects: &[EffectRecord]) -> bool {
+    effects.iter().all(|effect| {
+        matches!(effect.data(), EffectData::Identified { enabled: false, .. })
+            || super::super::effects::unmapped_warning(effect).is_some()
+    })
 }
 
 fn effects_supported(effects: &[EffectRecord]) -> bool {

@@ -11,6 +11,11 @@ use ts_rs::TS;
 
 mod declaration;
 mod primary_grade;
+mod tonal_color;
+pub(crate) use tonal_color::has_unsupported_tonal_color_semantics;
+pub use tonal_color::{
+    TonalColor, TonalColorError, TonalColorSemanticVersion, TONAL_COLOR_SEMANTIC_ID,
+};
 
 pub(crate) use primary_grade::has_unsupported_primary_grade_semantics;
 pub use primary_grade::{

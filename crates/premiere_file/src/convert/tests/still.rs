@@ -24,6 +24,8 @@ fn still_media(name: &str, alpha: bool) -> PrMedia {
         relative_paths: Vec::new(),
         absolute_paths: Vec::new(),
         video: Some(crate::schema::PrVideoStream {
+            pixel_aspect: Default::default(),
+            interpretation: Default::default(),
             orientation: crate::schema::VideoOrientation::Identity,
             intrinsic_ticks: STILL_INTRINSIC_TICKS,
             frame_rate: (FrameRate::Fps30).into(),
@@ -59,6 +61,7 @@ fn still_occurrence(media: &str, start_secs: i64, duration_secs: i64) -> PrVideo
         effects_above_mask: 0,
         stroke: None,
         active_transforms: 0,
+        source_effects: None,
     }
 }
 
@@ -278,6 +281,7 @@ fn packaged_facts() -> BTreeMap<String, MediaFacts> {
         (
             "premiere-video-1".to_owned(),
             MediaFacts::Video(VideoMedia {
+                pixel_aspect: Default::default(),
                 orientation: crate::schema::VideoOrientation::Identity,
                 codec: VideoCodec::H264,
                 bit_depth: 8,
@@ -307,6 +311,76 @@ fn export(document: Value) -> crate::error::Result<(crate::format::PrProjectFile
         &mut omissions,
     )?;
     Ok((project, omissions))
+}
+
+#[test]
+fn crop_guides_never_paint_and_reenabled_stills_export_edited_crop() {
+    for enabled in [false, true] {
+        let (mut sequence, media) = stills_over_video();
+        let clip = sequence.video_tracks[1].clip_mut(0);
+        clip.enabled = enabled;
+        clip.crop = crate::schema::PrStaticCrop {
+            left: 25.0,
+            right: 12.5,
+            ..Default::default()
+        };
+        let mut document = project_document_with_media(&sequence, &media);
+        let layers = document["composition"]["layers"].as_array_mut().unwrap();
+        let owner_index = layers
+            .iter()
+            .position(|layer| layer["type"] == "Image" && layer["activeRange"]["start"] == 0)
+            .unwrap();
+        let owner = &layers[owner_index];
+        let guide_id = owner["masks"][0]["layer"].clone();
+        assert_eq!(owner["isHidden"].as_bool().unwrap_or(false), !enabled);
+        let range = owner["activeRange"].clone();
+        let transform = owner["transform"].clone();
+        let guide = layers
+            .iter_mut()
+            .find(|layer| layer["id"] == guide_id)
+            .unwrap();
+        assert_eq!(guide["type"], "Rect");
+        assert!(!guide["isHidden"].as_bool().unwrap_or(false));
+        assert_eq!(guide["rect"]["fillEnabled"], false);
+        assert_eq!(guide["rect"]["strokeEnabled"], false);
+        assert_eq!(guide["activeRange"], range);
+        assert_eq!(guide["transform"], transform);
+        assert_eq!(guide["rect"]["position"], json!([480.0, 0.0]));
+        assert_eq!(guide["rect"]["size"], json!([1200.0, 1080.0]));
+        // Edit the live outline, not source replay data. Re-enabling only the
+        // owner must keep this nonhidden guide usable by its existing mask.
+        guide["rect"]["size"] = json!([960.0, 1080.0]);
+        let (exported, omissions) = export(document.clone()).unwrap();
+        assert!(omissions.is_empty(), "{omissions:?}");
+        let clip = exported
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .find(|clip| clip.media.as_str() == "premiere-image-2" && clip.start_ticks == 0)
+            .unwrap();
+        assert_eq!(clip.enabled, enabled);
+        assert_eq!(clip.crop.left, 25.0);
+        assert_eq!(clip.crop.right, 25.0);
+        assert_eq!(clip.end_ticks, TICKS);
+
+        // Visible is the canonical omitted default in the editable wire form.
+        document["composition"]["layers"][owner_index]
+            .as_object_mut()
+            .unwrap()
+            .remove("isHidden");
+        let (exported, omissions) = export(document).unwrap();
+        assert!(omissions.is_empty(), "{omissions:?}");
+        let clip = exported
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .find(|clip| clip.media.as_str() == "premiere-image-2" && clip.start_ticks == 0)
+            .unwrap();
+        assert!(clip.enabled);
+        assert_eq!(clip.crop.left, 25.0);
+        assert_eq!(clip.crop.right, 25.0);
+        assert_eq!(clip.end_ticks, TICKS);
+    }
 }
 
 #[test]
@@ -626,6 +700,46 @@ fn still_placements_fit_the_eleven_hours_after_the_one_hour_in_point() {
 }
 
 #[test]
+fn a_still_lengthened_past_its_source_span_shows_for_its_placement_on_its_source_clock() {
+    use crate::schema::{PrKeyframeEasing, PrPropertyAnimation, PrScalarKeyframe};
+    // Premiere 26.5.1 keeps a still's 5 s span on a lengthened 10 s
+    // placement. An Opacity key past that saved Out keeps its source time.
+    let mut still = still_occurrence("photo", 0, 10);
+    still.out_ticks = STILL_SOURCE_IN_TICKS + 5 * TICKS;
+    still.animations = vec![PrPropertyAnimation::Opacity(
+        [(0, 100.0), (8, 40.0)]
+            .map(|(seconds, value)| PrScalarKeyframe {
+                source_ticks: STILL_SOURCE_IN_TICKS + seconds * TICKS,
+                value,
+                easing: PrKeyframeEasing::Linear,
+            })
+            .to_vec(),
+    )];
+    let mut sequence = video_sequence();
+    sequence
+        .video_tracks
+        .push(crate::schema::PrVideoTrack::media([still]));
+    sequence.timeline_end_ticks = 10 * TICKS;
+    let mut media = video_media();
+    media.insert(MediaId("photo".into()), still_media("photo.jpg", false));
+    sequence.validate_timeline(&media).unwrap();
+    let document = project_document_with_media(&sequence, &media);
+    let [image] = image_layers(&document)[..] else {
+        panic!("one image: {document}");
+    };
+    assert_eq!(image["activeRange"], json!({"start": 0, "duration": 10000}));
+    let keys: Vec<_> = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["target"]["layerId"] == image["id"])
+        .flat_map(|entry| entry["animator"]["keyframes"].as_array().unwrap())
+        .map(|key| (key["layerTime"].clone(), key["value"]["value"].clone()))
+        .collect();
+    assert_eq!(keys, [(json!(0), json!(100.0)), (json!(8000), json!(40.0))]);
+}
+
+#[test]
 fn one_asset_cannot_be_both_video_and_still() {
     let (sequence, media) = stills_over_video();
     let base = project_document_with_media(&sequence, &media);
@@ -652,4 +766,45 @@ fn one_asset_cannot_be_both_video_and_still() {
             "{error}"
         );
     }
+}
+
+#[test]
+fn legacy_luma_key_bypassed_matte_still_keeps_its_exportable_consumer() {
+    use crate::schema::{PrEffect, PrEffectParams, PrMatteChannel, PrTrackMatte, PrVideoTrack};
+    let mut sequence = video_sequence();
+    sequence.video_tracks[0].clip_mut(0).track_matte = Some(PrTrackMatte {
+        track_index: 1,
+        channel: PrMatteChannel::Alpha,
+    });
+    let mut still = still_occurrence("photo", 0, 5);
+    still.effects.push(PrEffect {
+        mask: None,
+        enabled: false,
+        params: PrEffectParams::LegacyLuma {
+            threshold: 40.0,
+            cutoff: 20.0,
+        },
+        animations: Vec::new(),
+    });
+    sequence.video_tracks.push(PrVideoTrack::media([still]));
+    let mut media = video_media();
+    media.insert(MediaId("photo".into()), still_media("photo.jpg", false));
+    let ids = crate::tesseract_output::asset_ids_in_order(&sequence, &media);
+    let mut omissions = Vec::new();
+    let document = crate::convert::premiere_to_tesseract(&sequence, &media, &ids, &mut omissions)
+        .unwrap()
+        .to_json_value()
+        .unwrap();
+    assert!(image_layers(&document)[0].get("effects").is_none());
+    assert!(
+        omissions
+            .iter()
+            .any(|note| note.reason.contains("bypassed Luma Key")
+                && note.reason.contains("still is a Track Matte Key's matte")),
+        "{omissions:?}"
+    );
+    let (project, notes) = export(document).unwrap();
+    assert!(project.single_sequence().unwrap().video_tracks.iter()
+        .flat_map(|track| &track.items)
+        .any(|item| matches!(item, crate::schema::PrVideoItem::Media(clip) if clip.track_matte.is_some())), "{notes:?}");
 }

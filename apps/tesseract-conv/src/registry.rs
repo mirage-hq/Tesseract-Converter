@@ -15,16 +15,20 @@ use crate::formats::{
 pub(super) enum ConversionOption {
     Composition,
     ExpressionSamples,
+    AvailableFonts,
     MediaMap,
+    MediaRelink,
     Fps,
     Sequence,
 }
 
 impl ConversionOption {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 7] = [
         Self::Composition,
         Self::ExpressionSamples,
+        Self::AvailableFonts,
         Self::MediaMap,
+        Self::MediaRelink,
         Self::Fps,
         Self::Sequence,
     ];
@@ -33,7 +37,9 @@ impl ConversionOption {
         match self {
             Self::Composition => request.composition.is_some(),
             Self::ExpressionSamples => request.expression_samples.is_some(),
+            Self::AvailableFonts => request.available_fonts.is_some(),
             Self::MediaMap => request.media_map.is_some(),
+            Self::MediaRelink => request.media_relink.is_some(),
             Self::Fps => request.fps.is_some(),
             Self::Sequence => request.sequence.is_some(),
         }
@@ -47,7 +53,13 @@ impl ConversionOption {
             Self::ExpressionSamples => {
                 "--expression-samples is only supported for After Effects to Tesseract conversion"
             }
+            Self::AvailableFonts => {
+                "--available-fonts is only supported for After Effects to Tesseract conversion"
+            }
             Self::MediaMap => "--media-map is only supported for Adobe to Tesseract import",
+            Self::MediaRelink => {
+                "--media-relink is only supported for Premiere to Tesseract import"
+            }
             Self::Fps => {
                 "--fps is only supported for Tesseract to Premiere or After Effects conversion"
             }
@@ -201,10 +213,14 @@ impl FormatRegistration {
 const AFTER_EFFECTS_IMPORT_OPTIONS: &[ConversionOption] = &[
     ConversionOption::Composition,
     ConversionOption::ExpressionSamples,
+    ConversionOption::AvailableFonts,
     ConversionOption::MediaMap,
 ];
-const PREMIERE_IMPORT_OPTIONS: &[ConversionOption] =
-    &[ConversionOption::Sequence, ConversionOption::MediaMap];
+const PREMIERE_IMPORT_OPTIONS: &[ConversionOption] = &[
+    ConversionOption::Sequence,
+    ConversionOption::MediaMap,
+    ConversionOption::MediaRelink,
+];
 const EXPORT_OPTIONS: &[ConversionOption] = &[ConversionOption::Fps];
 
 static AFTER_EFFECTS_IMPORT: ImportRoute = ImportRoute {
@@ -427,7 +443,9 @@ mod tests {
             sequence: None,
             composition: Some(1),
             expression_samples: None,
+            available_fonts: None,
             media_map: None,
+            media_relink: None,
             fps: None,
             mode: ConversionMode::Check,
             progress: fx_conv::Progress::default(),

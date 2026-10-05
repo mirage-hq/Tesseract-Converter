@@ -3,17 +3,27 @@
 //! Other rectangles export as editable graphic Shapes.
 
 use super::support::*;
-use premiere_file::{PrProjectFile, PrSequence, PrVideoItem};
-use serde_json::{json, Value};
+use premiere_file::PrProjectFile;
+#[cfg(feature = "ffmpeg-library")]
+use premiere_file::{PrSequence, PrVideoItem};
+use serde_json::json;
+#[cfg(feature = "ffmpeg-library")]
+use serde_json::Value;
 use std::path::Path;
-use tesseract_file::{AssetKind, TesseractFile, TesseractFileBuilder};
+#[cfg(feature = "ffmpeg-library")]
+use tesseract_file::AssetKind;
+use tesseract_file::{TesseractFile, TesseractFileBuilder};
 
+#[cfg(feature = "ffmpeg-library")]
 const FIXTURE: &str = "feature_color_matte_strict.prproj";
+#[cfg(feature = "ffmpeg-library")]
 const SEQUENCE_UID: &str = "c8acf9c1-34b2-4086-9f55-d528950a7059";
+#[cfg(feature = "ffmpeg-library")]
 const TICKS: i64 = 254_016_000_000;
 
 /// `(track, start s, end s, media name)` for every occurrence, with
 /// "graphic" for a graphic.
+#[cfg(feature = "ffmpeg-library")]
 fn placements(project: &PrProjectFile, sequence: &PrSequence) -> Vec<(usize, i64, i64, String)> {
     sequence
         .video_tracks()
@@ -31,6 +41,7 @@ fn placements(project: &PrProjectFile, sequence: &PrSequence) -> Vec<(usize, i64
         .collect()
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn layer_names_at(document: &Value, millis: i64) -> Vec<String> {
     document["composition"]["layers"]
         .as_array()
@@ -50,6 +61,7 @@ fn layer_names_at(document: &Value, millis: i64) -> Vec<String> {
         .collect()
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn isolated_color_mattes_round_trip_as_editable_solid_fills() {
     let dir = tempfile::tempdir().unwrap();
@@ -158,7 +170,122 @@ fn isolated_color_mattes_round_trip_as_editable_solid_fills() {
     assert_eq!(xml.matches("<Markers ObjectID=").count(), 1);
 }
 
+#[test]
+fn native_black_video_imports_editably_and_exports_current_content_as_color_matte() {
+    use fx_conv::{ConversionMode, ExportFromTesseract};
+    use premiere_file::{FrameRate, Premiere, PremiereExportOptions};
+
+    let dir = tempfile::tempdir().unwrap();
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/black-video/occurrence-1172.xml");
+    let output = dir.path().join("imported");
+    let omissions = premiere_to_tesseract(
+        &source,
+        &output,
+        Some("d40c25d5-0359-473e-974e-24f423007763"),
+        false,
+    )
+    .unwrap();
+    assert!(omissions
+        .iter()
+        .all(|note| note.scope == premiere_file::OmissionScope::Feature));
+    assert_eq!(
+        omissions
+            .iter()
+            .map(|note| note.reason.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "IsCreatedWithNewColorManagement not converted",
+            "nondefault tone mapping not converted"
+        ]
+    );
+    let file = TesseractFile::open(first_project(&output)).unwrap();
+    assert!(file.metadata().assets.is_empty(), "generator has no file");
+    let mut document = file.project_json().unwrap();
+    assert_eq!(
+        document["dimensions"],
+        json!({"width": 2160, "height": 3840})
+    );
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    assert_eq!(layers.len(), 2, "authored solid plus implicit canvas");
+    let solid = &layers[0];
+    assert_eq!(solid["type"], "Rect");
+    assert_eq!(solid["rect"]["size"], json!([2160.0, 3840.0]));
+    assert_eq!(solid["rect"]["fillColor"], json!([0.0, 0.0, 0.0, 1.0]));
+    assert_eq!(solid["transform"]["position"], json!([0.0, 0.0]));
+    assert_eq!(solid["transform"]["anchorPoint"], json!([0.0, 0.0]));
+    assert_eq!(solid["transform"]["scale"], json!([100.0, 100.0]));
+    assert_eq!(solid["transform"]["rotation"], 0.0);
+    assert_eq!(solid["transform"]["opacity"], 100.0);
+    assert_eq!(
+        crate::test_support::layer_range(solid),
+        &json!({"start": 30163, "duration": 1702})
+    );
+    // Export a current-document two-second placement on the same 29.97 grid,
+    // without the unrelated leading gap of the source. Keep the separate
+    // implicit canvas so the authored black fill remains ordinary clip content.
+    document["duration"] = json!(2.002);
+    let layers = document["composition"]["layers"].as_array_mut().unwrap();
+    for layer in layers.iter_mut() {
+        layer["activeRange"] = json!({"start": 0, "duration": 2002});
+    }
+    layers[0]["name"] = json!("Edited solid");
+    for (index, color, prefs) in [
+        (0, [0.0, 0.0, 0.0, 1.0], "AAAAAAEAAAA="),
+        (1, [0.2, 0.4, 0.6, 1.0], "M2aZAAEAAAA="),
+    ] {
+        document["composition"]["layers"][0]["rect"]["fillColor"] = json!(color);
+        let archive = dir.path().join(format!("edited-{index}.tsrct"));
+        TesseractFileBuilder::from_project_json(&serde_json::to_vec(&document).unwrap())
+            .unwrap()
+            .write(&archive)
+            .unwrap();
+        let package = dir.path().join(format!("export-{index}"));
+        let omissions = Premiere
+            .export_from_tesseract(
+                &archive,
+                &package,
+                &PremiereExportOptions {
+                    frame_rate: Some(FrameRate::Fps30000Over1001),
+                },
+                ConversionMode::Write,
+            )
+            .unwrap()
+            .diagnostics;
+        assert!(omissions.is_empty(), "{omissions:?}");
+        let xml = read_xml(&package.join("project.prproj"));
+        assert!(xml.contains("<FilePath>1129270354</FilePath>"));
+        assert!(!xml.contains("<FilePath>1112293707</FilePath>"));
+        assert!(xml.contains(&format!(">{prefs}</ImporterPrefs>")));
+        assert_eq!(xml.matches("<IsStill>true</IsStill>").count(), 1);
+        let native = PrProjectFile::load(package.join("project.prproj"))
+            .unwrap()
+            .0;
+        let sequence = native.sequences().next().unwrap();
+        assert_eq!(sequence.video_occurrences().count(), 1);
+        let clip = sequence.video_occurrences().next().unwrap();
+        assert_eq!(clip.timeline_ticks(), 0..508_540_032_000);
+        let reimported = dir.path().join(format!("reimport-{index}"));
+        let omissions =
+            premiere_to_tesseract(package.join("project.prproj"), &reimported, None, false)
+                .unwrap();
+        assert!(omissions.is_empty(), "{omissions:?}");
+        let rebuilt = TesseractFile::open(first_project(&reimported))
+            .unwrap()
+            .project_json()
+            .unwrap();
+        let solid = &rebuilt["composition"]["layers"][0];
+        assert_eq!(solid["type"], "Rect");
+        assert_eq!(solid["rect"]["fillColor"], json!(color));
+        assert_eq!(
+            crate::test_support::layer_range(solid),
+            &json!({"start": 0, "duration": 2002})
+        );
+    }
+}
+
 /// A reimported shape layer's name, range, transform, path, fills and strokes.
+#[cfg(feature = "ffmpeg-library")]
 fn shape_summary(layer: &Value) -> Value {
     let transform = &layer["transform"];
     json!({
@@ -177,6 +304,7 @@ fn shape_summary(layer: &Value) -> Value {
     })
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn rectangles_beside_the_mattes_export_as_editable_shapes_and_reimport_as_shape_layers() {
     let dir = tempfile::tempdir().unwrap();
@@ -406,4 +534,205 @@ fn rectangles_beside_the_mattes_export_as_editable_shapes_and_reimport_as_shape_
             }),
         ]
     );
+}
+
+/// The public matte placement with unchanged native Crop records from cap2.
+/// This constituent regression is not a native combined-matte fidelity proof.
+#[cfg(feature = "ffmpeg-library")]
+fn cropped_color_matte_xml() -> String {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(FIXTURE);
+    let mut xml = read_xml(&source);
+    edit_record(
+        &mut xml,
+        "<VideoComponentChain ObjectID=\"156\"",
+        "</VideoComponentChain>",
+        |record| {
+            record.replace(
+            "<ComponentChain Version=\"3\">",
+            "<ComponentChain Version=\"3\"><Components><Component Index=\"0\" ObjectRef=\"403\"/></Components>",
+        )
+        },
+    );
+    xml.replace(
+        "</PremiereData>",
+        &include_str!("../fixtures/cap2-native-static-crop.xml")
+            .replace("<PremiereData Version=\"3\">", ""),
+    )
+}
+
+#[cfg(feature = "ffmpeg-library")]
+fn assert_color_matte_crop(
+    document: &Value,
+    color: [f64; 4],
+    range: Value,
+    position: [f64; 2],
+    size: [f64; 2],
+    hidden: bool,
+) {
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    let owner = layers
+        .iter()
+        .find(|layer| layer["rect"]["fillColor"] == json!(color))
+        .unwrap();
+    assert_eq!(owner["type"], "Rect");
+    assert_eq!(owner["rect"]["fillEnabled"], true);
+    assert_eq!(owner["rect"]["strokeEnabled"], false);
+    assert_eq!(owner["rect"]["size"], json!([1920.0, 1080.0]));
+    assert_eq!(owner["isHidden"].as_bool().unwrap_or(false), hidden);
+    assert_eq!(*crate::test_support::layer_range(owner), range);
+    assert_eq!(owner["masks"].as_array().unwrap().len(), 1);
+    let mask = &owner["masks"][0];
+    assert_eq!(mask["mode"], "add");
+    assert_eq!(mask["feather"], json!([0.0, 0.0]));
+    let guide = layers
+        .iter()
+        .find(|layer| layer["id"] == mask["layer"])
+        .unwrap();
+    assert_ne!(owner["id"], guide["id"]);
+    assert_ne!(mask["id"], guide["id"]);
+    assert_eq!(guide["type"], "Rect");
+    assert_eq!(guide["rect"]["fillEnabled"], false);
+    assert_eq!(guide["rect"]["strokeEnabled"], false);
+    assert_eq!(guide["rect"]["position"], json!(position));
+    let actual_size = &guide["rect"]["size"];
+    for (index, expected) in size.into_iter().enumerate() {
+        assert!((actual_size[index].as_f64().unwrap() - expected).abs() < 1e-8);
+    }
+    assert_eq!(guide["parent"], owner["parent"]);
+    assert_eq!(*crate::test_support::layer_range(guide), range);
+    assert!(!guide["isHidden"].as_bool().unwrap_or(false));
+    assert_eq!(guide["transform"]["opacity"], 100.0);
+    assert_eq!(owner["transform"]["opacity"], 100.0);
+    assert!(owner["effects"].is_null() || owner["effects"].as_array().unwrap().is_empty());
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn native_static_crop_color_matte_keeps_owner_and_nonpainting_guide() {
+    for hidden in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        std::fs::copy(
+            fixtures.join("video-30fps-10s.mp4"),
+            dir.path().join("video-30fps-10s.mp4"),
+        )
+        .unwrap();
+        let mut xml = cropped_color_matte_xml();
+        edit_record(
+            &mut xml,
+            "<VideoClipTrackItem ObjectID=\"157\"",
+            "</VideoClipTrackItem>",
+            |record| {
+                record.replace(
+                    "<ClipTrackItem Version=\"8\">",
+                    &format!("<ClipTrackItem Version=\"8\"><IsMuted>{hidden}</IsMuted>"),
+                )
+            },
+        );
+        let source = dir.path().join("project.prproj");
+        write_prproj(&source, &xml);
+        let output = dir.path().join("converted");
+        let omissions = premiere_to_tesseract(&source, &output, Some(SEQUENCE_UID), false).unwrap();
+        assert!(omissions.is_empty(), "{omissions:?}");
+        let archive = TesseractFile::open(first_project(&output)).unwrap();
+        assert_eq!(
+            archive.metadata().assets.len(),
+            1,
+            "only the ordinary video is packaged"
+        );
+        let document = archive.project_json().unwrap();
+        assert_color_matte_crop(
+            &document,
+            [1.0, 0.0, 0.0, 1.0],
+            json!({"start": 2000, "duration": 3000}),
+            [0.0, 0.0],
+            [977.1345703124928, 1080.0],
+            hidden,
+        );
+        let blue = document["composition"]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["rect"]["fillColor"] == json!([0.0, 0.0, 1.0, 1.0]))
+            .unwrap();
+        assert!(blue["masks"].is_null() || blue["masks"].as_array().unwrap().is_empty());
+        assert_eq!(blue["rect"]["size"], json!([1920.0, 1080.0]));
+    }
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn native_static_crop_color_matte_unsupported_controls_never_expose_an_unmasked_owner() {
+    for (param, from, to, reason) in [
+        (
+            "817",
+            "-91445760000000000,0.,0,0,0,0,0,0",
+            "-91445760000000000,NaN,0,0,0,0,0,0",
+            "nonfinite initial value",
+        ),
+        (
+            "817",
+            "<ParameterID>1</ParameterID>",
+            "<IsTimeVarying>true</IsTimeVarying><ParameterID>1</ParameterID>",
+            "animated or malformed Crop Left",
+        ),
+        (
+            "821",
+            "-91445760000000000,false,0,0,0,0,0,0",
+            "-91445760000000000,true,0,0,0,0,0,0",
+            "Crop Zoom is unsupported",
+        ),
+        (
+            "822",
+            "-91445760000000000,0,0,0,0,0,0,0",
+            "-91445760000000000,12,0,0,0,0,0,0",
+            "Crop on a Color Matte is unsupported",
+        ),
+        (
+            "156",
+            "<Component Index=\"0\" ObjectRef=\"403\"/>",
+            "<Component Index=\"0\" ObjectRef=\"403\"/><Component Index=\"1\" ObjectRef=\"405\"/>",
+            "duplicate Crop component",
+        ),
+    ] {
+        let mut xml = cropped_color_matte_xml();
+        let tag = if param == "156" {
+            "VideoComponentChain"
+        } else {
+            "VideoComponentParam"
+        };
+        edit_record(
+            &mut xml,
+            &format!("<{tag} ObjectID=\"{param}\""),
+            &format!("</{tag}>"),
+            |record| {
+                assert!(record.contains(from));
+                record.replace(from, to)
+            },
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        std::fs::copy(
+            fixtures.join("video-30fps-10s.mp4"),
+            dir.path().join("video-30fps-10s.mp4"),
+        )
+        .unwrap();
+        let source = dir.path().join("project.prproj");
+        write_prproj(&source, &xml);
+        let output = dir.path().join("converted");
+        let omissions = premiere_to_tesseract(&source, &output, Some(SEQUENCE_UID), false).unwrap();
+        assert!(omissions.iter().any(|omission| omission.record.contains("157") && omission.reason.contains(reason)), "{reason}: {omissions:?}");
+        let archive = TesseractFile::open(first_project(&output)).unwrap();
+        let document = archive.project_json().unwrap();
+        assert!(
+            !document["composition"]["layers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|layer| layer["rect"]["fillColor"] == json!([1.0, 0.0, 0.0, 1.0])),
+            "unsupported Crop must omit the red matte, not retain it unmasked"
+        );
+    }
 }

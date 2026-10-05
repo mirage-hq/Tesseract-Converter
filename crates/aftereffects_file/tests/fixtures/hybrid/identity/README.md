@@ -94,8 +94,8 @@ exact file and GUID, at the native placements (red 0–1s from source 0, blue
 `tests::linked_compositions::native_links_import_editable_same_name_compositions_by_exact_guid`.
 This is not a converted-render comparison; the unmeasured items above remain.
 
-**Unimplemented:** linked-audio occurrence import (such items are omitted with a
-reason) and automatic hybrid routing. FX→AEP export is unchanged; there is no new
+**Not covered by this picture-only fixture:** linked-audio occurrence import
+or automatic hybrid routing. FX→AEP export is unchanged here; there is no new
 generated export/Adobe acceptance, edit-propagation or relocation proof. This
 fixture pins only the AE26.5x89 macOS header profile; the one other accepted
 profile rests on private evidence, and no universal ID/GUID formula is claimed.

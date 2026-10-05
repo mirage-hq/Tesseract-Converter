@@ -73,6 +73,52 @@ fn native_target_id(name: &str) -> u32 {
     }
 }
 
+#[test]
+fn aligned_color_cubic_independent_native_import_preserves_edited_rgb() {
+    let source =
+        include_bytes!("../../../tests/fixtures/effects_coverage/aligned_color_cubic_native.aep");
+    use sha2::{Digest, Sha256};
+    assert_eq!(
+        format!("{:x}", Sha256::digest(source)),
+        "cd84c6fc05ab2c5f960c0660fcc367d18ad013089cc987596e29c185c60e1c2e"
+    );
+    let project = read_project(source).unwrap();
+    let (document, diagnostics) = imported_case(&project, 1);
+    let record =
+        effect_payload(&document, "tintTritone").unwrap_or_else(|| panic!("{diagnostics:?}"));
+    let entries = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    for (param, from, to) in [
+        ("blackR", 0.1, 0.9),
+        ("blackG", 0.2, 0.7),
+        ("blackB", 0.3, 0.6),
+    ] {
+        let matching: Vec<_> = entries
+            .iter()
+            .filter(|entry| {
+                entry["target"]["effectId"] == record["id"] && entry["target"]["paramName"] == param
+            })
+            .collect();
+        assert_eq!(matching.len(), 1, "{param}: {diagnostics:?}");
+        let keys = matching[0]["animator"]["keyframes"].as_array().unwrap();
+        assert_eq!(keys.len(), 2);
+        for (key, time, value) in [(&keys[0], 0, from), (&keys[1], 1000, to)] {
+            assert_eq!(key["layerTime"], time);
+            assert!((key["value"]["value"].as_f64().unwrap() - value).abs() < 5e-7);
+        }
+        let ease = &keys[1]["easing"];
+        assert_eq!(ease["type"], "cubicBezier");
+        for (field, expected) in [("x1", 0.25), ("y1", 0.1), ("x2", 0.75), ("y2", 0.9)] {
+            assert!(
+                (ease[field].as_f64().unwrap() - expected).abs() < 5e-7,
+                "{param}/{field}: {ease}"
+            );
+        }
+    }
+    assert!(!document.to_string().contains("JsScript"));
+}
+
 fn check_native(name: &str) {
     let id = native_target_id(name);
     let (source_path, source) = if name.ends_with("-animated") {
@@ -235,7 +281,55 @@ fn native_hue_saturation_animated() {
 }
 
 #[test]
-#[ignore = "Adobe-native proof backlog; see docs/after-effects-support.md"]
+fn packed_hue_master_overrides_stale_native_ui_defaults() {
+    fn stale_defaults(chunks: &mut [crate::rifx::Chunk]) -> usize {
+        let mut master_slot = false;
+        let mut changed = 0;
+        for chunk in chunks {
+            if chunk.id() == *b"tdmn" {
+                let name = chunk.data_payload().unwrap();
+                master_slot = [
+                    "ADBE HUE SATURATION-0004",
+                    "ADBE HUE SATURATION-0005",
+                    "ADBE HUE SATURATION-0006",
+                ]
+                .iter()
+                .any(|slot| name.starts_with(slot.as_bytes()));
+            }
+            if master_slot && chunk.id() == *b"pard" {
+                let mut bytes = chunk.data_payload().unwrap().to_vec();
+                bytes[56..60].fill(0);
+                *chunk = crate::rifx::Chunk::data(*b"pard", bytes).unwrap();
+                changed += 1;
+            }
+            if let Some(children) = chunk.children_mut() {
+                changed += stale_defaults(children);
+            }
+        }
+        changed
+    }
+    let mut project = read_project(include_bytes!(
+        "../../../tests/fixtures/effects_coverage/hue_master_static_adobe.aep"
+    ))
+    .unwrap();
+    let mut changed = 0;
+    for item in &mut project.items {
+        if let crate::structure::ItemKind::Composition(composition) = &mut item.kind {
+            for layer in &mut composition.layers {
+                changed += stale_defaults(&mut layer.content);
+            }
+        }
+    }
+    assert_eq!(changed, 3, "only the native UI defaults are made stale");
+    let (document, diagnostics) = imported_case(&project, 1);
+    let record = effect_payload(&document, "hueSaturation").unwrap();
+    assert_eq!(record["effect"]["hue"], json!(50.0), "{diagnostics:?}");
+    assert_eq!(record["effect"]["saturation"], json!(-60.0));
+    assert_eq!(record["effect"]["lightness"], json!(20.0));
+    assert!(!document.to_string().contains("JsScript"));
+}
+
+#[test]
 fn adobe_authored_hue_master_static_imports_editable_values() {
     const SOURCE: &[u8] =
         include_bytes!("../../../tests/fixtures/effects_coverage/hue_master_static_adobe.aep");
@@ -492,12 +586,10 @@ fn native_vibrance_animated() {
     check_native("vibrance-animated");
 }
 #[test]
-#[ignore = "Adobe-native proof backlog; see docs/after-effects-support.md"]
 fn native_twirl_static() {
     check_native("twirl-static");
 }
 #[test]
-#[ignore = "Adobe-native proof backlog; see docs/after-effects-support.md"]
 fn native_twirl_animated() {
     check_native("twirl-animated");
 }

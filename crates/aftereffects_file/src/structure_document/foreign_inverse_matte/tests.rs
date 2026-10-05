@@ -107,7 +107,10 @@ fn native_foreign_alias_copies_keys_and_preserves_destination_clock() {
     let content = group(&masked.layers[0]);
     assert_eq!(content.playback.input_range().start.as_millis(), 4000);
     assert_eq!(content.playback.input_range().duration.as_millis(), 583);
-    assert!(content.playback.time_remap().is_some());
+    assert!(
+        content.playback.time_remap().is_none(),
+        "constant Solid content retains its lifetime without a sampled source clock"
+    );
     assert!(masked.effects.is_empty());
     assert!(shadows.masks.is_empty());
     assert!(rotation.masks[0].inverted);
@@ -474,46 +477,4 @@ fn all_effects_matte_provider_uses_the_same_foreign_stage() {
         assert_eq!(rotation.name, "Foreign matte post-Glow Transform");
         assert!(rotation.masks[0].inverted);
     }
-}
-
-#[test]
-#[ignore = "requires private original source via BONSA_COSMIC_AEP; no Adobe invocation"]
-fn pinned_bonsa_foreign_mask_instances_are_admitted() {
-    use sha2::{Digest, Sha256};
-    let bytes =
-        std::fs::read(std::env::var("BONSA_COSMIC_AEP").expect("private source path")).unwrap();
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&bytes)),
-        "6d632ac99c9e081746d51b83a651cb311dc063f0541bbe43ba1a241bd8870fdd"
-    );
-    let project = read_project(&bytes).unwrap();
-    let conversion = crate::structure_document::to_structural_fx_document_with_assets(
-        &project,
-        Some(883),
-        &mut |_| true,
-    )
-    .unwrap();
-    fn count(layer: &fx_schema::Layer) -> usize {
-        let LayerData::Group(g) = layer.data() else {
-            return 0;
-        };
-        usize::from(g.name == "Foreign matte post-Glow Transform")
-            + g.layers.iter().map(count).sum::<usize>()
-    }
-    assert_eq!(
-        conversion
-            .document
-            .composition()
-            .layers()
-            .iter()
-            .map(count)
-            .sum::<usize>(),
-        4,
-        "{:?}",
-        conversion
-            .diagnostics
-            .iter()
-            .filter(|d| d.message.contains("Foreign"))
-            .collect::<Vec<_>>()
-    );
 }

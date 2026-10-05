@@ -114,13 +114,21 @@ impl<'a> Controls<'a> {
                     DEFAULTS[suffix(name).ok_or("unknown Fractal declaration")?]
                 };
                 let bytes = properties::data(run, *b"pard").map_err(|e| e.to_string())?;
+                // Both native corpora declare the centered Offset Point: older
+                // records use 50/50, newer records use normalized 0.5/0.5 (16:16).
+                // Actual instance Point units still follow tdb4 via the shared helper.
+                let normalized_offset = name == "ADBE Fractal Noise-0013"
+                    && kind == 6
+                    && bytes.len() == 148
+                    && bytes[56..60] == 0x0000_8000_u32.to_be_bytes()
+                    && bytes[60..64] == 0x0000_8000_u32.to_be_bytes();
                 if bytes.len() != 148
                     || bytes[12..16] != kind.to_be_bytes()
                     || (kind == 7
                         && (bytes[60..62] != choices.to_be_bytes()
                             || bytes[62..64] != (default as u16).to_be_bytes()))
-                    || (kind != 7 && bytes[56..60] != default.to_be_bytes())
-                    || (kind == 6 && bytes[60..64] != default.to_be_bytes())
+                    || (!normalized_offset && kind != 7 && bytes[56..60] != default.to_be_bytes())
+                    || (!normalized_offset && kind == 6 && bytes[60..64] != default.to_be_bytes())
                 {
                     return Err(
                         "Fractal declarations conflict with validated native defaults".into(),
@@ -179,15 +187,54 @@ impl<'a> Controls<'a> {
             properties::read_numeric(leaf)
         }
         .map_err(|e| e.to_string())?;
-        if numeric.animated
-            || !numeric.keyframes.is_empty()
-            || numeric.expression_present
-            || numeric.expression_enabled
+        let keyed = numeric.animated || !numeric.keyframes.is_empty();
+        if numeric.expression_enabled
             || numeric.dimensions_separated
-            || numeric.values.iter().any(|v| !v.is_finite())
+            || (keyed && (!matches!(number, 4 | 5 | 10 | 13 | 23) || numeric.keyframes.is_empty()))
         {
             return Err(format!(
-                "Fractal control {number:04}: requires finite static value without expression"
+                "Fractal control {number:04}: unsupported animation, live expression or separated dimensions"
+            ));
+        }
+        let dimensions = if number == 13 || number == 20 { 2 } else { 1 };
+        for values in std::iter::once(&numeric.values)
+            .filter(|values| !values.is_empty())
+            .chain(numeric.keyframes.iter().map(|key| &key.values))
+        {
+            if values.len() != dimensions
+                || values.iter().any(|value| {
+                    !value.is_finite()
+                        || (number == 4 && *value < 0.)
+                        || (number == 10 && *value <= 0.)
+                })
+            {
+                return Err(format!(
+                    "Fractal control {number:04}: invalid dimensions or numeric domain"
+                ));
+            }
+        }
+        // Bounded endpoints stay in-domain under Linear/Hold interpolation.
+        // Curved controls could overshoot scale/contrast or follow a spatial path.
+        for pair in numeric.keyframes.windows(2) {
+            if pair[0].time_secs >= pair[1].time_secs
+                || (pair[0].out_interpolation != 3
+                    && !(pair[0].out_interpolation == 1 && pair[1].in_interpolation == 1))
+            {
+                return Err(format!(
+                    "Fractal control {number:04}: requires ordered Linear/Hold keys"
+                ));
+            }
+        }
+        if numeric.keyframes.iter().any(|key| {
+            !key.time_secs.is_finite()
+                || key
+                    .spatial_in
+                    .iter()
+                    .chain(&key.spatial_out)
+                    .any(|value| *value != 0.)
+        }) {
+            return Err(format!(
+                "Fractal control {number:04}: invalid time or curved spatial keys"
             ));
         }
         Ok(Some(numeric))
@@ -197,7 +244,11 @@ impl<'a> Controls<'a> {
         let Some(numeric) = self.numeric(number)? else {
             return Ok(default);
         };
-        let [value] = numeric.values.as_slice() else {
+        let [value] = numeric
+            .keyframes
+            .first()
+            .map_or(numeric.values.as_slice(), |key| key.values.as_slice())
+        else {
             return Err(format!("Fractal control {number:04}: requires scalar"));
         };
         Ok(*value)
@@ -207,7 +258,11 @@ impl<'a> Controls<'a> {
         let Some(numeric) = self.numeric(number)? else {
             return Ok(default);
         };
-        let [x, y] = numeric.values.as_slice() else {
+        let [x, y] = numeric
+            .keyframes
+            .first()
+            .map_or(numeric.values.as_slice(), |key| key.values.as_slice())
+        else {
             return Err("Fractal point requires two coordinates".into());
         };
         let leaf = self.leaf(number)?.ok_or("Fractal point leaf missing")?;
@@ -219,6 +274,37 @@ impl<'a> Controls<'a> {
             [*x, *y]
         })
     }
+}
+
+/// Native Fractal ABI, normalized through the same Point units as Turbulent Noise.
+pub(crate) fn animation_controls(
+    layer: &Layer,
+    source: &DecodedEffect,
+    size: [u16; 2],
+) -> Result<Vec<(usize, properties::NumericProperty)>, String> {
+    let controls = Controls::read(layer, source)?;
+    let mut result = Vec::new();
+    for number in [4, 5, 10, 13, 23] {
+        // Equal Width/Height staging uses those static axes, not the inactive
+        // Uniform Scale slider. Its keys must not animate the receiving scale.
+        if number == 10 && controls.scalar(9, 1.)? == 0. {
+            continue;
+        }
+        if let Some(mut numeric) = controls.numeric(number)?
+            && !numeric.keyframes.is_empty()
+        {
+            if number == 13
+                && controls.leaf(number)?.is_some_and(|leaf| {
+                    properties::data(leaf, *b"tdb4")
+                        .is_ok_and(|meta| meta.len() == 124 && meta[59] == 4)
+                })
+            {
+                super::native::scale_relative_point(&mut numeric, size.map(f64::from));
+            }
+            result.push((number, numeric));
+        }
+    }
+    Ok(result)
 }
 
 fn opaque_source(layer: &Layer, items: Option<&HashMap<u32, &ProjectItem>>) -> bool {
@@ -326,7 +412,15 @@ pub(crate) fn lower(
     if !(0. ..=100.).contains(&opacity) {
         return Err("invalid Fractal opacity".into());
     }
-    if contrast == 0. && brightness == 0. && blend == 5. {
+    if contrast == 0.
+        && brightness == 0.
+        && blend == 5.
+        && [4, 5].into_iter().all(|number| {
+            controls
+                .numeric(number)
+                .is_ok_and(|value| value.is_none_or(|value| value.keyframes.is_empty()))
+        })
+    {
         // Zero contrast implies the midgray constant in the related noise model.
         // Coordinates/evolution cannot change this constant; native formula is
         // undocumented, so this source-derived simplification remains approximate.
@@ -340,12 +434,12 @@ pub(crate) fn lower(
             "zero-contrast Multiply approximated by editable Exposure using the opacity-weighted midgray constant; native contrast formula is unverified",
         ));
     }
-    if noise_type != 4. || blend != 2. || controls.scalar(9, 1.)? != 1. {
+    if blend != 2. || controls.scalar(9, 1.)? != 1. {
         return Err("requires Normal blending and Uniform Scaling; other modes/anisotropy remain outside admitted profile".into());
     }
     Ok((
         generator(&controls, size, controls.scalar(10, 100.)?, opacity / 100.)?,
-        "static uniform Basic/Spline Normal stage approximated by editable TurbulentNoise; native kernel, frame-relative feature scale, HDR overflow and evolution differ",
+        "uniform Basic Normal stage with editable noise interpolation and bounded numeric keys approximated by editable TurbulentNoise; native kernel, frame-relative feature scale, HDR overflow and evolution differ",
     ))
 }
 
@@ -396,10 +490,10 @@ fn generator(
     blend: f64,
 ) -> Result<LayerEffect, String> {
     if controls.scalar(1, 1.)? != 1.
-        || controls.scalar(2, 3.)? != 4.
+        || ![1., 2., 3., 4.].contains(&controls.scalar(2, 3.)?)
         || controls.scalar(6, 4.)? != 4.
     {
-        return Err("outside admitted Basic/Spline, Allow HDR generator profile".into());
+        return Err("outside admitted Basic, valid Noise Type, Allow HDR generator profile".into());
     }
     let invert = controls.scalar(3, 0.)?;
     if ![0., 1.].contains(&invert) {
@@ -449,7 +543,12 @@ fn generator(
         offset_y: Some((100. * offset[1] - 50. * f64::from(size[1])) / f64::from(size[0])),
         invert: Some(invert),
         blend: Some(blend),
-        noise_type: Some(NoiseType::Spline),
+        noise_type: Some(match controls.scalar(2, 3.)? {
+            1. => NoiseType::Block,
+            2. => NoiseType::Linear,
+            3. => NoiseType::SoftLinear,
+            _ => NoiseType::Spline,
+        }),
         fractal_type: Some(FractalType::Basic),
     })
 }
@@ -587,6 +686,101 @@ mod tests {
     }
 
     #[test]
+    fn native_fractal_noise_interpolation_modes_remain_editable() {
+        let (mut layer, source, _) = native();
+        for (ordinal, expected) in [
+            (1., NoiseType::Block),
+            (2., NoiseType::Linear),
+            (3., NoiseType::SoftLinear),
+            (4., NoiseType::Spline),
+        ] {
+            scalar(&mut layer, 2, ordinal);
+            let (effect, _) = lower(&source, &layer, [1920, 1080], true).unwrap();
+            let LayerEffect::TurbulentNoise { noise_type, .. } = effect else {
+                panic!("missing editable generator")
+            };
+            assert_eq!(noise_type, Some(expected));
+        }
+        scalar(&mut layer, 2, 5.);
+        assert!(lower(&source, &layer, [1920, 1080], true).is_err());
+    }
+
+    #[test]
+    fn native_fractal_offset_declaration_accepts_only_paired_center_forms() {
+        let (mut legacy, legacy_source, table) = native();
+        *descriptor(&mut legacy.content)
+            .iter_mut()
+            .find(|chunk| chunk.list_kind() == Some(*b"parT"))
+            .unwrap() = table;
+        let project = read_project(include_bytes!(
+            "../../tests/fixtures/effects/native-fractal-turbulent-keys.aep"
+        ))
+        .unwrap();
+        let ItemKind::Composition(comp) = &project.item(1).unwrap().kind else {
+            panic!()
+        };
+        let modern = comp.layers[0].clone();
+        let modern_source = super::super::native::read_effects(&modern.content, [320., 180.])
+            .0
+            .remove(0);
+        for (layer, source, original) in [
+            (legacy, legacy_source, 0x0032_0000_u32),
+            (modern, modern_source, 0x0000_8000_u32),
+        ] {
+            let offset = |layer: &mut Layer, x: u32, y: u32, kind: u32, truncate: bool| {
+                let table = descriptor(&mut layer.content)
+                    .iter_mut()
+                    .find(|chunk| chunk.list_kind() == Some(*b"parT"))
+                    .unwrap()
+                    .children_mut()
+                    .unwrap();
+                let index = table
+                    .iter()
+                    .position(|chunk| {
+                        chunk.id() == *b"tdmn"
+                            && chunk
+                                .data_payload()
+                                .unwrap()
+                                .starts_with(b"ADBE Fractal Noise-0013\0")
+                    })
+                    .unwrap();
+                let pard = table[index + 1..]
+                    .iter_mut()
+                    .find(|chunk| chunk.id() == *b"pard")
+                    .unwrap();
+                let mut bytes = pard.data_payload().unwrap().to_vec();
+                assert_eq!(&bytes[56..60], &original.to_be_bytes());
+                assert_eq!(&bytes[60..64], &original.to_be_bytes());
+                bytes[56..60].copy_from_slice(&x.to_be_bytes());
+                bytes[60..64].copy_from_slice(&y.to_be_bytes());
+                bytes[12..16].copy_from_slice(&kind.to_be_bytes());
+                if truncate {
+                    bytes.pop();
+                }
+                *pard = Chunk::data(*b"pard", bytes).unwrap();
+            };
+            assert!(Controls::read(&layer, &source).is_ok());
+            for (x, y, kind, truncate, accepted) in [
+                (0x0032_0000, 0x0032_0000, 6, false, true),
+                (0x0000_8000, 0x0000_8000, 6, false, true),
+                (0x0032_0000, 0x0000_8000, 6, false, false),
+                (0x0000_8000, 0x0032_0000, 6, false, false),
+                (0x0000_8000, 0x0000_8001, 6, false, false),
+                (0x0000_8000, 0x0000_8000, 2, false, false),
+                (0x0000_8000, 0x0000_8000, 6, true, false),
+            ] {
+                let mut changed = layer.clone();
+                offset(&mut changed, x, y, kind, truncate);
+                assert_eq!(
+                    Controls::read(&changed, &source).is_ok(),
+                    accepted,
+                    "{x:x}/{y:x},kind{kind},truncate{truncate}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn full_native_fractal_defaults_use_popup_default_not_cached_blend() {
         let (mut layer, source, table) = native();
         let d = descriptor(&mut layer.content);
@@ -635,7 +829,7 @@ mod tests {
         let (layer, source, _) = native();
         for (number, value) in [
             (1, 15.),
-            (2, 3.),
+            (2, 5.),
             (3, 2.),
             (4, -1.),
             (6, 1.),
@@ -785,7 +979,7 @@ mod tests {
         ));
         for (number, value) in [
             (1, 15.),
-            (2, 3.),
+            (2, 5.),
             (3, 2.),
             (4, -1.),
             (6, 1.),

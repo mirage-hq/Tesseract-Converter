@@ -269,6 +269,24 @@ pub(crate) fn group_enabled_or_warn(run: &[Chunk], name: &str, warnings: &mut Ve
     }
 }
 
+/// Persisted named groups omit defaults; their compact order is not an AE index.
+/// Only the independently captured Shape Scale family is qualified here. Indexed
+/// Contents groups retain every occurrence, including disabled siblings.
+pub(crate) fn shape_scale_index(parent: &str, child: &str, ordinal: usize) -> Option<u32> {
+    match (parent, child) {
+        ("ADBE Root Vectors Group" | "ADBE Vectors Group", _) => u32::try_from(ordinal + 1).ok(),
+        ("ADBE Vector Group", "ADBE Vectors Group") => Some(2),
+        ("ADBE Vector Group", "ADBE Vector Transform Group") => Some(3),
+        ("ADBE Vector Transform Group", "ADBE Vector Scale") => Some(3),
+        _ => None,
+    }
+}
+
+// tdb4 keeps expression disablement separate from presence (byte 120).
+// Both numeric readers validate this 124-byte metadata layout first.
+pub(crate) const EXPRESSION_DISABLED_OFFSET: usize = 119;
+pub(crate) const EXPRESSION_DISABLED_MASK: u8 = 1;
+
 /// Decode a numeric property's `tdbs` children without changing native values.
 /// This also supports external structural inspectors of freshly exported files.
 pub fn read_numeric(children: &[Chunk]) -> Result<NumericProperty, PropertyError> {
@@ -282,7 +300,7 @@ pub(crate) fn read_effect_point(children: &[Chunk]) -> Result<NumericProperty, P
     read_numeric_with_layout(children, false, false, true)
 }
 
-fn read_orientation(run: &[Chunk]) -> Result<NumericProperty, PropertyError> {
+pub(crate) fn read_orientation(run: &[Chunk]) -> Result<NumericProperty, PropertyError> {
     let wrapper = unique_list(run, *b"otst")?;
     let inner = unique_list(wrapper, *b"tdbs")?;
     let mut property = read_numeric_with_layout(inner, true, true, false)?;
@@ -385,7 +403,8 @@ fn read_numeric_with_layout(
     Ok(NumericProperty {
         values,
         animated,
-        expression_enabled: expression_present && meta[119] & 1 == 0,
+        expression_enabled: expression_present
+            && meta[EXPRESSION_DISABLED_OFFSET] & EXPRESSION_DISABLED_MASK == 0,
         expression_present,
         dimensions_separated: flags[2] & 8 != 0,
         keyframes,
@@ -408,7 +427,8 @@ pub(crate) fn read_path_metadata(children: &[Chunk]) -> Result<NumericProperty, 
     Ok(NumericProperty {
         values: Vec::new(),
         animated: meta[68] != 0 || children.iter().any(|c| c.list_kind() == Some(*b"list")),
-        expression_enabled: expression_present && meta[119] & 1 == 0,
+        expression_enabled: expression_present
+            && meta[EXPRESSION_DISABLED_OFFSET] & EXPRESSION_DISABLED_MASK == 0,
         expression_present,
         dimensions_separated: false,
         keyframes: read_keyframes(children, meta, 0, NumericValueKind::Continuous, Some(64))?,

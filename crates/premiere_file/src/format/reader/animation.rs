@@ -2,7 +2,7 @@
 
 use super::effects::{read_track_matte, TrackMatteKey};
 use crate::{
-    error::{ensure, unsupported, Result},
+    error::{ensure, unsupported, BuildError, Result},
     format::{Graph, Located},
     schema::{
         native::{Reference, VideoComponentChain, VideoComponentParam, VideoFilterComponent},
@@ -39,6 +39,40 @@ pub(super) fn scalar_start(wire: &str, context: &str) -> Result<f64> {
         .parse::<f64>()
         .map_err(|_| unsupported(format!("{context}: invalid initial value")))?;
     ensure!(value.is_finite(), "{context}: nonfinite initial value");
+    Ok(value)
+}
+
+/// A singleton boolean key equal to the initial value cannot change either
+/// side of its timestamp. Normalize that saved representation, not a changing
+/// Uniform Scale curve; numeric Motion keys keep their existing clocks.
+fn uniform_scale_start(
+    initial: &str,
+    wire: &str,
+    is_time_varying: Option<&str>,
+    context: &str,
+) -> Result<bool> {
+    let value = bool_start(initial, context)?;
+    if wire.is_empty() {
+        ensure!(
+            is_time_varying != Some("true"),
+            "{context}: animated Uniform Scale is unsupported"
+        );
+        return Ok(value);
+    }
+    ensure!(
+        is_time_varying != Some("false"),
+        "{context}: keyframes conflict with disabled IsTimeVarying"
+    );
+    let key = wire
+        .strip_suffix(';')
+        .ok_or_else(|| unsupported(format!("{context}: unterminated Uniform Scale key list")))?;
+    let fields = key_fields(key, 8, context)?;
+    ensure!(
+        fields[0].parse::<i64>().is_ok()
+            && fields[1] == if value { "true" } else { "false" }
+            && fields[2..].iter().all(|field| *field == "0"),
+        "{context}: Uniform Scale keys require one constant boolean equal to StartKeyframe"
+    );
     Ok(value)
 }
 
@@ -165,7 +199,7 @@ fn easing_at(
 }
 
 /// [`easing_at`] for scalar keys: Premiere eases a Linear key into a Bezier key
-/// with both stored handles (Oracle run C6, F23, probed on Motion Scale).
+/// with both stored handles (probed on Motion Scale).
 /// Handles on the chord, such as the zero handles that export writes for a
 /// Linear segment, keep the interval exactly Linear.
 fn scalar_easing_at(
@@ -185,6 +219,61 @@ fn scalar_easing_at(
 }
 
 pub(super) fn scalar_keys(wire: &str, context: &str) -> Result<Vec<PrScalarKeyframe>> {
+    let native = native_scalar_keys(wire, context)?;
+    native
+        .iter()
+        .enumerate()
+        .map(|(index, key)| {
+            Ok(PrScalarKeyframe {
+                source_ticks: key.source_ticks,
+                value: key.value,
+                easing: scalar_easing_at(&native, index, context)?,
+            })
+        })
+        .collect()
+}
+
+/// Legacy Luma's bounded approximation retains values/times even for Bezier
+/// velocity between equal endpoints, which has no exact FX cubic representation.
+pub(super) fn linearized_scalar_keys(
+    wire: &str,
+    context: &str,
+) -> Result<(Vec<PrScalarKeyframe>, bool)> {
+    let native = native_scalar_keys(wire, context)?;
+    let mut approximated = false;
+    let keys = native
+        .iter()
+        .enumerate()
+        .map(|(index, key)| {
+            let easing = if index == 0 {
+                PrKeyframeEasing::Linear
+            } else {
+                let previous = native[index - 1];
+                if previous.outgoing_mode == 4 {
+                    PrKeyframeEasing::Hold
+                } else {
+                    if previous.outgoing_mode == 5 || key.outgoing_mode == 5 {
+                        ensure!(
+                            (0.0..=1.0).contains(&previous.outgoing_influence)
+                                && (0.0..=1.0).contains(&key.incoming_influence),
+                            "{context}: Bezier influence must be between zero and one"
+                        );
+                        approximated = true;
+                    }
+                    PrKeyframeEasing::Linear
+                }
+            };
+            Ok(PrScalarKeyframe {
+                source_ticks: key.source_ticks,
+                value: key.value,
+                easing,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok((keys, approximated))
+}
+
+fn native_scalar_keys(wire: &str, context: &str) -> Result<Vec<NativeScalarKeyframe>> {
     ensure!(
         wire.is_empty() || wire.ends_with(';'),
         "{context}: unterminated keyframe list"
@@ -243,17 +332,7 @@ pub(super) fn scalar_keys(wire: &str, context: &str) -> Result<Vec<PrScalarKeyfr
         native.push(key);
     }
 
-    native
-        .iter()
-        .enumerate()
-        .map(|(index, key)| {
-            Ok(PrScalarKeyframe {
-                source_ticks: key.source_ticks,
-                value: key.value,
-                easing: scalar_easing_at(&native, index, context)?,
-            })
-        })
-        .collect()
+    Ok(native)
 }
 
 /// Read the exact static standalone Crop layout observed in pinned Adobe projects.
@@ -362,6 +441,16 @@ fn read_crop_component(
 }
 
 pub(super) fn point_keys(wire: &str, context: &str) -> Result<Vec<PrPointKeyframe>> {
+    read_point_keys(wire, context, false)
+}
+
+/// Offset's pinned source also saves mode5/flags2 resolved spatial handles.
+/// Only its explicitly straightened replacement admits that form.
+pub(super) fn offset_point_keys(wire: &str, context: &str) -> Result<Vec<PrPointKeyframe>> {
+    read_point_keys(wire, context, true)
+}
+
+fn read_point_keys(wire: &str, context: &str, offset: bool) -> Result<Vec<PrPointKeyframe>> {
     ensure!(
         wire.is_empty() || wire.ends_with(';'),
         "{context}: unterminated keyframe list"
@@ -418,17 +507,22 @@ pub(super) fn point_keys(wire: &str, context: &str) -> Result<Vec<PrPointKeyfram
             parse(fields[13], "spatial outgoing tangent")?,
         ];
         let (spatial_in_tangent, spatial_out_tangent) = match (spatial_mode, spatial_flags) {
-            (0, 0) => {
+            // Saved linear keys can retain flag 2 with zero tangents. Admit
+            // only that tangent-free form; temporal handles and times still
+            // use the same reading as the existing linear spatial profile.
+            (0, 0 | 2) => {
                 ensure!(
                     incoming == [0.0, 0.0] && outgoing == [0.0, 0.0],
                     "{context}: linear spatial key has nonzero tangents"
                 );
                 (None, None)
             }
-            // Flag 4 is Premiere's automatic spatial mode. Import its resolved
-            // handles as explicit editable tangents; automatic recomputation is
-            // deliberately not represented by the FX schema.
+            // Flag 4 is Premiere's automatic spatial mode. Keep its resolved
+            // handles in the native model; FX track mapping retains them only
+            // on curved adjacent segments. Automatic recomputation is not
+            // represented by the FX schema.
             (5, 0 | 4) => (Some(incoming), Some(outgoing)),
+            (5, 2) if offset => (Some(incoming), Some(outgoing)),
             _ => {
                 return Err(unsupported(format!(
                     "{context}: unsupported spatial interpolation mode {spatial_mode} with flags {spatial_flags}"
@@ -503,6 +597,38 @@ pub(super) fn point_keys(wire: &str, context: &str) -> Result<Vec<PrPointKeyfram
         .collect()
 }
 
+/// Checks that every point key of `wire`, which [`point_keys`] reads, has the
+/// form of the keys of the curved Corner Pin path of the pinned
+/// `premiere_isolated_source_effects_26_5` save: temporal flags 0 and
+/// Premiere's automatic spatial handles, spatial mode 5 with flags 4. A kept
+/// curved path converts only from that form, the one whose traversal
+/// Premiere's saved key speeds support (`convert::corner_path`);
+/// [`point_keys`] reads other paths without the flags.
+pub(super) fn ensure_saved_curve_form(wire: &str, context: &str) -> Result<()> {
+    for item in wire.split_terminator(';') {
+        let fields = key_fields(item, 14, context)?;
+        let parse = |field: &str| {
+            field
+                .parse::<u8>()
+                .map_err(|_| unsupported(format!("{context}: invalid keyframe flags")))
+        };
+        let form = [parse(fields[3])?, parse(fields[8])?, parse(fields[9])?];
+        if form != [0, 5, 4] {
+            let ticks = fields[0]
+                .parse::<i64>()
+                .map_err(|_| unsupported(format!("{context}: invalid key time")))?;
+            return Err(unsupported(format!(
+                "{context}: the key at source time {:.3} s is saved with temporal flags {} and spatial interpolation mode {} with flags {}; a curved spatial path converts only from the form of Premiere's saved keys, temporal flags 0 with automatic spatial handles (mode 5, flags 4), whose traversal Premiere's saved key speeds support",
+                ticks as f64 / TICKS as f64,
+                form[0],
+                form[1],
+                form[2]
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Read one bounded cardinal Linear Wipe component.
 fn read_linear_wipe(graph: &Graph<'_>, reference: &Reference, from: &str) -> Result<PrLinearWipe> {
     let effect = graph.follow::<VideoFilterComponent>(reference, from)?;
@@ -557,12 +683,23 @@ fn read_linear_wipe(graph: &Graph<'_>, reference: &Reference, from: &str) -> Res
         let name = input.value.name.as_deref().unwrap_or_default();
         match (input.value.parameter_id.as_str(), name) {
             ("1", "Transition Completion") => {
+                let varying = input.value.is_time_varying.as_deref();
+                ensure!(
+                    matches!(varying, None | Some("true") | Some("false")),
+                    "{}: invalid Transition Completion IsTimeVarying",
+                    input.identity
+                );
                 let keys = scalar_keys(
                     input.value.keyframes.as_deref().unwrap_or_default(),
                     &input.identity,
                 )?;
                 ensure!(
-                    !keys.is_empty() && keys.iter().all(|key| (0.0..=100.0).contains(&key.value)),
+                    !keys.is_empty() || varying != Some("true"),
+                    "{}: empty time-varying Transition Completion is unmeasured",
+                    input.identity
+                );
+                ensure!(
+                    keys.iter().all(|key| (0.0..=100.0).contains(&key.value)),
                     "{}: Transition Completion requires bounded animation keys",
                     input.identity
                 );
@@ -645,7 +782,11 @@ pub(super) fn chain_components(chain: &Located<VideoComponentChain>) -> Result<&
 pub(super) struct MotionAndMasks {
     pub(super) transform: PrStaticTransform,
     pub(super) animations: Vec<PrPropertyAnimation>,
+    /// The clip's one Crop: an active Crop effect's or the Motion Crop.
     pub(super) crop: PrStaticCrop,
+    /// Whether `crop` is the Motion Crop, which Premiere applies with Motion
+    /// after every standard effect, not at a Crop effect's stack position.
+    pub(super) crop_from_motion: bool,
     pub(super) linear_wipe: Option<PrLinearWipe>,
     pub(super) track_matte: Option<TrackMatteKey>,
 }
@@ -744,6 +885,7 @@ pub(super) fn read_video_animations(
             transform: PrStaticTransform::default(),
             animations: Vec::new(),
             crop: crop.unwrap_or_default(),
+            crop_from_motion: false,
             linear_wipe,
             track_matte,
         });
@@ -766,16 +908,17 @@ pub(super) fn read_video_animations(
         "{}: unsupported video component",
         motion.identity
     );
-    // Premiere 26.3 writes `Bypass` false; Premiere 26.5 omits it and adds Motion Crop.
+    // Older saves also append four inert Crop controls. Missing `Bypass`
+    // distinguishes active modern Motion Crop, not the parameter count.
     let premiere_26_5 = body.bypass.is_none();
-    let layout = if premiere_26_5 {
+    let params = body
+        .params
+        .ok_or_else(|| unsupported(format!("{}: missing Motion Params", motion.identity)))?;
+    let layout = if premiere_26_5 || params.items.len() == MOTION_PARAMS_26_5.len() {
         &MOTION_PARAMS_26_5[..]
     } else {
         &MOTION_PARAMS[..]
     };
-    let params = body
-        .params
-        .ok_or_else(|| unsupported(format!("{}: missing Motion Params", motion.identity)))?;
     ensure!(
         params.items.len() == layout.len(),
         "{}: unsupported Motion parameter layout",
@@ -785,6 +928,8 @@ pub(super) fn read_video_animations(
     let mut transform = PrStaticTransform::default();
     let mut uniform_scale = true;
     let mut animations = Vec::new();
+    // Motion Crop Left, Top, Right and Bottom (`MotionParamSpec::crop_edge`).
+    let mut motion_crop = [0.0; 4];
     for param in &params.items {
         let record = graph.locate(param, &motion.identity)?;
         ensure!(
@@ -820,22 +965,38 @@ pub(super) fn read_video_animations(
             "{}: unsupported Motion parameter Bypass",
             input.identity
         );
-        // Saves in the 26.3 layout vary these fields (Premiere 9-14 write a Scale
-        // UpperUIBound of 100 or none), so only the 26.5 layout checks them.
-        if premiere_26_5 {
-            let bounds = spec
-                .bounds
-                .map_or((None, None, None), |(lower, upper, upper_ui)| {
-                    (Some(lower), Some(upper), upper_ui)
-                });
+        // Legacy fields on ids 1-7 vary (Scale UpperUIBound is 100 or absent).
+        // Its inert Crop tail has control type 2 with full scalar or percentage
+        // bounds; modern controls keep their existing strict metadata checks.
+        if premiere_26_5 || spec.crop_edge().is_some() {
+            let (control, bounds) = if premiere_26_5 {
+                (
+                    spec.control,
+                    spec.bounds
+                        .map_or((None, None, None), |(lower, upper, upper_ui)| {
+                            (Some(lower), Some(upper), upper_ui)
+                        }),
+                )
+            } else {
+                (
+                    Some("2"),
+                    (
+                        Some("-3.4028234663852886e+38"),
+                        Some("3.4028234663852886e+38"),
+                        None,
+                    ),
+                )
+            };
+            let saved_bounds = (
+                input.value.lower_bound.as_deref(),
+                input.value.upper_bound.as_deref(),
+                input.value.upper_ui_bound.as_deref(),
+            );
             ensure!(
                 input.value.class_id.as_deref() == Some(spec.record.class_id)
-                    && input.value.parameter_control_type.as_deref() == spec.control
-                    && (
-                        input.value.lower_bound.as_deref(),
-                        input.value.upper_bound.as_deref(),
-                        input.value.upper_ui_bound.as_deref(),
-                    ) == bounds
+                    && input.value.parameter_control_type.as_deref() == control
+                    && (saved_bounds == bounds
+                        || (!premiere_26_5 && saved_bounds == (Some("0"), Some("100"), None)))
                     && input.value.lower_ui_bound.is_none(),
                 "{}: unexpected Motion parameter layout",
                 input.identity
@@ -896,24 +1057,33 @@ pub(super) fn read_video_animations(
             }
             continue;
         }
-        if spec.is_crop() {
-            // Motion Crop has no mapping; only its zero default converts.
-            let value = scalar_start(initial, &input.identity)?;
+        if let Some(edge) = spec.crop_edge() {
+            // Motion Crop crops the clip's own frame by edge percentages
+            // before Motion moves it, as a Crop effect does. Its keys are
+            // unmeasured, and the static value alone would crop wrongly
+            // between them, so a keyed edge omits the clip.
             ensure!(
-                value == 0.0 && wire.is_empty() && is_time_varying != Some("true"),
-                "{}: nonzero or keyed Motion {name} is unsupported",
+                wire.is_empty() && is_time_varying != Some("true"),
+                "{}: animated Motion {name} is unsupported",
                 input.identity
             );
+            let value = scalar_start(initial, &input.identity)?;
+            ensure!(
+                premiere_26_5 || value == 0.0,
+                "{}: nonzero legacy Motion {name} is unsupported",
+                input.identity
+            );
+            motion_crop[edge] = value;
             continue;
         }
-        ensure!(
-            wire.is_empty() && input.value.is_time_varying.as_deref() != Some("true"),
-            "{}: animated {name} is unsupported",
-            input.identity
-        );
         if spec.id == 4 {
-            uniform_scale = bool_start(initial, &input.identity)?;
+            uniform_scale = uniform_scale_start(initial, wire, is_time_varying, &input.identity)?;
         } else {
+            ensure!(
+                wire.is_empty() && is_time_varying != Some("true"),
+                "{}: animated {name} is unsupported",
+                input.identity
+            );
             default_param(spec, initial, &input.identity)?;
         }
     }
@@ -928,15 +1098,24 @@ pub(super) fn read_video_animations(
             .any(|animation| animation.property() == property)
     };
     if uniform_scale {
-        // Premiere scales both axes by Scale and leaves Scale Width unchanged
-        // while Uniform Scale is on (AME render of clip S2 of
-        // `premiere_isolated_motion_opacity_26_5`). Whether it also ignores
-        // Scale Width keys there is unmeasured.
-        ensure!(
-            !keyed(PrAnimatedProperty::ScaleWidth),
-            "{}: animated Scale Width is unsupported under Uniform Scale",
-            motion.identity
-        );
+        // Uniform Scale drives both axes. The Big Sale native discriminator
+        // renders duplicate Linear Scale/Width keys exactly like Scale alone.
+        // Keep unequal width curves unsupported; both tracks have already passed
+        // their ordinary key parsing and supported-form checks above.
+        if let Some(width) = animations.iter().find_map(|animation| match animation {
+            PrPropertyAnimation::ScaleWidth(keys) => Some(keys),
+            _ => None,
+        }) {
+            ensure!(
+                animations.iter().any(|animation| matches!(
+                    animation,
+                    PrPropertyAnimation::UniformScale(keys) if keys == width
+                )),
+                "{}: animated Scale Width is unsupported under Uniform Scale",
+                motion.identity
+            );
+            animations.retain(|animation| !matches!(animation, PrPropertyAnimation::ScaleWidth(_)));
+        }
         transform.scale[0] = transform.scale[1];
     } else {
         // Without Uniform Scale, Scale is the height; Scale Width keys beside
@@ -947,10 +1126,33 @@ pub(super) fn read_video_animations(
             motion.identity
         );
     }
+    let [left, top, right, bottom] = motion_crop;
+    let motion_crop = PrStaticCrop {
+        left,
+        top,
+        right,
+        bottom,
+        edge_feather: 0.0,
+    };
+    motion_crop
+        .validate()
+        .map_err(|source| BuildError::Context {
+            context: format!("{}: Motion Crop", motion.identity),
+            source: Box::new(source.into()),
+        })?;
+    let crop = crop.unwrap_or_default();
+    // Premiere applies each crop at its own stage; the clip keeps one mask.
+    ensure!(
+        motion_crop.is_default() || crop.is_default(),
+        "{}: a Motion Crop beside an active Crop effect on one clip is not converted",
+        motion.identity
+    );
+    let crop_from_motion = !motion_crop.is_default();
     Ok(MotionAndMasks {
         transform,
         animations,
-        crop: crop.unwrap_or_default(),
+        crop: if crop_from_motion { motion_crop } else { crop },
+        crop_from_motion,
         linear_wipe,
         track_matte,
     })
@@ -1071,12 +1273,31 @@ pub(super) fn read_video_compositing(
                     input.identity
                 ))
             })?;
+        // Altrion's original legacy controls save the full numeric type bounds,
+        // not the UI range. Admit only those exact pairs; value checks below
+        // still constrain alpha and the existing blend-code mapping is unchanged.
+        let bounds = (
+            input.value.lower_bound.as_deref(),
+            input.value.upper_bound.as_deref(),
+        );
+        let typed_bounds = body.bypass.as_deref() == Some("false")
+            && match id {
+                1 => {
+                    bounds
+                        == (
+                            Some("-3.4028234663852886e+38"),
+                            Some("3.4028234663852886e+38"),
+                        )
+                }
+                2 | 3 => bounds == (Some("-2147483648"), Some("2147483647")),
+                _ => false,
+            };
         ensure!(
             super::required(input.value.name.as_deref(), &input.identity, "Name")? == spec.name
                 && input.value.class_id.as_deref() == Some(spec.class_id)
                 && input.value.parameter_control_type.as_deref() == spec.control
-                && input.value.lower_bound.as_deref() == Some(spec.lower_bound)
-                && spec.accepts_upper_bound(input.value.upper_bound.as_deref()),
+                && (typed_bounds
+                    || bounds.0 == Some(spec.lower_bound) && spec.accepts_upper_bound(bounds.1)),
             "{}: unexpected Opacity parameter layout",
             input.identity
         );
@@ -1106,8 +1327,7 @@ pub(super) fn read_video_compositing(
             // Premiere 26.5.1 saves the explicit Opacity of a masked clip with
             // `IsTimeVarying` true and no `Keyframes` (fixture
             // `feature_opacity_masks_26_5_strict`, clips A to D, saved from an
-            // XML-authored `false`; `oracle/17/facts.md`,
-            // `fragments/A-saved.xml`); the native render shows the
+            // XML-authored `false`); the native render shows the
             // `StartKeyframe` value (A at alpha 0.500 = Mask Opacity 50 times
             // Opacity 100, B and C opaque inside the mask), so that state reads
             // as the static value, as it does for Motion's animated parameters.
@@ -1290,16 +1510,15 @@ mod tests {
 
     // Adobe-authored explore_bezier_keyframes project, pinned from long-term Asset
     // WJ313gJR2j08vrgbBlsL_txt at SHA-256
-    // 6d336d67efad9f857b7307e3f9dc5eb4860b5a2bf270ae6d48e3eacd7da8506f.
+    // 7608e9de691406509b4c48251206051d5dbf0f773d912b2d7fa1e498ce54ccdc.
     const ADOBE_POSITION_PATH: &[u8] =
         include_bytes!("../../../tests/fixtures/feature_motion_position_path_adobe.prproj");
 
-    /// Oracle run C6's F23 probe (Premiere 26.5.1, `f23_bezier_end_probe.prproj`):
+    /// Native Bezier probe (Premiere 26.5.1, `f23_bezier_end_probe.prproj`):
     /// Motion Scale keys K1 at 1 s (100, Linear), K2 at 2 s (150, Bezier), K3 at
     /// 4 s (100, Hold) and K4 at 5 s (150, Bezier), verbatim as saved in P1
     /// (Premiere's handles) and P3 (K2 and K4 in 12.5/s at 0.6, K1 out 20/s at
-    /// 0.4). Premiere read K1 to K2 back within 7.9e-6 of these readings
-    /// (control/evidence/6a-JRB-2077-r8/f23/).
+    /// 0.4). Premiere read K1 to K2 back within 7.9e-6 of these readings.
     const F23_P1: &str = "254016000000,100.,0,0,0,0.16666666666666666,50,0.16666666666666666;508032000000,150.,5,0,50,0.16666666666666666,0,0.16666666666666666;1016064000000,100.,4,0,-25,0.16666666666666666,0,0.33333333333333331;1270080000000,150.,5,0,50,0.16666666666666666,0,0.16666666666666666;";
     const F23_P3: &str = "254016000000,100.,0,0,0,0.16666666666666666,20,0.40000000000000002;508032000000,150.,5,0,12.5,0.59999999999999998,0,0.16666666666666666;1016064000000,100.,4,0,-25,0.16666666666666666,0,0.33333333333333331;1270080000000,150.,5,0,12.5,0.59999999999999998,0,0.16666666666666666;";
 
@@ -1413,6 +1632,67 @@ mod tests {
             scalar_keys(&scalar, "scalar").unwrap()[1].easing,
             PrKeyframeEasing::CubicBezier { .. }
         ));
+    }
+
+    #[test]
+    fn linear_spatial_flags_two_preserve_native_backed_point_profiles() {
+        // These existing native-backed profiles cover Linear/Hold Motion and
+        // Bezier Text/Vector Motion. Changing only the spatial flag is a
+        // supplemental wire regression, not a new Adobe-render oracle.
+        for fixture in [
+            "feature_motion_opacity_26_5_strict.prproj",
+            "feature_graphic_bezier_position_rotation_26_5_strict.prproj",
+        ] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures")
+                .join(fixture);
+            let xml = crate::format::read_xml(&path).unwrap();
+            let records = roxmltree::Document::parse(&xml).unwrap();
+            let mut checked = 0;
+            for record in records
+                .descendants()
+                .filter(|node| node.has_tag_name("PointComponentParam"))
+            {
+                let Some(wire) = record
+                    .children()
+                    .find(|node| node.has_tag_name("Keyframes"))
+                    .and_then(|node| node.text())
+                else {
+                    continue;
+                };
+                let flagged = wire.replace(",0,0,0,0,0,0;", ",0,2,0,0,0,0;");
+                assert_ne!(flagged, wire, "{fixture}");
+                assert_eq!(
+                    point_keys(&flagged, fixture).unwrap(),
+                    point_keys(wire, fixture).unwrap()
+                );
+                checked += 1;
+            }
+            assert!(checked > 0, "{fixture}");
+        }
+    }
+
+    #[test]
+    fn linear_spatial_flags_two_keep_tangent_and_unknown_form_guards() {
+        for flag in [0, 2] {
+            for tangents in ["1,0,0,0", "0,1,0,0", "0,0,1,0", "0,0,0,1"] {
+                let wire = format!("0,0:0,0,0,0,0,0,0,0,{flag},{tangents};");
+                let error = point_keys(&wire, "nonlinear handles").unwrap_err();
+                assert!(
+                    error
+                        .to_string()
+                        .contains("linear spatial key has nonzero tangents"),
+                    "{error}"
+                );
+            }
+        }
+        for (mode, flags) in [(0, 1), (0, 3), (0, 4), (5, 2), (4, 2)] {
+            let wire = format!("0,0:0,0,0,0,0,0,0,{mode},{flags},0,0,0,0;");
+            assert!(point_keys(&wire, "unknown form")
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported spatial interpolation"));
+        }
     }
 
     #[test]

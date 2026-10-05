@@ -1,0 +1,206 @@
+{
+  "formatVersion": 1,
+  "dimensions": {
+    "width": 640,
+    "height": 360
+  },
+  "duration": 2,
+  "composition": {
+    "id": "w06-textpath",
+    "name": "W06 Animated Text Path",
+    "layers": [
+      {
+        "type": "Text",
+        "id": 10,
+        "name": "Path text",
+        "activeRange": {
+          "start": 0,
+          "duration": 2000
+        },
+        "transform": {
+          "anchorPoint": [
+            0,
+            0
+          ],
+          "opacity": 100,
+          "position": [
+            0,
+            0
+          ],
+          "rotation": 0,
+          "scale": [
+            100,
+            100
+          ]
+        },
+        "sourceText": {
+          "text": "EDITABLE PATH",
+          "fontFamily": "ArialMT",
+          "fontStyle": "",
+          "fontSize": 32,
+          "fillColor": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "applyFill": true
+        },
+        "pathOptions": {
+          "id": 12,
+          "pathLayer": 11,
+          "firstMargin": 20,
+          "lastMargin": 0
+        }
+      },
+      {
+        "type": "Shape",
+        "id": 11,
+        "name": "Animated guide",
+        "activeRange": {
+          "start": 0,
+          "duration": 2000
+        },
+        "transform": {
+          "anchorPoint": [
+            0,
+            0
+          ],
+          "opacity": 100,
+          "position": [
+            0,
+            0
+          ],
+          "rotation": 0,
+          "scale": [
+            100,
+            100
+          ]
+        },
+        "shape": {
+          "path": {
+            "commands": [
+              {
+                "type": "moveTo",
+                "x": 80,
+                "y": 160
+              },
+              {
+                "type": "cubicTo",
+                "c1x": 140,
+                "c1y": 100,
+                "c2x": 200,
+                "c2y": 100,
+                "x": 280,
+                "y": 100
+              },
+              {
+                "type": "cubicTo",
+                "c1x": 360,
+                "c1y": 100,
+                "c2x": 480,
+                "c2y": 100,
+                "x": 540,
+                "y": 160
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "dynamics": {
+      "entries": [
+        {
+          "target": {
+            "kind": "layer",
+            "layerId": 11,
+            "propertyType": "shapePath"
+          },
+          "animator": {
+            "type": "keyframes",
+            "enabled": true,
+            "keyframes": [
+              {
+                "id": "path0",
+                "layerTime": 0,
+                "value": {
+                  "type": "path",
+                  "value": {
+                    "commands": [
+                      {
+                        "type": "moveTo",
+                        "x": 80,
+                        "y": 160
+                      },
+                      {
+                        "type": "cubicTo",
+                        "c1x": 140,
+                        "c1y": 100,
+                        "c2x": 200,
+                        "c2y": 100,
+                        "x": 280,
+                        "y": 100
+                      },
+                      {
+                        "type": "cubicTo",
+                        "c1x": 360,
+                        "c1y": 100,
+                        "c2x": 480,
+                        "c2y": 100,
+                        "x": 540,
+                        "y": 160
+                      }
+                    ]
+                  }
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "path1",
+                "layerTime": 1000,
+                "value": {
+                  "type": "path",
+                  "value": {
+                    "commands": [
+                      {
+                        "type": "moveTo",
+                        "x": 80,
+                        "y": 240
+                      },
+                      {
+                        "type": "cubicTo",
+                        "c1x": 140,
+                        "c1y": 180,
+                        "c2x": 200,
+                        "c2y": 180,
+                        "x": 280,
+                        "y": 180
+                      },
+                      {
+                        "type": "cubicTo",
+                        "c1x": 360,
+                        "c1y": 180,
+                        "c2x": 480,
+                        "c2y": 180,
+                        "x": 540,
+                        "y": 240
+                      }
+                    ]
+                  }
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              }
+            ]
+          },
+          "dependencies": [],
+          "layerRefs": {}
+        }
+      ]
+    }
+  },
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json"
+}

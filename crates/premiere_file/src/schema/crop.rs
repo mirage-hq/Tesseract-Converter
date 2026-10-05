@@ -124,8 +124,7 @@ pub(crate) const CROP_PARAMS: [CropParamSpec; CROP_PARAM_COUNT] = [
     },
 ];
 
-/// The Premiere 26.5.1 layout, which only the reader accepts (Oracle run C6: the
-/// P0 save and the F1 and F1m saves): the ids, names, ClassIDs and bounds of
+/// The Premiere 26.5.1 layout, which only the reader accepts: the ids, names, ClassIDs and bounds of
 /// [`CROP_PARAMS`], with `ParameterControlType` only on Edge Feather, no bounds
 /// on the Zoom checkbox (id 5) and no `IsTimeVarying`. Its component has no
 /// `Bypass` or `Intrinsic`.

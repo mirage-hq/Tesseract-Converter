@@ -132,6 +132,7 @@ fn review_audit_duplicate_set_matte_parades_are_rejected() {
 #[test]
 fn sparse_alpha_and_explicit_luma_stages_are_distinguished() {
     let all_effects_alpha = MatteSource {
+        projection: None,
         layer_id: 743,
         stage: MatteSampleStage::AllEffects,
         mode: TrackMatteType::Alpha,
@@ -141,15 +142,16 @@ fn sparse_alpha_and_explicit_luma_stages_are_distinguished() {
         vec![all_effects_alpha, all_effects_alpha]
     );
     assert_eq!(
-        sources(&synthetic_layer(true, 2088, 0, Some(2.0), vec![], 1)).unwrap(),
+        sources(&synthetic_layer(true, 2088, 0, Some(5.0), vec![], 1)).unwrap(),
         vec![MatteSource {
+            projection: None,
             layer_id: 2088,
             stage: MatteSampleStage::Source,
             mode: TrackMatteType::Luma,
         }]
     );
     assert_eq!(
-        sources(&synthetic_layer(true, 743, -1, Some(1.0), vec![], 1)).unwrap(),
+        sources(&synthetic_layer(true, 743, -1, Some(4.0), vec![], 1)).unwrap(),
         vec![all_effects_alpha]
     );
     assert!(
@@ -161,7 +163,7 @@ fn sparse_alpha_and_explicit_luma_stages_are_distinguished() {
 
 #[test]
 fn unknown_controls_and_channels_are_rejected_but_long_stacks_are_retained() {
-    assert!(sources(&synthetic_layer(true, 2088, 0, Some(3.0), vec![], 1)).is_err());
+    assert!(sources(&synthetic_layer(true, 2088, 0, Some(9.0), vec![], 1)).is_err());
     assert!(
         sources(&synthetic_layer(
             true,
@@ -241,12 +243,13 @@ fn canonical_alpha_defaults_preserve_source_and_reject_changed_profiles() {
     assert_eq!(
         sources(&layer).unwrap(),
         vec![MatteSource {
+            projection: None,
             layer_id: 42,
             stage: MatteSampleStage::Source,
             mode: TrackMatteType::Alpha,
         }]
     );
-    for (slot, value) in [(2, 5), (3, 1), (4, 0), (5, 0), (6, 0)] {
+    for (slot, value) in [(2, 6), (3, 1), (4, 0), (5, 0), (6, 0)] {
         let mut changed = synthetic_layer(true, 42, 0, None, vec![], 1);
         canonical_defaults(&mut changed, Some((slot, value)));
         assert!(
@@ -257,39 +260,6 @@ fn canonical_alpha_defaults_preserve_source_and_reject_changed_profiles() {
     let mut explicit_channel = synthetic_layer(true, 42, 0, Some(2.0), vec![], 1);
     canonical_defaults(&mut explicit_channel, None);
     assert!(sources(&explicit_channel).is_err());
-}
-
-#[test]
-#[ignore = "requires licensed AEP_INTRO_IMPORT_SOURCE; no redistributable native fixture"]
-fn pinned_intro_alpha_defaults_match_independent_adobe_readback() {
-    use sha2::{Digest, Sha256};
-    let bytes =
-        std::fs::read(std::env::var_os("AEP_INTRO_IMPORT_SOURCE").expect("source path")).unwrap();
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&bytes)),
-        "75bb7d70238e23ffaafdeacf952217de1fcded8f86875bee39c2e91bda7804d9"
-    );
-    let project = crate::structure::read_project(&bytes).unwrap();
-    let crate::structure::ItemKind::Composition(comp) = &project.item(3).unwrap().kind else {
-        panic!("SH01 composition")
-    };
-    // Adobe 26.5 readback: Alpha=4, Invert=0, Stretch=1, Composite=1,
-    // Premultiply=1. One instance stores parT defaults; the other is sparse.
-    for id in [2360, 2217] {
-        let layer = comp
-            .layers
-            .iter()
-            .find(|layer| layer.record.id() == id)
-            .unwrap();
-        assert_eq!(
-            sources(layer).unwrap(),
-            vec![MatteSource {
-                layer_id: 2218,
-                stage: MatteSampleStage::Source,
-                mode: TrackMatteType::Alpha,
-            }]
-        );
-    }
 }
 
 fn groups<'a>(layers: &'a [fx_schema::Layer], out: &mut Vec<&'a GroupLayer>) {
@@ -414,105 +384,6 @@ fn precomposition_set_matte_helper_mutes_audio_and_releases_volume_animation() {
     }));
 }
 
-#[test]
-#[ignore = "requires local licensed AEP_SET_MATTE_SOURCE; source cannot be redistributed"]
-fn local_external_source_restores_two_intersection_matte_stacks() {
-    use sha2::{Digest, Sha256};
-    let bytes =
-        std::fs::read(std::env::var_os("AEP_SET_MATTE_SOURCE").expect("licensed source path"))
-            .unwrap();
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&bytes)),
-        "28bbce1b8c9f9625105d632504a97c598394a4753d6b0d923fb19942e302bb5d"
-    );
-    let project = crate::structure::read_project(&bytes).unwrap();
-    let crate::structure::ItemKind::Composition(comp) = &project.item(724).unwrap().kind else {
-        panic!("composition")
-    };
-    for (id, expected) in [(739, [743, 742]), (740, [741, 746])] {
-        let source = comp
-            .layers
-            .iter()
-            .find(|layer| layer.record.id() == id)
-            .unwrap();
-        assert_eq!(
-            sources(source).unwrap(),
-            expected
-                .map(|layer_id| MatteSource {
-                    layer_id,
-                    stage: MatteSampleStage::AllEffects,
-                    mode: TrackMatteType::Alpha,
-                })
-                .to_vec()
-        );
-    }
-    let result = super::super::to_structural_fx_document(&project, Some(724)).unwrap();
-    let mut all = Vec::new();
-    groups(result.document.composition().layers(), &mut all);
-    for name in ["Intersect-Left", "Intesect-Right"] {
-        let wrappers: Vec<_> = all
-            .iter()
-            .filter(|group| group.name == format!("{name} (Set Matte)"))
-            .collect();
-        assert_eq!(wrappers.len(), 2, "{name}: {:?}", result.diagnostics);
-        for wrapper in wrappers {
-            let matte = wrapper.track_matte.as_ref().expect("alpha gate");
-            assert_eq!(matte.mode, TrackMatteType::Alpha);
-            assert_eq!(wrapper.layers.len(), 2);
-            assert!(wrapper.playback.time_remap().is_none());
-            assert_eq!(
-                wrapper.transform.position,
-                fx_schema::Position::TwoD([0.0, 0.0])
-            );
-            let helper = wrapper
-                .layers
-                .iter()
-                .find(|layer| layer.id() == matte.layer)
-                .expect("direct-child provider");
-            let FxLayer::Group(helper) = helper.data() else {
-                panic!("helper")
-            };
-            assert_eq!(helper.parent, Some(wrapper.id));
-            assert!(helper.name.ends_with(" (Set Matte sample)"));
-            assert!(!helper.is_hidden);
-            assert_ne!(wrapper.layers[0].id(), helper.id);
-        }
-    }
-    // Sampling duplicates, rather than consumes, the ordinary source paint.
-    for id in [741, 742, 743, 746] {
-        let name = &comp
-            .layers
-            .iter()
-            .find(|layer| layer.record.id() == id)
-            .unwrap()
-            .name;
-        let paint = all
-            .iter()
-            .find(|group| group.name.as_str() == name.as_ref())
-            .expect("original paint copy");
-        assert!(!all.iter().any(|group| {
-            group
-                .track_matte
-                .as_ref()
-                .is_some_and(|matte| matte.layer == paint.id)
-        }));
-    }
-    result.document.to_json_vec().unwrap();
-}
-
-fn has_native_effect(layer: &Layer, expected: &str) -> bool {
-    let roots = properties::root_runs(&layer.content).unwrap();
-    let (_, parade) = roots
-        .iter()
-        .find(|(name, _)| *name == "ADBE Effect Parade")
-        .expect("native Effect Parade");
-    let instances = properties::unique_list(parade, *b"tdgp").unwrap();
-    properties::runs(instances)
-        .unwrap()
-        .iter()
-        .any(|(name, _)| *name == expected)
-}
-
 fn chunk_match_name(chunk: &Chunk) -> Option<&str> {
     (chunk.id() == *b"tdmn").then_some(())?;
     let bytes = chunk.data_payload()?;
@@ -599,73 +470,6 @@ fn cloned_root_run(layer: &Layer, expected: &str) -> Vec<Chunk> {
         .unwrap_or_else(|| panic!("missing native root run {expected}"));
     chunks.extend_from_slice(run);
     chunks
-}
-
-fn enable_drop_shadow_style(layer: &mut Layer) {
-    let root = property_root_children_mut(layer);
-    let styles = named_list_children_mut(root, "ADBE Layer Styles", *b"tdgp");
-    let drop_shadow = named_list_children_mut(styles, "dropShadow/enabled", *b"tdgp");
-    let flags = drop_shadow
-        .iter_mut()
-        .find(|chunk| chunk.id() == *b"tdsb")
-        .expect("drop-shadow enable flags");
-    *flags = data(b"tdsb", [0, 0, 0, 1]);
-}
-
-fn set_set_matte_stage(layer: &mut Layer, stage: i32) {
-    let root = property_root_children_mut(layer);
-    let effects = named_list_children_mut(root, "ADBE Effect Parade", *b"tdgp");
-    let descriptor = named_list_children_mut(effects, MATCH_NAME, *b"sspc");
-    let controls = unique_list_children_mut(descriptor, *b"tdgp");
-    let property = named_list_children_mut(controls, "ADBE Set Matte3-0001", *b"tdbs");
-    let encoded = property
-        .iter_mut()
-        .find(|chunk| chunk.id() == *b"tdps")
-        .expect("Set Matte sampling stage");
-    *encoded = data(b"tdps", stage.to_be_bytes());
-}
-
-fn add_occurrence_pipeline_probe(project: &mut crate::structure::StructuralProject) {
-    let supported_effects = {
-        let crate::structure::ItemKind::Composition(comp) = &project.item(705).unwrap().kind else {
-            panic!("composition")
-        };
-        let layer = comp
-            .layers
-            .iter()
-            .find(|layer| layer.record.id() == 720)
-            .unwrap();
-        cloned_root_run(layer, "ADBE Effect Parade")
-    };
-    let mask_run = {
-        let crate::structure::ItemKind::Composition(comp) = &project.item(1197).unwrap().kind
-        else {
-            panic!("composition")
-        };
-        let layer = comp
-            .layers
-            .iter()
-            .find(|layer| layer.record.id() == 1204)
-            .unwrap();
-        cloned_root_run(layer, "ADBE Mask Parade")
-    };
-    let item = project
-        .items
-        .iter_mut()
-        .find(|item| item.id == 705)
-        .unwrap();
-    let crate::structure::ItemKind::Composition(comp) = &mut item.kind else {
-        panic!("composition")
-    };
-    let provider = comp
-        .layers
-        .iter_mut()
-        .find(|layer| layer.record.id() == 2088)
-        .unwrap();
-    let root = property_root_children_mut(provider);
-    replace_named_run(root, "ADBE Effect Parade", supported_effects);
-    append_before_group_end(root, mask_run);
-    enable_drop_shadow_style(provider);
 }
 
 fn has_effect_type(group: &GroupLayer, expected: &str) -> bool {
@@ -1102,71 +906,6 @@ fn combined_alpha_set_matte_rejects_all_effects_and_unresolved_native_gate() {
 }
 
 #[test]
-#[ignore = "requires the unchanged licensed local Intro source via AEP_INTRO_IMPORT_SOURCE"]
-fn pinned_intro_noise_consumers_keep_both_alpha_gates() {
-    use sha2::{Digest, Sha256};
-    let bytes =
-        std::fs::read(std::env::var_os("AEP_INTRO_IMPORT_SOURCE").expect("source path")).unwrap();
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&bytes)),
-        "75bb7d70238e23ffaafdeacf952217de1fcded8f86875bee39c2e91bda7804d9"
-    );
-    let project = crate::structure::read_project(&bytes).unwrap();
-    let crate::structure::ItemKind::Composition(comp) = &project.item(3).unwrap().kind else {
-        panic!("SH01")
-    };
-    for (consumer, provider) in [(2414, 2233), (2370, 2219)] {
-        let native = comp
-            .layers
-            .iter()
-            .find(|layer| layer.record.id() == consumer)
-            .unwrap();
-        assert_eq!(native.record.track_matte_type(), 1);
-        assert_eq!(
-            sources(native).unwrap(),
-            vec![MatteSource {
-                layer_id: provider,
-                stage: MatteSampleStage::Source,
-                mode: TrackMatteType::Alpha
-            }]
-        );
-    }
-    let result = super::super::to_structural_fx_document(&project, Some(3)).unwrap();
-    let mut all = Vec::new();
-    groups(result.document.composition().layers(), &mut all);
-    for native_id in [2414, 2370] {
-        let original = all
-            .iter()
-            .find(|group| {
-                group
-                    .description
-                    .contains(&format!("AEP comp=3 layer={native_id} kind="))
-            })
-            .unwrap();
-        let wrapper = all
-            .iter()
-            .find(|group| Some(group.id) == original.parent)
-            .unwrap();
-        assert!(
-            wrapper.name.ends_with("(Set Matte)"),
-            "native {native_id} has no Set Matte gate"
-        );
-        let effect_gate = wrapper.track_matte.as_ref().unwrap();
-        let native_gate = original.track_matte.as_ref().unwrap();
-        assert_eq!(effect_gate.mode, TrackMatteType::Alpha);
-        assert_eq!(native_gate.mode, TrackMatteType::Alpha);
-        assert_ne!(effect_gate.layer, native_gate.layer);
-        assert!(
-            wrapper
-                .layers
-                .iter()
-                .any(|child| child.id() == effect_gate.layer)
-        );
-        assert!(all.iter().any(|group| group.id == native_gate.layer));
-    }
-}
-
-#[test]
 fn track_matte_provider_clone_retains_content_when_set_matte_dependency_is_incompatible() {
     let result = super::super::to_structural_fx_document(
         &track_matte_provider_with_set_matte(true),
@@ -1198,311 +937,654 @@ fn track_matte_provider_clone_retains_content_when_set_matte_dependency_is_incom
     }));
 }
 
+const RED_NATIVE: &[u8] = include_bytes!("../../../tests/fixtures/effects/set_matte_red.aep");
+
 #[test]
-#[ignore = "requires local licensed AEP_SET_MATTE_SOURCE; source cannot be redistributed"]
-fn local_external_source_lowers_noise_from_source_stage_luma() {
+fn native_set_matte_red_import_keeps_public_editable_channel_projection() {
     use sha2::{Digest, Sha256};
-    let bytes =
-        std::fs::read(std::env::var_os("AEP_SET_MATTE_SOURCE").expect("licensed source path"))
-            .unwrap();
     assert_eq!(
-        format!("{:x}", Sha256::digest(&bytes)),
-        "28bbce1b8c9f9625105d632504a97c598394a4753d6b0d923fb19942e302bb5d"
+        format!("{:x}", Sha256::digest(RED_NATIVE)),
+        "f14eef956f06ce4072d2b273f39db2e6ee57da54075e4bcb5a8f51031340dffc"
     );
-    let mut project = crate::structure::read_project(&bytes).unwrap();
-    let crate::structure::ItemKind::Composition(comp) = &project.item(705).unwrap().kind else {
-        panic!("composition")
+    let project = crate::structure::read_project(RED_NATIVE).unwrap();
+    let ItemKind::Composition(comp) = &project.item(20).unwrap().kind else {
+        panic!("native target")
     };
-    let target = comp
-        .layers
-        .iter()
-        .find(|layer| layer.record.id() == 2098)
-        .unwrap();
-    assert_eq!(target.record.layer_type(), 0);
-    assert_eq!(target.record.source_id(), 165);
-    assert_eq!(target.record.parent_id(), 0);
-    assert!(!target.record.flags().three_d_layer);
+    let source = comp.layers.iter().find(|l| l.record.id() == 47).unwrap();
     assert_eq!(
-        sources(target).unwrap(),
+        sources(source).unwrap(),
         vec![MatteSource {
-            layer_id: 2088,
+            layer_id: 32,
             stage: MatteSampleStage::Source,
             mode: TrackMatteType::Luma,
+            projection: Some(ChannelSource::Red)
         }]
     );
-
-    let provider = comp
-        .layers
-        .iter()
-        .find(|layer| layer.record.id() == 2088)
-        .unwrap();
-    assert_eq!(provider.name.as_ref(), "SH-09");
-    assert_eq!(provider.record.layer_type(), 0);
-    assert_eq!(provider.record.source_id(), 724);
-    assert_eq!(provider.record.parent_id(), 0);
-    assert!(!provider.record.flags().three_d_layer);
-    assert!(matches!(
-        &project.item(724).unwrap().kind,
-        crate::structure::ItemKind::Composition(_)
-    ));
-    assert!(has_native_effect(provider, "Keylight 906"));
-
-    add_occurrence_pipeline_probe(&mut project);
-    let crate::structure::ItemKind::Composition(comp) = &project.item(705).unwrap().kind else {
-        panic!("composition")
-    };
-    let provider = comp
-        .layers
-        .iter()
-        .find(|layer| layer.record.id() == 2088)
-        .unwrap();
-    assert!(has_native_effect(provider, "ADBE Tint"));
-    assert!(
-        !crate::layer_styles::read(
-            &provider.content,
-            [f64::from(comp.width), f64::from(comp.height)],
-        )
-        .styles
-        .is_empty()
-    );
-
-    let mut all_effects_project = project.clone();
-    let item = all_effects_project
-        .items
-        .iter_mut()
-        .find(|item| item.id == 705)
-        .unwrap();
-    let crate::structure::ItemKind::Composition(comp) = &mut item.kind else {
-        panic!("composition")
-    };
-    let target = comp
-        .layers
-        .iter_mut()
-        .find(|layer| layer.record.id() == 2098)
-        .unwrap();
-    set_set_matte_stage(target, -1);
-    assert_eq!(
-        sources(target).unwrap(),
-        vec![MatteSource {
-            layer_id: 2088,
-            stage: MatteSampleStage::AllEffects,
-            mode: TrackMatteType::Luma,
-        }]
-    );
-
-    let result = super::super::to_structural_fx_document(&project, Some(705)).unwrap();
+    let result = super::super::to_structural_fx_document(&project, Some(20)).unwrap();
     let mut all = Vec::new();
     groups(result.document.composition().layers(), &mut all);
-    let wrappers: Vec<_> = all
+    let helper = all
         .iter()
-        .filter(|group| group.name == "Noise (Set Matte)")
-        .filter(|group| {
-            group.layers.iter().any(|layer| {
-                matches!(layer.data(), FxLayer::Group(child) if child.description.contains("comp=705 layer=2098 "))
-            })
-        })
-        .collect();
-    let [wrapper] = wrappers.as_slice() else {
-        panic!(
-            "expected one layer-2098 Set Matte wrapper: {:?}",
-            result.diagnostics
-        )
+        .find(|g| has_effect_type(g, "shiftChannels"))
+        .unwrap_or_else(|| panic!("{:?}", result.diagnostics));
+    let effects = serde_json::to_value(&helper.effects).unwrap();
+    assert_eq!(effects[0]["effect"]["takeRedFrom"], "red");
+    assert_eq!(effects[0]["effect"]["takeGreenFrom"], "fullOff");
+    assert_eq!(effects[0]["effect"]["takeBlueFrom"], "fullOff");
+    assert_eq!(effects[1]["effect"]["type"], "hueSaturation");
+    assert_eq!(effects[1]["effect"]["saturation"], -100.0);
+    assert_eq!(helper.layers.len(), 2);
+    let FxLayer::Rect(backing) = helper.layers[1].data() else {
+        panic!("opaque black backing")
     };
-    let matte = wrapper.track_matte.as_ref().expect("Luma gate");
-    assert_eq!(matte.mode, TrackMatteType::Luma);
-    let helper = wrapper
-        .layers
-        .iter()
-        .find(|layer| layer.id() == matte.layer)
-        .expect("direct-child provider");
-    let FxLayer::Group(helper) = helper.data() else {
-        panic!("helper")
-    };
-    assert_eq!(helper.parent, Some(wrapper.id));
-    assert_eq!(helper.name, "SH-09 (Set Matte sample)");
-    assert!(helper.description.contains("comp=705 layer=2088 "));
-    // The pinned provider's native Keylight was asserted before the probe.
-    // Because Keylight itself is not mapped, the probe substitutes mapped Tint/
-    // Levels effects and adds a mask/style so SOURCE omission is discriminating.
-    assert!(helper.effects.is_empty());
-    assert!(helper.masks.is_empty());
-    assert!(!helper.layers.is_empty());
-    let mut nested = Vec::new();
-    groups(&helper.layers, &mut nested);
-    assert!(nested.iter().any(|group| {
-        group.description.contains("comp=724 layer=747 ") && !group.effects.is_empty()
-    }));
+    assert_eq!(backing.rect.fill_color, [0.0, 0.0, 0.0, 1.0]);
+    assert_eq!(backing.rect.size, [320.0, 180.0]);
+    assert_eq!(backing.parent, Some(helper.id));
+    assert_eq!(backing.transform.opacity.value(), 100.0);
+    let mut colors = Vec::new();
+    for group in &all {
+        for layer in &group.layers {
+            if let FxLayer::Rect(rect) = layer.data() {
+                colors.push(rect.rect.fill_color);
+            }
+        }
+    }
+    for expected in [
+        [0.8, 0.2, 0.1, 1.0],
+        [0.1, 0.7, 0.3, 1.0],
+        [0.2, 0.4, 0.9, 1.0],
+    ] {
+        assert!(colors.iter().any(|color| {
+            color
+                .iter()
+                .zip(expected)
+                .all(|(actual, expected)| (actual - expected).abs() < 1e-6)
+        }));
+    }
 
-    // The independently visible provider retains its occurrence pipeline.
-    let visible: Vec<_> = all
+    let wrapper = all
         .iter()
-        .filter(|group| group.name == "SH-09")
-        .filter(|group| group.description.contains("comp=705 layer=2088 "))
-        .collect();
-    let [visible] = visible.as_slice() else {
-        panic!("expected one independently visible SH-09 provider")
-    };
-    assert!(!visible.is_hidden);
-    assert!(!visible.effects.is_empty());
-    assert!(!visible.masks.is_empty());
-    assert!(has_effect_type(visible, "tintTritone"));
-    assert!(has_effect_type(visible, "dropShadow"));
-
-    // ALL_EFFECTS remains the old behavior and imports the same occurrence
-    // Effects, mask, and Layer Style into its independent helper.
-    let all_effects =
-        super::super::to_structural_fx_document(&all_effects_project, Some(705)).unwrap();
-    let mut all_groups = Vec::new();
-    groups(all_effects.document.composition().layers(), &mut all_groups);
-    let wrappers: Vec<_> = all_groups
-        .iter()
-        .filter(|group| group.name == "Noise (Set Matte)")
-        .filter(|group| {
-            group.layers.iter().any(|layer| {
-                matches!(layer.data(), FxLayer::Group(child) if child.description.contains("comp=705 layer=2098 "))
-            })
-        })
-        .collect();
-    let [all_effects_wrapper] = wrappers.as_slice() else {
-        panic!("expected one all-effects layer-2098 Set Matte wrapper")
-    };
-    let matte = all_effects_wrapper.track_matte.as_ref().expect("Luma gate");
-    assert_eq!(matte.mode, TrackMatteType::Luma);
-    let helper = all_effects_wrapper
-        .layers
-        .iter()
-        .find(|layer| layer.id() == matte.layer)
-        .expect("direct-child all-effects provider");
-    let FxLayer::Group(helper) = helper.data() else {
-        panic!("helper")
-    };
-    assert!(!helper.effects.is_empty());
-    assert!(!helper.masks.is_empty());
-    assert!(has_effect_type(helper, "tintTritone"));
-    assert!(has_effect_type(helper, "dropShadow"));
-    let mut nested = Vec::new();
-    groups(&helper.layers, &mut nested);
-    assert!(nested.iter().any(|group| {
-        group.description.contains("comp=724 layer=747 ") && !group.effects.is_empty()
-    }));
-
-    let json = String::from_utf8(result.document.to_json_vec().unwrap()).unwrap();
-    assert!(!json.contains("JsScript"));
+        .find(|g| g.track_matte.as_ref().is_some_and(|m| m.layer == helper.id))
+        .unwrap();
+    assert_eq!(
+        wrapper.track_matte.as_ref().unwrap().mode,
+        TrackMatteType::Luma
+    );
+    assert_eq!(helper.parent, wrapper.parent);
+    assert_ne!(helper.id, wrapper.id);
+    assert!(
+        all.iter()
+            .any(|g| g.name == "Cell 1" && g.transform.opacity.value() == 50.0)
+    );
+    assert!(
+        all.iter()
+            .any(|g| g.name == "Cell 2" && g.transform.opacity.value() == 0.0)
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("premultiplied Red"))
+    );
 }
 
 #[test]
-#[ignore = "requires local licensed AEP_CAPTION_SOURCE, which cannot be redistributed"]
-fn local_external_caption_source_matte_keeps_geometry_without_effect_fade() {
-    use fx_schema::{PropType, PropertyTarget};
-    use sha2::{Digest, Sha256};
-    let bytes =
-        std::fs::read(std::env::var_os("AEP_CAPTION_SOURCE").expect("local native source path"))
-            .unwrap();
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&bytes)),
-        "0026b99dcc616687f05eac377f09f59a7fa4ef0ac73933a27342ef7a8b1205c7"
+fn native_set_matte_red_bypass_retains_original_picture() {
+    let mut project = crate::structure::read_project(RED_NATIVE).unwrap();
+    let item = project.items.iter_mut().find(|i| i.id == 20).unwrap();
+    let ItemKind::Composition(comp) = &mut item.kind else {
+        panic!("composition")
+    };
+    let layer = comp
+        .layers
+        .iter_mut()
+        .find(|l| l.record.id() == 47)
+        .unwrap();
+    // Explicit supplementary mutation, not an independently authored bypass case.
+    let root = property_root_children_mut(layer);
+    let parade = named_list_children_mut(root, "ADBE Effect Parade", *b"tdgp");
+    let descriptor = named_list_children_mut(parade, MATCH_NAME, *b"sspc");
+    let body = descriptor
+        .iter_mut()
+        .find(|c| c.list_kind() == Some(*b"tdgp"))
+        .unwrap()
+        .children_mut()
+        .unwrap();
+    if let Some(enabled) = body.iter_mut().find(|c| c.id() == *b"tdsb") {
+        *enabled = data(b"tdsb", [0, 0, 0, 0]);
+    } else {
+        body.insert(0, data(b"tdsb", [0, 0, 0, 0]));
+    }
+    assert!(sources(layer).unwrap().is_empty());
+    let result = super::super::to_structural_fx_document(&project, Some(20)).unwrap();
+    let mut all = Vec::new();
+    groups(result.document.composition().layers(), &mut all);
+    assert!(!all.iter().any(|g| has_effect_type(g, "shiftChannels")));
+    assert!(
+        all.iter()
+            .any(|g| g.name == "Target source" && !g.is_hidden)
     );
-    let original = crate::structure::read_project(&bytes).unwrap();
-    for stage in [0, -1] {
-        let mut project = original.clone();
-        let mut root = project.item(474).unwrap().clone();
-        root.id = 9000;
-        let crate::structure::ItemKind::Composition(comp) = &mut root.kind else {
-            panic!()
+    let exported = crate::export_document::to_aep_with_fps(&result.document, 30.0).unwrap();
+    let native = crate::structure::read_project(&exported.bytes).unwrap();
+    let ItemKind::Composition(root) = &native.item(1).unwrap().kind else {
+        panic!("output composition")
+    };
+    assert!(root.layers.iter().any(|layer| layer.record.flags().enabled));
+}
+
+#[test]
+fn native_set_matte_red_current_green_edit_exports_native_controls() {
+    let project = crate::structure::read_project(RED_NATIVE).unwrap();
+    let result = super::super::to_structural_fx_document(&project, Some(20)).unwrap();
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&result.document.to_json_vec().unwrap()).unwrap();
+    fn edit(value: &mut serde_json::Value) -> usize {
+        let mut count = 0;
+        if value["type"] == "shiftChannels" {
+            value["takeRedFrom"] = serde_json::json!("fullOff");
+            value["takeGreenFrom"] = serde_json::json!("green");
+            count += 1;
+        }
+        match value {
+            serde_json::Value::Object(fields) => {
+                for child in fields.values_mut() {
+                    count += edit(child);
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for child in values {
+                    count += edit(child);
+                }
+            }
+            _ => {}
+        }
+        count
+    }
+    assert_eq!(edit(&mut value), 1);
+    let document = fx_schema::EditableFxCompositionDocument::from_json_value(value).unwrap();
+    let output = crate::export_document::to_aep_with_fps(&document, 30.0).unwrap();
+    let native = crate::structure::read_project(&output.bytes).unwrap();
+    let mut found = 0;
+    let mut luma = false;
+    for item in &native.items {
+        let ItemKind::Composition(comp) = &item.kind else {
+            continue;
         };
-        // Keep text immediately before its native Pill so index-1 stays valid.
-        let provider = comp.layers[1].record.id();
-        let mut target = synthetic_layer(true, provider, stage, None, vec![], 1);
-        patch_layer_identity(&mut target, 9001, 474);
-        let mut record = target.record.encode();
-        record[107] = 0;
-        record[160..164].fill(0);
-        target.record = crate::schema::layer_records::LayerRecord::decode(&record).unwrap();
-        target.name = "Caption Matte Consumer".into();
-        comp.layers.push(target);
-        project.items.push(root);
-        let result = super::super::to_structural_fx_document(&project, Some(9000)).unwrap();
-        let mut all = Vec::new();
-        groups(result.document.composition().layers(), &mut all);
-        let wrapper = all
-            .iter()
-            .copied()
-            .find(|g| g.name == "Caption Matte Consumer (Set Matte)")
-            .unwrap_or_else(|| panic!("missing consumer: {:?}", result.diagnostics));
-        let matte_id = wrapper.track_matte.as_ref().unwrap().layer;
-        let helper = all.iter().copied().find(|g| g.id == matte_id).unwrap();
-        let visible = all
-            .iter()
-            .copied()
-            .find(|g| {
-                g.description
-                    .contains(&format!("comp=9000 layer={provider} "))
-            })
-            .unwrap();
-        let entries = result.document.composition().dynamics().entries();
-        for (owner, fade_expected) in [(helper, stage == -1), (visible, true)] {
-            let mut nested = Vec::new();
-            groups(&owner.layers, &mut nested);
-            let paint = nested
+        for layer in &comp.layers {
+            luma |= layer.record.track_matte_type() == 3;
+            let (effects, _) = crate::effects::native::read_effects(&layer.content, [320.0, 180.0]);
+            for effect in effects
                 .iter()
-                .copied()
-                .find(|g| {
-                    g.layers
+                .filter(|e| e.match_name == "ADBE Shift Channels")
+            {
+                found += 1;
+                for (name, value) in [
+                    ("ADBE Shift Channels-0002", 10.0),
+                    ("ADBE Shift Channels-0003", 3.0),
+                    ("ADBE Shift Channels-0004", 10.0),
+                ] {
+                    let p = effect
+                        .parameters
                         .iter()
-                        .filter(|l| matches!(l.data(), FxLayer::Rect(_)))
-                        .count()
-                        == 2
-                })
-                .unwrap_or_else(|| panic!("missing paint group at stage {stage}"));
-            let rectangles: Vec<_> = paint
-                .layers
-                .iter()
-                .filter_map(|l| match l.data() {
-                    FxLayer::Rect(r) => Some(r),
-                    _ => None,
-                })
-                .collect();
-            assert!(
-                rectangles
+                        .find(|p| p.match_name == name)
+                        .unwrap();
+                    assert_eq!(p.numeric.as_ref().unwrap().values, [value]);
+                }
+            }
+        }
+    }
+    assert_eq!(found, 1, "{:?}", output.diagnostics);
+    assert!(luma, "{:?}", output.diagnostics);
+}
+
+#[test]
+fn native_set_matte_red_edited_graph_bypass_keeps_picture() {
+    let project = crate::structure::read_project(RED_NATIVE).unwrap();
+    let imported = super::super::to_structural_fx_document(&project, Some(20)).unwrap();
+    let mut value = imported.document.to_json_value().unwrap();
+    fn unbind(value: &mut serde_json::Value) -> Option<serde_json::Value> {
+        if value["trackMatte"]["mode"] == "luma" {
+            let id = value["trackMatte"]["layer"].clone();
+            value.as_object_mut().unwrap().remove("trackMatte");
+            return Some(id);
+        }
+        match value {
+            serde_json::Value::Object(fields) => fields.values_mut().find_map(unbind),
+            serde_json::Value::Array(values) => values.iter_mut().find_map(unbind),
+            _ => None,
+        }
+    }
+    let helper = unbind(&mut value).unwrap();
+    fn hide_helper(value: &mut serde_json::Value, id: &serde_json::Value) -> usize {
+        let mut count = 0;
+        if value["type"] == "Group" && value["id"] == *id {
+            value["isHidden"] = serde_json::json!(true);
+            count += 1;
+        }
+        match value {
+            serde_json::Value::Object(fields) => {
+                for child in fields.values_mut() {
+                    count += hide_helper(child, id);
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for child in values {
+                    count += hide_helper(child, id);
+                }
+            }
+            _ => {}
+        }
+        count
+    }
+    assert_eq!(hide_helper(&mut value, &helper), 1);
+    let edited = fx_schema::EditableFxCompositionDocument::from_json_value(value).unwrap();
+    let mut all = Vec::new();
+    groups(edited.composition().layers(), &mut all);
+    assert!(
+        all.iter()
+            .any(|g| g.name == "Target source" && !g.is_hidden && g.track_matte.is_none())
+    );
+    let output = crate::export_document::to_aep_with_fps(&edited, 30.0).unwrap();
+    let native = crate::structure::read_project(&output.bytes).unwrap();
+    let ItemKind::Composition(root) = &native.item(1).unwrap().kind else {
+        panic!("output composition")
+    };
+    assert!(root.layers.iter().any(|layer| layer.record.flags().enabled));
+    for item in &native.items {
+        if let ItemKind::Composition(comp) = &item.kind {
+            assert!(!comp.layers.iter().any(|l| l.record.track_matte_type() == 3));
+        }
+    }
+}
+
+#[test]
+fn native_set_matte_alpha_then_red_keeps_both_gates() {
+    // Supplementary mutation of the pinned native source, not native-authored
+    // stacked-gate or edited-output fidelity evidence.
+    let mut project = crate::structure::read_project(RED_NATIVE).unwrap();
+    let ItemKind::Composition(comp) =
+        &mut project.items.iter_mut().find(|i| i.id == 20).unwrap().kind
+    else {
+        panic!("composition")
+    };
+    let mut alpha_provider = comp
+        .layers
+        .iter()
+        .find(|l| l.record.id() == 32)
+        .unwrap()
+        .clone();
+    patch_layer_identity(&mut alpha_provider, 900, 1);
+    alpha_provider.name = "Independent Alpha provider".into();
+    comp.layers.push(alpha_provider);
+    let consumer = comp
+        .layers
+        .iter_mut()
+        .find(|l| l.record.id() == 47)
+        .unwrap();
+    let alpha = synthetic_layer(true, 900, 0, None, vec![], 1);
+    let mut effects = named_list_children_mut(
+        property_root_children_mut(&mut alpha.clone()),
+        "ADBE Effect Parade",
+        *b"tdgp",
+    )
+    .clone();
+    let parade = named_list_children_mut(
+        property_root_children_mut(consumer),
+        "ADBE Effect Parade",
+        *b"tdgp",
+    );
+    effects.append(parade);
+    *parade = effects;
+    assert_eq!(
+        sources(consumer)
+            .unwrap()
+            .iter()
+            .map(|s| s.layer_id)
+            .collect::<Vec<_>>(),
+        [900, 32]
+    );
+    let imported = super::super::to_structural_fx_document(&project, Some(20)).unwrap();
+    let mut all = Vec::new();
+    groups(imported.document.composition().layers(), &mut all);
+    let gates: Vec<_> = all
+        .iter()
+        .filter_map(|g| g.track_matte.as_ref().map(|m| (*g, m)))
+        .collect();
+    assert_eq!(
+        gates.len(),
+        2,
+        "both live gate bindings must survive: {:?}",
+        imported.diagnostics
+    );
+    for mode in [TrackMatteType::Alpha, TrackMatteType::Luma] {
+        let (consumer, matte) = gates.iter().find(|(_, m)| m.mode == mode).unwrap();
+        let provider = all.iter().find(|g| g.id == matte.layer).unwrap();
+        assert_ne!(consumer.id, provider.id);
+        assert!(provider.name.contains("Set Matte sample"));
+        assert_eq!(consumer.parent, provider.parent);
+        assert_eq!(consumer.layers.len(), 1);
+        let FxLayer::Group(previous) = consumer.layers[0].data() else {
+            panic!("preserved subtree")
+        };
+        assert_eq!(previous.parent, Some(consumer.id));
+        let identity = group(
+            consumer.id,
+            String::new(),
+            consumer.parent,
+            TimeRangeProperty::new(Time::ZERO, fx_schema::Duration::from_secs(2.0)),
+        );
+        assert_eq!(consumer.transform, identity.transform);
+        assert_eq!(consumer.playback, identity.playback);
+        assert!(consumer.effects.is_empty() && consumer.masks.is_empty());
+
+        println!(
+            "matte scope: {:?} consumer={} parent={:?} provider={} parent={:?}",
+            mode, consumer.id, consumer.parent, provider.id, provider.parent
+        );
+    }
+    let picture = all.iter().find(|g| g.name == "Target source").unwrap();
+    assert!(!picture.is_hidden);
+    let baseline = super::super::to_structural_fx_document(
+        &crate::structure::read_project(RED_NATIVE).unwrap(),
+        Some(20),
+    )
+    .unwrap();
+    let mut baseline_groups = Vec::new();
+    groups(
+        baseline.document.composition().layers(),
+        &mut baseline_groups,
+    );
+    let original = baseline_groups
+        .iter()
+        .find(|g| g.name == "Target source")
+        .unwrap();
+    assert_eq!(picture.transform, original.transform);
+    assert_eq!(picture.playback, original.playback);
+    assert_eq!(picture.effects, original.effects);
+    assert_eq!(picture.masks, original.masks);
+    assert_eq!(picture.blend_mode, original.blend_mode);
+    // Every generated sample stays consumed rather than joining ordinary paint.
+    for helper in all
+        .iter()
+        .filter(|g| g.name.ends_with("(Set Matte sample)"))
+    {
+        assert!(gates.iter().any(|(_, m)| m.layer == helper.id));
+    }
+    let output = crate::export_document::to_aep_with_fps(&imported.document, 30.0).unwrap();
+    let native = crate::structure::read_project(&output.bytes).unwrap();
+    let mut modes = Vec::new();
+    for item in &native.items {
+        let ItemKind::Composition(comp) = &item.kind else {
+            continue;
+        };
+        for layer in &comp.layers {
+            if let Some(compositing::MatteLayer::Id(id)) = compositing::matte_layer(&layer.record) {
+                modes.push(layer.record.track_matte_type());
+                println!(
+                    "native matte scope: composition={} consumer={} name={} mode={} provider={}",
+                    item.id,
+                    layer.record.id(),
+                    layer.name,
+                    layer.record.track_matte_type(),
+                    id
+                );
+
+                let provider = comp
+                    .layers
                     .iter()
-                    .any(|r| r.rect.fill_enabled && r.transform.opacity.value() == 50.0)
-            );
-            assert!(
-                rectangles
-                    .iter()
-                    .any(|r| r.rect.stroke_enabled && r.transform.opacity.value() == 100.0)
-            );
-            let owned: Vec<_> = entries
-                .iter()
-                .filter(|e| {
-                    e.target
-                        .layer_id()
-                        .is_some_and(|id| id == paint.id || rectangles.iter().any(|r| r.id == id))
-                })
-                .collect();
-            assert_eq!(owned.len(), if fade_expected { 6 } else { 5 });
-            let opacity = PropertyTarget::layer(paint.id, PropType::Opacity);
-            assert_eq!(
-                owned.iter().filter(|e| e.target == opacity).count(),
-                usize::from(fade_expected)
-            );
-            for entry in owned {
-                let keys = entry.animator.keyframe_track().unwrap().keyframes();
-                assert_eq!(keys[0].layer_time().as_millis(), 11600);
-                assert_eq!(
-                    keys[1].layer_time().as_millis(),
-                    if entry.target == opacity {
-                        11801
-                    } else {
-                        12200
-                    }
+                    .find(|p| p.record.id() == id)
+                    .expect("same-composition matte provider");
+                assert!(
+                    !provider.record.flags().enabled,
+                    "matte helper must not paint independently"
                 );
             }
         }
-        assert_eq!(
-            helper.playback.input_range(),
-            visible.playback.input_range()
-        );
-        assert_eq!(helper.transform, visible.transform);
     }
+    modes.sort();
+    assert_eq!(modes, [1, 3], "{:?}", output.diagnostics);
+    let ItemKind::Composition(root) = &native.item(1).unwrap().kind else {
+        panic!("root")
+    };
+    assert!(root.layers.iter().any(|l| l.record.flags().enabled));
+    assert!(
+        native.items.iter().any(|item| {
+            let ItemKind::Composition(comp) = &item.kind else {
+                return false;
+            };
+            comp.layers
+                .iter()
+                .any(|layer| layer.name.as_ref() == "Target source" && layer.record.flags().enabled)
+        }),
+        "original target picture must survive: {:?}",
+        output.diagnostics
+    );
+    fn has_target_paint(chunks: &[Chunk]) -> bool {
+        if let Ok(runs) = properties::runs(chunks) {
+            for (name, run) in runs {
+                if name == "ADBE Vector Fill Color" {
+                    let color =
+                        properties::read_numeric(properties::unique_list(run, *b"tdbs").unwrap())
+                            .unwrap();
+                    if color.values.len() == 4
+                        && color
+                            .values
+                            .iter()
+                            .zip([0.3, 0.6, 0.8, 1.0])
+                            .all(|(actual, expected)| (actual - expected).abs() < 1e-6)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        chunks
+            .iter()
+            .filter_map(Chunk::children)
+            .any(has_target_paint)
+    }
+    assert!(
+        native.items.iter().any(|item| {
+            let ItemKind::Composition(comp) = &item.kind else {
+                return false;
+            };
+            comp.layers
+                .iter()
+                .any(|layer| layer.record.flags().enabled && has_target_paint(&layer.content))
+        }),
+        "original target native vector paint must survive fresh export"
+    );
+}
+
+#[test]
+fn premiere_linked_green_blue_sources_keep_mixed_gate_scopes() {
+    let bytes =
+        include_bytes!("../../../../premiere_file/tests/fixtures/premiere_channel_matte/aep.aep");
+    for (comp_id, consumer_id, provider_id, channel) in [
+        (34, 47, 46, ChannelSource::Green),
+        (48, 61, 60, ChannelSource::Blue),
+    ] {
+        let mut project = crate::structure::read_project(bytes).unwrap();
+        let ItemKind::Composition(comp) = &mut project
+            .items
+            .iter_mut()
+            .find(|i| i.id == comp_id)
+            .unwrap()
+            .kind
+        else {
+            panic!("native comp")
+        };
+        let consumer = comp
+            .layers
+            .iter()
+            .find(|l| l.record.id() == consumer_id)
+            .unwrap();
+        assert_eq!(sources(consumer).unwrap()[0].projection, Some(channel));
+        for (id, control) in [(900, None), (901, Some(5.0))] {
+            let mut provider = comp
+                .layers
+                .iter()
+                .find(|l| l.record.id() == provider_id)
+                .unwrap()
+                .clone();
+            let source_id = provider.record.source_id();
+            patch_layer_identity(&mut provider, id, source_id);
+            comp.layers.push(provider);
+            let mut gate = synthetic_layer(true, id, 0, control, vec![], 1);
+            let mut effects = named_list_children_mut(
+                property_root_children_mut(&mut gate),
+                "ADBE Effect Parade",
+                *b"tdgp",
+            )
+            .clone();
+            let consumer = comp
+                .layers
+                .iter_mut()
+                .find(|l| l.record.id() == consumer_id)
+                .unwrap();
+            let parade = named_list_children_mut(
+                property_root_children_mut(consumer),
+                "ADBE Effect Parade",
+                *b"tdgp",
+            );
+            effects.append(parade);
+            *parade = effects;
+        }
+        let imported = super::super::to_structural_fx_document(&project, Some(comp_id)).unwrap();
+        let mut all = Vec::new();
+        groups(imported.document.composition().layers(), &mut all);
+        let gates: Vec<_> = all
+            .iter()
+            .filter_map(|g| g.track_matte.as_ref().map(|m| (*g, m)))
+            .collect();
+        assert_eq!(gates.len(), 3, "{:?}", imported.diagnostics);
+        for (consumer, matte) in gates {
+            let provider = all.iter().find(|g| g.id == matte.layer).unwrap();
+            assert_eq!(consumer.parent, provider.parent);
+            assert_eq!(consumer.layers.len(), 1);
+            assert!(consumer.effects.is_empty() && consumer.masks.is_empty());
+            assert_ne!(consumer.id, provider.id);
+        }
+    }
+}
+
+#[test]
+fn native_rgb_source_sample_ignores_only_provider_occurrence_blend() {
+    use fx_schema::BlendMode;
+
+    fn set_blend(layer: &mut Layer, blend: u8) {
+        let mut bytes = layer.record.encode();
+        bytes[99] = blend;
+        layer.record = crate::schema::layer_records::LayerRecord::decode(&bytes).unwrap();
+    }
+    // Derived from the pinned Premiere-linked source, not another native save
+    // or an executed pixel comparison. Multiply over the projection's opaque
+    // black gives zero; Source sampling must instead retain the source channel.
+    let bytes =
+        include_bytes!("../../../../premiere_file/tests/fixtures/premiere_channel_matte/aep.aep");
+    for (comp_id, provider_id) in [(34, 46), (48, 60)] {
+        let mut baseline = crate::structure::read_project(bytes).unwrap();
+        let ItemKind::Composition(inner) =
+            &mut baseline.items.iter_mut().find(|i| i.id == 2).unwrap().kind
+        else {
+            panic!("source composition")
+        };
+        set_blend(
+            inner
+                .layers
+                .iter_mut()
+                .find(|l| l.record.id() == 20)
+                .unwrap(),
+            6,
+        );
+        let mut changed = baseline.clone();
+        let ItemKind::Composition(comp) = &mut changed
+            .items
+            .iter_mut()
+            .find(|i| i.id == comp_id)
+            .unwrap()
+            .kind
+        else {
+            panic!("occurrence composition")
+        };
+        set_blend(
+            comp.layers
+                .iter_mut()
+                .find(|l| l.record.id() == provider_id)
+                .unwrap(),
+            5,
+        );
+        let mut samples = Vec::new();
+        for (project, occurrence_blend) in [
+            (&baseline, BlendMode::Normal),
+            (&changed, BlendMode::Multiply),
+        ] {
+            let imported = super::super::to_structural_fx_document(project, Some(comp_id)).unwrap();
+            let mut all = Vec::new();
+            groups(imported.document.composition().layers(), &mut all);
+            let projection = all
+                .iter()
+                .find(|g| has_effect_type(g, "shiftChannels"))
+                .unwrap();
+            let FxLayer::Group(sample) = projection.layers[0].data() else {
+                panic!("sample over black")
+            };
+            let FxLayer::Rect(backing) = projection.layers[1].data() else {
+                panic!("black backing")
+            };
+            assert_eq!(backing.rect.fill_color, [0.0, 0.0, 0.0, 1.0]);
+            let identity = format!("comp={comp_id} layer={provider_id} ");
+            let original = all
+                .iter()
+                .find(|g| g.id != sample.id && g.description.contains(&identity))
+                .unwrap();
+            assert_eq!(
+                original.blend_mode, occurrence_blend,
+                "original occurrence is not normalized"
+            );
+            let mut inside = Vec::new();
+            groups(&sample.layers, &mut inside);
+            let cell = inside
+                .iter()
+                .find(|g| g.description.contains("comp=2 layer=20 "))
+                .unwrap();
+            assert_eq!(
+                cell.blend_mode,
+                BlendMode::Screen,
+                "source composition blend is not normalized"
+            );
+            assert_eq!(
+                sample.blend_mode,
+                BlendMode::Normal,
+                "Source-stage channel sample must not multiply against opaque black"
+            );
+            samples.push(serde_json::to_value(sample).unwrap());
+        }
+        assert_eq!(
+            samples[0], samples[1],
+            "changing only the provider occurrence blend cannot change the sampled source graph"
+        );
+    }
+    // Other sample-stage semantics are unchanged by the Source-only boundary.
+    let mut project = redistributable_stage_project(-1);
+    let ItemKind::Composition(comp) = &mut project
+        .items
+        .iter_mut()
+        .find(|i| i.id == 9_000)
+        .unwrap()
+        .kind
+    else {
+        panic!("AllEffects composition")
+    };
+    set_blend(
+        comp.layers
+            .iter_mut()
+            .find(|l| l.record.id() == 901)
+            .unwrap(),
+        5,
+    );
+    let imported = super::super::to_structural_fx_document(&project, Some(9_000)).unwrap();
+    let (sample, original) = stage_helper_and_visible(&imported);
+    assert_eq!(sample.blend_mode, BlendMode::Multiply);
+    assert_eq!(original.blend_mode, BlendMode::Multiply);
 }

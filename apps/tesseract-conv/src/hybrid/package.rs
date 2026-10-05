@@ -106,8 +106,11 @@ pub(super) fn scoped_aep_path(scope: u16) -> anyhow::Result<PathBuf> {
     )))
 }
 
-/// Retain each AEP's own media subtree; same basenames/GUIDs in different files
-/// are not deduplication keys. Validate local path shapes before opening files.
+/// Retain each AEP's own `media/` and `fonts/` subtrees; same basenames/GUIDs
+/// in different files are not deduplication keys. The After Effects stage
+/// packages embedded Text fonts as `fonts/<sha256>.<ext>` plus
+/// `fonts/manifest.json` next to its project, so those stay beside the scoped
+/// AEP. Validate local path shapes before opening files.
 pub(super) fn scoped_aep_inputs(
     scope: u16,
     directory: &Path,
@@ -135,8 +138,9 @@ pub(super) fn scoped_aep_inputs(
                 projects += 1;
             }
             ArtifactKind::Media => ensure!(
-                path.starts_with("media") && path.components().count() >= 2,
-                "AEP media must remain within its local media subtree"
+                (path.starts_with("media") || path.starts_with("fonts"))
+                    && path.components().count() >= 2,
+                "AEP media must remain within its local media or fonts subtree"
             ),
         }
     }

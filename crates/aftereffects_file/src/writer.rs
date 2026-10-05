@@ -6,13 +6,16 @@
 mod camera;
 mod composition_options;
 mod dashes;
-mod effect_points;
+pub(crate) mod effect_points;
 pub(crate) mod effects;
 pub(crate) mod footage;
 mod keyframes;
+pub(crate) use keyframes::PropertyClock;
 mod layer_options;
 mod layer_styles;
 mod masks;
+mod native_text;
+mod native_text_controls;
 mod path_geometry;
 pub(crate) use path_geometry::{PathKeyframe, PathTrack, split_path_track, validate_path_track};
 mod rects;
@@ -32,6 +35,29 @@ pub(crate) use dashes::StrokeDashes;
 pub(crate) use keyframes::{
     Easing as KeyframeEasing, Keyframe as NumericKeyframe, Track as NumericTrack,
 };
+/// Check the native COLOR profile before lowering admits keys, retaining static
+/// best-effort content when temporal handles or vector speeds cannot be written.
+pub(crate) fn validate_effect_color(track: &NumericTrack) -> Result<(), crate::rifx::RifxError> {
+    keyframes::effect_color_list_with_clock(track, keyframes::PropertyClock::DEFAULT).map(|_| ())
+}
+
+pub(crate) fn validate_effect_color_at_rate(
+    track: &NumericTrack,
+    rate: crate::timing::FrameRate,
+) -> Result<(), crate::rifx::RifxError> {
+    keyframes::effect_color_list_with_clock(track, keyframes::PropertyClock::for_rate(rate)?)
+        .map(|_| ())
+}
+
+/// Exercise the same scalar profile and owning clock used by EffectFloat output.
+pub(crate) fn validate_effect_float_at_rate(
+    track: &NumericTrack,
+    rate: crate::timing::FrameRate,
+) -> Result<(), crate::rifx::RifxError> {
+    keyframes::list_with_clock(track, 1, false, keyframes::PropertyClock::for_rate(rate)?)
+        .map(|_| ())
+}
+
 pub(crate) use layer_options::{NativeLayerOptions, NativeMatteRef};
 pub(crate) use masks::{NativeMaskMode, NativeMaskSpec};
 #[cfg(test)]

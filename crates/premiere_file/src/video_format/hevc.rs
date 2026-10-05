@@ -26,9 +26,8 @@
 //! the header nor the sample-entry boxes reliably carry: the interlaced-source
 //! flag (the header keeps it only when every parameter set sets it), the
 //! decoded size, and the VUI pixel aspect, range, color, field coding, and
-//! display window. The `colr` and `pasp` boxes are optional: the in-repo
-//! iPhone-shaped HEVC `tests/rendering-custom/fixtures/ios11361_p3_patches.mov`
-//! has neither and declares Display-P3 primaries only in its VUI, which
+//! display window. The `colr` and `pasp` boxes are optional: a captured
+//! iPhone HEVC sample has neither and declares Display-P3 primaries only in its VUI, which
 //! box-only checks would accept as BT.709.
 
 use crate::{
@@ -55,7 +54,11 @@ const NAL_HEADER_BYTES: NonZeroUsize = match NonZeroUsize::new(2) {
 pub(super) fn validate_configuration(
     description: &SampleDescription,
     reader: &mut (impl Read + Seek),
-) -> Result<(u8, Option<ColourDescription>)> {
+) -> Result<(
+    u8,
+    Option<ColourDescription>,
+    crate::schema::records::PixelAspectRatio,
+)> {
     let mut configurations = Vec::new();
     for (kind, payload) in &description.children {
         match kind {
@@ -97,6 +100,7 @@ pub(super) fn validate_configuration(
     );
     let mut colour = description.colour;
     let mut full_range = None;
+    let mut pixel_aspect = description.pixel_aspect;
     for unit in configuration.units(SEQUENCE_PARAMETER_SET) {
         let parameters = SequenceParameters::read(unit).map_err(parameter_set_error)?;
         let (chroma_format, luma_minus8, chroma_minus8) = parameters.format;
@@ -111,6 +115,13 @@ pub(super) fn validate_configuration(
             parameters.usability.as_ref().and_then(|vui| vui.full_range),
         )?;
         let vui_colour = parameters.validate(description.width, description.height)?;
+        let vui_aspect = parameters
+            .usability
+            .as_ref()
+            .map(VideoUsability::pixel_aspect)
+            .transpose()?
+            .flatten();
+        crate::media_metadata::merge_pixel_aspect(&mut pixel_aspect, vui_aspect)?;
         ColourDescription::merge(&mut colour, vui_colour)?;
     }
     crate::media_metadata::validate_video_range(
@@ -119,7 +130,11 @@ pub(super) fn validate_configuration(
         configuration.bit_depth_luma_minus8 + 8,
         colour,
     )?;
-    Ok((configuration.bit_depth_luma_minus8 + 8, colour))
+    Ok((
+        configuration.bit_depth_luma_minus8 + 8,
+        colour,
+        pixel_aspect.unwrap_or_default(),
+    ))
 }
 
 /// Read only the bytes declared by the native hvcC fields. An extended MP4
@@ -432,6 +447,38 @@ struct VideoUsability {
     display_window: bool,
 }
 
+impl VideoUsability {
+    fn pixel_aspect(&self) -> Result<Option<crate::schema::records::PixelAspectRatio>> {
+        use crate::schema::records::PixelAspectRatio;
+        // H.265 Table E.1: aspect_ratio_idc values 1 through 16.
+        const RATIOS: [(u16, u16); 16] = [
+            (1, 1),
+            (12, 11),
+            (10, 11),
+            (16, 11),
+            (40, 33),
+            (24, 11),
+            (20, 11),
+            (32, 11),
+            (80, 33),
+            (18, 11),
+            (15, 11),
+            (64, 33),
+            (160, 99),
+            (4, 3),
+            (3, 2),
+            (2, 1),
+        ];
+        let (width, height) = match self.aspect_ratio_idc {
+            None | Some(0) => return Ok(None),
+            Some(id @ 1..=16) => RATIOS[usize::from(id - 1)],
+            Some(255) => self.sample_aspect_ratio,
+            Some(_) => return Err(unsupported("reserved HEVC pixel aspect ratio")),
+        };
+        PixelAspectRatio::new(u64::from(width), u64::from(height)).map(Some)
+    }
+}
+
 impl SequenceParameters {
     /// Parses `seq_parameter_set_rbsp` (H.265 7.3.2.2) through the VUI fields
     /// that decide the decoded picture.
@@ -589,13 +636,6 @@ impl SequenceParameters {
             !usability.display_window,
             "HEVC default display window cropping is unsupported"
         );
-        let (sar_width, sar_height) = usability.sample_aspect_ratio;
-        let square = match usability.aspect_ratio_idc {
-            None | Some(0 | 1) => true,
-            Some(255) => sar_width != 0 && sar_width == sar_height,
-            Some(_) => false,
-        };
-        ensure!(square, "HEVC pixel aspect ratio must be square");
         match usability.colour {
             Some((primaries, transfer, matrix)) => {
                 validate_color(primaries.into(), transfer.into(), matrix.into())

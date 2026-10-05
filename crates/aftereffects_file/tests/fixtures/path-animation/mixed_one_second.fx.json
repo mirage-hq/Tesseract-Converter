@@ -1,0 +1,409 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "formatVersion": 1,
+  "dimensions": {
+    "width": 320,
+    "height": 240
+  },
+  "duration": 5,
+  "composition": {
+    "id": "w06-forward-mixed-one-second",
+    "name": "W06 forward mixed Path one-second",
+    "layers": [
+      {
+        "type": "Shape",
+        "id": 400,
+        "name": "shape base",
+        "activeRange": {
+          "start": 2000,
+          "duration": 3000
+        },
+        "transform": {
+          "anchorPoint": [
+            0,
+            0
+          ],
+          "position": [
+            160,
+            120
+          ],
+          "scale": [
+            100,
+            100
+          ],
+          "rotation": 0,
+          "opacity": 100
+        },
+        "shape": {
+          "path": {
+            "commands": [
+              {
+                "type": "moveTo",
+                "x": -80,
+                "y": -40
+              },
+              {
+                "type": "cubicTo",
+                "c1x": -50,
+                "c1y": -30,
+                "c2x": 45,
+                "c2y": -35,
+                "x": 70,
+                "y": -20
+              },
+              {
+                "type": "cubicTo",
+                "c1x": 80,
+                "c1y": 10,
+                "c2x": 40,
+                "c2y": 80,
+                "x": 20,
+                "y": 70
+              },
+              {
+                "type": "cubicTo",
+                "c1x": -5,
+                "c1y": 55,
+                "c2x": -65,
+                "c2y": -60,
+                "x": -80,
+                "y": -40
+              },
+              {
+                "type": "close"
+              }
+            ]
+          },
+          "strokes": [
+            {
+              "paint": {
+                "type": "solid",
+                "color": [
+                  1,
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "width": 5
+            }
+          ]
+        }
+      },
+      {
+        "type": "Shape",
+        "id": 401,
+        "name": "shape +30X",
+        "activeRange": {
+          "start": 2000,
+          "duration": 3000
+        },
+        "transform": {
+          "anchorPoint": [
+            0,
+            0
+          ],
+          "position": [
+            160,
+            120
+          ],
+          "scale": [
+            100,
+            100
+          ],
+          "rotation": 0,
+          "opacity": 100
+        },
+        "shape": {
+          "path": {
+            "commands": [
+              {
+                "type": "moveTo",
+                "x": -50,
+                "y": -40
+              },
+              {
+                "type": "cubicTo",
+                "c1x": -20,
+                "c1y": -30,
+                "c2x": 75,
+                "c2y": -35,
+                "x": 100,
+                "y": -20
+              },
+              {
+                "type": "cubicTo",
+                "c1x": 110,
+                "c1y": 10,
+                "c2x": 70,
+                "c2y": 80,
+                "x": 50,
+                "y": 70
+              },
+              {
+                "type": "cubicTo",
+                "c1x": 25,
+                "c1y": 55,
+                "c2x": -35,
+                "c2y": -60,
+                "x": -50,
+                "y": -40
+              },
+              {
+                "type": "close"
+              }
+            ]
+          },
+          "strokes": [
+            {
+              "paint": {
+                "type": "solid",
+                "color": [
+                  1,
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "width": 5
+            }
+          ]
+        }
+      }
+    ],
+    "dynamics": {
+      "entries": [
+        {
+          "target": {
+            "kind": "layer",
+            "layerId": 400,
+            "propertyType": "shapePath"
+          },
+          "animator": {
+            "type": "keyframes",
+            "enabled": true,
+            "keyframes": [
+              {
+                "id": "path-400-0",
+                "layerTime": 250,
+                "value": {
+                  "type": "path",
+                  "value": {
+                    "commands": [
+                      {
+                        "type": "moveTo",
+                        "x": -80,
+                        "y": -40
+                      },
+                      {
+                        "type": "cubicTo",
+                        "c1x": -50,
+                        "c1y": -30,
+                        "c2x": 45,
+                        "c2y": -35,
+                        "x": 70,
+                        "y": -20
+                      },
+                      {
+                        "type": "cubicTo",
+                        "c1x": 80,
+                        "c1y": 10,
+                        "c2x": 40,
+                        "c2y": 80,
+                        "x": 20,
+                        "y": 70
+                      },
+                      {
+                        "type": "cubicTo",
+                        "c1x": -5,
+                        "c1y": 55,
+                        "c2x": -65,
+                        "c2y": -60,
+                        "x": -80,
+                        "y": -40
+                      },
+                      {
+                        "type": "close"
+                      }
+                    ]
+                  }
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "path-400-1",
+                "layerTime": 1250,
+                "value": {
+                  "type": "path",
+                  "value": {
+                    "commands": [
+                      {
+                        "type": "moveTo",
+                        "x": -80,
+                        "y": -20
+                      },
+                      {
+                        "type": "cubicTo",
+                        "c1x": -50,
+                        "c1y": -10,
+                        "c2x": 45,
+                        "c2y": -35,
+                        "x": 70,
+                        "y": -20
+                      },
+                      {
+                        "type": "cubicTo",
+                        "c1x": 80,
+                        "c1y": 10,
+                        "c2x": 40,
+                        "c2y": 80,
+                        "x": 20,
+                        "y": 70
+                      },
+                      {
+                        "type": "cubicTo",
+                        "c1x": -5,
+                        "c1y": 55,
+                        "c2x": -65,
+                        "c2y": -40,
+                        "x": -80,
+                        "y": -20
+                      },
+                      {
+                        "type": "close"
+                      }
+                    ]
+                  }
+                },
+                "easing": {
+                  "type": "cubicBezier",
+                  "x1": 0.16666666666666666,
+                  "y1": 0.16666666666666666,
+                  "x2": 0.1,
+                  "y2": 1
+                }
+              }
+            ]
+          }
+        },
+        {
+          "target": {
+            "kind": "layer",
+            "layerId": 401,
+            "propertyType": "shapePath"
+          },
+          "animator": {
+            "type": "keyframes",
+            "enabled": true,
+            "keyframes": [
+              {
+                "id": "path-401-0",
+                "layerTime": 250,
+                "value": {
+                  "type": "path",
+                  "value": {
+                    "commands": [
+                      {
+                        "type": "moveTo",
+                        "x": -50,
+                        "y": -40
+                      },
+                      {
+                        "type": "cubicTo",
+                        "c1x": -20,
+                        "c1y": -30,
+                        "c2x": 75,
+                        "c2y": -35,
+                        "x": 100,
+                        "y": -20
+                      },
+                      {
+                        "type": "cubicTo",
+                        "c1x": 110,
+                        "c1y": 10,
+                        "c2x": 70,
+                        "c2y": 80,
+                        "x": 50,
+                        "y": 70
+                      },
+                      {
+                        "type": "cubicTo",
+                        "c1x": 25,
+                        "c1y": 55,
+                        "c2x": -35,
+                        "c2y": -60,
+                        "x": -50,
+                        "y": -40
+                      },
+                      {
+                        "type": "close"
+                      }
+                    ]
+                  }
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "path-401-1",
+                "layerTime": 1250,
+                "value": {
+                  "type": "path",
+                  "value": {
+                    "commands": [
+                      {
+                        "type": "moveTo",
+                        "x": -50,
+                        "y": -20
+                      },
+                      {
+                        "type": "cubicTo",
+                        "c1x": -20,
+                        "c1y": -10,
+                        "c2x": 75,
+                        "c2y": -35,
+                        "x": 100,
+                        "y": -20
+                      },
+                      {
+                        "type": "cubicTo",
+                        "c1x": 110,
+                        "c1y": 10,
+                        "c2x": 70,
+                        "c2y": 80,
+                        "x": 50,
+                        "y": 70
+                      },
+                      {
+                        "type": "cubicTo",
+                        "c1x": 25,
+                        "c1y": 55,
+                        "c2x": -35,
+                        "c2y": -40,
+                        "x": -50,
+                        "y": -20
+                      },
+                      {
+                        "type": "close"
+                      }
+                    ]
+                  }
+                },
+                "easing": {
+                  "type": "cubicBezier",
+                  "x1": 0.16666666666666666,
+                  "y1": 0.16666666666666666,
+                  "x2": 0.1,
+                  "y2": 1
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

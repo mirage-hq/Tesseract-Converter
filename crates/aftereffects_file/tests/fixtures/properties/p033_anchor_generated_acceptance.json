@@ -1,0 +1,150 @@
+{
+  "native_job": "397668dd7458454f91864ca1340b2c1e",
+  "application_version": "26.5x89",
+  "result": {
+    "inputEditResponse": true,
+    "observations": [
+      {
+        "comp": "p033-anchor-union-controls",
+        "input": "control",
+        "keys": [
+          {
+            "inType": "6612",
+            "outType": "6612",
+            "spatialIn": [
+              0,
+              0,
+              0
+            ],
+            "spatialOut": [
+              0,
+              0,
+              0
+            ],
+            "time": 0,
+            "value": [
+              0,
+              0,
+              0
+            ]
+          },
+          {
+            "inType": "6612",
+            "outType": "6612",
+            "spatialIn": [
+              0,
+              0,
+              0
+            ],
+            "spatialOut": [
+              0,
+              0,
+              0
+            ],
+            "time": 0.5,
+            "value": [
+              40,
+              10,
+              0
+            ]
+          },
+          {
+            "inType": "6612",
+            "outType": "6612",
+            "spatialIn": [
+              0,
+              0,
+              0
+            ],
+            "spatialOut": [
+              0,
+              0,
+              0
+            ],
+            "time": 1,
+            "value": [
+              40,
+              20,
+              0
+            ]
+          }
+        ],
+        "layer": "anchor-owner"
+      },
+      {
+        "comp": "p033-anchor-union-controls",
+        "input": "edited",
+        "keys": [
+          {
+            "inType": "6612",
+            "outType": "6612",
+            "spatialIn": [
+              0,
+              0,
+              0
+            ],
+            "spatialOut": [
+              0,
+              0,
+              0
+            ],
+            "time": 0,
+            "value": [
+              0,
+              0,
+              0
+            ]
+          },
+          {
+            "inType": "6612",
+            "outType": "6612",
+            "spatialIn": [
+              0,
+              0,
+              0
+            ],
+            "spatialOut": [
+              0,
+              0,
+              0
+            ],
+            "time": 0.5,
+            "value": [
+              60,
+              10,
+              0
+            ]
+          },
+          {
+            "inType": "6612",
+            "outType": "6612",
+            "spatialIn": [
+              0,
+              0,
+              0
+            ],
+            "spatialOut": [
+              0,
+              0,
+              0
+            ],
+            "time": 1,
+            "value": [
+              60,
+              20,
+              0
+            ]
+          }
+        ],
+        "layer": "anchor-owner"
+      }
+    ]
+  },
+  "generated_aep_sha256": {
+    "control": "53bede68d03e86d7d1ed955f8d62b8645bee57c8cb210f28dccdf703647415d4",
+    "edited": "7579c42977a1dc4184794ab5d2a78e2b012c88b82be7fc98b543557635cf27a3"
+  },
+  "limitations": [
+    "Native key storage and input-edit response only; no interior runtime/RGB/alpha/audio/reference Asset proof."
+  ]
+}

@@ -354,6 +354,7 @@ fn conversion_state(
         media_resolver: &mut resolver,
         assets: vec![],
         shape_budget: shapes::OutputBudget::with_limit(shape_limit),
+        mapped_shape_expressions: Default::default(),
         root_progress: fx_conv::Progress::default().phase("test", "layers", 0),
     };
     let item = project.item(1).unwrap();

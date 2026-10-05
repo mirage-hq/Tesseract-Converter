@@ -9,7 +9,9 @@ use fx_schema::{
     TimeRemapProperty,
 };
 
-use crate::writer::{AepWriteError, source_clock::SourceClockPlan};
+use crate::writer::{
+    AepWriteError, footage::SOURCE_TICKS_PER_SECOND, source_clock::SourceClockPlan,
+};
 
 /// A finalized moving-media clock and optional static native Time Remap value.
 #[derive(Clone, Debug, PartialEq)]
@@ -24,6 +26,39 @@ pub(crate) struct MediaClockPlan {
 }
 
 pub(crate) fn plan_layer(
+    playback: &LayerPlayback,
+    source_range: TimeRangeProperty,
+    static_source_time_secs: Option<f64>,
+    source_duration_millis: u64,
+) -> Result<MediaClockPlan, AepWriteError> {
+    if let LayerPlaybackMapping::Linear { input, output } = playback.mapping()
+        && static_source_time_secs.is_none()
+    {
+        require_source_range(source_range, source_duration_millis)?;
+        return Ok(MediaClockPlan {
+            source_clock: SourceClockPlan::affine_windowed(
+                playback.input_range(),
+                *input,
+                *output,
+                playback.input_offset_ms(),
+                source_range,
+                source_duration_millis,
+            )?,
+            static_source_time_secs: None,
+            requires_source_owned_transform: false,
+        });
+    }
+    plan_integral_layer(
+        playback,
+        source_range,
+        static_source_time_secs,
+        source_duration_millis,
+    )
+}
+
+// Audio and static source-Time-Remap retain the existing integral endpoint
+// admission. Only Video's canonical positive affine mapping is broadened.
+fn plan_integral_layer(
     playback: &LayerPlayback,
     source_range: TimeRangeProperty,
     static_source_time_secs: Option<f64>,
@@ -90,7 +125,7 @@ pub(crate) fn plan_audio_layer(
                 ..plan
             })
         }
-        _ => plan_layer(playback, source_range, None, source_duration_millis),
+        _ => plan_integral_layer(playback, source_range, None, source_duration_millis),
     }
 }
 
@@ -281,19 +316,91 @@ fn require_source_range(
     Ok(())
 }
 
+/// The full-asset descriptor may end at ceil milliseconds, but the actual
+/// affine endpoints, static sample or remap hull must remain inside physical EOF.
+pub(crate) fn require_exact_video_source_domain(
+    source_range: TimeRangeProperty,
+    playback: Option<&LayerPlayback>,
+    legacy_playback: Option<&TimeRemapProperty>,
+    static_source_time_secs: Option<f64>,
+    duration_native_ticks: u64,
+) -> Result<(), AepWriteError> {
+    let limit_millis = duration_native_ticks as f64 * 1_000.0 / SOURCE_TICKS_PER_SECOND as f64;
+    let property = match playback.map(LayerPlayback::mapping) {
+        Some(LayerPlaybackMapping::TimeRemap { property }) => Some(property),
+        _ => legacy_playback,
+    };
+    if let Some(property) = property {
+        // Integer key values are compared without rounding physical EOF.
+        if property.keyframes().iter().any(|key| {
+            u128::from(key.value.as_millis()) * u128::from(SOURCE_TICKS_PER_SECOND)
+                > u128::from(duration_native_ticks) * 1_000
+        }) {
+            return Err(AepWriteError::Invalid(
+                "media Time Remap key exceeds exact source EOF",
+            ));
+        }
+        return require_playback_hull(
+            property,
+            0.0,
+            limit_millis,
+            "media Time Remap key exceeds exact source EOF",
+            "media Time Remap control hull exceeds exact source EOF",
+        );
+    }
+    if let Some(seconds) = static_source_time_secs {
+        if !seconds.is_finite()
+            || seconds < 0.0
+            || seconds > duration_native_ticks as f64 / SOURCE_TICKS_PER_SECOND as f64
+        {
+            return Err(AepWriteError::Invalid(
+                "static media Time Remap exceeds exact source EOF",
+            ));
+        }
+        return Ok(());
+    }
+    let mapped = if let Some(playback) = playback
+        && let LayerPlaybackMapping::Linear { input, output } = playback.mapping()
+    {
+        linear_output_range(playback, *input, *output)?
+    } else {
+        source_range
+    };
+    if u128::from(mapped.end().as_millis()) * u128::from(SOURCE_TICKS_PER_SECOND)
+        > u128::from(duration_native_ticks) * 1_000
+    {
+        return Err(AepWriteError::Invalid(
+            "linear media playback exceeds exact source EOF",
+        ));
+    }
+    Ok(())
+}
+
 fn require_playback_hull_in_source_range(
     property: &TimeRemapProperty,
     source_range: TimeRangeProperty,
 ) -> Result<(), AepWriteError> {
-    let start = source_range.start.as_millis() as f64;
-    let end = source_range.end().as_millis() as f64;
+    require_playback_hull(
+        property,
+        source_range.start.as_millis() as f64,
+        source_range.end().as_millis() as f64,
+        "media Time Remap key leaves the authored source range",
+        "media Time Remap control hull leaves the authored source range",
+    )
+}
+
+fn require_playback_hull(
+    property: &TimeRemapProperty,
+    start: f64,
+    end: f64,
+    key_error: &'static str,
+    hull_error: &'static str,
+) -> Result<(), AepWriteError> {
     let keys = property.keyframes();
     for (index, key) in keys.iter().enumerate() {
         let value = key.value.as_millis() as f64;
         if !(start..=end).contains(&value) {
-            return Err(AepWriteError::Invalid(
-                "media Time Remap key leaves the authored source range",
-            ));
+            return Err(AepWriteError::Invalid(key_error));
         }
         if index == 0 {
             continue;
@@ -312,9 +419,7 @@ fn require_playback_hull_in_source_range(
             .into_iter()
             .any(|control| !control.is_finite() || !(start..=end).contains(&control))
         {
-            return Err(AepWriteError::Invalid(
-                "media Time Remap control hull leaves the authored source range",
-            ));
+            return Err(AepWriteError::Invalid(hull_error));
         }
     }
     Ok(())
@@ -349,6 +454,52 @@ mod tests {
     }
 
     #[test]
+    fn exact_video_eof_distinguishes_selection_alias_from_actual_source_samples() {
+        let source = range(0, 6_042);
+        let ticks = 148_480; // 145 frames at 24 fps, physically 6041 2/3 ms.
+        let bounded = remap(&[(0, 0), (1_000, 6_041)]);
+        assert!(
+            require_exact_video_source_domain(source, None, Some(&bounded), None, ticks).is_ok()
+        );
+        let escaped = remap(&[(0, 0), (1_000, 6_042)]);
+        assert!(
+            require_exact_video_source_domain(source, None, Some(&escaped), None, ticks).is_err()
+        );
+        let mut keys = remap(&[(0, 5_000), (1_000, 6_000)]).keyframes().to_vec();
+        keys[1].easing = PropertyKeyframeEasing::CubicBezier {
+            x1: 0.25,
+            y1: 0.25,
+            x2: 0.75,
+            y2: 1.0,
+        };
+        let bounded_bezier = TimeRemapProperty::new(
+            keys,
+            TimeRemapExtrapolation::Inactive,
+            TimeRemapExtrapolation::Inactive,
+        )
+        .unwrap();
+        assert!(
+            require_exact_video_source_domain(source, None, Some(&bounded_bezier), None, ticks)
+                .is_ok()
+        );
+        assert!(require_exact_video_source_domain(source, None, None, Some(6.041), ticks).is_ok());
+        assert!(
+            require_exact_video_source_domain(source, None, None, Some(6.0418), ticks).is_err()
+        );
+        assert!(require_exact_video_source_domain(source, None, None, None, ticks).is_err());
+        for (end, accepted) in [(6_041, true), (6_042, false)] {
+            let playback =
+                LayerPlayback::linear(range(100, 1_000), range(0, 1_000), range(0, end), -100)
+                    .unwrap();
+            assert_eq!(
+                require_exact_video_source_domain(source, Some(&playback), None, None, ticks)
+                    .is_ok(),
+                accepted
+            );
+        }
+    }
+
+    #[test]
     fn affine_media_clock_preserves_trim_and_stretch_exactly() {
         let planned = plan(range(1_000, 2_000), range(500, 1_000), None, None, 4_000).unwrap();
         assert_eq!(planned.source_clock.record.stretch.numerator, 2);
@@ -358,7 +509,84 @@ mod tests {
     }
 
     #[test]
-    fn playback_keeps_strict_guard_keys_and_source_range_hull() {
+    fn affine_video_shifted_window_preserves_fractional_source_endpoints() {
+        let playback =
+            LayerPlayback::linear(range(1_000, 1_000), range(0, 3_000), range(250, 4_000), 250)
+                .unwrap();
+        let planned = plan_layer(&playback, range(250, 4_000), None, 8_000)
+            .expect("exact positive affine native clock, without rounding source samples");
+        let record = planned.source_clock.native_record();
+        assert_eq!(
+            (record.stretch.numerator, record.stretch.denominator),
+            (3, 4)
+        );
+        assert_eq!(
+            (record.start_time.numerator, record.start_time.denominator),
+            (-7, 16)
+        );
+        assert_eq!(
+            (record.in_point.numerator, record.in_point.denominator),
+            (23, 12)
+        );
+        assert_eq!(
+            (record.out_point.numerator, record.out_point.denominator),
+            (13, 4)
+        );
+    }
+
+    #[test]
+    fn affine_video_fractional_window_keeps_source_bounds_and_edit_mapping() {
+        let mapped = |start, offset| {
+            LayerPlayback::linear(
+                range(start, 1_000),
+                range(0, 3_000),
+                range(250, 4_000),
+                offset,
+            )
+            .unwrap()
+        };
+        for (selection, duration, offset) in [
+            (range(2_000, 2_250), 8_000, 250),
+            (range(250, 2_750), 8_000, 250),
+            (range(250, 4_000), 4_000, 250),
+            (range(250, 4_000), 8_000, -1_100),
+        ] {
+            assert!(plan_layer(&mapped(1_000, offset), selection, None, duration).is_err());
+        }
+        let edited = plan_layer(&mapped(1_250, 250), range(250, 4_000), None, 8_000).unwrap();
+        let record = edited.source_clock.native_record();
+        assert_eq!(
+            (record.start_time.numerator, record.start_time.denominator),
+            (-7, 16)
+        );
+        assert_eq!(
+            (record.in_point.numerator, record.in_point.denominator),
+            (9, 4)
+        );
+        assert_eq!(
+            (record.out_point.numerator, record.out_point.denominator),
+            (43, 12)
+        );
+        let original = plan_layer(&mapped(1_000, 250), range(250, 4_000), None, 8_000).unwrap();
+        assert!(original.source_clock.source_time_millis(0).is_err());
+        assert_eq!(
+            original.source_clock.source_time_millis(250).unwrap(),
+            2_250
+        );
+    }
+
+    #[test]
+    fn canonical_reverse_video_retains_time_remap_profile() {
+        let property = remap(&[(0, 8_000), (8_000, 0)]);
+        let playback = LayerPlayback::remapped(range(0, 8_000), property, 0).unwrap();
+        let planned = plan_layer(&playback, range(0, 8_000), None, 8_000).unwrap();
+        assert!(planned.source_clock.has_time_remap());
+        assert!(planned.requires_source_owned_transform);
+        assert_eq!(planned.source_clock.active_range, range(0, 8_000));
+    }
+
+    #[test]
+    fn playback_keeps_covering_keys_and_source_range_hull() {
         let accepted = remap(&[(0, 500), (1_250, 750), (1_750, 1_000), (3_000, 1_250)]);
         assert!(
             plan(
@@ -380,7 +608,7 @@ mod tests {
                 None,
                 2_000
             )
-            .is_err()
+            .is_ok()
         );
     }
 

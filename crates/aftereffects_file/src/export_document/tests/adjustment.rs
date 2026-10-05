@@ -13,7 +13,8 @@ fn document(source: &str) -> Value {
 fn fresh_native(source: &str) -> (ExportedDocument, StructuralProject) {
     let value = document(source);
     let output = export(value.clone());
-    if let Some(directory) = std::env::var_os("AEP_EFFECTS_COVERAGE_DIR") {
+    {
+        let directory = crate::adobe_test_support::artifact_directory();
         let name = value["composition"]["name"].as_str().unwrap();
         let path = std::path::Path::new(&directory).join(name);
         std::fs::create_dir_all(&directory).unwrap();
@@ -111,6 +112,145 @@ fn adjustment_shared_writer_two_solid_control() {
             expected
         );
         assert!(!root.layers[index].record.flags().adjustment_layer);
+    }
+}
+
+#[test]
+fn unsupported_shader_only_adjustment_omits_solid_but_keeps_supported_siblings() {
+    let mut value = document(include_str!(
+        "../../../tests/fixtures/adjustment/fx_export/adjustment-stack-order.fx.json"
+    ));
+    let shader = json!({
+        "id": 2242,
+        "enabled": true,
+        "effect": {
+            "type": "customShader",
+            "name": "Unsupported adjustment shader",
+            "wgsl": "@fragment fn main() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }"
+        }
+    });
+    let layers = value["composition"]["layers"].as_array_mut().unwrap();
+    layers[1]["effects"] = json!([shader]);
+    layers[2]["effects"].as_array_mut().unwrap().push(json!({
+        "id": 2232,
+        "enabled": true,
+        "effect": {
+            "type": "customShader",
+            "name": "Unsupported sibling shader",
+            "wgsl": "@fragment fn main() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }"
+        }
+    }));
+
+    let output = export(value);
+    let native = read_project(&output.bytes).unwrap();
+    assert_eq!(
+        names(&native),
+        [
+            "upper-sentinel-37x23",
+            "lower-amber-83x117",
+            "lower-cobalt-127x71"
+        ]
+    );
+    assert!(output.diagnostics.iter().any(|diagnostic| {
+        diagnostic.layer_id == Some(LayerId::new(224))
+            && diagnostic
+                .message
+                .contains("owner omitted: CustomShader adjustment or plain white shader canvas")
+    }));
+    assert!(output.omitted_layer_ids.contains(&LayerId::new(223)));
+}
+
+#[test]
+fn omitted_shader_adjustment_keeps_its_containing_group() {
+    let (output, native) = fresh_native(include_str!(
+        "../../../tests/fixtures/adjustment/fx_export/omitted-shader-adjustment-group.fx.json"
+    ));
+    assert_eq!(names(&native), ["supported-dialog-scope"]);
+    let nested = native
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            ItemKind::Composition(composition)
+                if composition
+                    .layers
+                    .iter()
+                    .any(|layer| layer.name.as_ref() == "lower-amber-83x117") =>
+            {
+                Some(composition)
+            }
+            _ => None,
+        })
+        .expect("supported nested content must survive the omitted Adjustment");
+    assert_eq!(
+        nested
+            .layers
+            .iter()
+            .map(|layer| layer.name.as_ref())
+            .collect::<Vec<_>>(),
+        [
+            "upper-sentinel-37x23",
+            "lower-amber-83x117",
+            "lower-cobalt-127x71"
+        ]
+    );
+    assert!(!output.omitted_layer_ids.contains(&LayerId::new(20500)));
+    assert!(output.omitted_layer_ids.contains(&LayerId::new(1463)));
+    assert!(output.diagnostics.iter().any(|diagnostic| {
+        diagnostic.layer_id == Some(LayerId::new(1463))
+            && diagnostic
+                .message
+                .contains("owner omitted: CustomShader adjustment or plain white shader canvas")
+    }));
+}
+
+#[test]
+fn omitted_shader_adjustment_classifier_includes_mixed_stacks() {
+    let value = document(include_str!(
+        "../../../tests/fixtures/adjustment/fx_export/omitted-shader-adjustment-group.fx.json"
+    ));
+    let record = value["composition"]["layers"][0]["layers"][1]["effects"][0].clone();
+    let classify = |records: Value| {
+        let records: Vec<fx_schema::EffectRecord> = serde_json::from_value(records).unwrap();
+        super::super::effects::omitted_shader_adjustment(&records)
+    };
+    assert!(!classify(json!([])));
+    assert!(classify(json!([record.clone()])));
+    let mut disabled = record.clone();
+    disabled["enabled"] = json!(false);
+    assert!(classify(json!([disabled])));
+    assert!(classify(json!([record["effect"].clone()])));
+    for effect in [
+        json!({"type": "gaussianBlur", "blurriness": 25, "repeatEdgePixels": true}),
+        json!({"type": "unknownFutureEffect", "radius": 25}),
+    ] {
+        let native = json!({"id": 14632, "enabled": true, "effect": effect});
+        assert!(!classify(json!([native.clone()])));
+        assert!(classify(json!([record.clone(), native])));
+    }
+}
+
+#[test]
+fn mixed_shader_adjustment_omission_keeps_containing_group() {
+    for effect in [
+        json!({"type": "gaussianBlur", "blurriness": 25, "repeatEdgePixels": true}),
+        json!({"type": "unknownFutureEffect", "radius": 25}),
+    ] {
+        let mut value = document(include_str!(
+            "../../../tests/fixtures/adjustment/fx_export/omitted-shader-adjustment-group.fx.json"
+        ));
+        value["composition"]["layers"][0]["layers"][1]["effects"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": 14632, "enabled": true, "effect": effect}));
+        let output = export(value);
+        assert!(!output.omitted_layer_ids.contains(&LayerId::new(20500)));
+        assert!(output.omitted_layer_ids.contains(&LayerId::new(1463)));
+        assert!(output.diagnostics.iter().any(|diagnostic| {
+            diagnostic.layer_id == Some(LayerId::new(1463))
+                && diagnostic
+                    .message
+                    .contains("owner omitted: CustomShader adjustment or plain white shader canvas")
+        }));
     }
 }
 

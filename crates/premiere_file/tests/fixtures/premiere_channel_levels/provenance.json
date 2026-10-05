@@ -1,0 +1,62 @@
+{
+  "sourceSha256": "3b6ee8fdee5f1ab31d4fbc0c9c9a4aafca3e2dd87f4bf40322a8000a62cd2ca0",
+  "authorSha256": "f4797a5dcd7cff3d264eab46511a528e9dae1c6e43506fd3c9ff2e4f6d902187",
+  "mediaSha256": "14adae30d0719af343cb387390a8f1b925debd4cadb83ed04a460d6820b0e605",
+  "application": "Premiere Pro",
+  "version": "26.5.2",
+  "sequenceUID": "f2351e48-a071-4421-b0a1-26419b6121bb",
+  "matchName": "PR.ADBE Levels",
+  "rows": [
+    [
+      30,
+      255,
+      0,
+      255,
+      100
+    ],
+    [
+      0,
+      200,
+      0,
+      255,
+      2
+    ],
+    [
+      0,
+      255,
+      0,
+      255,
+      100
+    ],
+    [
+      0,
+      255,
+      0,
+      255,
+      100
+    ]
+  ],
+  "rgbaCells": [
+    [
+      204,
+      51,
+      26,
+      255
+    ],
+    [
+      51,
+      179,
+      102,
+      64
+    ],
+    [
+      26,
+      102,
+      230,
+      0
+    ]
+  ],
+  "path_sanitization_original_sha256": {
+    "source/native.prproj": "916e0bea22089283239533a3ec73d7e23dec05170dbd79265b82a132c08ce934"
+  }
+}

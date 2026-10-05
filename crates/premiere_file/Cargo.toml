@@ -12,17 +12,19 @@ ffmpeg-library = ["media_transcode/ffmpeg-library", "aftereffects_file/ffmpeg-li
 
 [dependencies]
 aftereffects_file = { path = "../aftereffects_file", default-features = false }
-anyhow = { workspace = true }
 base64 = { workspace = true }
 boa_engine = { version = "0.21.1", default-features = false, features = ["js"] }
 flatbuffers = "25.12.19"
 flate2 = "1"
+# Zero-tail read-slack proof is source-pinned: upgrades require a new audit and guard/ASan runs.
+gdeflate-sys = "=0.4.1"
 fx_conv = { path = "../fx_conv" }
 fx_keyframe_bake = { path = "../fx_keyframe_bake" }
 fx_schema = { path = "../fx_schema" }
 h264-reader = "=0.8.0"
 image = { workspace = true }
 media_transcode = { path = "../media_transcode", default-features = false }
+png = "0.18"
 quick-xml = { workspace = true, features = ["overlapped-lists", "serialize"] }
 roxmltree = { workspace = true }
 serde = { workspace = true }
@@ -33,3 +35,10 @@ tesseract_file = { path = "../tesseract_file" }
 tempfile = "3"
 thiserror = { workspace = true }
 uuid = { workspace = true }
+zip = { version = "7.2", default-features = false, features = ["deflate-flate2"] }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"

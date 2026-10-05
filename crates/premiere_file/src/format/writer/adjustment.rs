@@ -17,7 +17,7 @@
 //!
 //! Premiere 26.5.1 reopened one edited export of these records and read its
 //! Levels, edge-transparent Gaussian Blur and Opacity key back as written
-//! (the JRB-2030 export gate; case `premiere_isolated_adjustment_layer_26_5`).
+//! (fixture `premiere_isolated_adjustment_layer_26_5`).
 
 use super::{graph::MediaIds, media::video_media_source};
 use crate::schema::{

@@ -1,0 +1,33 @@
+<PremiereData Version="3">
+<!-- Source: human-inputs-20261004.prproj
+     SHA-256: e74d088116570ddb7178b127129036755be2f8e553dea80f98aa59b601585b76
+     Sequence UID: b3aecac7-c452-48ba-a5e1-737807cb32ee
+     Extracted ObjectIDs: 537, 714, 715
+-->
+	<VideoFilterComponent ObjectID="537" ClassID="d10da199-beea-4dd1-b941-ed3a78766d50" Version="9">
+		<Component Version="7">
+			<Params Version="1">
+				<Param Index="0" ObjectRef="714"/>
+				<Param Index="1" ObjectRef="715"/>
+			</Params>
+			<ID>3</ID>
+			<DisplayName>Find Edges</DisplayName>
+		</Component>
+		<VideoFilterType>2</VideoFilterType>
+		<MatchName>AE.ADBE Find Edges</MatchName>
+	</VideoFilterComponent>
+	<VideoComponentParam ObjectID="714" ClassID="cc12343e-f113-4d3b-ae05-b287db77d461" Version="10">
+		<ParameterID>1</ParameterID>
+		<StartKeyframe>-91445760000000000,true,0,0,0,0,0,0</StartKeyframe>
+	</VideoComponentParam>
+	<VideoComponentParam ObjectID="715" ClassID="fe47129e-6c94-4fc0-95d5-c056a517aaf3" Version="10">
+		<Name>Blend With Original</Name>
+		<IsTimeVarying>true</IsTimeVarying>
+		<ParameterID>2</ParameterID>
+		<StartKeyframe>-91445760000000000,0.25,0,0,0,0,0,0</StartKeyframe>
+		<Keyframes>0,0.25,0,0,0,0.16666666666666666,0.24870647761579487,0.16666666666666666;510674274420,0.75,0,0,0.24870647761579487,0.16666666666666666,0,0.16666666666666666;</Keyframes>
+		<CurrentValue>1</CurrentValue>
+		<LowerBound>0</LowerBound>
+		<UpperBound>1</UpperBound>
+	</VideoComponentParam>
+</PremiereData>

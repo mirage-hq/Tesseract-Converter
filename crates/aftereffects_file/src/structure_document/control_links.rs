@@ -4,16 +4,25 @@
 //! for pixel-unit properties, bounded equal-stretch Angle/Slider offsets for
 //! Rotation/X Position, bounded Scale sums, one delayed-Position rig, the
 //! Source Text Slider percent binding and pure same-effect scalar aliases.
-//! Other expressions retain captured-sample fallback.
+//! A bounded posterizeTime/wiggle Position profile retains native base keys with
+//! explicit jitter/sampling omissions. Other expressions retain captured-sample fallback.
 //! A Slider reference names its value parameter or uses index `1`; text
 //! animator expressions reuse this grammar in `text::expression_links`.
 
+mod color_control;
 mod cross_comp;
+mod cross_comp_point;
+mod cross_comp_slider;
 mod delayed_position;
+mod dimension_scale;
 mod effect_alias;
+mod indexed_position;
 mod parent_scale;
+mod point_control;
+mod position_wiggle_base;
 mod property_alias;
 mod rotation;
+mod rotation_offset_loop;
 mod scale_offset;
 mod sibling_rotation;
 mod slider;
@@ -76,6 +85,26 @@ pub(super) fn resolve_same_effect_alias(
     parameter: &str,
 ) -> Option<Result<String, PropertyError>> {
     effect_alias::resolve(content, effect_index, parameter)
+}
+
+/// Copies a static same-composition Point Control into independent pixel coordinates.
+/// Only proven planar Shape controller storage is admitted.
+pub(super) fn lower_static_point_control(
+    property: &[Chunk],
+    composition: &Composition,
+    consumer_id: u32,
+) -> Result<[f64; 2], PropertyError> {
+    point_control::resolve(property, composition, consumer_id)
+}
+
+/// Copies one complete static Color Control alias into an independent editable color.
+/// Animated controls and expressions on the referenced control are not evaluated.
+pub(super) fn lower_static_color_control(
+    property: &[Chunk],
+    composition: &Composition,
+    source_items: Option<&HashMap<u32, &ProjectItem>>,
+) -> Result<[f64; 4], PropertyError> {
+    color_control::resolve(property, composition, source_items)
 }
 
 pub(super) fn lower_slider_scalar(
@@ -175,7 +204,52 @@ fn read_layer_transform_inner<'a>(
     only_member: Option<cross_comp::Member>,
 ) -> Result<(Vec<TransformProperty>, Vec<String>), PropertyError> {
     let (mut properties, mut warnings) = read_transform(&layer.content)?;
+    // Foreign member aliases can sample beyond the source composition's
+    // interval. Do not advertise a finite prepared loop as a live alias curve.
+    if only_member.is_none()
+        && let Some(property) = properties.iter_mut().find(|property| {
+            property.match_name == "ADBE Rotate Z"
+                && property
+                    .numeric
+                    .as_ref()
+                    .is_ok_and(|value| value.expression_enabled)
+        })
+        && let Ok(base) = &property.numeric
+        && let Some(result) = rotation_offset_loop::lower(layer, composition, base)
+    {
+        match result {
+            Ok(value) => {
+                property.numeric = Ok(value);
+                warnings.retain(|warning| {
+                    !warning.starts_with("ADBE Rotate Z: scalar offset link not lowered")
+                });
+                warnings.push("ADBE Rotate Z: exact two-key Linear offset loop lowered to editable Linear keys through the composition interval; native clock rounding remains, and later FX key edits do not retain a live loop expression".into());
+            }
+            Err(error) => warnings.push(format!(
+                "ADBE Rotate Z: offset loop not lowered ({error}); original expression retained"
+            )),
+        }
+    }
     let mut axes = Vec::new();
+    if only_member.is_none_or(|member| member == cross_comp::Member::Scale)
+        && let Some(property) = properties.iter_mut().find(|property| {
+            property.match_name == "ADBE Scale"
+                && property
+                    .numeric
+                    .as_ref()
+                    .is_ok_and(|value| value.expression_enabled)
+        })
+        && let Some(result) = dimension_scale::lower(layer, composition)
+    {
+        match result {
+            Ok(value) => {
+                property.numeric = Ok(value);
+                warnings.retain(|warning| !warning.starts_with("ADBE Scale: control link not lowered"));
+                warnings.push("ADBE Scale: bounded composition-dimension expression lowered to independent editable static values; live composition-resize linkage is not retained".into());
+            }
+            Err(error) => warnings.push(format!("ADBE Scale: composition-dimension expression not lowered ({error}); original expression retained")),
+        }
+    }
     if let Some(context) = source_context {
         for property in &mut properties {
             let Some(member) = cross_comp::Member::from_match_name(&property.match_name) else {
@@ -188,6 +262,33 @@ fn read_layer_transform_inner<'a>(
                 continue;
             };
             if !base.expression_enabled {
+                continue;
+            }
+            if member == cross_comp::Member::Position
+                && let Some(result) = cross_comp_point::lower(layer, context, base)
+            {
+                match result {
+                    Ok(value) => {
+                        property.numeric = Ok(value);
+                        warnings.push("ADBE Position: static native Point2D binding lowered to independent editable Position3D using the user-approved Z=0 policy, not established Adobe coercion; live controller linkage is not retained".into());
+                    }
+                    Err(error) => warnings.push(format!(
+                        "ADBE Position: static Point2D-to-Position3D policy binding not lowered ({error}); original expression retained"
+                    )),
+                }
+                continue;
+            }
+            if member == cross_comp::Member::Scale
+                && let Some(result) = cross_comp_slider::lower(layer, context, base)
+            {
+                match result {
+                    Ok(value) => {
+                        property.numeric = Ok(value);
+                        warnings.retain(|warning| !warning.starts_with("ADBE Scale: control link not lowered"));
+                        warnings.push("ADBE Scale: bounded static cross-composition Slider repeated XY binding lowered to independent editable values; live controller linkage and native Z Scale semantics are not retained".into());
+                    }
+                    Err(error) => warnings.push(format!("ADBE Scale: static cross-composition Slider binding not lowered ({error}); original expression retained")),
+                }
                 continue;
             }
             if let Some(result) = cross_comp::same_member_identity(layer, member, base) {
@@ -318,6 +419,20 @@ fn read_layer_transform_inner<'a>(
     if only_member.is_none_or(|member| member == cross_comp::Member::Position)
         && let Some(property) = properties.iter_mut().find(|property| {
             property.match_name == "ADBE Position"
+                && property.numeric.as_ref().is_ok_and(|numeric| {
+                    numeric.expression_enabled && numeric.animated && !numeric.keyframes.is_empty()
+                })
+        })
+        && position_wiggle_base::source(layer).is_ok_and(position_wiggle_base::recognized)
+        && let Ok(numeric) = &mut property.numeric
+    {
+        numeric.expression_enabled = false;
+        numeric.expression_present = false;
+        warnings.push("ADBE Position: native base Position keys retained as an editable approximation for a bounded posterizeTime/wiggle expression; jitter and posterized sampling omitted, native expression fidelity is not established".into());
+    }
+    if only_member.is_none_or(|member| member == cross_comp::Member::Position)
+        && let Some(property) = properties.iter_mut().find(|property| {
+            property.match_name == "ADBE Position"
                 && property
                     .numeric
                     .as_ref()
@@ -328,7 +443,17 @@ fn read_layer_transform_inner<'a>(
             .numeric
             .as_ref()
             .expect("filtered successful Position property");
-        if let Some(result) = delayed_position::lower(layer, composition, base) {
+        if let Some(result) = indexed_position::lower(layer, composition, base) {
+            match result {
+                Ok(value) => {
+                    property.numeric = Ok(value);
+                    warnings.push("ADBE Position: bounded native index times static Slider expression lowered to independent editable Position; layer-order/controller edit linkage is not retained".into());
+                }
+                Err(error) => warnings.push(format!(
+                    "ADBE Position: indexed static Slider expression not lowered ({error}); original expression retained"
+                )),
+            }
+        } else if let Some(result) = delayed_position::lower(layer, composition, base) {
             match result {
                 Ok(value) => {
                     property.numeric = Ok(value);
@@ -746,6 +871,13 @@ pub(super) fn expression(chunks: &[Chunk]) -> Result<&str, PropertyError> {
 pub(super) struct Reference<'a> {
     effect: &'a str,
     parameter: &'a str,
+}
+
+impl Reference<'_> {
+    /// A built-in Slider value selector, even when AE omitted its default record.
+    pub(super) fn selects_slider_value(self) -> bool {
+        matches!(self.parameter, SLIDER_VALUE | "Slider")
+    }
 }
 
 /// The Slider value's match name; `effect(name)(1)` selects it by index.

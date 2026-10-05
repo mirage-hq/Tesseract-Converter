@@ -33,26 +33,47 @@ pub fn fit_value_curve<T: PartialEq, E>(
     duration_ms: u64,
     tolerance: f64,
     maximum_keys: usize,
+    evaluate: impl FnMut(u64) -> Result<T, E>,
+    error: impl Fn(&T, &T, &T, f64) -> Option<f64>,
+) -> Result<Vec<ValueKey<T>>, ValueCurveError<E>> {
+    fit_sampled_value_curve(0..=duration_ms, tolerance, maximum_keys, evaluate, error)
+}
+
+/// Fit values at caller-selected offsets, which must be nonempty and strictly
+/// ascending. Error is bounded only at these offsets; the caller owns the
+/// sampling policy. Equal values form held intervals between sampled offsets.
+pub fn fit_sampled_value_curve<T: PartialEq, E>(
+    offsets: impl IntoIterator<Item = u64>,
+    tolerance: f64,
+    maximum_keys: usize,
     mut evaluate: impl FnMut(u64) -> Result<T, E>,
     error: impl Fn(&T, &T, &T, f64) -> Option<f64>,
 ) -> Result<Vec<ValueKey<T>>, ValueCurveError<E>> {
     if maximum_keys == 0 {
         return Err(ValueCurveError::KeyLimit);
     }
+    let mut offsets = offsets.into_iter();
+    let first = offsets.next().expect("sample offsets must be nonempty");
     let mut result = Vec::new();
     let mut keys = vec![ValueKey {
-        offset_ms: 0,
-        value: evaluate(0).map_err(ValueCurveError::Evaluation)?,
+        offset_ms: first,
+        value: evaluate(first).map_err(ValueCurveError::Evaluation)?,
         linear: false,
     }];
-    for offset_ms in 1..=duration_ms {
+    let mut previous_sample = first;
+    for offset_ms in offsets {
+        assert!(
+            offset_ms > previous_sample,
+            "sample offsets must be strictly ascending"
+        );
         let value = evaluate(offset_ms).map_err(ValueCurveError::Evaluation)?;
         let previous = keys.last().expect("initial key exists");
+        let adjacent = previous_sample == previous.offset_ms;
+        previous_sample = offset_ms;
         if previous.value == value {
             continue;
         }
-        let linear = offset_ms - previous.offset_ms == 1
-            && error(&previous.value, &value, &previous.value, 0.0).is_some();
+        let linear = adjacent && error(&previous.value, &value, &previous.value, 0.0).is_some();
         keys.push(ValueKey {
             offset_ms,
             value,
@@ -190,6 +211,68 @@ mod tests {
             [0, 17, 34, 51, 68, 85]
         );
         assert!(keys.iter().all(|k| !k.linear));
+    }
+
+    #[test]
+    fn sparse_offsets_preserve_endpoints_and_reduce_by_actual_time() {
+        let offsets = [5, 12, 27, 91];
+        let keys =
+            fit_sampled_value_curve(offsets, 0.0, 2, |t| Ok::<_, ()>(t as f64), error).unwrap();
+        assert_eq!(
+            keys.iter().map(|key| key.offset_ms).collect::<Vec<_>>(),
+            [5, 91]
+        );
+        assert!(keys[1].linear);
+    }
+
+    #[test]
+    fn sparse_held_samples_do_not_tween_across_a_plateau() {
+        let keys = fit_sampled_value_curve(
+            [0, 8, 21, 40, 73],
+            0.0,
+            5,
+            |t| Ok::<_, ()>(if t < 40 { 0.0 } else { (t - 40) as f64 + 1.0 }),
+            error,
+        )
+        .unwrap();
+        assert_eq!(
+            keys.iter().map(|key| key.offset_ms).collect::<Vec<_>>(),
+            [0, 40, 73]
+        );
+        assert!(!keys[1].linear);
+        assert!(keys[2].linear);
+    }
+
+    #[test]
+    fn sparse_topology_errors_and_limit_match_dense_behavior() {
+        let offsets = [0, 4, 12];
+        let keys = fit_sampled_value_curve(
+            offsets,
+            0.0,
+            3,
+            |t| Ok::<_, ()>(vec![0; t as usize]),
+            |_, _, _, _| None,
+        )
+        .unwrap();
+        assert_eq!(
+            keys.iter().map(|key| key.offset_ms).collect::<Vec<_>>(),
+            offsets
+        );
+        assert!(keys.iter().all(|key| !key.linear));
+        assert!(matches!(
+            fit_sampled_value_curve(offsets, 0.0, 2, Ok::<_, ()>, |_, _, _, _| None),
+            Err(ValueCurveError::KeyLimit)
+        ));
+        assert!(matches!(
+            fit_sampled_value_curve(
+                offsets,
+                0.0,
+                3,
+                |t| if t == 4 { Err("failed") } else { Ok(t) },
+                |_, _, _, _| None
+            ),
+            Err(ValueCurveError::Evaluation("failed"))
+        ));
     }
 
     #[test]

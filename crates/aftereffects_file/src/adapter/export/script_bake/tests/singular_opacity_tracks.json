@@ -1,0 +1,403 @@
+{
+  "entries": [
+    {
+      "target": {
+        "kind": "layer",
+        "layerId": 7,
+        "propertyType": "positionX"
+      },
+      "animator": {
+        "type": "keyframes",
+        "enabled": true,
+        "keyframes": [
+          {
+            "id": "k2200063-positionX-0",
+            "layerTime": 0,
+            "value": {
+              "type": "float",
+              "value": 363.2
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionX-1",
+            "layerTime": 34,
+            "value": {
+              "type": "float",
+              "value": 391.08
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionX-2",
+            "layerTime": 67,
+            "value": {
+              "type": "float",
+              "value": 447.71
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionX-3",
+            "layerTime": 100,
+            "value": {
+              "type": "float",
+              "value": 524.88
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionX-4",
+            "layerTime": 134,
+            "value": {
+              "type": "float",
+              "value": 619.38
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionX-5",
+            "layerTime": 167,
+            "value": {
+              "type": "float",
+              "value": 729.3
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionX-6",
+            "layerTime": 200,
+            "value": {
+              "type": "float",
+              "value": 853.31
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionX-7",
+            "layerTime": 234,
+            "value": {
+              "type": "float",
+              "value": 990.4
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionX-8",
+            "layerTime": 267,
+            "value": {
+              "type": "float",
+              "value": 1127.49
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionX-9",
+            "layerTime": 300,
+            "value": {
+              "type": "float",
+              "value": 1251.5
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionX-10",
+            "layerTime": 334,
+            "value": {
+              "type": "float",
+              "value": 1361.42
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionX-11",
+            "layerTime": 367,
+            "value": {
+              "type": "float",
+              "value": 1455.92
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionX-12",
+            "layerTime": 400,
+            "value": {
+              "type": "float",
+              "value": 1533.09
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionX-13",
+            "layerTime": 434,
+            "value": {
+              "type": "float",
+              "value": 1589.72
+            },
+            "easing": {
+              "type": "linear"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "target": {
+        "kind": "layer",
+        "layerId": 7,
+        "propertyType": "positionY"
+      },
+      "animator": {
+        "type": "keyframes",
+        "enabled": true,
+        "keyframes": [
+          {
+            "id": "k2200063-positionY-0",
+            "layerTime": 0,
+            "value": {
+              "type": "float",
+              "value": -21.25
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionY-1",
+            "layerTime": 34,
+            "value": {
+              "type": "float",
+              "value": -24.178
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionY-2",
+            "layerTime": 67,
+            "value": {
+              "type": "float",
+              "value": -27.294
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionY-3",
+            "layerTime": 100,
+            "value": {
+              "type": "float",
+              "value": -30.6
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionY-4",
+            "layerTime": 134,
+            "value": {
+              "type": "float",
+              "value": -34.094
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionY-5",
+            "layerTime": 167,
+            "value": {
+              "type": "float",
+              "value": -37.778
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionY-6",
+            "layerTime": 200,
+            "value": {
+              "type": "float",
+              "value": -41.65
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionY-7",
+            "layerTime": 234,
+            "value": {
+              "type": "float",
+              "value": -45.711
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionY-8",
+            "layerTime": 267,
+            "value": {
+              "type": "float",
+              "value": -49.961
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionY-9",
+            "layerTime": 300,
+            "value": {
+              "type": "float",
+              "value": -54.4
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionY-10",
+            "layerTime": 334,
+            "value": {
+              "type": "float",
+              "value": -59.028
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionY-11",
+            "layerTime": 367,
+            "value": {
+              "type": "float",
+              "value": -63.844
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionY-12",
+            "layerTime": 400,
+            "value": {
+              "type": "float",
+              "value": -68.85
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-positionY-13",
+            "layerTime": 434,
+            "value": {
+              "type": "float",
+              "value": -74.044
+            },
+            "easing": {
+              "type": "linear"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "target": {
+        "kind": "layer",
+        "layerId": 7,
+        "propertyType": "opacity"
+      },
+      "animator": {
+        "type": "keyframes",
+        "enabled": true,
+        "keyframes": [
+          {
+            "id": "k2200063-opacity-0",
+            "layerTime": 0,
+            "value": {
+              "type": "float",
+              "value": 0
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-opacity-1",
+            "layerTime": 67,
+            "value": {
+              "type": "float",
+              "value": 100
+            },
+            "easing": {
+              "type": "cubicBezier",
+              "x1": 0.16,
+              "y1": 1,
+              "x2": 0.3,
+              "y2": 1
+            }
+          },
+          {
+            "id": "k2200063-opacity-2",
+            "layerTime": 400,
+            "value": {
+              "type": "float",
+              "value": 100
+            },
+            "easing": {
+              "type": "linear"
+            }
+          },
+          {
+            "id": "k2200063-opacity-3",
+            "layerTime": 466,
+            "value": {
+              "type": "float",
+              "value": 0
+            },
+            "easing": {
+              "type": "cubicBezier",
+              "x1": 0.55,
+              "y1": 0,
+              "x2": 1,
+              "y2": 0.45
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

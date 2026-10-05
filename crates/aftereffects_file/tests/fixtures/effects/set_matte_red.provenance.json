@@ -1,0 +1,60 @@
+{
+  "case": "set-matte-red-premultiplied",
+  "source": "set_matte_red.aep",
+  "sourceSha256": "f14eef956f06ce4072d2b273f39db2e6ee57da54075e4bcb5a8f51031340dffc",
+  "authorScript": "set_matte_red.author.jsx",
+  "authorScriptSha256": "d7d865c52e26c243331e5311cfac29b568f64604f65787a468feb793ea26347b",
+  "nativeVersion": "26.5x89",
+  "authoring": "Independent headless-adobe managed JSX authoring; source is not converter output",
+  "target": {
+    "compositionId": 20,
+    "targetLayerId": 47,
+    "providerLayerId": 32,
+    "width": 320,
+    "height": 180,
+    "fps": 30,
+    "durationSeconds": 2
+  },
+  "supportingTargets": [
+    {
+      "compositionId": 1,
+      "purpose": "Three distinct RGB cells with opacities100/50/0 for set-matte-red-premultiplied"
+    },
+    {
+      "compositionId": 33,
+      "purpose": "Editable opaque target paint for set-matte-red-premultiplied"
+    }
+  ],
+  "nativeControls": [
+    {
+      "matchName": "ADBE Set Matte3-0001",
+      "name": "Take Matte From Layer",
+      "value": 2
+    },
+    {
+      "matchName": "ADBE Set Matte3-0002",
+      "name": "Use For Matte",
+      "value": 1
+    },
+    {
+      "matchName": "ADBE Set Matte3-0003",
+      "name": "Invert Matte",
+      "value": 0
+    },
+    {
+      "matchName": "ADBE Set Matte3-0004",
+      "name": "If Layer Sizes Differ",
+      "value": 1
+    },
+    {
+      "matchName": "ADBE Set Matte3-0005",
+      "name": "Composite Matte with Original",
+      "value": 1
+    },
+    {
+      "matchName": "ADBE Set Matte3-0006",
+      "name": "Premultiply Matte Layer",
+      "value": 1
+    }
+  ]
+}

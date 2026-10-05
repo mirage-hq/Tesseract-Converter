@@ -1,11 +1,135 @@
 use crate::{
     format::{inspect_project_with_omissions, FrameRate, MediaId},
-    schema::{PrProjectFile, PrVideoTrack, TICKS, TICKS_PER_MILLISECOND},
+    schema::{
+        PrKeyframeEasing, PrMediaKind, PrProjectFile, PrTimeRemap, PrTimeRemapKeyframe,
+        PrVideoTrack, STILL_INTRINSIC_TICKS, TICKS, TICKS_PER_MILLISECOND,
+    },
     tests::support::{project_document_with_media, video_media, video_sequence},
 };
 use serde_json::json;
 
 const THIRTY_FPS_TICKS: i64 = FrameRate::Fps30.ticks_per_frame();
+
+#[test]
+fn source_span_consistency_preserves_saved_native_rate() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/native-constant-rate-timing.xml");
+    let (project, omissions) = PrProjectFile::load(path).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let clip = project
+        .sequences()
+        .next()
+        .unwrap()
+        .video_occurrences()
+        .next()
+        .unwrap();
+    // Public conversion timing tests assert the exact tick ranges and editable
+    // structure; the saved rate and remap flag require private model access.
+    assert_eq!(clip.playback_rate, 2.936507936515802);
+    assert!(clip.time_remap.is_none());
+
+    // Independent second saved case from the same source hash as the fixture:
+    // nested occurrence 1168 / VideoClip 1664. Its 6.4236273259948800-tick
+    // residue at near-unit speed rules out a speed-scaled, first-case-only fix.
+    // This tests window consistency, not support for that nest's effects.
+    assert!(crate::schema::source_span_matches(
+        194_940_345_600,
+        194_929_623_888,
+        0.9999450000029977,
+    ));
+}
+
+#[test]
+fn source_span_consistency_has_nanosecond_not_frame_precision() {
+    use crate::schema::source_span_matches;
+    for rate in [1.0, -1.0] {
+        // One nanosecond is 254.016 ticks: test both sides of the integer edge,
+        // with magnitudes small enough that arithmetic error is negligible.
+        assert!(source_span_matches(10_000, 10_254, rate));
+        assert!(source_span_matches(10_000, 9_746, rate));
+        assert!(!source_span_matches(10_000, 10_255, rate));
+        assert!(!source_span_matches(10_000, 9_745, rate));
+        assert!(!source_span_matches(TICKS, TICKS + THIRTY_FPS_TICKS, rate));
+    }
+    // Arithmetic precision scales with magnitude, not duration in frames.
+    // These i64 operands exceed binary64's exact-integer range; the first
+    // discrepancy fits their conservative numeric budget, the second does not.
+    let large = (1_i64 << 60) + 1;
+    assert!(source_span_matches(large, large + 1024, 1.0));
+    assert!(!source_span_matches(large, large + 1_000_000, 1.0));
+}
+
+#[test]
+fn source_span_consistency_rejects_invalid_and_overflowing_inputs() {
+    use crate::schema::source_span_matches;
+    for rate in [0.0, -0.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(!source_span_matches(TICKS, TICKS, rate));
+    }
+    for (timeline, source) in [(0, TICKS), (-TICKS, TICKS), (TICKS, 0), (TICKS, -TICKS)] {
+        assert!(!source_span_matches(timeline, source, 1.0));
+    }
+    // Finite speed must not make an overflowing product/tolerance admit a span.
+    assert!(!source_span_matches(i64::MAX, i64::MAX, f64::MAX));
+    assert!(!source_span_matches(1, i64::MAX, f64::MAX));
+}
+
+#[test]
+fn a_still_span_may_differ_from_its_placement_only_at_unit_forward_rate() {
+    let still = PrMediaKind::Still { alpha: false };
+    let video = PrMediaKind::Video {
+        codec: None,
+        hdr_profile: None,
+    };
+    // Premiere keeps a still's 5 s span from its one-hour in-point.
+    let source_in = FrameRate::Fps30.generator_in_ticks();
+    let span = source_in..source_in + 5 * TICKS;
+    let remap = PrTimeRemap {
+        keys: [(0, span.start), (10 * TICKS, span.end)]
+            .map(|(timeline_ticks, source_ticks)| PrTimeRemapKeyframe {
+                timeline_ticks,
+                source_ticks,
+                easing: PrKeyframeEasing::Linear,
+            })
+            .to_vec(),
+    };
+    // (case, media, placement, source range, rate, remap, error)
+    #[rustfmt::skip]
+    let cases = [
+        ("an ordinary still", still, 0..5 * TICKS, span.clone(), 1.0, None, None),
+        ("a still lengthened to 10 s", still, 0..10 * TICKS, span.clone(), 1.0, None, None),
+        // Native images/nests inner item123 keeps a 5 s source span on a 2 s placement.
+        ("a still shortened to 2 s", still, 0..2 * TICKS, span.clone(), 1.0, None, None),
+        ("a shortened still at 2x", still, 0..2 * TICKS, span.clone(), 2.0, None, Some("source span")),
+        ("a shortened still reversed", still, 0..2 * TICKS, span.clone(), -1.0, None, Some("source span")),
+        ("a video lengthened to 10 s", video, 0..10 * TICKS, 0..5 * TICKS, 1.0, None, Some("source span")),
+        ("a lengthened still at 2x", still, 0..10 * TICKS, span.clone(), 2.0, None, Some("source span")),
+        ("a lengthened still reversed", still, 0..10 * TICKS, span.clone(), -1.0, None, Some("source span")),
+        // Its rate, not the lengthening, fills the placement: the rate rule.
+        ("a still at 0.5x", still, 0..10 * TICKS, span.clone(), 0.5, None, None),
+        ("a lengthened still remapped", still, 0..10 * TICKS, span.clone(), 1.0, Some(remap), Some("TimeRemapping In to Out must match")),
+        ("a still lengthened past its clock", still, 0..10 * TICKS, STILL_INTRINSIC_TICKS - 5 * TICKS..STILL_INTRINSIC_TICKS, 1.0, None, Some("frame past")),
+        ("a still lengthened past i64", still, 0..i64::MAX, span.clone(), 1.0, None, Some("frame past")),
+    ];
+    for (case, kind, placement, source, rate, remap, error) in cases {
+        let mut sequence = video_sequence();
+        let mut media = video_media();
+        let clip = sequence.video_tracks[0].clip_mut(0);
+        (clip.start_ticks, clip.end_ticks) = (placement.start, placement.end);
+        (clip.in_ticks, clip.out_ticks) = (source.start, source.end);
+        (clip.playback_rate, clip.time_remap) = (rate, remap);
+        let facts = media.get_mut(&clip.media).unwrap().video.as_mut().unwrap();
+        facts.kind = kind;
+        if kind.is_still() {
+            facts.intrinsic_ticks = STILL_INTRINSIC_TICKS;
+        }
+        sequence.timeline_end_ticks = placement.end;
+        match (sequence.validate_timeline(&media), error) {
+            (Ok(()), None) => {}
+            (Err(actual), Some(expected)) if actual.to_string().contains(expected) => {}
+            (result, _) => panic!("{case}: {result:?}"),
+        }
+    }
+}
 
 #[test]
 fn ranges_reject_negative_empty_out_of_bounds_and_rate_mismatched_clips() {
@@ -310,10 +434,10 @@ fn linear_wipe_completion_past_the_former_limit_keeps_its_range_and_order_checks
         change(&mut keys[4999], before);
         keys
     };
+    validate(Vec::new()).unwrap(); // The initial value is a constant wipe.
     let mut swapped = keys.clone();
     swapped.swap(4998, 4999);
     for (case, keys) in [
-        ("empty", Vec::new()),
         ("above 100", with_last(&|key, _| key.value = 100.5)),
         ("nonfinite", with_last(&|key, _| key.value = f64::NAN)),
         (

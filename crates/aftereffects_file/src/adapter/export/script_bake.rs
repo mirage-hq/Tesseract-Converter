@@ -1,11 +1,23 @@
-//! Non-mutating scalar/Path script preparation for the archive export route.
+//! Non-mutating scalar/Path/Source Text script preparation for the archive export route.
 //!
 //! Graph/clock support is deliberately explicit. Unsupported scripts stay in the
 //! copy for the lowerer's contextual omission policy; a resource-budget failure
 //! aborts the entire preparation before media staging or publication.
 
+mod clock;
+mod dependencies;
+mod document;
+mod execution;
+mod input;
+mod keys;
 mod path;
+mod sampling;
 mod seed;
+mod singular_ease;
+mod singular_opacity;
+
+use document::BakedDocument;
+use sampling::Sampling;
 #[cfg(test)]
 mod tests;
 
@@ -14,10 +26,11 @@ use std::{
     collections::{BTreeMap, BTreeSet},
 };
 
+use crate::{AfterEffectsExportOptions, export_document::ExportDiagnostic, writer::AepWriteError};
 use boa_engine::JsValue;
 use fx_conv::Progress;
 use fx_keyframe_bake::{
-    curve_fit::{FittedCurve, FittedEasing, fit_scalar_curve},
+    curve_fit::{FittedCurve, FittedEasing, fit_sampled_scalar_curve},
     identity::{conversion_identity_seed, converted_keyframe_id, random_seed},
     script::{ScriptError, ScriptRuntime, install_reference_tables},
 };
@@ -30,13 +43,12 @@ use fx_schema::{
     },
     time::TimeOffset,
 };
-use serde_json::json;
-
-use crate::{export_document::ExportDiagnostic, writer::AepWriteError};
 
 // JavaScript Number must distinguish adjacent millisecond timestamps. This is
-// a representation bound, not a duration/work quota. Per-call VM loop/stack
-// protection remains in ScriptRuntime; project totals do not limit preparation.
+// a representation bound, not a duration/work quota. ScriptRuntime keeps only
+// recursion/stack guards: it has no loop-iteration cap, deadline or
+// cancellation, so a nonterminating script blocks preparation. Project totals
+// do not limit preparation either.
 const MAX_EXACT_SCRIPT_MILLIS: u64 = (1 << 53) - 1;
 
 /// Provision the existing empirical native-parser stack margin without a source
@@ -63,12 +75,16 @@ pub(super) struct Prepared<'a> {
 enum BakeError {
     #[error("script bake budget exceeded: {0}")]
     Budget(&'static str),
+    #[error("script preparation aborted")]
+    Aborted,
     #[error("{0}")]
     Unsupported(&'static str),
     #[error(transparent)]
     Script(#[from] ScriptError),
     #[error("script must return a finite scalar number at layer time {0}ms")]
     NonScalar(u64),
+    #[error("Source Text script must return a valid Unicode string at layer time {0}ms")]
+    NonText(u64),
     #[error(
         "script is history-dependent or failed fresh dense playback validation at layer time {0}ms"
     )]
@@ -82,24 +98,18 @@ enum BakeError {
 #[derive(Default)]
 struct Budget {
     calls: usize,
-    probes: usize,
     keys: usize,
 }
 
 impl Budget {
     fn sample(&mut self) -> Result<(), BakeError> {
+        if execution::aborted() {
+            return Err(BakeError::Aborted);
+        }
         self.calls = self
             .calls
             .checked_add(1)
             .ok_or(BakeError::Budget("evaluation counter overflow"))?;
-        Ok(())
-    }
-
-    fn probe(&mut self) -> Result<(), BakeError> {
-        self.probes = self
-            .probes
-            .checked_add(1)
-            .ok_or(BakeError::Budget("probe counter overflow"))?;
         Ok(())
     }
 }
@@ -108,21 +118,45 @@ impl Budget {
 struct Owner {
     id: LayerId,
     duration_ms: u64,
+    start_ms: u64,
     unsupported_clock: bool,
+    clock_id: usize,
+}
+
+impl Owner {
+    fn end_ms(self) -> u64 {
+        self.start_ms + self.duration_ms
+    }
+    fn times(self, sampling: Sampling) -> impl Iterator<Item = u64> {
+        sampling
+            .offsets(self.duration_ms)
+            .map(move |offset| self.start_ms + offset)
+    }
 }
 
 #[cfg(test)]
 pub(super) fn prepare(
     document: &EditableFxCompositionDocument,
 ) -> Result<Prepared<'_>, AepWriteError> {
-    prepare_with_progress(document, Progress::default())
+    prepare_with_progress(
+        document,
+        &AfterEffectsExportOptions::default(),
+        Progress::default(),
+    )
 }
 
 pub(super) fn prepare_with_progress<'a>(
     document: &'a EditableFxCompositionDocument,
+    options: &AfterEffectsExportOptions,
     progress: Progress<'_>,
 ) -> Result<Prepared<'a>, AepWriteError> {
-    prepare_layers_with_progress(document, document.composition().layers(), false, progress)
+    prepare_layers_with_progress(
+        document,
+        document.composition().layers(),
+        false,
+        options,
+        progress,
+    )
 }
 
 #[cfg(test)]
@@ -131,15 +165,69 @@ pub(super) fn prepare_layers<'a>(
     roots: &[fx_schema::Layer],
     selected: bool,
 ) -> Result<Prepared<'a>, AepWriteError> {
-    prepare_layers_with_progress(document, roots, selected, Progress::default())
+    prepare_layers_with_progress(
+        document,
+        roots,
+        selected,
+        &AfterEffectsExportOptions::default(),
+        Progress::default(),
+    )
 }
 
 pub(super) fn prepare_layers_with_progress<'a>(
     document: &'a EditableFxCompositionDocument,
     roots: &[fx_schema::Layer],
     selected: bool,
+    options: &AfterEffectsExportOptions,
     progress: Progress<'_>,
 ) -> Result<Prepared<'a>, AepWriteError> {
+    let opacity = singular_opacity::prepare(document, roots, selected)?;
+    let scripts = prepare_scripts(
+        opacity.document.as_ref(),
+        roots,
+        selected,
+        options,
+        progress,
+    )?;
+    let mut diagnostics = opacity.diagnostics;
+    diagnostics.extend(scripts.diagnostics);
+    let owned = match scripts.document {
+        Cow::Owned(document) => Some(document),
+        Cow::Borrowed(_) => None,
+    };
+    let scripts_document = owned.map(Cow::Owned).unwrap_or(opacity.document);
+    // Script dependencies must see the authored cubic, not its native substitute.
+    let ease = singular_ease::prepare(scripts_document.as_ref(), roots, selected)?;
+    diagnostics.extend(ease.diagnostics);
+    let document = match ease.document {
+        Cow::Owned(document) => Cow::Owned(document),
+        Cow::Borrowed(_) => scripts_document,
+    };
+    Ok(Prepared {
+        document,
+        diagnostics,
+    })
+}
+
+fn prepare_scripts<'a>(
+    document: &'a EditableFxCompositionDocument,
+    roots: &[Layer],
+    selected: bool,
+    options: &AfterEffectsExportOptions,
+    progress: Progress<'_>,
+) -> Result<Prepared<'a>, AepWriteError> {
+    prepare_scripts_with_workers(document, roots, selected, options, progress, 2)
+}
+
+fn prepare_scripts_with_workers<'a>(
+    document: &'a EditableFxCompositionDocument,
+    roots: &[Layer],
+    selected: bool,
+    options: &AfterEffectsExportOptions,
+    progress: Progress<'_>,
+    workers: usize,
+) -> Result<Prepared<'a>, AepWriteError> {
+    let sampling = Sampling::new(options)?;
     let entries = document.composition().dynamics().entries();
     if !entries.iter().any(|entry| entry.animator.is_js_script()) {
         return Ok(Prepared {
@@ -150,7 +238,14 @@ pub(super) fn prepare_layers_with_progress<'a>(
     let mut owners = BTreeMap::new();
     let mut effects = BTreeMap::new();
     let mut items = BTreeMap::new();
-    collect_owners(roots, false, &mut owners, &mut effects, &mut items);
+    collect_owners(
+        roots,
+        &[],
+        &mut clock::Clocks::default(),
+        &mut owners,
+        &mut effects,
+        &mut items,
+    );
     let owner_of = |entry: &AnimationGraphEntry| match &entry.target {
         PropertyTarget::LayerProperty(property) => owners.get(&property.layer_id()).copied(),
         PropertyTarget::EffectProperty(property) => effects.get(&property.effect_id()).copied(),
@@ -170,7 +265,7 @@ pub(super) fn prepare_layers_with_progress<'a>(
             diagnostics: Vec::new(),
         });
     }
-    let script_progress = progress.phase("bake AE scripts", "tracks", count);
+    let script_progress = progress.phase("bake FX scripts for AEP", "tracks", count);
     let mut used_ids = entries
         .iter()
         .filter_map(|entry| entry.animator.keyframe_track())
@@ -178,11 +273,10 @@ pub(super) fn prepare_layers_with_progress<'a>(
         .map(|key| key.id().as_str().to_owned())
         .collect();
     let mut budget = Budget::default();
-    let mut raw = document
-        .to_json_value()
-        .map_err(|error| AepWriteError::InvalidDocument(error.to_string()))?;
+    let mut raw = None;
     let mut diagnostics = Vec::new();
     let mut baked = 0;
+    let mut static_fallbacks = 0;
     // Boa parses on its caller's native stack, so every script runs on one
     // thread sized only from the selected entries it will process. An unrelated
     // unselected script must not increase this scope's stack reservation.
@@ -198,53 +292,132 @@ pub(super) fn prepare_layers_with_progress<'a>(
         .max()
         .unwrap_or(0);
     let stack = stack_bytes(longest)?;
-    std::thread::scope(|scope| {
-        std::thread::Builder::new()
-            .stack_size(stack)
-            .spawn_scoped(scope, || {
-                for (processed, (index, entry)) in scripts.into_iter().enumerate() {
-                    let owner = owner_of(entry);
-                    match bake_entry(entry, owner, &mut used_ids, &mut budget) {
-                        Ok(animator) => {
-                            raw["composition"]["dynamics"]["entries"][index]["animator"] = animator.known_value();
-                            baked += 1;
-                        }
-                        Err(error @ BakeError::Budget(_)) => {
-                            return Err(AepWriteError::InvalidDocument(format!(
-                                "{}: {error}; completed {baked}/{count} tracks, {} keys, {} evaluations, {} fitter probes",
-                                entry.target, budget.keys, budget.calls, budget.probes,
-                            )));
-                        }
-                        Err(error) => diagnostics.push(ExportDiagnostic {
-                            layer_id: owner.map(|owner| owner.id),
-                            message: format!("JS animator {} was not baked: {error}; original animator retained for diagnosed best-effort lowering.", entry.target),
-                        }),
-                    }
-                    script_progress.update(processed + 1);
-                }
-                Ok(())
+    let mut processed = 0;
+    while processed < count {
+        let end = (processed + workers.max(1)).min(count);
+        // Do not start speculative successors past a known fatal time bound.
+        let end = scripts[processed..end]
+            .iter()
+            .position(|(_, entry)| {
+                owner_of(entry).is_some_and(|owner| {
+                    owner
+                        .start_ms
+                        .checked_add(owner.duration_ms)
+                        .is_none_or(|end| end > MAX_EXACT_SCRIPT_MILLIS)
+                })
             })
-            .map_err(|error| {
-                AepWriteError::InvalidDocument(format!(
-                    "script evaluation could not start a thread with a {} MiB stack: {error}",
-                    stack >> 20
-                ))
-            })?
-            .join()
-            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-    })?;
+            .map_or(end, |offset| processed + offset + 1);
+        let batch = &scripts[processed..end];
+        std::thread::scope(|scope| {
+            let order = std::sync::Arc::new(execution::Order::default());
+            // Drop before scope auto-joins on error/panic, releasing console waits.
+            let _abort = order.abort_on_drop();
+            let mut handles = Vec::with_capacity(batch.len());
+            for (position, (_, entry)) in batch.iter().copied().enumerate() {
+                let order = std::sync::Arc::clone(&order);
+                let owner_of = &owner_of;
+                handles.push(std::thread::Builder::new().stack_size(stack)
+                    .spawn_scoped(scope, move || execution::with_order(order, position, || {
+                        let mut builder = keys::Builder::default();
+                        let mut local_budget = Budget::default();
+                        let result = fit_entry(entry, owner_of(entry), entries, owner_of, &mut builder, &mut local_budget, sampling);
+                        (result, builder, local_budget.calls)
+                    }))
+                    .map_err(|error| AepWriteError::InvalidDocument(format!(
+                        "script evaluation could not start a thread with a {} MiB stack: {error}", stack >> 20
+                    )))?);
+            }
+            // Every predecessor already has a dedicated running thread. Results,
+            // IDs and console turns are published only in source order.
+            for (position, ((index, entry), handle)) in
+                batch.iter().copied().zip(handles).enumerate()
+            {
+                let (result, builder, calls) = handle
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+                let owner = owner_of(entry);
+                let result = match budget.calls.checked_add(calls) {
+                    Some(total) => {
+                        budget.calls = total;
+                        builder.finish(result, &entry.target, &mut used_ids, &mut budget)
+                    }
+                    None => {
+                        budget.calls = usize::MAX;
+                        Err(BakeError::Budget("evaluation counter overflow"))
+                    }
+                };
+                match result {
+                    Ok(animator) => {
+                        if raw.is_none() {
+                            raw = Some(BakedDocument::new(document).map_err(|error| {
+                                AepWriteError::InvalidDocument(error.to_string())
+                            })?);
+                        }
+                        raw.as_mut()
+                            .expect("successful bake prepares the document")
+                            .replace_script(index, &animator)
+                            .map_err(|error| AepWriteError::InvalidDocument(error.to_string()))?;
+                        baked += 1;
+                    }
+                    Err(error @ BakeError::Budget(_)) => {
+                        return Err(AepWriteError::InvalidDocument(format!(
+                            "{}: {error}; completed {baked}/{count} tracks, {} keys, {} evaluations",
+                            entry.target, budget.keys, budget.calls,
+                        )));
+                    }
+                    Err(error) => {
+                        if let Some((animator, root, value)) =
+                            parse_invalid_static_transform(entry, owner, roots, &error)
+                        {
+                            if raw.is_none() {
+                                raw = Some(BakedDocument::new(document).map_err(|error| {
+                                    AepWriteError::InvalidDocument(error.to_string())
+                                })?);
+                            }
+                            raw.as_mut()
+                                .expect("static fallback prepares the document")
+                                .replace_script(index, &animator)
+                                .map_err(|error| {
+                                    AepWriteError::InvalidDocument(error.to_string())
+                                })?;
+                            static_fallbacks += 1;
+                            diagnostics.push(ExportDiagnostic {
+                                    layer_id: owner.map(|owner| owner.id),
+                                    message: format!("Root {root}, JS animator {} parse failure: {error}; export working copy uses authored static transform value {value}; scripted motion is lost. Source animator is unchanged; native hierarchy enclosure checks still apply.", entry.target),
+                                });
+                        } else {
+                            diagnostics.push(ExportDiagnostic {
+                                    layer_id: owner.map(|owner| owner.id),
+                                    message: format!("JS animator {} was not baked: {error}; original animator retained for diagnosed best-effort lowering.", entry.target),
+                                });
+                        }
+                    }
+                }
+                script_progress.update(processed + position + 1);
+                order.advance();
+            }
+            Ok(())
+        })?;
+        processed = end;
+    }
     progress.stage("validate baked AE document");
-    if baked == 0 {
+    if baked == 0 && static_fallbacks == 0 {
         return Ok(Prepared {
             document: Cow::Borrowed(document),
             diagnostics,
         });
     }
-    let prepared = EditableFxCompositionDocument::from_json_value(raw)
+    let prepared = raw
+        .expect("a successful bake prepares the document")
+        .finish()
         .map_err(|error| AepWriteError::InvalidDocument(error.to_string()))?;
     diagnostics.push(ExportDiagnostic {
         layer_id: None,
-        message: format!("JS animator baking approximated {baked}/{count} scalar/Path tracks with {} editable keys; millisecond fit validation is not Adobe render-fidelity proof.", budget.keys),
+        message: format!("FX script baking samples at four times the native {fps}fps output rate, rounded to integer milliseconds, plus owner endpoints. Scalar keys use Linear/Hold interpolation. Evaluation and fresh-runtime validation skip unsampled times; subframe pulses, topology changes, state changes and motion-blur fidelity are not guaranteed.", fps = options.fps),
+    });
+    diagnostics.push(ExportDiagnostic {
+        layer_id: None,
+        message: format!("JS animator baking approximated {baked}/{count} scalar/Path/Source Text tracks with {} editable keys; sampled-grid fit validation is not Adobe render-fidelity proof. Source Text changes use editable Hold keys at the first observed grid sample; sub-grid change times can shift by up to one sampling interval.", budget.keys),
     });
     Ok(Prepared {
         document: Cow::Owned(prepared),
@@ -252,53 +425,146 @@ pub(super) fn prepare_layers_with_progress<'a>(
     })
 }
 
-/// This adapter evaluates JS and stores keys at the owner's local 0..duration.
-fn unsupported_playback_clock(layer: &Layer) -> bool {
-    let media_clock = |playback: &fx_schema::LayerPlayback| {
-        matches!(playback.mapping(), fx_schema::LayerPlaybackMapping::Linear { input, .. }
-            if i128::from(playback.input_range().start.as_millis())
-                + i128::from(playback.input_offset_ms())
-                == i128::from(input.start.as_millis()))
+/// This adapter evaluates JS and stores keys in the owner's actual local domain,
+/// including an explicit media remap's absolute source-range start/end.
+/// Only syntactically invalid, independent transform bodies can use authored
+/// static components. Reparse without invoking user code to distinguish syntax
+/// errors from the shared runtime's deliberately coarser ScriptError variants.
+fn parse_invalid_static_transform(
+    entry: &AnimationGraphEntry,
+    owner: Option<Owner>,
+    roots: &[Layer],
+    error: &BakeError,
+) -> Option<(PropertyAnimator, LayerId, f64)> {
+    if !matches!(error, BakeError::Script(_))
+        || !entry.dependencies.is_empty()
+        || !entry.layer_refs.is_empty()
+        || entry.random_seed_target.is_some()
+    {
+        return None;
+    }
+    let owner = owner?;
+    if owner.unsupported_clock || owner.duration_ms > MAX_EXACT_SCRIPT_MILLIS {
+        return None;
+    }
+    let PropertyTarget::LayerProperty(property) = &entry.target else {
+        return None;
     };
-    match layer.data() {
-        LayerData::Video(video) => !media_clock(&video.playback),
-        LayerData::Audio(audio) => !media_clock(&audio.playback),
+    let (field, component) = match property.property_type() {
+        PropType::PositionX => ("position", Some(0)),
+        PropType::PositionY => ("position", Some(1)),
+        PropType::PositionZ => ("position", Some(2)),
+        PropType::AnchorPointX => ("anchorPoint", Some(0)),
+        PropType::AnchorPointY => ("anchorPoint", Some(1)),
+        PropType::ScaleX => ("scale", Some(0)),
+        PropType::ScaleY => ("scale", Some(1)),
+        PropType::OrientationX => ("orientation", Some(0)),
+        PropType::OrientationY => ("orientation", Some(1)),
+        PropType::OrientationZ => ("orientation", Some(2)),
+        PropType::Rotation => ("rotation", None),
+        PropType::RotationX => ("rotationX", None),
+        PropType::RotationY => ("rotationY", None),
+        PropType::Skew => ("skew", None),
+        PropType::SkewAxis => ("skewAxis", None),
+        PropType::Opacity => ("opacity", None),
+        _ => return None,
+    };
+    fn find(layers: &[Layer], id: LayerId) -> Option<&Layer> {
+        layers.iter().find_map(|layer| {
+            if layer.id() == id {
+                Some(layer)
+            } else {
+                find(layer.child_layers().unwrap_or(&[]), id)
+            }
+        })
+    }
+    let (root, layer) = roots.iter().find_map(|root| {
+        find(std::slice::from_ref(root), owner.id).map(|layer| (root.id(), layer))
+    })?;
+    // A failed owner transform leaves its authored base active independently
+    // of descendant content. Descendants still pass normal export safety checks;
+    // this is not recovery of failed geometry, Text or effect scripts.
+    if !plain_static_transform_owner(layer) {
+        return None;
+    }
+    let authored = layer.wire_value().get("transform")?.get(field)?;
+    let value = match component {
+        Some(index) => authored.get(index)?.as_f64()?,
+        None => authored.as_f64()?,
+    };
+    if !value.is_finite() {
+        return None;
+    }
+    let AnimatorData::JsScript {
+        code: None,
+        layer_time_js_code: Some(code),
+    } = entry.animator.data()
+    else {
+        return None;
+    };
+    let mut runtime = ScriptRuntime::new().ok()?;
+    let source = format!("(function(input) {{\n\"use strict\";\n{code}\n}})");
+    let parse_error = boa_engine::Script::parse(
+        boa_engine::Source::from_bytes(source.as_str()),
+        None,
+        runtime.context_mut(),
+    )
+    .err()?;
+    if !matches!(
+        parse_error.as_native()?.kind,
+        boa_engine::JsNativeErrorKind::Syntax
+    ) {
+        return None;
+    }
+    let animator = PropertyAnimator::constant(PropertyValue::Float(value)).ok()?;
+    Some((animator, root, value))
+}
+
+// Bound lossy recovery to an ordinary Group owner. Its children's drawable
+// profiles do not affect the runtime's persisted-base fallback semantics.
+fn plain_static_transform_owner(layer: &Layer) -> bool {
+    // Deterministic JS clock support does not widen lossy parse-error recovery.
+    let plain_clock = match layer.data() {
         LayerData::Group(group) => match group.playback.mapping() {
             fx_schema::LayerPlaybackMapping::Linear { input, output } => {
-                input.duration != output.duration
-                    || i128::from(output.start.as_millis())
+                input.duration == output.duration
+                    && i128::from(output.start.as_millis())
                         + i128::from(group.playback.input_range().start.as_millis())
                         + i128::from(group.playback.input_offset_ms())
                         - i128::from(input.start.as_millis())
-                        != 0
+                        == 0
             }
-            fx_schema::LayerPlaybackMapping::TimeRemap { .. } => true,
+            _ => false,
         },
-        _ => layer
-            .wire_value()
-            .get("playback")
-            .is_some_and(|value| !value.is_null()),
+        _ => false,
+    };
+    if !plain_clock {
+        return false;
+    }
+    match layer.data() {
+        LayerData::Group(group) => {
+            !group.layers.is_empty()
+                && group.fills.is_empty()
+                && group.effects.is_empty()
+                && group.masks.is_empty()
+                && group.track_matte.is_none()
+                && !group.motion_blur
+                && group.blend_mode == fx_schema::BlendMode::Normal
+        }
+        _ => false,
     }
 }
 
 fn collect_owners(
     layers: &[Layer],
-    inherited_unsupported_clock: bool,
+    parent_clock: &[String],
+    clocks: &mut clock::Clocks,
     owners: &mut BTreeMap<LayerId, Owner>,
     effects: &mut BTreeMap<fx_schema::EffectId, Owner>,
     items: &mut BTreeMap<FxItemId, Owner>,
 ) {
     for layer in layers {
-        // The supported clock is the layer's OWN active-start-relative clock,
-        // not its nearest group or source-media clock. The same clock drives
-        // both layer-time JS and keyframes. Legacy/nonlinear remaps need their
-        // runtime migration and domain rules, and are not guessed here.
-        let unsupported_clock = inherited_unsupported_clock || unsupported_playback_clock(layer);
-        let owner = Owner {
-            id: layer.id(),
-            duration_ms: layer.active_range().duration.as_millis(),
-            unsupported_clock,
-        };
+        let (owner, child_clock) = clocks.owner(layer, parent_clock);
         owners.insert(layer.id(), owner);
         for effect in layer.effects() {
             if let EffectData::Identified { id, .. } = effect.data() {
@@ -341,17 +607,43 @@ fn collect_owners(
             }
         }
         if let Some(children) = layer.child_layers() {
-            collect_owners(children, unsupported_clock, owners, effects, items);
+            collect_owners(children, &child_clock, clocks, owners, effects, items);
         }
     }
 }
 
+#[cfg(test)]
 fn bake_entry(
     entry: &AnimationGraphEntry,
     owner: Option<Owner>,
+    entries: &[AnimationGraphEntry],
+    owner_of: &impl Fn(&AnimationGraphEntry) -> Option<Owner>,
     used_ids: &mut BTreeSet<String>,
     budget: &mut Budget,
+    sampling: Sampling,
 ) -> Result<PropertyAnimator, BakeError> {
+    let mut builder = keys::Builder::default();
+    let result = fit_entry(
+        entry,
+        owner,
+        entries,
+        owner_of,
+        &mut builder,
+        budget,
+        sampling,
+    );
+    builder.finish(result, &entry.target, used_ids, budget)
+}
+
+fn fit_entry(
+    entry: &AnimationGraphEntry,
+    owner: Option<Owner>,
+    entries: &[AnimationGraphEntry],
+    owner_of: &impl Fn(&AnimationGraphEntry) -> Option<Owner>,
+    builder: &mut keys::Builder,
+    budget: &mut Budget,
+    sampling: Sampling,
+) -> Result<Vec<keys::Key>, BakeError> {
     let AnimatorData::JsScript {
         code: None,
         layer_time_js_code: Some(code),
@@ -361,9 +653,9 @@ fn bake_entry(
             "legacy/mixed script clocks require runtime migration",
         ));
     };
-    if !entry.dependencies.is_empty() || !entry.layer_refs.is_empty() {
+    if !entry.layer_refs.is_empty() {
         return Err(BakeError::Unsupported(
-            "dependency or layer-reference evaluation is not available in this bake adapter",
+            "layer-reference evaluation is not available in this bake adapter",
         ));
     }
     if matches!(entry.target, PropertyTarget::FxItemProperty(_)) {
@@ -377,41 +669,51 @@ fn bake_entry(
             "owner or ancestor playback remapping is not supported by this bake adapter",
         ));
     }
-    if owner.duration_ms > MAX_EXACT_SCRIPT_MILLIS {
+    if owner.end_ms() > MAX_EXACT_SCRIPT_MILLIS {
         return Err(BakeError::Budget("exact JavaScript millisecond time"));
     }
-    if matches!(&entry.target, PropertyTarget::LayerProperty(property)
-        if property.property_type() == PropType::ShapePath)
-    {
-        return path::bake(entry, code, owner, used_ids, budget);
+    if let PropertyTarget::LayerProperty(property) = &entry.target {
+        if !entry.dependencies.is_empty()
+            && matches!(
+                property.property_type(),
+                PropType::ShapePath | PropType::TextContent
+            )
+        {
+            return Err(BakeError::Unsupported(
+                "dependent Path/Text scripts are not supported by this scalar adapter",
+            ));
+        }
+        match property.property_type() {
+            PropType::ShapePath => {
+                return path::bake(entry, code, owner, builder, budget, sampling);
+            }
+            PropType::TextContent => {
+                return bake_text(entry, code, owner, builder, budget, sampling);
+            }
+            _ => {}
+        }
     }
-    // Validate the scalar target before paying for evaluation. Public schema
-    // checks use the same shape rules as the private runtime model.
-    PropertyKeyframeTrack::new(vec![PropertyKeyframe::new(
-        fx_schema::KeyframeId::new("bake-type-probe"),
-        TimeOffset::from_millis(0),
-        PropertyValue::Float(0.0),
-        PropertyKeyframeEasing::Hold,
-    )])?
-    .validate_for_target(&entry.target)?;
+    validate_scalar_target(&entry.target)?;
 
     let seed = seed::prefix(entry.random_seed_target.as_ref().unwrap_or(&entry.target));
-    let mut runtime = ScriptRuntime::new()?;
-    let mut samples = BTreeMap::new();
-    let fitted = fit_scalar_curve(owner.duration_ms, tolerance_cap(&entry.target), |time_ms| {
-        cached_evaluate(&mut runtime, code, seed, time_ms, &mut samples, budget)
-    })?;
+    let mut runtime = execution::runtime()?;
+    let dependencies = dependencies::Program::new(entry, entries, owner, owner_of)?;
+    // The fitter evaluates each offset once and owns its samples.
+    let fitted = fit_sampled_scalar_curve(
+        owner.times(sampling),
+        tolerance_cap(&entry.target),
+        |time_ms| dependencies.evaluate(&mut runtime, code, seed, time_ms, budget),
+    )?;
     // Fresh ascending playback rejects obvious ambient randomness/global-state
     // dependence rather than silently turning sample order into authored motion.
-    validate_fresh(code, seed, owner.duration_ms, &fitted, budget)?;
-    let identity = conversion_identity_seed(&serde_json::to_vec(&entry.target)?, code.as_bytes());
+    validate_fresh(code, seed, owner, &fitted, budget, sampling, &dependencies)?;
+    builder.identify(entry, code)?;
     let mut keys = Vec::with_capacity(fitted.keys.len());
     for key in fitted.keys {
         // The exact JavaScript time check also fits the signed persisted domain.
         let time_ms = i64::try_from(key.offset_ms).map_err(|_| BakeError::Budget("key time"))?;
-        let key = PropertyKeyframe::new(
-            fx_schema::KeyframeId::new(converted_keyframe_id(identity, time_ms, used_ids)),
-            TimeOffset::from_millis(time_ms),
+        let key = builder.record(
+            time_ms,
             PropertyValue::Float(key.value),
             match key.easing {
                 FittedEasing::Hold => PropertyKeyframeEasing::Hold,
@@ -426,30 +728,76 @@ fn bake_entry(
         );
         keys.push(key);
     }
-    let track = PropertyKeyframeTrack::new(keys)?;
-    track.validate_for_target(&entry.target)?;
-    budget.keys = budget
-        .keys
-        .checked_add(track.keyframes().len())
-        .ok_or(BakeError::Budget("key counter overflow"))?;
-    Ok(PropertyAnimator::keyframes(track))
+    Ok(keys)
 }
 
-fn cached_evaluate(
+fn validate_scalar_target(target: &PropertyTarget) -> Result<(), BakeError> {
+    // Match runtime-shaped conversion before supplying a Float to a consumer;
+    // numeric JS on Text/Bool/vector/color/path targets is not a scalar value.
+    PropertyKeyframeTrack::new(vec![PropertyKeyframe::new(
+        fx_schema::KeyframeId::new("bake-type-probe"),
+        TimeOffset::from_millis(0),
+        PropertyValue::Float(0.0),
+        PropertyKeyframeEasing::Hold,
+    )])?
+    .validate_for_target(target)?;
+    Ok(())
+}
+
+fn bake_text(
+    entry: &AnimationGraphEntry,
+    code: &str,
+    owner: Owner,
+    builder: &mut keys::Builder,
+    budget: &mut Budget,
+    sampling: Sampling,
+) -> Result<Vec<keys::Key>, BakeError> {
+    let seed = seed::prefix(entry.random_seed_target.as_ref().unwrap_or(&entry.target));
+    builder.identify(entry, code)?;
+    let mut runtime = execution::runtime()?;
+    let mut keys = Vec::new();
+    for time_ms in owner.times(sampling) {
+        let text = evaluate_text(&mut runtime, code, seed, time_ms, budget)?;
+        if keys.last().is_some_and(|key: &keys::Key| {
+            matches!(&key.value, PropertyValue::String(previous) if previous == &text)
+        }) {
+            continue;
+        }
+        let time = i64::try_from(time_ms).map_err(|_| BakeError::Budget("key time"))?;
+        keys.push(builder.record(
+            time,
+            PropertyValue::String(text),
+            PropertyKeyframeEasing::Hold,
+        ));
+    }
+    // Out-of-order probes on a fresh VM reject counters and stateful scripts
+    // that could otherwise match a second ascending sampling pass.
+    let mut fresh = execution::runtime()?;
+    for time_ms in [owner.end_ms(), owner.start_ms]
+        .into_iter()
+        .chain(owner.times(sampling))
+    {
+        let value = evaluate_text(&mut fresh, code, seed, time_ms, budget)?;
+        let position = keys.partition_point(|key| key.time_ms <= time_ms as i64);
+        if !matches!(&keys[position.saturating_sub(1)].value, PropertyValue::String(expected) if expected == &value)
+        {
+            return Err(BakeError::Validation(time_ms));
+        }
+    }
+    Ok(keys)
+}
+
+fn evaluate_text(
     runtime: &mut ScriptRuntime,
     code: &str,
     seed: u64,
     time_ms: u64,
-    samples: &mut BTreeMap<u64, f64>,
     budget: &mut Budget,
-) -> Result<f64, BakeError> {
-    budget.probe()?;
-    if let Some(value) = samples.get(&time_ms) {
-        return Ok(*value);
-    }
-    let value = evaluate(runtime, code, seed, time_ms, budget)?;
-    samples.insert(time_ms, value);
-    Ok(value)
+) -> Result<String, BakeError> {
+    evaluate_value(runtime, code, seed, time_ms, budget)?
+        .as_string()
+        .and_then(|text| text.to_std_string().ok())
+        .ok_or(BakeError::NonText(time_ms))
 }
 
 fn evaluate(
@@ -473,14 +821,9 @@ fn evaluate_value(
     budget: &mut Budget,
 ) -> Result<JsValue, BakeError> {
     budget.sample()?;
-    let input = json!({
-        "time": {"seconds": time_ms as f64 / 1000.0, "milliseconds": time_ms},
-        "randomSeed": random_seed(seed, time_ms), "deps": [],
-    });
-    let input = JsValue::from_json(&input, runtime.context_mut()).map_err(ScriptError::from)?;
-    let refs = JsValue::from_json(&json!({}), runtime.context_mut()).map_err(ScriptError::from)?;
-    let metadata =
-        JsValue::from_json(&json!({}), runtime.context_mut()).map_err(ScriptError::from)?;
+    let input = input::build(runtime.context_mut(), time_ms, random_seed(seed, time_ms));
+    let refs = input::empty_object(runtime.context_mut());
+    let metadata = input::empty_object(runtime.context_mut());
     install_reference_tables(&input, refs, metadata, runtime.context_mut())?;
     Ok(runtime.call(code, input)?)
 }
@@ -488,18 +831,27 @@ fn evaluate_value(
 fn validate_fresh(
     code: &str,
     seed: u64,
-    duration_ms: u64,
+    owner: Owner,
     fitted: &FittedCurve,
     budget: &mut Budget,
+    sampling: Sampling,
+    dependencies: &dependencies::Program<'_>,
 ) -> Result<(), BakeError> {
     if !fitted.tolerance.is_finite() {
         return Err(BakeError::Unsupported(
             "curve range overflowed the fitting tolerance",
         ));
     }
-    let mut runtime = ScriptRuntime::new()?;
+    let mut runtime = execution::runtime()?;
     let mut left = 0;
-    for time in 0..=duration_ms {
+    // Probe out of order so a counter cannot pass as a time-driven animation.
+    for time in [owner.end_ms(), owner.start_ms]
+        .into_iter()
+        .chain(owner.times(sampling))
+    {
+        if fitted.keys[left].offset_ms > time {
+            left = 0;
+        }
         while left + 1 < fitted.keys.len() && fitted.keys[left + 1].offset_ms <= time {
             left += 1;
         }
@@ -510,7 +862,7 @@ fn validate_fresh(
         } else {
             key.value
         };
-        let actual = evaluate(&mut runtime, code, seed, time, budget)?;
+        let actual = dependencies.evaluate(&mut runtime, code, seed, time, budget)?;
         let error = (actual - expected).abs();
         if !expected.is_finite() || !error.is_finite() || error > fitted.tolerance {
             return Err(BakeError::Validation(time));
@@ -520,6 +872,26 @@ fn validate_fresh(
 }
 
 fn tolerance_cap(target: &PropertyTarget) -> f64 {
+    // Corner Pin coordinates use the logical source plane. A giant invisible
+    // point must not relax the fit of later visible points: doing so can create
+    // a native output extent that the authored animation never requested.
+    // Preserve every sampled coordinate exactly, including the giant points;
+    // this changes neither their values nor the existing sampled-time domain.
+    if let PropertyTarget::EffectProperty(property) = target
+        && matches!(
+            property.param_name(),
+            "upperLeftX"
+                | "upperLeftY"
+                | "upperRightX"
+                | "upperRightY"
+                | "lowerLeftX"
+                | "lowerLeftY"
+                | "lowerRightX"
+                | "lowerRightY"
+        )
+    {
+        return 0.0;
+    }
     let PropertyTarget::LayerProperty(property) = target else {
         return f64::INFINITY;
     };

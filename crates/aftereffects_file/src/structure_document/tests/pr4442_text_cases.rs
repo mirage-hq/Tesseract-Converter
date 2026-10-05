@@ -1098,20 +1098,22 @@ fn source_text_cos(layer: &Layer) -> &[u8] {
     find(&layer.content).expect("Source Text COS payload")
 }
 
-/// `value` as the writer's UTF-16BE COS hex string.
-fn utf16_hex(value: &str) -> Vec<u8> {
-    let mut output = String::from("<FEFF");
-    for unit in value.encode_utf16() {
-        output.push_str(&format!("{unit:04X}"));
-    }
-    output.push('>');
-    output.into_bytes()
-}
-
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack
-        .windows(needle.len())
-        .any(|window| window == needle)
+fn native_document_text(layer: &Layer) -> String {
+    let value = super::super::text::cos::parse(source_text_cos(layer)).unwrap();
+    value
+        .get("1")
+        .unwrap()
+        .get("1")
+        .unwrap()
+        .index(0)
+        .unwrap()
+        .get("0")
+        .unwrap()
+        .get("0")
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_owned()
 }
 
 /// A fresh export of the derived percent source: each held segment stays a
@@ -1174,10 +1176,7 @@ fn slider_percent_segments_export_as_native_text_under_null_parents() {
     assert_eq!(clock.record.parent_id(), layer.record.id());
     for (text, value) in texts.iter().zip(["0%\r", "100%\r"]) {
         assert_eq!(text.record.parent_id(), clock.record.id());
-        assert!(
-            contains(source_text_cos(text), &utf16_hex(value)),
-            "{value:?}"
-        );
+        assert_eq!(native_document_text(text), value);
     }
 }
 
@@ -1267,14 +1266,10 @@ fn native_shown_at(layers: &[Layer], time: f64) -> Vec<&'static str> {
             start + record.in_point().unwrap() * stretch <= time
                 && time < start + record.out_point().unwrap() * stretch
         })
-        .map(|layer| {
-            let cos = source_text_cos(layer);
-            if contains(cos, &utf16_hex("100%\r")) {
-                "100%"
-            } else {
-                assert!(contains(cos, &utf16_hex("0%\r")));
-                "0%"
-            }
+        .map(|layer| match native_document_text(layer).as_str() {
+            "100%\r" => "100%",
+            "0%\r" => "0%",
+            unexpected => panic!("unexpected native Source Text {unexpected:?}"),
         })
         .collect()
 }

@@ -2296,7 +2296,7 @@
         }
       ],
       "fx_input": {
-        "document_sha256": "d5bc0cad11a721606b5686adbc3b1c8b48034117e166051536c501d64da76b5c"
+        "document_sha256": "8205e03fc91f6848c18a2de4ffd021bfa88f9e717c1cf90d2dad26ba207ebe54"
       },
       "reference": {
         "path": "tests/references/aep/audio/group-affine-playback.mp4"

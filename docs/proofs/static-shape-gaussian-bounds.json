@@ -1,0 +1,76 @@
+{
+  "profile": "static Shape Gaussian Blur; Both dimensions; Repeat Edge Pixels false; nominal radius 12 px",
+  "version": "26.5x89",
+  "nativeJobId": "c91a934a9e854c53a2efba538be49671",
+  "scriptSHA256": "bf19b6b8a972f7c0eb2347aba93b69f9b755bb0c5cbf7a697b9669c759594af6",
+  "artifactSHA256": "e91f435dcfebd7846a05e93e780614a3ae6de8a6795284e6d0f3e7529635b930",
+  "nativeControl": {
+    "alternateAlpha": 1,
+    "blurriness": 12,
+    "dimensions": 1,
+    "exceedsAuthoredRadius": false,
+    "passed": true,
+    "repeatEdges": false,
+    "samples": [
+      {
+        "alpha": 1,
+        "outsidePixels": -107.5
+      },
+      {
+        "alpha": 0.98507702350616,
+        "outsidePixels": -7.5
+      },
+      {
+        "alpha": 0.38737067580223,
+        "outsidePixels": 0.5
+      },
+      {
+        "alpha": 0.07250393927097,
+        "outsidePixels": 4.5
+      },
+      {
+        "alpha": 0.00081069191219,
+        "outsidePixels": 8.5
+      },
+      {
+        "alpha": 0,
+        "outsidePixels": 11.5
+      },
+      {
+        "alpha": 0,
+        "outsidePixels": 12.5
+      },
+      {
+        "alpha": 0,
+        "outsidePixels": 13.5
+      },
+      {
+        "alpha": 0,
+        "outsidePixels": 16.5
+      },
+      {
+        "alpha": 0,
+        "outsidePixels": 20.5
+      },
+      {
+        "alpha": 0,
+        "outsidePixels": 24.5
+      },
+      {
+        "alpha": 0,
+        "outsidePixels": 32.5
+      }
+    ],
+    "sourceRect": {
+      "height": 214,
+      "left": -108,
+      "top": -107,
+      "width": 216
+    }
+  },
+  "limits": [
+    "Only the recorded static radius12 native profile was sampled; sparse samples are not general kernel/alpha equivalence proof.",
+    "Fresh fixed generated native full render is covered separately; no new native editable-property readback operation was available within the3-small-operation budget.",
+    "First failed/second wrong-edge-coordinate attempts are not edge-support proof."
+  ]
+}

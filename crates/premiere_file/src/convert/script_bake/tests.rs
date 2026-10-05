@@ -4,23 +4,28 @@
 //! in Rust; no test evaluates keys with a second runtime.
 
 use super::*;
+use crate::test_support::write_archive;
+#[cfg(feature = "ffmpeg-library")]
 use crate::{
     format::{PrProjectFile, PrSequence},
     schema::{PrEffectParamKeys, PrPropertyAnimation, TICKS_PER_MILLISECOND},
-    test_support::write_archive,
 };
 use fx_schema::PropType;
 use serde_json::{json, Value};
+#[cfg(feature = "ffmpeg-library")]
+use std::f64::consts::PI;
 use std::{
-    f64::consts::PI,
     path::{Path, PathBuf},
     sync::Mutex,
 };
+#[cfg(feature = "ffmpeg-library")]
 use tesseract_file::TesseractFile;
 
 /// FX `blurriness` per native Amount of the current Gaussian Blur, and FX
 /// `blurLength` per native Amount of the current Directional Blur.
+#[cfg(feature = "ffmpeg-library")]
 const BLURRINESS_PER_AMOUNT: f64 = 5.7;
+#[cfg(feature = "ffmpeg-library")]
 const BLUR_LENGTH_PER_AMOUNT: f64 = 1.6;
 
 /// The representative red-video fixture: two scripts on a placed, trimmed clip.
@@ -68,6 +73,7 @@ fn set_scripts(document: &mut Value, scripts: &[(Value, &str)]) {
 
 /// Exports `source` in check and write mode through the public entry, which
 /// must report the same diagnostics, and loads the written project.
+#[cfg(feature = "ffmpeg-library")]
 fn export(source: &Path) -> (Vec<Omission>, PrProjectFile) {
     let directory = source.parent().unwrap();
     let check = directory.join("check");
@@ -100,11 +106,13 @@ fn assert_written(diagnostics: &[Omission], count: usize) {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn sequence(project: &PrProjectFile) -> &PrSequence {
     project.single_sequence().unwrap()
 }
 
 /// Native keys as (owner-local ms, value), from the owner's source in-point.
+#[cfg(feature = "ffmpeg-library")]
 fn local(keys: &[crate::schema::PrScalarKeyframe], source_in: i64) -> Vec<(f64, f64)> {
     keys.iter()
         .map(|key| {
@@ -116,6 +124,7 @@ fn local(keys: &[crate::schema::PrScalarKeyframe], source_in: i64) -> Vec<(f64, 
 
 /// Every key lies on `expected`, the script's formula at owner-local ms,
 /// and the keys are not one constant.
+#[cfg(feature = "ffmpeg-library")]
 fn assert_on_curve(keys: &[(f64, f64)], expected: impl Fn(f64) -> f64, tolerance: f64) {
     assert!(
         keys.windows(2).any(|pair| pair[0].1 != pair[1].1),
@@ -130,6 +139,7 @@ fn assert_on_curve(keys: &[(f64, f64)], expected: impl Fn(f64) -> f64, tolerance
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn scalar(
     animations: &[PrPropertyAnimation],
     select: fn(&PrPropertyAnimation) -> bool,
@@ -141,6 +151,7 @@ fn scalar(
         .unwrap_or_else(|| panic!("{animations:?}"))
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn public_export_retains_editable_owner_units_and_local_time_without_changing_source() {
     let directory = tempfile::tempdir().unwrap();
@@ -180,6 +191,7 @@ fn public_export_retains_editable_owner_units_and_local_time_without_changing_so
 
 /// Nonlinear Motion scripts become Premiere's paired Position point, one
 /// uniform Scale and Bezier-eased scalar keys, each on the owner's clock.
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn video_motion_scripts_become_paired_uniform_and_nonlinear_native_keys() {
     let directory = tempfile::tempdir().unwrap();
@@ -304,6 +316,7 @@ fn video_motion_scripts_become_paired_uniform_and_nonlinear_native_keys() {
 
 /// A Position with one scripted axis keeps the static axis at every key of
 /// the one native point.
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn a_single_scripted_position_axis_keeps_the_static_axis_on_every_key() {
     let directory = tempfile::tempdir().unwrap();
@@ -393,6 +406,7 @@ fn script_baking_reports_from_the_evaluation_loop() {
 
 /// Imports the Adobe-derived `fixture`, which packages its media, and
 /// returns its archive and editable document.
+#[cfg(feature = "ffmpeg-library")]
 fn imported(directory: &Path, fixture: &str) -> (PathBuf, Value) {
     let output = directory.join("imported");
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
@@ -433,6 +447,7 @@ fn imported(directory: &Path, fixture: &str) -> (PathBuf, Value) {
 }
 
 /// `archive` with `document` as its project and the same packaged assets.
+#[cfg(feature = "ffmpeg-library")]
 fn rescripted(archive: &Path, document: &Value) -> PathBuf {
     let mut file = TesseractFile::open(archive).unwrap();
     file.replace_project(EditableFxCompositionDocument::from_json_value(document.clone()).unwrap())
@@ -449,11 +464,13 @@ fn rescripted(archive: &Path, document: &Value) -> PathBuf {
 }
 
 /// Owner-local native keys of one binding in an exported project.
+#[cfg(feature = "ffmpeg-library")]
 type NativeKeys = fn(&PrSequence) -> Vec<(f64, f64)>;
 
 /// One owner case: an Adobe-derived fixture, the scripts that replace or
 /// join its animation, the native keys they write, the scripts' curve at
 /// owner-local milliseconds, and the number of baked tracks.
+#[cfg(feature = "ffmpeg-library")]
 type OwnerCase<'a> = (
     &'a str,
     Vec<(Value, &'a str)>,
@@ -463,6 +480,7 @@ type OwnerCase<'a> = (
 );
 
 /// The topmost clip that starts at `ms`.
+#[cfg(feature = "ffmpeg-library")]
 fn clip_at(sequence: &PrSequence, ms: i64) -> &crate::format::PrVideoOccurrence {
     sequence
         .video_occurrences()
@@ -471,6 +489,7 @@ fn clip_at(sequence: &PrSequence, ms: i64) -> &crate::format::PrVideoOccurrence 
 }
 
 /// Owner-local keys of the native parameter `name` of `clip`'s first effect.
+#[cfg(feature = "ffmpeg-library")]
 fn effect_keys(clip: &crate::format::PrVideoOccurrence, name: &str) -> Vec<(f64, f64)> {
     let animation = clip.effects[0]
         .animations
@@ -485,6 +504,7 @@ fn effect_keys(clip: &crate::format::PrVideoOccurrence, name: &str) -> Vec<(f64,
 /// Linear Wipes, a stage group's Motion, graphic Vector Motion, text and
 /// clip Opacity, audio and clip sound Volume, and each kind of mapped effect
 /// parameter.
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn scripts_on_every_owner_kind_reach_their_native_bindings() {
     let ramp = "return 50 + 40 * Math.sin(input.time.seconds * 2);";
@@ -833,6 +853,7 @@ fn scripts_on_every_owner_kind_reach_their_native_bindings() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn tint_amount_bakes_but_range_errors_and_colour_channels_keep_their_scripts() {
     for (parameter, code, baked) in [
@@ -872,10 +893,46 @@ fn tint_amount_bakes_but_range_errors_and_colour_channels_keep_their_scripts() {
     }
 }
 
+/// A script on one tile field of a Replicate's `motionTile` stays a script:
+/// a Count keys all four tile fields, and the unbaked effect is omitted.
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn replicate_tile_scripts_keep_their_scripts() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut document = video_fixture();
+    document["composition"]["dynamics"] = json!({"entries": []});
+    document["composition"]["layers"][0]["effects"] = json!([{
+        "id": 17, "enabled": true, "effect": {
+            "type": "motionTile", "tileCenterX": 0.25, "tileCenterY": 0.25,
+            "tileWidth": 50, "tileHeight": 50, "outputWidth": 100, "outputHeight": 100,
+            "mirrorEdges": false, "phase": 0
+        }
+    }]);
+    set_scripts(
+        &mut document,
+        &[(effect_target(17, "tileWidth"), "return 25;")],
+    );
+    let source = archive(directory.path(), &document);
+    let (diagnostics, project) = export(&source);
+    let found = reasons(&diagnostics);
+    assert!(
+        found.iter().any(|reason| reason.contains("0 of 1 scripts")),
+        "{found:?}"
+    );
+    assert!(
+        found
+            .iter()
+            .any(|reason| reason.contains("native Replicate Count keys couple four tile fields")),
+        "{found:?}"
+    );
+    assert!(clip_at(sequence(&project), 500).effects.is_empty());
+}
+
 /// Scripts on the two outputs of a Levels in Invert's form key one Invert
 /// Blend With Original when the output black is the output white's
 /// complement, as the writer exports such keys; other output scripts key
 /// the Levels outputs.
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn complementary_invert_outputs_key_blend_with_original() {
     let white = "return 255 * (0.3 + 0.5 * Math.sin(input.time.seconds * Math.PI / 3));";
@@ -958,6 +1015,7 @@ fn nested_fixture() -> Value {
 
 /// The project that the public entry writes for `source`, before its XML:
 /// the same preparation, inspection and writer, of the fixture's one video.
+#[cfg(feature = "ffmpeg-library")]
 fn written_model(source: &Path) -> PrProjectFile {
     let file = TesseractFile::open(source).unwrap();
     let asset = file.asset("premiere-video-1").unwrap();
@@ -988,6 +1046,7 @@ fn written_model(source: &Path) -> PrProjectFile {
 
 /// A nest placement and a clip inside it each take keys on their own clock:
 /// the group's from its start, the clip's from its source in-point.
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn nested_owners_keep_owner_local_clocks_through_their_offsets() {
     let rotation_script = "return 30 * Math.sin(input.time.seconds * 3);";
@@ -1036,8 +1095,8 @@ fn nested_owners_keep_owner_local_clocks_through_their_offsets() {
         ],
     );
     let source = archive(directory.path(), &raw);
-    // The crate's reader omits keyed nest placements, so the written project
-    // cannot be read back; check the model that the public entry writes.
+    // The crate's reader omits nest placements with effects, so the written
+    // project cannot be read back; check the model that the public entry writes.
     let check = directory.path().join("check");
     let diagnostics = crate::tesseract_to_premiere(&source, &check, true).unwrap();
     assert_written(&diagnostics, 3);
@@ -1219,6 +1278,7 @@ fn evaluation_stacks_follow_the_longest_source() {
 /// Graphic Position and text Rotation have no verified Bezier speeds, so
 /// their scripts become Linear and Hold keys; text Opacity and the uniform
 /// Scales of text and Vector Motion keep Bezier.
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn graphic_parameters_without_verified_bezier_take_linear_keys() {
     let directory = tempfile::tempdir().unwrap();
@@ -1326,6 +1386,7 @@ fn graphic_parameters_without_verified_bezier_take_linear_keys() {
 
 /// Authored keys keep their export; a pair that one native track cannot
 /// hold keeps its script, reported with the reason.
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn authored_keys_are_unchanged_and_unrepresentable_pairs_keep_their_scripts() {
     let directory = tempfile::tempdir().unwrap();
@@ -1424,7 +1485,10 @@ fn failing_and_history_dependent_scripts_keep_their_animator() {
         ("return [1, 2];", "the script did not return a finite number"),
         ("return input.time.seconds > 1 ? Infinity : 50;", "the script did not return a finite number at layer time 1001 ms"),
         ("throw new Error('failed');", "the script failed: layer 1 opacity (the script failed at layer time 0 ms: Error: failed (unknown at :9:7))"),
-        ("while (true) {}", "the script failed"),
+        // Loop-iteration policy was removed; nontermination now requires
+        // caller-owned process termination, not a recoverable VM error.
+        // Keep loop-body failure coverage without relying on that old cap.
+        ("for (let i = 0; i < 10; i++) { if (i === 9) throw new Error('loop failed'); }", "the script failed"),
         ("return input.time + 1;", "the script failed"),
         // Ascending samples are 1, 2, 3, ...; a fresh realm's descending
         // probe returns 1 at the window end.
@@ -1518,10 +1582,10 @@ fn unsupported_scripts_are_reported_by_reason_without_evaluation() {
                 raw["composition"]["layers"][0]["effects"] = json!([{"id": 7, "enabled": true, "effect": {"type": "posterizeTime", "frameRate": 12}}]);
             },
         ),
-        ("posterize has no Premiere effect mapping", |raw| {
+        ("vignette has no Premiere effect mapping", |raw| {
             raw["composition"]["layers"][0]["effects"] =
-                json!([{"id": 7, "enabled": true, "effect": {"type": "posterize", "levels": 7.0}}]);
-            raw["composition"]["dynamics"]["entries"][0]["target"] = effect_target(7, "levels");
+                json!([{"id": 7, "enabled": true, "effect": {"type": "vignette", "amount": 0.5}}]);
+            raw["composition"]["dynamics"]["entries"][0]["target"] = effect_target(7, "amount");
         }),
         (
             "graphic shapes export without keys; a keyed shape omits its graphic",
@@ -1591,6 +1655,7 @@ fn unsupported_scripts_are_reported_by_reason_without_evaluation() {
 
 /// Aggregate budgets stop the export before publication; a track over the
 /// native key limit keeps its script. Nothing is truncated.
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn budgets_stop_the_export_without_the_former_track_key_quota() {
     let document = EditableFxCompositionDocument::from_json_value(video_fixture()).unwrap();
@@ -1696,6 +1761,7 @@ fn script_source_above_former_byte_quota_becomes_editable_keys() {
 
 /// A baked track whose owner export omits is reported under that owner and
 /// not counted as written.
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn baked_tracks_that_export_discards_are_reported_under_their_owner() {
     let directory = tempfile::tempdir().unwrap();
@@ -1731,6 +1797,7 @@ fn baked_tracks_that_export_discards_are_reported_under_their_owner() {
 
 /// Without a script, export neither copies the document nor reports
 /// anything, and writes what the writer alone writes.
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn documents_without_scripts_export_unchanged_without_a_copy() {
     let mut raw = video_fixture();
@@ -1963,6 +2030,7 @@ fn paired_axes_share_keys_within_each_tolerance() {
 
 /// A cubic ramp into a jump becomes keys that Premiere's scalar keys hold:
 /// no cubic arrival into a key that starts a Hold.
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn cubic_arrivals_into_holds_are_refitted_for_native_scalar_keys() {
     let code =

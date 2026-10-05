@@ -1,0 +1,188 @@
+{
+  "source_aep_sha256": "cd84c6fc05ab2c5f960c0660fcc367d18ad013089cc987596e29c185c60e1c2e",
+  "source_composition_id": 1,
+  "native_key_edit": {
+    "request_id": "accuracy-R06-color-key-editability-v1",
+    "artifact_sha256": "0fb21d108ee8353648d9c72e4e8c4667b4bb17af67716cce2b94a772a7661375",
+    "script_sha256": "f913ba9576709ef6d01548ec57519477b25599737143280b8e07a0242569340c",
+    "generated_input_sha256": "c3634d0ad66ef54ea304a7991b43aa78b6ac5457be00788e21decdb4101258cd",
+    "readback": {
+      "after": {
+        "amount": 73,
+        "key": [
+          0.89999997615814,
+          0.69999998807907,
+          0.60000002384186,
+          0
+        ],
+        "sample": [
+          0.49999998807907,
+          0.44999999403954,
+          0.45000001192093,
+          0
+        ],
+        "white": [
+          0.52,
+          1,
+          0.7,
+          0
+        ]
+      },
+      "before": {
+        "amount": 73,
+        "key": [
+          0.8,
+          0.7,
+          0.6,
+          0
+        ],
+        "white": [
+          0.52,
+          1,
+          0.7,
+          0
+        ]
+      },
+      "editAccepted": true,
+      "reopened": {
+        "amount": 73,
+        "key": [
+          0.89999997615814,
+          0.69999998807907,
+          0.60000002384186,
+          0
+        ],
+        "sample": [
+          0.49999998807907,
+          0.44999999403954,
+          0.45000001192093,
+          0
+        ],
+        "white": [
+          0.52,
+          1,
+          0.7,
+          0
+        ]
+      }
+    },
+    "cleanup_ready": "verified by managed publication",
+    "scope": "Same-host native key/ease edit and save/reopen; keyed EffectColor does not reproduce static control hidden-parent failure."
+  },
+  "independent_native_reference": {
+    "request_id": "accuracy-R06-color-native-reference30-v1",
+    "artifact_sha256": "35809a40e6d0e32fdffd5d1e16985138e1d8a4275a761e9be3f86301dc36c550",
+    "bytes": 13097,
+    "inspection": {
+      "artifact_sha256": "35809a40e6d0e32fdffd5d1e16985138e1d8a4275a761e9be3f86301dc36c550",
+      "source_sha256": "cd84c6fc05ab2c5f960c0660fcc367d18ad013089cc987596e29c185c60e1c2e",
+      "source_fps": 24,
+      "source_duration": 1.25,
+      "output_fps": "30/1",
+      "frames": 38,
+      "duration": "1.266667",
+      "samples": [
+        {
+          "requested_time": 0,
+          "frame": 0,
+          "timestamp": 0.0,
+          "center_rgb": [
+            89,
+            145,
+            126
+          ]
+        },
+        {
+          "requested_time": 0.125,
+          "frame": 4,
+          "timestamp": 0.13333333333333333,
+          "center_rgb": [
+            97,
+            150,
+            130
+          ]
+        },
+        {
+          "requested_time": 0.25,
+          "frame": 8,
+          "timestamp": 0.26666666666666666,
+          "center_rgb": [
+            108,
+            154,
+            132
+          ]
+        },
+        {
+          "requested_time": 0.5,
+          "frame": 15,
+          "timestamp": 0.5,
+          "center_rgb": [
+            129,
+            168,
+            141
+          ]
+        },
+        {
+          "requested_time": 0.75,
+          "frame": 22,
+          "timestamp": 0.7333333333333333,
+          "center_rgb": [
+            148,
+            182,
+            147
+          ]
+        },
+        {
+          "requested_time": 0.875,
+          "frame": 26,
+          "timestamp": 0.8666666666666667,
+          "center_rgb": [
+            158,
+            187,
+            152
+          ]
+        },
+        {
+          "requested_time": 1,
+          "frame": 30,
+          "timestamp": 1.0,
+          "center_rgb": [
+            165,
+            190,
+            154
+          ]
+        },
+        {
+          "requested_time": 1.2,
+          "frame": 36,
+          "timestamp": 1.2,
+          "center_rgb": [
+            165,
+            190,
+            154
+          ]
+        }
+      ],
+      "inspection": "Full RGB decode; no blank/error slate. Gray solid native Tint has discriminating RGB COLOR progression before/at/between/after1sec key. Numeric decoded-center check, not converter RGB comparison or alpha/audio proof."
+    },
+    "cleanup_ready": "verified by managed publication",
+    "source_unchanged": true,
+    "long_term_asset": "UNPUBLISHED: uploader executable unavailable in scoped workspace paths"
+  },
+  "validation": {
+    "color_filter_job": 1714,
+    "passed": 37,
+    "ignored": 5,
+    "workspace_job": 1715,
+    "workspace_passed": 1670,
+    "workspace_failed": 12,
+    "workspace_ignored": 411,
+    "workspace_result": "FAIL, same baseline failures; no suite pass"
+  },
+  "limitations": [
+    "Reference render is independent Adobe source at native30fps sampling, not a converter-output comparison.",
+    "Original32x32/24fps/1.25sec source preserved; output1.266667sec/38frames30fps is native output sampling, not trimming or resampling.",
+    "Long-term Asset publication/download/hash verification incomplete.",
+    "RGB full-frame equality, alpha/audio, Tint kernel and original49 fidelity unproved."
+  ]
+}

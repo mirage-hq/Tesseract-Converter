@@ -1,0 +1,117 @@
+<PremiereData Version="3">
+  <Sequence ObjectUID="d40c25d5-0359-473e-974e-24f423007763"><Name>Black Video native occurrence</Name><TrackGroups><TrackGroup><Second ObjectRef="1"/></TrackGroup></TrackGroups></Sequence>
+  <VideoTrackGroup ObjectID="1"><TrackGroup><Tracks><Track ObjectURef="track-1"/></Tracks><FrameRate>8475667200</FrameRate></TrackGroup><FrameRect>0,0,2160,3840</FrameRect><ComponentOwner><Components ObjectRef="2"/></ComponentOwner></VideoTrackGroup>
+  <VideoComponentChain ObjectID="2"><ComponentChain/></VideoComponentChain>
+  <VideoClipTrack ObjectUID="track-1"><ClipTrack><Track><ID>1</ID></Track><ClipItems><TrackItems><TrackItem ObjectRef="1172"/></TrackItems></ClipItems></ClipTrack></VideoClipTrack>
+	<MasterClip ObjectUID="2160ab06-9d6a-4b1a-ad9a-9ffdc9e5e81b" ClassID="fb11c33a-b0a9-4465-aa94-b6d5db2628cf" Version="12">
+		<LoggingInfo ObjectRef="71"/>
+		<Clips Version="1">
+			<Clip Index="0" ObjectRef="72"/>
+		</Clips>
+		<AudioClipChannelGroups ObjectRef="73"/>
+		<Name>Black Video</Name>
+		<MasterClipChangeVersion>9</MasterClipChangeVersion>
+	</MasterClip>
+	<ClipLoggingInfo ObjectID="71" ClassID="77ab7fdd-dcdf-465d-9906-7a330ca1e738" Version="10">
+		<CaptureMode>2</CaptureMode>
+		<ClipName>Black Video</ClipName>
+		<MediaFrameRate>8475667200</MediaFrameRate>
+		<TimecodeFormat>102</TimecodeFormat>
+	</ClipLoggingInfo>
+	<VideoClip ObjectID="72" ClassID="9308dbef-2440-4acb-9ab2-953b9a4e82ec" Version="11">
+		<Clip Version="18">
+			<Node Version="1">
+				<Properties Version="1">
+					<BE.Prefs.SyntheticMedia.DefaultIsDropFrame>true</BE.Prefs.SyntheticMedia.DefaultIsDropFrame>
+					<asl.clip.label.name>BE.Prefs.LabelColors.7</asl.clip.label.name>
+					<asl.clip.label.color>16711808</asl.clip.label.color>
+				</Properties>
+			</Node>
+			<Source ObjectRef="389"/>
+			<ClipID>20b68366-e34e-406d-bbe6-a3ae7f519722</ClipID>
+			<InUse>false</InUse>
+			<InPoint>0</InPoint>
+			<OutPoint>245794348800</OutPoint>
+		</Clip>
+	</VideoClip>
+	<ClipChannelGroupVectorSerializer ObjectID="73" ClassID="a3127a8c-95d4-456e-a7f5-171b3f922426" Version="1">
+	</ClipChannelGroupVectorSerializer>
+	<VideoMediaSource ObjectID="389" ClassID="e64ddf74-8fac-4682-8aa8-0e0ca2248949" Version="2">
+		<MediaSource Version="4">
+			<Content Version="10">
+			</Content>
+			<Media ObjectURef="e2bcda88-84c4-4736-b083-7430bd7d928e"/>
+		</MediaSource>
+		<OriginalDuration>10973491200000000</OriginalDuration>
+	</VideoMediaSource>
+	<Media ObjectUID="e2bcda88-84c4-4736-b083-7430bd7d928e" ClassID="7a5c103e-f3ac-4391-b6b4-7cc3d2f9a7ff" Version="30">
+		<VideoStream ObjectRef="930"/>
+		<ModificationState Encoding="base64" BinaryHash="05586341-df20-7a95-1837-93430000001c"/>
+		<FilePath>1112293707</FilePath>
+		<ImplementationID>42008e7a-de6f-4270-96de-7e287abb9b4b</ImplementationID>
+		<Infinite>true</Infinite>
+		<Title>Black Video</Title>
+		<ActualMediaFilePath>1112293707</ActualMediaFilePath>
+	</Media>
+	<VideoStream ObjectID="930" ClassID="a36e4719-3ec6-4a0c-ab11-8b4aab377aa5" Version="22">
+		<CodecType>1431194446</CodecType>
+		<IsStill>true</IsStill>
+		<IsContinuousTime>true</IsContinuousTime>
+		<OriginalColorSpace>{"baseColorProfile":{"colorProfileName":"BT.709 RGB Full"},"baseProfileType":1}</OriginalColorSpace>
+		<FieldTypeIsUncertain>true</FieldTypeIsUncertain>
+		<FrameRate>8475667200</FrameRate>
+		<Duration>10973491200000000</Duration>
+		<FrameRect>0,0,2160,3840</FrameRect>
+	</VideoStream>
+	<VideoClipTrackItem ObjectID="1172" ClassID="368b0406-29e3-4923-9fcd-094fbf9a1089" Version="8">
+		<ClipTrackItem Version="8">
+			<ComponentOwner Version="1">
+				<Components ObjectRef="1374"/>
+			</ComponentOwner>
+			<TrackItem Version="4">
+				<Start>7662003148800</Start>
+				<End>8094262176000</End>
+			</TrackItem>
+			<SubClip ObjectRef="1375"/>
+		</ClipTrackItem>
+		<ToneMapSettings>{"peak":-1,"version":100}</ToneMapSettings>
+		<FrameRect>0,0,2160,3840</FrameRect>
+		<PixelAspectRatio>1,1</PixelAspectRatio>
+		<IsCreatedWithNewColorManagement>true</IsCreatedWithNewColorManagement>
+	</VideoClipTrackItem>
+	<VideoComponentChain ObjectID="1374" ClassID="0970e08a-f58f-4108-b29a-1a717b8e12e2" Version="3">
+		<DefaultMotion>true</DefaultMotion>
+		<DefaultOpacity>true</DefaultOpacity>
+		<DefaultMotionComponentID>1</DefaultMotionComponentID>
+		<DefaultOpacityComponentID>2</DefaultOpacityComponentID>
+		<ComponentChain Version="3">
+			<Node Version="1">
+				<Properties Version="1">
+					<MZ.ComponentChain.ActiveComponentID>2</MZ.ComponentChain.ActiveComponentID>
+					<MZ.ComponentChain.ActiveComponentParamIndex>4294967295</MZ.ComponentChain.ActiveComponentParamIndex>
+				</Properties>
+			</Node>
+		</ComponentChain>
+	</VideoComponentChain>
+	<SubClip ObjectID="1375" ClassID="e0c58dc9-dbdd-4166-aef7-5db7e3f22e84" Version="6">
+		<Clip ObjectRef="1671"/>
+		<MasterClip ObjectURef="2160ab06-9d6a-4b1a-ad9a-9ffdc9e5e81b"/>
+		<OrigChGrp>0</OrigChGrp>
+		<Name>Black Video</Name>
+	</SubClip>
+	<VideoClip ObjectID="1671" ClassID="9308dbef-2440-4acb-9ab2-953b9a4e82ec" Version="11">
+		<Clip Version="18">
+			<Node Version="1">
+				<Properties Version="1">
+					<BE.Prefs.SyntheticMedia.DefaultIsDropFrame>true</BE.Prefs.SyntheticMedia.DefaultIsDropFrame>
+					<asl.clip.label.name>BE.Prefs.LabelColors.7</asl.clip.label.name>
+					<asl.clip.label.color>16711808</asl.clip.label.color>
+				</Properties>
+			</Node>
+			<Source ObjectRef="389"/>
+			<ClipID>f041f31c-6bdc-4366-a39e-8cfe2604a8d6</ClipID>
+			<InPoint>914456685542400</InPoint>
+			<OutPoint>914888944569600</OutPoint>
+		</Clip>
+	</VideoClip>
+</PremiereData>

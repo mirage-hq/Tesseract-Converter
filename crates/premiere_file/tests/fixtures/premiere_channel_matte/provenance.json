@@ -1,0 +1,65 @@
+{
+  "application": "Premiere Pro",
+  "version": "26.5.2",
+  "sequenceUID": "715705e9-74fa-46ba-a637-f2f8bfddd5e3",
+  "placementTicks": [
+    0,
+    254016000000
+  ],
+  "sourceTicks": [
+    127008000000,
+    381024000000
+  ],
+  "operatorLocation": "Inside the referenced AEP composition, not on the Premiere clip",
+  "aep": {
+    "alphas": [
+      100,
+      50,
+      0
+    ],
+    "colors": [
+      [
+        0.8,
+        0.2,
+        0.1
+      ],
+      [
+        0.1,
+        0.7,
+        0.3
+      ],
+      [
+        0.2,
+        0.4,
+        0.9
+      ]
+    ],
+    "rows": [
+      {
+        "channel": 2,
+        "composition": 34,
+        "name": "Set Matte Green",
+        "provider": 46,
+        "target": 47
+      },
+      {
+        "channel": 3,
+        "composition": 48,
+        "name": "Set Matte Blue",
+        "provider": 60,
+        "target": 61
+      }
+    ]
+  },
+  "hashes": {
+    "author-ae.jsx": "1f37395fa02805c8065fc7955b1a552e549bf3b12b3be976a28b9c64a9dd30e0",
+    "aep.aep": "5af3f8e4809e4d1f11878b08128df1eb778983dd10a0c9b10f52b58b428c4efc",
+    "author-premiere.jsx": "93d8676b8be3721bc09379b05433d4d580294f070490fe6e2eaeddc34774d180",
+    "native.prproj": "57602c5967104c8e15047092e3e6610d1462f5459ce5833e6643e80747c486ec",
+    "video.mp4": "38e257ad454d877f66e5d3ae9b54dd244bed84f41b4ae284011399a136507614"
+  },
+  "path_sanitization_original_sha256": {
+    "aep.aep": "432dde2e16ac3aec5ef6c8deefbdfbd86dbeb19e30cce61638a21f9134160d3e",
+    "native.prproj": "f8eaae8261dfa3b2554e551626ed87b00f97dfeeabb01192992295a7504dc653"
+  }
+}

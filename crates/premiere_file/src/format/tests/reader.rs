@@ -1,8 +1,12 @@
+use super::effects::{transform_26_5_xml, DEFAULT_TRANSFORM};
 use crate::{
     format::{
         inspect_project, inspect_project_with_media, inspect_project_with_omissions, FrameRate,
     },
-    schema::TICKS,
+    schema::{
+        PrEffectParamKeys, PrEffectParams, PrSourceEffects, PrVideoOccurrence, TICKS,
+        TRANSFORM_OPACITY,
+    },
     test_support::{one_clip_xml, OneClip},
     tests::support::project_document_with_media,
     OmissionScope,
@@ -208,8 +212,7 @@ fn a_version_6_cross_dissolve_reads_its_omitted_controls_as_defaults() {
         )
     );
     assert!(transition.outgoing_clip.is_none() && transition.incoming_clip.is_some());
-    // Only a static Color Matte's head converts: on this video the
-    // transition is reported, not dropped.
+    // The default head now converts on an ordinary video too.
     let mut omissions = Vec::new();
     let ids = crate::tesseract_output::asset_ids_in_order(sequence, &project.media);
     crate::convert::premiere_to_tesseract(sequence, &project.media, &ids, &mut omissions).unwrap();
@@ -217,11 +220,8 @@ fn a_version_6_cross_dissolve_reads_its_omitted_controls_as_defaults() {
         omissions
             .iter()
             .any(|omission| omission.record == "VideoTransitionTrackItem:60"
-                && omission.kind == crate::OmissionKind::Omitted
-                && omission.reason.contains("Cross Dissolve detected")
-                && omission
-                    .reason
-                    .contains("only a Color Matte's head converts")),
+                && omission.kind == crate::OmissionKind::Approximated
+                && omission.reason.contains("Cross Dissolve New retained")),
         "{omissions:?}"
     );
     // A Version 5 record still saves each control, and so must have it; a
@@ -247,6 +247,50 @@ fn a_version_6_cross_dissolve_reads_its_omitted_controls_as_defaults() {
             "{field}: {omissions:?}"
         );
     }
+}
+
+#[test]
+fn an_omitted_transition_start_keeps_the_zero_origin_head() {
+    // Native zero-origin transitions omit Start (as does the source clip).
+    let transition = version_6_dissolve(0, TICKS / 4).replace("<Start>0</Start>", "");
+    let xml = SOURCE
+        .replace(
+            "</ClipItems></ClipTrack>",
+            "</ClipItems><TransitionItems><TrackItems><TrackItem ObjectRef=\"60\"/></TrackItems></TransitionItems></ClipTrack>",
+        )
+        .replace(
+            "<SubClip ObjectRef=\"5\"/></ClipTrackItem>",
+            "<SubClip ObjectRef=\"5\"/><HeadTransition ObjectRef=\"60\"/></ClipTrackItem>",
+        )
+        .replace("</PremiereData>", &format!("{transition}</PremiereData>"));
+    let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let transitions = &project.single_sequence().unwrap().video_tracks[0].transitions;
+    assert_eq!(transitions.len(), 1);
+    assert_eq!(transitions[0].start_ticks, 0);
+    assert_eq!(transitions[0].cut_ticks, 0);
+    assert_eq!(transitions[0].end_ticks, TICKS / 4);
+    assert_eq!(
+        transitions[0].incoming_clip.as_deref(),
+        Some("VideoClipTrackItem:3")
+    );
+    assert!(transitions[0].outgoing_clip.is_none());
+
+    // Absence is the default; an explicitly malformed value is not.
+    let malformed = xml.replace(
+        "<TransitionTrackItem><TrackItem>",
+        "<TransitionTrackItem><TrackItem><Start>invalid</Start>",
+    );
+    let (project, omissions) = inspect_project_with_omissions(&malformed, None).unwrap();
+    assert!(project.single_sequence().unwrap().video_tracks[0]
+        .transitions
+        .is_empty());
+    assert!(
+        omissions
+            .iter()
+            .any(|omission| { omission.record == "60" && omission.reason.contains("Start") }),
+        "{omissions:?}"
+    );
 }
 
 #[test]
@@ -405,13 +449,28 @@ fn sequence_and_media_frame_rates_come_from_their_own_records() {
     let video = project.media(occurrence).unwrap().video.as_ref().unwrap();
     assert_eq!(video.frame_rate, media_rate.into());
 
-    // An unlisted sequence rate fails its timeline. A nonpositive source
+    // Even a sub-millisecond native sequence keeps its exact positive period.
+    let native = one_clip_xml(OneClip {
+        sequence_frame: 1,
+        ..OneClip::default()
+    });
+    let native = crate::format::inspect_project_with_media(&native, None).unwrap();
+    assert_eq!(
+        native
+            .single_sequence()
+            .unwrap()
+            .frame_rate
+            .ticks_per_frame(),
+        1
+    );
+
+    // A nonpositive sequence rate fails its timeline. A nonpositive source
     // duration omits that media; positive physical source durations are checked
     // against exact container timing at import preparation.
     for (timing, reason, omitted) in [
         (
             OneClip {
-                sequence_frame: 123,
+                sequence_frame: 0,
                 ..OneClip::default()
             },
             "VideoTrackGroup:1: unsupported video frame rate",
@@ -552,7 +611,7 @@ fn unknown_feature_and_bad_occurrence_leave_valid_cut() {
 #[test]
 fn pinned_adobe_vhsvertical_selected_sequence_defines_native_reverse_fields() {
     // Byte identity is pinned in tests/manifest.json (SHA-256
-    // f16803da67c3e18eca9f102b7410a62a9609cf723ae8b1351c4b99169a5a1ef0).
+    // b95b1cbe44b1990fa2d9cc0c8a0bb893ad124f281e53b97b00a2396c1c14d7ca).
     let bytes = include_bytes!("../../../tests/fixtures/vhsvertical.prproj");
     let mut xml = String::new();
     flate2::read::GzDecoder::new(bytes.as_slice())
@@ -633,7 +692,7 @@ fn pinned_adobe_vhsvertical_selected_sequence_defines_native_reverse_fields() {
 }
 
 #[test]
-fn isolated_reverse_fixture_has_only_the_reviewed_native_element_diff() {
+fn isolated_reverse_fixture_differs_from_its_base_only_in_reverse_elements() {
     fn decode(bytes: &[u8]) -> String {
         let mut xml = String::new();
         flate2::read::GzDecoder::new(bytes)
@@ -817,7 +876,7 @@ fn custom_canvases_keep_their_size_and_place_the_source_by_its_own_frame() {
 }
 
 #[test]
-fn malformed_or_non_square_frames_are_rejected() {
+fn frame_dimensions_and_source_pixel_aspect_are_validated() {
     let invalid = [
         "0,0,0,1920",
         "0,0,1080,-1920",
@@ -846,25 +905,51 @@ fn malformed_or_non_square_frames_are_rejected() {
             "{frame}: {error}"
         );
     }
-    for (xml, expected) in [
-        (
-            SOURCE.replace(
-                "</TrackGroup><FrameRect>0,0,1920,1080</FrameRect>",
-                "</TrackGroup><FrameRect>0,0,1920,1080</FrameRect><PixelAspectRatio>2,1</PixelAspectRatio>",
-            ),
-            "non-square sequence pixels (2:1) are unsupported",
-        ),
-        (
-            SOURCE.replace(
-                "<FrameRect>0,0,1920,1080</FrameRect></VideoStream>",
-                "<FrameRect>0,0,1920,1080</FrameRect><PixelAspectRatio>2,1</PixelAspectRatio></VideoStream>",
-            ),
-            "VideoStream:8: non-square source pixels (2:1) are unsupported",
-        ),
-    ] {
-        assert_ne!(xml, SOURCE);
-        let error = inspect_project(&xml, None).unwrap_err().to_string();
-        assert!(error.contains(expected), "{expected}: {error}");
+    let sequence = SOURCE.replace(
+        "</TrackGroup><FrameRect>0,0,1920,1080</FrameRect>",
+        "</TrackGroup><FrameRect>0,0,1920,1080</FrameRect><PixelAspectRatio>2,1</PixelAspectRatio>",
+    );
+    assert_ne!(sequence, SOURCE);
+    let error = inspect_project(&sequence, None).unwrap_err().to_string();
+    assert!(
+        error.contains("non-square sequence pixels (2:1) are unsupported"),
+        "{error}"
+    );
+
+    // Source pixels now normalize into editable scale; the canvas stays square.
+    let source = SOURCE.replace(
+        "<FrameRect>0,0,1920,1080</FrameRect></VideoStream>",
+        "<FrameRect>0,0,1920,1080</FrameRect><PixelAspectRatio>2,1</PixelAspectRatio></VideoStream>",
+    );
+    assert_ne!(source, SOURCE);
+    let sequence = inspect_project(&source, None).unwrap();
+    assert_eq!((sequence.width, sequence.height), (1920, 1080));
+}
+
+#[test]
+fn missing_par_override_uses_valid_inherited_ratio_with_a_warning() {
+    for field in ["OriginalPAR", "PixelAspectRatio"] {
+        let xml = SOURCE.replace(
+            "<FrameRect>0,0,1920,1080</FrameRect></VideoStream>",
+            &format!("<FrameRect>0,0,1920,1080</FrameRect><IsPAROverridden>true</IsPAROverridden><{field}>2,1</{field}></VideoStream>"),
+        );
+        let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+        assert_eq!(
+            project
+                .single_sequence()
+                .unwrap()
+                .video_occurrences()
+                .count(),
+            1
+        );
+        assert!(omissions.iter().any(
+            |note| note.reason.contains("missing OverriddenPAR") && note.reason.contains("2:1")
+        ));
+        let invalid = xml.replace(
+            &format!("<{field}>2,1</{field}>"),
+            &format!("<{field}>0,1</{field}>"),
+        );
+        assert!(inspect_project(&invalid, None).is_err());
     }
 }
 
@@ -1027,6 +1112,927 @@ fn source_effects_and_ambiguous_optional_defaults_are_not_dropped() {
     assert!(error.contains("source identity mismatch"), "{error}");
 }
 
+// The Premiere 26.5.1 save of the structural-only native case
+// `premiere_isolated_source_effects_26_5` (SHA-256
+// ac389ca62556d580b9b6171de44d73f3e44f763f333aa863c5e85f84b8f98820), which
+// tests/manifest.json does not register: it lists only strict
+// `video_reference` cases.
+const SOURCE_EFFECTS: &[u8] =
+    include_bytes!("../../../tests/fixtures/feature_source_effects_26_5.prproj");
+
+fn gunzip(bytes: &[u8]) -> String {
+    let mut xml = String::new();
+    flate2::read::GzDecoder::new(bytes)
+        .read_to_string(&mut xml)
+        .unwrap();
+    xml
+}
+
+#[test]
+fn a_duplicate_master_component_chain_omits_only_its_placement() {
+    // Supplementary: the first of two cuts plays master-1, the second master-2.
+    // A repeated chain is ambiguous; like any repeated declared field, it
+    // stops master-1 from decoding.
+    const CHAIN: &str = "<VideoComponentChain ObjectRef='20'/>";
+    let with_chains = |chains: &str| {
+        two_cuts_xml()
+            .replace(
+                "<Clip ObjectRef=\"6\"/>",
+                "<Clip ObjectRef=\"6\"/><MasterClip ObjectURef='master-1'/>",
+            )
+            .replace(
+                "</PremiereData>",
+                &format!(
+                    "<MasterClip ObjectUID='master-1'>{chains}<Clips><Clip ObjectRef='21'/></Clips></MasterClip><VideoClip ObjectID='21'><Clip><Source ObjectRef='7'/></Clip></VideoClip><VideoComponentChain ObjectID='20'><ComponentChain/></VideoComponentChain></PremiereData>"
+                ),
+            )
+    };
+    let reports_chain = |omissions: &[crate::Omission]| {
+        omissions.iter().any(|item| {
+            item.scope == OmissionScope::Feature
+                && item.record == "MasterClip:master-1"
+                && item.reason == "VideoComponentChain not converted"
+        })
+    };
+    let cuts = |project: &crate::schema::PrProjectFile| -> Vec<_> {
+        project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .map(|clip| clip.timeline_ticks())
+            .collect()
+    };
+
+    // The cut that plays master-2.
+    let sibling = 508_032_000_000..1_278_547_200_000;
+
+    let (project, omissions) = inspect_project_with_omissions(&with_chains(CHAIN), None).unwrap();
+    assert_eq!(cuts(&project), [0..508_032_000_000, sibling.clone()]);
+    // The one chain, empty, is carried for import rather than reported.
+    let carried: Vec<_> = project
+        .single_sequence()
+        .unwrap()
+        .video_occurrences()
+        .map(|clip| clip.source_effects.clone())
+        .collect();
+    assert_eq!(
+        carried,
+        [
+            Some(PrSourceEffects {
+                master: "MasterClip:master-1".to_owned(),
+                effects: Vec::new(),
+                active_transforms: 0,
+            }),
+            None,
+        ]
+    );
+    assert!(!reports_chain(&omissions), "{omissions:?}");
+
+    let (project, omissions) =
+        inspect_project_with_omissions(&with_chains(&CHAIN.repeat(2)), None).unwrap();
+    assert_eq!(cuts(&project), [sibling]);
+    assert!(
+        omissions
+            .iter()
+            .any(|item| item.scope == OmissionScope::Occurrence
+                && item.record == "3"
+                && item
+                    .reason
+                    .contains("duplicate field `VideoComponentChain`")),
+        "{omissions:?}"
+    );
+    // That omission names the chain; nothing else reports it.
+    assert!(!reports_chain(&omissions), "{omissions:?}");
+}
+
+/// The sequence of `SOURCE_EFFECTS`: on V2, P1 plays 1-4 s from source 1 s,
+/// P2 5-8 s from source 2 s, and P3, disabled, 8-10 s from source 1 s.
+const SOURCE_EFFECTS_SEQUENCE: &str = "1fa92cc6-5dc6-4866-8ce9-4c5b2c9af9c0";
+
+/// The video placements of the source-effects sequence in `xml` that play
+/// the timecoded source, by start: all but the grey backdrop still.
+fn source_effects_placements(xml: &str) -> (Vec<PrVideoOccurrence>, Vec<crate::Omission>) {
+    let (project, omissions) =
+        inspect_project_with_omissions(xml, Some(SOURCE_EFFECTS_SEQUENCE)).unwrap();
+    let mut placements: Vec<_> = project
+        .sequences()
+        .flat_map(|sequence| sequence.video_occurrences())
+        .filter(|clip| {
+            project.media[&clip.media]
+                .video
+                .as_ref()
+                .is_some_and(|video| !video.kind.is_still())
+        })
+        .cloned()
+        .collect();
+    placements.sort_by_key(|clip| clip.start_ticks);
+    (placements, omissions)
+}
+
+fn reports_source_chain(omissions: &[crate::Omission], master: &str) -> bool {
+    omissions.iter().any(|item| {
+        item.scope == OmissionScope::Feature
+            && item.record == master
+            && item.reason == "VideoComponentChain not converted"
+    })
+}
+
+#[test]
+fn the_pinned_source_corner_pin_keeps_its_saved_keys_and_tangents() {
+    // The curved Upper Left path keeps its saved keys and resolved automatic
+    // tangents for import to convert or report.
+    let (placements, _) = source_effects_placements(&gunzip(SOURCE_EFFECTS));
+    let key = |seconds: i64, value: [f64; 2], incoming: [f64; 2], outgoing: [f64; 2]| {
+        crate::schema::PrPointKeyframe {
+            source_ticks: seconds * TICKS,
+            value,
+            easing: crate::schema::PrKeyframeEasing::Linear,
+            spatial_in_tangent: Some(incoming),
+            spatial_out_tangent: Some(outgoing),
+        }
+    };
+    let pin = &placements[0].source_effects.as_ref().unwrap().effects[0];
+    assert_eq!(
+        pin.animations,
+        [crate::schema::PrEffectParamAnimation {
+            param: &crate::schema::CORNER_PIN.params[0],
+            keys: PrEffectParamKeys::Point(vec![
+                key(
+                    0,
+                    [0.0, 0.0],
+                    [0.0, 0.0],
+                    [0.027777778605620067, 0.02469135820865631],
+                ),
+                key(
+                    3,
+                    [0.1666666716337204, 0.14814814925193787],
+                    [-0.006944444651405015, -0.04012345770994822],
+                    [0.006944444651405015, 0.04012345770994822],
+                ),
+                key(
+                    6,
+                    [0.0416666679084301, 0.24074074625968933],
+                    [0.020833333954215053, -0.015432099501291912],
+                    [0.0, 0.0],
+                ),
+            ]),
+        }]
+    );
+}
+
+/// The `Keyframes` wire of the source Corner Pin's Upper Left in
+/// `SOURCE_EFFECTS`, as saved: each key Linear in time with temporal flags 0,
+/// and with automatic spatial Bézier handles (mode 5, flags 4).
+const UPPER_LEFT: &str = "0,0:0,0,0,0,0.16666666666666666,0.075113251463444261,0.16666666666666666,5,4,0,0,0.027777778605620067,0.024691358208656311;762048000000,0.1666666716337204:0.14814814925193787,0,0,0.075113251463444261,0.16666666666666666,0.05404495105825096,0.16666666666666666,5,4,-0.0069444446514050151,-0.04012345770994822,0.0069444446514050151,0.04012345770994822;1524096000000,0.041666667908430099:0.24074074625968933,0,0,0.05404495105825096,0.16666666666666666,0,0.16666666666666666,5,4,0.020833333954215053,-0.015432099501291912,0,0;";
+
+#[test]
+fn a_curved_source_path_is_read_only_from_the_key_form_that_premiere_saved() {
+    // A curved path converts from keys in the saved form only: temporal flags
+    // 0 and automatic spatial handles, spatial mode 5 with flags 4. Another
+    // form's effect on the traversal is unverified, so the reader leaves the
+    // Corner Pin out of each placement's source stack for it, and the Blur
+    // stays. Supplementary mutations of the pinned save, not native evidence.
+    let edited = |key: usize, field: usize, value: &str| -> String {
+        UPPER_LEFT
+            .split_terminator(';')
+            .enumerate()
+            .map(|(index, item)| {
+                let mut fields: Vec<&str> = item.split(',').collect();
+                assert_eq!(fields.len(), 14, "{item}");
+                if index == key {
+                    fields[field] = value;
+                }
+                format!("{};", fields.join(","))
+            })
+            .collect()
+    };
+    for (case, wire, reason) in [
+        (
+            "temporal flags 255 on the second key",
+            edited(1, 3, "255"),
+            "the key at source time 3.000 s is saved with temporal flags 255 and spatial interpolation mode 5 with flags 4",
+        ),
+        (
+            "spatial flags 0 on the first key",
+            edited(0, 9, "0"),
+            "the key at source time 0.000 s is saved with temporal flags 0 and spatial interpolation mode 5 with flags 0",
+        ),
+    ] {
+        let xml = gunzip(SOURCE_EFFECTS);
+        assert_eq!(xml.matches(UPPER_LEFT).count(), 1);
+        let (placements, omissions) = source_effects_placements(&xml.replace(UPPER_LEFT, &wire));
+        assert_eq!(placements.len(), 3, "{case}");
+        for clip in &placements {
+            let stack = clip.source_effects.as_ref().unwrap();
+            assert!(
+                matches!(stack.effects.as_slice(), [blur] if matches!(blur.params, PrEffectParams::GaussianBlur(_))),
+                "{case}: {stack:?}"
+            );
+        }
+        let pin: Vec<_> = omissions
+            .iter()
+            .filter(|omission| omission.record == "VideoFilterComponent:63")
+            .map(|omission| omission.reason.as_str())
+            .collect();
+        assert_eq!(pin.len(), 3, "{case}: {omissions:?}");
+        assert!(
+            pin.iter().all(|pin| pin.contains(&format!("Upper Left (PointComponentParam:78): {reason}"))),
+            "{case}: {pin:?}"
+        );
+    }
+}
+
+#[test]
+fn a_keyed_source_effect_reads_its_keys_on_the_source_clock() {
+    // Supplementary: the pinned source chain with its Blurriness keyed
+    // (Linear, then Hold), a form that the effect readers accept. Not native
+    // evidence.
+    const BLURRINESS: &str = "<VideoComponentParam ObjectID=\"75\" ClassID=\"a4ff2d6e-7ac2-44f8-9d52-17d9ca50e542\" Version=\"10\">\n\t\t<Name>Blurriness</Name>";
+    let xml = gunzip(SOURCE_EFFECTS);
+    assert_eq!(xml.matches(BLURRINESS).count(), 1);
+    let xml = xml.replace(
+        BLURRINESS,
+        &format!("{BLURRINESS}<IsTimeVarying>true</IsTimeVarying><Keyframes>0,20.,0,0,0,0,0,0;762048000000,40.,4,0,0,0,0,0;1524096000000,10.,0,0,0,0,0,0;</Keyframes>"),
+    );
+    let (placements, _) = source_effects_placements(&xml);
+    // The keys keep their source times, not moved to the first placement's
+    // source In of 1 s.
+    let blur = &placements[0].source_effects.as_ref().unwrap().effects[1];
+    let [animation] = blur.animations.as_slice() else {
+        panic!("{blur:?}")
+    };
+    let PrEffectParamKeys::Scalar(keys) = &animation.keys else {
+        panic!("{animation:?}")
+    };
+    assert_eq!(
+        keys.iter()
+            .map(|key| (key.source_ticks, key.value))
+            .collect::<Vec<_>>(),
+        [(0, 20.0), (3 * TICKS, 40.0), (6 * TICKS, 10.0)]
+    );
+}
+
+/// `two_cuts_xml` whose first cut plays `master-1`. The master clip names chain
+/// 20, which lists `components`, or else carries the element `chain`; `records`
+/// adds the records they name.
+fn with_source_chain(chain: Option<&str>, components: &str, records: &str) -> String {
+    two_cuts_xml()
+        .replace(
+            "<Clip ObjectRef=\"6\"/>",
+            "<Clip ObjectRef=\"6\"/><MasterClip ObjectURef='master-1'/>",
+        )
+        .replace(
+            "</PremiereData>",
+            &format!(
+                "<MasterClip ObjectUID='master-1'>{}<Clips><Clip ObjectRef='21'/></Clips></MasterClip><VideoClip ObjectID='21'><Clip><Source ObjectRef='7'/></Clip></VideoClip><VideoComponentChain ObjectID='20'><ComponentChain><Components>{components}</Components></ComponentChain></VideoComponentChain>{records}</PremiereData>",
+                chain.unwrap_or("<VideoComponentChain ObjectRef='20'/>")
+            ),
+        )
+}
+
+/// A minimal standard effect record 22 with `component` content.
+fn source_effect(match_name: &str, component: &str) -> String {
+    format!("<VideoFilterComponent ObjectID='22'><Component><ID>1</ID>{component}</Component><MatchName>{match_name}</MatchName></VideoFilterComponent>")
+}
+
+/// The native Geometry2 of `cap2-native-geometry2.xml` as record 22, with its
+/// parameters 829 to 840: a centered zoom, Scale Height keys from 100 to 118
+/// under Uniform Scale, with the time-varying Rotation marker that Premiere
+/// saves without keys.
+fn native_geometry2() -> String {
+    include_str!("../../../tests/fixtures/cap2-native-geometry2.xml")
+        .replace("<PremiereData Version=\"3\">", "")
+        .replace("</PremiereData>", "")
+        .replace("ObjectID=\"407\"", "ObjectID=\"22\"")
+}
+
+/// [`native_geometry2`] with its last Scale Height key at 0 instead of 118.
+fn collapsing_geometry2() -> String {
+    const LAST_KEY: &str = "914545680048000,118.,";
+    let records = native_geometry2();
+    assert_eq!(records.matches(LAST_KEY).count(), 1);
+    records.replace(LAST_KEY, "914545680048000,0.,")
+}
+
+#[test]
+fn unconsumable_source_processing_omits_only_its_placement() {
+    // Supplementary: synthetic master chains. A source mask, intrinsic or
+    // coverage effect would hide part of the picture that no conversion
+    // applies yet; a malformed or ambiguous chain names no reliable one.
+    const EFFECT: &str = "<Component Index='0' ObjectRef='22'/>";
+    let crop = |component| source_effect("AE.ADBE AECrop", component);
+    // The second cut, which plays master-2.
+    let sibling = 508_032_000_000..1_278_547_200_000;
+    let radial_wipe = source_effect(
+        "AE.ADBE Radial Wipe",
+        "<DisplayName>Radial Wipe</DisplayName>",
+    );
+    // A Transform as Premiere 26.5.1 saves one, with its Opacity (value,
+    // keys). Import converts no source Transform, so one that can hide the
+    // picture, or whose Opacity is unreadable, omits the placement.
+    let transform = |opacity: (&'static str, &'static str)| {
+        let mut values = DEFAULT_TRANSFORM;
+        values[8] = opacity;
+        transform_26_5_xml(22, values)
+    };
+    const TRANSFORM: &str = "effect \"Transform\" (match name \"AE.ADBE Geometry\", VideoFilterComponent version 9, Component version 7) at stack position 1";
+    let hides = |opacity: &str| {
+        format!("source effect of MasterClip:master-1: active {TRANSFORM} can hide the clip: its Opacity reaches {opacity}")
+    };
+    let unreadable = |state: &str, reason: &str| {
+        format!("source effect of MasterClip:master-1: {state} {TRANSFORM} has an Opacity that cannot be read ({reason})")
+    };
+    // A Transform at its defaults but for `edits` by `Params` index: its
+    // geometry, which import does not convert either, can hide the picture.
+    let moved = |edits: &[(usize, (&'static str, &'static str))]| {
+        let mut values = DEFAULT_TRANSFORM;
+        for &(index, value) in edits {
+            values[index] = value;
+        }
+        transform_26_5_xml(22, values)
+    };
+    let hides_by = |geometry: &str| {
+        format!("source effect of MasterClip:master-1: active {TRANSFORM} can hide the clip: {geometry}, and no source Transform converts")
+    };
+    for (records, reason) in [
+        (
+            transform(("0.", "")),
+            format!(
+                "{}, and no source Transform converts; the clip is not converted without it",
+                hides("0")
+            ),
+        ),
+        (
+            transform(("100.", "0,100.,0,0,0,0,0,0;254016000000,0.,0,0,0,0,0,0;")),
+            hides("0"),
+        ),
+        // Keys of 50 and 10 whose Bezier dips below 0 between them: its
+        // handles (0.5, 2.5) and (0.5, 1) peak at t = 5/11, a progress of
+        // 1925/1331, so an Opacity of 50 - 40 * 1925/1331 = -7.8512...
+        (
+            transform(("50.", "0,50.,5,0,0,0,-200,0.5;254016000000,10.,0,0,0,0.5,0,0;")),
+            hides("-7.851239669"),
+        ),
+        // Scale Height 0 without Uniform Scale collapses the picture, and
+        // Scale Width keys from 100 to -100 pass through 0.
+        (moved(&[(3, ("0.", ""))]), hides_by("its Scale Height is 0")),
+        (
+            moved(&[(
+                4,
+                ("100.", "0,100.,0,0,0,0,0,0;254016000000,-100.,0,0,0,0,0,0;"),
+            )]),
+            hides_by("its Scale Width keys reach -100 to 100, which includes 0"),
+        ),
+        // Scale Height keys of 50 and 10 whose Bezier dips below 0 between
+        // them, as the Opacity's above.
+        (
+            moved(&[(
+                3,
+                ("50.", "0,50.,5,0,0,0,-200,0.5;254016000000,10.,0,0,0,0.5,0,0;"),
+            )]),
+            format!("source effect of MasterClip:master-1: active {TRANSFORM} can hide the clip: its Scale Height keys reach -7.851239669"),
+        ),
+        // At Position 1.5:0.5 the picture's left edge meets the frame's right
+        // edge; Position keys to 0.5:1.5 move it below the frame.
+        (
+            moved(&[(1, ("1.5:0.5", ""))]),
+            hides_by("its Position, Anchor Point and Scale can move the whole picture out of its frame on the x axis"),
+        ),
+        (
+            moved(&[(
+                1,
+                (
+                    "0.5:0.5",
+                    "0,0.5:0.5,0,0,0,0,0,0,0,0,0,0,0,0;254016000000,0.5:1.5,0,0,0,0,0,0,0,0,0,0,0,0;",
+                ),
+            )]),
+            hides_by("its Position, Anchor Point and Scale can move the whole picture out of its frame on the y axis"),
+        ),
+        // Under a Rotation, part of the picture stays in its frame only with
+        // an Anchor Point on the picture and a Position inside the frame.
+        (
+            moved(&[(1, ("3:0.5", "")), (7, ("30.", ""))]),
+            hides_by("under its Rotation or Skew, its Anchor Point or Position can move the whole picture out of its frame"),
+        ),
+        (
+            moved(&[(3, ("40000.", ""))]),
+            format!("source effect of MasterClip:master-1: active {TRANSFORM} has parameters that cannot be read (Scale Height \"40000.\" is not a number from -30000 to 30000)"),
+        ),
+        (
+            transform(("150.", "")),
+            unreadable("active", "Opacity \"150.\" is not a number from 0 to 100"),
+        ),
+        (
+            transform(("100.", "0,100.,0,0,0,0,0,0;254016000000,150.,0,0,0,0,0,0;")),
+            unreadable("active", "Opacity key value 150 is outside Premiere's 0 to 100 range"),
+        ),
+        (
+            transform(("100.", "")).replacen(
+                "<DisplayName>Transform</DisplayName>",
+                "<DisplayName>Transform</DisplayName><Bypass>maybe</Bypass>",
+                1,
+            ),
+            unreadable("invalid-Bypass", "invalid Bypass \"maybe\""),
+        ),
+        (
+            source_effect("AE.ADBE Geometry", ""),
+            "source effect of MasterClip:master-1: active effect \"<no DisplayName>\" (match name \"AE.ADBE Geometry\", VideoFilterComponent version <none>, Component version <none>) at stack position 1 has an Opacity that cannot be read (unsupported VideoFilterType None)".to_owned(),
+        ),
+    ] {
+        let xml = with_source_chain(None, EFFECT, &records);
+        let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+        let cuts: Vec<_> = project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .map(|clip| clip.timeline_ticks())
+            .collect();
+        assert_eq!(cuts, std::slice::from_ref(&sibling), "{reason}");
+        assert!(
+            omissions.iter().any(|item| item.scope == OmissionScope::Occurrence
+                && item.record == "3"
+                && item.reason.contains(&reason)),
+            "{reason}: {omissions:?}"
+        );
+    }
+    for (chain, components, records, reason) in [
+        (
+            None,
+            EFFECT,
+            crop(""),
+            "VideoComponentChain:20: source component VideoFilterComponent:22 (AE.ADBE AECrop) of MasterClip:master-1 is not converted",
+        ),
+        // An unreadable Bypass counts as active.
+        (
+            None,
+            EFFECT,
+            crop("<Bypass>maybe</Bypass>"),
+            "source component VideoFilterComponent:22 (AE.ADBE AECrop)",
+        ),
+        (
+            None,
+            EFFECT,
+            source_effect("AE.ADBE Motion", "<Intrinsic>true</Intrinsic>"),
+            "source component VideoFilterComponent:22 (AE.ADBE Motion)",
+        ),
+        (
+            None,
+            EFFECT,
+            radial_wipe,
+            "VideoComponentChain:20: source effect of MasterClip:master-1: active effect \"Radial Wipe\"",
+        ),
+        (
+            None,
+            EFFECT,
+            "<VideoFilterComponent ObjectID='22'><Component><ID>1</ID><DisplayName>Tint</DisplayName></Component><SubComponents><SubComponent Index='0' ObjectRef='24'/></SubComponents><MatchName>AE.ADBE Tint</MatchName></VideoFilterComponent><VideoFilterComponent ObjectID='24'><MatchName>AE.ADBE AEMask2</MatchName></VideoFilterComponent>".to_owned(),
+            "source effect of MasterClip:master-1: active effect \"Tint\" (match name \"AE.ADBE Tint\", VideoFilterComponent version <none>, Component version <none>) at stack position 1: carries a mask (AE.ADBE AEMask2 sub-component",
+        ),
+        (
+            Some("<VideoComponentChain ObjectRef='23'/>"),
+            "",
+            "<VideoComponentChain ObjectID='23'/>".to_owned(),
+            "VideoComponentChain:23: missing ComponentChain",
+        ),
+        (
+            None,
+            "<Component Index='0' ObjectRef='99'/>",
+            String::new(),
+            "missing reference at Component",
+        ),
+        // The first cut's own chain.
+        (
+            Some("<VideoComponentChain ObjectRef='4'/>"),
+            "",
+            String::new(),
+            "VideoComponentChain:4: the source chain of MasterClip:master-1 is also the placement's own chain",
+        ),
+        // The master clip's own VideoClip.
+        (
+            Some("<VideoComponentChain ObjectRef='21'/>"),
+            "",
+            String::new(),
+            "expected VideoComponentChain, found VideoClip:21",
+        ),
+    ] {
+        let xml = with_source_chain(chain, components, &records);
+        let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+        let cuts: Vec<_> = project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .map(|clip| clip.timeline_ticks())
+            .collect();
+        assert_eq!(cuts, std::slice::from_ref(&sibling), "{reason}");
+        assert!(
+            omissions.iter().any(|item| item.scope == OmissionScope::Occurrence
+                && item.record == "3"
+                && item.reason.contains(reason)),
+            "{reason}: {omissions:?}"
+        );
+        // The omission names the chain; nothing else reports it.
+        assert!(
+            !reports_source_chain(&omissions, "MasterClip:master-1"),
+            "{omissions:?}"
+        );
+    }
+}
+
+#[test]
+fn a_source_geometry2_that_hides_its_picture_omits_its_placement() {
+    // Supplementary: the native Geometry2 in a synthetic master chain. Only
+    // its centered positive zoom converts, so one whose Scale Height keys
+    // reach 0, or whose Position moves the picture out of its frame, is left
+    // out where it hides the picture, and the placement is omitted. Its saved
+    // Rotation marker reads as the static 0 (`GEOMETRY2`).
+    const EFFECT: &str = "<Component Index='0' ObjectRef='22'/>";
+    // The native Geometry2 with its Position, record 830, at 1.75:0.5.
+    let geometry2 = native_geometry2();
+    let (before, position) = geometry2.split_once("ObjectID=\"830\"").unwrap();
+    let moved = format!(
+        "{before}ObjectID=\"830\"{}",
+        position.replacen(
+            "-91445760000000000,0.5:0.5,",
+            "-91445760000000000,1.75:0.5,",
+            1
+        )
+    );
+    let cases = [
+        (
+            collapsing_geometry2(),
+            "its Scale Height keys reach 0 to 100, which includes 0",
+        ),
+        (
+            moved,
+            "its Position, Anchor Point and Scale can move the whole picture out of its frame on the x axis",
+        ),
+    ];
+    // The second cut, which plays master-2.
+    let sibling = 508_032_000_000..1_278_547_200_000;
+    let mut reported = Vec::new();
+    let outcomes: Vec<_> = cases
+        .iter()
+        .map(|(records, hides)| {
+            let xml = with_source_chain(None, EFFECT, records);
+            let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+            let cuts: Vec<_> = project
+                .single_sequence()
+                .unwrap()
+                .video_occurrences()
+                .map(|clip| clip.timeline_ticks())
+                .collect();
+            let reason = format!("source effect of MasterClip:master-1: active effect \"Transform\" (match name \"AE.ADBE Geometry2\", VideoFilterComponent version 9, Component version 7) at stack position 1 can hide the clip: {hides}, and it does not convert; the clip is not converted without it");
+            let omitted = omissions.iter().any(|item| {
+                item.scope == OmissionScope::Occurrence
+                    && item.record == "3"
+                    && item.reason.contains(&reason)
+            });
+            reported.extend(omissions);
+            (*hides, cuts, omitted)
+        })
+        .collect();
+    // Each case keeps only the sibling, and its omission says why.
+    let expected: Vec<_> = cases
+        .iter()
+        .map(|(_, hides)| (*hides, vec![sibling.clone()], true))
+        .collect();
+    assert_eq!(outcomes, expected, "{reported:?}");
+}
+
+#[test]
+fn bypassed_and_unconvertible_source_effects_keep_the_placement() {
+    // Supplementary: synthetic master chains. Premiere renders the source
+    // without a bypassed Crop or Transform, and an unconvertible effect is
+    // left out as on the placement's own chain.
+    const EFFECT: &str = "<Component Index='0' ObjectRef='22'/>";
+    let mut hidden = DEFAULT_TRANSFORM;
+    hidden[1] = ("3:0.5", "");
+    hidden[3] = ("0.", "");
+    hidden[8] = ("0.", "");
+    let bypass = |record: String| {
+        record.replacen(
+            "<DisplayName>Transform</DisplayName>",
+            "<DisplayName>Transform</DisplayName><Bypass>true</Bypass>",
+            1,
+        )
+    };
+    for (record, active_transforms, reason) in [
+        (
+            source_effect("AE.ADBE AECrop", "<Bypass>true</Bypass>"),
+            0,
+            "unknown bypassed effect \"<no DisplayName>\" (match name \"AE.ADBE AECrop\", VideoFilterComponent version <none>, Component version <none>) at source stack position 1 of MasterClip:master-1 on clip \"Source\" (VideoClipTrackItem:3, V1, 0.000 s to 2.000 s): no Tesseract effect mapping",
+        ),
+        // A bypassed Transform hides nothing, at Opacity 0, Scale Height 0
+        // and a Position out of its frame too, nor does a bypassed Geometry2
+        // whose Scale Height keys reach 0.
+        (
+            bypass(transform_26_5_xml(22, hidden)),
+            0,
+            "bypassed effect \"Transform\" (match name \"AE.ADBE Geometry\", VideoFilterComponent version 9, Component version 7) at source stack position 1 of MasterClip:master-1 on clip \"Source\" (VideoClipTrackItem:3, V1, 0.000 s to 2.000 s): a bypassed Transform is not converted",
+        ),
+        (
+            bypass(collapsing_geometry2()),
+            0,
+            "bypassed effect \"Transform\" (match name \"AE.ADBE Geometry2\", VideoFilterComponent version 9, Component version 7) at source stack position 1 of MasterClip:master-1 on clip \"Source\" (VideoClipTrackItem:3, V1, 0.000 s to 2.000 s): a bypassed Transform is not converted",
+        ),
+    ] {
+        let xml = with_source_chain(None, EFFECT, &record);
+        let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+        let clips: Vec<_> = project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .collect();
+        assert_eq!(clips.len(), 2, "{omissions:?}");
+        assert_eq!(
+            clips[0].source_effects,
+            Some(PrSourceEffects {
+                master: "MasterClip:master-1".to_owned(),
+                effects: Vec::new(),
+                active_transforms,
+            })
+        );
+        // master-2 names no chain.
+        assert_eq!(clips[1].source_effects, None);
+        assert!(
+            omissions.iter().any(|item| item.scope == OmissionScope::Feature
+                && item.record == "VideoFilterComponent:22"
+                && item.reason.contains(reason)),
+            "{reason}: {omissions:?}"
+        );
+        // The carried chain is import's to convert or report.
+        assert!(
+            !reports_source_chain(&omissions, "MasterClip:master-1"),
+            "{omissions:?}"
+        );
+    }
+}
+
+#[test]
+fn a_source_transform_that_shows_the_picture_keeps_its_placement() {
+    // Supplementary: synthetic master chains. A source Transform whose
+    // Opacity stays above 0 is carried for import, which reports and drops
+    // it; the placement shows its picture as Premiere does, though fainter
+    // there.
+    const EFFECT: &str = "<Component Index='0' ObjectRef='22'/>";
+    for (opacity, keys) in [
+        (("50.", ""), None),
+        (
+            ("100.", "0,100.,0,0,0,0,0,0;254016000000,20.,0,0,0,0,0,0;"),
+            Some([100.0, 20.0]),
+        ),
+    ] {
+        let mut values = DEFAULT_TRANSFORM;
+        values[8] = opacity;
+        let xml = with_source_chain(None, EFFECT, &transform_26_5_xml(22, values));
+        let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+        let clips: Vec<_> = project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .collect();
+        assert_eq!(clips.len(), 2, "{omissions:?}");
+        let stack = clips[0].source_effects.as_ref().unwrap();
+        assert_eq!(stack.active_transforms, 1);
+        let [effect] = stack.effects.as_slice() else {
+            panic!("{stack:?}")
+        };
+        let PrEffectParams::Transform(transform) = &effect.params else {
+            panic!("{effect:?}")
+        };
+        let opacity_keys = effect.keys(&TRANSFORM_OPACITY).map(|keys| {
+            keys.scalar()
+                .unwrap()
+                .iter()
+                .map(|key| key.value)
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            (transform.opacity, opacity_keys),
+            (
+                keys.map_or(50.0, |keys: [f64; 2]| keys[0]),
+                keys.map(Vec::from)
+            )
+        );
+        assert!(
+            !omissions
+                .iter()
+                .any(|item| item.record == "VideoFilterComponent:22" || item.record == "3"),
+            "{omissions:?}"
+        );
+    }
+    // Its geometry keeps part of the picture in the frame: at Position
+    // 1.49:0.5 its left edge is at 0.99 frame widths, under a Rotation of 30
+    // its Anchor Point on the picture lands on the Position inside it, and
+    // under Uniform Scale its Scale Width keys through 0 do not render.
+    let edits: [&[(usize, (&str, &str))]; 3] = [
+        &[(1, ("1.49:0.5", ""))],
+        &[(7, ("30.", ""))],
+        &[
+            (2, ("true", "")),
+            (
+                4,
+                ("100.", "0,100.,0,0,0,0,0,0;254016000000,-100.,0,0,0,0,0,0;"),
+            ),
+        ],
+    ];
+    for edits in edits {
+        let mut values = DEFAULT_TRANSFORM;
+        for &(index, value) in edits {
+            values[index] = value;
+        }
+        let xml = with_source_chain(None, EFFECT, &transform_26_5_xml(22, values));
+        let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+        let clips: Vec<_> = project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .collect();
+        assert_eq!(clips.len(), 2, "{omissions:?}");
+        let stack = clips[0].source_effects.as_ref().unwrap();
+        assert!(
+            matches!(stack.effects.as_slice(), [effect] if matches!(effect.params, PrEffectParams::Transform(_))),
+            "{stack:?}"
+        );
+        assert!(
+            !omissions
+                .iter()
+                .any(|item| item.record == "VideoFilterComponent:22" || item.record == "3"),
+            "{omissions:?}"
+        );
+    }
+    // The native Geometry2's centered zoom converts as a Corner Pin.
+    let xml = with_source_chain(None, EFFECT, &native_geometry2());
+    let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+    let clips: Vec<_> = project
+        .single_sequence()
+        .unwrap()
+        .video_occurrences()
+        .collect();
+    assert_eq!(clips.len(), 2, "{omissions:?}");
+    let stack = clips[0].source_effects.as_ref().unwrap();
+    assert!(
+        matches!(stack.effects.as_slice(), [effect] if matches!(effect.params, PrEffectParams::CornerPin(_))),
+        "{stack:?}"
+    );
+    assert!(
+        !omissions
+            .iter()
+            .any(|item| item.record == "VideoFilterComponent:22" || item.record == "3"),
+        "{omissions:?}"
+    );
+}
+
+#[test]
+fn source_transforms_whose_combined_geometry_is_not_evaluated_omit_their_placement() {
+    // Supplementary: synthetic master chains. Alone, the Transform at
+    // Position 1.1:0.5 keeps part of the whole picture in its frame, which it
+    // spans from 0.6 to 1.6 frame widths, but two of them move the picture
+    // 1.2 frame widths, out of the frame. The reader checks one Transform on
+    // the whole picture alone in its frame, so beside an effect that also
+    // moves, distorts or resamples the picture, a Geometry2 or Mosaic too, a
+    // Transform that import leaves out omits the placement. Beside one that
+    // leaves the picture where it is, at Opacity 50, or a bypassed one, the
+    // placement converts.
+    const COMPONENTS: &str =
+        "<Component Index='0' ObjectRef='22'/><Component Index='1' ObjectRef='40'/>";
+    let mut moved = DEFAULT_TRANSFORM;
+    moved[1] = ("1.1:0.5", "");
+    let mut faded = DEFAULT_TRANSFORM;
+    faded[8] = ("50.", "");
+    // The second cut, which plays master-2.
+    let sibling = 508_032_000_000..1_278_547_200_000;
+    // The cuts and omissions of a chain of the moved Transform, record 40 at
+    // stack position 1, after `beside`, record 22 at stack position 2.
+    let read = |beside: &str| {
+        let records = format!("{beside}{}", transform_26_5_xml(40, moved));
+        let xml = with_source_chain(None, COMPONENTS, &records);
+        let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+        let cuts: Vec<_> = project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .map(|clip| clip.timeline_ticks())
+            .collect();
+        (cuts, omissions)
+    };
+    let bypassed = transform_26_5_xml(22, moved).replacen(
+        "<DisplayName>Transform</DisplayName>",
+        "<DisplayName>Transform</DisplayName><Bypass>true</Bypass>",
+        1,
+    );
+    for beside in [transform_26_5_xml(22, faded), bypassed] {
+        let (cuts, omissions) = read(&beside);
+        assert_eq!(cuts.len(), 2, "{omissions:?}");
+        assert!(
+            !omissions.iter().any(|item| item.record == "3"),
+            "{omissions:?}"
+        );
+    }
+    let cases = [
+        (
+            transform_26_5_xml(22, moved),
+            "\"Transform\" (match name \"AE.ADBE Geometry\", VideoFilterComponent version 9, Component version 7)",
+        ),
+        (
+            native_geometry2(),
+            "\"Transform\" (match name \"AE.ADBE Geometry2\", VideoFilterComponent version 9, Component version 7)",
+        ),
+        (
+            source_effect("AE.ADBE Mosaic", ""),
+            "\"<no DisplayName>\" (match name \"AE.ADBE Mosaic\", VideoFilterComponent version <none>, Component version <none>)",
+        ),
+    ];
+    let mut reported = Vec::new();
+    let outcomes: Vec<_> = cases
+        .iter()
+        .map(|(beside, effect)| {
+            let reason = format!("source effect of MasterClip:master-1: active effect \"Transform\" (match name \"AE.ADBE Geometry\", VideoFilterComponent version 9, Component version 7) at stack position 1 can hide the clip: its geometry combined with active effect {effect} at stack position 2 is not evaluated, and no source Transform converts; the clip is not converted without it");
+            let (cuts, omissions) = read(beside);
+            let omitted = omissions.iter().any(|item| {
+                item.scope == OmissionScope::Occurrence
+                    && item.record == "3"
+                    && item.reason.contains(&reason)
+            });
+            reported.extend(omissions);
+            (*effect, cuts, omitted)
+        })
+        .collect();
+    // Each chain keeps only the sibling, and its omission says why.
+    let expected: Vec<_> = cases
+        .iter()
+        .map(|(_, effect)| (*effect, vec![sibling.clone()], true))
+        .collect();
+    assert_eq!(outcomes, expected, "{reported:?}");
+}
+
+/// The pinned Adobe-derived linked picture-and-sound case: its master clip
+/// plays in a video and a sound placement.
+const LINKED_AV: &[u8] = include_bytes!("../../../tests/fixtures/feature_linked_av_strict.prproj");
+
+#[test]
+fn a_hiding_source_transform_omits_the_picture_and_not_its_linked_sound() {
+    // Supplementary: the linked case's master clip given a chain with an
+    // active Transform at Opacity 0 or Scale Height 0. Its picture placement
+    // is omitted; its sound, which the chain does not process, converts.
+    const MASTER: &str = "<MasterClip ObjectUID=\"6fed5564-291d-4b94-8c5a-dbecb76dbaa4\" ClassID=\"fb11c33a-b0a9-4465-aa94-b6d5db2628cf\" Version=\"12\">\n\t\t<LoggingInfo ObjectRef=\"56\"/>";
+    let xml = gunzip(LINKED_AV);
+    assert_eq!(xml.matches(MASTER).count(), 1);
+    // A Transform at its defaults but for the static value at `Params` index.
+    let with_transform = |(index, value): (usize, &'static str)| {
+        let mut values = DEFAULT_TRANSFORM;
+        values[index] = (value, "");
+        xml.replace(
+            MASTER,
+            &format!("{MASTER}<VideoComponentChain ObjectRef=\"900\"/>"),
+        )
+        .replace(
+            "</PremiereData>",
+            &format!(
+                "<VideoComponentChain ObjectID=\"900\"><ComponentChain><Components><Component Index=\"0\" ObjectRef=\"901\"/></Components></ComponentChain></VideoComponentChain>{}</PremiereData>",
+                transform_26_5_xml(901, values)
+            ),
+        )
+    };
+    let placements = |xml: &str| {
+        let (project, omissions) = inspect_project_with_omissions(xml, None).unwrap();
+        let sequence = project.single_sequence().unwrap();
+        let pictures: Vec<_> = sequence
+            .video_occurrences()
+            .map(|clip| clip.record().to_owned())
+            .collect();
+        let sounds: Vec<_> = sequence
+            .audio
+            .iter()
+            .map(|clip| clip.record().to_owned())
+            .collect();
+        (pictures, sounds, omissions)
+    };
+    let (pictures, sounds, _) = placements(&with_transform((8, "100.")));
+    assert_eq!(
+        (pictures, sounds),
+        (
+            vec!["VideoClipTrackItem:121".to_owned()],
+            vec!["AudioClipTrackItem:122".to_owned()]
+        )
+    );
+    for (edit, hides) in [
+        ((8, "0."), "its Opacity reaches 0"),
+        ((3, "0."), "its Scale Height is 0"),
+    ] {
+        let (pictures, sounds, omissions) = placements(&with_transform(edit));
+        assert_eq!(pictures, Vec::<String>::new(), "{hides}");
+        assert_eq!(sounds, ["AudioClipTrackItem:122"], "{hides}");
+        assert!(
+            omissions
+                .iter()
+                .any(|item| item.scope == OmissionScope::Occurrence
+                    && item.record == "121"
+                    && item.reason.contains(&format!("can hide the clip: {hides}"))),
+            "{omissions:?}"
+        );
+    }
+}
+
 #[test]
 fn populated_clip_markers_are_not_dropped() {
     let xml = SOURCE.replace("<Clip><Source", "<Clip><MarkerOwner><Markers ObjectRef=\"90\"/></MarkerOwner><Source")
@@ -1165,7 +2171,7 @@ fn short_color_profiles_with_one_changed_value_still_reject() {
     const MEDIA: &str = "unsupported OriginalColorSpace profile for its native role";
     for (profile, expected) in [
         (
-            r#"{"baseColorProfile":{"colorProfileName":"BT.709,10-bit,Display-Referred"},"baseProfileType":1}"#,
+            r#"{"baseColorProfile":{"colorProfileName":"BT.709,10-bit,Display-Referred"},"baseProfileType":2}"#,
             MEDIA,
         ),
         (
@@ -1182,8 +2188,97 @@ fn short_color_profiles_with_one_changed_value_still_reject() {
     }
 }
 
+const BT709_10BIT_STREAMS: &str =
+    include_str!("../../../tests/fixtures/bt709-10bit-source-streams.xml");
+
+#[test]
+fn native_bt709_10bit_source_profiles_keep_their_video_occurrence() {
+    let records = roxmltree::Document::parse(BT709_10BIT_STREAMS).unwrap();
+    for stream in records
+        .descendants()
+        .filter(|node| node.has_tag_name("VideoStream"))
+    {
+        let record = &BT709_10BIT_STREAMS[stream.range()];
+        let record = record.replace(
+            &format!("ObjectID=\"{}\"", stream.attribute("ObjectID").unwrap()),
+            "ObjectID=\"8\"",
+        );
+        let original = roxmltree::Document::parse(SOURCE).unwrap();
+        let range = original
+            .descendants()
+            .find(|node| node.has_tag_name("VideoStream") && node.attribute("ObjectID").is_some())
+            .unwrap()
+            .range();
+        let mut xml = SOURCE.to_owned();
+        xml.replace_range(range, &record);
+        // A generic one-frame placement fits both unchanged native source durations.
+        let xml = xml.replace("1270080000000", "8467200000").replace(
+            "<OriginalDuration>2540160000000</OriginalDuration>",
+            &format!(
+                "<OriginalDuration>{}</OriginalDuration>",
+                stream
+                    .children()
+                    .find(|node| node.has_tag_name("Duration"))
+                    .unwrap()
+                    .text()
+                    .unwrap()
+            ),
+        );
+        let project = inspect_project_with_media(&xml, None).unwrap();
+        let sequence = project.single_sequence().unwrap();
+        let clips: Vec<_> = sequence.video_occurrences().collect();
+        assert_eq!(clips.len(), 1);
+        let clip = clips[0];
+        assert_eq!(
+            (
+                clip.start_ticks,
+                clip.end_ticks,
+                clip.in_ticks,
+                clip.out_ticks
+            ),
+            (0, 8_467_200_000, 0, 8_467_200_000)
+        );
+        let video = project.media(clip).unwrap().video.as_ref().unwrap();
+        assert_eq!(video.frame_rate, FrameRate::Fps30000Over1001.into());
+    }
+}
+
+#[test]
+fn native_bt709_10bit_source_profiles_reject_wrong_data_and_sequence_role() {
+    let records = roxmltree::Document::parse(BT709_10BIT_STREAMS).unwrap();
+    for profile in records
+        .descendants()
+        .filter(|node| node.has_tag_name("OriginalColorSpace"))
+    {
+        let profile = profile.text().unwrap();
+        let error = inspect_project(&with_output_color_space(profile), None).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported OutputColorSpace profile"),
+            "{error}"
+        );
+        let value: serde_json::Value = serde_json::from_str(profile).unwrap();
+        for (field, replacement) in [
+            ("colorProfileData", json!("AQAAAGQAAAA=")),
+            ("colorProfileData", serde_json::Value::Null),
+            ("colorProfileName", json!("BT.709,12-bit,Display-Referred")),
+        ] {
+            let mut changed = value.clone();
+            changed["baseColorProfile"][field] = replacement;
+            assert!(
+                inspect_project(&with_original_color_space(&changed.to_string()), None).is_err(),
+                "{changed}"
+            );
+        }
+        let mut changed = value;
+        changed["colorSpaceMetadata"] = json!({"peakLuminance": 100});
+        assert!(inspect_project(&with_original_color_space(&changed.to_string()), None).is_err());
+    }
+}
+
 /// The `OriginalColorSpace` text that Premiere 26.5.1 saved for 10-bit BT.2020
-/// HLG and PQ `hvc1` sources on a Rec. 709 sequence (`oracle/M2/hdr/facts.md`).
+/// HLG and PQ `hvc1` sources on a Rec. 709 sequence.
 const HDR_SOURCE_PROFILES: [&str; 2] = [
     r#"{"baseColorProfile":{"colorProfileData":"AQAAAP////8=","colorProfileName":"BT.2100 HLG,10-bit,Display-Referred"},"baseProfileType":1}"#,
     r#"{"baseColorProfile":{"colorProfileData":"AQAAAP////8=","colorProfileName":"BT.2100 PQ,10-bit,Display-Referred"},"baseProfileType":1}"#,
@@ -1737,12 +2832,15 @@ fn identical_repeated_relative_paths_keep_the_first() {
     // Premiere can write a Media's RelativePath twice, after ModificationState
     // and after ContentAndMetadataState. The copies are identical in the
     // Premiere 26.5.1 re-save of feature_motion_opacity_26_5_strict.prproj
-    // (SHA-256 42b41a045db3f6b4c3ef1a4fb7d7cdafb710417acd9bc232a4555e99883fe4c7)
+    // (SHA-256 a8a966779cf61d4e2547d011b465a791d8b4b7f0a4c8bb06889551eb28df2ff0)
     // and in the Premiere 25.0 user saves of the corpus adobe-pro-audio and
     // adobe-modern-speed projects.
     for (path, package_local) in [
         ("./feature_multi_sequence_blue_10s.mp4", true),
-        ("../../../../../../../Macintosh HD/Users/whaley/Downloads/RAW FILES/Interview/Intro  Outro/Outro/Outro-Cam-A.mp4", false),
+        (
+            "../../../../../../../Macintosh HD/Users/editor/Downloads/footage/source.mp4",
+            false,
+        ),
     ] {
         let xml = SOURCE.replace(
             "<RelativePath>media/source.mp4</RelativePath>",
@@ -1757,7 +2855,10 @@ fn identical_repeated_relative_paths_keep_the_first() {
             .unwrap();
         let media = project.media(occurrence).unwrap();
         assert_eq!(media.relative_paths, [path]);
-        assert_eq!(media.relative_path.as_deref(), package_local.then_some(path));
+        assert_eq!(
+            media.relative_path.as_deref(),
+            package_local.then_some(path)
+        );
     }
 }
 
@@ -1899,8 +3000,7 @@ fn windows_saved_paths_keep_the_timelines_of_pinned_fixtures() {
                     r"<RelativePath>.\media\feature_still_opaque.jpg</RelativePath>".to_owned(),
                 ),
                 (
-                    "/private/tmp/JRB-1966/evidence/native/media/feature_still_opaque.jpg"
-                        .to_owned(),
+                    "/private/tmp/native-fixture/media/feature_still_opaque.jpg".to_owned(),
                     r"C:\Users\editor\native\media\feature_still_opaque.jpg".to_owned(),
                 ),
             ],
@@ -1942,6 +3042,30 @@ fn with_master_range(xml: &str, in_point: i64, out_point: i64) -> String {
              <VideoClip ObjectID=\"40\"><Clip><Source ObjectRef=\"7\"/><InPoint>{in_point}</InPoint><OutPoint>{out_point}</OutPoint></Clip></VideoClip></PremiereData>"
         ),
     )
+}
+
+#[test]
+fn zero_rendered_offset_keeps_occurrence_ranges_and_source_identity() {
+    let xml = with_master_range(SOURCE, 254_016_000_000, 762_048_000_000);
+    let node = include_str!("../../../tests/fixtures/native-zero-rendered-offset.xml");
+    let with_offset = xml.replace(
+        "<MasterClip ObjectUID=\"master-1\">",
+        &format!("<MasterClip ObjectUID=\"master-1\">{node}"),
+    );
+    let project = inspect_project(&with_offset, None).unwrap();
+    assert_eq!(
+        format!("{project:?}"),
+        format!("{:?}", inspect_project(&xml, None).unwrap())
+    );
+    let occurrence = project.video_occurrences().next().unwrap();
+    assert_eq!(occurrence.source_ticks(), 0..1_270_080_000_000);
+
+    let mismatch = with_offset.replace(
+        "<VideoClip ObjectID=\"40\"><Clip><Source ObjectRef=\"7\"/>",
+        "<VideoClip ObjectID=\"40\"><Clip><Source ObjectRef=\"8\"/>",
+    );
+    let error = inspect_project(&mismatch, None).unwrap_err().to_string();
+    assert!(error.contains("source identity mismatch"), "{error}");
 }
 
 /// Adds a native `OriginalSubClipTimeOffset` to the `one-clip.xml` track item,
@@ -2159,4 +3283,83 @@ fn native_film_impact_curve_expansion_is_ui_without_private_curve_data() {
         assert_eq!(track.items.len(), 1);
         assert!(track.transitions.is_empty(), "{from}: {omissions:?}");
     }
+}
+
+#[test]
+fn interpreted_gopr_native_duration_is_not_intrinsic_duration() {
+    // Unchanged Adobe tutorial source, SHA-256
+    // d51abbe13d810eee8154b26b9cde1b2eb41701ec64cdcd6154c7694cbf322afd.
+    let mut xml = String::new();
+    flate2::read::GzDecoder::new(
+        &include_bytes!("../../../tests/fixtures/interpreted-gopr.prproj")[..],
+    )
+    .read_to_string(&mut xml)
+    .unwrap();
+    let (project, omissions) =
+        inspect_project_with_omissions(&xml, Some("99e0ea88-c0f0-4e36-9e58-1c71c94a0e98")).unwrap();
+    let sequence = project.single_sequence().unwrap();
+    let clip = sequence
+        .video_occurrences()
+        .next()
+        .expect("interpreted picture retained");
+    assert_eq!((clip.start_ticks, clip.end_ticks), (0, 17_306_956_800_000));
+    assert_eq!((clip.in_ticks, clip.out_ticks), (0, 17_306_956_800_000));
+    assert!(sequence.video_occurrences().count() == 1, "{omissions:?}");
+}
+
+#[test]
+fn interpreted_invalid_declaration_preserves_ordinary_picture_siblings() {
+    for fields in [
+        "<IsFrameRateOverridden>invalid</IsFrameRateOverridden>",
+        "<IsFrameRateOverridden>true</IsFrameRateOverridden>",
+        "<IsFrameRateOverridden>true</IsFrameRateOverridden><OveriddenFrameRate>9223372036854775807</OveriddenFrameRate>",
+    ] {
+        let xml = two_cuts_xml().replace("<VideoStream ObjectID=\"8\">",
+            &format!("<VideoStream ObjectID=\"8\">{fields}"));
+        let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+        let sequence = project.single_sequence().unwrap();
+        assert_eq!(sequence.video_occurrences().count(), 1, "{omissions:?}");
+        assert_eq!(sequence.video_occurrences().next().unwrap().start_ticks, 508_032_000_000);
+    }
+}
+
+// Clock saved by the human-authored effects sequence
+// b3aecac7-c452-48ba-a5e1-737807cb32ee, source SHA-256
+// e74d088116570ddb7178b127129036755be2f8e553dea80f98aa59b601585b76.
+// The synthetic placement isolates admission from that source's unrelated effects.
+#[test]
+fn unlisted_native_sequence_clock_preserves_editable_placement_ticks() {
+    let frame = 8_511_237_907;
+    let xml = one_clip_xml(OneClip {
+        sequence_frame: frame,
+        end: 30 * frame,
+        out_point: 30 * frame,
+        ..OneClip::default()
+    });
+    let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+    let sequence = project.single_sequence().unwrap();
+    assert_eq!(sequence.frame_rate.ticks_per_frame(), frame);
+    assert_eq!(sequence.native_frame_ticks, None);
+    assert!(!omissions
+        .iter()
+        .any(|item| item.reason.contains("Object Mask sequence cadence")));
+    let clip = sequence.video_occurrences().next().unwrap();
+    assert_eq!(clip.end_ticks, 30 * frame);
+    assert_eq!(clip.out_ticks, 30 * frame);
+    let document = project_document_with_media(sequence, &project.media);
+    let video = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Video")
+        .unwrap();
+    assert_eq!(
+        crate::test_support::layer_range(video),
+        &json!({"start": 0, "duration": 1005})
+    );
+    assert_eq!(video["sourceRange"], json!({"start": 0, "duration": 1005}));
+    assert_eq!(video["sourceIntrinsicDuration"], 10000);
+    assert!(omissions
+        .iter()
+        .any(|item| item.reason.contains("8511237907")));
 }

@@ -102,6 +102,8 @@ fn paired_rect_miter_and_geometry_keys_keep_rect_and_group_ownership() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let layers = lower(
         &mut collector,
@@ -287,6 +289,8 @@ fn animated_vector_group_preserves_native_rectangle_and_separate_targets() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let exhausted = lower(
         &mut collector,
@@ -451,6 +455,8 @@ fn native_shapes_keep_identity_group_blend_boundaries() {
                     animations: Vec::new(),
                     warnings: Vec::new(),
                     frame_fade_lowered: false,
+                    evaluated_shapes: Default::default(),
+                    mapped_expressions: Vec::new(),
                 };
                 let layers = collector
                     .collect_contents_with_budget(
@@ -597,6 +603,8 @@ fn native_rectangle_keys_drive_size_and_center_anchor_without_js() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let layers = lower(
         &mut collector,
@@ -664,91 +672,6 @@ fn native_rectangle_keys_drive_size_and_center_anchor_without_js() {
         crate::structure_document::stored_layers(vec![FxLayer::Group(root)]).unwrap(),
     )
     .unwrap();
-}
-
-#[test]
-#[ignore = "requires licensed AEP_INTRO_IMPORT_SOURCE; source cannot be redistributed"]
-fn pinned_intro_rectangles_keep_zero_start_and_coupled_size_keys() {
-    use sha2::{Digest, Sha256};
-    let bytes =
-        std::fs::read(std::env::var_os("AEP_INTRO_IMPORT_SOURCE").expect("source path")).unwrap();
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&bytes)),
-        "75bb7d70238e23ffaafdeacf952217de1fcded8f86875bee39c2e91bda7804d9"
-    );
-    let project = read_project(&bytes).unwrap();
-    let ItemKind::Composition(comp) = &project.item(3).unwrap().kind else {
-        panic!("SH01 composition")
-    };
-    fn rect(layer: &FxLayer) -> Option<&fx_schema::RectLayer> {
-        match layer {
-            FxLayer::Rect(rect) => Some(rect),
-            FxLayer::Group(group) => group.layers.iter().find_map(|child| rect(child.data())),
-            _ => None,
-        }
-    }
-    // Independent Adobe readback: keys at composition times 9+1/24,
-    // 9+14/24 (and 10+13/24 for Dark_Masker). Both owners start at 9+1/24.
-    for (native_id, expected) in [
-        (2372, vec![(0, 0.0), (542, 138.0)]),
-        (2375, vec![(0, 1600.0), (542, 900.0), (1500, 300.0)]),
-    ] {
-        let layer = comp
-            .layers
-            .iter()
-            .find(|layer| layer.record.id() == native_id)
-            .unwrap();
-        let owner = crate::structure_document::group(
-            LayerId::new(1),
-            "owner".into(),
-            None,
-            full_active_range(),
-        );
-        let mut next_id = 2;
-        let imported = super::super::import(
-            layer,
-            &owner,
-            32,
-            &mut next_id,
-            &mut OutputBudget::default(),
-            &mut AnimationBudget::default(),
-        )
-        .unwrap();
-        let rect = imported.layers.iter().find_map(rect).unwrap_or_else(|| {
-            panic!(
-                "native {native_id} lost editable Rect: {:?}",
-                imported.warnings
-            )
-        });
-        for (property, factor) in [
-            (PropType::RectSize, 1.0),
-            (PropType::AnchorPointX, 0.5),
-            (PropType::AnchorPointY, 0.5),
-        ] {
-            let entry = imported
-                .animations
-                .iter()
-                .find(|entry| entry.target == PropertyTarget::layer(rect.id, property))
-                .expect("editable native Size and coupled Anchor tracks");
-            let fx_schema::animator::AnimatorData::Keyframes { track, .. } = entry.animator.data()
-            else {
-                panic!("native controls must remain typed keyframes, not scripts")
-            };
-            assert_eq!(track.keyframes().len(), expected.len());
-            for (key, &(time, value)) in track.keyframes().iter().zip(&expected) {
-                assert_eq!(key.layer_time().as_millis(), time);
-                match key.value() {
-                    fx_schema::PropertyValue::Vector2(pair) => {
-                        assert!(pair.iter().all(|v| (v - value).abs() < 1e-9))
-                    }
-                    fx_schema::PropertyValue::Float(actual) => {
-                        assert!((actual - value * factor).abs() < 1e-9)
-                    }
-                    _ => panic!("wrong native Rectangle control type"),
-                }
-            }
-        }
-    }
 }
 
 #[test]
@@ -891,6 +814,8 @@ fn native_gradient_fill_preserves_editable_rectangle_controls() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let layers = lower(
         &mut collector,

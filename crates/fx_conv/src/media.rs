@@ -98,7 +98,11 @@ impl ValidatedMediaMap {
             ));
         }
         validate_hash(&map.source.sha256)?;
-        let base = canonical(path.parent().unwrap_or(Path::new(".")))?;
+        let base = canonical(
+            path.parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or(Path::new(".")),
+        )?;
         let mut entries = Vec::with_capacity(map.replacements.len());
         let mut by_original = HashMap::new();
         for entry in &map.replacements {

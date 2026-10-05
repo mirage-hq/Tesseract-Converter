@@ -6,7 +6,7 @@
 use serde_json::Value;
 
 use crate::{
-    properties::{self, read_numeric},
+    properties::{self, NumericValueKind, read_numeric},
     rifx::Chunk,
     structure::Layer,
 };
@@ -612,10 +612,19 @@ fn apply_path<'a>(
     }
 
     let mut children = children;
+    let mut declared_effect_control = None;
     for (position, head) in path.iter().enumerate() {
         let is_leaf = position + 1 == path.len();
+        let declaration_kind = declared_effect_control.take();
+        let is_declared_effect_control = declaration_kind.is_some();
         let ranges = run_ranges(children)?;
-        let selected = match head.child_index {
+        // parT indexes declarations, not the sparse authored values in tdgp.
+        let value_index = if is_declared_effect_control {
+            None
+        } else {
+            head.child_index
+        };
+        let selected = match value_index {
             Some(index) => ranges
                 .get(usize::try_from(index).map_err(|_| {
                     warning(
@@ -638,15 +647,40 @@ fn apply_path<'a>(
 
         let Some(selected) = selected else {
             if is_leaf
-                && head.child_index.is_none()
+                && (is_declared_effect_control
+                    || (head.child_index.is_none()
+                        && is_implicit_numeric_leaf(parent_name, &head.match_name)))
                 && !ranges.iter().any(|range| range.name == head.match_name)
-                && is_implicit_numeric_leaf(parent_name, &head.match_name)
                 && replacement
                     .iter()
                     .any(|chunk| chunk.list_kind() == Some(*b"tdbs"))
             {
-                properties::unique_list(replacement, *b"tdbs")
-                    .and_then(read_numeric)
+                let declaration_kind = declaration_kind.transpose().map_err(|error| {
+                    warning(
+                        WarningKind::UnresolvedSourcePath,
+                        format!(
+                            "{} missing control declaration is invalid: {error}; source retained",
+                            head.match_name
+                        ),
+                    )
+                })?;
+                if declaration_kind.is_some_and(|kind| !matches!(kind, 1..=7 | 10)) {
+                    return Err(warning(
+                        WarningKind::UnresolvedSourcePath,
+                        format!(
+                            "{} declaration kind {declaration_kind:?} does not authorize numeric storage; source retained",
+                            head.match_name
+                        ),
+                    ));
+                }
+                let numeric = properties::unique_list(replacement, *b"tdbs")
+                    .and_then(|storage| {
+                        if declaration_kind == Some(6) {
+                            properties::read_effect_point(storage).or_else(|_| read_numeric(storage))
+                        } else {
+                            read_numeric(storage)
+                        }
+                    })
                     .map_err(|error| {
                         warning(
                             WarningKind::MalformedOverride,
@@ -656,6 +690,35 @@ fn apply_path<'a>(
                             ),
                         )
                     })?;
+                if let Some(kind) = declaration_kind {
+                    let dimensions = numeric
+                        .keyframes
+                        .first()
+                        .map_or(numeric.values.len(), |key| key.values.len());
+                    let compatible = match kind {
+                        // Both scalar encodings are accepted by the native effect
+                        // reader; PF_Param_SLIDER rounding remains its responsibility.
+                        1 | 2 | 3 | 4 | 7 | 10 => {
+                            dimensions == 1
+                                && matches!(
+                                    numeric.value_kind,
+                                    NumericValueKind::Integer | NumericValueKind::Continuous
+                                )
+                        }
+                        5 => dimensions == 4 && numeric.value_kind == NumericValueKind::Color,
+                        6 => dimensions == 2 && numeric.value_kind == NumericValueKind::Continuous,
+                        _ => false,
+                    };
+                    if !compatible {
+                        return Err(warning(
+                            WarningKind::MalformedOverride,
+                            format!(
+                                "{} override dimensions/value type do not match declared kind {kind}; source retained",
+                                head.match_name
+                            ),
+                        ));
+                    }
+                }
                 let insert_at = children
                     .iter()
                     .position(|chunk| decode_match_name(chunk).as_deref() == Some("ADBE Group End"))
@@ -691,11 +754,98 @@ fn apply_path<'a>(
             return Ok(warnings);
         }
 
-        let group_positions: Vec<_> = children[selected.marker + 1..selected.end]
+        let storage = &mut children[selected.marker + 1..selected.end];
+        // Effect instances wrap their controls in sspc, unlike ordinary groups.
+        // Restrict this extra hop to Effect Parade children; do not search arbitrary
+        // descendant groups or choose between conflicting storage layouts.
+        let group_storage: &mut [Chunk] = if parent_name == Some("ADBE Effect Parade")
+            && storage
+                .iter()
+                .any(|chunk| chunk.list_kind() == Some(*b"sspc"))
+        {
+            let descriptors: Vec<_> = storage
+                .iter()
+                .enumerate()
+                .filter(|(_, chunk)| chunk.list_kind() == Some(*b"sspc"))
+                .map(|(index, _)| index)
+                .collect();
+            let [descriptor] = descriptors.as_slice() else {
+                return Err(warning(
+                    WarningKind::UnresolvedSourcePath,
+                    format!(
+                        "source effect {} has ambiguous descriptors",
+                        head.match_name
+                    ),
+                ));
+            };
+            if storage
+                .iter()
+                .any(|chunk| chunk.list_kind() == Some(*b"tdgp"))
+            {
+                return Err(warning(
+                    WarningKind::UnresolvedSourcePath,
+                    format!(
+                        "source effect {} has conflicting control groups",
+                        head.match_name
+                    ),
+                ));
+            }
+            let descriptor = storage[*descriptor].children_mut().ok_or_else(|| {
+                warning(
+                    WarningKind::UnresolvedSourcePath,
+                    format!("source effect {} descriptor is opaque", head.match_name),
+                )
+            })?;
+            let declaration_storage =
+                properties::unique_list(descriptor, *b"parT").map_err(|error| {
+                    warning(
+                        WarningKind::UnresolvedSourcePath,
+                        format!(
+                            "source effect {} control declarations: {error}",
+                            head.match_name
+                        ),
+                    )
+                })?;
+            let declarations = run_ranges(declaration_storage)?;
+            let next = &path[position + 1];
+            let matches: Vec<_> = declarations
+                .iter()
+                .enumerate()
+                .filter(|(_, range)| range.name == next.match_name)
+                .collect();
+            let declaration = match matches.as_slice() {
+                [(index, range)]
+                    if next
+                        .child_index
+                        .is_none_or(|expected| usize::try_from(expected).ok() == Some(*index)) =>
+                {
+                    Some(*range)
+                }
+                _ => None,
+            };
+            let Some(declaration) = declaration else {
+                return Err(warning(
+                    WarningKind::UnresolvedSourcePath,
+                    format!(
+                        "source effect {} declaration index/name does not identify {} uniquely",
+                        head.match_name, next.match_name
+                    ),
+                ));
+            };
+            // Retain the declaration's validation result for missing-leaf admission.
+            // Existing authored leaves keep their pre-existing replacement behavior.
+            declared_effect_control = Some(crate::effects::native::declaration_kind(
+                &declaration_storage[declaration.marker + 1..declaration.end],
+            ));
+            descriptor
+        } else {
+            storage
+        };
+        let group_positions: Vec<_> = group_storage
             .iter()
             .enumerate()
             .filter(|(_, chunk)| chunk.list_kind() == Some(*b"tdgp"))
-            .map(|(offset, _)| selected.marker + 1 + offset)
+            .map(|(index, _)| index)
             .collect();
         let [group_position] = group_positions.as_slice() else {
             return Err(warning(
@@ -703,12 +853,14 @@ fn apply_path<'a>(
                 format!("source path descends through non-group {}", head.match_name),
             ));
         };
-        children = children[*group_position].children_mut().ok_or_else(|| {
-            warning(
-                WarningKind::UnresolvedSourcePath,
-                format!("source group {} is opaque", head.match_name),
-            )
-        })?;
+        children = group_storage[*group_position]
+            .children_mut()
+            .ok_or_else(|| {
+                warning(
+                    WarningKind::UnresolvedSourcePath,
+                    format!("source group {} is opaque", head.match_name),
+                )
+            })?;
         parent_name = Some(&head.match_name);
     }
     unreachable!("non-empty paths return from their leaf")
@@ -1110,6 +1262,401 @@ mod tests {
         assert_ne!(cloned.content, original.content);
         assert_eq!(transform_value(source, "ADBE Opacity"), None);
         assert_eq!(source, &original);
+    }
+
+    #[test]
+    fn native_effect_overrides_descend_into_descriptor_controls() {
+        let envelope = aep::Project::parse(AEP).unwrap();
+        let controllers = controllers(find_controller_item(&envelope.chunks).unwrap());
+        assert!(controllers.warnings.is_empty());
+        let project = structure::read_project(AEP).unwrap();
+        let layer = |id| {
+            project
+                .items
+                .iter()
+                .find_map(|item| match &item.kind {
+                    structure::ItemKind::Composition(comp) => {
+                        comp.layers.iter().find(|layer| layer.record.id() == id)
+                    }
+                    _ => None,
+                })
+                .unwrap()
+        };
+        let overrides = overrides(&layer(28).content, &controllers.values);
+        assert!(overrides.warnings.is_empty());
+        let source = layer(15);
+        let original = source.clone();
+        let mut count = 0;
+        for property_override in &overrides.values {
+            let OverrideValue::Property {
+                path,
+                chunks: storage,
+            } = &property_override.value
+            else {
+                continue;
+            };
+            if path
+                .first()
+                .is_none_or(|node| node.match_name != "ADBE Effect Parade")
+            {
+                continue;
+            }
+            let control = &path.last().unwrap().match_name;
+            let expected = read_numeric(properties::unique_list(storage, *b"tdbs").unwrap())
+                .unwrap()
+                .values;
+            let values = |owner: &Layer| {
+                let (effects, warnings) =
+                    crate::effects::native::read_effects(&owner.content, [1.0, 1.0]);
+                assert!(warnings.is_empty(), "{warnings:?}");
+                effects
+                    .iter()
+                    .flat_map(|effect| &effect.parameters)
+                    .find(|parameter| parameter.match_name == *control)
+                    .unwrap()
+                    .numeric
+                    .as_ref()
+                    .unwrap()
+                    .values
+                    .clone()
+            };
+            // The upstream native projection pins these default-valued overrides.
+            // They prove path admission, not a visual change in this source.
+            assert_eq!(
+                expected,
+                match control.as_str() {
+                    "ADBE Brightness & Contrast 2-0001" => vec![0.0],
+                    "ADBE Fill-0002" => vec![1.0, 0.0, 0.0, 1.0],
+                    _ => panic!("unexpected native effect control {control}"),
+                }
+            );
+            let mut cloned = source.clone();
+            let warnings = apply(&mut cloned, property_override).unwrap();
+            assert!(warnings.is_empty(), "{warnings:?}");
+            assert_eq!(values(&cloned), expected, "{control}");
+            assert_eq!(
+                source, &original,
+                "occurrence override must not mutate its source"
+            );
+            count += 1;
+        }
+        assert_eq!(
+            count, 2,
+            "native Fill and Brightness controls must both be exercised"
+        );
+    }
+
+    #[test]
+    fn effect_descriptor_hop_changes_only_the_selected_control_and_rejects_ambiguity() {
+        let controls = || {
+            Chunk::list(
+                *b"tdgp",
+                [
+                    named_leaf("Value", numeric_storage(10.0)),
+                    named_leaf("Sibling", numeric_storage(7.0)),
+                ]
+                .concat(),
+            )
+        };
+        let declarations = || {
+            Chunk::list(
+                *b"parT",
+                [
+                    named_leaf("Extra", effect_declaration(10)),
+                    named_leaf("Value", effect_declaration(10)),
+                    named_leaf("Sibling", effect_declaration(10)),
+                ]
+                .concat(),
+            )
+        };
+        let descriptor = || Chunk::list(*b"sspc", vec![declarations(), controls()]);
+        let effect = |storage| named_leaf("Effect", storage);
+        let path = [
+            SourcePropertyRef {
+                match_name: "Effect".into(),
+                child_index: Some(0),
+            },
+            SourcePropertyRef {
+                match_name: "Value".into(),
+                child_index: Some(1),
+            },
+        ];
+        let replacement = numeric_storage(42.0);
+        let mut source = effect(vec![descriptor()]);
+        let warnings =
+            apply_path(&mut source, &path, Some("ADBE Effect Parade"), &replacement).unwrap();
+        assert!(warnings.is_empty());
+        let expected = effect(vec![Chunk::list(
+            *b"sspc",
+            vec![
+                declarations(),
+                Chunk::list(
+                    *b"tdgp",
+                    [
+                        named_leaf("Value", numeric_storage(42.0)),
+                        named_leaf("Sibling", numeric_storage(7.0)),
+                    ]
+                    .concat(),
+                ),
+            ],
+        )]);
+        assert_eq!(source, expected);
+
+        for storage in [
+            vec![descriptor(), descriptor()],
+            vec![descriptor(), controls()],
+            vec![Chunk::list(
+                *b"sspc",
+                vec![declarations(), controls(), controls()],
+            )],
+            vec![Chunk::list(
+                *b"sspc",
+                vec![declarations(), declarations(), controls()],
+            )],
+            vec![Chunk::list(*b"sspc", vec![controls()])],
+            vec![Chunk::list(*b"sspc", vec![declarations()])],
+            vec![Chunk::list(
+                *b"sspc",
+                vec![
+                    Chunk::list(
+                        *b"parT",
+                        [
+                            named_leaf("Value", Vec::new()),
+                            named_leaf("Value", Vec::new()),
+                        ]
+                        .concat(),
+                    ),
+                    controls(),
+                ],
+            )],
+            vec![Chunk::list(
+                *b"sspc",
+                vec![
+                    declarations(),
+                    Chunk::list(
+                        *b"tdgp",
+                        [
+                            named_leaf("Value", numeric_storage(10.0)),
+                            named_leaf("Value", numeric_storage(20.0)),
+                        ]
+                        .concat(),
+                    ),
+                ],
+            )],
+        ] {
+            let mut source = effect(storage);
+            let original = source.clone();
+            assert_eq!(
+                apply_path(&mut source, &path, Some("ADBE Effect Parade"), &replacement)
+                    .unwrap_err()
+                    .kind,
+                WarningKind::UnresolvedSourcePath
+            );
+            assert_eq!(source, original);
+        }
+        for index in [0, 2, u32::MAX] {
+            let mut stale_path = path.clone();
+            stale_path[1].child_index = Some(index);
+            let mut source = effect(vec![descriptor()]);
+            let original = source.clone();
+            assert!(
+                apply_path(
+                    &mut source,
+                    &stale_path,
+                    Some("ADBE Effect Parade"),
+                    &replacement
+                )
+                .is_err()
+            );
+            assert_eq!(source, original);
+        }
+
+        // An absent authored leaf is admitted only by its declaration, and uses
+        // the supplied override rather than guessing an effect default.
+        let sparse = || {
+            effect(vec![Chunk::list(
+                *b"sspc",
+                vec![
+                    declarations(),
+                    Chunk::list(*b"tdgp", named_leaf("Sibling", numeric_storage(7.0))),
+                ],
+            )])
+        };
+        let mut source = sparse();
+        assert!(
+            apply_path(&mut source, &path, Some("ADBE Effect Parade"), &replacement)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            source,
+            effect(vec![Chunk::list(
+                *b"sspc",
+                vec![
+                    declarations(),
+                    Chunk::list(
+                        *b"tdgp",
+                        [
+                            named_leaf("Sibling", numeric_storage(7.0)),
+                            named_leaf("Value", numeric_storage(42.0))
+                        ]
+                        .concat()
+                    ),
+                ]
+            )])
+        );
+        for replacement in [Vec::new(), vec![Chunk::list(*b"tdbs", Vec::new())]] {
+            let mut source = sparse();
+            let original = source.clone();
+            assert!(
+                apply_path(&mut source, &path, Some("ADBE Effect Parade"), &replacement).is_err()
+            );
+            assert_eq!(source, original);
+        }
+        let mut ordinary_group = effect(vec![descriptor()]);
+        let original = ordinary_group.clone();
+        assert!(
+            apply_path(
+                &mut ordinary_group,
+                &path,
+                Some("ADBE Transform Group"),
+                &replacement
+            )
+            .is_err()
+        );
+        assert_eq!(ordinary_group, original);
+    }
+
+    #[test]
+    fn missing_effect_leaf_requires_numeric_declaration_and_compatible_override() {
+        fn storage(values: &[f64], flags: u8) -> Vec<Chunk> {
+            let mut meta = vec![0; 124];
+            meta[..2].copy_from_slice(&[0xdb, 0x99]);
+            meta[2..4].copy_from_slice(&u16::try_from(values.len()).unwrap().to_be_bytes());
+            meta[59] = flags;
+            vec![Chunk::list(
+                *b"tdbs",
+                vec![
+                    Chunk::data(*b"tdb4", meta).unwrap(),
+                    Chunk::data(*b"tdsb", [0; 4]).unwrap(),
+                    Chunk::data(
+                        *b"cdat",
+                        values
+                            .iter()
+                            .flat_map(|value| value.to_be_bytes())
+                            .collect::<Vec<_>>(),
+                    )
+                    .unwrap(),
+                ],
+            )]
+        }
+        let source = |declaration| {
+            named_leaf(
+                "Effect",
+                vec![Chunk::list(
+                    *b"sspc",
+                    vec![
+                        Chunk::list(*b"parT", named_leaf("Value", declaration)),
+                        Chunk::list(*b"tdgp", named_leaf("Sibling", numeric_storage(7.0))),
+                    ],
+                )],
+            )
+        };
+        let path = [
+            SourcePropertyRef {
+                match_name: "Effect".into(),
+                child_index: Some(0),
+            },
+            SourcePropertyRef {
+                match_name: "Value".into(),
+                child_index: Some(0),
+            },
+        ];
+        let scalar = storage(&[42.0], 0);
+        let integer = storage(&[1.0], 4);
+        let point = storage(&[12.0, 34.0], 4);
+        let continuous_point = storage(&[12.0, 34.0], 0);
+        let color = storage(&[255.0, 90.0, 70.0, 20.0], 1);
+        let mut duplicate = effect_declaration(10);
+        duplicate.extend(effect_declaration(10));
+        for declaration in [
+            Vec::new(),
+            duplicate,
+            vec![Chunk::data(*b"pard", [0; 147]).unwrap()],
+            vec![Chunk::data(*b"pard", [0; 149]).unwrap()],
+            vec![Chunk::list(*b"pard", Vec::new())],
+            effect_declaration(0),
+            effect_declaration(8),
+            effect_declaration(12),
+            effect_declaration(u32::MAX),
+        ] {
+            let mut value = source(declaration);
+            let original = value.clone();
+            assert!(
+                apply_path(&mut value, &path, Some("ADBE Effect Parade"), &scalar).is_err(),
+                "invalid declaration admitted missing numeric storage"
+            );
+            assert_eq!(value, original);
+        }
+        for (kind, replacement) in [
+            (10, point.clone()),
+            (10, color.clone()),
+            (1, point.clone()),
+            (4, color.clone()),
+            (7, continuous_point.clone()),
+            (5, continuous_point.clone()),
+            (5, storage(&[1.0, 2.0, 3.0, 4.0], 0)),
+            (6, scalar.clone()),
+            (6, color.clone()),
+        ] {
+            let mut value = source(effect_declaration(kind));
+            let original = value.clone();
+            assert!(
+                apply_path(&mut value, &path, Some("ADBE Effect Parade"), &replacement).is_err()
+            );
+            assert_eq!(value, original);
+        }
+        for (kind, replacement) in [
+            (1, scalar.clone()),
+            (10, integer.clone()),
+            (1, integer.clone()),
+            (4, integer.clone()),
+            (7, integer),
+            (2, scalar.clone()),
+            (3, scalar.clone()),
+            (10, scalar),
+            (5, color),
+            (6, point),
+            (6, continuous_point),
+        ] {
+            let declaration = effect_declaration(kind);
+            let mut value = source(declaration.clone());
+            assert!(
+                apply_path(&mut value, &path, Some("ADBE Effect Parade"), &replacement)
+                    .unwrap()
+                    .is_empty()
+            );
+            assert_eq!(
+                value,
+                named_leaf(
+                    "Effect",
+                    vec![Chunk::list(
+                        *b"sspc",
+                        vec![
+                            Chunk::list(*b"parT", named_leaf("Value", declaration)),
+                            Chunk::list(
+                                *b"tdgp",
+                                [
+                                    named_leaf("Sibling", numeric_storage(7.0)),
+                                    named_leaf("Value", replacement),
+                                ]
+                                .concat()
+                            ),
+                        ]
+                    )]
+                ),
+            );
+        }
     }
 
     #[test]
@@ -1620,6 +2167,12 @@ mod tests {
         std::iter::once(match_name_chunk(name).unwrap())
             .chain(storage)
             .collect()
+    }
+
+    fn effect_declaration(kind: u32) -> Vec<Chunk> {
+        let mut bytes = vec![0; 148];
+        bytes[12..16].copy_from_slice(&kind.to_be_bytes());
+        vec![Chunk::data(*b"pard", bytes).unwrap()]
     }
 
     fn numeric_storage(value: f64) -> Vec<Chunk> {

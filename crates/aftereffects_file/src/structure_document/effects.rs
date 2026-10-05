@@ -19,7 +19,7 @@ use crate::{
     effects::{keylight, mapping, native, special, toner},
     expression_samples::{ExpressionSamples, PropertyIdentity},
     properties::NumericProperty,
-    structure::{Layer, ProjectItem},
+    structure::{Composition, Layer, ProjectItem},
 };
 
 #[path = "effects/color_balance_identity.rs"]
@@ -29,18 +29,25 @@ mod color_balance_identity;
 #[path = "effects/toner_tests.rs"]
 mod toner_tests;
 
+#[cfg(test)]
+#[path = "effects/fractal_key_tests.rs"]
+mod fractal_key_tests;
+
 mod frame_fade;
+mod light_sweep;
 
 pub(super) use frame_fade::FrameFade;
 
-/// Native effect controls and direct aliases resolve against one source project.
+/// Direct aliases distinguish the current occurrence from named project compositions.
 pub(super) struct ImportContext<'a> {
     pub evaluations: &'a ExpressionSamples,
     pub composition_id: u32,
+    pub composition: Option<&'a Composition>,
     pub items: Option<&'a HashMap<u32, &'a ProjectItem>>,
 }
 
 pub(super) struct ImportedEffects {
+    pub basic_text: Option<super::basic_text::Generator>,
     pub effects: Vec<EffectRecord>,
     pub native_ordinals: Vec<usize>,
     pub fractal_blends: Vec<super::fractal_blend::Stage>,
@@ -49,6 +56,8 @@ pub(super) struct ImportedEffects {
     pub adjustment_opacity: Option<fx_schema::PercentageProperty>,
     /// An active Roto Brush was omitted, so the owner's pixels are unsegmented.
     pub unsupported_cutout: bool,
+    /// Static fully wet unsupported CC Light Sweep Cutout reception.
+    pub unsupported_sweep_cutout: bool,
     /// A recognized frame-fade preset, whose native effects were not imported,
     /// or the warning why a present preset is not lowered. The caller resolves
     /// it after the Shape importer, which can commit the same preset itself.
@@ -59,7 +68,10 @@ pub(super) struct ImportedEffects {
 const ROTO_BRUSH: &str = "ADBE Samurai";
 
 fn parameter_plane_size(match_name: &str, native_size: [u16; 2], group_size: [u16; 2]) -> [u16; 2] {
-    if matches!(match_name, "ADBE Bulge" | "ADBE Ripple" | "ADBE Wave Warp") {
+    if matches!(
+        match_name,
+        "ADBE Bulge" | "ADBE Spherize" | "ADBE Ripple" | "ADBE Wave Warp"
+    ) {
         // These effects evaluate in the destination Group's UV plane. Keep
         // native pixel controls fixed when a source-backed layer is hosted by
         // the composition-sized imported Group.
@@ -132,6 +144,152 @@ fn same_effect_alias(
                 "Effect {} / {}: same-effect alias not lowered ({error}); existing expression fallback retained",
                 source.match_name, destination.match_name
             ));
+            None
+        }
+    }
+}
+
+fn static_effect_color_alias(
+    layer: &Layer,
+    source: &native::DecodedEffect,
+    parameter: &native::DecodedParameter,
+    numeric: &NumericProperty,
+    context: &ImportContext<'_>,
+    warnings: &mut Vec<String>,
+) -> Option<NumericProperty> {
+    let supported = match source.match_name.as_str() {
+        "ADBE Fill" => parameter.match_name == "ADBE Fill-0002",
+        "ADBE Tint" => matches!(
+            parameter.match_name.as_str(),
+            "ADBE Tint-0001" | "ADBE Tint-0002"
+        ),
+        "CC Toner" => matches!(
+            parameter.match_name.as_str(),
+            "CC Toner-0001" | "CC Toner-0002" | "CC Toner-0003" | "CC Toner-0006" | "CC Toner-0007"
+        ),
+        _ => false,
+    };
+    if !supported {
+        return None;
+    }
+    let resolved = (|| {
+        let items = context
+            .items
+            .ok_or(crate::properties::PropertyError::Layout(
+                "Color Control project scope missing",
+            ))?;
+        let composition = context
+            .composition
+            .ok_or(crate::properties::PropertyError::Layout(
+                "Color Control consumer composition missing",
+            ))?;
+        let roots = crate::properties::root_runs(&layer.content)?;
+        let parade = control_links::unique_run(&roots, "ADBE Effect Parade")?;
+        let effects = crate::properties::runs(crate::properties::unique_list(parade, *b"tdgp")?)?;
+        let index = source
+            .index
+            .checked_sub(1)
+            .ok_or(crate::properties::PropertyError::Layout(
+                "invalid one-based color effect occurrence",
+            ))?;
+        let (kind, effect) = effects
+            .get(index)
+            .ok_or(crate::properties::PropertyError::Layout(
+                "color effect occurrence missing",
+            ))?;
+        if *kind != source.match_name
+            || numeric.value_kind != crate::properties::NumericValueKind::Color
+        {
+            return Err(crate::properties::PropertyError::Layout(
+                "color effect occurrence/type mismatch",
+            ));
+        }
+        let plugin = crate::properties::unique_list(effect, *b"sspc")?;
+        let controls = crate::properties::runs(crate::properties::unique_list(plugin, *b"tdgp")?)?;
+        let run = control_links::unique_run(&controls, &parameter.match_name)?;
+        let property = crate::properties::unique_list(run, *b"tdbs")?;
+        let color = control_links::lower_static_color_control(property, composition, Some(items))?;
+        if source.match_name == "ADBE Tint" && color[3] != 1.0 {
+            return Err(crate::properties::PropertyError::Layout(
+                "Tint Color Control must be opaque",
+            ));
+        }
+        Ok(color)
+    })();
+    match resolved {
+        Ok(color) => {
+            let mut lowered = numeric.clone();
+            lowered.values = color.to_vec();
+            lowered.animated = false;
+            lowered.keyframes.clear();
+            lowered.expression_present = false;
+            lowered.expression_enabled = false;
+            warnings.push(format!("Effect {} / {}: complete static Color Control alias copied into editable effect color; live controller linkage is lost", source.match_name, parameter.match_name));
+            Some(lowered)
+        }
+        Err(error) => {
+            warnings.push(format!("Effect {} / {}: static Color Control alias not lowered ({error}); existing expression fallback retained", source.match_name, parameter.match_name));
+            None
+        }
+    }
+}
+
+fn static_effect_point_alias(
+    layer: &Layer,
+    source: &native::DecodedEffect,
+    parameter: &native::DecodedParameter,
+    numeric: &NumericProperty,
+    context: &ImportContext<'_>,
+    warnings: &mut Vec<String>,
+) -> Option<NumericProperty> {
+    if source.match_name != "ADBE Bulge" || parameter.match_name != "ADBE Bulge-0003" {
+        return None;
+    }
+    let resolved = (|| {
+        let composition = context
+            .composition
+            .ok_or(crate::properties::PropertyError::Layout(
+                "Point Control effective composition missing",
+            ))?;
+        let roots = crate::properties::root_runs(&layer.content)?;
+        let parade = control_links::unique_run(&roots, "ADBE Effect Parade")?;
+        let effects = crate::properties::runs(crate::properties::unique_list(parade, *b"tdgp")?)?;
+        let index = source
+            .index
+            .checked_sub(1)
+            .ok_or(crate::properties::PropertyError::Layout(
+                "invalid Point alias effect occurrence",
+            ))?;
+        let (kind, run) = effects
+            .get(index)
+            .ok_or(crate::properties::PropertyError::Layout(
+                "Point alias consumer effect missing",
+            ))?;
+        if *kind != source.match_name {
+            return Err(crate::properties::PropertyError::Layout(
+                "Point alias consumer occurrence mismatch",
+            ));
+        }
+        let plugin = crate::properties::unique_list(run, *b"sspc")?;
+        let controls = crate::properties::runs(crate::properties::unique_list(plugin, *b"tdgp")?)?;
+        let run = control_links::unique_run(&controls, &parameter.match_name)?;
+        let property = crate::properties::unique_list(run, *b"tdbs")?;
+        control_links::lower_static_point_control(property, composition, layer.record.id())
+    })();
+    match resolved {
+        Ok(point) => {
+            let mut lowered = numeric.clone();
+            lowered.values = point.to_vec();
+            lowered.animated = false;
+            lowered.keyframes.clear();
+            lowered.expression_present = false;
+            lowered.expression_enabled = false;
+            lowered.dimensions_separated = false;
+            warnings.push(format!("Effect {} / {}: static Point Control alias copied into independent editable center; live controller linkage is lost", source.match_name, parameter.match_name));
+            Some(lowered)
+        }
+        Err(error) => {
+            warnings.push(format!("Effect {} / {}: static Point Control alias not lowered ({error}); existing expression fallback retained", source.match_name, parameter.match_name));
             None
         }
     }
@@ -343,6 +501,36 @@ fn rescaled_entry(entry: &AnimationGraphEntry, factor: f64) -> Result<AnimationG
     Ok(scaled)
 }
 
+/// Diagnose the existing runtime boundary without rewriting editable content.
+/// Inspect retained bases and emitted keys (including fitted expression keys),
+/// not unused native values that were replaced or already omitted.
+fn simple_choker_cap_warning(
+    id: EffectId,
+    base: Option<f64>,
+    animations: &[AnimationGraphEntry],
+) -> Option<String> {
+    let target = PropertyTarget::effect_param(id, "choke");
+    let authored = base
+        .into_iter()
+        .chain(
+            animations
+                .iter()
+                .filter(|entry| entry.target == target)
+                .filter_map(|entry| entry.animator.keyframe_track())
+                .flat_map(|track| track.keyframes().iter())
+                .filter_map(|key| match key.value() {
+                    PropertyValue::Float(value) => Some(*value),
+                    _ => None,
+                }),
+        )
+        .find(|value| value.is_finite() && value.abs() > 10.0)?;
+    let boundary = if authored > 10.0 { "> 10" } else { "< -10" };
+    Some(format!(
+        "unsupported: choke {boundary}, clamped to renderer cap ±10 while rendering \
+         (retained value {authored}); editable FX values and keys unchanged"
+    ))
+}
+
 #[cfg(test)]
 pub(super) fn import(
     evaluations: &ExpressionSamples,
@@ -357,6 +545,7 @@ pub(super) fn import(
         ImportContext {
             evaluations,
             composition_id: comp_id,
+            composition: None,
             items: None,
         },
         layer,
@@ -383,7 +572,9 @@ pub(super) fn import_with_context(
         )
     });
     let consumed = frame_fade.as_ref().ok().copied().flatten();
+    let basic_text = super::basic_text::recognize(layer, &native_effects, native_size);
     let mut result = ImportedEffects {
+        basic_text: None,
         effects: Vec::new(),
         native_ordinals: Vec::new(),
         fractal_blends: Vec::new(),
@@ -391,8 +582,15 @@ pub(super) fn import_with_context(
         warnings,
         adjustment_opacity: None,
         unsupported_cutout: false,
+        unsupported_sweep_cutout: false,
         frame_fade,
     };
+    match basic_text {
+        Ok(generator) => result.basic_text = generator,
+        Err(reason) => result.warnings.push(format!(
+            "Effect ADBE Basic Text2: {reason}; generator omitted, source and siblings retained"
+        )),
+    }
     let mut identities = HashSet::new();
     for source in &native_effects {
         if source.match_name == color_balance_identity::MATCH_NAME {
@@ -406,7 +604,11 @@ pub(super) fn import_with_context(
     let opaque_fractal =
         crate::effects::fractal_noise::opaque_ordinals(layer, &native_effects, context.items);
     let fractal_canvas = crate::effects::fractal_noise::blend_canvas(layer, context.items);
-    for source in native_effects {
+    for mut source in native_effects {
+        if source.match_name == super::basic_text::MATCH_NAME && result.basic_text.is_some() {
+            result.warnings.push("Effect ADBE Basic Text2: observed static centered single-line fill profile replaced with editable Text over original source; em-box baseline, bundled font substitution and rasterization approximate native glyph metrics. Legacy plugin controls are not restored on export; independent native fidelity and alpha remain unmeasured".into());
+            continue;
+        }
         if identities.contains(&source.index) {
             result.warnings.push(format!("Effect {}: all three static neutral controls proved; identity stage omitted without changing other effect ownership", source.match_name));
             continue;
@@ -421,6 +623,7 @@ pub(super) fn import_with_context(
             continue;
         }
         if source.match_name == crate::effects::fractal_noise::MATCH_NAME {
+            let checkpoint = budget.checkpoint();
             let candidate = (|| -> Result<_, String> {
                 let (effect, note, blend) = match crate::effects::fractal_noise::lower(
                     &source,
@@ -442,7 +645,7 @@ pub(super) fn import_with_context(
                         .map_err(|blend_reason| format!("{reason}; {blend_reason}"))?;
                         (
                             effect,
-                            "static Basic/Spline Multiply/Screen generator staged for source-layer blend approximation; native kernel/scale/evolution/HDR semantics differ",
+                            "Basic Multiply/Screen generator with bounded numeric keys staged for source-layer blend approximation; native kernel/scale/evolution/HDR semantics differ",
                             Some((
                                 mode,
                                 fx_schema::PercentageProperty::new(opacity)
@@ -454,22 +657,98 @@ pub(super) fn import_with_context(
                 let mut cursor = *next_id;
                 let id = super::reserve_ids(&mut cursor, 1)
                     .ok_or("effect identity allocation exhausted")?;
+                let controls = if matches!(effect, LayerEffect::TurbulentNoise { .. }) {
+                    crate::effects::fractal_noise::animation_controls(layer, &source, native_size)?
+                } else {
+                    Vec::new()
+                };
+                let mut animations = Vec::new();
+                if !controls.is_empty() {
+                    let clock = NumericAnimationClock::parent_identity(layer)?;
+                    if matches!(effect, LayerEffect::TurbulentNoise { .. }) {
+                        for (number, mut numeric) in controls {
+                            let fields: &[(&str, usize, f64, f64)] = match number {
+                                4 => &[("contrast", 0, 1., 0.)],
+                                5 => &[("brightness", 0, 1., 0.)],
+                                10 => &[("scale", 0, 1., 0.)],
+                                23 => &[("evolution", 0, 1., 0.)],
+                                13 => &[
+                                    ("offsetX", 0, 100. / f64::from(native_size[0]), -50.),
+                                    (
+                                        "offsetY",
+                                        1,
+                                        100. / f64::from(native_size[0]),
+                                        -50. * f64::from(native_size[1])
+                                            / f64::from(native_size[0]),
+                                    ),
+                                ],
+                                _ => unreachable!("bounded Fractal animation controls"),
+                            };
+                            let targets: Vec<_> = fields
+                                .iter()
+                                .map(|(name, component, scale, offset)| {
+                                    for key in &mut numeric.keyframes {
+                                        key.values[*component] += offset / scale;
+                                    }
+                                    NumericAnimationTarget::float(
+                                        PropertyTarget::effect_param(EffectId::new(id), *name),
+                                        *component,
+                                        *scale,
+                                    )
+                                })
+                                .collect();
+                            // Disabled text has no runtime effect; live expressions were rejected.
+                            numeric.expression_present = false;
+                            let (entries, warnings) = animation::numeric_entries(
+                                &format!("ADBE Fractal Noise-{number:04}"),
+                                &numeric,
+                                &targets,
+                                clock,
+                                budget,
+                            );
+                            if entries.len() != targets.len() || !warnings.is_empty() {
+                                return Err(format!(
+                                    "Fractal numeric key lowering failed: {}",
+                                    warnings.join("; ")
+                                ));
+                            }
+                            animations.extend(entries);
+                        }
+                    }
+                }
                 let effect = EffectRecord::from_data(&EffectData::Identified {
                     id: EffectId::new(id),
                     enabled: source.enabled && layer.record.flags().effects_active,
                     effect: EffectPayload::Known(effect),
                 })
                 .map_err(|e| e.to_string())?;
-                Ok((cursor, effect, note, blend))
+                Ok((cursor, effect, note, blend, animations))
             })();
             match candidate {
-                Ok((cursor, effect, note, blend)) => {
-                    *next_id=cursor;
-                    if let Some((blend_mode,opacity))=blend {result.fractal_blends.push(super::fractal_blend::Stage {native_ordinal:source.index,generator:effect,blend_mode,opacity});}
-                    else {result.native_ordinals.push(source.index);result.effects.push(effect);}
-                    result.warnings.push(format!("Effect ADBE Fractal Noise: {note}"));
+                Ok((cursor, effect, note, blend, animations)) => {
+                    *next_id = cursor;
+                    if let Some((blend_mode, opacity)) = blend {
+                        budget.rollback(checkpoint);
+                        result.fractal_blends.push(super::fractal_blend::Stage {
+                            native_ordinal: source.index,
+                            generator: effect,
+                            animations,
+                            blend_mode,
+                            opacity,
+                        });
+                    } else {
+                        result.animations.extend(animations);
+                        result.native_ordinals.push(source.index);
+                        result.effects.push(effect);
+                    }
+                    result
+                        .warnings
+                        .push(format!("Effect ADBE Fractal Noise: {note}"));
                 }
-                Err(reason) => result.warnings.push(format!("Effect ADBE Fractal Noise: {reason}; effect omitted, owner and siblings retained")),
+                Err(reason) => {
+                    budget.rollback(checkpoint);
+                    result.warnings.push(format!("Effect ADBE Fractal Noise: {reason}; effect omitted, owner and siblings retained"));
+                }
             }
             continue;
         }
@@ -479,8 +758,10 @@ pub(super) fn import_with_context(
             } else {
                 native_size
             };
+            let checkpoint = budget.checkpoint();
             let candidate = (|| -> Result<_, String> {
-                let effect = crate::effects::box_blur::lower(&source, layer, size)?;
+                let (effect, radius_keys) =
+                    crate::effects::box_blur::lower_with_radius_keys(&source, layer, size)?;
                 let mut cursor = *next_id;
                 let id = super::reserve_ids(&mut cursor, 1)
                     .ok_or("effect identity allocation exhausted")?;
@@ -490,22 +771,74 @@ pub(super) fn import_with_context(
                     effect: EffectPayload::Known(effect),
                 })
                 .map_err(|e| e.to_string())?;
-                Ok((cursor, effect))
+                let mut animations = Vec::new();
+                if let Some(keys) = &radius_keys {
+                    let (entries, warnings) = animation::numeric_entries(
+                        "ADBE Box Blur2-0001",
+                        keys,
+                        &[NumericAnimationTarget::float(
+                            PropertyTarget::effect_param(EffectId::new(id), "blurriness"),
+                            0,
+                            1.,
+                        )],
+                        NumericAnimationClock::parent_identity(layer)?,
+                        budget,
+                    );
+                    if entries.is_empty() || !warnings.is_empty() {
+                        return Err(format!(
+                            "radius key lowering failed: {}; keyed effect omitted instead of freezing blur",
+                            warnings.join("; ")
+                        ));
+                    }
+                    animations = entries;
+                }
+                Ok((cursor, effect, animations, radius_keys.is_some()))
             })();
             match candidate {
-                Ok((cursor, effect)) => {
+                Ok((cursor, effect, animations, keyed)) => {
                     *next_id = cursor;
                     result.native_ordinals.push(source.index);
                     result.effects.push(effect);
-                    result.warnings.push("Effect ADBE Box Blur2: static Both-dimensions Fast Box Blur approximated by editable GaussianBlur with source-derived sequential box variance; native kernel, fractional-radius sampling and edge alpha are unverified".into());
+                    result.animations.extend(animations);
+                    result.warnings.push(if keyed {
+                        "Effect ADBE Box Blur2: authored Linear/Hold radius keys approximated by editable GaussianBlur keys using sequential box variance at authored endpoints. Linear intervals interpolate Gaussian blurriness (sigma), not native radius; no sampling or new keys. Native kernel, fractional-radius sampling and edge alpha are unverified".into()
+                    } else {
+                        "Effect ADBE Box Blur2: static Both-dimensions Fast Box Blur approximated by editable GaussianBlur with source-derived sequential box variance; native kernel, fractional-radius sampling and edge alpha are unverified".into()
+                    });
                 }
-                Err(reason) => result.warnings.push(format!(
-                    "Effect ADBE Box Blur2: {reason}; effect omitted, owner and siblings retained"
-                )),
+                Err(reason) => {
+                    budget.rollback(checkpoint);
+                    result.warnings.push(format!(
+                        "Effect ADBE Box Blur2: {reason}; effect omitted, owner and siblings retained"
+                    ));
+                }
             }
             continue;
         }
         if source.match_name == "CC Toner" {
+            // Resolve only bounded static color aliases before the existing atomic
+            // Toner guard. Unresolved expressions still reject the whole effect.
+            for index in 0..source.parameters.len() {
+                let parameter = &source.parameters[index];
+                let lowered = parameter.numeric.as_ref().ok().and_then(|numeric| {
+                    numeric
+                        .expression_enabled
+                        .then(|| {
+                            static_effect_color_alias(
+                                layer,
+                                &source,
+                                parameter,
+                                numeric,
+                                &context,
+                                &mut result.warnings,
+                            )
+                        })
+                        .flatten()
+                });
+                if let Some(numeric) = lowered {
+                    source.parameters[index].numeric = Ok(numeric);
+                }
+            }
             let candidate = (|| -> Result<_, String> {
                 let lowered = toner::lower(&source)?;
                 let enabled = source.enabled && layer.record.flags().effects_active;
@@ -568,11 +901,20 @@ pub(super) fn import_with_context(
             ));
             continue;
         }
+        if source.match_name == "ADBE Mirror" {
+            // Applied after content assembly, with the ordered pre-effect image.
+            continue;
+        }
         let Some(mapping) = mapping::by_native(&source.match_name) else {
+            result.unsupported_sweep_cutout |= light_sweep::cutout(layer, &source);
             result.unsupported_cutout |= source.match_name == ROTO_BRUSH
                 && source.enabled
                 && layer.record.flags().effects_active;
-            result.warnings.push(format!("Effect {}: no current native FX counterpart/mapping; effect omitted, owner and other effects retained", source.match_name));
+            if source.match_name == "CS Vignette" {
+                result.warnings.push("Effect CS Vignette (CC Vignette): unsupported native kernel and controls; the different FX radial falloff is not substituted; effect omitted, owner, masks and other effects retained".into());
+            } else {
+                result.warnings.push(format!("Effect {}: no current native FX counterpart/mapping; effect omitted, owner and other effects retained", source.match_name));
+            }
             continue;
         };
         // Probe the budget without consuming an ID for an effect discarded below.
@@ -586,6 +928,14 @@ pub(super) fn import_with_context(
         };
         let id = EffectId::new(raw_id);
         let size = parameter_plane_size(&source.match_name, native_size, group_size);
+        if source.match_name == "ADBE Spherize"
+            && let Err(reason) = special::validate_spherize(&source, size)
+        {
+            result.warnings.push(format!(
+                "Effect ADBE Spherize: {reason}; effect omitted, owner and siblings retained"
+            ));
+            continue;
+        }
         let mut value = mapping::default_effect(mapping.fx_type);
         let mut animations = Vec::new();
         let checkpoint = budget.checkpoint();
@@ -627,9 +977,32 @@ pub(super) fn import_with_context(
             let alias = (numeric.expression_enabled && evaluated.is_none())
                 .then(|| {
                     same_effect_alias(layer, &source, parameter, numeric, &mut result.warnings)
+                        .or_else(|| {
+                            static_effect_color_alias(
+                                layer,
+                                &source,
+                                parameter,
+                                numeric,
+                                &context,
+                                &mut result.warnings,
+                            )
+                        })
                 })
                 .flatten();
-            let numeric = alias.as_ref().unwrap_or(numeric);
+            let point_alias =
+                (numeric.expression_enabled && evaluated.is_none() && alias.is_none())
+                    .then(|| {
+                        static_effect_point_alias(
+                            layer,
+                            &source,
+                            parameter,
+                            numeric,
+                            &context,
+                            &mut result.warnings,
+                        )
+                    })
+                    .flatten();
+            let numeric = point_alias.as_ref().or(alias.as_ref()).unwrap_or(numeric);
             let mut shifted = numeric.clone();
             let mut shifted_any = false;
             let mut targets = Vec::new();
@@ -773,6 +1146,39 @@ pub(super) fn import_with_context(
                 }
             }
         }
+        if let Some(rgb) = special.shadow_opacity_rgb
+            && let Some(parameter) = source
+                .parameters
+                .iter()
+                .find(|p| p.match_name == "ADBE Drop Shadow-0002")
+            && let Ok(numeric) = &parameter.numeric
+        {
+            match NumericAnimationClock::parent_identity(layer) {
+                Ok(clock) => {
+                    let target = NumericAnimationTarget::opacity_color(
+                        PropertyTarget::effect_param(id, "color"),
+                        rgb,
+                    );
+                    let (entries, warnings) = animation::numeric_entries(
+                        &parameter.match_name,
+                        numeric,
+                        &[target],
+                        clock,
+                        budget,
+                    );
+                    animations.extend(entries);
+                    result.warnings.extend(
+                        warnings
+                            .into_iter()
+                            .map(|w| format!("Effect {}: {w}", source.match_name)),
+                    );
+                }
+                Err(error) => result.warnings.push(format!(
+                    "Effect {} / {}: {error}; initial shadow alpha retained",
+                    source.match_name, parameter.match_name,
+                )),
+            }
+        }
         if source.match_name == "ADBE Ripple" {
             result.warnings.extend(limit_ripple_amplitude(
                 id,
@@ -806,6 +1212,9 @@ pub(super) fn import_with_context(
                 .into_iter()
                 .map(|warning| format!("Effect {}: {warning}", source.match_name)),
         );
+        let choker_warning = (mapping.fx_type == "simpleChoker")
+            .then(|| simple_choker_cap_warning(id, value["choke"].as_f64(), &animations))
+            .flatten();
         match serde_json::from_value::<LayerEffect>(value).and_then(|effect| {
             EffectRecord::from_data(&EffectData::Identified {
                 id,
@@ -815,6 +1224,12 @@ pub(super) fn import_with_context(
         }) {
             Ok(effect) => {
                 *next_id = candidate_id;
+                if let Some(warning) = choker_warning {
+                    result.warnings.push(format!(
+                        "Effect {} (native ordinal {}) / choke: {warning}",
+                        source.match_name, source.index
+                    ));
+                }
                 result.native_ordinals.push(source.index);
                 result.effects.push(effect);
                 result.animations.extend(animations);
@@ -929,7 +1344,7 @@ mod tests {
         animation_budget::committed_entry_reservation_bytes,
         to_structural_fx_document, to_structural_fx_document_with_animation_limit,
     };
-    use super::{ImportedEffects, import, parameter_plane_size};
+    use super::{ImportedEffects, import, light_sweep, parameter_plane_size};
     use crate::{
         effects::native,
         expression_samples::ExpressionSamples,
@@ -1346,12 +1761,14 @@ mod tests {
     }
 
     #[test]
-    fn effect_parameter_planes_match_destination_runtime_contracts() {
+    fn effect_parameter_planes_preserve_mapping_units() {
         let native = [120, 80];
         let group = [320, 180];
         for name in ["ADBE Bulge", "ADBE Ripple", "ADBE Wave Warp"] {
             assert_eq!(parameter_plane_size(name, native, group), group, "{name}");
         }
+        // Twirl retains native normalized controls; the owner adapter stages
+        // eligible composition-plane images with a late CornerPin.
         for name in ["ADBE Corner Pin", "ADBE Tile", "ADBE Twirl"] {
             assert_eq!(parameter_plane_size(name, native, group), native, "{name}");
         }
@@ -1546,6 +1963,246 @@ mod tests {
     }
 
     #[test]
+    fn review_box_blur_radius_keys_keep_owner_clock_and_fail_atomically() {
+        // A supplementary authored-key mutation of the independent native static
+        // Box Blur donor. Private Slides is separately imported in local proof.
+        let project = read_project(include_bytes!(
+            "../../tests/fixtures/effects/shape_owner_gaussian.aep"
+        ))
+        .unwrap();
+        let ItemKind::Composition(comp) = &project.item(1).unwrap().kind else {
+            panic!()
+        };
+        let parsed = crate::rifx::Rifx::parse_with(
+            include_bytes!("../../tests/fixtures/effects/native-static-box-blur.rifx"),
+            |_| false,
+        )
+        .unwrap();
+        let mut owner = comp.layers[0].clone();
+        owner.content = parsed.chunks()[0].children().unwrap().to_vec();
+        let mut generated = native_effect("ADBE Gaussian Blur 2", &[("-0001", 12.)]);
+        generated
+            .properties
+            .iter_mut()
+            .find(|p| p.match_name.ends_with("0001"))
+            .unwrap()
+            .animation = Some(NumericTrack {
+            keys: [
+                (1_000, 12., KeyframeEasing::Linear),
+                (2_000, 0., KeyframeEasing::Linear),
+                (3_000, 12., KeyframeEasing::Hold),
+            ]
+            .into_iter()
+            .map(|(time_millis, value, easing)| NumericKeyframe {
+                time_millis,
+                values: vec![value],
+                easing: vec![easing],
+                spatial_in: Vec::new(),
+                spatial_out: Vec::new(),
+            })
+            .collect(),
+        });
+        let generated = effect_parade(&[generated], owner.record.id(), [1920., 1080.]).unwrap();
+        let effects = crate::properties::runs(generated.children().unwrap()).unwrap();
+        let descriptor = crate::properties::unique_list(effects[0].1, *b"sspc").unwrap();
+        let controls =
+            crate::properties::runs(crate::properties::unique_list(descriptor, *b"tdgp").unwrap())
+                .unwrap();
+        let radius = controls
+            .iter()
+            .find(|(name, _)| *name == "ADBE Gaussian Blur 2-0001")
+            .unwrap()
+            .1;
+        let replacement = Chunk::list(
+            *b"tdbs",
+            crate::properties::unique_list(radius, *b"tdbs")
+                .unwrap()
+                .to_vec(),
+        );
+        fn replace_radius(chunks: &mut [Chunk], replacement: &Chunk) -> bool {
+            for index in 0..chunks.len() {
+                if chunks[index].id() == *b"tdmn"
+                    && chunk_match_name(&chunks[index]) == Some("ADBE Box Blur2-0001")
+                {
+                    let end = chunks[index + 1..]
+                        .iter()
+                        .position(|c| c.id() == *b"tdmn")
+                        .map_or(chunks.len(), |n| index + 1 + n);
+                    if let Some(leaf) = chunks[index + 1..end]
+                        .iter_mut()
+                        .find(|c| c.list_kind() == Some(*b"tdbs"))
+                    {
+                        *leaf = replacement.clone();
+                        return true;
+                    }
+                }
+                if let Some(children) = chunks[index].children_mut()
+                    && replace_radius(children, replacement)
+                {
+                    return true;
+                }
+            }
+            false
+        }
+        assert!(replace_radius(&mut owner.content, &replacement));
+        let (sources, _) = native::read_effects(&owner.content, [1920., 1080.]);
+        let ordinal = sources
+            .iter()
+            .find(|s| s.match_name == "ADBE Box Blur2")
+            .unwrap()
+            .index;
+        let mut id = 100;
+        let mut budget = AnimationBudget::default();
+        let result = import(
+            &ExpressionSamples::default(),
+            1,
+            &owner,
+            [1920, 1080],
+            [1920, 1080],
+            &mut id,
+            &mut budget,
+        );
+        assert!(
+            result.native_ordinals.contains(&ordinal),
+            "{:?}",
+            result.warnings
+        );
+        assert_eq!(result.animations.len(), 1);
+        let actual_keys = keys(&result.animations[0]);
+        let iterations = sources
+            .iter()
+            .find(|s| s.index == ordinal)
+            .unwrap()
+            .parameters
+            .iter()
+            .find(|p| p.match_name == "ADBE Box Blur2-0002")
+            .unwrap()
+            .numeric
+            .as_ref()
+            .unwrap()
+            .values[0];
+        let blur = 4. * (iterations * 12_f64 * 13. / 3.).sqrt();
+        assert_eq!(
+            actual_keys,
+            vec![
+                (1_000, blur, PropertyKeyframeEasing::Linear),
+                (2_000, 0., PropertyKeyframeEasing::Linear),
+                (3_000, blur, PropertyKeyframeEasing::Hold)
+            ]
+        );
+        assert_eq!(id, 100 + result.effects.len() as u64);
+
+        // Supplemental native-shell mutations: effects live on the composition
+        // owner, not its independently remapped source-content Group.
+        for (start, stretch, expected_times) in [
+            (5_i32, 1_i32, [6_000, 7_000, 8_000]),
+            (0, 2, [2_000, 4_000, 6_000]),
+            (5, 2, [7_000, 9_000, 11_000]),
+        ] {
+            let mut shifted_owner = owner.clone();
+            let mut record = shifted_owner.record.encode();
+            record[12..16].copy_from_slice(&start.to_be_bytes());
+            record[16..20].copy_from_slice(&1_u32.to_be_bytes());
+            record[8..12].copy_from_slice(&stretch.to_be_bytes());
+            record[108..112].copy_from_slice(&1_u32.to_be_bytes());
+            shifted_owner.record =
+                crate::schema::layer_records::LayerRecord::decode(&record).unwrap();
+            let mut id = 100;
+            let mut budget = AnimationBudget::default();
+            let shifted = import(
+                &ExpressionSamples::default(),
+                1,
+                &shifted_owner,
+                [1920, 1080],
+                [1920, 1080],
+                &mut id,
+                &mut budget,
+            );
+            assert!(
+                shifted.native_ordinals.contains(&ordinal),
+                "{:?}",
+                shifted.warnings
+            );
+            assert_eq!(shifted.animations.len(), 1);
+            let shifted_keys = keys(&shifted.animations[0]);
+            assert_eq!(shifted_keys.len(), actual_keys.len());
+            for ((time, value, easing), (expected_time, original)) in shifted_keys
+                .iter()
+                .zip(expected_times.into_iter().zip(&actual_keys))
+            {
+                assert_eq!(*time, expected_time);
+                assert_eq!((*value, *easing), (original.1, original.2));
+            }
+            assert_eq!(id, 100 + shifted.effects.len() as u64);
+            assert_eq!(
+                budget.used(),
+                committed_entry_reservation_bytes(&shifted.animations[0]).unwrap()
+            );
+        }
+
+        // Invalid clocks reject only the keyed effect through the same atomic
+        // candidate path as a budget denial; no identity or charge is leaked.
+        for (offset, bytes) in [
+            (16, 0_u32.to_be_bytes()),
+            (108, 0_u32.to_be_bytes()),
+            (8, 0_i32.to_be_bytes()),
+        ] {
+            let mut invalid_owner = owner.clone();
+            let mut record = invalid_owner.record.encode();
+            record[offset..offset + 4].copy_from_slice(&bytes);
+            invalid_owner.record =
+                crate::schema::layer_records::LayerRecord::decode(&record).unwrap();
+            let mut id = 100;
+            let mut budget = AnimationBudget::default();
+            let invalid = import(
+                &ExpressionSamples::default(),
+                1,
+                &invalid_owner,
+                [1920, 1080],
+                [1920, 1080],
+                &mut id,
+                &mut budget,
+            );
+            assert!(!invalid.native_ordinals.contains(&ordinal));
+            assert_eq!(invalid.effects.len() + 1, result.effects.len());
+            assert!(invalid.animations.is_empty());
+            assert_eq!(budget.used(), 0);
+            assert_eq!(id, 100 + invalid.effects.len() as u64);
+            assert!(invalid.warnings.iter().any(|warning| {
+                warning.starts_with("Effect ADBE Box Blur2:")
+                    && warning.contains("clock")
+                    && warning.contains("effect omitted, owner and siblings retained")
+            }));
+        }
+
+        let mut id = 100;
+        let mut budget = AnimationBudget::with_limit(1);
+        let failed = import(
+            &ExpressionSamples::default(),
+            1,
+            &owner,
+            [1920, 1080],
+            [1920, 1080],
+            &mut id,
+            &mut budget,
+        );
+        assert!(!failed.native_ordinals.contains(&ordinal));
+        assert!(failed.animations.is_empty());
+        assert_eq!(budget.used(), 0);
+        assert_eq!(
+            id,
+            100 + failed.effects.len() as u64,
+            "discarded effect consumes no identity"
+        );
+        assert!(
+            failed
+                .warnings
+                .iter()
+                .any(|s| s.contains("keyed effect omitted instead of freezing blur"))
+        );
+    }
+
+    #[test]
     fn native_static_box_blur_keeps_ordinal_and_source_derived_variance() {
         let p = read_project(include_bytes!(
             "../../tests/fixtures/effects/shape_owner_gaussian.aep"
@@ -1658,6 +2315,7 @@ mod tests {
                 ImportContext {
                     evaluations: &Default::default(),
                     composition_id: 1,
+                    composition: Some(comp),
                     items: Some(&items),
                 },
                 &layer,
@@ -1717,6 +2375,7 @@ mod tests {
                     ImportContext {
                         evaluations: &Default::default(),
                         composition_id: 1,
+                        composition: Some(comp),
                         items: None,
                     },
                     &layer,
@@ -1741,6 +2400,190 @@ mod tests {
                         && warning.contains("approximat"))
             );
         }
+    }
+
+    #[test]
+    fn shadow_opacity_keys_keep_static_rgb_and_scalar_easing() {
+        // Supplementary writer-generated controls on a native catalog owner;
+        // the independent AI source readback is separate evidence.
+        let mut shadow = new_effect("ADBE Drop Shadow", true, PLANE.map(f64::from))
+            .expect("native shadow definition");
+        let rgb = [0.2, 0.4, 0.6];
+        shadow
+            .properties
+            .iter_mut()
+            .find(|p| p.match_name == "ADBE Drop Shadow-0001")
+            .unwrap()
+            .values = vec![rgb[0], rgb[1], rgb[2], 1.0];
+        shadow
+            .properties
+            .iter_mut()
+            .find(|p| p.match_name == "ADBE Drop Shadow-0002")
+            .unwrap()
+            .animation = Some(NumericTrack {
+            keys: vec![
+                NumericKeyframe {
+                    time_millis: 0,
+                    values: vec![0.0],
+                    easing: vec![KeyframeEasing::Linear],
+                    spatial_in: vec![],
+                    spatial_out: vec![],
+                },
+                NumericKeyframe {
+                    time_millis: 1000,
+                    values: vec![127.5],
+                    easing: vec![KeyframeEasing::CubicBezier {
+                        x1: 0.25,
+                        y1: 0.4,
+                        x2: 0.6,
+                        y2: 0.85,
+                    }],
+                    spatial_in: vec![],
+                    spatial_out: vec![],
+                },
+            ],
+        });
+        let owner = catalog_owner(std::slice::from_ref(&shadow));
+        let (native, _) = native::read_effects(&owner.content, PLANE.map(f64::from));
+        let numeric = native[0]
+            .parameters
+            .iter()
+            .find(|p| p.match_name == "ADBE Drop Shadow-0002")
+            .unwrap()
+            .numeric
+            .as_ref()
+            .unwrap();
+        let expected_target = PropertyTarget::effect_param(EffectId::new(100), "color");
+        let scalar_target = NumericAnimationTarget::float(expected_target.clone(), 0, 1.0 / 255.0);
+        let (expected, warnings) = animation::numeric_entries(
+            "ADBE Drop Shadow-0002",
+            numeric,
+            &[scalar_target],
+            animation::NumericAnimationClock::parent_identity(&owner).unwrap(),
+            &mut AnimationBudget::default(),
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let mut budget = AnimationBudget::default();
+        let imported = import(
+            &Default::default(),
+            1,
+            &owner,
+            PLANE,
+            PLANE,
+            &mut 100,
+            &mut budget,
+        );
+        let actual = imported
+            .animations
+            .iter()
+            .find(|entry| entry.target == expected_target)
+            .unwrap_or_else(|| panic!("native opacity needs an editable Color-alpha track: warnings={:?}; native={:?}; entries={:?}", imported.warnings, native[0], imported.animations));
+        assert_eq!(
+            budget.used(),
+            committed_entry_reservation_bytes(actual).unwrap(),
+            "admit the final RGBA payload, not smaller scalar placeholders"
+        );
+        let actual = actual.animator.keyframe_track().unwrap().keyframes();
+        let expected = expected[0].animator.keyframe_track().unwrap().keyframes();
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(expected) {
+            let PropertyValue::Float(alpha) = expected.value() else {
+                panic!("scalar opacity")
+            };
+            assert_eq!(
+                actual.value(),
+                &PropertyValue::Color([rgb[0], rgb[1], rgb[2], *alpha])
+            );
+            assert_eq!(actual.easing(), expected.easing());
+        }
+        assert!(
+            !imported
+                .warnings
+                .iter()
+                .any(|w| w.contains("-0002: only the initial"))
+        );
+        let mut tight = AnimationBudget::with_limit(1);
+        let limited = import(
+            &Default::default(),
+            1,
+            &owner,
+            PLANE,
+            PLANE,
+            &mut 100,
+            &mut tight,
+        );
+        assert!(
+            limited.animations.is_empty(),
+            "budget must not retain partial alpha motion"
+        );
+        assert_eq!(tight.used(), 0);
+        assert!(!limited.warnings.is_empty());
+
+        let mut expression_owner = owner.clone();
+        assert!(enable_expression(
+            &mut expression_owner.content,
+            "ADBE Drop Shadow-0002"
+        ));
+        let expressions = import(
+            &Default::default(),
+            1,
+            &expression_owner,
+            PLANE,
+            PLANE,
+            &mut 100,
+            &mut AnimationBudget::default(),
+        );
+        assert!(expressions.animations.is_empty());
+        assert!(
+            expressions
+                .warnings
+                .iter()
+                .any(|w| w.contains("animation/expression omitted"))
+        );
+
+        shadow
+            .properties
+            .iter_mut()
+            .find(|p| p.match_name == "ADBE Drop Shadow-0001")
+            .unwrap()
+            .animation = Some(NumericTrack {
+            keys: vec![
+                NumericKeyframe {
+                    time_millis: 0,
+                    values: vec![0.2, 0.4, 0.6, 1.0],
+                    easing: vec![KeyframeEasing::Linear; 4],
+                    spatial_in: vec![],
+                    spatial_out: vec![],
+                },
+                NumericKeyframe {
+                    time_millis: 1000,
+                    values: vec![0.5, 0.6, 0.7, 1.0],
+                    easing: vec![KeyframeEasing::Linear; 4],
+                    spatial_in: vec![],
+                    spatial_out: vec![],
+                },
+            ],
+        });
+        let coupled = catalog_owner(&[shadow]);
+        let coupled = import(
+            &Default::default(),
+            1,
+            &coupled,
+            PLANE,
+            PLANE,
+            &mut 100,
+            &mut AnimationBudget::default(),
+        );
+        assert!(
+            coupled.animations.is_empty(),
+            "do not overwrite authored RGB motion with alpha keys"
+        );
+        assert!(
+            coupled
+                .warnings
+                .iter()
+                .any(|w| w.contains("Shadow Color animation"))
+        );
     }
 
     const CATALOG: &[u8] = include_bytes!("../../tests/fixtures/effects/catalog.aep");
@@ -1778,6 +2621,229 @@ mod tests {
             .expect("generated Effect Parade group")
             .to_vec();
         owner
+    }
+
+    #[test]
+    fn unsupported_light_sweep_cutout_is_guarded_and_preserves_effect_siblings() {
+        // Supplementary synthetic control profile on a native catalog owner;
+        // the proprietary Slides source is not a redistributable fixture.
+        let sweep = native_effect("ADBE Ripple", &[("-0006", 3.0)]);
+        let mut owner = catalog_owner(&[sweep, native_effect("ADBE Gaussian Blur 2", &[])]);
+        fn rename(chunks: &mut [Chunk]) {
+            for chunk in chunks {
+                if chunk.id() == *b"tdmn" {
+                    let replacement = match chunk_match_name(chunk) {
+                        Some("ADBE Ripple") => Some("CC Light Sweep"),
+                        Some("ADBE Ripple-0006") => Some("CC Light Sweep-0009"),
+                        _ => None,
+                    };
+                    if let Some(name) = replacement {
+                        let mut bytes = name.as_bytes().to_vec();
+                        bytes.resize(40, 0);
+                        *chunk = Chunk::data(*b"tdmn", bytes).unwrap();
+                    }
+                }
+                if let Some(children) = chunk.children_mut() {
+                    rename(children);
+                }
+            }
+        }
+        rename(&mut owner.content);
+        assert!(patch_control(
+            &mut owner.content,
+            "CC Light Sweep-0009",
+            *b"pard",
+            &mut |bytes| {
+                bytes[12..16].copy_from_slice(&7_u32.to_be_bytes());
+            }
+        ));
+        let (decoded, warnings) = native::read_effects(&owner.content, PLANE.map(f64::from));
+        assert!(!decoded.is_empty(), "{warnings:?}");
+        let mut source = decoded[0].clone();
+        source
+            .parameters
+            .retain(|p| p.match_name == "CC Light Sweep-0009");
+        assert!(light_sweep::cutout(&owner, &source));
+        for mode in [1.0, 2.0, 0.0, 4.0, f64::NAN] {
+            source.parameters[0].numeric.as_mut().unwrap().values = vec![mode];
+            assert!(!light_sweep::cutout(&owner, &source));
+        }
+        source.parameters[0].numeric.as_mut().unwrap().values = vec![3.0];
+        source.enabled = false;
+        assert!(!light_sweep::cutout(&owner, &source));
+        source.enabled = true;
+        source.parameters[0].numeric.as_mut().unwrap().animated = true;
+        assert!(!light_sweep::cutout(&owner, &source));
+        source.parameters[0].numeric.as_mut().unwrap().animated = false;
+        source.parameters[0]
+            .numeric
+            .as_mut()
+            .unwrap()
+            .expression_present = true;
+        assert!(!light_sweep::cutout(&owner, &source));
+        source.parameters[0]
+            .numeric
+            .as_mut()
+            .unwrap()
+            .expression_present = false;
+        source.parameters[0]
+            .numeric
+            .as_mut()
+            .unwrap()
+            .expression_enabled = true;
+        assert!(!light_sweep::cutout(&owner, &source));
+        source.parameters[0]
+            .numeric
+            .as_mut()
+            .unwrap()
+            .expression_enabled = false;
+        source.parameters[0]
+            .numeric
+            .as_mut()
+            .unwrap()
+            .dimensions_separated = true;
+        assert!(!light_sweep::cutout(&owner, &source));
+        source.parameters[0]
+            .numeric
+            .as_mut()
+            .unwrap()
+            .dimensions_separated = false;
+        source.declarations = native::Declarations::Unreadable;
+        assert!(!light_sweep::cutout(&owner, &source));
+        source.declarations = native::Declarations::Missing;
+        source.parameters[0].declared_kind = Ok(None);
+        assert!(light_sweep::cutout(&owner, &source));
+        source.declarations = decoded[0].declarations;
+        source.parameters[0].declared_kind = Ok(Some(2));
+        assert!(!light_sweep::cutout(&owner, &source));
+        source.parameters[0].declared_kind = Ok(Some(7));
+        source.parameters.push(source.parameters[0].clone());
+        assert!(!light_sweep::cutout(&owner, &source));
+        let mut id = 100;
+        let mut budget = AnimationBudget::default();
+        let result = import(
+            &ExpressionSamples::default(),
+            RIPPLE_COMPOSITION,
+            &owner,
+            PLANE,
+            PLANE,
+            &mut id,
+            &mut budget,
+        );
+        assert!(result.unsupported_sweep_cutout);
+        assert_eq!(result.effects.len(), 1, "supported Blur sibling survives");
+        assert_eq!(result.native_ordinals, vec![2]);
+        // Exercise Converter wiring too: a flag-only assertion would miss a
+        // regression that left the raw opaque Solid painted in the document.
+        let mut project = read_project(CATALOG).unwrap();
+        let ItemKind::Composition(lower_comp) = &project.item(1).unwrap().kind else {
+            panic!()
+        };
+        let mut lower = lower_comp.layers[0].clone();
+        lower.name = "Untouched lower sibling".into();
+        let mut cutout = owner.clone();
+        cutout.name = "Cutout owner".into();
+        let ItemKind::Composition(comp) = &mut project
+            .items
+            .iter_mut()
+            .find(|i| i.id == RIPPLE_COMPOSITION)
+            .unwrap()
+            .kind
+        else {
+            panic!()
+        };
+        comp.layers = vec![cutout, lower];
+        let converted = to_structural_fx_document(&project, Some(RIPPLE_COMPOSITION)).unwrap();
+        let document = serde_json::to_value(&converted.document).unwrap();
+        fn named<'a>(value: &'a Value, name: &str) -> Option<&'a Value> {
+            match value {
+                Value::Object(object) => {
+                    if object.get("name").and_then(Value::as_str) == Some(name) {
+                        return Some(value);
+                    }
+                    object.values().find_map(|v| named(v, name))
+                }
+                Value::Array(values) => values.iter().find_map(|v| named(v, name)),
+                _ => None,
+            }
+        }
+        fn contains(value: &Value, key: &str, expected: &Value) -> bool {
+            match value {
+                Value::Object(object) => {
+                    object.get(key) == Some(expected)
+                        || object.values().any(|v| contains(v, key, expected))
+                }
+                Value::Array(values) => values.iter().any(|v| contains(v, key, expected)),
+                _ => false,
+            }
+        }
+        let emitted = named(&document, "Cutout owner").unwrap();
+        assert!(
+            contains(emitted, "isHidden", &Value::Bool(true)),
+            "raw Cutout source paint must be hidden: {emitted}"
+        );
+        assert!(
+            contains(emitted, "type", &Value::String("gaussianBlur".into())),
+            "supported Blur effect sibling remains"
+        );
+        let lower = named(&document, "Untouched lower sibling").unwrap();
+        assert!(
+            !contains(lower, "isHidden", &Value::Bool(true)),
+            "lower visual sibling must not be hidden"
+        );
+        assert!(
+            converted
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("CC Light Sweep static Cutout"))
+        );
+        fn name(value: &str) -> Chunk {
+            let mut bytes = value.as_bytes().to_vec();
+            bytes.resize(40, 0);
+            Chunk::data(*b"tdmn", bytes).unwrap()
+        }
+        fn add_compositing(chunks: &mut [Chunk]) -> bool {
+            for chunk in chunks {
+                if chunk.list_kind() == Some(*b"sspc") {
+                    let body = chunk
+                        .children_mut()
+                        .unwrap()
+                        .iter_mut()
+                        .find(|c| c.list_kind() == Some(*b"tdgp"))
+                        .unwrap()
+                        .children_mut()
+                        .unwrap();
+                    body.extend([
+                        name("ADBE Effect Built In Params"),
+                        Chunk::list(*b"tdgp", vec![name("ADBE Effect Mask Parade")]),
+                    ]);
+                    return true;
+                }
+                if let Some(children) = chunk.children_mut()
+                    && add_compositing(children)
+                {
+                    return true;
+                }
+            }
+            false
+        }
+        let mut mixed = owner.clone();
+        assert!(add_compositing(&mut mixed.content));
+        assert!(
+            !light_sweep::cutout(&mixed, &decoded[0]),
+            "effect masks/mix must not hide raw paint"
+        );
+        let result = import(
+            &ExpressionSamples::default(),
+            RIPPLE_COMPOSITION,
+            &mixed,
+            PLANE,
+            PLANE,
+            &mut id,
+            &mut budget,
+        );
+        assert!(!result.unsupported_sweep_cutout);
+        assert_eq!(result.effects.len(), 1);
     }
 
     /// A native effect with the given static control values.
@@ -1953,6 +3019,8 @@ mod tests {
     fn evaluated_ripple_amplitude_keeps_its_ordinary_fit_before_one_uniform_reduction() {
         // 320px plane, 20px Wave Width. The 200.5px midpoint deviates 0.5px
         // (0.0015625 FX units) from linear, beyond the 0.001 fitting cap.
+        // Actual-time fitting can retain that observation with a sparse cubic;
+        // the limiter must preserve its easing as well as its endpoint keys.
         let mut owner = catalog_owner(&[native_ripple(20.0, 20.0, None)]);
         assert!(enable_expression(&mut owner.content, "ADBE Ripple-0006"));
         let samples = wave_height_samples(&owner, &[0.0, 0.001, 0.002], &[0.0, 200.5, 400.0]);
@@ -1963,12 +3031,18 @@ mod tests {
         let ordinary = ordinary_lowering(&samples);
         assert_eq!(
             ordinary.iter().map(|key| key.0).collect::<Vec<_>>(),
-            [0, 1, 2],
-            "the ordinary fit keeps the midpoint key"
+            [0, 2],
+            "the ordinary actual-time fit retains sparse cubic endpoints"
         );
+        let PropertyKeyframeEasing::CubicBezier { x1, y1, x2, y2 } = &ordinary[1].2 else {
+            panic!("the nonlinear midpoint must not become a linear segment");
+        };
+        assert_eq!((*x1, *x2), (1.0 / 3.0, 2.0 / 3.0));
+        let midpoint_progress = 0.375 * (y1 + y2) + 0.125;
+        assert!((ordinary[1].1 * midpoint_progress - 200.5 / 320.0).abs() < 1e-12);
         let factor = assert_uniformly_reduced(&reduced, &ordinary);
-        assert!((fold_over(reduced[2].1, &ripple) - 1.25).abs() < 1e-12);
-        assert!((reduced[1].1 / reduced[2].1 - 200.5 / 400.0).abs() < 1e-12);
+        assert!((fold_over(reduced[1].1, &ripple) - 1.25).abs() < 1e-12);
+        assert!((midpoint_progress - 200.5 / 400.0).abs() < 1e-12);
         assert!(
             (ripple["amplitude"].as_f64().unwrap() - 20.0 / 320.0 * factor).abs() < 1e-15,
             "the retained base takes the same factor"
@@ -2043,6 +3117,119 @@ mod tests {
         );
         assert_eq!(limit_warnings(&fallback.warnings), 1);
         assert_eq!(budget.used(), 0);
+    }
+
+    #[test]
+    fn simple_choker_renderer_cap_diagnostic_preserves_output_bytes() {
+        // Supplementary CPU controls on an Adobe catalog owner; this is not a
+        // newly Adobe-authored or rendered feature-fidelity fixture.
+        let mut retained = Vec::new();
+        let mut observed = Vec::new();
+        for (base, animated) in [
+            (0.0, false),
+            (10.0, false),
+            (-10.0, false),
+            (100.0, false),
+            (-100.0, false),
+            (1.0, true),
+            (-1.0, true),
+        ] {
+            let mut effect = native_effect("ADBE Simple Choker", &[("-0002", base)]);
+            if animated {
+                let peak = if base > 0.0 { 100.0 } else { -100.0 };
+                effect
+                    .properties
+                    .iter_mut()
+                    .find(|property| property.match_name == "ADBE Simple Choker-0002")
+                    .expect("native Choke Matte")
+                    .animation = Some(NumericTrack {
+                    keys: [(0, base), (1000, peak), (2000, 0.0)]
+                        .into_iter()
+                        .map(|(time_millis, value)| NumericKeyframe {
+                            time_millis,
+                            values: vec![value],
+                            easing: vec![KeyframeEasing::Linear],
+                            spatial_in: Vec::new(),
+                            spatial_out: Vec::new(),
+                        })
+                        .collect(),
+                });
+            }
+            let sibling = native_effect("ADBE Exposure2", &[("-0003", 0.5)]);
+            let owner = catalog_owner(&[effect, sibling]);
+            let mut next_id = RIPPLE_ID;
+            let imported = import(
+                &ExpressionSamples::default(),
+                RIPPLE_COMPOSITION,
+                &owner,
+                PLANE,
+                PLANE,
+                &mut next_id,
+                &mut AnimationBudget::default(),
+            );
+            assert_eq!(
+                payload(&imported, "simpleChoker")["choke"],
+                serde_json::json!(base)
+            );
+            assert_eq!(imported.effects.len(), 2, "effect siblings retained");
+            if animated {
+                let target = PropertyTarget::effect_param(EffectId::new(RIPPLE_ID), "choke");
+                let values: Vec<_> = keys(
+                    imported
+                        .animations
+                        .iter()
+                        .find(|entry| entry.target == target)
+                        .expect("editable choke keys"),
+                )
+                .into_iter()
+                .map(|(time, value, _)| (time, value))
+                .collect();
+                assert_eq!(
+                    values,
+                    vec![(0, base), (1000, base.signum() * 100.0), (2000, 0.0)]
+                );
+            }
+            retained.push(serde_json::json!({
+                "effects":imported.effects, "animations":imported.animations,
+                "nativeOrdinals":imported.native_ordinals, "nextId":next_id,
+            }));
+            let cap_warnings: Vec<_> = imported
+                .warnings
+                .iter()
+                .filter(|warning| warning.contains("clamped to renderer cap"))
+                .collect();
+            for warning in &cap_warnings {
+                assert!(
+                    warning.starts_with("Effect ADBE Simple Choker (native ordinal 1) / choke:")
+                );
+                assert!(warning.contains("unsupported: choke "));
+                assert!(warning.contains("editable FX values and keys unchanged"));
+                let expected = if base > 0.0 { "> 10" } else { "< -10" };
+                assert!(warning.contains(expected), "{warning}");
+            }
+            observed.push((base, animated, cap_warnings.len()));
+        }
+        let bytes = serde_json::to_vec(&retained).expect("editable output bytes");
+        // Pinned from the pre-fix RED execution: diagnostics are not included in
+        // editable output; effects, keys, sibling order and identifiers are.
+        assert_eq!(
+            format!("{:x}", Sha256::digest(&bytes)),
+            "f6b97d1a7712e876d7bc0055299ae8b8967c7307b8ebbd44c754a7782f1359d0",
+            "diagnostic-only change must preserve editable output bytes"
+        );
+        assert_eq!(
+            observed,
+            vec![
+                (0.0, false, 0),
+                (10.0, false, 0),
+                (-10.0, false, 0),
+                (100.0, false, 1),
+                (-100.0, false, 1),
+                (1.0, true, 1),
+                (-1.0, true, 1),
+            ],
+            "out-of-cap static and later keyed values need diagnostics"
+        );
     }
 
     #[test]
@@ -2139,6 +3326,76 @@ mod tests {
             omitted.warnings
         );
         assert_eq!(tight.used(), 0);
+    }
+
+    #[test]
+    fn corner_pin_zero_speed_straight_spatial_keys_stay_editable() {
+        let mut effect =
+            new_effect("ADBE Corner Pin", true, PLANE.map(f64::from)).expect("known Corner Pin");
+        let point = effect
+            .properties
+            .iter_mut()
+            .find(|parameter| parameter.match_name == "ADBE Corner Pin-0001")
+            .expect("upper-left point");
+        point.values = vec![-48.0, -9.0];
+        let easing = KeyframeEasing::Linear;
+        point.animation = Some(NumericTrack {
+            keys: vec![
+                NumericKeyframe {
+                    time_millis: 0,
+                    values: vec![-48.0, -9.0],
+                    easing: vec![easing],
+                    spatial_in: vec![-8.0, -1.5],
+                    spatial_out: vec![8.0, 1.5],
+                },
+                NumericKeyframe {
+                    time_millis: 1_000,
+                    values: vec![0.0, 0.0],
+                    easing: vec![easing],
+                    spatial_in: vec![-8.0, -1.5],
+                    spatial_out: vec![8.0, 1.5],
+                },
+            ],
+        });
+        // Supplementary writer-authored reproduction, not an independent Adobe oracle.
+        let mut owner = catalog_owner(&[effect]);
+        assert!(patch_control(
+            &mut owner.content,
+            "ADBE Corner Pin-0001",
+            *b"ldat",
+            &mut |data| {
+                assert_eq!(data.len(), 208, "two native spatial Point keys");
+                for key in data.chunks_exact_mut(104) {
+                    key[4] = 2;
+                    key[5] = 2;
+                    for (index, value) in
+                        [0.0_f64, 1.0 / 3.0, 0.0, 1.0 / 3.0].into_iter().enumerate()
+                    {
+                        key[24 + index * 8..32 + index * 8].copy_from_slice(&value.to_be_bytes());
+                    }
+                }
+            }
+        ));
+        let imported = import_ripple(
+            &owner,
+            &ExpressionSamples::default(),
+            PLANE,
+            &mut AnimationBudget::default(),
+        );
+        assert_eq!(imported.animations.len(), 2, "{:?}", imported.warnings);
+        let tracks: Vec<_> = imported.animations.iter().map(keys).collect();
+        assert!((tracks[0][0].1 - (-48.0 / 320.0)).abs() < 1e-15);
+        assert!((tracks[1][0].1 - (-9.0 / 180.0)).abs() < 1e-15);
+        for track in tracks {
+            assert_eq!(track.len(), 2);
+            assert_eq!(track[1].1, 0.0);
+            let PropertyKeyframeEasing::CubicBezier { x1, y1, x2, y2 } = track[1].2 else {
+                panic!("native zero-speed ease was lost: {track:?}")
+            };
+            assert!((x1 - 1.0 / 3.0).abs() < 1e-8);
+            assert!((x2 - 2.0 / 3.0).abs() < 1e-8);
+            assert_eq!((y1, y2), (0.0, 1.0));
+        }
     }
 
     #[test]

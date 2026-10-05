@@ -15,6 +15,7 @@ const EYE_CONTACT: &str = "eye-contact-output";
 
 fn one_second(codec: VideoCodec) -> VideoMedia {
     VideoMedia {
+        pixel_aspect: Default::default(),
         orientation: crate::schema::VideoOrientation::Identity,
         codec,
         bit_depth: 8,
@@ -102,7 +103,7 @@ fn enabled_eye_contact_exports_the_active_replacement_with_its_own_codec() {
     assert_eq!(
         reasons,
         [
-            "Eye Contact exported as its active output \"eye-contact-output\"; the original asset \"premiere-video-1\" and the Eye Contact toggle were not exported"
+            "Eye Contact exported as its active output \"eye-contact-output\"; the original picture lineage \"premiere-video-1\" and the Eye Contact toggle were not exported"
         ]
     );
 }
@@ -190,6 +191,7 @@ fn active_replacement_keeps_playback_and_wipe_export_and_rejects_retimed_duratio
         for (id, asset) in &ids {
             let media = native.media[id].video.as_ref().unwrap();
             let video = VideoMedia {
+                pixel_aspect: Default::default(),
                 orientation: crate::schema::VideoOrientation::Identity,
                 codec: VideoCodec::H264,
                 bit_depth: 8,
@@ -273,7 +275,9 @@ fn active_replacement_keeps_playback_and_wipe_export_and_rejects_retimed_duratio
         }
         assert_eq!(
             omissions.len(),
-            expected_omissions.len() + actual_clips.len(),
+            // Replacement loss belongs to each authored clip, not each
+            // speed/hold segment emitted from that clip.
+            expected_omissions.len() + sequence.video_occurrences().count(),
             "{name}: {omissions:?}"
         );
         omissions.retain(|item| !item.reason.starts_with("Eye Contact exported as"));

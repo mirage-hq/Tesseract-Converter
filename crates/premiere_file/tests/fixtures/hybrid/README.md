@@ -2,17 +2,18 @@
 
 Case: `premiere_after_effects_dynamic_link_v1`.
 
-These **unchanged Adobe-authored sources** were created in a new, task-owned
+These **Adobe-authored sources** were created in a new, task-owned
 macOS GUI session on 2026-09-28, not by either converter. Premiere Pro 26.5.1
 imported the AE composition with `importAEComps`, placed it above the native
 video, and saved the project. After Effects 26.5x89 (build 89) authored the AEP.
-The fixture contains task-local absolute paths; CPU source-record tests do not
-resolve them or require Adobe. Do not rewrite the pinned originals to relocate
-or repair them.
+The public Premiere fixture anonymizes absolute path metadata. Its original
+source identity remains separate from the published derivative in
+[the path provenance](../path-sanitization.json). CPU source-record tests do not
+require Adobe. No new native acceptance is claimed for the derivative.
 
 | Input | Bytes | SHA-256 |
 |---|---:|---|
-| `native-linked.prproj` | 8531 | `7ce138008b0dd305a3f033fd7020051b4e93d3593ffcf747f2664fe56782c25e` |
+| `native-linked.prproj` | 8531 | `a6a7a7a662bd8f2b5b9392cd11e97dde16344ccb55a589a1d902b6f40ac88154` |
 | `native-title.aep` | 80335 | `d17ed2fd6a118c69e3be3ae41d327a3877036579715dcc6f5dfa8eb7001c9d31` |
 | `background.mp4` (local only; not included) | 134521 | `0c8bc4a098980d45287c05a6f3e15b4fd82f50ed3823354f6532d772d4eb6e6a` |
 

@@ -30,11 +30,45 @@ fn scalar(effect: &DecodedEffect, suffix: &str, warnings: &mut Vec<String>) -> O
     values.first().copied().filter(|v| v.is_finite())
 }
 
+/// Bound the static Spherize approximation to finite shader-safe geometry.
+/// Bulge's square root requires normalized radial distance no greater than one.
+pub(crate) fn validate_spherize(
+    native: &DecodedEffect,
+    size: [u16; 2],
+) -> Result<(), &'static str> {
+    for (suffix, dimensions) in [("-0001", 1), ("-0002", 2)] {
+        let numeric = native
+            .parameters
+            .iter()
+            .find(|parameter| parameter.match_name.ends_with(suffix))
+            .and_then(|parameter| parameter.numeric.as_ref().ok())
+            .ok_or("missing or malformed Radius/Center")?;
+        if numeric.animated
+            || !numeric.keyframes.is_empty()
+            || numeric.expression_enabled
+            || numeric.dimensions_separated
+            || numeric.values.len() != dimensions
+            || !numeric.values.iter().all(|value| value.is_finite())
+        {
+            return Err("Radius/Center requires finite static controls without expressions");
+        }
+        if suffix == "-0001"
+            && (numeric.values[0] < 0.0 || numeric.values[0] >= f64::from(size[0].min(size[1])))
+        {
+            return Err(
+                "Radius must be nonnegative and smaller than the destination plane's short edge",
+            );
+        }
+    }
+    Ok(())
+}
+
 #[derive(Default)]
 pub(crate) struct ImportReport {
     pub(crate) warnings: Vec<String>,
     consumed_suffixes: Vec<&'static str>,
     pub(crate) shadow_distance_scale: Option<[f64; 2]>,
+    pub(crate) shadow_opacity_rgb: Option<[f64; 3]>,
 }
 
 impl ImportReport {
@@ -100,6 +134,54 @@ fn shadow_distance_scale(native: &DecodedEffect) -> Option<[f64; 2]> {
     Some([theta.sin(), -theta.cos()])
 }
 
+// Independent scalar alpha keys can use a Color target only when RGB is fixed.
+// Coupled RGB/opacity animation remains a diagnosed static approximation.
+fn shadow_opacity_rgb(native: &DecodedEffect) -> Option<[f64; 3]> {
+    let parameter = |name: &str| {
+        native
+            .parameters
+            .iter()
+            .find(|p| p.match_name == name)?
+            .numeric
+            .as_ref()
+            .ok()
+    };
+    let color = parameter("ADBE Drop Shadow-0001")?;
+    let opacity = parameter("ADBE Drop Shadow-0002")?;
+    if color.animated
+        || !color.keyframes.is_empty()
+        || color.expression_present
+        || color.expression_enabled
+        || opacity.expression_present
+        || opacity.expression_enabled
+        || opacity.dimensions_separated
+        || opacity.keyframes.is_empty()
+        || !matches!(
+            opacity.value_kind,
+            crate::properties::NumericValueKind::Continuous
+                | crate::properties::NumericValueKind::Integer
+        )
+        || opacity.keyframes.iter().any(|key| {
+            key.values.len() != 1
+                || !(0.0..=255.0).contains(&key.values[0])
+                || key
+                    .spatial_in
+                    .iter()
+                    .chain(&key.spatial_out)
+                    .any(|value| *value != 0.0)
+        })
+    {
+        return None;
+    }
+    let [r, g, b, alpha] = color.values.as_slice() else {
+        return None;
+    };
+    [*r, *g, *b, *alpha]
+        .iter()
+        .all(|v| v.is_finite())
+        .then_some([*r, *g, *b])
+}
+
 fn set_native(effect: &mut NativeEffect, suffix: &str, component: usize, value: f64) {
     if let Some(slot) = effect
         .properties
@@ -118,8 +200,69 @@ fn value(payload: &Value, name: &str) -> Option<f64> {
 /// Invert's other channels require different color-space/alpha operations.
 /// Reject the occurrence before assigning IDs or importing any numeric tracks.
 pub(crate) fn validate_import(native: &DecodedEffect) -> Result<(), &'static str> {
+    if matches!(native.match_name.as_str(), "ADBE Ripple" | "ADBE Wave Warp") {
+        let suffix = if native.match_name == "ADBE Ripple" {
+            "-0005"
+        } else {
+            "-0003"
+        };
+        let Some((values, _)) = source(native, suffix) else {
+            return Err("missing/malformed wavelength");
+        };
+        if values.len() != 1 || !values[0].is_finite() || values[0] <= 0.0 {
+            return Err("wavelength must be finite and positive");
+        }
+    }
+    if native.match_name == "ADBE Gaussian Blur" {
+        // Admit only the observed scalar-only legacy descriptor. Additional
+        // controls are not assumed to share the modern plugin's defaults/units.
+        let mut controls = native
+            .parameters
+            .iter()
+            .filter(|parameter| parameter.match_name != "ADBE Group End");
+        let Some(parameter) = controls.next() else {
+            return Err("legacy Gaussian Blur requires explicit Blurriness");
+        };
+        if controls.next().is_some() || parameter.match_name != "ADBE Gaussian Blur-0001" {
+            return Err("legacy Gaussian Blur requires the scalar-only control profile");
+        }
+        let numeric = parameter
+            .numeric
+            .as_ref()
+            .map_err(|_| "legacy Gaussian Blur requires readable Blurriness")?;
+        let valid =
+            |values: &[f64]| matches!(values, [value] if value.is_finite() && *value >= 0.0);
+        // Match the existing mapper's authored-key initialization, not a guessed
+        // plugin default: keyed native properties may have no cached static value.
+        let initial = numeric
+            .keyframes
+            .first()
+            .map(|key| key.values.as_slice())
+            .unwrap_or(&numeric.values);
+        if numeric.expression_enabled
+            || !valid(initial)
+            || numeric.keyframes.iter().any(|key| !valid(&key.values))
+        {
+            return Err(
+                "legacy Gaussian Blur requires expression-free finite nonnegative scalar values/keys",
+            );
+        }
+        return Ok(());
+    }
     if native.match_name != "ADBE Invert" {
         return Ok(());
+    }
+    if native.declarations == super::native::Declarations::Unreadable {
+        return Err("Invert parameter declarations are unreadable");
+    }
+    for (name, kind) in [("ADBE Invert-0001", 7), ("ADBE Invert-0002", 2)] {
+        if native.parameters.iter().any(|parameter| {
+            parameter.match_name == name
+                && !matches!(parameter.declared_kind, Ok(None))
+                && parameter.declared_kind != Ok(Some(kind))
+        }) {
+            return Err("Invert requires valid popup Channel and scalar Blend declarations");
+        }
     }
     match source(native, "-0001") {
         Some(([1.0], false)) => {}
@@ -169,7 +312,13 @@ pub(crate) fn import(native: &DecodedEffect, size: [f64; 2], payload: &mut Value
                     report.warnings.push("Shadow Color animation requires a typed color target; retain initial color only".into());
                 }
             }
-            if let Some(opacity) = scalar(native, "-0002", &mut report.warnings) {
+            report.shadow_opacity_rgb = shadow_opacity_rgb(native);
+            let opacity = if report.shadow_opacity_rgb.is_some() {
+                source(native, "-0002").and_then(|(values, _)| values.first().copied())
+            } else {
+                scalar(native, "-0002", &mut report.warnings)
+            };
+            if let Some(opacity) = opacity {
                 payload["color"][3] = serde_json::json!(opacity / 255.0);
                 report.consume("-0002");
             }
@@ -306,8 +455,29 @@ pub(crate) fn import(native: &DecodedEffect, size: [f64; 2], payload: &mut Value
                 }
             }
         }
+        "ADBE Spherize" => {
+            // Near the centre Bulge samples r * (1 - height/pi). Match the
+            // 2/pi slope of a normalized asin spherical projection; the rest
+            // of the native projection is deliberately not claimed equivalent.
+            let radius = scalar(native, "-0001", &mut report.warnings).unwrap_or(0.0);
+            payload["bulgeHeight"] = serde_json::json!(if radius == 0.0 {
+                0.0
+            } else {
+                std::f64::consts::PI - 2.0
+            });
+            if radius == 0.0 {
+                // A zero-strength, nonzero-radius Bulge is identity without 0/0.
+                payload["horizontalRadius"] = serde_json::json!(0.5);
+                payload["verticalRadius"] = serde_json::json!(0.5);
+            }
+        }
         "ADBE Ripple" | "ADBE Wave Warp" => {
             let ripple = native.match_name == "ADBE Ripple";
+            let speed = if ripple { "-0004" } else { "-0005" };
+            if source(native, speed).is_some_and(|(values, animated)| !animated && values == [0.0])
+            {
+                report.consume(speed);
+            }
             let suffix = if ripple { "-0005" } else { "-0003" };
             if let Some(width) = scalar(native, suffix, &mut report.warnings) {
                 report.consume(suffix);
@@ -341,6 +511,15 @@ pub(crate) fn export(
     };
     let mut warnings = Vec::new();
     match native.match_name.as_str() {
+        "ADBE Exposure2" if matches!(effect, LayerEffect::TemperatureTint { .. }) => {
+            // Canonical AE26 popup: Master=1, Individual Channels=2.
+            set_native(native, "-0001", 0, 2.0);
+        }
+        "ADBE Radial Blur" => {
+            // FX's radial kernel samples along rays from the center (Zoom),
+            // rather than the canonical native donor's default Spin mode.
+            set_native(native, "-0003", 0, 2.0);
+        }
         "ADBE Glo2" => {
             // FX composites its glow premultiplied-over the source. The native
             // catalog's Add operation washes out bright, colored source pixels.
@@ -464,7 +643,13 @@ pub(crate) fn export(
         }
         "ADBE Ripple" | "ADBE Wave Warp" => {
             let ripple = native.match_name == "ADBE Ripple";
-            if let Some(frequency) = value(&payload, if ripple { "frequency" } else { "waveWidth" })
+            // FX phase has no implicit time evolution. The native donors both
+            // default Wave Speed to 1, which would animate even a static FX input.
+            // Explicit phase keys remain the only clock after export.
+            set_native(native, if ripple { "-0004" } else { "-0005" }, 0, 0.0);
+
+            let frequency = value(&payload, if ripple { "frequency" } else { "waveWidth" })
+                .unwrap_or(if ripple { 30.0 } else { 6.0 });
             {
                 if frequency > 0.0 && size[0] > 0.0 {
                     set_native(
@@ -501,6 +686,45 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn legacy_gaussian_profile_rejects_extra_missing_and_invalid_controls() {
+        let controls = crate::rifx::Rifx::parse_with(
+            include_bytes!("../../tests/fixtures/effects/cosmic-self-mask-controls.rifx"),
+            |_| false,
+        )
+        .unwrap();
+        let (effects, _) = super::super::native::read_effects(controls.chunks(), [3840., 2160.]);
+        // Supplementary profile guards, not a native legacy-effect oracle.
+        let mut legacy = effects[0].clone();
+        legacy.match_name = "ADBE Gaussian Blur".into();
+        legacy
+            .parameters
+            .retain(|parameter| parameter.match_name == "ADBE Drop Shadow-0003");
+        assert_eq!(legacy.parameters.len(), 1);
+        legacy.parameters[0].match_name = "ADBE Gaussian Blur-0001".into();
+        legacy.parameters[0].numeric.as_mut().unwrap().values = vec![30.];
+        assert!(validate_import(&legacy).is_ok());
+        for case in 0..7 {
+            let mut invalid = legacy.clone();
+            match case {
+                0 => invalid.parameters.clear(),
+                1 => invalid.parameters.push(legacy.parameters[0].clone()),
+                2 => invalid.parameters[0].match_name = "ADBE Gaussian Blur-0002".into(),
+                3 => invalid.parameters[0].numeric.as_mut().unwrap().values = vec![-1.],
+                4 => invalid.parameters[0].numeric.as_mut().unwrap().values = vec![f64::NAN],
+                5 => invalid.parameters[0].numeric.as_mut().unwrap().values = vec![1., 2.],
+                _ => {
+                    invalid.parameters[0]
+                        .numeric
+                        .as_mut()
+                        .unwrap()
+                        .expression_enabled = true
+                }
+            }
+            assert!(validate_import(&invalid).is_err(), "case {case}");
+        }
+    }
+
     #[test]
     fn fixed_shadow_direction_supports_any_finite_angle_and_rejects_coupled_controls() {
         let controls = crate::rifx::Rifx::parse_with(

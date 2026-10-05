@@ -153,7 +153,7 @@ pub(super) fn producer(
         ),
     ] {
         if let Some(numeric) = numeric_leaf(&leaves, property, &mut warnings) {
-            collector.add_numeric(property, &numeric, &targets);
+            collector.add_leaf_numeric(&leaves, property, &numeric, &targets);
         }
     }
     collector.warnings.extend(warnings);
@@ -351,7 +351,7 @@ pub(super) fn lower_with_context(
             paint_warnings = warnings;
             Some(fill)
         } else {
-            solid_fill(paint.chunks).ok()
+            collector.solid_fill(paint.chunks, control_context).ok()
         }
     } else {
         None
@@ -549,7 +549,7 @@ pub(super) fn lower_with_context(
         if let Some(controls) = controls.as_ref() {
             collector.add_numeric(property, controls.curve(property), &targets);
         } else if let Some(numeric) = numeric_leaf(&leaves, property, &mut local_warnings) {
-            collector.add_numeric(property, &numeric, &targets);
+            collector.add_leaf_numeric(&leaves, property, &numeric, &targets);
         } else if defaults::numeric(property).is_none() {
             local_warnings.push(format!(
                 "{property} has no native numeric data; base Rect retained"

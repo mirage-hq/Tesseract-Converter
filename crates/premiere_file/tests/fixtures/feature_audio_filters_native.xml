@@ -1,0 +1,142 @@
+<?xml version='1.0' encoding='utf-8'?>
+<NativeAudioFilterExcerpts>
+  <AudioComponentParam ObjectID="1558" ClassID="32657501-3aa4-445f-a49b-d09ecb9fa1ae" Version="10">
+    <IsTimeVarying>false</IsTimeVarying>
+    <RangeLocked>false</RangeLocked>
+    <Name>Bypass</Name>
+  </AudioComponentParam>
+  <AudioFilterComponent ObjectID="1111" ClassID="d77a90a0-6c9e-44bf-9b20-de8c21168fe1" Version="4">
+    <AudioComponent Version="3">
+      <Component Version="7">
+        <Params Version="1">
+          <Param Index="0" ObjectRef="1558" />
+        </Params>
+        <ID>3</ID>
+      </Component>
+      <AudioChannelLayout>[{"channellabel":100},{"channellabel":101}]</AudioChannelLayout>
+      <AudioComponentType>0</AudioComponentType>
+      <ChannelType>1</ChannelType>
+      <FrameRate>5760000</FrameRate>
+    </AudioComponent>
+    <FilterPreset>0</FilterPreset>
+    <ChannelConfigData>{"in":[{"layout":[100,101],"name":"Stereo In","type":0}],"out":[{"layout":[100,101],"name":"Stereo Out","type":0}]}</ChannelConfigData>
+    <FilterMatchName>Internal Audio Fill Right</FilterMatchName>
+    <FilterIndex>-1</FilterIndex>
+  </AudioFilterComponent>
+  <AudioComponentParam ObjectID="2855" ClassID="32657501-3aa4-445f-a49b-d09ecb9fa1ae" Version="10">
+    <IsTimeVarying>false</IsTimeVarying>
+    <RangeLocked>false</RangeLocked>
+    <Name>Bypass</Name>
+  </AudioComponentParam>
+  <AudioFilterComponent ObjectID="1996" ClassID="d77a90a0-6c9e-44bf-9b20-de8c21168fe1" Version="4">
+    <AudioComponent Version="3">
+      <Component Version="7">
+        <Params Version="1">
+          <Param Index="0" ObjectRef="2855" />
+        </Params>
+        <ID>3</ID>
+      </Component>
+      <AudioChannelLayout>[{"channellabel":0}]</AudioChannelLayout>
+      <AudioComponentType>0</AudioComponentType>
+      <ChannelType>0</ChannelType>
+      <FrameRate>5292000</FrameRate>
+    </AudioComponent>
+    <FilterPreset>0</FilterPreset>
+    <ChannelConfigData>{"in":[{"layout":[0],"name":"","type":0}],"out":[{"layout":[0],"name":"","type":0}]}</ChannelConfigData>
+    <FilterMatchName>164b4e8a-7105-406b-b23b-1ef2cc4d8957</FilterMatchName>
+    <FilterIndex>-1</FilterIndex>
+  </AudioFilterComponent>
+  <AudioComponentParam ObjectID="7429" ClassID="32657501-3aa4-445f-a49b-d09ecb9fa1ae" Version="10">
+    <IsTimeVarying>false</IsTimeVarying>
+    <RangeLocked>false</RangeLocked>
+    <Name>Bypass</Name>
+  </AudioComponentParam>
+  <AudioFilterComponent ObjectID="1772" ClassID="d77a90a0-6c9e-44bf-9b20-de8c21168fe1" Version="4">
+    <AudioComponent Version="3">
+      <Component Version="7">
+        <Params Version="1">
+          <Param Index="0" ObjectRef="7429" />
+        </Params>
+        <ID>2</ID>
+      </Component>
+      <AudioChannelLayout>[{"channellabel":0}]</AudioChannelLayout>
+      <AudioComponentType>0</AudioComponentType>
+      <ChannelType>0</ChannelType>
+      <FrameRate>5292000</FrameRate>
+    </AudioComponent>
+    <FilterPreset>0</FilterPreset>
+    <ChannelConfigData>{"in":[{"layout":[0],"name":"","type":0}],"out":[{"layout":[0],"name":"","type":0}]}</ChannelConfigData>
+    <FilterMatchName>c6762838-e451-4d22-9c90-b0eaa734605a</FilterMatchName>
+    <FilterIndex>-1</FilterIndex>
+  </AudioFilterComponent>
+  <AudioComponentParam ObjectID="7600" ClassID="32657501-3aa4-445f-a49b-d09ecb9fa1ae" Version="10">
+    <IsTimeVarying>false</IsTimeVarying>
+    <RangeLocked>false</RangeLocked>
+    <Name>Bypass</Name>
+  </AudioComponentParam>
+  <AudioFilterComponent ObjectID="1793" ClassID="d77a90a0-6c9e-44bf-9b20-de8c21168fe1" Version="4">
+    <AudioComponent Version="3">
+      <Component Version="7">
+        <Params Version="1">
+          <Param Index="0" ObjectRef="7600" />
+        </Params>
+        <ID>2</ID>
+      </Component>
+      <AudioChannelLayout>[{"channellabel":0}]</AudioChannelLayout>
+      <AudioComponentType>0</AudioComponentType>
+      <ChannelType>0</ChannelType>
+      <FrameRate>2646000</FrameRate>
+    </AudioComponent>
+    <FilterPreset>0</FilterPreset>
+    <ChannelConfigData>{"in":[{"layout":[0],"name":"","type":0}],"out":[{"layout":[0],"name":"","type":0}]}</ChannelConfigData>
+    <FilterMatchName>3792d46f-5036-4be6-ab5a-177622246a5d</FilterMatchName>
+    <FilterIndex>-1</FilterIndex>
+  </AudioFilterComponent>
+  <AudioComponentParam ObjectID="7616" ClassID="32657501-3aa4-445f-a49b-d09ecb9fa1ae" Version="10">
+    <IsTimeVarying>false</IsTimeVarying>
+    <RangeLocked>false</RangeLocked>
+    <Name>Bypass</Name>
+  </AudioComponentParam>
+  <AudioFilterComponent ObjectID="1794" ClassID="d77a90a0-6c9e-44bf-9b20-de8c21168fe1" Version="4">
+    <AudioComponent Version="3">
+      <Component Version="7">
+        <Params Version="1">
+          <Param Index="0" ObjectRef="7616" />
+        </Params>
+        <ID>3</ID>
+        <Bypass>true</Bypass>
+      </Component>
+      <AudioChannelLayout>[{"channellabel":0}]</AudioChannelLayout>
+      <AudioComponentType>0</AudioComponentType>
+      <ChannelType>0</ChannelType>
+      <FrameRate>2646000</FrameRate>
+    </AudioComponent>
+    <FilterPreset>0</FilterPreset>
+    <ChannelConfigData>{"in":[{"layout":[0],"name":"Mono In","type":0}],"out":[{"layout":[0],"name":"Mono Out","type":0}]}</ChannelConfigData>
+    <FilterMatchName>Internal Bass</FilterMatchName>
+    <FilterIndex>-1</FilterIndex>
+  </AudioFilterComponent>
+  <AudioComponentParam ObjectID="8056" ClassID="32657501-3aa4-445f-a49b-d09ecb9fa1ae" Version="10">
+    <IsTimeVarying>false</IsTimeVarying>
+    <RangeLocked>false</RangeLocked>
+    <Name>Bypass</Name>
+  </AudioComponentParam>
+  <AudioFilterComponent ObjectID="1849" ClassID="d77a90a0-6c9e-44bf-9b20-de8c21168fe1" Version="4">
+    <AudioComponent Version="3">
+      <Component Version="7">
+        <Params Version="1">
+          <Param Index="0" ObjectRef="8056" />
+        </Params>
+        <ID>3</ID>
+      </Component>
+      <AudioChannelLayout>[{"channellabel":100},{"channellabel":101}]</AudioChannelLayout>
+      <AudioComponentType>0</AudioComponentType>
+      <ChannelType>1</ChannelType>
+      <FrameRate>2646000</FrameRate>
+    </AudioComponent>
+    <FilterPreset>0</FilterPreset>
+    <ChannelConfigData>{"in":[{"layout":[100,101],"name":"","type":0}],"out":[{"layout":[100,101],"name":"","type":0}]}</ChannelConfigData>
+    <FilterMatchName>8edcd326-33de-4a4d-985b-f1bf48ed1427</FilterMatchName>
+    <FilterIndex>-1</FilterIndex>
+  </AudioFilterComponent>
+</NativeAudioFilterExcerpts>

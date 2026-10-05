@@ -1,8 +1,13 @@
+#[cfg(feature = "ffmpeg-library")]
 use crate::format::inspect_project;
-use crate::test_support::{
-    editable_document as editable_video_document, write_archive, write_prproj,
-};
+#[cfg(feature = "ffmpeg-library")]
+use crate::test_support::editable_document as editable_video_document;
+#[cfg(feature = "ffmpeg-library")]
+use crate::test_support::write_archive;
+use crate::test_support::write_prproj;
+#[cfg(feature = "ffmpeg-library")]
 use crate::tests::support::inspect;
+#[cfg(feature = "ffmpeg-library")]
 use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -87,6 +92,7 @@ fn native_media_fixture(relative_paths: &str) -> (tempfile::TempDir, PathBuf, Pa
     )
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn media_dimension_mismatch_rejects_conversion_despite_a_healthy_sibling() {
     let (directory, project, packaged, _) =
@@ -153,6 +159,7 @@ fn media_dimension_mismatch_rejects_conversion_despite_a_healthy_sibling() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn absolute_only_media_requires_consistent_live_aliases() {
     for conflict in [false, true] {
@@ -197,6 +204,7 @@ fn absolute_only_media_requires_consistent_live_aliases() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn unsupported_native_sound_keeps_adobe_derived_picture() {
     use std::io::Read;
@@ -321,6 +329,7 @@ fn absent_relative_path_does_not_admit_missing_or_invalid_aliases() {
     assert!(!output.exists());
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn native_inspection_and_import_do_not_inspect_unconsumed_embedded_audio() {
     let source = one_second_xml("<RelativePath>media/source.mp4</RelativePath>")
@@ -341,7 +350,7 @@ fn native_inspection_and_import_do_not_inspect_unconsumed_embedded_audio() {
         )
         .unwrap();
     assert!(
-        crate::tesseract_output::require_video_admission(&selected_media).is_ok(),
+        crate::tesseract_output::require_video_admission(&selected_media, &project).is_ok(),
         "{selected_media:?}"
     );
     let output = directory.path().join("picture-only");
@@ -381,6 +390,7 @@ fn malformed_native_sound_is_not_an_unsupported_audio_omission() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn premiere_to_tesseract_accepts_same_bytes_for_external_and_packaged_candidates() {
     let (directory, project, packaged, external) = native_media_fixture(
@@ -433,6 +443,7 @@ fn unpackageable_media_name_rejects_used_video_admission() {
     assert!(omissions.is_empty(), "{omissions:?}");
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn project_build_failure_is_an_error_not_an_omission() {
     let (_directory, project, packaged, _) =
@@ -448,10 +459,17 @@ fn project_build_failure_is_an_error_not_an_omission() {
         media,
         &mut omissions,
     );
-    assert!(result.is_err());
+    let error = result.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("width and height must be non-zero"),
+        "{error}"
+    );
     assert!(omissions.is_empty(), "{omissions:?}");
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn external_only_relative_media_requires_matching_absolute_identity() {
     let (directory, project, _packaged, external) =
@@ -488,6 +506,7 @@ fn external_only_relative_media_requires_matching_absolute_identity() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn packaged_media_digest_must_match_the_inspected_source() {
     let (directory, project, packaged, _external) =
@@ -507,6 +526,7 @@ fn packaged_media_digest_must_match_the_inspected_source() {
     assert!(!output.exists());
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn premiere_to_tesseract_rejects_conflicting_native_candidates_before_output() {
     let (directory, project, packaged, external) = native_media_fixture(
@@ -530,9 +550,10 @@ fn premiere_to_tesseract_rejects_conflicting_native_candidates_before_output() {
 
 /// A live package-local RelativePath identifies the media, so a missing `../`
 /// hint beside it is stale history. Without that copy, a missing hint that no
-/// live absolute alias vouches for fails used-video admission.
+/// live absolute alias vouches for omits the unavailable video's placements.
+#[cfg(feature = "ffmpeg-library")]
 #[test]
-fn missing_relative_hint_is_stale_beside_live_package_media_else_admission_fails() {
+fn missing_relative_hint_is_stale_beside_live_package_media_else_video_is_omitted() {
     // Whether the packaged and external copies exist, then the admission error.
     for (packaged_live, external_live, expected_error) in [
         (true, false, None),
@@ -564,21 +585,16 @@ fn missing_relative_hint_is_stale_beside_live_package_media_else_admission_fails
             &mut omissions,
         );
         if let Some(reason) = expected_error {
-            let error = match converted {
-                Err(error) => error.to_string(),
-                Ok(_) => panic!("missing used video must fail admission"),
-            };
-            assert!(
-                error.contains("failed admission") && error.contains(reason),
-                "{error}"
-            );
+            assert!(converted.unwrap().is_none());
+            assert!(omissions.iter().any(|note| note.reason.contains(reason)), "{omissions:?}");
         } else {
             assert!(converted.unwrap().is_some());
+            assert!(omissions.is_empty(), "{omissions:?}");
         }
-        assert!(omissions.is_empty(), "{omissions:?}");
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn premiere_to_tesseract_accepts_adobe_save_as_stale_relative_hint_with_verified_absolute_alias() {
     let (directory, project, packaged, external) = native_media_fixture(
@@ -596,6 +612,7 @@ fn premiere_to_tesseract_accepts_adobe_save_as_stale_relative_hint_with_verified
     assert!(output.is_file());
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn premiere_to_tesseract_accepts_stale_external_relative_hint_only_with_live_matching_alias() {
     let (directory, project, packaged, external) = native_media_fixture(
@@ -613,6 +630,7 @@ fn premiere_to_tesseract_accepts_stale_external_relative_hint_only_with_live_mat
     assert!(output.is_file());
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn premiere_to_tesseract_rechecks_reappearing_relative_alias_before_writing() {
     let (directory, project, packaged, external) = native_media_fixture(
@@ -668,6 +686,7 @@ fn stale_relative_hints_with_aliases(actual: &Path, file_path: &Path) -> String 
     )
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn premiere_to_tesseract_uses_agreeing_absolute_aliases_when_every_relative_hint_is_stale() {
     let (directory, project, packaged, external) =
@@ -741,6 +760,7 @@ fn premiere_to_tesseract_rejects_package_local_symlink_escape_before_output() {
 const WINDOWS_ALIASES: &str = r"<FilePath>C:\Users\editor\package\media\source.mp4</FilePath><ActualMediaFilePath>C:\Users\editor\package\media\source.mp4</ActualMediaFilePath>";
 
 #[cfg(unix)]
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn windows_saved_media_converts_only_from_its_verified_package_copy() {
     const PACKAGED: &str = r"<RelativePath>.\media\source.mp4</RelativePath>";
@@ -801,12 +821,14 @@ fn windows_saved_media_converts_only_from_its_verified_package_copy() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn write_tesseract_document(path: &Path, document: serde_json::Value) {
     let media = path.parent().unwrap().join("black-1920-1s.mp4");
     std::fs::write(&media, MEDIA).unwrap();
     write_archive(path, &document, &media);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn tesseract_to_premiere_rebuilds_graph_and_preserves_exact_media() {
     let directory = tempfile::tempdir().unwrap();
@@ -851,6 +873,7 @@ fn tesseract_to_premiere_rebuilds_graph_and_preserves_exact_media() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn tesseract_to_premiere_snaps_persisted_millisecond_boundaries() {
     let directory = tempfile::tempdir().unwrap();
@@ -946,6 +969,7 @@ fn ambiguous_import_fails_before_media_validation_or_publication() {
     assert!(!output.exists());
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn prepared_tesseract_import_rejects_changed_inputs() {
     let (dir, native, media, _) =
@@ -960,6 +984,7 @@ fn prepared_tesseract_import_rejects_changed_inputs() {
     assert!(!tesseract_output.exists());
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn changed_input_blocks_a_prepared_batch_without_publication() {
     let (root, input, media, _) =
@@ -980,6 +1005,7 @@ fn changed_input_blocks_a_prepared_batch_without_publication() {
         .starts_with(".conversion-tesseract-")));
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn invalid_selection_and_late_destination_do_not_publish_files() {
     let (root, input, media, _) =
@@ -1006,6 +1032,7 @@ fn invalid_selection_and_late_destination_do_not_publish_files() {
         .starts_with(".conversion-tesseract-")));
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn late_absolute_alias_blocks_prepared_batch() {
     let (dir, input, media, alias) =

@@ -154,14 +154,31 @@ struct Record<'a> {
     error: Option<&'a str>,
 }
 
+pub(crate) fn artifact_directory() -> PathBuf {
+    let directory = PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../target/adobe-test/fx_exports"
+    ));
+    fs::create_dir_all(&directory).expect("Adobe artifact directory");
+    directory
+        .canonicalize()
+        .expect("resolve Adobe artifact directory")
+}
+
+fn journal(name: &str) -> PathBuf {
+    let directory = artifact_directory().parent().unwrap().to_path_buf();
+    fs::create_dir_all(&directory).expect("Adobe journal directory");
+    directory.join(name)
+}
+
 fn append_record(path: &Path, record: &impl Serialize) -> Result<(), String> {
-    // The parent runner allocates a fresh scratch journal. Never append to a
+    // The parent runner clears the fixed scratch journal. Never append to a
     // native fixture, existing symlink, or a path beneath fixture storage.
     if path
         .extension()
         .is_none_or(|extension| extension != "jsonl")
     {
-        return Err("ADOBE_TEST_RECORDS must name a scratch .jsonl file".to_owned());
+        return Err("Adobe journal must name a scratch .jsonl file".to_owned());
     }
     let parent = path
         .parent()
@@ -226,6 +243,16 @@ impl CaseBatch {
             eprintln!("Unregistered Adobe target: {source_path} composition {composition_id}");
             return;
         };
+        let selection_path = journal("selected-case-ids.json");
+        if selection_path.exists() {
+            let selected: Vec<String> = serde_json::from_slice(
+                &fs::read(selection_path).expect("read Adobe case selection"),
+            )
+            .expect("parse Adobe case selection");
+            if !selected.is_empty() && !selected.contains(&target.case_id) {
+                return;
+            }
+        }
         let expected_hash = catalog
             .sources
             .get(source_path)
@@ -258,7 +285,8 @@ impl CaseBatch {
         if error.is_some() {
             self.failures += 1;
         }
-        if let Some(path) = std::env::var_os("ADOBE_TEST_RECORDS") {
+        {
+            let path = journal("adobe-test-records.jsonl");
             let record = Record {
                 schema_version: 1,
                 case_id: &target.case_id,
@@ -294,10 +322,9 @@ impl CaseBatch {
 }
 
 fn export_artifacts(name: &str) -> serde_json::Value {
-    let directory = std::env::var_os("AEP_EFFECTS_COVERAGE_DIR")
-        .or_else(|| std::env::var_os("AEP_EFFECTS_FX_PANEL_DIR"));
+    let directory = artifact_directory();
     let mut artifacts = serde_json::Map::new();
-    if let Some(directory) = directory {
+    {
         for (key, extension) in [
             ("fx_json", "fx.json"),
             ("expected_json", "expected.json"),
@@ -330,7 +357,8 @@ fn export_artifacts(name: &str) -> serde_json::Value {
 pub(crate) fn export_case(name: &str, assertions: impl FnOnce()) {
     let error = assertions_error(assertions);
     let thread = std::thread::current();
-    if let Some(path) = std::env::var_os("ADOBE_EXPORT_RECORDS") {
+    {
+        let path = journal("adobe-export-records.jsonl");
         let record = serde_json::json!({
             "schema_version": 1,
             "case_id": format!("fx-export-{name}"),

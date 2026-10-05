@@ -1,0 +1,11 @@
+<!-- Selected, unchanged fields from the Premiere Pro 2026-authored dynamic_link
+     sequence in human-inputs-20261004.prproj.
+     Source SHA-256: e74d088116570ddb7178b127129036755be2f8e553dea80f98aa59b601585b76.
+     The companion ae26_one_comp.aep.prproj contains only project settings, not
+     linked media. This excerpt establishes record encoding, not render fidelity. -->
+<Media ObjectUID="87b56c9d-28f7-4fe6-b119-9f6635b7b263" ClassID="7a5c103e-f3ac-4391-b6b4-7cc3d2f9a7ff" Version="30">
+  <ImporterPrefs Encoding="base64" BinaryHash="05ae47fb-9170-71a1-ff2f-d30f00000054">MAAwADAAMAAwADAAMAAxAC0AMAAwADAAMAAtADAAMAAwADAALQAwADAAMAAwAC0AMAAwADAAMAAwADAAMAAwADAAMAAwADAA</ImporterPrefs>
+  <ModificationState Encoding="base64" BinaryHash="cac3e48a-ea56-d9a1-80ae-46ed0000001c">6OKfYfJvcoVBRAg1QlgQxQ==</ModificationState>
+  <ImplementationID>ec341e53-60c2-4d89-abfc-bdb5c0ff2e0b</ImplementationID>
+  <ContentAndMetadataState>e8e29f61-f26f-7285-4144-0835425810c5</ContentAndMetadataState>
+</Media>

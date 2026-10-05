@@ -1,8 +1,11 @@
 //! Static Crop records extracted unchanged from an Adobe-native source.
 
 use super::support::*;
+#[cfg(feature = "ffmpeg-library")]
 use serde_json::json;
+#[cfg(feature = "ffmpeg-library")]
 use std::io::Read;
+#[cfg(feature = "ffmpeg-library")]
 use tesseract_file::TesseractFile;
 
 const NATIVE_CROP: &str = include_str!("../fixtures/cap2-native-static-crop.xml");
@@ -19,6 +22,7 @@ fn crop_xml(component: u32, records: &str) -> String {
         )
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn native_static_crop_uses_authored_start_instead_of_stale_current_value() {
     // Both source placements save Left=0 with a stale CurrentValue=99.

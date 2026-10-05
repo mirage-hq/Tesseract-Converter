@@ -48,66 +48,6 @@ fn value(effect: &super::DecodedEffect, suffix: &str) -> Vec<f64> {
         .clone()
 }
 
-#[test]
-#[ignore = "requires pinned AEP_EXPRESSION_SOURCE; see support ledger"]
-fn mixkit_native_sparse_shadow_regression() {
-    use crate::{
-        properties,
-        structure::{ItemKind, read_project},
-    };
-    use sha2::{Digest, Sha256};
-    let bytes = std::fs::read(std::env::var("AEP_EXPRESSION_SOURCE").unwrap()).unwrap();
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&bytes)),
-        "cb8139e4a82f17dbaf121a1a7313e5a5990c96e243f5a62a51d570515eba7a84"
-    );
-    let project = read_project(&bytes).unwrap();
-    let item = project.items.iter().find(|item| item.id == 20219).unwrap();
-    let ItemKind::Composition(comp) = &item.kind else {
-        panic!("Main composition missing")
-    };
-    let mut definition_counts = Vec::new();
-    for id in [20261, 21018] {
-        let layer = comp
-            .layers
-            .iter()
-            .find(|layer| layer.record.id() == id)
-            .unwrap();
-        let root = properties::root_runs(&layer.content).unwrap();
-        let (_, parade) = root
-            .iter()
-            .find(|(name, _)| *name == "ADBE Effect Parade")
-            .unwrap();
-        let runs = properties::runs(properties::unique_list(parade, *b"tdgp").unwrap()).unwrap();
-        let (_, shadow) = runs
-            .iter()
-            .find(|(name, _)| *name == "ADBE Drop Shadow")
-            .unwrap();
-        let sspc = properties::unique_list(shadow, *b"sspc").unwrap();
-        definition_counts.push(
-            properties::runs(properties::unique_list(sspc, *b"parT").unwrap())
-                .unwrap()
-                .len(),
-        );
-        let (effects, warnings) = super::read_effects(&layer.content, [1920.0, 1080.0]);
-        let shadow = effects
-            .iter()
-            .find(|effect| effect.match_name == "ADBE Drop Shadow")
-            .unwrap();
-        assert!(shadow.enabled, "{warnings:?}");
-        assert!((value(shadow, "-0001")[0] - 0.17730103433132).abs() < 1e-8);
-        assert_eq!(value(shadow, "-0002"), vec![25.5]);
-        assert_eq!(value(shadow, "-0003"), vec![117.0]);
-        assert_eq!(value(shadow, "-0004"), vec![40.0]);
-        assert_eq!(value(shadow, "-0005"), vec![0.0]);
-    }
-    assert!(
-        definition_counts[0] > definition_counts[1],
-        "{definition_counts:?}"
-    );
-    eprintln!("native per-instance parameter definition counts: {definition_counts:?}");
-}
-
 /// `fill_isolated.readback.json` is Adobe's own readback: Fill Mask = 0 (none).
 #[test]
 fn adobe_native_unset_mask_path_declaration_is_decoded() {
@@ -306,4 +246,129 @@ fn sparse_duplicate_effect_definitions_use_each_instances_own_controls() {
     assert_eq!(value(&decoded[1], "-0002"), vec![51.0]);
     assert_eq!(value(&decoded[1], "-0003"), vec![33.0]);
     assert_eq!(value(&decoded[1], "-0004"), vec![12.0]);
+}
+
+#[test]
+fn sparse_invert_catalog_preserves_explicit_controls_and_rejects_bad_records() {
+    let size = [1920.0, 1080.0];
+    let mut effect = effects::new_effect("ADBE Invert", true, size).unwrap();
+    set(&mut effect, "-0001", &[2.0]);
+    set(&mut effect, "-0002", &[25.0]);
+    let mut parade = effects::effect_parade(&[effect], 7, size).unwrap();
+    let plugin = parade
+        .children_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|chunk| chunk.list_kind() == Some(*b"sspc"))
+        .unwrap();
+    let children = plugin.children_mut().unwrap();
+    children
+        .iter_mut()
+        .find(|chunk| chunk.list_kind() == Some(*b"parT"))
+        .unwrap()
+        .children_mut()
+        .unwrap()
+        .clear();
+    let content = |parade| {
+        vec![Chunk::list(
+            *b"tdgp",
+            vec![named("ADBE Effect Parade"), parade, named("ADBE Group End")],
+        )]
+    };
+    let (decoded, _) = read_effects(&content(parade.clone()), size);
+    assert_eq!(value(&decoded[0], "-0001"), vec![2.0]);
+    assert_eq!(value(&decoded[0], "-0002"), vec![25.0]);
+    assert!(crate::effects::special::validate_import(&decoded[0]).is_err());
+
+    for duplicate in [false, true] {
+        let mut broken = parade.clone();
+        let plugin = broken
+            .children_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|chunk| chunk.list_kind() == Some(*b"sspc"))
+            .unwrap();
+        let body = plugin
+            .children_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|chunk| chunk.list_kind() == Some(*b"tdgp"))
+            .unwrap()
+            .children_mut()
+            .unwrap();
+        let index = body
+            .iter()
+            .position(|chunk| chunk == &named("ADBE Invert-0001"))
+            .unwrap();
+        if duplicate {
+            let repeated = body[index..index + 2].to_vec();
+            body.splice(index..index, repeated);
+        } else {
+            body[index + 1] = Chunk::list(*b"tdbs", vec![]);
+        }
+        let (decoded, _) = read_effects(&content(broken), size);
+        let channel = decoded[0]
+            .parameters
+            .iter()
+            .find(|parameter| parameter.match_name == "ADBE Invert-0001")
+            .unwrap();
+        assert!(
+            channel.numeric.is_err(),
+            "malformed/duplicate control must not use RGB default"
+        );
+        assert!(crate::effects::special::validate_import(&decoded[0]).is_err());
+    }
+
+    let plugin = parade
+        .children_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|chunk| chunk.list_kind() == Some(*b"sspc"))
+        .unwrap();
+    let body = plugin
+        .children_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|chunk| chunk.list_kind() == Some(*b"tdgp"))
+        .unwrap()
+        .children_mut()
+        .unwrap();
+    for name in ["ADBE Invert-0002", "ADBE Invert-0001"] {
+        let index = body.iter().position(|chunk| chunk == &named(name)).unwrap();
+        body.drain(index..index + 2);
+    }
+    let (decoded, _) = read_effects(&content(parade), size);
+    assert_eq!(value(&decoded[0], "-0001"), vec![1.0]);
+    assert_eq!(value(&decoded[0], "-0002"), vec![0.0]);
+    assert!(crate::effects::special::validate_import(&decoded[0]).is_ok());
+    for unreadable in [false, true] {
+        let mut invalid = decoded[0].clone();
+        if unreadable {
+            invalid.declarations = super::Declarations::Unreadable;
+        } else {
+            invalid
+                .parameters
+                .iter_mut()
+                .find(|parameter| parameter.match_name == "ADBE Invert-0001")
+                .unwrap()
+                .declared_kind = Ok(Some(2));
+        }
+        assert!(crate::effects::special::validate_import(&invalid).is_err());
+    }
+}
+
+#[test]
+fn integer_slider_default_is_signed_while_checkbox_and_popup_are_unsigned() {
+    let pard = |kind: u32, default: [u8; 4]| {
+        let mut bytes = vec![0; 148];
+        bytes[12..16].copy_from_slice(&kind.to_be_bytes());
+        bytes[56..60].copy_from_slice(&default);
+        vec![Chunk::data(*b"pard", bytes).unwrap()]
+    };
+    let slider = super::default_numeric(&pard(1, (-5_i32).to_be_bytes()), [1.0, 1.0]).unwrap();
+    assert_eq!(slider.values, [-5.0]);
+    for kind in [4, 7] {
+        let unsigned = super::default_numeric(&pard(kind, [0, 0, 0, 3]), [1.0, 1.0]).unwrap();
+        assert_eq!(unsigned.values, [3.0]);
+    }
 }

@@ -52,7 +52,7 @@ where
 /// The `OriginalColorSpace` profile that Premiere 26.5.1 saves on an HDR video
 /// source, measured on a Rec. 709 sequence for a 10-bit BT.2020 HLG and a
 /// 10-bit BT.2020 PQ `hvc1` source and an iPhone HLG capture with a Dolby
-/// Vision box, which saves the HLG profile (`oracle/M2/hdr/facts.md`). Other
+/// Vision box, which saves the HLG profile. Other
 /// pass-through colours have no observed profile and keep the BT.709 text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HdrProfile {
@@ -132,11 +132,20 @@ impl ColorSpace {
     }
 
     /// Premiere tags 8-bit SDR sources with the 8-bit profile name and the same profile data.
+    /// Native 10-bit BT.709 sources also save a short form without profile data;
+    /// neither form establishes codec support, which media inspection checks separately.
     /// Premiere 26.5.1 saves tag PNG stills with the `sequence_sdr` profile, and
     /// HDR video sources with an [`HdrProfile`].
     pub(crate) fn is_source(&self) -> bool {
         self == &Self::source_sdr()
             || self == &Self::source("BT.709,8-bit,Display-Referred")
+            || (self.base_profile_type == 1
+                && self.base_color_profile.color_profile_name == "BT.709,10-bit,Display-Referred"
+                && matches!(
+                    self.base_color_profile.color_profile_data.as_deref(),
+                    None | Some("AQAAAP////8=")
+                )
+                && self.color_space_metadata.is_none())
             || self == &Self::sequence_sdr()
             || HdrProfile::ALL
                 .iter()

@@ -6,7 +6,7 @@
 
 use fx_schema::{
     LayerData, LayerId, NonNegativeProperty, PropType, PropertyKeyframeEasing, PropertyValue,
-    animator::{AnimationGraphEntry, AnimatorData},
+    animator::AnimatorData,
     layer::{
         BlendMode, ShapeFillRule, ShapeFillStyle, ShapeLineCap, ShapeLineJoin, ShapePaint,
         ShapeStrokeStyle,
@@ -19,8 +19,8 @@ use crate::writer::{
 
 use super::effective_constant;
 
-const NORMALIZED_FILL_DIAGNOSTIC: &str = "FillEnabled was normalized to every owned Fill's native paint Opacity because native vector-group toggle authoring is not established; original paint opacity and color alpha remain separate.";
-const NORMALIZED_STROKE_DIAGNOSTIC: &str = "StrokeEnabled was normalized to every owned Stroke's native paint Opacity because native vector-group toggle authoring is not established; original paint opacity and color alpha remain separate.";
+const NORMALIZED_FILL_DIAGNOSTIC: &str = "FillEnabled was normalized to every owned Fill's native paint Opacity because native vector-group toggle authoring is not established; paint opacity remains per-paint, with static solid alpha combined there, never into layer/group opacity.";
+const NORMALIZED_STROKE_DIAGNOSTIC: &str = "StrokeEnabled was normalized to every owned Stroke's native paint Opacity because native vector-group toggle authoring is not established; paint opacity remains per-paint, with static solid alpha combined there, never into layer/group opacity.";
 const DISABLED_STROKE_DIAGNOSTIC: &str = "A statically disabled authored Stroke was omitted while sibling paint was retained; the off-state is preserved, but editable disabled-Stroke authoring is lost.";
 const MISSING_RECT_STROKE_DIAGNOSTIC: &str =
     "StrokeEnabled has no Rectangle stroke color to reveal; no native Stroke paint was invented.";
@@ -156,7 +156,7 @@ impl PaintMaterialization {
 /// layer kinds fail instead of silently consuming a paint target.
 pub(super) fn materialize(
     layer: &LayerData,
-    entries: &[AnimationGraphEntry],
+    entries: &crate::export_document::AnimationIndex<'_>,
 ) -> Result<PaintMaterialization, &'static str> {
     let id = layer.id();
     let fill_control = bool_control(entries, id, PropType::FillEnabled)?;
@@ -290,7 +290,7 @@ fn materialize_array_paints(
 }
 
 fn bool_control(
-    entries: &[AnimationGraphEntry],
+    entries: &crate::export_document::AnimationIndex<'_>,
     id: LayerId,
     property: PropType,
 ) -> Result<Option<BoolControl>, &'static str> {
@@ -394,6 +394,7 @@ fn default_stroke() -> ShapeStrokeStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fx_schema::animator::AnimationGraphEntry;
     use fx_schema::{
         PropertyTarget, TimeOffset,
         animator::{KeyframeId, PropertyAnimator, PropertyKeyframe, PropertyKeyframeTrack},
@@ -449,9 +450,13 @@ mod tests {
     #[test]
     fn disabled_paint_presence_controls_materialize_runtime_visible_state() {
         let off_entry = entry(PropType::FillEnabled, disabled_bool(false));
-        let off = bool_control(&[off_entry], LayerId::new(7), PropType::FillEnabled)
-            .unwrap()
-            .expect("disabledValue false remains a materialized control");
+        let off = bool_control(
+            &crate::export_document::AnimationIndex::new(&[off_entry]),
+            LayerId::new(7),
+            PropType::FillEnabled,
+        )
+        .unwrap()
+        .expect("disabledValue false remains a materialized control");
         assert!(!off.can_enable());
         assert_eq!(off.opacity_track(42.0).keys[0].values, [0.0]);
 
@@ -475,9 +480,13 @@ mod tests {
         assert_eq!(strokes, std::slice::from_ref(&authored_stroke));
 
         let on_entry = entry(PropType::FillEnabled, disabled_bool(true));
-        let on = bool_control(&[on_entry], LayerId::new(7), PropType::FillEnabled)
-            .unwrap()
-            .expect("disabledValue true remains a materialized control");
+        let on = bool_control(
+            &crate::export_document::AnimationIndex::new(&[on_entry]),
+            LayerId::new(7),
+            PropType::FillEnabled,
+        )
+        .unwrap()
+        .expect("disabledValue true remains a materialized control");
         assert!(on.can_enable());
         let (fills, strokes) = materialize_array_paints(
             &[],
@@ -494,9 +503,13 @@ mod tests {
     #[test]
     fn hold_and_constant_controls_preserve_discrete_values() {
         let hold = entry(PropType::FillEnabled, bool_keys());
-        let control = bool_control(&[hold], LayerId::new(7), PropType::FillEnabled)
-            .expect("Hold control is supported")
-            .expect("control exists");
+        let control = bool_control(
+            &crate::export_document::AnimationIndex::new(&[hold]),
+            LayerId::new(7),
+            PropType::FillEnabled,
+        )
+        .expect("Hold control is supported")
+        .expect("control exists");
         let track = control.opacity_track(37.5);
         assert_eq!(track.keys[0].values, [0.0]);
         assert_eq!(track.keys[1].values, [37.5]);
@@ -511,9 +524,13 @@ mod tests {
             PropType::StrokeEnabled,
             PropertyAnimator::constant(PropertyValue::Bool(true)).expect("Bool constant is valid"),
         );
-        let control = bool_control(&[constant], LayerId::new(7), PropType::StrokeEnabled)
-            .expect("constant is supported")
-            .expect("control exists");
+        let control = bool_control(
+            &crate::export_document::AnimationIndex::new(&[constant]),
+            LayerId::new(7),
+            PropType::StrokeEnabled,
+        )
+        .expect("constant is supported")
+        .expect("control exists");
         assert_eq!(control.opacity_track(62.0).keys[0].values, [62.0]);
     }
 

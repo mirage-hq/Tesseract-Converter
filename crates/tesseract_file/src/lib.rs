@@ -93,6 +93,9 @@ pub struct TesseractFile {
     project_bytes: Vec<u8>,
     entries: HashMap<String, EntryInfo>,
     source_identity: SourceIdentity,
+    // Keep the parsed file alive so replacement checks cannot confuse inode reuse.
+    #[cfg(not(target_arch = "wasm32"))]
+    source_handle: same_file::Handle,
     writer_generator: Generator,
     pending_assets: BTreeMap<String, PendingAsset>,
 }
@@ -101,8 +104,10 @@ impl TesseractFile {
     /// Opens and validates a `.tsrct` file without reading asset payloads.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, TesseractFileError> {
         let path = path.as_ref().to_path_buf();
-        let source_identity = source_identity(&path)?;
-        let file = File::open(&path).at(&path)?;
+        let file = open_source_file(&path)?;
+        let source_identity = source_identity(&file, &path)?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let source_handle = same_file::Handle::from_file(file.try_clone().at(&path)?).at(&path)?;
         let mut archive = ZipArchive::new(file)?;
 
         let data_range_end = archive.central_directory_start();
@@ -169,6 +174,8 @@ impl TesseractFile {
             project_bytes,
             entries,
             source_identity,
+            #[cfg(not(target_arch = "wasm32"))]
+            source_handle,
             writer_generator: current_generator(),
             pending_assets: BTreeMap::new(),
         })
@@ -227,15 +234,16 @@ impl TesseractFile {
 
     /// Commits an agent-edited JSON file while admitting runtime-owned assets.
     ///
-    /// Validation is transactional. On success, the source file's exact bytes
-    /// become the next `project.json`, preserving formatting and key order.
+    /// Validation is transactional and admits the same bounded legacy clocks
+    /// as archive opening. On success, the source file's exact bytes become the
+    /// next `project.json`, preserving formatting and key order.
     pub fn commit_project_json_with_runtime_assets(
         &mut self,
         source: impl AsRef<Path>,
         is_runtime_owned: impl Fn(AssetRef<'_>) -> bool,
     ) -> Result<(), TesseractFileError> {
         let project_bytes = read_project_file(source.as_ref())?;
-        let candidate = EditableFxCompositionDocument::from_json_slice(&project_bytes)?;
+        let candidate = legacy_timing::read(&project_bytes)?;
         validate_project_asset_refs(&candidate, &self.metadata, is_runtime_owned)?;
         self.project = candidate;
         self.project_bytes = project_bytes;
@@ -377,7 +385,9 @@ impl TesseractFile {
             &project_bytes,
             &self.pending_assets,
         )?;
-        *self = Self::open(&self.path)?;
+        let mut reopened = Self::open(&self.path)?;
+        reopened.writer_generator = self.writer_generator.clone();
+        *self = reopened;
         Ok(report)
     }
 
@@ -409,7 +419,9 @@ impl TesseractFile {
             &project_bytes,
             &self.pending_assets,
         )?;
-        *self = Self::open(destination)?;
+        let mut reopened = Self::open(destination)?;
+        reopened.writer_generator = self.writer_generator.clone();
+        *self = reopened;
         Ok(report)
     }
 
@@ -429,7 +441,13 @@ impl TesseractFile {
     }
 
     fn ensure_source_unchanged(&self) -> Result<(), TesseractFileError> {
-        if source_identity(&self.path)? != self.source_identity {
+        let file = open_source_file(&self.path)?;
+        let identity = source_identity(&file, &self.path)?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let same_file = same_file::Handle::from_file(file).at(&self.path)? == self.source_handle;
+        #[cfg(target_arch = "wasm32")]
+        let same_file = true;
+        if !same_file || identity != self.source_identity {
             return Err(invalid(format!(
                 "source .tsrct file changed after it was opened: {}",
                 self.path.display()
@@ -680,6 +698,8 @@ impl TesseractFileBuilder {
         // before that read would otherwise keep two full FX trees alive.
         drop(self.project);
         writer::write_new(path.as_ref(), metadata, &project_bytes, self.assets)?;
+        // Reopening reads its own buffer; the serialized copy is no longer needed.
+        drop(project_bytes);
         let mut file = TesseractFile::open(path)?;
         file.writer_generator = writer_generator;
         Ok(file)
@@ -1112,7 +1132,7 @@ fn sha256_bytes(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-fn source_identity(path: &Path) -> Result<SourceIdentity, TesseractFileError> {
+fn open_source_file(path: &Path) -> Result<File, TesseractFileError> {
     let metadata = std::fs::symlink_metadata(path).at(path)?;
     if !metadata.file_type().is_file() {
         return Err(invalid(format!(
@@ -1120,6 +1140,15 @@ fn source_identity(path: &Path) -> Result<SourceIdentity, TesseractFileError> {
             path.display()
         )));
     }
+    let file = File::open(path).at(path)?;
+    if !file.metadata().at(path)?.is_file() {
+        return Err(invalid("opened .tsrct source is not a regular file"));
+    }
+    Ok(file)
+}
+
+fn source_identity(file: &File, path: &Path) -> Result<SourceIdentity, TesseractFileError> {
+    let metadata = file.metadata().at(path)?;
     Ok(SourceIdentity {
         byte_length: metadata.len(),
         modified: metadata.modified().ok(),

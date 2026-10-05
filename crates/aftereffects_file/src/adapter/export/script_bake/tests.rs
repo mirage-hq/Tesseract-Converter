@@ -1,7 +1,14 @@
+mod encoded_document;
+mod parallel;
+mod playback;
+mod sampled;
+mod singular_ease;
+mod singular_opacity;
+
 use super::*;
 use crate::{AfterEffects, AfterEffectsExportOptions, structure::read_project};
 use fx_conv::{ConversionMode, Progress};
-use serde_json::Value;
+use serde_json::{Value, json};
 use tesseract_file::TesseractFileBuilder;
 
 // An edited pinned native fixture exercises preparation/publication only. These
@@ -58,16 +65,111 @@ fn script_progress_counts_each_processed_track() {
     let events = std::sync::Mutex::new(Vec::new());
     let callback = |event| events.lock().unwrap().push(event);
 
-    prepare_with_progress(&original, Progress::new(&callback)).unwrap();
+    prepare_with_progress(
+        &original,
+        &AfterEffectsExportOptions::default(),
+        Progress::new(&callback),
+    )
+    .unwrap();
 
     let events = events.into_inner().unwrap();
     assert_eq!(events.len(), 4);
     assert_eq!(events[3].phase, "validate baked AE document");
     assert!(events[3].total.is_none());
-    assert_eq!(events[0].phase, "bake AE scripts");
+    assert_eq!(events[0].phase, "bake FX scripts for AEP");
     assert_eq!(events[0].total, Some(2));
     assert_eq!(events[1].completed, Some(1));
     assert_eq!(events[2].completed, Some(2));
+}
+
+fn text_document(code: &str) -> EditableFxCompositionDocument {
+    let raw: Value = serde_json::from_str(include_str!(
+        "../../../../tests/fixtures/text_controls_native_panel/panel-text-style-hold.fx.json"
+    ))
+    .unwrap();
+    modify(
+        &EditableFxCompositionDocument::from_json_value(raw).unwrap(),
+        |raw| {
+            let entry = raw["composition"]["dynamics"]["entries"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|entry| entry["target"]["propertyType"] == "textContent")
+                .unwrap();
+            entry["animator"] = json!({"type": "jsScript", "layerTimeJsCode": code});
+        },
+    )
+}
+
+#[test]
+fn source_derived_typed_caption_script_becomes_editable_hold_text() {
+    let original = text_document(
+        "const events=[[0.0, 'I'], [0.1, 'IB'], [0.2, 'IBM']];let text='';for(const e of events){if(input.time.seconds+0.00001>=e[0])text=e[1];}return text;",
+    );
+    let baked = prepare(&original).unwrap();
+    let entry = baked
+        .document
+        .composition()
+        .dynamics()
+        .entries()
+        .iter()
+        .find(|entry| matches!(&entry.target, PropertyTarget::LayerProperty(target) if target.property_type() == PropType::TextContent))
+        .unwrap();
+    let keys = entry.animator.keyframe_track().unwrap().keyframes();
+    assert_eq!(keys.len(), 3);
+    assert_eq!(keys[0].value(), &PropertyValue::String("I".into()));
+    assert_eq!(keys[1].value(), &PropertyValue::String("IB".into()));
+    assert_eq!(keys[2].value(), &PropertyValue::String("IBM".into()));
+    assert!(
+        keys.iter()
+            .all(|key| key.easing() == PropertyKeyframeEasing::Hold)
+    );
+    assert!((100..=111).contains(&keys[1].layer_time().as_millis()));
+    assert!((200..=211).contains(&keys[2].layer_time().as_millis()));
+    assert!(
+        baked
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("sub-grid"))
+    );
+    let native = crate::export_document::to_aep(&baked.document).unwrap();
+    assert!(!native.omitted_layer_ids.contains(&LayerId::new(6100)));
+}
+
+#[test]
+fn source_text_script_returning_a_number_is_diagnosed_not_coerced() {
+    let original = text_document("return 42;");
+    let baked = prepare(&original).unwrap();
+    let entry = baked
+        .document
+        .composition()
+        .dynamics()
+        .entries()
+        .iter()
+        .find(|entry| matches!(&entry.target, PropertyTarget::LayerProperty(target) if target.property_type() == PropType::TextContent))
+        .unwrap();
+    assert!(entry.animator.is_js_script());
+    assert!(baked.diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("must return a valid Unicode string")
+    }));
+}
+
+#[test]
+fn source_text_script_depending_on_call_history_is_not_baked() {
+    let original = text_document("globalThis.n=(globalThis.n||0)+1; return String(globalThis.n);");
+    let baked = prepare(&original).unwrap();
+    assert!(
+        baked
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("history-dependent"))
+    );
+    assert!(baked.document.composition().dynamics().entries().iter().any(|entry| {
+        matches!(&entry.target, PropertyTarget::LayerProperty(target) if target.property_type() == PropType::TextContent)
+            && entry.animator.is_js_script()
+    }));
 }
 
 #[test]
@@ -112,7 +214,7 @@ fn scalar_bake_is_local_deterministic_and_preserves_unrelated_data() {
 }
 
 #[test]
-fn path_script_bake_keeps_steps_and_variable_contours_in_owner_clock() {
+fn path_script_bake_quantizes_steps_and_variable_contours_to_owner_grid() {
     let original = modify(
         &document(
             "var t=Math.floor(input.time.milliseconds/17); var c=[]; for(var i=0;i<t;i++){c.push({type:'moveTo',x:i,y:t},{type:'lineTo',x:i+1,y:t},{type:'lineTo',x:i,y:t+1},{type:'close'});}return {commands:c};",
@@ -128,7 +230,9 @@ fn path_script_bake_keeps_steps_and_variable_contours_in_owner_clock() {
         keys.iter()
             .map(|key| key.layer_time().as_millis())
             .collect::<Vec<_>>(),
-        [0, 17, 34, 51, 68, 85]
+        // Each 17ms topology change moves to the next sample on the 96Hz grid.
+        // This is a sampled approximation, not millisecond-exact step timing.
+        [0, 21, 42, 52, 73, 94]
     );
     for (index, key) in keys.iter().enumerate() {
         assert_eq!(key.easing(), PropertyKeyframeEasing::Hold);
@@ -273,6 +377,83 @@ fn effect_script_uses_its_owner_local_clock() {
 }
 
 #[test]
+fn corner_pin_invisible_extremes_do_not_erase_visible_point_samples() {
+    let original = modify(
+        &document(
+            "const t = input.time.milliseconds; return t < 92 ? -1000000 + t : -10.8 / (1 + (t - 100) / 9.6);",
+        ),
+        |raw| {
+            raw["composition"]["layers"][0]["activeRange"] = json!({"start": 0, "duration": 1500});
+            raw["composition"]["layers"][0]["effects"] = json!([{
+                "id": 101, "enabled": true, "effect": {
+                    "type": "cornerPin", "upperLeftX": 0.0, "upperLeftY": 0.0,
+                    "upperRightX": 1.0, "upperRightY": 0.0,
+                    "lowerLeftX": 0.0, "lowerLeftY": 1.0,
+                    "lowerRightX": 1.0, "lowerRightY": 1.0
+                }
+            }]);
+            let entry = raw["composition"]["dynamics"]["entries"][0].clone();
+            raw["composition"]["dynamics"]["entries"] = json!(
+                [
+                    "upperLeftX",
+                    "upperLeftY",
+                    "upperRightX",
+                    "upperRightY",
+                    "lowerLeftX",
+                    "lowerLeftY",
+                    "lowerRightX",
+                    "lowerRightY",
+                ]
+                .map(|param| {
+                    let mut entry = entry.clone();
+                    entry["target"] =
+                        json!({"kind": "effectProperty", "effectId": 101, "paramName": param});
+                    entry
+                })
+            );
+        },
+    );
+    let options = AfterEffectsExportOptions { fps: 30.0 };
+    let prepared = prepare_with_progress(&original, &options, Progress::default()).unwrap();
+    for index in 0..8 {
+        let keys = track(&prepared, index).keyframes();
+        assert_eq!(keys[0].value(), &PropertyValue::Float(-1000000.0));
+        let visible = keys
+            .iter()
+            .find(|key| key.layer_time().as_millis() == 100)
+            .expect("the first visible point cannot be fitted away by invisible extremes");
+        assert_eq!(visible.value(), &PropertyValue::Float(-10.8));
+    }
+    assert!(
+        original.composition().dynamics().entries()[0]
+            .animator
+            .is_js_script()
+    );
+    let edited = modify(&original, |raw| {
+        for entry in raw["composition"]["dynamics"]["entries"]
+            .as_array_mut()
+            .unwrap()
+        {
+            entry["animator"]["layerTimeJsCode"] = json!(
+                "const t = input.time.milliseconds; return t < 92 ? -2000000 + t : -21.6 / (1 + (t - 100) / 9.6);"
+            );
+        }
+    });
+    let prepared_edit = prepare_with_progress(&edited, &options, Progress::default()).unwrap();
+    for index in 0..8 {
+        let keys = track(&prepared_edit, index).keyframes();
+        assert_eq!(keys[0].value(), &PropertyValue::Float(-2000000.0));
+        assert_eq!(
+            keys.iter()
+                .find(|key| key.layer_time().as_millis() == 100)
+                .unwrap()
+                .value(),
+            &PropertyValue::Float(-21.6)
+        );
+    }
+}
+
+#[test]
 fn selected_mask_script_keeps_unsupported_diagnostic_and_bakes_sibling() {
     let original = modify(&document("return 2;"), |raw| {
         raw["composition"]["layers"][0]["masks"] = json!([{"id": 901, "mode": "add", "layer": 7}]);
@@ -368,6 +549,7 @@ fn failures_remain_scripts_with_context_instead_of_static_success() {
         "return NaN;",
         "return input.time.milliseconds < 50 ? -1e308 : 1e308;",
         "throw 'bad';",
+        "throw new SyntaxError('runtime');",
         "return [1,2];",
         "globalThis.n = (globalThis.n || 0) + 1; return globalThis.n;",
     ] {
@@ -385,6 +567,291 @@ fn failures_remain_scripts_with_context_instead_of_static_success() {
                     && warning.message.contains("was not baked")),
             "{source}"
         );
+    }
+}
+
+#[test]
+fn parse_invalid_transform_uses_authored_static_for_both_video_group_owners() {
+    // Minimal equivalent of the original malformed `1700--0.066` expression.
+    // The native archive and its scripts are never repaired by preparation.
+    for (root, owner) in [(4000, 4526), (5000, 5535)] {
+        let original = modify(&document("return 1700--0.066;"), |raw| {
+            let child = json!({
+                "type":"Video", "id":owner + 1, "parent":owner, "name":"Actual footage",
+                "playback":{"type":"windowed","inputRange":{"start":0,"duration":100},
+                    "mapping":{"type":"linear","input":{"start":0,"duration":100},
+                        "output":{"start":0,"duration":100}},"inputOffsetMs":0},
+                "sourceRange":{"start":0,"duration":100}, "sourceIntrinsicDuration":100,
+                "source":{"assetId":"test-video","fit":"contain"},
+                "transform":{"anchorPoint":[0,0],"position":[0,0],
+                    "scale":[100,100],"rotation":0,"opacity":100}
+            });
+            let child = json!({
+                "type":"Group", "id":owner, "name":"Source footage group", "parent":root,
+                "playback":{"type":"windowed","inputRange":{"start":0,"duration":100},
+                    "mapping":{"type":"linear","input":{"start":0,"duration":100},
+                        "output":{"start":0,"duration":100}},"inputOffsetMs":0},
+                "transform":{"anchorPoint":[600,1700],"position":[600,1700],
+                    "scale":[100,100],"rotation":0,"opacity":100},
+                "layers":[child]
+            });
+            raw["composition"]["layers"] = json!([{
+                "type": "Group", "id": root, "name": "Source root",
+                "playback":{"type":"windowed","inputRange":{"start":0,"duration":100},
+                    "mapping":{"type":"linear","input":{"start":0,"duration":100},
+                        "output":{"start":0,"duration":100}},"inputOffsetMs":0},
+                "transform": {"anchorPoint": [0, 0], "position": [0, 0],
+                    "scale": [100, 100], "rotation": 0, "opacity": 100},
+                "layers": [child]
+            }]);
+            raw["composition"]["dynamics"]["entries"] = json!([
+                {"target": {"kind": "layer", "layerId": owner, "propertyType": "positionY"},
+                 "animator": {"type": "jsScript", "layerTimeJsCode": "return 1700--0.066;"}},
+                {"target": {"kind": "layer", "layerId": owner, "propertyType": "positionX"},
+                 "animator": {"type": "jsScript", "layerTimeJsCode": "return input.time.milliseconds;"}}
+            ]);
+        });
+        let before = original.to_json_value().unwrap();
+        let prepared = prepare(&original).unwrap();
+        let entries = prepared.document.composition().dynamics().entries();
+        assert!(
+            matches!(entries[0].animator.data(), AnimatorData::Constant { value: PropertyValue::Float(value) } if *value == 1700.0)
+        );
+        assert!(entries[1].animator.keyframe_track().is_some());
+        assert_eq!(original.to_json_value().unwrap(), before);
+        assert_eq!(
+            prepared.document.to_json_value().unwrap()["composition"]["layers"],
+            before["composition"]["layers"]
+        );
+        assert!(prepared.diagnostics.iter().any(|diagnostic| {
+            diagnostic.layer_id == Some(LayerId::new(owner))
+                && diagnostic.message.contains(&format!("Root {root}"))
+                && diagnostic.message.contains("positionY")
+                && diagnostic.message.contains("parse failure")
+                && diagnostic.message.contains("1700")
+                && diagnostic.message.contains("motion is lost")
+        }));
+    }
+}
+
+fn plain_footage_clock() -> Value {
+    json!({"type":"windowed","inputRange":{"start":0,"duration":100},
+        "mapping":{"type":"linear","input":{"start":0,"duration":100},
+            "output":{"start":0,"duration":100}},"inputOffsetMs":0})
+}
+
+#[test]
+fn parse_invalid_transform_preserves_authored_base_for_mixed_groups() {
+    let solid = document("return 1700--0.066;").to_json_value().unwrap()["composition"]["layers"]
+        [0]
+    .clone();
+    let text = text_document("return 'text';").to_json_value().unwrap()["composition"]["layers"][0]
+        .clone();
+    let video = media_on_clock("Video", media_clock(0, 0))
+        .to_json_value()
+        .unwrap()["composition"]["layers"][0]
+        .clone();
+    let audio = media_on_clock("Audio", media_clock(0, 0))
+        .to_json_value()
+        .unwrap()["composition"]["layers"][0]
+        .clone();
+    fn identify(children: &mut [Value], parent: u64, next: &mut u64) {
+        for child in children {
+            let id = *next;
+            *next += 1;
+            child["id"] = json!(id);
+            child["parent"] = json!(parent);
+            if let Some(layers) = child["layers"].as_array_mut() {
+                identify(layers, id, next);
+            }
+        }
+    }
+    for mut children in [
+        vec![solid.clone()],
+        vec![text.clone()],
+        vec![],
+        vec![audio],
+        vec![video.clone(), text.clone()],
+        vec![video.clone(), solid],
+        vec![
+            json!({"type":"Group","id":10,"name":"Nested mixed", "playback":plain_footage_clock(), "transform":{"anchorPoint":[0,0],"position":[0,0],"scale":[100,100],"rotation":0,"opacity":100},
+            "layers":[video, text]}),
+        ],
+    ] {
+        let mut next = 8;
+        identify(&mut children, 7, &mut next);
+        let original = modify(&document("return 1700--0.066;"), |raw| {
+            raw["composition"]["layers"] = json!([{
+                "type":"Group", "id":7, "name":"Mixed descendant owner", "playback":plain_footage_clock(),
+                "transform":{"anchorPoint":[0,0],"position":[600,1700],
+                    "scale":[100,100],"rotation":0,"opacity":100},
+                "layers":children
+            }]);
+            raw["composition"]["dynamics"]["entries"][0]["target"]["propertyType"] =
+                json!("positionY");
+        });
+        let before = original.to_json_value().unwrap();
+        let prepared = prepare(&original).unwrap();
+        let empty = children.is_empty();
+        let animator = prepared.document.composition().dynamics().entries()[0]
+            .animator
+            .data();
+        if empty {
+            assert!(matches!(animator, AnimatorData::JsScript { .. }));
+        } else {
+            assert!(
+                matches!(animator, AnimatorData::Constant { value: PropertyValue::Float(value) } if *value == 1700.0)
+            );
+            assert!(
+                prepared
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.message.contains("motion is lost"))
+            );
+        }
+        assert_eq!(original.to_json_value().unwrap(), before);
+        assert_eq!(
+            prepared.document.to_json_value().unwrap()["composition"]["layers"],
+            before["composition"]["layers"]
+        );
+    }
+}
+
+#[test]
+fn parse_invalid_transform_checks_owner_not_descendant_effect_profiles() {
+    for level in [0, 1, 2] {
+        for field in [
+            "effects",
+            "motionBlur",
+            "blendMode",
+            "masks",
+            "trackMatte",
+            "fills",
+        ] {
+            // Video has no Group paint; the two Group levels exercise that guard.
+            if level == 2 && field == "fills" {
+                continue;
+            }
+            let original = modify(&document("return 1700--0.066;"), |raw| {
+                let mut video = media_on_clock("Video", plain_footage_clock())
+                    .to_json_value()
+                    .unwrap()["composition"]["layers"][0]
+                    .clone();
+                video["id"] = json!(9);
+                video["parent"] = json!(8);
+                raw["composition"]["layers"] = json!([{
+                    "type":"Group","id":7,"name":"Footage owner", "playback":plain_footage_clock(),
+                    "transform":{"anchorPoint":[0,0],"position":[600,1700],"scale":[100,100],"rotation":0,"opacity":100},
+                    "layers":[{"type":"Group","id":8,"name":"Structural wrapper", "parent":7,
+                        "playback":plain_footage_clock(), "transform":{"anchorPoint":[0,0],"position":[0,0],"scale":[100,100],"rotation":0,"opacity":100}, "layers":[video]}]
+                }]);
+                let mut node = &mut raw["composition"]["layers"][0];
+                for _ in 0..level {
+                    node = &mut node["layers"][0];
+                }
+                node[field] = match field {
+                    "effects" => json!([{"id":101,"enabled":true,"effect":{"type":"gaussianBlur",
+                        "blurriness":1.0,"dimensions":"both","repeatEdgePixels":false}}]),
+                    "motionBlur" => json!(true),
+                    "masks" => json!([{"id":901,"mode":"add","layer":9}]),
+                    "trackMatte" => json!({"mode":"alpha","layer":9}),
+                    "fills" => json!([{"blendMode":"normal","fillRule":"nonZeroWinding",
+                        "opacity":1.0,"paint":{"type":"solid","color":[1.0,0.0,0.0,1.0]}}]),
+                    _ => json!("multiply"),
+                };
+                raw["composition"]["dynamics"]["entries"][0]["target"]["propertyType"] =
+                    json!("positionY");
+            });
+            let prepared = prepare(&original).unwrap();
+            let animator = prepared.document.composition().dynamics().entries()[0]
+                .animator
+                .data();
+            if level == 0 {
+                assert!(matches!(animator, AnimatorData::JsScript { .. }));
+                assert!(
+                    !prepared
+                        .diagnostics
+                        .iter()
+                        .any(|d| d.message.contains("motion is lost"))
+                );
+            } else {
+                assert!(
+                    matches!(animator, AnimatorData::Constant { value: PropertyValue::Float(value) } if *value == 1700.0)
+                );
+                assert!(
+                    prepared
+                        .diagnostics
+                        .iter()
+                        .any(|d| d.message.contains("motion is lost"))
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn subtraction_of_negative_number_is_normally_baked() {
+    let original = document("return 1700 - -0.066;");
+    let prepared = prepare(&original).unwrap();
+    assert!(
+        matches!(track(&prepared, 0).keyframes()[0].value(), PropertyValue::Float(value) if (*value - 1700.066).abs() < 1e-9)
+    );
+}
+
+#[test]
+fn malformed_dependency_or_reference_and_runtime_syntax_errors_remain_scripts() {
+    for source in ["return 1700--0.066;", "throw new SyntaxError('runtime');"] {
+        let original = modify(&document(source), |raw| {
+            let mut child = raw["composition"]["layers"][0].clone();
+            child["id"] = json!(8);
+            child["parent"] = json!(7);
+            raw["composition"]["layers"] = json!([{
+                "type":"Group","id":7,"name":"Untrusted Group control",
+                "playback":{"type":"windowed","inputRange":{"start":500,"duration":100},
+                    "mapping":{"type":"linear","input":{"start":500,"duration":100},
+                        "output":{"start":0,"duration":100}},"inputOffsetMs":0},
+                "transform":{"anchorPoint":[0,0],"position":[600,1700],
+                    "scale":[100,100],"rotation":0,"opacity":100},
+                "layers":[child]
+            }]);
+        });
+        if source.starts_with("throw") {
+            let prepared = prepare(&original).unwrap();
+            assert_eq!(
+                prepared.document.to_json_value().unwrap(),
+                original.to_json_value().unwrap()
+            );
+        } else {
+            for field in ["dependencies", "layerRefs"] {
+                let dependent = modify(&original, |raw| {
+                    raw["composition"]["dynamics"]["entries"][0][field] =
+                        if field == "dependencies" {
+                            json!([{"kind": "layer", "layerId": 7, "propertyType": "positionY"}])
+                        } else {
+                            raw["composition"]["layers"].as_array_mut().unwrap().push(json!({
+                            "type":"Image","id":9,"name":"Reference-only asset","parent":null,
+                            "activeRange":{"start":0,"duration":2000},
+                            "transform":{"anchorPoint":[0,0],"position":[0,0],
+                                "scale":[100,100],"rotation":0,"opacity":100},
+                            "source":{"assetId":"parse-reference","fit":"contain"}
+                        }));
+                            json!({"source": {"layerId": 9}})
+                        };
+                    raw["composition"]["dynamics"]["entries"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(json!({
+                            "target":{"kind":"layer","layerId":7,"propertyType":"positionY"},
+                            "animator":{"type":"constant","value":{"type":"float","value":1700.0}}
+                        }));
+                });
+                let prepared = prepare(&dependent).unwrap();
+                assert_eq!(
+                    prepared.document.to_json_value().unwrap(),
+                    dependent.to_json_value().unwrap()
+                );
+            }
+        }
     }
 }
 
@@ -611,7 +1078,7 @@ fn canonical_media_input_clocks_bake_signed_anchor_cancellation_independently_of
 }
 
 #[test]
-fn canonical_media_shifted_anchors_and_time_remaps_keep_their_script_with_a_diagnostic() {
+fn canonical_media_shifted_anchors_and_time_remaps_bake_in_owner_domain() {
     let remap = json!({
         "type":"windowed", "inputRange":{"start":1000,"duration":100},
         "mapping":{"type":"timeRemap", "property":{"keyframes":[
@@ -623,26 +1090,26 @@ fn canonical_media_shifted_anchors_and_time_remaps_keep_their_script_with_a_diag
         for playback in [media_clock(-500, 1), media_clock(500, 1), remap.clone()] {
             let original = media_on_clock(kind, playback);
             let prepared = prepare(&original).unwrap();
-            assert!(
-                prepared.document.composition().dynamics().entries()[0]
-                    .animator
-                    .is_js_script()
-            );
-            assert_eq!(prepared.diagnostics.len(), 1);
-            assert!(
-                prepared.diagnostics[0]
-                    .message
-                    .contains("owner or ancestor playback remapping is not supported")
+            let keys = track(&prepared, 0).keyframes();
+            let start = if original.composition().layers()[0].wire_value()["playback"]["mapping"]["type"]
+                == "timeRemap"
+            {
+                2000
+            } else {
+                0
+            };
+            assert_eq!(keys[0].layer_time().as_millis(), start);
+            assert_eq!(
+                keys[0].value(),
+                &PropertyValue::Float(0.5 + start as f64 / 1000.0)
             );
         }
     }
 }
 
 #[test]
-fn delayed_plain_group_clocks_bake_owners_and_children_while_nonplain_clocks_propagate() {
-    for (source_start, source_duration, supported) in
-        [(0, 100, true), (1, 100, false), (0, 200, false)]
-    {
+fn delayed_affine_group_clocks_bake_owner_domains_and_child_windows() {
+    for (source_start, source_duration) in [(0, 100), (1, 100), (0, 200)] {
         let original = modify(
             &document("return 0.5 + input.time.milliseconds / 1000;"),
             |raw| {
@@ -667,28 +1134,43 @@ fn delayed_plain_group_clocks_bake_owners_and_children_while_nonplain_clocks_pro
             },
         );
         let prepared = prepare(&original).unwrap();
-        for entry in prepared.document.composition().dynamics().entries() {
-            assert_eq!(entry.animator.is_js_script(), !supported);
-            if supported {
+        for (index, entry) in prepared
+            .document
+            .composition()
+            .dynamics()
+            .entries()
+            .iter()
+            .enumerate()
+        {
+            assert!(!entry.animator.is_js_script());
+            {
                 let keys = entry.animator.keyframe_track().unwrap().keyframes();
                 assert_eq!(
                     (
                         keys[0].layer_time().as_millis(),
                         keys[1].layer_time().as_millis()
                     ),
-                    (0, 100)
+                    if index == 0 {
+                        (0, 100)
+                    } else {
+                        (source_start, source_start + source_duration)
+                    }
                 );
-                assert_eq!(keys[0].value(), &PropertyValue::Float(0.5));
-                assert_eq!(keys[1].value(), &PropertyValue::Float(0.6));
+                let start = if index == 0 { 0 } else { source_start };
+                let end = if index == 0 {
+                    100
+                } else {
+                    source_start + source_duration
+                };
+                assert_eq!(
+                    keys[0].value(),
+                    &PropertyValue::Float(0.5 + start as f64 / 1000.0)
+                );
+                assert_eq!(
+                    keys[1].value(),
+                    &PropertyValue::Float(0.5 + end as f64 / 1000.0)
+                );
             }
-        }
-        if !supported {
-            assert_eq!(prepared.diagnostics.len(), 2);
-            assert!(prepared.diagnostics.iter().all(|diagnostic| {
-                diagnostic
-                    .message
-                    .contains("owner or ancestor playback remapping is not supported")
-            }));
         }
     }
 }
@@ -697,7 +1179,6 @@ fn delayed_plain_group_clocks_bake_owners_and_children_while_nonplain_clocks_pro
 fn accumulated_evaluations_do_not_reject_the_next_script() {
     let mut budget = Budget {
         calls: 20_000_000,
-        probes: 80_000_000,
         keys: 250_000,
     };
     let mut runtime = ScriptRuntime::new().unwrap();
@@ -705,19 +1186,26 @@ fn accumulated_evaluations_do_not_reject_the_next_script() {
         evaluate(&mut runtime, "return 1;", 0, 0, &mut budget).unwrap(),
         1.0
     );
-    budget.probe().unwrap();
-    assert_eq!((budget.calls, budget.probes), (20_000_001, 80_000_001));
+    assert_eq!(budget.calls, 20_000_001);
     let original = document("return 1;");
     let entry = &original.composition().dynamics().entries()[0];
+    let owner = Owner {
+        id: original.composition().layers()[0].id(),
+        duration_ms: 2,
+        start_ms: 0,
+        clock_id: 0,
+        unsupported_clock: false,
+    };
+    // Production derives the consumer's owner through the same lookup, and the
+    // dependency-domain program resolves every member through it.
     let animator = bake_entry(
         entry,
-        Some(Owner {
-            id: original.composition().layers()[0].id(),
-            duration_ms: 2,
-            unsupported_clock: false,
-        }),
+        Some(owner),
+        original.composition().dynamics().entries(),
+        &|_| Some(owner),
         &mut BTreeSet::new(),
         &mut budget,
+        Sampling::new(&AfterEffectsExportOptions::default()).unwrap(),
     )
     .unwrap();
     assert_eq!(animator.keyframe_track().unwrap().keyframes().len(), 1);
@@ -738,34 +1226,20 @@ fn script_window_longer_than_one_minute_retains_its_constant_value() {
 }
 
 #[test]
-fn cache_hits_and_misses_count_work_and_reject_counter_overflow() {
+fn evaluations_count_work_and_reject_counter_overflow() {
     let mut budget = Budget::default();
     let mut runtime = ScriptRuntime::new().unwrap();
-    let mut samples = BTreeMap::new();
     let code = "return input.time.milliseconds;";
     assert_eq!(
-        cached_evaluate(&mut runtime, code, 0, 2, &mut samples, &mut budget).unwrap(),
+        evaluate(&mut runtime, code, 0, 2, &mut budget).unwrap(),
         2.0
     );
-    assert_eq!((budget.calls, budget.probes), (1, 1));
-    cached_evaluate(&mut runtime, code, 0, 2, &mut samples, &mut budget).unwrap();
-    assert_eq!((budget.calls, budget.probes), (1, 2));
-    budget.probes = usize::MAX;
-    assert!(matches!(
-        cached_evaluate(&mut runtime, code, 0, 2, &mut samples, &mut budget),
-        Err(BakeError::Budget("probe counter overflow"))
-    ));
-    budget.probes = 0;
+    assert_eq!(budget.calls, 1);
     budget.calls = usize::MAX;
     assert!(matches!(
-        cached_evaluate(&mut runtime, code, 0, 3, &mut samples, &mut budget),
+        evaluate(&mut runtime, code, 0, 3, &mut budget),
         Err(BakeError::Budget("evaluation counter overflow"))
     ));
-    // A cache hit does not evaluate JS, even when the call counter is exhausted.
-    assert_eq!(
-        cached_evaluate(&mut runtime, code, 0, 2, &mut samples, &mut budget).unwrap(),
-        2.0
-    );
 }
 
 #[test]
@@ -787,6 +1261,117 @@ fn fifteen_second_stepped_opacity_has_compact_validated_keys() {
     assert!(
         keys.iter()
             .all(|key| key.easing() == PropertyKeyframeEasing::Hold)
+    );
+}
+
+#[test]
+fn direct_input_matches_json_builder_and_is_fresh_at_extreme_times() {
+    let probe = r#"
+        const keys = o => Object.keys(o).join(',');
+        const descriptor = (o, k) => {
+          const d = Object.getOwnPropertyDescriptor(o, k);
+          return [d.writable, d.enumerable, d.configurable].join(',');
+        };
+        const result = [keys(input), keys(input.time), keys(input.refs),
+          keys(input.__jerboaAssetMetadata), descriptor(input, 'time'),
+          descriptor(input.time, 'milliseconds'), descriptor(input, 'refs'),
+          Object.getPrototypeOf(input) === Object.prototype,
+          Object.getPrototypeOf(input.time) === Object.prototype,
+          Object.getPrototypeOf(input.refs) === Object.prototype,
+          Object.getPrototypeOf(input.__jerboaAssetMetadata) === Object.prototype,
+          Object.getPrototypeOf(input.deps) === Array.prototype,
+          input.time.seconds, input.time.milliseconds, input.randomSeed,
+          input.deps.length].join('|');
+        input.time.milliseconds = -1;
+        input.deps.push(5);
+        input.refs.changed = 1;
+        input.__jerboaAssetMetadata.changed = 1;
+        return result;
+    "#;
+    for time_ms in [
+        0,
+        1,
+        i32::MAX as u64,
+        i32::MAX as u64 + 1,
+        MAX_EXACT_SCRIPT_MILLIS,
+    ] {
+        for seed in [0, i32::MAX as u32, u32::MAX] {
+            let mut direct = ScriptRuntime::new().unwrap();
+            let mut json_runtime = ScriptRuntime::new().unwrap();
+            for _ in 0..2 {
+                let actual = input::build(direct.context_mut(), time_ms, seed);
+                install_reference_tables(
+                    &actual,
+                    input::empty_object(direct.context_mut()),
+                    input::empty_object(direct.context_mut()),
+                    direct.context_mut(),
+                )
+                .unwrap();
+                let old = json!({
+                    "time": {"seconds": time_ms as f64 / 1000.0, "milliseconds": time_ms},
+                    "randomSeed": seed, "deps": [],
+                });
+                let expected = JsValue::from_json(&old, json_runtime.context_mut()).unwrap();
+                let refs = JsValue::from_json(&json!({}), json_runtime.context_mut()).unwrap();
+                let metadata = JsValue::from_json(&json!({}), json_runtime.context_mut()).unwrap();
+                install_reference_tables(&expected, refs, metadata, json_runtime.context_mut())
+                    .unwrap();
+                assert_eq!(
+                    direct
+                        .call(probe, actual)
+                        .unwrap()
+                        .as_string()
+                        .unwrap()
+                        .to_std_string_escaped(),
+                    json_runtime
+                        .call(probe, expected)
+                        .unwrap()
+                        .as_string()
+                        .unwrap()
+                        .to_std_string_escaped(),
+                    "time={time_ms}, seed={seed}",
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn unsupported_only_borrows_original_and_mixed_bakes_preserve_it() {
+    let original = modify(&document("return input.time.milliseconds;"), |raw| {
+        raw["composition"]["dynamics"]["entries"][0]["animator"] =
+            json!({"type": "jsScript", "code": "return 1;"});
+    });
+    let before = original.to_json_value().unwrap();
+    let skipped = prepare(&original).unwrap();
+    assert!(matches!(skipped.document, Cow::Borrowed(_)));
+    assert_eq!(skipped.diagnostics.len(), 1);
+    assert_eq!(original.to_json_value().unwrap(), before);
+    let mixed = modify(&original, |raw| {
+        let mut second = raw["composition"]["dynamics"]["entries"][0].clone();
+        second["animator"] = json!({
+            "type": "jsScript", "layerTimeJsCode": "return input.time.milliseconds;"
+        });
+        second["target"]["propertyType"] = json!("positionY");
+        raw["composition"]["dynamics"]["entries"]
+            .as_array_mut()
+            .unwrap()
+            .push(second);
+    });
+    let mixed_before = mixed.to_json_value().unwrap();
+    let result = prepare(&mixed).unwrap();
+    assert!(matches!(result.document, Cow::Owned(_)));
+    assert!(
+        result.document.composition().dynamics().entries()[0]
+            .animator
+            .is_js_script()
+    );
+    assert_eq!(track(&result, 1).keyframes().len(), 2);
+    assert_eq!(mixed.to_json_value().unwrap(), mixed_before);
+    assert!(
+        result.diagnostics[0]
+            .message
+            .contains("legacy/mixed script clocks")
     );
 }
 
@@ -821,7 +1406,7 @@ fn seed_provenance_matches_the_existing_runtime_wire_contract() {
 }
 
 #[test]
-fn unsupported_dependency_keeps_its_script_and_convertible_sibling() {
+fn same_owner_dependency_bakes_original_script_and_convertible_sibling() {
     let original = modify(&document("return input.deps[0].value;"), |raw| {
         raw["composition"]["dynamics"]["entries"][0]["dependencies"] = json!([
             {"kind": "layer", "layerId": 7, "propertyType": "positionY"}
@@ -832,17 +1417,12 @@ fn unsupported_dependency_keeps_its_script_and_convertible_sibling() {
         }));
     });
     let prepared = prepare(&original).unwrap();
-    assert!(
-        prepared.document.composition().dynamics().entries()[0]
-            .animator
-            .is_js_script()
-    );
+    assert_eq!(track(&prepared, 0).keyframes().len(), 2);
     assert_eq!(track(&prepared, 1).keyframes().len(), 2);
     assert!(
-        prepared
-            .diagnostics
-            .iter()
-            .any(|item| item.message.contains("dependency or layer-reference"))
+        prepared.document.composition().dynamics().entries()[0]
+            .dependencies
+            .is_empty()
     );
 }
 

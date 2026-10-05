@@ -1,8 +1,12 @@
 //! Bounded ISO-BMFF metadata checks for facts FFmpeg normalizes or omits.
 use crate::error::{ensure, unsupported, Result};
-use h264_reader::nal::{
-    sps::{AspectRatioInfo, ChromaFormat, FrameMbsFlags, SeqParameterSet},
-    Nal, RefNal, UnitType,
+use crate::schema::records::PixelAspectRatio;
+use h264_reader::{
+    avcc::AvcDecoderConfigurationRecord,
+    nal::{
+        sps::{AspectRatioInfo, ChromaFormat, FrameMbsFlags, SeqParameterSet},
+        Nal, RefNal, UnitType,
+    },
 };
 use std::{
     collections::BTreeSet,
@@ -30,8 +34,10 @@ pub(crate) struct TrackMetadata {
     pub(crate) sample_timing: Option<SampleTiming>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub(crate) struct SampleTiming {
+    /// Unnormalized STTS counts/deltas, retained to detect demuxer clock repair.
+    pub(crate) decode_runs: Vec<(u32, u32)>,
     pub(crate) sample_count: u32,
     pub(crate) media_end: u64,
     pub(crate) constant_duration: Option<u32>,
@@ -50,6 +56,24 @@ pub(crate) fn read_movie_metadata(
     mut reader: impl Read + Seek,
     size: u64,
     validate_video: bool,
+) -> Result<MovieMetadata> {
+    read_movie_metadata_with_colour(&mut reader, size, validate_video, false)
+}
+
+/// Export can retain sRGB declarations for a foreign editable picture without
+/// admitting them to the native Premiere writer or the Tesseract decoder.
+pub(crate) fn read_export_movie_metadata(
+    mut reader: impl Read + Seek,
+    size: u64,
+) -> Result<MovieMetadata> {
+    read_movie_metadata_with_colour(&mut reader, size, true, true)
+}
+
+fn read_movie_metadata_with_colour(
+    mut reader: impl Read + Seek,
+    size: u64,
+    validate_video: bool,
+    export_colour: bool,
 ) -> Result<MovieMetadata> {
     let roots = boxes(&mut reader, 0..size)?;
     ensure!(
@@ -88,7 +112,8 @@ pub(crate) fn read_movie_metadata(
         {
             if track.handler == *b"vide" {
                 let track_boxes = boxes(&mut reader, trak.clone())?;
-                let (description, timing) = read_video_description(&mut reader, &track_boxes)?;
+                let (description, timing) =
+                    read_video_description(&mut reader, &track_boxes, export_colour)?;
                 track.sample_description = Some(description);
                 track.sample_timing = Some(timing);
             }
@@ -117,7 +142,16 @@ fn validate_user_metadata(reader: &mut (impl Read + Seek), movie: &[MediaBox]) -
             range.end - range.start >= 4,
             "truncated MP4 metadata header"
         );
-        for (_, list) in boxes(reader, range.start + 4..range.end)?
+        // An ISO full box stores its version and flags before the children. A
+        // QuickTime metadata atom has neither and starts with its `hdlr` child.
+        let quicktime =
+            range.end - range.start >= 8 && bytes::<4>(reader, range.start + 4)? == *b"hdlr";
+        let children = if quicktime {
+            range
+        } else {
+            range.start + 4..range.end
+        };
+        for (_, list) in boxes(reader, children)?
             .into_iter()
             .filter(|(kind, _)| kind == b"ilst")
         {
@@ -221,6 +255,7 @@ fn read_edit(
 fn read_video_description(
     reader: &mut (impl Read + Seek),
     track_boxes: &[MediaBox],
+    export_colour: bool,
 ) -> Result<(SampleDescription, SampleTiming)> {
     let tkhd = exactly_one(track_boxes, *b"tkhd", "track header")?;
     let tkhd_version = bytes::<1>(reader, tkhd.start)?[0];
@@ -261,10 +296,14 @@ fn read_video_description(
     let dimensions = bytes::<28>(reader, payload.start)?;
     let width = u16::from_be_bytes([dimensions[24], dimensions[25]]);
     let height = u16::from_be_bytes([dimensions[26], dimensions[27]]);
+    // The visual sample entry's depth field (24 opaque, 32 with alpha), which
+    // ProRes 4444 writers set for an alpha picture.
+    let depth = u16::from_be_bytes(bytes::<2>(reader, payload.start + 74)?);
     payload.start += 78;
     let children = boxes(reader, payload)?;
     let mut colour = None;
     let mut full_range = None;
+    let mut pixel_aspect = None;
     let mut seen = BTreeSet::new();
     for (kind, payload) in children.iter().cloned() {
         if [*b"pasp", *b"colr", *b"clap", *b"fiel"].contains(&kind) && !seen.insert(kind) {
@@ -279,7 +318,7 @@ fn read_video_description(
                 let value = bytes::<8>(reader, payload.start)?;
                 let x = u32::from_be_bytes(value[..4].try_into().expect("four bytes"));
                 let y = u32::from_be_bytes(value[4..].try_into().expect("four bytes"));
-                ensure!(x != 0 && x == y, "MP4 pixel aspect ratio must be square");
+                pixel_aspect = Some(PixelAspectRatio::new(u64::from(x), u64::from(y))?);
             }
             b"colr" => {
                 let length = payload.end - payload.start;
@@ -290,10 +329,11 @@ fn read_video_description(
                         || (value[..4] == *b"nclx" && length == 11),
                     "unsupported MP4 color profile"
                 );
-                colour = validate_color(
+                colour = validate_color_for_use(
                     u16::from_be_bytes([value[4], value[5]]),
                     u16::from_be_bytes([value[6], value[7]]),
                     u16::from_be_bytes([value[8], value[9]]),
+                    export_colour,
                 )?;
                 if length == 11 {
                     let flags = bytes::<1>(reader, payload.start + 10)?[0];
@@ -301,7 +341,36 @@ fn read_video_description(
                     merge_video_range(&mut full_range, Some(flags & 0x80 != 0))?;
                 }
             }
-            b"clap" => return Err(unsupported("MP4 clean-aperture cropping unsupported")),
+            b"clap" => {
+                ensure!(
+                    payload.end - payload.start == 32,
+                    "invalid MP4 clean aperture"
+                );
+                let value = bytes::<32>(reader, payload.start)?;
+                // Numerators and denominators of the aperture width and height
+                // and of its horizontal and vertical offsets.
+                let words: [u32; 8] = std::array::from_fn(|index| {
+                    u32::from_be_bytes(
+                        value[index * 4..index * 4 + 4]
+                            .try_into()
+                            .expect("four bytes"),
+                    )
+                });
+                let [width_n, width_d, height_n, height_d, x_n, x_d, y_n, y_d] = words;
+                ensure!(
+                    width_d != 0 && height_d != 0 && x_d != 0 && y_d != 0,
+                    "invalid MP4 clean aperture"
+                );
+                // The whole picture with zero offsets, as iPhone captures
+                // declare it, crops nothing; any other aperture changes it.
+                ensure!(
+                    u64::from(width_n) == u64::from(width) * u64::from(width_d)
+                        && u64::from(height_n) == u64::from(height) * u64::from(height_d)
+                        && x_n == 0
+                        && y_n == 0,
+                    "MP4 clean-aperture cropping unsupported"
+                );
+            }
             b"fiel" => ensure!(
                 payload.end - payload.start == 2 && bytes::<1>(reader, payload.start)?[0] == 1,
                 "interlaced video is unsupported; the fiel box must declare one progressive field"
@@ -309,19 +378,18 @@ fn read_video_description(
             _ => {}
         }
     }
-    ensure!(
-        display_width == u32::from(width) << 16 && display_height == u32::from(height) << 16,
-        "MP4 display dimensions must match the sample entry"
-    );
     let orientation = video_orientation(matrix, width, height)?;
     Ok((
         SampleDescription {
             entry: *entry,
             width,
             height,
+            depth,
+            display_dimensions: [display_width, display_height],
             colour,
             orientation,
             full_range,
+            pixel_aspect,
             children,
         },
         timing,
@@ -344,6 +412,10 @@ fn validate_sample_tables(
                 == Some(stts.end - stts.start),
         "packaged MP4 has invalid sample-timing runs"
     );
+    let mut decode_runs = Vec::new();
+    decode_runs
+        .try_reserve_exact(usize::try_from(run_count).unwrap_or(usize::MAX))
+        .map_err(|_| unsupported("packaged MP4 has excessive sample-timing runs"))?;
     let mut sample_count = 0_u32;
     let mut media_end = 0_u64;
     let mut constant_duration = None;
@@ -363,6 +435,7 @@ fn validate_sample_tables(
         media_end = media_end
             .checked_add(u64::from(samples) * u64::from(duration))
             .ok_or_else(|| unsupported("packaged MP4 sample timeline overflows"))?;
+        decode_runs.push((samples, duration));
         constant &= constant_duration.is_none_or(|value| value == duration);
         constant_duration.get_or_insert(duration);
         final_duration = duration;
@@ -486,6 +559,7 @@ fn validate_sample_tables(
         );
     }
     Ok(SampleTiming {
+        decode_runs,
         sample_count,
         media_end,
         constant_duration: constant.then_some(constant_duration.expect("nonempty timing runs")),
@@ -501,27 +575,89 @@ pub(crate) struct SampleDescription {
     pub(crate) entry: [u8; 4],
     pub(crate) width: u16,
     pub(crate) height: u16,
+    /// The visual sample entry's depth field: 24 for an opaque picture, 32
+    /// when the picture carries alpha.
+    pub(crate) depth: u16,
+    /// Track-header dimensions in unsigned 16.16 pixels, before orientation.
+    display_dimensions: [u32; 2],
     pub(crate) colour: Option<ColourDescription>,
     pub(crate) orientation: crate::schema::VideoOrientation,
     pub(crate) full_range: Option<bool>,
+    pub(crate) pixel_aspect: Option<PixelAspectRatio>,
     pub(crate) children: Vec<MediaBox>,
+}
+
+impl SampleDescription {
+    /// Check the track header only after container and codec PAR agree. A
+    /// codec-only VUI declaration can explain aspect-adjusted tkhd dimensions.
+    pub(crate) fn validate_display_dimensions(&self, aspect: PixelAspectRatio) -> Result<()> {
+        let [display_width, display_height] = self.display_dimensions;
+        let coded_width = u32::from(self.width) << 16;
+        let (numerator, denominator) = aspect.terms();
+        let declared = u128::from(display_width) * u128::from(denominator);
+        let expected = u128::from(coded_width) * u128::from(numerator);
+        // Allow only the rounding of tkhd's 16.16 representation.
+        let aspect_width = declared.abs_diff(expected) <= u128::from(denominator) / 2;
+        ensure!(
+            (display_width == coded_width || aspect_width)
+                && display_height == u32::from(self.height) << 16,
+            "MP4 display dimensions must match the sample entry and pixel aspect"
+        );
+        Ok(())
+    }
+}
+
+pub(crate) fn merge_pixel_aspect(
+    current: &mut Option<PixelAspectRatio>,
+    declared: Option<PixelAspectRatio>,
+) -> Result<()> {
+    let Some(declared) = declared else {
+        return Ok(());
+    };
+    ensure!(
+        current.is_none_or(|current| current.agrees(declared)),
+        "conflicting video pixel aspect ratio declarations"
+    );
+    *current = Some(declared);
+    Ok(())
 }
 
 pub(crate) fn validate_h264(
     description: &SampleDescription,
     extradata: &[u8],
-) -> Result<Option<ColourDescription>> {
+) -> Result<(Option<ColourDescription>, PixelAspectRatio)> {
+    let (_, colour, aspect) = inspect_h264(description, extradata, false)?;
+    Ok((colour, aspect))
+}
+
+pub(crate) fn inspect_export_h264(
+    description: &SampleDescription,
+    extradata: &[u8],
+) -> Result<(u8, Option<ColourDescription>, PixelAspectRatio)> {
+    inspect_h264(description, extradata, true)
+}
+
+fn inspect_h264(
+    description: &SampleDescription,
+    extradata: &[u8],
+    export_picture: bool,
+) -> Result<(u8, Option<ColourDescription>, PixelAspectRatio)> {
     ensure!(description.entry == *b"avc1", "missing AVC sample entry");
+    let configuration = AvcDecoderConfigurationRecord::try_from(extradata)
+        .map_err(|e| unsupported(format!("invalid H.264 decoder configuration: {e:?}")))?;
     ensure!(
-        extradata.len() >= 7,
-        "missing H.264 sequence parameter sets"
+        extradata[4] & 0xfc == 0xfc
+            && extradata[5] & 0xe0 == 0xe0
+            && configuration.length_size_minus_one() != 2,
+        "invalid H.264 decoder configuration reserved fields or NAL length size"
     );
     let mut cursor = 5usize;
     let count = usize::from(extradata[cursor] & 0x1f);
     cursor += 1;
-    ensure!(count > 0, "missing H.264 sequence parameter sets");
     let mut colour = description.colour;
     let mut full_range = None;
+    let mut pixel_aspect = description.pixel_aspect;
+    let mut bit_depth = None;
     for _ in 0..count {
         ensure!(
             cursor + 2 <= extradata.len(),
@@ -556,37 +692,87 @@ pub(crate) fn validate_h264(
                 .map_err(|e| unsupported(format!("invalid H.264 dimensions: {e:?}")))?
                 == (u32::from(description.width), u32::from(description.height))
                 && sps.chroma_info.chroma_format == ChromaFormat::YUV420
-                && sps.chroma_info.bit_depth_luma_minus8 == 0
-                && sps.chroma_info.bit_depth_chroma_minus8 == 0
+                && sps.chroma_info.bit_depth_luma_minus8 == sps.chroma_info.bit_depth_chroma_minus8
+                && (sps.chroma_info.bit_depth_luma_minus8 == 0
+                    || export_picture && sps.chroma_info.bit_depth_luma_minus8 == 2)
                 && !sps.chroma_info.separate_colour_plane_flag
                 && sps.frame_mbs_flags == FrameMbsFlags::Frames,
             "H.264 must be progressive 8-bit 4:2:0 with matching dimensions"
         );
+        let depth = sps.chroma_info.bit_depth_luma_minus8 + 8;
+        ensure!(
+            bit_depth.is_none_or(|first| first == depth),
+            "H.264 parameter sets declare conflicting bit depths"
+        );
+        bit_depth = Some(depth);
         if let Some(vui) = sps.vui_parameters {
             if let Some(ratio) = vui.aspect_ratio_info {
-                ensure!(
-                    matches!(ratio, AspectRatioInfo::Unspecified)
-                        || ratio.get().is_some_and(|(x, y)| x != 0 && x == y),
-                    "H.264 pixel aspect ratio must be square"
-                );
+                if !matches!(ratio, AspectRatioInfo::Unspecified) {
+                    let (x, y) = ratio
+                        .get()
+                        .ok_or_else(|| unsupported("reserved H.264 pixel aspect ratio"))?;
+                    merge_pixel_aspect(
+                        &mut pixel_aspect,
+                        Some(PixelAspectRatio::new(u64::from(x), u64::from(y))?),
+                    )?;
+                }
             }
             if let Some(signal) = vui.video_signal_type {
                 merge_video_range(&mut full_range, Some(signal.video_full_range_flag))?;
                 if let Some(c) = signal.colour_description {
                     ColourDescription::merge(
                         &mut colour,
-                        validate_color(
+                        validate_color_for_use(
                             u16::from(c.colour_primaries),
                             u16::from(c.transfer_characteristics),
                             u16::from(c.matrix_coefficients),
+                            export_picture,
                         )?,
                     )?;
                 }
             }
         }
     }
-    validate_video_range(description.full_range, full_range, 8, colour)?;
-    Ok(colour)
+    let bit_depth =
+        bit_depth.ok_or_else(|| unsupported("missing H.264 sequence parameter sets"))?;
+    // The record constructor bounds every PPS, but its iterators require a
+    // nonempty NAL. Guard that precondition before asking it to interpret PPS
+    // syntax and SPS references; successful metadata demux is not that proof.
+    let pps_count = extradata[cursor];
+    cursor += 1;
+    ensure!(pps_count > 0, "missing H.264 picture parameter sets");
+    for _ in 0..pps_count {
+        let length = usize::from(u16::from_be_bytes([
+            extradata[cursor],
+            extradata[cursor + 1],
+        ]));
+        cursor += 2;
+        ensure!(length > 0, "empty H.264 picture parameter set");
+        cursor += length;
+    }
+    if cursor < extradata.len() {
+        // High-profile extension fields are optional in existing records. When
+        // present, require the complete bounded form and agreement with SPS.
+        // Auxiliary SPS extensions have no established interpretation here.
+        let extension = &extradata[cursor..];
+        ensure!(
+            matches!(extradata[1], 100 | 110 | 122 | 144)
+                && extension.len() == 4
+                && extension[0] & 0xfc == 0xfc
+                && extension[0] & 3 == 1
+                && extension[1] & 0xf8 == 0xf8
+                && extension[1] & 7 == bit_depth - 8
+                && extension[2] & 0xf8 == 0xf8
+                && extension[2] & 7 == bit_depth - 8
+                && extension[3] == 0,
+            "invalid or unsupported H.264 decoder configuration extension"
+        );
+    }
+    configuration
+        .create_context()
+        .map_err(|e| unsupported(format!("invalid H.264 parameter sets: {e:?}")))?;
+    validate_video_range(description.full_range, full_range, bit_depth, colour)?;
+    Ok((bit_depth, colour, pixel_aspect.unwrap_or_default()))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -602,7 +788,13 @@ const PRIMARIES: [(u16, &str); 4] = [
     (9, "BT.2020"),
     (12, "P3"),
 ];
-const TRANSFERS: [(u16, &str); 4] = [(1, "BT.709"), (2, "unspecified"), (16, "PQ"), (18, "HLG")];
+const TRANSFERS: [(u16, &str); 5] = [
+    (1, "BT.709"),
+    (2, "unspecified"),
+    (13, "sRGB"),
+    (16, "PQ"),
+    (18, "HLG"),
+];
 const MATRICES: [(u16, &str); 3] = [(1, "BT.709"), (2, "unspecified"), (9, "BT.2020nc")];
 impl ColourDescription {
     pub(crate) fn codes(self) -> (u16, u16, u16) {
@@ -666,8 +858,27 @@ pub(crate) fn validate_color(
     transfer: u16,
     matrix: u16,
 ) -> Result<Option<ColourDescription>> {
+    validate_color_for_use(primaries, transfer, matrix, false)
+}
+
+pub(crate) fn validate_export_color(
+    primaries: u16,
+    transfer: u16,
+    matrix: u16,
+) -> Result<Option<ColourDescription>> {
+    validate_color_for_use(primaries, transfer, matrix, true)
+}
+
+fn validate_color_for_use(
+    primaries: u16,
+    transfer: u16,
+    matrix: u16,
+    export_picture: bool,
+) -> Result<Option<ColourDescription>> {
     let listed = |t: &[(u16, &str)], c| t.iter().any(|(x, _)| *x == c);
-    ensure!(listed(&PRIMARIES,primaries)&&listed(&TRANSFERS,transfer)&&listed(&MATRICES,matrix),"explicit media colour metadata {primaries}/{transfer}/{matrix} is unsupported; conversion passes through BT.709, BT.2020 PQ/HLG and P3 declarations");
+    ensure!(listed(&PRIMARIES,primaries)&&listed(&TRANSFERS,transfer)&&listed(&MATRICES,matrix)
+        && (transfer != 13 || export_picture && primaries == 1 && [1, 2].contains(&matrix)),
+        "explicit media colour metadata {primaries}/{transfer}/{matrix} is unsupported; conversion passes through BT.709, BT.2020 PQ/HLG and P3 declarations");
     Ok((![primaries, transfer, matrix]
         .iter()
         .all(|c| *c == UNSPECIFIED))

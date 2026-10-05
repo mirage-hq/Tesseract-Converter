@@ -33,7 +33,7 @@ are shared directly rather than expanded into separate projections.
 
 The product schema generator reads these canonical declarations for Rust docs and
 default metadata; callback emission shells and runtime wrappers are not competing
-schema sources. Revision 67 uses the existing Video, Audio and Group kinds with required
+schema sources. Since revision 67, the schema uses the existing Video, Audio and Group kinds with required
 `playback: { type: "windowed", inputRange, mapping, inputOffsetMs }`. Video and
 Audio also require an independent `sourceRange`. The mapping is either
 `{ type: "linear", input, output }` or `{ type: "timeRemap", property }`.

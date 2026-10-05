@@ -1,7 +1,17 @@
 # Contributing
 
-Open an issue to discuss substantial changes before implementing them. Submit
-focused pull requests against `main` with a description of the behavior,
+## Source of truth
+
+The source of truth is [`bungeeapp/jerboa`](https://github.com/bungeeapp/jerboa),
+under `opensource/conv/`. Develop converter code, documentation and tests there,
+and open issues and pull requests in Jerboa. Standalone or public distribution
+repositories are downstream mirrors, not upstream development sources. Do not
+use a repository redirect to choose a different development repository. Sync or
+publication of a downstream mirror requires a separate explicit request and review;
+the publication restrictions below still apply.
+
+Open an issue in Jerboa to discuss substantial changes before implementing them.
+Submit focused pull requests against Jerboa's `main` with a description of the behavior,
 compatibility impact and verification performed. Please keep the standalone
 workspace buildable: do not introduce dependencies on another repository or
 require native editor installations for the Rust unit tests.
@@ -33,8 +43,8 @@ approval. Mocked/offline test success is not evidence that an integration ran.
 **Public distribution remains on hold for the newly moved integration tooling.**
 Do not sync these helpers to a public repository or publicly release a revision
 containing them until the separate publication review is complete. MIT licensing,
-the export inventory and green tests do not clear that review. Asset retrieval
-and the public/private boundary are intentionally unchanged in this relocation.
+the export inventory and green tests do not clear that review. Checked-in
+fixtures and references need no Asset API retrieval.
 See the [publication notice](README.md#conversion-test-tooling).
 
 ## Build and verify

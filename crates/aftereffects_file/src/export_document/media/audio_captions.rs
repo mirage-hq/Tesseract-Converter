@@ -39,9 +39,12 @@ fn resolved_wave(audio: &AudioLayer) -> ResolvedMediaSource {
         format: NativeSourceFormat::Wave,
         dimensions: [0, 0],
         duration_millis: 4_000,
+        duration_millis_floor: 4_000,
+        duration_native_ticks: None,
         frame_rate: NativeFrameRate::integer(0),
         audio_sample_rate: 48_000.0,
         wave_metadata: None,
+        native_duration: None,
     }
 }
 
@@ -83,6 +86,21 @@ fn disabled_captions_match_absent_export_footage_spec() {
     assert_eq!(disabled_spec.audio_levels_animation, None);
     assert_eq!(disabled_spec.static_source_time_secs, None);
     assert!(!disabled_spec.time_remap_requires_source_owned_transform);
+}
+
+#[test]
+fn wave_sample_tail_one_millisecond_past_authored_duration_keeps_selected_audio() {
+    let audio = imported_wave_static();
+    let mut source = resolved_wave(&audio);
+    source.duration_millis = audio.source_intrinsic_duration.as_millis() + 1;
+    assert!(lower_audio(&audio, &source, Dimensions::new(320, 180)).is_ok());
+    source.duration_millis += 1;
+    assert_eq!(
+        lower_audio(&audio, &source, Dimensions::new(320, 180)).unwrap_err(),
+        "FX audio intrinsic duration differs from interpreted archive duration"
+    );
+    source.duration_millis = audio.source_intrinsic_duration.as_millis() - 1;
+    assert!(lower_audio(&audio, &source, Dimensions::new(320, 180)).is_err());
 }
 
 #[test]

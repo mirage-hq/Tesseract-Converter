@@ -2,3 +2,37 @@
 accepted = ["MIT", "Apache-2.0", "BSD-3-Clause", "BSD-2-Clause", "ISC", "Unicode-3.0", "MPL-2.0", "WTFPL", "Zlib", "0BSD", "Unlicense", "BSL-1.0", "LGPL-2.1-or-later"]
 ignore-dev-dependencies = true
 ignore-build-dependencies = true
+
+# The crate manifest offers MIT/Apache-2.0, but its bundled C also contains
+# NVIDIA's Apache-2.0 additions. Generic SPDX fallback drops the actual native
+# copyright notices. Pin representative headers for every distinct holder/year.
+[gdeflate-sys.clarify]
+license = "MIT AND Apache-2.0"
+
+[[gdeflate-sys.clarify.files]]
+path = "vendor/libdeflate/lib/gdeflate_decompress.c"
+license = "MIT AND Apache-2.0"
+checksum = "21d1a616717f9df3ef4bdbdf2fd5b17b734f94a77484509c436ff83f95e09f77"
+start = "/*"
+end = "*/"
+
+[[gdeflate-sys.clarify.files]]
+path = "vendor/libdeflate/lib/cpu_features_common.h"
+license = "MIT"
+checksum = "9179b8ce8c829b27c2286107e2de1e9fb9c1ac759b1f7ad0b43501135a3e8160"
+start = "/*"
+end = "*/"
+
+[[gdeflate-sys.clarify.files]]
+path = "vendor/libdeflate/lib/arm/cpu_features.c"
+license = "MIT"
+checksum = "8b2389b07af954a18d86444663b4b9e140a10a10805c957a3609497c35cf0ee2"
+start = "/*"
+end = "*/"
+
+[[gdeflate-sys.clarify.files]]
+path = "vendor/libdeflate/lib/arm/crc32_impl.h"
+license = "MIT"
+checksum = "6f767e65961c774d2e269df2502e7aa3ec1dd938af86b4741bf604802a97fb19"
+start = "/*"
+end = "*/"

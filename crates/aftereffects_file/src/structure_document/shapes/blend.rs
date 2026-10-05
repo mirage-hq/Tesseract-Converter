@@ -1,5 +1,4 @@
 //! Shape-property ordinals differ from the native layer-record blend byte.
-//! Source: pinned Bodymovin jsx/helpers/blendModes.jsx, BlendingModeShape.
 use super::*;
 use fx_schema::BlendMode;
 

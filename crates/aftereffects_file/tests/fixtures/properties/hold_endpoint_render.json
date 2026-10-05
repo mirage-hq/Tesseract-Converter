@@ -1,0 +1,325 @@
+{
+  "schema_version": 1,
+  "public_only": true,
+  "source": {
+    "path": "hold_endpoint_render.aep",
+    "sha256": "9ce527d842991598197745862785fb84805e1c2458d3e2b44d88c20caac7f972",
+    "bytes": 100401,
+    "composition": {
+      "duration": 2,
+      "fps": 24,
+      "height": 64,
+      "id": "1",
+      "name": "hold-render-public",
+      "width": 128
+    }
+  },
+  "authoring": {
+    "managed_job": "2a9b49b00a0249da99a316a07bec8dd4",
+    "request_id": "accuracy-r02-public-hold-render-author-20261004-v1",
+    "application": "26.5x89",
+    "script": "hold_endpoint_render.jsx",
+    "script_sha256": "7bbdc8bce53563354859230b4e933863238569bef451b7b8c6402d52d7acb7b8",
+    "result": {
+      "composition": {
+        "duration": 2,
+        "fps": 24,
+        "height": 64,
+        "id": "1",
+        "name": "hold-render-public",
+        "width": 128
+      },
+      "layers": [
+        {
+          "enabled": true,
+          "expression": "",
+          "keys": [
+            {
+              "incoming": 6612,
+              "outgoing": 6614,
+              "time": -0.5,
+              "value": 0
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6614,
+              "time": 0.5,
+              "value": 100
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 1.5,
+              "value": 40
+            }
+          ],
+          "name": "opacity-control",
+          "position": [
+            96,
+            32,
+            0
+          ]
+        },
+        {
+          "enabled": true,
+          "expression": "thisComp.layer(\"driver\").transform.rotation",
+          "keys": [],
+          "name": "rotation-alias",
+          "position": [
+            32,
+            32,
+            0
+          ]
+        },
+        {
+          "enabled": false,
+          "expression": "",
+          "keys": [
+            {
+              "incoming": 6612,
+              "outgoing": 6614,
+              "time": -0.5,
+              "value": 0
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6614,
+              "time": 0.5,
+              "value": 90
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 1.5,
+              "value": 180
+            }
+          ],
+          "name": "driver",
+          "position": [
+            64,
+            32,
+            0
+          ]
+        }
+      ],
+      "samples": [
+        {
+          "opacity": 0,
+          "rotation": 0,
+          "time": 0
+        },
+        {
+          "opacity": 0,
+          "rotation": 0,
+          "time": 0.46666666666667
+        },
+        {
+          "opacity": 100,
+          "rotation": 90,
+          "time": 0.5
+        },
+        {
+          "opacity": 100,
+          "rotation": 90,
+          "time": 0.53333333333333
+        },
+        {
+          "opacity": 100,
+          "rotation": 90,
+          "time": 1
+        },
+        {
+          "opacity": 100,
+          "rotation": 90,
+          "time": 1.46666666666667
+        },
+        {
+          "opacity": 40,
+          "rotation": 180,
+          "time": 1.5
+        },
+        {
+          "opacity": 40,
+          "rotation": 180,
+          "time": 1.53333333333333
+        },
+        {
+          "opacity": 40,
+          "rotation": 180,
+          "time": 1.96666666666667
+        }
+      ]
+    },
+    "cleanup_and_fresh_ready": true
+  },
+  "native_reference": {
+    "managed_job": "9849807f2b794a129458e49410713a71",
+    "request_id": "accuracy-r02-public-hold-render-reference-20261004-v1",
+    "settings": {
+      "format": "mp4",
+      "fps": 30.0,
+      "start_frame": null,
+      "end_frame": null,
+      "audio": "off"
+    },
+    "renderer": "aerender",
+    "bytes": 13868,
+    "sha256": "b67cf49013a6651ef9d3fa301a999290f8d6b1052cf87aec2a97fd9a494df770",
+    "width": 128,
+    "height": 64,
+    "duration_seconds": 2,
+    "fps": 30,
+    "decoded_frames": 60,
+    "cleanup_and_fresh_ready": true,
+    "asset": {
+      "phase": "published_fresh_download_hash_verified",
+      "native_sha256": "b67cf49013a6651ef9d3fa301a999290f8d6b1052cf87aec2a97fd9a494df770",
+      "native_bytes": 13868,
+      "retention": "long_term",
+      "public_only": true,
+      "asset_id": "ROaNxCVfwxIfADbwmQvA_vid",
+      "download_sha256": "b67cf49013a6651ef9d3fa301a999290f8d6b1052cf87aec2a97fd9a494df770",
+      "download_bytes": 13868,
+      "asset_type": null,
+      "resolved_asset_id": "ROaNxCVfwxIfADbwmQvA_vid"
+    }
+  },
+  "fresh_import": {
+    "converter_build_job": 2170,
+    "converter_build_commit": "0215e35c5ad06f8a05c22f16fb83ce11ed9f9ee3",
+    "converter_sha256": "1fe1e6c2d061fec0c32bd050e7b8cc98cc54cc491013dde3e3ac2b7d09b994dd",
+    "aep_sha256": "9ce527d842991598197745862785fb84805e1c2458d3e2b44d88c20caac7f972",
+    "fx_sha256": "15e40341ca6b59d9d847646599bca5c347ffb9edbe5c167bfbe70d8b652ddaba",
+    "rotation_alias_lowered": true,
+    "test": "native_hold_endpoint_flags_public_render_alias_lowers_saved_native_expression",
+    "test_job": 2183,
+    "test_passed": true
+  },
+  "tesseract_export": {
+    "build": {
+      "version": 1,
+      "workspace": "<redacted local path>",
+      "commit": "f19762af9dde934bd5a91af8c7a995c756184683",
+      "operation": "build-tsrct",
+      "profile": "dev",
+      "binary": "<redacted local path>",
+      "sha256": "221031d744d80b314e7621015c6a5dbf9d5b46991fa6f47ee7b65d1605d85581"
+    },
+    "export_job": 2204,
+    "video_sha256": "8706dfc5c9055285c61af609ed24f1d0e2d4ca0adae8436d237156e6d572e5a8"
+  },
+  "comparison": {
+    "algorithm": "rgb-hybrid",
+    "sample_interval_seconds": 0.25,
+    "canonical_rgb24": true,
+    "max_dimension": 0,
+    "min_similarity": 0.99,
+    "gate_passed": false,
+    "result": {
+      "score": {
+        "similarity": 0.9746325405625006,
+        "deviation": 0.025367459437499407
+      },
+      "compared_frames": 9,
+      "compared_duration_secs": 2.0,
+      "sample_interval_secs": 0.25,
+      "min_frame_similarity": 0.9651322732679546,
+      "max_frame_similarity": 0.9884065166115761,
+      "frame_results": [
+        {
+          "index": 0,
+          "time_secs": 0.0,
+          "score": {
+            "similarity": 0.9884065166115761,
+            "deviation": 0.01159348338842392
+          }
+        },
+        {
+          "index": 1,
+          "time_secs": 0.25,
+          "score": {
+            "similarity": 0.9884065166115761,
+            "deviation": 0.01159348338842392
+          }
+        },
+        {
+          "index": 2,
+          "time_secs": 0.5,
+          "score": {
+            "similarity": 0.9651322732679546,
+            "deviation": 0.03486772673204541
+          }
+        },
+        {
+          "index": 3,
+          "time_secs": 0.75,
+          "score": {
+            "similarity": 0.9651322732679546,
+            "deviation": 0.03486772673204541
+          }
+        },
+        {
+          "index": 4,
+          "time_secs": 1.0,
+          "score": {
+            "similarity": 0.9651322732679546,
+            "deviation": 0.03486772673204541
+          }
+        },
+        {
+          "index": 5,
+          "time_secs": 1.25,
+          "score": {
+            "similarity": 0.9651322732679546,
+            "deviation": 0.03486772673204541
+          }
+        },
+        {
+          "index": 6,
+          "time_secs": 1.5,
+          "score": {
+            "similarity": 0.9778009406290948,
+            "deviation": 0.02219905937090516
+          }
+        },
+        {
+          "index": 7,
+          "time_secs": 1.75,
+          "score": {
+            "similarity": 0.9782779673114419,
+            "deviation": 0.0217220326885581
+          }
+        },
+        {
+          "index": 8,
+          "time_secs": 2.0,
+          "score": {
+            "similarity": 0.9782718308269978,
+            "deviation": 0.021728169173002243
+          }
+        }
+      ],
+      "left": {
+        "width": 128,
+        "height": 64,
+        "duration_secs": 2.0,
+        "frame_count": 60,
+        "fps": 30.0
+      },
+      "right": {
+        "width": 128,
+        "height": 64,
+        "duration_secs": 2.0,
+        "frame_count": 60,
+        "fps": 30.0
+      }
+    },
+    "validation_sha256": "9ca6a2f8afa63f8097a83a9773909463c1dc94d8a4b228532100b43811c1f422"
+  },
+  "limitations": [
+    "Raw RGB comparison FAILS unchanged .99 threshold; not a fidelity pass.",
+    "Source-native reference vs fresh-import Tesseract comparison; no new generated-AEP native rendering.",
+    "Existing14-sample generated-AEP native acceptance/readback preserved separately.",
+    "Alpha/audio/original49 visual improvement unproved."
+  ]
+}

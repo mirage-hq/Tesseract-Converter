@@ -2,7 +2,7 @@ use super::{
     graph::SequenceGraphIds,
     tracks::{audio, video},
 };
-use crate::format::{invalid, Result};
+use crate::format::Result;
 use crate::schema::{native::*, records, AudioChannels, FrameRate, PrSequence};
 
 pub(super) fn sequence_clip<S>(source: ObjectId<S>, clip_id: String) -> Clip {
@@ -21,7 +21,10 @@ pub(super) fn sequence_clip<S>(source: ObjectId<S>, clip_id: String) -> Clip {
         .into(),
         marker_owner: None,
         time_remapping: None,
+        maintain_audio_pitch: None,
         playback_speed: None,
+        is_multicam: None,
+        selected_track_index: None,
         play_backwards: None,
         source: Some(Reference::object(source)),
         out_point: None,
@@ -71,7 +74,8 @@ fn sequence_source(audio: bool, ids: &SequenceGraphIds, end: i64) -> Record {
 /// Five 29.97 fps sequences store 103 (non-drop-frame): "Color Matte" in
 /// `credits`, `credits_lower_third`, `food_lower_third` and `lower_third`, and
 /// "Nested Sequence 01" in `food_lower_third`. No corpus sequence runs at 50 or
-/// 60 fps, so those rates have no code and reject.
+/// 60 fps. Premiere Pro 26.5.1 saves 105 and 108 in the sequence that it creates
+/// from a single 50 or 60 fps clip.
 fn video_time_display_format(frame_rate: FrameRate) -> Result<&'static str> {
     Ok(match frame_rate {
         FrameRate::Fps24000Over1001 => "110",
@@ -79,11 +83,13 @@ fn video_time_display_format(frame_rate: FrameRate) -> Result<&'static str> {
         FrameRate::Fps25 => "101",
         FrameRate::Fps30000Over1001 => "102",
         FrameRate::Fps30 => "104",
+        FrameRate::Fps50 => "105",
         FrameRate::Fps60000Over1001 => "106",
-        FrameRate::Fps50 | FrameRate::Fps60 => {
-            return Err(invalid(format!(
-                "writer has no Premiere-authored time display format for {frame_rate} sequences"
-            )))
+        FrameRate::Fps60 => "108",
+        FrameRate::Native(_) => {
+            return Err(crate::format::invalid(
+                "native sequence clocks are import-only; choose a listed export frame rate",
+            ))
         }
     })
 }
@@ -196,6 +202,7 @@ pub(super) fn records(spec: &PrSequence, ids: &SequenceGraphIds) -> Result<Vec<R
             audio_component_chains: Some(AudioComponentChains::single(
                 ids.sequence.audio_component_chain,
             )),
+            video_component_chain: None,
             clips: Some(Clips::from_ids(
                 Some(ids.sequence.audio_clip),
                 Some(ids.sequence.video_clip),
@@ -228,6 +235,7 @@ pub(super) fn records(spec: &PrSequence, ids: &SequenceGraphIds) -> Result<Vec<R
             secondary_contents: SecondaryContents::from_ids(ids.sequence.secondary_content),
             audio_channel_layout: records::STEREO.into(),
             gain: None,
+            audio_time_scaler_settings: None,
         }),
         Record::VideoClip(VideoClip {
             object_id: Some(ids.sequence.video_clip.as_native_string()),

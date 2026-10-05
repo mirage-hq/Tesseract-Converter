@@ -22,6 +22,7 @@ mod media;
 mod project;
 mod sequence;
 mod still;
+mod time_remap;
 mod tracks;
 
 fn valid_xml_text(value: &str) -> bool {
@@ -113,6 +114,11 @@ fn validate_project(
         let media = &project.media[id];
         if let Some(video) = &media.video {
             let generator = match video.kind {
+                PrMediaKind::NumberedStills { .. } => {
+                    return Err(invalid(
+                        "numbered stills must export as editable individual still placements",
+                    ))
+                }
                 PrMediaKind::ColorMatte(matte) => Some(BoundMedia::ColorMatte { media, matte }),
                 PrMediaKind::Adjustment => Some(BoundMedia::Adjustment { media }),
                 PrMediaKind::Video { .. }

@@ -1,0 +1,49 @@
+<PremiereData Version="3">
+  <Sequence ObjectUID="sequence-1"><Name>Main</Name><TrackGroups><TrackGroup><Second ObjectRef="1"/></TrackGroup></TrackGroups></Sequence>
+  <VideoTrackGroup ObjectID="1"><TrackGroup><Tracks><Track ObjectURef="track-1"/></Tracks><FrameRate>8467200000</FrameRate></TrackGroup><FrameRect>0,0,1920,1080</FrameRect><ComponentOwner><Components ObjectRef="2"/></ComponentOwner></VideoTrackGroup>
+  <VideoComponentChain ObjectID="2"><ComponentChain/></VideoComponentChain>
+  <VideoClipTrack ObjectUID="track-1"><ClipTrack><Track><ID>1</ID></Track><ClipItems><TrackItems><TrackItem ObjectRef="3"/></TrackItems></ClipItems></ClipTrack></VideoClipTrack>
+  <VideoClipTrackItem ObjectID="3"><ClipTrackItem><ComponentOwner><Components ObjectRef="4"/></ComponentOwner><TrackItem><End>1270080000000</End></TrackItem><SubClip ObjectRef="5"/></ClipTrackItem><FrameRect>0,0,1920,1080</FrameRect><PixelAspectRatio>1,1</PixelAspectRatio></VideoClipTrackItem>
+  <VideoComponentChain ObjectID="4"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain><Components><Component Index="0" ObjectRef="889"/></Components></ComponentChain></VideoComponentChain>
+  <SubClip ObjectID="5"><Clip ObjectRef="6"/><Name>Source</Name></SubClip>
+  <VideoClip ObjectID="6"><Clip><Source ObjectRef="7"/><InPoint>0</InPoint><OutPoint>1270080000000</OutPoint></Clip></VideoClip>
+  <VideoMediaSource ObjectID="7"><MediaSource><Media ObjectURef="media-1"/></MediaSource><OriginalDuration>2540160000000</OriginalDuration></VideoMediaSource>
+  <Media ObjectUID="media-1"><VideoStream ObjectRef="8"/><RelativePath>media/source.mp4</RelativePath></Media>
+  <VideoStream ObjectID="8"><Duration>2540160000000</Duration><FrameRate>8467200000</FrameRate><FrameRect>0,0,1920,1080</FrameRect></VideoStream>
+<VideoFilterComponent ObjectID="889" ClassID="d10da199-beea-4dd1-b941-ed3a78766d50" Version="7">
+		<Component Version="5">
+			<Node Version="1">
+				<Properties Version="1">
+					<ECP.Filter.Expanded>false</ECP.Filter.Expanded>
+				</Properties>
+			</Node>
+			<Params Version="1">
+				<Param Index="0" ObjectRef="3090"/>
+				<Param Index="1" ObjectRef="3091"/>
+			</Params>
+			<ID>5</ID>
+			<DisplayName>Offset</DisplayName>
+			<Bypass>false</Bypass>
+			<Intrinsic>false</Intrinsic>
+		</Component>
+		<MatchName>AE.ADBE Offset</MatchName>
+		<VideoFilterType>2</VideoFilterType>
+	</VideoFilterComponent>
+<PointComponentParam ObjectID="3090" ClassID="ca81d347-309b-44d2-acc7-1c572efb973c" Version="3">
+		<Name>Shift Center To</Name>
+		<IsTimeVarying>false</IsTimeVarying>
+		<ParameterControlType>6</ParameterControlType>
+		<StartKeyframe>-91445760000000000,0.50937497615814209:0.5,0,0,0,0,0,0,5,4,0,0,0,0</StartKeyframe>
+		<ParameterID>1</ParameterID>
+	</PointComponentParam>
+<VideoComponentParam ObjectID="3091" ClassID="fe47129e-6c94-4fc0-95d5-c056a517aaf3" Version="9">
+		<Name>Blend With Original</Name>
+		<IsTimeVarying>false</IsTimeVarying>
+		<ParameterControlType>2</ParameterControlType>
+		<StartKeyframe>-91445760000000000,0.5,0,0,0,0,0,0</StartKeyframe>
+		<CurrentValue>1</CurrentValue>
+		<LowerBound>0</LowerBound>
+		<UpperBound>1</UpperBound>
+		<ParameterID>2</ParameterID>
+	</VideoComponentParam>
+</PremiereData>

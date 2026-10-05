@@ -6,9 +6,8 @@ use fx_conv::{Progress, ProgressPhase};
 use fx_schema::animator::{AnimationGraphEntry, KeyframeId, PropertyKeyframeEasing};
 use fx_schema::{CompositionId, Duration, Time};
 use fx_schema::{
-    Dimensions, EditableFxCompositionDocument, FXComposition, GroupLayer, LayerData as FxLayer,
-    LayerId, TimeRangeProperty, TimeRemapExtrapolation, TimeRemapKeyframe, TimeRemapProperty,
-    Transform,
+    Dimensions, EditableFxCompositionDocument, GroupLayer, LayerData as FxLayer, LayerId,
+    TimeRangeProperty, TimeRemapExtrapolation, TimeRemapKeyframe, TimeRemapProperty, Transform,
 };
 
 use crate::{
@@ -20,21 +19,27 @@ use crate::{
 
 mod adjustment;
 mod alpha_projection;
+mod alpha_stack;
 mod animation;
 mod animation_budget;
+mod assembly;
+mod basic_text;
 mod camera_normalization;
 mod compositing;
 mod control_links;
+mod directional_plane;
 mod effects;
 mod foreign_inverse_matte;
 mod fractal_blend;
 mod geometry2;
+pub(crate) mod graphic_template;
 mod inverse_matte_transform;
 mod layer_styles;
 mod linear_wipe;
 mod masks;
 mod matte_text_paints;
 mod media;
+mod mirror;
 mod posterize_time;
 mod preserve_transparency;
 mod radial_wipe;
@@ -42,11 +47,14 @@ mod radial_wipe;
 mod scalar_script;
 mod self_inverse_matte;
 mod set_matte;
+mod shadow_plane;
 pub(crate) mod shapes;
 mod split2;
-mod text;
+pub(crate) mod text;
 mod transform;
+mod twirl_plane;
 mod vegas;
+pub(crate) use animation::editable_native_keys;
 pub(crate) use media::{
     AssetNamespace, MediaAssetKind, MediaAssetRequest, MediaResolution, asset_request_for_source,
 };
@@ -86,11 +94,18 @@ pub(crate) enum Destination<'a> {
         first_id: u64,
         asset_namespace: AssetNamespace<'a>,
     },
+    /// An independent Premiere audio placement. Keep the composition's audio
+    /// clocks and editable gain, but suppress every visual layer.
+    LinkedAudio {
+        parent: Option<LayerId>,
+        first_id: u64,
+        asset_namespace: AssetNamespace<'a>,
+    },
 }
 
 impl Destination<'_> {
     fn is_linked(self) -> bool {
-        matches!(self, Self::LinkedPicture { .. })
+        !matches!(self, Self::Document)
     }
 }
 
@@ -246,6 +261,11 @@ fn to_structural_fx_document_with_budget(
             parent,
             first_id,
             asset_namespace,
+        }
+        | Destination::LinkedAudio {
+            parent,
+            first_id,
+            asset_namespace,
         } => (parent, first_id, asset_namespace),
     };
     let mut converter = Converter {
@@ -267,6 +287,7 @@ fn to_structural_fx_document_with_budget(
         media_resolver,
         assets: Vec::new(),
         shape_budget: shapes::OutputBudget::default(),
+        mapped_shape_expressions: HashSet::new(),
         root_progress: progress.phase("convert AEP root layers", "root layers", comp.layers.len()),
     };
     if project.format_version != 97 {
@@ -289,7 +310,10 @@ fn to_structural_fx_document_with_budget(
     );
     root.layers = stored_layers(converter.composition_layers(selected, root_id, 0)?)?;
     progress.stage("assemble Tesseract document");
-    if converter.linked {
+    if matches!(destination, Destination::LinkedAudio { .. }) {
+        hide_visuals(&mut root)?;
+    }
+    if matches!(destination, Destination::LinkedPicture { .. }) {
         let mut muted = HashSet::new();
         mute_audio(&mut root, &mut muted)?;
         if !muted.is_empty()
@@ -336,27 +360,52 @@ fn to_structural_fx_document_with_budget(
         );
         (used, committed)
     };
-    let mut fx = FXComposition::try_from_parts(
+    let motion_blur = match compositing::motion_blur(&comp.record) {
+        Ok(settings) => Some(settings),
+        Err(error) => {
+            converter.warn(
+                Limitation::CompositionSettings,
+                Some(selected.id),
+                None,
+                format!("invalid motion-blur settings replaced by disabled defaults: {error}"),
+            );
+            None
+        }
+    };
+    let fx = assembly::composition(
         CompositionId::new("main"),
         name,
         fx_schema::AnimationGraph::from_entries(std::mem::take(&mut converter.animations))?,
         stored_layers(vec![FxLayer::Group(root)])?,
+        motion_blur,
     )?;
-    match compositing::motion_blur(&comp.record) {
-        Ok(settings) => fx.set_motion_blur(settings)?,
-        Err(error) => converter.warn(
-            Limitation::CompositionSettings,
-            Some(selected.id),
-            None,
-            format!("invalid motion-blur settings replaced by disabled defaults: {error}"),
-        ),
-    }
     let document = EditableFxCompositionDocument::new(
         Dimensions::new(u32::from(width), u32::from(height)),
         duration,
         (!converter.linked).then(|| comp.record.background_color()),
         fx,
     )?;
+    // Never silently discard a captured Shape identity without a committed mapping.
+    for sample in expression_samples.properties() {
+        if matches!(
+            sample.property(),
+            crate::expression_samples::PropertyIdentity::Shape { .. }
+        ) && !converter.mapped_shape_expressions.contains(&(
+            sample.composition_id(),
+            sample.layer_id(),
+            sample.property().clone(),
+        )) && converter
+            .visited_compositions
+            .contains(&sample.composition_id())
+        {
+            converter.warn(
+                Limitation::Properties,
+                Some(sample.composition_id()),
+                Some(sample.layer_id()),
+                format!("captured native Shape expression target {:?} has no editable expression mapping; authored fallback retained", sample.property()),
+            );
+        }
+    }
     for error in expression_samples.errors() {
         if converter
             .visited_compositions
@@ -381,10 +430,13 @@ fn to_structural_fx_document_with_budget(
 fn suppress_replaced_expression_warnings(warnings: &mut Vec<String>, evaluated: &[String]) {
     warnings.retain(|warning| {
         !evaluated.iter().any(|message| {
-            message.contains("AE-evaluated expression approximated")
-                && message.split_once(": ").is_some_and(|(name, _)| {
-                    warning.starts_with(&format!("{name}: enabled AE expression"))
-                })
+            message.rsplit_once(": ").is_some_and(|(name, provenance)| {
+                (provenance.starts_with("AE-evaluated expression approximated with ")
+                    || provenance.starts_with("converter-evaluated expression sampled")
+                    || provenance.starts_with("converter-evaluated expression lowered into ")
+                    || provenance.starts_with("AE-evaluated expression lowered into "))
+                    && warning.starts_with(&format!("{name}: enabled AE expression"))
+            })
         })
     });
 }
@@ -429,6 +481,7 @@ struct Converter<'a> {
     media_resolver: &'a mut dyn FnMut(&MediaAssetRequest) -> MediaResolution,
     assets: Vec<MediaAssetRequest>,
     shape_budget: shapes::OutputBudget,
+    mapped_shape_expressions: HashSet<(u32, u32, crate::expression_samples::PropertyIdentity)>,
     root_progress: ProgressPhase<'a>,
 }
 
@@ -577,6 +630,7 @@ impl Converter<'_> {
             .filter(|value| value.source_comp_id == item.id)
             .cloned()
             .collect();
+        let has_expression_overrides = !overrides.is_empty();
         for property_override in overrides {
             if let crate::essential::OverrideValue::Media { source_id } = &property_override.value
                 && !self.items.get(source_id).is_some_and(|source| {
@@ -660,7 +714,42 @@ impl Converter<'_> {
             }
         }
         self.stack.push(item.id);
-        let ids: HashSet<_> = comp.layers.iter().map(|layer| layer.record.id()).collect();
+        let layer_indices = index_layers(&comp.layers);
+        let mut approximations = Vec::new();
+        let expression_samples = crate::expression_eval::evaluate_occurrence_with_diagnostics(
+            &self.items,
+            item.id,
+            &comp,
+            self.expression_samples,
+            has_expression_overrides,
+            &mut approximations,
+        );
+        for approximation in approximations {
+            for note in &approximation.key_notes {
+                self.warn(
+                    Limitation::Properties,
+                    Some(item.id),
+                    Some(approximation.layer_id),
+                    format!(
+                        "{:?}: AE expression input keys approximated: {note}",
+                        approximation.property
+                    ),
+                );
+            }
+            for api in approximation.apis {
+                self.warn(Limitation::Properties, Some(item.id), Some(approximation.layer_id),
+                    format!("{:?}: AE expression {api} approximated with a deterministic random API; random sequence/kernel differs from Adobe; baked source-frame values do not establish native fidelity", approximation.property));
+            }
+        }
+        for error in expression_samples
+            .errors()
+            .iter()
+            .filter(|error| error.composition_id() == item.id)
+        {
+            if !self.expression_samples.errors().contains(error) {
+                self.warn(Limitation::Properties, Some(item.id), Some(error.layer_id()), format!("{:?}: converter expression evaluation unsupported ({}); existing native fallback retained", error.property(), error.message()));
+            }
+        }
         let solo = comp.layers.iter().any(|layer| layer.record.flags().solo);
         let context = LayerContext {
             comp_id: item.id,
@@ -668,8 +757,9 @@ impl Converter<'_> {
             parent,
             depth,
             solo,
-            ids: &ids,
+            layer_indices: &layer_indices,
             camera_normalization,
+            expression_samples: &expression_samples,
         };
         let mut layers = Vec::new();
         let mut source_indices = Vec::new();
@@ -699,6 +789,12 @@ impl Converter<'_> {
                 self.root_progress.update(source_index + 1);
             }
         }
+        let alpha_sources: Vec<_> = source_indices
+            .iter()
+            .copied()
+            .zip(layers.iter().map(FxLayer::id))
+            .filter(|(index, _)| matches!(comp.layers[*index].record.blend_mode(), 17 | 19))
+            .collect();
         let emitted_end = self.next_id;
         self.apply_mattes(&context, &source_indices, &mut layers)?;
         self.apply_set_mattes(&context, &source_indices, &mut layers)?;
@@ -710,6 +806,7 @@ impl Converter<'_> {
             self.apply_split2(&context, &source_indices, &mut layers)?;
         }
         layers.append(&mut adjustment_guides);
+        self.apply_alpha_stack(&context, &alpha_sources, &mut layers)?;
         self.stack.pop();
         Ok(layers)
     }
@@ -984,12 +1081,13 @@ impl Converter<'_> {
                 helper.description = "Independent editable alpha sample of overlapping prior native siblings; bounded approximation of AE Preserve Underlying Transparency for opaque interiors"
                     .into();
                 let sample_context = LayerContext {
+                    expression_samples: context.expression_samples,
                     comp_id: context.comp_id,
                     comp: context.comp,
                     parent: helper.id,
                     depth: context.depth + 1,
                     solo: context.solo,
-                    ids: context.ids,
+                    layer_indices: context.layer_indices,
                     camera_normalization: context.camera_normalization,
                 };
                 let mut samples = Vec::with_capacity(selection.indices.len());
@@ -1083,8 +1181,9 @@ impl Converter<'_> {
             parent,
             depth,
             solo,
-            ids,
+            layer_indices,
             camera_normalization,
+            expression_samples,
         } = *context;
         let ancestors = self.transform_ancestors(context, layer);
         let content_depth = context.depth + ancestors.len() + 2;
@@ -1130,13 +1229,16 @@ impl Converter<'_> {
         }
         let apply_authored_remap = authored_remap.is_some();
         let source = self.items.get(&source_id).copied();
-        // A still has no sampled source clock: AE shows it over its whole
-        // layer lifetime, including any part before the layer start time.
-        let still_image = record.layer_type() == 0
-            && !flags.null_layer
-            && !flags.adjustment_layer
-            && source.is_some_and(is_still_image);
-        let retain_affine_source_clock = purpose != LayerPurpose::Adjustment && !still_image;
+        let ordinary_av_source =
+            record.layer_type() == 0 && !flags.null_layer && !flags.adjustment_layer;
+        let still_image = ordinary_av_source && source.is_some_and(is_still_image);
+        // Still media and native Solid sources are constant rasters, not sampled
+        // timelines. Their layer lifetime can include time before startTime;
+        // clipping a nonexistent source clock would discard visible content.
+        let static_raster_source = ordinary_av_source
+            && source.is_some_and(|source| is_still_image(source) || is_solid_source(source));
+        let retain_affine_source_clock =
+            purpose != LayerPurpose::Adjustment && !static_raster_source;
         let timing = self.timing(
             comp_id,
             comp,
@@ -1257,7 +1359,7 @@ impl Converter<'_> {
         );
         self.warn(Limitation::LayerMetadata, Some(comp_id), Some(layer_id), format!("source IDs/kind stored in description; label={}, editor state, quality, raw record fields and property payloads are not editable FX metadata", record.label()));
         self.warn(Limitation::LayerSwitches, Some(comp_id), Some(layer_id), format!("enabled/solo/guide flattened to isHidden={}; 3D Transform, layer motion-blur flags and supported Effects use existing FX controls. Collapse/continuous-rasterization, auto-orient, sampling quality, unsupported preserve-transparency cases, shy/lock and editor-only switches have no equivalent importer mapping; source flags={flags:?}", result.is_hidden));
-        if record.parent_id() != 0 && !ids.contains(&record.parent_id()) {
+        if record.parent_id() != 0 && !layer_indices.contains_key(&record.parent_id()) {
             self.warn(
                 Limitation::MissingReference,
                 Some(comp_id),
@@ -1267,7 +1369,7 @@ impl Converter<'_> {
         }
         if let Some(mode) = compositing::blend_mode(record.blend_mode()) {
             result.blend_mode = mode;
-        } else {
+        } else if !matches!(record.blend_mode(), 17 | 19) {
             self.warn(
                 Limitation::BlendMode,
                 Some(comp_id),
@@ -1304,6 +1406,8 @@ impl Converter<'_> {
             size
         };
         let mut unsupported_cutout = false;
+        let mut basic_text = None;
+        let mut unsupported_sweep_cutout = false;
         // The generic frame-fade outcome waits for the Shape importer, which can
         // commit the same preset onto a caption paint Group.
         let mut frame_fade: Result<Option<effects::FrameFade>, String> = Ok(None);
@@ -1312,8 +1416,9 @@ impl Converter<'_> {
             let effect_denials = self.animation_budget.denials();
             let imported_effects = effects::import_with_context(
                 effects::ImportContext {
-                    evaluations: self.expression_samples,
+                    evaluations: expression_samples,
                     composition_id: comp_id,
+                    composition: Some(comp),
                     items: Some(&self.items),
                 },
                 layer,
@@ -1330,11 +1435,13 @@ impl Converter<'_> {
                 "Shape/Text Effects retain their composition-sized coordinate plane on the destination FX Group; effect-specific algorithm, expansion and edge behavior can still differ".into(),
             );
             }
+            basic_text = imported_effects.basic_text;
             adjustment_opacity = imported_effects.adjustment_opacity;
             native_effect_ordinals = imported_effects.native_ordinals;
             fractal_blends = imported_effects.fractal_blends;
             result.effects = imported_effects.effects;
             unsupported_cutout = imported_effects.unsupported_cutout;
+            unsupported_sweep_cutout = imported_effects.unsupported_sweep_cutout;
             frame_fade = imported_effects.frame_fade;
             self.animations.extend(imported_effects.animations);
             self.warn_animation_denial(effect_denials, comp_id, layer_id, "Effects");
@@ -1382,14 +1489,80 @@ impl Converter<'_> {
             warnings.push(format!("generated-camera inverse normalization: {error}; affected static Transform component retained without translation"));
         }
         result.transform = transform;
+        if self.stack.len() == 1
+            && !self.linked
+            && purpose.includes_occurrence_pipeline()
+            && record.parent_id() == 0
+            && record.auto_orient() == 0
+            && record.layer_type() == 0
+            && !flags.three_d_layer
+            && !flags.null_layer
+            && !flags.adjustment_layer
+            && comp.pixel_aspect.0 == comp.pixel_aspect.1
+            && source
+                .and_then(|source| source.solid.as_ref())
+                .and_then(|solid| solid.as_ref().ok())
+                .is_some_and(|solid| solid.pixel_aspect.0 == solid.pixel_aspect.1)
+        {
+            match shadow_plane::compensate(layer, size, &result.transform, &mut result.effects) {
+                Ok(true) => self.warn(
+                    Limitation::Properties,
+                    Some(comp_id),
+                    Some(layer_id),
+                    "Isolated static hard Drop Shadow offset transformed from the native Solid source plane into FX screen pixels; soft kernels, nested/animated transforms and native export fidelity remain unverified".into(),
+                ),
+                Ok(false) => {}
+                Err(error) => self.warn(
+                    Limitation::Properties,
+                    Some(comp_id),
+                    Some(layer_id),
+                    format!("Hard Drop Shadow source-plane offset retained without compensation: {error}"),
+                ),
+            }
+        }
+        if self.stack.len() == 1
+            && !self.linked
+            && purpose.includes_occurrence_pipeline()
+            && record.parent_id() == 0
+            && record.layer_type() == 0
+            && record.track_matte_type() == 0
+            && !flags.three_d_layer
+            && !flags.null_layer
+            && !flags.adjustment_layer
+            && !flags.preserve_transparency
+            && comp.pixel_aspect.0 == comp.pixel_aspect.1
+            && source
+                .and_then(|source| source.solid.as_ref())
+                .and_then(|solid| solid.as_ref().ok())
+                .is_some_and(|solid| solid.pixel_aspect.0 == solid.pixel_aspect.1)
+        {
+            match directional_plane::compensate(layer, comp, size, &result.transform, &mut result.effects) {
+                Ok(true) => self.warn(
+                    Limitation::Properties,
+                    Some(comp_id),
+                    Some(layer_id),
+                    "Isolated static Directional Blur direction and length transformed from native Solid source-plane controls into FX screen-space controls; sampling kernels, mixed/nested/animated transforms and native export fidelity remain unverified".into(),
+                ),
+                Ok(false) => {}
+                Err(error) => self.warn(
+                    Limitation::Properties,
+                    Some(comp_id),
+                    Some(layer_id),
+                    format!("Directional Blur source-plane controls retained without compensation: {error}"),
+                ),
+            }
+        }
         if purpose == LayerPurpose::MatteSample(set_matte::MatteSampleStage::Source) {
+            // The occurrence's destination blend is not part of its source pixels.
+            // Nested source layers were imported with their own ordinary purpose.
+            result.blend_mode = fx_schema::BlendMode::Normal;
             result.transform.opacity =
                 fx_schema::PercentageProperty::new(100.0).expect("100 is a valid opacity");
             self.warn(
                 Limitation::TrackMatte,
                 Some(comp_id),
                 Some(layer_id),
-                "Source-stage Set Matte sampling excludes provider owner opacity; the independent helper uses static 100% owner opacity while source content and paint opacity remain unchanged"
+                "Source-stage Set Matte sampling excludes provider owner opacity and occurrence blend; the independent helper uses static 100% owner opacity and Normal outer blend while source content, inner blends and paint opacity remain unchanged"
                     .into(),
             );
         }
@@ -1418,7 +1591,7 @@ impl Converter<'_> {
             };
             if correction.is_identity() {
                 let (evaluated, expression_warnings) = animation::evaluated_transform_entries(
-                    self.expression_samples,
+                    expression_samples,
                     (comp_id, comp),
                     layer,
                     id,
@@ -1426,17 +1599,19 @@ impl Converter<'_> {
                     true,
                     budget,
                 );
+                entries.retain(|entry| {
+                    !evaluated
+                        .iter()
+                        .any(|replacement| replacement.target == entry.target)
+                });
                 entries.extend(evaluated);
                 suppress_replaced_expression_warnings(
                     &mut animation_warnings,
                     &expression_warnings,
                 );
                 animation_warnings.extend(expression_warnings);
-            } else if self
-                .expression_samples
-                .has_transform_layer(comp_id, layer_id)
-            {
-                animation_warnings.push("AE-evaluated Transform expressions cannot be combined with generated-camera normalization; evaluated values omitted".into());
+            } else if expression_samples.has_transform_layer(comp_id, layer_id) {
+                animation_warnings.push("evaluated Transform expressions cannot be combined with generated-camera normalization; evaluated values omitted".into());
             }
             (entries, animation_warnings)
         };
@@ -1500,6 +1675,7 @@ impl Converter<'_> {
         let mask_import = if purpose.includes_occurrence_pipeline() {
             masks::apply(
                 layer,
+                (comp_id, expression_samples),
                 &mut result,
                 mask_size,
                 &mut self.next_id,
@@ -1537,16 +1713,15 @@ impl Converter<'_> {
                 Err(message) => self.warn(Limitation::Properties, Some(comp_id), Some(layer_id), format!("Radial Wipe omitted: {message}; original content and other effects retained, expression fallback not used")),
             }
         }
-        if size.contains(&0) && !result.masks.is_empty() {
+        if record.layer_type() != 4 && size.contains(&0) && !result.masks.is_empty() {
             self.warn(Limitation::Properties, Some(comp_id), Some(layer_id),
-                "mask normalization uses composition dimensions because source-local dimensions are unavailable; text/shape mask alignment is approximate".into());
+                "mask normalization uses composition dimensions because source-local dimensions are unavailable; source-local mask alignment is approximate".into());
         }
         // A light/environment or future layer may reference a comp as an input
         // without being a visible precomp occurrence. Only AV layers expand it.
-        if flags.null_layer {
-            // A null is an editable transform carrier, not drawable solid content.
-        } else if flags.adjustment_layer {
-            self.warn(Limitation::Properties, Some(comp_id), Some(layer_id), "adjustment-layer cross-layer compositing has no existing FX equivalent; adjustment contribution omitted, transform carrier retained without pixels".into());
+        if flags.null_layer || flags.adjustment_layer {
+            // These carriers have no source pixels. The direct Adjustment lowering
+            // retains sibling-stack effects and reports any actual limitations.
         } else if let Some(source) = source.filter(|source| {
             record.layer_type() == 0 && matches!(source.kind, ItemKind::Composition(_))
         }) {
@@ -1627,9 +1802,10 @@ impl Converter<'_> {
             }
         } else if record.layer_type() == 4 {
             let animation_denials = self.animation_budget.denials();
-            let imported = shapes::import_with_composition(
+            let imported = shapes::import_with_evaluations(
                 layer,
                 comp,
+                (comp_id, expression_samples),
                 &self.items,
                 purpose.includes_occurrence_pipeline(),
                 &content,
@@ -1639,6 +1815,12 @@ impl Converter<'_> {
                 &mut self.animation_budget,
             )?;
             shape_lowered_fade = imported.frame_fade_lowered;
+            self.mapped_shape_expressions.extend(
+                imported
+                    .mapped_expressions
+                    .into_iter()
+                    .map(|identity| (comp_id, layer_id, identity)),
+            );
             content.layers.extend(stored_layers(imported.layers)?);
             self.animations.extend(imported.animations);
             self.warn_animation_denial(animation_denials, comp_id, layer_id, "Shape contents");
@@ -1652,8 +1834,10 @@ impl Converter<'_> {
             }
         } else if record.layer_type() == 3 {
             let animation_denials = self.animation_budget.denials();
-            let imported = text::import_with_mask_guides(
+            let imported = text::import_in_composition(
                 layer,
+                context.comp,
+                Some((comp_id, expression_samples)),
                 &content,
                 &mask_import.guide_ids,
                 &mut self.next_id,
@@ -1693,6 +1877,15 @@ impl Converter<'_> {
                 );
             }
         }
+        // Complete effect-generated source paint before any fallback hiding.
+        if let Some(generator) = basic_text {
+            let text = generator.into_layer(self.allocate_id()?, &content);
+            // FX siblings are topmost-first. Composite On Original was admitted
+            // explicitly, and the generator is the first native effect stage.
+            content
+                .layers
+                .insert(0, fx_schema::Layer::from_data(&text)?);
+        }
         // Unsegmented footage is not a neutral fallback: it is opaque where AE
         // keeps only the foreground. Hidden paint keeps its editable source.
         if unsupported_cutout && contributes {
@@ -1701,6 +1894,10 @@ impl Converter<'_> {
                 hide_visual_layers(&mut content.layers)?;
                 self.warn(Limitation::Properties, Some(comp_id), Some(layer_id), "Roto Brush (ADBE Samurai) segmentation has no FX equivalent; this occurrence's unsegmented source is hidden so it does not cover lower layers. Its transform, masks, effects, audio, children and siblings are retained; the isolated foreground and its occlusion are lost. Unhide the source to see the raw frame".into());
             }
+        }
+        if unsupported_sweep_cutout && contributes && !purpose.samples_matte() {
+            hide_visual_layers(&mut content.layers)?;
+            self.warn(Limitation::Properties, Some(comp_id), Some(layer_id), "CC Light Sweep static Cutout reception has no current FX counterpart; this occurrence's raw source paint is hidden so the omitted cutout does not become an opaque cover over lower siblings. Editable source, owner controls and other effects are retained. Sweep pixels and suffix effects on those pixels are lost; Add, Composite, disabled, dynamic reception and nondefault compositing are not hidden. Alpha/render fidelity and export restoration are unverified".into());
         }
         // Unless a committed caption already lowered the preset onto its paint
         // Group, the owner lowers it or reports why not.
@@ -1760,6 +1957,37 @@ impl Converter<'_> {
                 result.is_hidden = true;
             }
         }
+        if purpose.includes_occurrence_pipeline() {
+            let before = result.effects.len();
+            match mirror::apply(
+                layer,
+                &mut result,
+                mirror::Context {
+                    size: native_effect_size,
+                    ordinals: &native_effect_ordinals,
+                    depth: depth + ancestors.len(),
+                    other_stages: !fractal_blends.is_empty(),
+                },
+                mirror::State {
+                    next: &mut self.next_id,
+                    entries: &mut self.animations,
+                    animations: &mut self.animation_budget,
+                    shapes: &mut self.shape_budget,
+                },
+            ) {
+                Ok(true) => {
+                    native_effect_ordinals.drain(..before - result.effects.len());
+                    self.warn(Limitation::Properties,Some(comp_id),Some(layer_id),"Mirror approximated by two editable pre-effect vector copies, clipped to the retained half-plane, with one reflected about the native center/angle. Later effects and owner opacity remain outside once. Native projection, clipping/edge antialiasing and transformed-owner pixels remain uncalibrated; edits to the two copies are independent. Export writes the current graph, not native Mirror replay".into());
+                }
+                Ok(false) => {}
+                Err(error) => self.warn(
+                    Limitation::Properties,
+                    Some(comp_id),
+                    Some(layer_id),
+                    format!("Mirror not lowered: {error}; owner and convertible siblings retained"),
+                ),
+            }
+        }
         let mut linear_wipe_lowered = false;
         if purpose.includes_occurrence_pipeline() {
             match linear_wipe::apply(layer, &mut result, linear_wipe::Context {source,size:native_effect_size,depth:depth+ancestors.len(),planar:ancestors.iter().all(|parent|!parent.record.flags().three_d_layer)}, linear_wipe::State {next:&mut self.next_id,animations:&mut self.animation_budget,shapes:&mut self.shape_budget}) {
@@ -1775,10 +2003,10 @@ impl Converter<'_> {
         if purpose.includes_occurrence_pipeline() {
             let before = result.effects.len();
             let fractal_hidden = timing.hide_content || result.is_hidden;
-            match fractal_blend::apply(&mut result,&fractal_blends,fractal_blend::Context {ordinals:&native_effect_ordinals,size:native_effect_size,visibility:fractal_blend::Visibility {range,hidden:fractal_hidden},parent_depth:depth+ancestors.len()},fractal_blend::State {next:&mut self.next_id,budget:&mut self.shape_budget}) {
+            match fractal_blend::apply(&mut result,&fractal_blends,fractal_blend::Context {ordinals:&native_effect_ordinals,size:native_effect_size,visibility:fractal_blend::Visibility {range,hidden:fractal_hidden},parent_depth:depth+ancestors.len()},fractal_blend::State {next:&mut self.next_id,budget:&mut self.shape_budget,animation_budget:&mut self.animation_budget,animations:&mut self.animations}) {
                 Ok(true) => {
                     native_effect_ordinals.drain(..before-result.effects.len());
-                    self.warn(Limitation::Properties,Some(comp_id),Some(layer_id),"static Basic/Spline Fractal Multiply/Screen stages approximated by independent opaque TurbulentNoise generators on the finite source plane and source-over blend Groups. Imported prefix/suffix order, generator identities, opacity and native visibility are retained; unsupported prior/later spatial stages remain omitted. Native noise kernel, scale calibration, HDR overflow, evolution and edge/raster behavior differ; Transform parity is not established. Independent generator effect-only disabling leaves opaque carrier paint and can change transparent prefix alpha; disable generator Group for full bypass".into());
+                    self.warn(Limitation::Properties,Some(comp_id),Some(layer_id),"Basic Fractal Multiply/Screen stages with bounded numeric keys approximated by independent opaque TurbulentNoise generators on the finite source plane and source-over blend Groups. Imported prefix/suffix order, generator identities, opacity and native visibility are retained; unsupported prior/later spatial stages remain omitted. Native noise kernel, scale calibration, HDR overflow, evolution and edge/raster behavior differ; Transform parity is not established. Independent generator effect-only disabling leaves opaque carrier paint and can change transparent prefix alpha; disable generator Group for full bypass".into());
                 }
                 Ok(false) => {},
                 Err(error) => self.warn(Limitation::Properties,Some(comp_id),Some(layer_id),format!("Fractal blend stages not lowered: {error}; original owner retained and staged generators omitted")),
@@ -1892,6 +2120,13 @@ impl Converter<'_> {
         } else {
             Ok(None)
         };
+        if purpose.includes_occurrence_pipeline() {
+            match twirl_plane::stage(layer, comp, &mut result, &mut self.next_id, self.stack.len() == 1 && ancestors.is_empty(), self.linked) {
+                Ok(true) => self.warn(Limitation::Properties, Some(comp_id), Some(layer_id), "Twirl source-local image staged before static owner Transform using a late full-composition CornerPin; source controls, keys and clock remain editable. Native kernel, radius falloff and clipped frame edges remain approximate".into()),
+                Ok(false) => {},
+                Err(message) => self.warn(Limitation::Properties, Some(comp_id), Some(layer_id), message),
+            }
+        }
         let mut result = self.transform_parents(context, layer, ancestors, result)?;
         match geometry {
             Ok(Some(prepared)) => {
@@ -2056,12 +2291,7 @@ impl Converter<'_> {
                 );
                 return Vec::new();
             }
-            let Some(parent) = context
-                .comp
-                .layers
-                .iter()
-                .find(|parent| parent.record.id() == parent_id)
-            else {
+            let Some(&parent_index) = context.layer_indices.get(&parent_id) else {
                 self.warn(
                     Limitation::Parenting,
                     Some(context.comp_id),
@@ -2070,6 +2300,7 @@ impl Converter<'_> {
                 );
                 break;
             };
+            let parent = &context.comp.layers[parent_index];
             ancestors.push(parent);
             parent_id = parent.record.parent_id();
         }
@@ -2123,7 +2354,7 @@ impl Converter<'_> {
                 );
             self.animations.extend(entries);
             let (entries, expression_warnings) = animation::evaluated_transform_entries(
-                self.expression_samples,
+                context.expression_samples,
                 (context.comp_id, context.comp),
                 parent,
                 wrapper_id,
@@ -2131,6 +2362,11 @@ impl Converter<'_> {
                 false,
                 &mut self.animation_budget,
             );
+            self.animations.retain(|entry| {
+                !entries
+                    .iter()
+                    .any(|replacement| replacement.target == entry.target)
+            });
             self.animations.extend(entries);
             suppress_replaced_expression_warnings(&mut animation_warnings, &expression_warnings);
             warnings.extend(expression_warnings);
@@ -2494,13 +2730,29 @@ impl LayerPurpose {
 }
 
 struct LayerContext<'a> {
+    expression_samples: &'a ExpressionSamples,
     comp_id: u32,
     comp: &'a Composition,
     parent: LayerId,
     depth: usize,
     solo: bool,
-    ids: &'a HashSet<u32>,
+    layer_indices: &'a HashMap<u32, usize>,
     camera_normalization: Option<camera_normalization::CompositionNormalization>,
+}
+
+// Built from the effective occurrence after Essential Property overrides. Keeping
+// positions avoids copying layers and preserves the old linear lookup's first match.
+/// Reuses the source-proven native tdsn envelope decoder for runtime snapshots.
+pub(super) fn native_property_name(chunks: &[crate::rifx::Chunk]) -> Option<&str> {
+    control_links::display_name(chunks)
+}
+
+fn index_layers(layers: &[Layer]) -> HashMap<u32, usize> {
+    let mut indices = HashMap::with_capacity(layers.len());
+    for (index, layer) in layers.iter().enumerate() {
+        indices.entry(layer.record.id()).or_insert(index);
+    }
+    indices
 }
 
 fn is_solid_source(source: &ProjectItem) -> bool {
@@ -2517,7 +2769,12 @@ fn is_still_image(source: &ProjectItem) -> bool {
 }
 
 fn has_source_relative_anchor(source: &ProjectItem) -> bool {
-    is_solid_source(source) || matches!(source.kind, ItemKind::Composition(_))
+    is_solid_source(source)
+        || matches!(source.kind, ItemKind::Composition(_))
+        || source
+            .footage
+            .as_ref()
+            .is_some_and(|footage| footage.main_source == crate::structure::FootageSourceKind::File)
 }
 
 fn solid_anchor_scale(source: Option<&ProjectItem>, size: [u16; 2]) -> [f64; 2] {

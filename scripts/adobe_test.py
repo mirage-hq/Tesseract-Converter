@@ -17,6 +17,7 @@ import importlib.util
 import json
 import math
 import os
+import shutil
 from pathlib import Path
 import re
 import signal
@@ -406,45 +407,60 @@ def run_cpu_command(
     log_limit: int,
     selected_case_ids: list[str],
 ) -> CpuExecution:
-    """Run the parent-owned complete CaseBatch and retain bounded logs."""
+    """Run selected CaseBatch callbacks and retain bounded logs and artifacts."""
     stdout_log = records_path.parent / "cpu.stdout.log"
     stderr_log = records_path.parent / "cpu.stderr.log"
-    environment = os.environ.copy()
-    export_records = records_path.parent / "adobe-export-records.jsonl"
-    export_root = records_path.parent / "fx_exports"
-    records_path.touch(exist_ok=False)
-    export_records.touch(exist_ok=False)
-    export_root.mkdir(exist_ok=False)
-    environment["ADOBE_TEST_RECORDS"] = str(records_path.resolve())
-    environment["ADOBE_TEST_CASE_IDS"] = json.dumps(selected_case_ids, separators=(",", ":"))
-    environment["ADOBE_EXPORT_RECORDS"] = str(export_records.resolve())
-    environment["AEP_EFFECTS_COVERAGE_DIR"] = str(export_root.resolve())
-    environment["AEP_EFFECTS_FX_PANEL_DIR"] = str(export_root.resolve())
-    process = subprocess.Popen(
-        list(command),
-        cwd=workspace,
-        env=environment,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=os.name == "posix",
-    )
-    assert process.stdout is not None and process.stderr is not None
-    stdout = _BoundedLogCapture(process.stdout, stdout_log, log_limit)
-    stderr = _BoundedLogCapture(process.stderr, stderr_log, log_limit)
-    stdout.thread.start()
-    stderr.thread.start()
+    # Rust's compile-time channel is fixed inside this converter workspace.
+    # The shared Rust queue serializes commands; retain each run's artifacts
+    # before the next command clears the channel.
+    channel = workspace / "target" / "adobe-test"
+    if channel.exists():
+        shutil.rmtree(channel)
+    channel.mkdir(parents=True)
+    channel_records = channel / "adobe-test-records.jsonl"
+    channel_exports = channel / "adobe-export-records.jsonl"
+    export_root = channel / "fx_exports"
+    channel_records.touch()
+    channel_exports.touch()
+    export_root.mkdir()
+    # The selector only scopes this runner's subprocess; a stale file would make
+    # later direct Rust test runs silently skip unselected cases.
+    selection = channel / "selected-case-ids.json"
+    selection.write_text(json.dumps(selected_case_ids))
     timed_out = False
     cancelled = False
     try:
-        process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        _kill_process_group(process)
-    except KeyboardInterrupt:
-        cancelled = True
-        _kill_process_group(process)
-    stdout.thread.join()
-    stderr.thread.join()
+        process = subprocess.Popen(
+            list(command),
+            cwd=workspace,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=os.name == "posix",
+        )
+        assert process.stdout is not None and process.stderr is not None
+        stdout = _BoundedLogCapture(process.stdout, stdout_log, log_limit)
+        stderr = _BoundedLogCapture(process.stderr, stderr_log, log_limit)
+        stdout.thread.start()
+        stderr.thread.start()
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            _kill_process_group(process)
+        except KeyboardInterrupt:
+            cancelled = True
+            _kill_process_group(process)
+        stdout.thread.join()
+        stderr.thread.join()
+    finally:
+        selection.unlink(missing_ok=True)
+    retained_exports = records_path.parent / "fx_exports"
+    original_exports = str(export_root.resolve())
+    shutil.move(str(export_root), retained_exports)
+    retained_path = str(retained_exports.resolve())
+    records_path.write_text(channel_records.read_text().replace(original_exports, retained_path))
+    export_records = records_path.parent / "adobe-export-records.jsonl"
+    export_records.write_text(channel_exports.read_text().replace(original_exports, retained_path))
     return CpuExecution(
         exit_code=None if cancelled else process.returncode,
         timed_out=timed_out,
@@ -855,7 +871,6 @@ def run_unified(
                 cache_dir=cache,
                 local_references=export_local_references or {},
                 tools={
-                    "aerender": tools["aerender"],
                     "ffprobe": tools["ffprobe"],
                     "validation": tools["validation"],
                 },
@@ -1091,7 +1106,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--aerender",
         type=Path,
-        default=Path("/Applications/Adobe After Effects 2026/aerender"),
+        default=None,
+        help="Deprecated compatibility option; never executed. Configure HEADLESS_ADOBE_COMMAND.",
     )
     parser.add_argument("--ffprobe", default="ffprobe")
     parser.add_argument("--cache-dir", type=Path, default=aep_test.DEFAULT_CACHE)

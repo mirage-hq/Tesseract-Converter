@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 import aep_audio_e2e as e2e
+import adobe_native
 from aep_audio_test import compare, sha256
 
 FIXTURES = Path(__file__).resolve().parents[1] / "crates/aftereffects_file/tests/fixtures/audio_e2e"
@@ -89,8 +90,45 @@ def _phase(attempted: bool, status: str, reason: str | None = None) -> dict[str,
     return {"attempted": attempted, "status": status, "reason": reason}
 
 
-def _native_acceptance(*, case: dict[str, Any], work: Path, aerender: Path | str,
-                       timeout: int) -> dict[str, Any]:
+def _native_dependencies(case: dict[str, Any], work: Path) -> dict[str, Any]:
+    """Pin original media and exact paths of verified task-owned media copies."""
+    dependencies: dict[str, Any] = {}
+    hashes: set[str] = set()
+    for index, item in enumerate(case["primary"]):
+        path = e2e._path(FIXTURES, item, "primary media")
+        digest = sha256(path)
+        hashes.add(digest)
+        dependencies[f"primary-{index}"] = {"path": str(path.resolve()), "sha256": digest}
+    media_suffixes = {".wav", ".mov", ".mp4", ".mp3", ".aif", ".aiff", ".m4a"}
+    for directory in ("independent-source", "prepared", "conversion"):
+        root = work / "export" / directory
+        if root.is_symlink():
+            raise AudioAdapterError("symlinked native media directory")
+        if not root.exists():
+            continue
+        pending = [root]
+        count = 0
+        while pending:
+            folder = pending.pop()
+            for path in sorted(folder.iterdir()):
+                count += 1
+                if count > 1000:
+                    raise AudioAdapterError("native media scan exceeds owned-directory bound")
+                if path.is_symlink():
+                    raise AudioAdapterError("symlink in native media directory")
+                if path.is_dir():
+                    pending.append(path)
+                elif path.suffix.lower() in media_suffixes:
+                    digest = sha256(path)
+                    if digest not in hashes:
+                        raise AudioAdapterError("changed or unexpected native media copy")
+                    dependencies[f"copy-{len(dependencies)}"] = {
+                        "path": str(path.resolve()), "sha256": digest}
+    return dependencies
+
+
+def _native_acceptance(*, case: dict[str, Any], work: Path,
+                       timeout: int, aerender: Path | str | None = None) -> dict[str, Any]:
     """Render the *fresh exported AEP* in Adobe and compare its audio to native source.
 
     A successful own-reader inspection, local roundtrip or FX render cannot
@@ -106,15 +144,19 @@ def _native_acceptance(*, case: dict[str, Any], work: Path, aerender: Path | str
     name = case["slug"]  # pinned explicit FX root name, not source composition ID
     if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name):
         raise AudioAdapterError("invalid exported composition name")
-    command = [str(aerender), "-project", str(exported), "-comp", name,
-               "-s", "0", "-e", "143",
-               "-renderSettings", "Use this frame rate: 30; Quality: Best; Resolution: Full",
-               "-OMtemplate", "H.264 - Match Render Settings - 40 Mbps",
-               "-output", str(output), "-v", "ERRORS_AND_PROGRESS"]
     error: BaseException | None = None
     diagnostics = ""
+    native_artifact = None
+    native_work = work / "export/native-worker"
     try:
-        diagnostics = e2e._run(command, work / "export/adobe-native.log", timeout)
+        native_artifact = adobe_native.execute(
+            "render_aep", {"source": adobe_native.source_ref(exported, _native_dependencies(case, work)),
+                           "composition_id": name,
+                           "settings": {"format": "mp4", "fps": 30, "start_frame": 0,
+                                        "end_frame": 143, "audio": "on"}},
+            native_work, timeout=timeout)
+        adobe_native.copy_artifact(native_artifact, output)
+        diagnostics = adobe_native.read_render_log(native_artifact).decode('utf-8', errors='replace')
     except BaseException as exc:
         error = exc
     if not exported.is_file() or exported.is_symlink() or sha256(exported) != original:
@@ -134,6 +176,7 @@ def _native_acceptance(*, case: dict[str, Any], work: Path, aerender: Path | str
     return {"attempted": True, "status": "success" if result["passed"] else "failure",
             "reason": None if result["passed"] else "Adobe native audio differs from independent source reference",
             "aep_sha256": original, "output": native_contract,
+            "native_artifact": native_artifact,
             "reference_path": case["reference"]["path"], "audio_comparison": result,
             "evidence": "fresh generated-AEP Adobe render versus independent native source audio"}
 
@@ -195,7 +238,7 @@ def run_cases(*, selected: list[dict[str, Any]], run_dir: Path,
             if case["direction"] == "export" and stages.get("fresh_export", {}).get("status") == "passed":
                 try:
                     row["native_acceptance"] = native_acceptance(case=case, work=work,
-                        aerender=tools["aerender"], timeout=timeout)
+                        timeout=timeout)
                     if row["native_acceptance"].get("status") != "success":
                         row["native_acceptance"]["status"] = "failure"
                 except Exception as exc:

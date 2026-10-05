@@ -26,6 +26,7 @@ sys.path.insert(0, str(HERE))
 import aep_feature_proof as proof
 import aep_test
 import adobe_vector_controls
+import adobe_native
 from aep_adjustment_cases import ADJUSTMENT_EXPORT_CASE_IDS
 
 COVERAGE_CASES = Path(
@@ -978,37 +979,17 @@ def _run_native_and_score(
     output = case_dir / f"{case.name}.mp4"
     if output.exists() or output.is_symlink():
         raise ExportAdapterError("Adobe output already exists before render")
-    command = [
-        str(tools["aerender"]),
-        "-project",
-        str(aep_path),
-        "-comp",
-        case.name,
-        "-s",
-        "0",
-        "-e",
-        "47",
-        "-renderSettings",
-        RENDER_SETTINGS,
-        "-OMtemplate",
-        OUTPUT_MODULE,
-        "-output",
-        str(output),
-        "-mem_usage",
-        "20",
-        "40",
-        "-mfr",
-        "OFF",
-        "50",
-        "-v",
-        "ERRORS_AND_PROGRESS",
-    ]
     render_error: BaseException | None = None
-    render_result: aep_test.CompletedCommand | None = None
+    native_artifact: dict[str, Any] | None = None
+    native_work = case_dir / "native-worker"
     try:
-        render_result = aep_test.run_recorded(
-            command, timeouts["render"], "adobe-render", case_dir, commands, executor
+        native_artifact = adobe_native.execute(
+            "render_aep",
+            {"source": adobe_native.source_ref(aep_path), "composition_id": case.name,
+             "settings": {"format": "mp4", "fps": 30, "audio": "off"}},
+            native_work, timeout=timeouts["render"],
         )
+        adobe_native.copy_artifact(native_artifact, output)
     except (Exception, KeyboardInterrupt) as exc:  # noqa: BLE001
         # Even an unexpected injected-executor failure must not bypass the mutation check.
         render_error = exc
@@ -1025,10 +1006,8 @@ def _run_native_and_score(
         ) from exc
     if render_error is not None:
         raise render_error
-    assert render_result is not None
-    if render_result.returncode:
-        raise _command_failure(render_result, "Adobe render")
-    diagnostics = f"{render_result.stdout}\n{render_result.stderr}"
+    assert native_artifact is not None
+    diagnostics = adobe_native.read_render_log(native_artifact).decode('utf-8', errors='replace')
     if _has_adobe_diagnostic(diagnostics):
         raise ExportAdapterError(
             "Adobe render emitted warning/error/fatal diagnostic text"
@@ -1073,6 +1052,7 @@ def _run_native_and_score(
         },
         "metadata": {**actual_metadata, "fps": str(actual_metadata["fps"])},
         "aep_unchanged": True,
+        "native_artifact": native_artifact,
     }
 
     if reference_target is None:
@@ -1280,9 +1260,9 @@ def run_exports(
         )
     if artifact_dir.resolve().parent != run_dir:
         raise ExportAdapterError("FX artifacts escaped run_dir")
-    required_tools = {"aerender", "ffprobe", "validation"}
-    if set(tools) != required_tools:
-        raise ExportAdapterError(f"tools must contain exactly {sorted(required_tools)}")
+    required_tools = {"ffprobe", "validation"}
+    if not required_tools <= set(tools) or set(tools) - required_tools - {"aerender"}:
+        raise ExportAdapterError(f"tools must contain {sorted(required_tools)}; aerender is retired")
     if set(timeouts) != {"render", "metadata", "compare"} or any(
         not isinstance(value, int) or isinstance(value, bool) or value <= 0
         for value in timeouts.values()
@@ -1336,6 +1316,9 @@ def run_exports(
     tool_identities: dict[str, dict[str, Any]] = {}
     tool_problems: list[str] = []
     for name, value in tools.items():
+        if name == "aerender":
+            # Legacy dictionaries may still carry this value; never resolve or execute it.
+            continue
         try:
             resolved = aep_test._tool_path(value, workspace)
             resolved_tools[name] = resolved

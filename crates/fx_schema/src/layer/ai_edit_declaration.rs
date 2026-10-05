@@ -49,6 +49,11 @@ macro_rules! define_ai_edit_layer_schema {
             /// Legacy shot stickers rendered with the segment's caption/emoji settings.
             #[serde(default, skip_serializing_if = "Vec::is_empty")]
             pub stickers: Vec<AiEditSticker>,
+            /// Generated emoji values keyed by caption word id. An absent map means
+            /// generated emoji provenance is unavailable.
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            #[ts(optional)]
+            pub server_emojis: Option<std::collections::BTreeMap<String, String>>,
             /// Source media, audio, matte, and PAG style layers. The first item
             /// renders above later items.
             pub layers: Vec<Layer>,

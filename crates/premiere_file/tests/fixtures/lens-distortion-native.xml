@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PremiereData>
+<VideoFilterComponent ObjectID="546" ClassID="d10da199-beea-4dd1-b941-ed3a78766d50" Version="9">
+		<Component Version="7">
+			<Params Version="1">
+				<Param Index="0" ObjectRef="722"/>
+				<Param Index="1" ObjectRef="723"/>
+				<Param Index="2" ObjectRef="724"/>
+				<Param Index="3" ObjectRef="725"/>
+				<Param Index="4" ObjectRef="726"/>
+				<Param Index="5" ObjectRef="727"/>
+				<Param Index="6" ObjectRef="728"/>
+			</Params>
+			<ID>3</ID>
+			<DisplayName>Lens Distortion</DisplayName>
+		</Component>
+		<PremiereFilterPrivateData Encoding="base64" BinaryHash="f62b86ff-6376-ea9b-171b-66000000001c">2P8AAAAAAAAAAAH///8AAA==
+		</PremiereFilterPrivateData>
+		<VideoFilterType>1</VideoFilterType>
+		<MatchName>PR.ADBE Lens Distortion</MatchName>
+	</VideoFilterComponent>
+<VideoComponentParam ObjectID="722" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>Curvature</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<IsTimeVarying>true</IsTimeVarying>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,-40,0,0,0,0,0,0</StartKeyframe>
+		<Keyframes>0,-40,0,0,0,0.16666666666666666,39.79303641852718,0.16666666666666666;510674274420,40,0,0,39.79303641852718,0.16666666666666666,0,0.16666666666666666;</Keyframes>
+		<LowerBound>-100</LowerBound>
+		<UpperBound>100</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="723" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>Vertical Decentering</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,0,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>-100</LowerBound>
+		<UpperBound>100</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="724" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>Horizontal Decentering</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,0,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>-100</LowerBound>
+		<UpperBound>100</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="725" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>Vertical Prism FX</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,0,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>-100</LowerBound>
+		<UpperBound>100</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="726" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>Horizontal Prism FX</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,0,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>-100</LowerBound>
+		<UpperBound>100</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="727" ClassID="cc12343e-f113-4d3b-ae05-b287db77d461" Version="10">
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,true,0,0,0,0,0,0</StartKeyframe>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="728" ClassID="0fde4e9f-f895-4ba3-b0fe-9a6feafda583" Version="10">
+		<Name>Fill Color</Name>
+		<ParameterID>-1</ParameterID>
+		<UpperUIBound>0</UpperUIBound>
+		<StartKeyframe>-91445760000000000,18374966859414961920,0,0,0,0,0,0</StartKeyframe>
+	</VideoComponentParam>
+</PremiereData>

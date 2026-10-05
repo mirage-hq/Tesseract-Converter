@@ -72,6 +72,74 @@ fn assert_native_animation_record(composition_id: u32, effect_name: &str, proper
 }
 
 #[test]
+fn native_static_plugin_descriptors_allow_editable_controls() {
+    let source = crate::rifx::Rifx::parse_with(
+        include_bytes!("../../../tests/fixtures/effects/native-static-effect-descriptors.rifx"),
+        |_| false,
+    )
+    .unwrap();
+    // Adobe omits native-default leaves when saving. The independent edited
+    // revision exposes Posterize and Gaussian Blur's popup/checkbox descriptors;
+    // retain the original oracle for Mosaic's default-valued edited checkbox.
+    let edited_source = crate::rifx::Rifx::parse_with(
+        include_bytes!(
+            "../../../tests/fixtures/effects/native-static-effect-edited-descriptors.rifx"
+        ),
+        |_| false,
+    )
+    .unwrap();
+    for (effect_name, parameter_names) in [
+        (
+            "ADBE Mosaic",
+            &[
+                "ADBE Mosaic-0000",
+                "ADBE Mosaic-0001",
+                "ADBE Mosaic-0002",
+                "ADBE Mosaic-0003",
+            ][..],
+        ),
+        (
+            "ADBE Posterize",
+            &["ADBE Posterize-0000", "ADBE Posterize-0001"][..],
+        ),
+        (
+            "ADBE Gaussian Blur 2",
+            &[
+                "ADBE Gaussian Blur 2-0000",
+                "ADBE Gaussian Blur 2-0001",
+                "ADBE Gaussian Blur 2-0002",
+                "ADBE Gaussian Blur 2-0003",
+            ][..],
+        ),
+    ] {
+        let effect = new_effect(effect_name, true, [320.0, 180.0]).unwrap();
+        let fresh = plugin_with_clock(
+            &effect,
+            13,
+            [320.0, 180.0],
+            super::super::keyframes::PropertyClock::for_rate(
+                crate::timing::FrameRate::new(30.0).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        for name in parameter_names {
+            let native = named_property(source.chunks(), name)
+                .or_else(|| named_property(edited_source.chunks(), name))
+                .unwrap_or_else(|| panic!("independent native descriptor missing: {name}"));
+            let generated = named_property(fresh.children().unwrap(), name).unwrap();
+            for tag in [*b"tdb4", *b"tdsb"] {
+                assert_eq!(
+                    properties::data(generated, tag).unwrap(),
+                    properties::data(native, tag).unwrap(),
+                    "{name}: static plugin descriptor/storage must match Adobe"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn native_animation_fixed_scalar_record() {
     assert_native_animation_record(443, "ADBE Radial Blur", "ADBE Radial Blur-0001");
 }

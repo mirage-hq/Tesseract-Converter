@@ -32,7 +32,8 @@ def main():
             subprocess.run([
                 'ffmpeg', '-hide_banner', '-loglevel', 'error',
                 '-i', str(video), '-ss', str(worst['time_secs']),
-                '-vf', 'scale=1280:720:flags=lanczos',
+                # Bound the preview without distorting vertical or other canvases.
+                '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease:flags=lanczos',
                 '-fps_mode', 'vfr', '-frames:v', '1', '-y',
                 str(output / case_id / f'{label}-worst-decoded.png'),
             ], check=True)

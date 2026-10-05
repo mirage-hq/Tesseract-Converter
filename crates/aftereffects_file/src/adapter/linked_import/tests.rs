@@ -14,6 +14,10 @@ const SOURCE: &[u8] =
 const PREMIERE: &[u8] =
     include_bytes!("../../../tests/fixtures/hybrid/identity/native-linked.prproj");
 const SOURCE_SHA: &str = "90ba0883e9c54ee006a8e33d8b497666706a2f25297dbeb3cac71e4c2127f3ff";
+const FORMAT96: &[u8] =
+    include_bytes!("../../../tests/fixtures/hybrid/format96/coeditor-format96.rifx");
+
+mod format96;
 
 fn guid(id: u32) -> [u8; 16] {
     let mut bytes = [0; 16];
@@ -368,30 +372,41 @@ fn native_ae26_3_header_profile_is_accepted_and_its_neighbors_are_not() {
 
 #[test]
 fn accepted_profiles_match_only_as_whole_pairs_and_keep_the_guid_layout() {
-    // An accepted header with the other accepted producer word is a mixed
-    // tuple that neither native record covers, and a changed revision is
-    // unknown to both. The AE 26.3x87 file keeps the zero-suffix item-ID GUID
-    // layout of the other profile.
+    // Mixing any observed header with another producer is unproven. Admission
+    // covers whole native pairs, never a Cartesian product of their fields.
     const AE26_3: &[u8] = include_bytes!("../../../tests/fixtures/ae26_one_comp.aep");
     let root = tempfile::tempdir().unwrap();
     let input = root.path().join("input.aep");
-    for (source, other_producer) in [(SOURCE, 0x0f91_8657_u32), (AE26_3, 0x0f92_8659)] {
+    let profiles = [
+        (SOURCE, 0x0f92_8659_u32),
+        (AE26_3, 0x0f91_8657),
+        (FORMAT96, 0x0f8a_0656),
+    ];
+    for (source, producer) in profiles {
         let at = source
             .windows(8)
             .position(|v| v == b"head\0\0\0\x14")
             .unwrap()
             + 8;
-        let mut mixed = source.to_vec();
-        mixed[at + 4..at + 8].copy_from_slice(&other_producer.to_be_bytes());
-        let mut revision = source.to_vec();
-        revision[at + 1] ^= 1;
-        for changed in [mixed, revision] {
-            fs::write(&input, changed).unwrap();
+        for (_, other_producer) in profiles {
+            if producer == other_producer {
+                continue;
+            }
+            let mut mixed = source.to_vec();
+            mixed[at + 4..at + 8].copy_from_slice(&other_producer.to_be_bytes());
+            fs::write(&input, mixed).unwrap();
             assert!(matches!(
                 AfterEffects.prepare_linked_import(&input),
                 Err(DynamicLinkImportError::UnsupportedProfile { .. })
             ));
         }
+        let mut revision = source.to_vec();
+        revision[at + 1] ^= 1;
+        fs::write(&input, revision).unwrap();
+        assert!(matches!(
+            AfterEffects.prepare_linked_import(&input),
+            Err(DynamicLinkImportError::UnsupportedProfile { .. })
+        ));
     }
     fs::write(&input, AE26_3).unwrap();
     let prepared = AfterEffects.prepare_linked_import(&input).unwrap();
@@ -826,6 +841,7 @@ fn footage_request(authored: &Path, kind: MediaAssetKind) -> MediaAssetRequest {
         source_item_id: 1,
         authored_path: authored.to_str().unwrap().into(),
         relative_location: None,
+        relative_hint_malformed: false,
         kind,
         photoshop_source: None,
         dimensions: [0, 0],

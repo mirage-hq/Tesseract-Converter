@@ -1,13 +1,18 @@
 //! Coordinate actual converter results; no parallel capability or proof model.
 use super::{dependencies::GraphDependencies, owners::Owners, package};
-use aftereffects_file::{AfterEffects, AfterEffectsExportOptions, StagedAfterEffectsPictureExport};
+use aftereffects_file::{
+    AepPreparationControl, AfterEffects, AfterEffectsExportOptions, StagedAfterEffectsPictureExport,
+};
 use anyhow::{ensure, Context};
 use fx_conv::{ConversionDiagnostic, Diagnostic, DiagnosticKind};
 use premiere_file::{
-    AfterEffectsPicture, ExportLossDomain, ExportLossSource, FrameRate, PictureReplacement,
-    Premiere, PremiereExportOptions, StagedPicturePremiereExport,
+    AfterEffectsPicture, ExportField, ExportLossDomain, ExportLossKind, ExportLossSource,
+    FrameRate, PictureReplacement, Premiere, PremiereExportOptions, StagedPicturePremiereExport,
 };
-use std::{collections::BTreeSet, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 use tesseract_file::TesseractFile;
 
 pub(super) struct StagedExport {
@@ -25,6 +30,9 @@ pub(super) fn stage(
 ) -> anyhow::Result<StagedExport> {
     let document = archive.project();
     let prepared = Premiere.prepare_export_with_progress(archive, document, options, progress)?;
+    if document.composition().layers().is_empty() {
+        return super::empty_root::stage(archive, prepared, parent, output, options, progress);
+    }
     progress.stage("plan Premiere picture scopes");
     let losses = prepared.losses();
     ensure!(
@@ -46,6 +54,10 @@ pub(super) fn stage(
     }
     let owners = Owners::new(document.composition().layers())?;
     let mut seeds = BTreeSet::new();
+    let preserve_video_assets = losses
+        .losses
+        .iter()
+        .any(|loss| loss.kind == ExportLossKind::Field(ExportField::PictureMedia));
     for loss in &losses.losses {
         if matches!(
             loss.domain,
@@ -82,7 +94,25 @@ pub(super) fn stage(
         FrameRate::Fps24 => 24.0,
         FrameRate::Fps25 => 25.0,
         FrameRate::Fps30 => 30.0,
-        _ => anyhow::bail!("hybrid AEP scopes require an integral 24, 25 or 30 fps clock"),
+        FrameRate::Fps50 => 50.0,
+        FrameRate::Fps60 => 60.0,
+        FrameRate::Native(_) => anyhow::bail!("unsupported Premiere export sequence rate"),
+        FrameRate::Fps24000Over1001 | FrameRate::Fps30000Over1001 | FrameRate::Fps60000Over1001 => {
+            // These rational sequence rates are not exact AE 16.16 rates.
+            // Keep the already prepared native result rather than changing
+            // cadence or discarding otherwise convertible picture and sound.
+            progress.stage("stage Premiere project");
+            return Ok(StagedExport {
+                native: prepared.stage_with_picture_replacements(parent, output, &[])?,
+                scopes: Vec::new(),
+                diagnostics: vec![Diagnostic {
+                    code: "HYBRID-NATIVE-RETAINED",
+                    kind: DiagnosticKind::Warning,
+                    context: Some(format!("sequence rate {rate}")),
+                    message: format!("The {rate} fps sequence clock is not exact in linked AEP scopes; retained the native Premiere result with its reported limitations. Linked scopes support exact 24, 25, 30, 50 and 60 fps."),
+                }],
+            });
+        }
     };
     let dependencies = GraphDependencies::new(document, &owners)?;
     let recipe = prepared.packing_recipe();
@@ -96,6 +126,13 @@ pub(super) fn stage(
         .find(|c| c.token == recipe.root())
         .context("missing root picture container")?;
     let boundaries = recipe.boundaries();
+    let mut boundary_layers = BTreeMap::<_, BTreeSet<_>>::new();
+    for boundary in &boundaries {
+        boundary_layers
+            .entry(boundary.token)
+            .or_default()
+            .insert(boundary.layer);
+    }
     let retained: BTreeSet<_> = recipe.retained_picture_boundaries(root.token).collect();
     let retained_roots: BTreeSet<_> = boundaries
         .iter()
@@ -123,28 +160,23 @@ pub(super) fn stage(
         // this interval: picture-only AE staging disables its native switches,
         // while Premiere replay retains its independent sound occurrences.
         let ids: BTreeSet<_> = selected.iter().map(fx_schema::Layer::id).collect();
-        let slots: Vec<_> = root
-            .boundaries
-            .iter()
-            .copied()
-            .filter(|token| {
-                boundaries
-                    .iter()
-                    .any(|boundary| boundary.token == *token && ids.contains(&boundary.layer))
-            })
-            .collect();
+        let slots = select_boundary_slots(&root.boundaries, &boundary_layers, &ids);
         ensure!(
             slots.len() == selected.len(),
             "selected roots are not independently replaceable native boundaries"
         );
         let scope = u16::try_from(scopes.len() + 1)?;
-        let ae = match AfterEffects.stage_picture_layers_with_progress(
+        let ae = match AfterEffects.stage_picture_layers_with_control(
             archive,
             document,
             first..last + 1,
             parent,
             &AfterEffectsExportOptions { fps },
-            progress,
+            AepPreparationControl {
+                progress,
+                preserve_video_assets,
+                ..Default::default()
+            },
         ) {
             Ok(stage) => stage,
             Err(error) => {
@@ -174,21 +206,40 @@ pub(super) fn stage(
             .map(|id| owners.layer(*id))
             .collect::<anyhow::Result<_>>()?;
         if !omitted_roots.is_disjoint(&retained_roots) {
-            for omission in &ae.report().diagnostics {
-                let mut diagnostic = omission.diagnostic();
-                diagnostic.context = Some(format!(
-                    "AE fallback for roots {first}..={last}: {}",
-                    diagnostic.context.unwrap_or_default()
-                ));
-                diagnostics.push(diagnostic);
+            // After Effects drops something that the native export kept.
+            // Replace the native picture only when the linked scope still
+            // preserves more of it than the native export does.
+            let scope = &document.composition().layers()[first..=last];
+            let native_lost = native_lost_leaves(scope, &losses.losses, &owners, first..=last)?;
+            let linked_lost = lost_leaves(scope, ae.omitted_layer_ids());
+            if !linked_scope_preserves_more(&linked_lost, &native_lost) {
+                for omission in &ae.report().diagnostics {
+                    let mut diagnostic = omission.diagnostic();
+                    diagnostic.context = Some(format!(
+                        "AE fallback for roots {first}..={last}: {}",
+                        diagnostic.context.unwrap_or_default()
+                    ));
+                    diagnostics.push(diagnostic);
+                }
+                diagnostics.push(Diagnostic {
+                    code: "HYBRID-NATIVE-RETAINED",
+                    kind: DiagnosticKind::Warning,
+                    context: Some(format!("roots {first}..={last}")),
+                    message: format!("After Effects omitted a source layer from a root with retained native picture: it omits {} shown picture layers whole, while the native export omits or partly converts {}; kept the complete native scope with its reported limitations instead of deleting supported content.", linked_lost.len(), native_lost.len()),
+                });
+                continue;
             }
+            let because = if linked_lost.len() < native_lost.len() {
+                "it loses fewer layers"
+            } else {
+                "it loses as many layers and none that the native export kept"
+            };
             diagnostics.push(Diagnostic {
-                code: "HYBRID-NATIVE-RETAINED",
+                code: "HYBRID-LINKED-PREFERRED",
                 kind: DiagnosticKind::Warning,
                 context: Some(format!("roots {first}..={last}")),
-                message: "After Effects omitted a source layer from a root with retained native picture; kept the complete native scope with its reported limitations instead of deleting supported content.".into(),
+                message: format!("The native Premiere export omits or partly converts {} shown picture layers of this scope; After Effects omits {} whole, including {} that the native export kept. The linked scope replaces the native picture because {because}; this count ignores effect and key approximations on either side, and its omissions are reported with the scope's diagnostics.", native_lost.len(), linked_lost.len(), linked_lost.difference(&native_lost).count()),
             });
-            continue;
         }
         let composition = ae.root_composition();
         let frames = (composition.duration_secs() * fps).round();
@@ -229,4 +280,275 @@ pub(super) fn stage(
         scopes,
         diagnostics,
     })
+}
+
+/// Picture layers that the native Premiere export of roots `scope_roots`
+/// loses: every leaf under a layer whose whole subtree is omitted
+/// ([`ExportLossSource::LayerSubtree`]), plus the layer that owns a reported
+/// partial loss ([`ExportLossSource::Layer`] or a property) in a picture
+/// domain. Audio and metadata losses are not picture.
+fn native_lost_leaves(
+    scope: &[fx_schema::Layer],
+    losses: &[premiere_file::ExportLoss],
+    owners: &Owners,
+    scope_roots: std::ops::RangeInclusive<usize>,
+) -> anyhow::Result<BTreeSet<fx_schema::LayerId>> {
+    let shown = shown_layer_ids(scope);
+    let mut subtrees = BTreeSet::new();
+    let mut lost = BTreeSet::new();
+    for loss in losses {
+        if matches!(
+            loss.domain,
+            ExportLossDomain::Audio | ExportLossDomain::Metadata
+        ) {
+            continue;
+        }
+        let (root, layer) = match &loss.source {
+            ExportLossSource::Document => continue,
+            ExportLossSource::LayerSubtree(layer) => {
+                let root = owners.layer(*layer)?;
+                if scope_roots.contains(&root) {
+                    subtrees.insert(*layer);
+                }
+                continue;
+            }
+            ExportLossSource::Layer(layer) => (owners.layer(*layer)?, *layer),
+            ExportLossSource::Property(target) => {
+                (owners.target(target)?, owners.target_layer(target)?)
+            }
+        };
+        // A partial loss on a hidden layer, or under a hidden ancestor,
+        // changes no picture either.
+        if scope_roots.contains(&root) && shown.contains(&layer) {
+            lost.insert(layer);
+        }
+    }
+    lost.extend(lost_leaves(scope, &subtrees));
+    Ok(lost)
+}
+
+/// Every layer of `scope` that paints: not hidden and under no hidden
+/// ancestor, groups included.
+fn shown_layer_ids(scope: &[fx_schema::Layer]) -> BTreeSet<fx_schema::LayerId> {
+    fn visit(layers: &[fx_schema::Layer], shown: &mut BTreeSet<fx_schema::LayerId>) {
+        for layer in layers {
+            if is_hidden(layer) {
+                continue;
+            }
+            shown.insert(layer.id());
+            if let Some(children) = layer.child_layers() {
+                visit(children, shown);
+            }
+        }
+    }
+    let mut shown = BTreeSet::new();
+    visit(scope, &mut shown);
+    shown
+}
+
+/// The painting leaves (shown layers without children, sound excluded) under
+/// the layers of `scope` whose IDs are in `omitted`, each omitted with its
+/// whole subtree. A hidden layer or subtree paints nothing, so losing it
+/// loses no picture.
+fn lost_leaves(
+    scope: &[fx_schema::Layer],
+    omitted: &BTreeSet<fx_schema::LayerId>,
+) -> BTreeSet<fx_schema::LayerId> {
+    fn visit(
+        layers: &[fx_schema::Layer],
+        omitted: &BTreeSet<fx_schema::LayerId>,
+        under_omitted: bool,
+        lost: &mut BTreeSet<fx_schema::LayerId>,
+    ) {
+        for layer in layers {
+            if is_hidden(layer) {
+                continue;
+            }
+            let dropped = under_omitted || omitted.contains(&layer.id());
+            match layer.child_layers() {
+                Some(children) => visit(children, omitted, dropped, lost),
+                None => {
+                    if dropped && !matches!(layer.data(), fx_schema::LayerData::Audio(_)) {
+                        lost.insert(layer.id());
+                    }
+                }
+            }
+        }
+    }
+    let mut lost = BTreeSet::new();
+    visit(scope, omitted, false, &mut lost);
+    lost
+}
+
+fn is_hidden(layer: &fx_schema::Layer) -> bool {
+    use fx_schema::LayerData;
+    match layer.data() {
+        LayerData::Media(v) => v.is_hidden,
+        LayerData::Video(v) => v.is_hidden,
+        LayerData::Image(v) => v.is_hidden,
+        LayerData::Text(v) => v.is_hidden,
+        LayerData::Rect(v) => v.is_hidden,
+        LayerData::Shape(v) => v.is_hidden,
+        LayerData::Group(v) => v.is_hidden,
+        LayerData::BooleanOperation(v) => v.is_hidden,
+        LayerData::Adjustment(v) => v.is_hidden,
+        _ => false,
+    }
+}
+
+/// Whether the linked After Effects scope keeps more of the picture than the
+/// native Premiere export: it loses fewer layers, or the same number while
+/// losing nothing that the native export kept. The two counts differ in
+/// kind: `native_lost` holds the leaves of omitted subtrees plus the owner
+/// of each partial picture loss, `linked_lost` the leaves of omitted
+/// subtrees only, as AE reports approximations without typed losses. Any
+/// other tie keeps the native, Premiere-editable result.
+fn linked_scope_preserves_more(
+    linked_lost: &BTreeSet<fx_schema::LayerId>,
+    native_lost: &BTreeSet<fx_schema::LayerId>,
+) -> bool {
+    linked_lost.len() < native_lost.len()
+        || (linked_lost.len() == native_lost.len() && linked_lost.is_subset(native_lost))
+}
+
+fn select_boundary_slots<T, L>(
+    ordered_tokens: &[T],
+    boundary_layers: &BTreeMap<T, BTreeSet<L>>,
+    selected_layers: &BTreeSet<L>,
+) -> Vec<T>
+where
+    T: Copy + Ord,
+    L: Ord,
+{
+    ordered_tokens
+        .iter()
+        .copied()
+        .filter(|token| {
+            boundary_layers
+                .get(token)
+                .is_some_and(|layers| !layers.is_disjoint(selected_layers))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fx_schema::LayerId;
+    use serde_json::{json, Value};
+
+    fn rect(id: u64, hidden: bool) -> Value {
+        let mut value: Value = serde_json::from_str(include_str!(
+            "../../../../crates/aftereffects_file/tests/fixtures/hybrid/rect-identity.fx.json"
+        ))
+        .unwrap();
+        let mut layer = value["composition"]["layers"][0].take();
+        layer["id"] = json!(id);
+        layer["isHidden"] = json!(hidden);
+        layer
+    }
+
+    fn group(id: u64, hidden: bool, children: Vec<Value>) -> Value {
+        json!({
+            "type": "Group", "id": id, "name": "group", "isHidden": hidden,
+            "playback": {
+                "type": "windowed", "inputRange": {"start": 0, "duration": 2000},
+                "mapping": {"type": "linear", "input": {"start": 0, "duration": 2000},
+                    "output": {"start": 0, "duration": 2000}},
+                "inputOffsetMs": 0
+            },
+            "transform": rect(999, false)["transform"],
+            "layers": children,
+        })
+    }
+
+    fn scope(roots: Vec<Value>) -> fx_schema::EditableFxCompositionDocument {
+        let mut value: Value = serde_json::from_str(include_str!(
+            "../../../../crates/aftereffects_file/tests/fixtures/hybrid/rect-identity.fx.json"
+        ))
+        .unwrap();
+        value["composition"]["layers"] = json!(roots);
+        fx_schema::EditableFxCompositionDocument::from_json_value(value).unwrap()
+    }
+
+    fn ids(values: &[u64]) -> BTreeSet<LayerId> {
+        values.iter().copied().map(LayerId::new).collect()
+    }
+
+    #[test]
+    fn hidden_layers_and_hidden_subtrees_count_for_neither_side() {
+        // Root 1: a shown group with a shown rect and a hidden rect.
+        // Root 2: a hidden group with a shown rect under it.
+        let document = scope(vec![
+            rect(1, false),
+            group(10, false, vec![rect(11, false), rect(12, true)]),
+            group(20, true, vec![rect(21, false)]),
+        ]);
+        let layers = document.composition().layers();
+        assert_eq!(shown_layer_ids(layers), ids(&[1, 10, 11]));
+        // Omitting the shown group loses its shown leaf only; omitting the
+        // hidden group or the hidden rect loses nothing.
+        assert_eq!(lost_leaves(layers, &ids(&[10])), ids(&[11]));
+        assert_eq!(lost_leaves(layers, &ids(&[12, 20, 21])), ids(&[]));
+        assert_eq!(lost_leaves(layers, &ids(&[1, 10, 20])), ids(&[1, 11]));
+    }
+
+    #[test]
+    fn linked_scope_wins_by_fewer_losses_or_by_losing_nothing_the_native_export_kept() {
+        assert!(linked_scope_preserves_more(&ids(&[1]), &ids(&[2, 3])));
+        assert!(linked_scope_preserves_more(&ids(&[]), &ids(&[2])));
+        assert!(linked_scope_preserves_more(&ids(&[2]), &ids(&[2])));
+        assert!(!linked_scope_preserves_more(&ids(&[1]), &ids(&[2])));
+        assert!(!linked_scope_preserves_more(&ids(&[1, 2]), &ids(&[2])));
+    }
+
+    fn dense_selection(
+        ordered_tokens: &[u8],
+        boundaries: &[(u8, u8)],
+        selected_layers: &BTreeSet<u8>,
+    ) -> Vec<u8> {
+        ordered_tokens
+            .iter()
+            .copied()
+            .filter(|token| {
+                boundaries.iter().any(|(boundary_token, layer)| {
+                    boundary_token == token && selected_layers.contains(layer)
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn indexed_boundary_selection_matches_dense_scan_for_bounded_inventories() {
+        let ordered_tokens = [3, 1, 3, 2, 0];
+        for inventory in 0..4usize.pow(4) {
+            let mut encoded = inventory;
+            let mut boundaries = Vec::new();
+            let mut boundary_layers = BTreeMap::<_, BTreeSet<_>>::new();
+            for token in 0..4u8 {
+                let layer = (encoded % 4) as u8;
+                encoded /= 4;
+                boundaries.push((token, layer));
+                boundary_layers.entry(token).or_default().insert(layer);
+                if (inventory + usize::from(token)) % 3 == 0 {
+                    let duplicate_layer = (layer + 1) % 4;
+                    boundaries.push((token, duplicate_layer));
+                    boundary_layers
+                        .entry(token)
+                        .or_default()
+                        .insert(duplicate_layer);
+                }
+            }
+            for selected_bits in 0..(1 << 4) {
+                let selected_layers = (0..4u8)
+                    .filter(|layer| selected_bits & (1 << layer) != 0)
+                    .collect();
+                assert_eq!(
+                    select_boundary_slots(&ordered_tokens, &boundary_layers, &selected_layers),
+                    dense_selection(&ordered_tokens, &boundaries, &selected_layers),
+                    "inventory={inventory}, selected_bits={selected_bits}"
+                );
+            }
+        }
+    }
 }

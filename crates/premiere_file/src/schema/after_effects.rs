@@ -5,10 +5,6 @@ use uuid::Uuid;
 pub(crate) const IMPORTER_ID: &str = "ec341e53-60c2-4d89-abfc-bdb5c0ff2e0b";
 pub(crate) const CODEC: &str = "1145854285";
 
-/// Why an audio placement of a linked composition is omitted. Premiere plays a
-/// link's sound only through such items, so its video items import muted.
-pub(crate) const LINKED_AUDIO_REASON: &str = "the sound of a linked After Effects composition is not converted; linked-audio occurrence import is not implemented, and its video items import the picture muted";
-
 /// The composition GUID stored by Premiere's After Effects importer.
 ///
 /// This is not a project UUID or an AEP numeric item ID. Obtain it from the

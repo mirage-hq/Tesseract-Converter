@@ -164,6 +164,31 @@ fn assert_linear_keys(entry: &Value, expected: &[(i64, f64)]) {
 }
 
 #[test]
+fn adjustment_import_diagnostics_do_not_claim_retained_effects_were_omitted() {
+    let converted = fresh_import(1, "adjustment-scope");
+    let adjustment = direct_adjustment(root(&converted), "scope-adjustment");
+    let effects = effect_json(adjustment);
+    assert_eq!(effects.len(), 1);
+    assert_gaussian(&effects[0], 19.0);
+    assert!(converted.diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("native Adjustment lowered to a direct FX Adjustment sibling")
+    }));
+    assert!(
+        !converted.diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("adjustment contribution omitted")
+                || diagnostic.message.contains(
+                    "adjustment-layer cross-layer compositing has no existing FX equivalent",
+                )
+        }),
+        "retained native Adjustment effects must not be diagnosed as omitted"
+    );
+}
+
+#[test]
 #[ignore = "Adobe-native proof backlog; see docs/after-effects-support.md"]
 fn adjustment_import_scope() {
     let converted = fresh_import(1, "adjustment-scope");

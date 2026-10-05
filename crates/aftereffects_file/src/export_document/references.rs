@@ -21,6 +21,8 @@ pub(in crate::export_document) struct SourceVariantEligibility {
     pub nested_or_parented: bool,
     pub owns_masks_or_matte: bool,
     pub referenced_as_parent: bool,
+    /// Excludes direct child containment, which travels with a Group subtree.
+    pub referenced_as_noncontainer_parent: bool,
     pub referenced_as_matte: bool,
     pub referenced_as_mask_guide: bool,
     pub referenced_as_text_guide: bool,
@@ -61,6 +63,7 @@ pub(super) struct DocumentReferenceFacts {
     nested_or_parented: BTreeSet<LayerId>,
     owns_masks_or_matte: BTreeSet<LayerId>,
     parents: BTreeSet<LayerId>,
+    noncontainer_parents: BTreeSet<LayerId>,
     mattes: BTreeSet<LayerId>,
     mask_guides: BTreeSet<LayerId>,
     text_guides: BTreeSet<LayerId>,
@@ -88,6 +91,7 @@ impl DocumentReferenceFacts {
         let mut mask_item_owners = BTreeMap::new();
         collect_layers(
             layers,
+            None,
             &mut facts,
             &mut effect_owners,
             &mut mask_item_owners,
@@ -147,6 +151,7 @@ impl DocumentReferenceFacts {
             nested_or_parented: self.nested_or_parented.contains(&layer_id),
             owns_masks_or_matte: self.owns_masks_or_matte.contains(&layer_id),
             referenced_as_parent: self.parents.contains(&layer_id),
+            referenced_as_noncontainer_parent: self.noncontainer_parents.contains(&layer_id),
             referenced_as_matte: self.mattes.contains(&layer_id),
             referenced_as_mask_guide: self.mask_guides.contains(&layer_id),
             referenced_as_text_guide: self.text_guides.contains(&layer_id),
@@ -161,6 +166,7 @@ impl DocumentReferenceFacts {
 
 fn collect_layers(
     layers: &[Layer],
+    container: Option<LayerId>,
     facts: &mut DocumentReferenceFacts,
     effect_owners: &mut BTreeMap<EffectId, LayerId>,
     mask_item_owners: &mut BTreeMap<FxItemId, LayerId>,
@@ -173,6 +179,9 @@ fn collect_layers(
         if let Some(parent) = layer.parent_id() {
             facts.nested_or_parented.insert(layer_id);
             facts.parents.insert(parent);
+            if Some(parent) != container {
+                facts.noncontainer_parents.insert(parent);
+            }
         }
         for effect in layer.effects() {
             if let EffectData::Identified { id, .. } = effect.data()
@@ -208,7 +217,13 @@ fn collect_layers(
             _ => {}
         }
         if let Some(children) = layer.child_layers() {
-            collect_layers(children, facts, effect_owners, mask_item_owners)?;
+            collect_layers(
+                children,
+                Some(layer_id),
+                facts,
+                effect_owners,
+                mask_item_owners,
+            )?;
         }
     }
     Ok(())
@@ -332,6 +347,41 @@ mod tests {
         assert!(matte.referenced_as_matte && matte.referenced_by_animation_dependency);
         let guide = facts.eligibility(LayerId::new(4));
         assert!(guide.referenced_as_mask_guide && guide.referenced_by_animation_layer_ref);
+    }
+
+    #[test]
+    fn twirl_plane_parent_admission_distinguishes_containment_from_external_edges() {
+        let native = crate::structure::read_project(include_bytes!(
+            "../../tests/fixtures/effects_coverage/native_static_controls.aep"
+        ))
+        .unwrap();
+        let imported =
+            crate::structure_document::to_structural_fx_document(&native, Some(625)).unwrap();
+        let composition = imported.document.composition();
+        let LayerData::Group(root) = composition.layers()[0].data() else {
+            panic!("root Group");
+        };
+        let owner = root.layers[0].id();
+        let facts = DocumentReferenceFacts::analyze(
+            composition.layers(),
+            &[],
+            composition.dynamics().entries(),
+        )
+        .unwrap();
+        assert!(facts.eligibility(owner).referenced_as_parent);
+        assert!(
+            !facts.eligibility(owner).referenced_as_noncontainer_parent,
+            "source clock containment stays inside the Twirl carrier"
+        );
+
+        let mut layers = composition.layers().to_vec();
+        layers.push(image(90000, Some(owner.value()), json!({})));
+        let facts = DocumentReferenceFacts::analyze(&layers, &[], composition.dynamics().entries())
+            .unwrap();
+        assert!(
+            facts.eligibility(owner).referenced_as_noncontainer_parent,
+            "a real external parent consumer must still block carrier admission"
+        );
     }
 
     #[test]

@@ -1,0 +1,22 @@
+{
+  "request_id": "accuracy-w03-selector-enum-20261004-v1",
+  "job_id": "34b9ca9ee18a490882688c976b455634",
+  "application_version": "26.5x89",
+  "source_sha256": "af930a26ff398e33be705b2677bc977612a4887fd474976ef59513dd6188fa6d",
+  "source_bytes": 83845,
+  "author_sha256": "726a76ef44e1b7e59875e7a490213696e61a68d171931ee9105fa0ef19b1692f",
+  "composition_id": 1,
+  "provenance": "Managed native authoring getters; selected result fields copied without machine paths. Not generated-AEP acceptance or render proof.",
+  "before": {
+    "ADBE Text Range Units": 2,
+    "ADBE Text Range Type2": 3,
+    "ADBE Text Selector Mode": 2,
+    "ADBE Text Range Shape": 4
+  },
+  "edited": {
+    "ADBE Text Range Units": 2,
+    "ADBE Text Range Type2": 4,
+    "ADBE Text Selector Mode": 2,
+    "ADBE Text Range Shape": 4
+  }
+}

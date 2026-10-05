@@ -125,9 +125,20 @@ fn finite_mask_gate_requires_static_hard_add_inline_path() {
         ]}
     });
     let mask: fx_schema::layer::PathMask = serde_json::from_value(value.clone()).unwrap();
-    assert_eq!(finite_mask_gate(&[mask], &[]).unwrap().max, [20.0, 20.0]);
+    assert_eq!(
+        finite_mask_gate(&[mask], &crate::export_document::AnimationIndex::new(&[]))
+            .unwrap()
+            .max,
+        [20.0, 20.0]
+    );
     let mut inverted = value;
     inverted["inverted"] = serde_json::json!(true);
     let inverted = serde_json::from_value(inverted).unwrap();
-    assert!(finite_mask_gate(&[inverted], &[]).is_err());
+    assert!(
+        finite_mask_gate(
+            &[inverted],
+            &crate::export_document::AnimationIndex::new(&[])
+        )
+        .is_err()
+    );
 }

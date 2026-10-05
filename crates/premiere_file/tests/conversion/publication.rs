@@ -1,7 +1,199 @@
 use super::support::*;
+#[cfg(feature = "ffmpeg-library")]
 use premiere_file::OmissionScope;
 use std::{fs, path::Path};
+#[cfg(feature = "ffmpeg-library")]
 use tesseract_file::TesseractFile;
+
+/// Supplementary public-API structure/cleanup controls, not Adobe acceptance.
+#[test]
+fn empty_root_staging_preserves_public_picture_api_and_rejects_incomplete_links() {
+    use premiere_file::{AfterEffectsPicture, FrameRate, Premiere, StagedPicturePremiereExport};
+    use serde_json::json;
+    use tesseract_file::{TesseractFile, TesseractFileBuilder};
+
+    for case in [
+        "full",
+        "null-background",
+        "transparent-background",
+        "source-trim",
+        "intrinsic",
+        "disabled",
+        "background",
+        "unknown",
+        "dimensions",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mut value = json!({
+            "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+            "formatVersion": 1,
+            "dimensions": {"width": 1080, "height": 1920},
+            "duration": 3.0,
+            "composition": {"id": "empty-root", "name": "Empty root", "layers": []}
+        });
+        match case {
+            "null-background" => value["backgroundColor"] = json!(null),
+            "transparent-background" => value["backgroundColor"] = json!([1.0, 0.0, 0.0, 0.0]),
+            "background" => value["backgroundColor"] = json!([1.0, 0.0, 0.0, 1.0]),
+            "unknown" => value["composition"]["unmappedControl"] = json!(true),
+            "dimensions" => value["dimensions"]["unmappedControl"] = json!(true),
+            _ => {}
+        }
+        let input = root.join("empty.tsrct");
+        TesseractFileBuilder::from_project_json(&serde_json::to_vec(&value).unwrap())
+            .unwrap()
+            .write(&input)
+            .unwrap();
+        let archive = TesseractFile::open(&input).unwrap();
+        let prepared = Premiere
+            .prepare_export(&archive, archive.project(), &Default::default())
+            .unwrap();
+        let end = 3 * TICKS;
+        let mut picture = AfterEffectsPicture {
+            composition_guid: "00000001-0000-0000-0000-000000000000".into(),
+            relative_path: "media/ae-0001/compositions.aep".into(),
+            dimensions: [1080, 1920],
+            frame_rate: FrameRate::Fps30,
+            intrinsic_duration_ticks: end,
+            timeline_ticks: 0..end,
+            source_ticks: 0..end,
+            enabled: true,
+        };
+        match case {
+            "source-trim" => picture.source_ticks.start = TICKS,
+            "intrinsic" => picture.intrinsic_duration_ticks += TICKS,
+            "disabled" => picture.enabled = false,
+            _ => {}
+        }
+        let output = root.join("output");
+        let result = prepared.stage_empty_root_with_after_effects(root, &output, &picture);
+        if matches!(case, "full" | "null-background" | "transparent-background") {
+            let stage: StagedPicturePremiereExport = result.unwrap();
+            assert_eq!(stage.after_effects_paths(), [picture.relative_path]);
+            assert_eq!(stage.report().artifacts.len(), 1);
+            assert!(fs::read_dir(stage.directory().join("media"))
+                .unwrap()
+                .next()
+                .is_none());
+            let temporary = stage.directory().to_owned();
+            let (project, _) =
+                premiere_file::PrProjectFile::load(temporary.join("project.prproj")).unwrap();
+            let mut sequences = project.sequences();
+            assert_eq!(sequences.len(), 1);
+            let sequence = sequences.next().unwrap();
+            assert_eq!(sequence.dimensions(), [1080, 1920]);
+            let occurrences: Vec<_> = sequence.video_occurrences().collect();
+            assert_eq!(occurrences.len(), 1);
+            assert_eq!(occurrences[0].timeline_ticks(), 0..end);
+            assert_eq!(occurrences[0].source_ticks(), 0..end);
+            drop(stage);
+            assert!(!temporary.exists());
+        } else {
+            let error = result.unwrap_err();
+            assert!(error.is_unsupported(), "{case}: {error}");
+            assert!(
+                !error.is_io() && !error.is_missing_media(),
+                "{case}: {error}"
+            );
+        }
+        assert!(!output.exists(), "{case}");
+        assert_eq!(fs::read_dir(root).unwrap().count(), 1, "{case}");
+    }
+}
+
+/// The archive's authored semantics cannot disappear in an empty caller view.
+#[test]
+fn empty_root_rejects_stripped_archive_semantics() {
+    use premiere_file::{AfterEffectsPicture, FrameRate, Premiere};
+    use serde_json::json;
+    use tesseract_file::{TesseractFile, TesseractFileBuilder};
+
+    for case in [
+        "background",
+        "document",
+        "composition",
+        "dimensions",
+        "animation",
+        "view-dimensions",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let clean = json!({
+            "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+            "formatVersion": 1,
+            "dimensions": {"width": 1080, "height": 1920},
+            "duration": 3.0,
+            "composition": {"id": "empty-root", "name": "Empty root", "layers": []}
+        });
+        let mut value = clean.clone();
+        match case {
+            "background" => value["backgroundColor"] = json!([1.0, 0.0, 0.0, 1.0]),
+            "document" => value["unmappedControl"] = json!(true),
+            "composition" => value["composition"]["unmappedControl"] = json!(true),
+            "dimensions" | "view-dimensions" => {
+                value["dimensions"]["unmappedControl"] = json!(true)
+            }
+            "animation" => {
+                value["composition"]["dynamics"] = json!({"entries":[{
+                    "target":{"kind":"layer","layerId":1,"propertyType":"opacity"},
+                    "animator":{"type":"jsScript","layerTimeJsCode":"return 1;"}
+                }]})
+            }
+            _ => unreachable!(),
+        }
+        let input = root.join("source.tsrct");
+        let source = if case == "view-dimensions" {
+            &clean
+        } else {
+            &value
+        };
+        TesseractFileBuilder::from_project_json(&serde_json::to_vec(source).unwrap())
+            .unwrap()
+            .write(&input)
+            .unwrap();
+        let original = fs::read(&input).unwrap();
+        let archive = TesseractFile::open(&input).unwrap();
+        let view = fx_schema::EditableFxCompositionDocument::from_json_value(
+            if case == "view-dimensions" {
+                value
+            } else {
+                clean
+            },
+        )
+        .unwrap();
+        let prepared = Premiere
+            .prepare_export(&archive, &view, &Default::default())
+            .unwrap();
+        let end = 3 * TICKS;
+        let picture = AfterEffectsPicture {
+            composition_guid: "00000001-0000-0000-0000-000000000000".into(),
+            relative_path: "media/ae-0001/compositions.aep".into(),
+            dimensions: [1080, 1920],
+            frame_rate: FrameRate::Fps30,
+            intrinsic_duration_ticks: end,
+            timeline_ticks: 0..end,
+            source_ticks: 0..end,
+            enabled: true,
+        };
+        let output = root.join("output");
+        let error = prepared
+            .stage_empty_root_with_after_effects(root, &output, &picture)
+            .expect_err(case);
+        assert!(error.is_unsupported(), "{case}: {error}");
+        assert!(!output.exists(), "{case}");
+        assert_eq!(
+            fs::read_dir(root).unwrap().count(),
+            1,
+            "{case}: private cleanup"
+        );
+        assert_eq!(
+            fs::read(input).unwrap(),
+            original,
+            "{case}: source unchanged"
+        );
+    }
+}
 
 #[cfg(unix)]
 #[test]
@@ -31,6 +223,7 @@ fn non_utf8_input_and_output_paths_fail_without_writes() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn ambiguous_timelines_require_selection_before_ignoring_unsupported_content() {
     let dir = tempfile::tempdir().unwrap();
@@ -62,6 +255,7 @@ fn ambiguous_timelines_require_selection_before_ignoring_unsupported_content() {
     assert_eq!(project_files(&selected), [selected.join("project.tsrct")]);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn explicit_selection_ignores_malformed_unrelated_sequence_and_publishes() {
     for (field, target, replacement, expected_reason) in [
@@ -110,6 +304,7 @@ fn explicit_selection_ignores_malformed_unrelated_sequence_and_publishes() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn explicit_selection_does_not_convert_an_unrelated_cyclic_timeline() {
     let dir = tempfile::tempdir().unwrap();
@@ -128,6 +323,7 @@ fn explicit_selection_does_not_convert_an_unrelated_cyclic_timeline() {
     assert_eq!(project_files(&output), [output.join("project.tsrct")]);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn explicit_selection_preserves_valid_clip_in_a_cyclic_timeline() {
     let dir = tempfile::tempdir().unwrap();
@@ -173,6 +369,7 @@ fn explicit_selection_preserves_valid_clip_in_a_cyclic_timeline() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn selected_timeline_ignores_unrelated_missing_media_without_staging_directory() {
     let dir = tempfile::tempdir().unwrap();
@@ -211,6 +408,7 @@ fn selected_timeline_ignores_unrelated_missing_media_without_staging_directory()
         .starts_with(".conversion-tesseract-")));
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn broken_occurrence_link_requires_selection_and_preserves_other_clips() {
     let dir = tempfile::tempdir().unwrap();
@@ -369,6 +567,7 @@ fn premiere_to_tesseract_never_replaces_an_existing_directory_or_symlink() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn checks_validate_real_media_without_writes_and_share_execution_failures() {
     let dir = tempfile::tempdir().unwrap();
@@ -426,6 +625,7 @@ fn checks_validate_real_media_without_writes_and_share_execution_failures() {
     assert!(!root.join("bad").exists());
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn tree_bytes(root: &Path) -> std::collections::BTreeMap<std::path::PathBuf, Vec<u8>> {
     fn visit(
         root: &Path,

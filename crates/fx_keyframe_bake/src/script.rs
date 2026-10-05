@@ -6,13 +6,15 @@
 use std::collections::HashMap;
 
 use boa_engine::{
-    Context, JsError, JsNativeError, JsSymbol, JsValue, NativeFunction, Source, js_string,
+    Context, JsError, JsNativeError, JsSymbol, JsValue, NativeFunction, Source,
+    ast::scope::Scope,
+    js_string,
     object::{FunctionObjectBuilder, builtins::JsFunction},
+    parser::Parser,
     property::{Attribute, PropertyDescriptor},
 };
 use boa_runtime::Console;
 
-const JS_LOOP_ITERATION_LIMIT: u64 = 100_000;
 const JS_RECURSION_LIMIT: usize = 128;
 // Boa counts VM stack slots, not native stack bytes.
 const JS_STACK_SLOT_LIMIT: usize = 10 * 1024;
@@ -58,13 +60,14 @@ pub struct ScriptRuntime {
 }
 
 impl ScriptRuntime {
-    /// Creates the same bounded VM and console used during FX playback.
+    /// Creates the shared VM and console without a loop-iteration policy.
+    /// Boa's recursion/stack guards remain: the pinned API cannot disable them.
     pub fn new() -> Result<Self, ScriptError> {
         let mut context = Context::default();
         // Boa exposes no wall-clock interrupt hook. These limits are weaker
         // than a sandbox for straight-line expensive scripts.
         let limits = context.runtime_limits_mut();
-        limits.set_loop_iteration_limit(JS_LOOP_ITERATION_LIMIT);
+        limits.disable_loop_iteration_limit();
         limits.set_recursion_limit(JS_RECURSION_LIMIT);
         limits.set_stack_size_limit(JS_STACK_SLOT_LIMIT);
         let console = Console::init(&mut context);
@@ -92,6 +95,13 @@ impl ScriptRuntime {
     }
 
     /// Installs the time-object coercion guard, then invokes the cached function.
+    ///
+    /// This is synchronous trusted-code execution, not a sandbox. There is no
+    /// iteration ceiling, timeout, or cancellation hook: a nonterminating script
+    /// never returns. Callers needing a deadline must isolate the conversion in
+    /// a separately supervised process that can be terminated. This runtime does
+    /// not provide or enforce that supervision; recursion/stack guards do not
+    /// bound execution time.
     pub fn call(&mut self, code: &str, input: JsValue) -> Result<JsValue, ScriptError> {
         install_time_object_coercion_guard(
             &input,
@@ -99,6 +109,8 @@ impl ScriptRuntime {
             &mut self.context,
         )?;
         let function = self.function_for(code)?;
+        // A buggy or untrusted script can wedge this caller indefinitely. Only
+        // an external process supervisor can enforce a deadline at this boundary.
         function
             .call(&JsValue::undefined(), &[input], &mut self.context)
             .map_err(ScriptError::from)
@@ -120,6 +132,7 @@ impl ScriptRuntime {
         if let Some(function) = self.functions.get(code) {
             return Ok(function.clone());
         }
+        ensure_complete_function_body(code, &mut self.context)?;
         let value = self
             .context
             .eval(Source::from_bytes(wrap_script(code).as_str()))
@@ -134,6 +147,32 @@ impl ScriptRuntime {
         self.compile_count += 1;
         Ok(function)
     }
+}
+
+/// The wrapper is evaluated as a script, so first prove (by parsing only) that
+/// `code` is one complete function body. Boa's function-body parser stops at an
+/// unmatched `}`; the remaining input must then be empty. Otherwise text such as
+/// `}; sideEffect(); {` could close the user function and run at compile time.
+fn ensure_complete_function_body(code: &str, context: &mut Context) -> Result<(), ScriptError> {
+    let mut body = Vec::with_capacity(code.len() + 2);
+    body.push(b'\n');
+    body.extend_from_slice(code.as_bytes());
+    body.push(b'\n');
+    let mut parser = Parser::new(Source::from_bytes(&body));
+    parser
+        .parse_function_body(context.interner_mut(), false, false)
+        .map_err(|error| ScriptError::Runtime {
+            message: format!("SyntaxError: failed to parse function body: {error}"),
+        })?;
+    let rest = parser
+        .parse_script(&Scope::new_global(), context.interner_mut())
+        .ok();
+    if rest.is_none_or(|rest| !rest.statements().statements().is_empty()) {
+        return Err(ScriptError::Runtime {
+            message: "SyntaxError: script source is not one complete function body".into(),
+        });
+    }
+    Ok(())
 }
 
 fn install_time_object_coercion_guard(
@@ -259,6 +298,27 @@ mod tests {
     }
 
     #[test]
+    fn compilation_rejects_source_that_escapes_the_function_body() {
+        let mut runtime = ScriptRuntime::new().unwrap();
+        let escape = "}; globalThis.__escaped = 123; {";
+        let error = runtime.validate(escape).unwrap_err();
+        assert!(matches!(error, ScriptError::Runtime { .. }), "{error}");
+        let probe = runtime
+            .context_mut()
+            .eval(boa_engine::Source::from_bytes(
+                "typeof globalThis.__escaped",
+            ))
+            .unwrap();
+        assert_eq!(
+            probe.to_string(runtime.context_mut()).unwrap(),
+            boa_engine::js_string!("undefined")
+        );
+        assert_eq!(runtime.compile_count(), 0);
+        let input = input(&mut runtime);
+        assert!(runtime.call(escape, input).is_err());
+    }
+
+    #[test]
     fn time_object_rejects_numeric_coercion() {
         let mut runtime = ScriptRuntime::new().unwrap();
         let input = input(&mut runtime);
@@ -269,11 +329,16 @@ mod tests {
     }
 
     #[test]
-    fn loop_budget_is_enforced() {
+    fn finite_loop_exceeds_former_iteration_policy() {
         let mut runtime = ScriptRuntime::new().unwrap();
         let input = input(&mut runtime);
-        let error = runtime.call("while (true) {}", input).unwrap_err();
-        assert!(matches!(error, ScriptError::Runtime { .. }));
+        let value = runtime
+            .call(
+                "let total = 0; for (let i = 0; i < 200001; i++) total += 1; return total;",
+                input,
+            )
+            .unwrap();
+        assert_eq!(value.as_number(), Some(200001.0));
     }
 
     #[test]

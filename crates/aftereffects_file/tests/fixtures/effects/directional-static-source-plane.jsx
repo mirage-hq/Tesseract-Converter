@@ -1,0 +1,11 @@
+var c = app.project.items.addComp('W07-directional-plane', 180, 160, 1, 1, 30);
+var l = c.layers.addSolid([1,0,0], 'Native directional plane', 12, 12, 1, 1);
+var t = l.property('ADBE Transform Group');
+t.property('ADBE Position').setValue([90,80]);
+t.property('ADBE Scale').setValue([200,200]);
+t.property('ADBE Rotate Z').setValue(90);
+var s = l.property('ADBE Effect Parade').addProperty('ADBE Motion Blur');
+s.property('ADBE Motion Blur-0001').setValue(0);
+s.property('ADBE Motion Blur-0002').setValue(20);
+app.project.save(new File(context.output_path));
+return {result:{direction:s.property('ADBE Motion Blur-0001').value,length:s.property('ADBE Motion Blur-0002').value,scale:t.property('ADBE Scale').value,rotation:t.property('ADBE Rotate Z').value},targets:[{id:'main',name:c.name,native_id:String(c.id)}]};

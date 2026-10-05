@@ -21,23 +21,33 @@ use std::collections::BTreeMap;
 
 /// Checks writer-only restrictions throughout the nested sequence tree.
 pub(in crate::format::writer) fn validate_sequences(spec: &PrSequence) -> Result<()> {
-    if spec
-        .video_tracks
-        .iter()
-        .any(|track| !track.transitions.is_empty())
-    {
+    if spec.audio.iter().any(|clip| clip.source_channel.is_some()) {
         return Err(invalid(
-            "writer cannot encode native video transitions without flattening them",
+            "selected audio channels must be extracted before native writing",
+        ));
+    }
+    if spec.video_tracks.iter().any(|track| {
+        track.transitions.iter().any(|transition| {
+            transition.kind != crate::schema::PrVideoTransitionKind::CrossDissolve
+        })
+    }) {
+        return Err(invalid(
+            "writer supports only native Cross Dissolve New video transitions",
         ));
     }
     // A text or shape layer name becomes its component's InstanceName, which
     // the model leaves unconstrained.
     for (index, track) in spec.video_tracks.iter().enumerate() {
         for graphic in track.items.iter().filter_map(PrVideoItem::graphic) {
-            for object in &graphic.objects {
+            let mut remaining: Vec<_> = graphic.objects.iter().collect();
+            while let Some(object) = remaining.pop() {
                 let (kind, name) = match object {
                     PrGraphicObject::Text(text) => ("text", &text.name),
                     PrGraphicObject::Shape(shape) => ("shape", &shape.name),
+                    PrGraphicObject::Group(group) => {
+                        remaining.extend(&group.objects);
+                        ("SubGroup", &group.name)
+                    }
                     PrGraphicObject::TextLines(_) => {
                         return Err(invalid(
                             "native mixed text must be converted to editable line objects before writing",
@@ -161,6 +171,7 @@ fn sound_records(nest: &PrNestOccurrence, ids: &NestIds, sound: &NestSoundIds) -
             secondary_contents: SecondaryContents::from_ids(sound.secondary),
             audio_channel_layout: records::STEREO.into(),
             gain: None,
+            audio_time_scaler_settings: None,
         }),
         audio::default_chain(sound.components, AudioChannels::Stereo),
         Record::SubClip(SubClip {

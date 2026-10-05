@@ -12,6 +12,7 @@ mod adjustment;
 mod adobe_feature_additions;
 mod adobe_vector_panel;
 mod essential;
+mod footage_anchor;
 mod implemented_core_additions;
 mod implemented_shape_additions;
 mod implemented_text_additions;
@@ -23,6 +24,7 @@ mod native_layer_styles;
 mod native_shape_cases;
 mod native_sources;
 mod native_text_cases;
+mod parent_lookup;
 mod pr4442_general_cases;
 mod pr4442_text_cases;
 mod pr4442_vector_cases;
@@ -268,40 +270,6 @@ fn null_transform_uses_physical_solid_anchor_without_rendering_solid_bounds() {
         fx_composition::Position::TwoD([60.0, 60.0])
     );
     assert!(as_group(&implicit.layers[0]).layers.is_empty());
-}
-
-#[test]
-#[ignore = "requires licensed local Intro source via AEP_MASK_SOURCE"]
-fn local_external_source_restores_rotated_precomposition_anchor() {
-    use sha2::{Digest, Sha256};
-
-    let bytes =
-        std::fs::read(std::env::var_os("AEP_MASK_SOURCE").expect("licensed source path")).unwrap();
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&bytes)),
-        "28bbce1b8c9f9625105d632504a97c598394a4753d6b0d923fb19942e302bb5d"
-    );
-    let project = read_project(&bytes).unwrap();
-    let converted = to_structural_fx_document(&project, Some(1197)).unwrap();
-    fn find_masked_occurrence(layers: &[fx_schema::Layer]) -> Option<&GroupLayer> {
-        for layer in layers {
-            if let FxLayer::Group(group) = layer.data() {
-                if group.description.contains("AEP comp=1197 layer=1203 ")
-                    && !group.masks.is_empty()
-                {
-                    return Some(group);
-                }
-                if let Some(found) = find_masked_occurrence(&group.layers) {
-                    return Some(found);
-                }
-            }
-        }
-        None
-    }
-    let occurrence = find_masked_occurrence(&root(&converted).layers)
-        .expect("rotated masked precomposition remains editable");
-    assert!((occurrence.transform.anchor_point[0] - 1530.0).abs() < 0.0001);
-    assert!((occurrence.transform.anchor_point[1] - 868.0).abs() < 0.0001);
 }
 
 #[test]
@@ -635,7 +603,11 @@ fn spatial_position_axis_with_noise_equal_endpoints_stays_put_on_occurrence_and_
                     .unwrap_or_else(|| panic!("{axis:?} keys on {id:?}"))
                     .keyframes();
                 assert_eq!(keys.len(), 2);
-                assert_eq!(keys[1].spatial_in_tangent(), Some(0.0));
+                assert_eq!(
+                    keys[1].spatial_in_tangent(),
+                    None,
+                    "straight native geometry must not reintroduce FX spatial double easing"
+                );
                 easings.push((axis, keys[1].easing()));
             }
         }

@@ -14,15 +14,22 @@ ffmpeg-library = ["media_transcode/ffmpeg-library"]
 fx_conv = { path = "../fx_conv" }
 tesseract_file = { path = "../tesseract_file" }
 tempfile = "3"
+ttf-parser = { version = "0.25.1", default-features = false, features = ["std"] }
+rustybuzz = "0.20.1"
 fx_schema = { path = "../fx_schema" }
 fx_keyframe_bake = { path = "../fx_keyframe_bake" }
 lopdf = { version = "0.45.0", default-features = false }
 boa_engine = { version = "0.21.1", default-features = false, features = ["js"] }
+boa_gc = "0.21.1"
+boa_runtime = { version = "0.21.1", default-features = false }
+boa_ast = "0.21.1"
+boa_parser = "0.21.1"
+boa_interner = "0.21.1"
 thiserror.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 sha2.workspace = true
-image.workspace = true
+image = { workspace = true, features = ["exr"] }
 media_transcode = { path = "../media_transcode", default-features = false }
 
 [dev-dependencies]

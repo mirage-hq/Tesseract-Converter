@@ -41,10 +41,16 @@ use crate::{
 /// - AE 26.3x87: a private package, retained outside Git, whose Premiere
 ///   26.3.0 ImporterPrefs GUIDs name three item IDs that its independently
 ///   produced AE validation receipt and the AEP's own items also name.
+/// - Co-Editor format 96/subtype 6: five native Premiere ImporterPrefs GUIDs
+///   match the pinned AEP's item IDs/names. The reduced native-derived fixture
+///   retains that header and selected editable siblings (`hybrid/format96`).
 ///
 /// Do not widen this to other producers without renewed native evidence.
-const DYNAMIC_LINK_PROFILES: [([u8; 4], u32); 2] =
-    [([0, 97, 0, 10], 0x0f92_8659), ([0, 97, 0, 7], 0x0f91_8657)];
+const DYNAMIC_LINK_PROFILES: [([u8; 4], u32); 3] = [
+    ([0, 97, 0, 10], 0x0f92_8659),
+    ([0, 97, 0, 7], 0x0f91_8657),
+    ([0, 96, 0, 6], 0x0f8a_0656),
+];
 
 /// A link could not be resolved safely; callers must not substitute a name or root.
 #[derive(Debug, Error)]
@@ -117,7 +123,26 @@ pub struct LinkedPicture {
     pub diagnostics: Vec<ImportDiagnostic>,
 }
 
-/// The archive media of every linked picture in one host document: each asset
+/// The editable sound of one independent Dynamic Link audio placement.
+#[derive(Debug)]
+pub struct LinkedAudio {
+    /// The composition's root Group. Visual layers are hidden, not audible layers.
+    pub root: Layer,
+    /// Animation entries whose clocks remain in the composition hierarchy.
+    pub animations: Vec<AnimationGraphEntry>,
+    /// First unused layer, item or effect identity.
+    pub next_id: u64,
+    /// Approximation and omission notes of the composition import.
+    pub diagnostics: Vec<ImportDiagnostic>,
+}
+
+#[derive(Clone, Copy)]
+enum LinkedContent {
+    Picture,
+    Audio,
+}
+
+/// The archive media of every linked picture or sound in one host document: each asset
 /// once, the normalized files that back them, and the identity of every local
 /// file that the pictures were read from.
 #[derive(Debug, Default)]
@@ -356,7 +381,8 @@ impl ResolvedAfterEffectsComposition<'_> {
         }
         self.source.verify_source()?;
         let namespace = format!("{asset_prefix}{}", AssetNamespace::STANDALONE.as_str());
-        let (converted, mut preflight) = self.convert_picture(None, first_id, &namespace, None)?;
+        let (converted, mut preflight) =
+            self.convert_content(None, first_id, &namespace, None, LinkedContent::Picture)?;
         let mut assets = Vec::new();
         let mut kept = HashSet::new();
         for asset in preflight.used_assets(&converted.assets)? {
@@ -506,11 +532,12 @@ impl ResolvedAfterEffectsComposition<'_> {
         media: &mut LinkedMedia,
         media_map: Option<&ValidatedMediaMap>,
     ) -> Result<LinkedPicture, AepConversionError> {
-        let (converted, preflight) = self.convert_picture(
+        let (converted, preflight) = self.convert_content(
             Some(target.parent),
             target.first_id,
             target.asset_namespace,
             media_map,
+            LinkedContent::Picture,
         )?;
         let mut diagnostics = converted.diagnostics;
         diagnostics.append(&mut media.record(preflight, &converted.assets)?);
@@ -527,16 +554,50 @@ impl ResolvedAfterEffectsComposition<'_> {
         })
     }
 
-    /// The one Dynamic Link picture conversion of both entry points: the
-    /// composition's root Group under `parent`, with identities from
-    /// `first_id` and assets of `asset_namespace`, and the preflight that
-    /// resolved its media.
-    fn convert_picture<'a>(
+    /// Imports sound independently of a link's muted picture placement.
+    ///
+    /// The host reserves identities from `first_id`, supplies the source clock
+    /// through `parent`, and applies the Premiere audio item's own gain. Asset
+    /// names share the picture's namespace, so both placements package a source
+    /// only once. Visual layers stay hidden to preserve graph references.
+    pub fn import_audio_with_media_map(
+        &self,
+        parent: LayerId,
+        first_id: u64,
+        asset_namespace: &str,
+        media: &mut LinkedMedia,
+        media_map: Option<&ValidatedMediaMap>,
+    ) -> Result<LinkedAudio, AepConversionError> {
+        let (converted, preflight) = self.convert_content(
+            Some(parent),
+            first_id,
+            asset_namespace,
+            media_map,
+            LinkedContent::Audio,
+        )?;
+        let mut diagnostics = converted.diagnostics;
+        diagnostics.append(&mut media.record(preflight, &converted.assets)?);
+        let composition = converted.document.composition();
+        let [root] = composition.layers() else {
+            panic!("a converted composition has exactly one root Group");
+        };
+        Ok(LinkedAudio {
+            root: root.clone(),
+            animations: composition.dynamics().entries().to_vec(),
+            next_id: converted.next_id,
+            diagnostics,
+        })
+    }
+
+    /// Shares native selection, preflight and asset naming between the two
+    /// independently placed streams of a Dynamic Link composition.
+    fn convert_content<'a>(
         &'a self,
         parent: Option<LayerId>,
         first_id: u64,
         asset_namespace: &str,
         media_map: Option<&'a ValidatedMediaMap>,
+        content: LinkedContent,
     ) -> Result<(StructuralConversion, media::MediaPreflight<'a>), AepConversionError> {
         if AssetId::new(asset_namespace).is_err() {
             return Err(AepConversionError::Input(
@@ -555,10 +616,17 @@ impl ResolvedAfterEffectsComposition<'_> {
             &self.source.project,
             self.item.id,
             &mut |request| preflight.resolve_media(request),
-            Destination::LinkedPicture {
-                parent,
-                first_id,
-                asset_namespace: AssetNamespace::new(asset_namespace),
+            match content {
+                LinkedContent::Picture => Destination::LinkedPicture {
+                    parent,
+                    first_id,
+                    asset_namespace: AssetNamespace::new(asset_namespace),
+                },
+                LinkedContent::Audio => Destination::LinkedAudio {
+                    parent,
+                    first_id,
+                    asset_namespace: AssetNamespace::new(asset_namespace),
+                },
             },
         )?;
         if let Some(error) = preflight.failure.take() {

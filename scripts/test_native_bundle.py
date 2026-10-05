@@ -78,6 +78,30 @@ def fixture_bundle(directory: Path, platform: str, binary_data: bytes = b"fake e
 
 
 class NativeBundleTest(unittest.TestCase):
+    def test_zlib_nmake_does_not_inherit_gnu_makeflags(self):
+        env = {"MAKEFLAGS": " -- prefix=D:\\a\\jerboa\\target\\release-ffmpeg",
+               "PATH": "MSVC tools", "INCLUDE": "MSVC headers", "LIB": "MSVC libraries"}
+        original_env = env.copy()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            for name, contents in {"zlib.h": "header", "zconf.h": "#ifdef HAVE_UNISTD_H\n",
+                                   "zlib.lib": "library", "README": "license"}.items():
+                (source / name).write_text(contents)
+            with patch.object(ffmpeg, "fetch_source", return_value=source), \
+                 patch.object(ffmpeg.subprocess, "run") as run, \
+                 patch.object(ffmpeg, "output", side_effect=["D:/prefix/zlib/include", "D:/prefix/zlib/lib"]):
+                flags = ffmpeg.build_zlib(root / "sources", root / "work", root / "prefix", env)
+            run.assert_called_once_with(["nmake", "-f", "win32/Makefile.msc", "zlib.lib"],
+                                        cwd=source, env={key: value for key, value in env.items()
+                                                         if key != "MAKEFLAGS"}, check=True)
+            self.assertEqual(env, original_env)
+            self.assertEqual(flags, ["--extra-cflags=-ID:/prefix/zlib/include",
+                                     "--extra-ldflags=-LIBPATH:D:/prefix/zlib/lib"])
+            self.assertEqual((root / "prefix/zlib/include/zconf.h").read_text(),
+                             "#if defined(HAVE_UNISTD_H) && HAVE_UNISTD_H\n")
+
     def test_all_platforms(self):
         with pinned_source_fixture(), tempfile.TemporaryDirectory() as temporary:
             for platform in sorted(native_bundle.PLATFORMS):

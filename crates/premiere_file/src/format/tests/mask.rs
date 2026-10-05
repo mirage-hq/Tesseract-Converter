@@ -1,17 +1,17 @@
-//! The static Opacity mask (JRB-2028): reader, classifier and writer, on the
+//! The static Opacity mask: reader, classifier and writer, on the
 //! corpus record forms and on Premiere 26.5.1's saved form (the records of
 //! `feature_opacity_masks_26_5_strict.prproj`, verbatim).
 
 use super::{
     animation::animation_fixture::masked_opacity_xml,
     effects::{
-        blur, fixture_records, intrinsic, read, top_crop, with_chain, with_second_clip,
-        DEFAULT_FLAGS, SOURCE,
+        blur, fixture_records, intrinsic, omitted_occurrence_reason, read, top_crop, with_chain,
+        with_second_clip, DEFAULT_FLAGS, SOURCE,
     },
 };
 use crate::{
     format::{inspect_project_with_omissions, writer::project_xml, Graph},
-    schema::{native::ArbVideoComponentParam, text::PrPathVertex, MediaId, PrMask},
+    schema::{native::ArbVideoComponentParam, text::PrPathVertex, MediaId, PrMask, TICKS},
     tests::support::{opacity_mask, video_media, video_sequence},
     Omission, OmissionKind, OmissionScope,
 };
@@ -107,14 +107,47 @@ pub(super) fn mask(id: u32, v8: bool) -> String {
         boolean(4, "16", "true"),
         boolean(5, "12", "false"),
         id + 6,
-        slider(7, "<Name>Mask Feather</Name>", "30.", "0", range, "<UpperUIBound>300</UpperUIBound>"),
+        slider(
+            7,
+            "<Name>Mask Feather</Name>",
+            "30.",
+            "0",
+            range,
+            "<UpperUIBound>300</UpperUIBound>"
+        ),
         slider(8, "<Name>Mask Opacity</Name>", "100.", "0", "100", ""),
-        slider(9, "<Name>Mask Expansion</Name>", "0.", &format!("-{range}"), range, "<LowerUIBound>-300</LowerUIBound><UpperUIBound>300</UpperUIBound>"),
+        slider(
+            9,
+            "<Name>Mask Expansion</Name>",
+            "0.",
+            &format!("-{range}"),
+            range,
+            "<LowerUIBound>-300</LowerUIBound><UpperUIBound>300</UpperUIBound>"
+        ),
         boolean(10, "4", "true"),
         slider(11, "", "2.", "0", "3", ""),
         slider(12, "", "0.", "0", "4294967296", ""),
         slider(13, "", "0.5", "0", "3.4028234663852886e+38", ""),
     )
+}
+
+/// [`mask`] `id` in the v8 form with its Mask Path keyed by `keys`
+/// (`ticks,base64;` per key) as the v8 record that Premiere 26.5.1 opened and
+/// AME rendered stores them: `Keyframes` and no
+/// `IsTimeVarying`, beside the stored [`PEN_PATH`].
+pub(super) fn keyed_mask(id: u32, keys: &str) -> String {
+    let records = mask(id, true);
+    let edited = records.replace(
+        &format!("<Name>Mask Path</Name><IsTimeVarying>false</IsTimeVarying><ParameterControlType>22</ParameterControlType><StartKeyframePosition>{STATIC}</StartKeyframePosition>"),
+        &format!("<Name>Mask Path</Name><ParameterControlType>22</ParameterControlType><StartKeyframePosition>{STATIC}</StartKeyframePosition><Keyframes>{keys}</Keyframes>"),
+    );
+    assert_ne!(edited, records);
+    edited
+}
+
+/// Mask Path keys at source 0 and 1 s: the pen path, then the rectangle.
+pub(super) fn two_path_keys() -> String {
+    format!("0,{PEN_PATH};{TICKS},{RECTANGLE_PATH};")
 }
 
 /// `one-clip.xml` whose first clip has the Opacity 50 of [`masked_opacity`]
@@ -151,10 +184,16 @@ fn corpus_opacity_masks_import_in_both_record_forms() {
     // and with Opacity keys), and the same values in the v7 form with
     // `abstract_slideshow`'s rectangle, Feather 0 and Inverted.
     let pen = PrMask {
+        raster: None,
+        feather_keys: Vec::new(),
+        expansion: 0.0,
+        expansion_keys: Vec::new(),
+        opacity_keys: Vec::new(),
         path: crate::schema::text::PrShapePath {
             vertices: pen_path(),
             closed: true,
         },
+        path_keys: Vec::new(),
         feather: 30.0,
         opacity: 100.0,
         inverted: false,
@@ -183,6 +222,11 @@ fn corpus_opacity_masks_import_in_both_record_forms() {
             "v7",
             masked_clip(v7, &[]),
             PrMask {
+                raster: None,
+                feather_keys: Vec::new(),
+                expansion: 0.0,
+                expansion_keys: Vec::new(),
+                opacity_keys: Vec::new(),
                 path: crate::schema::text::PrShapePath {
                     vertices: vec![
                         corner(0.412409, 0.3778594),
@@ -192,6 +236,7 @@ fn corpus_opacity_masks_import_in_both_record_forms() {
                     ],
                     closed: true,
                 },
+                path_keys: Vec::new(),
                 feather: 0.0,
                 opacity: 100.0,
                 inverted: true,
@@ -290,6 +335,15 @@ fn opacity_masks_outside_the_supported_form_omit_the_occurrence() {
         &format!("<Name>Mask Expansion</Name><IsTimeVarying>false</IsTimeVarying><ParameterControlType>8</ParameterControlType><StartKeyframe>{STATIC},0.,"),
         &format!("<Name>Mask Expansion</Name><IsTimeVarying>false</IsTimeVarying><ParameterControlType>8</ParameterControlType><StartKeyframe>{STATIC},278.,"),
     );
+    for records in [keyed_opacity, expansion] {
+        let (project, omissions) =
+            inspect_project_with_omissions(&masked_clip(records, &[]), Some("sequence-1")).unwrap();
+        assert_eq!(
+            project.sequences[0].video_occurrences().count(),
+            2,
+            "{omissions:?}"
+        );
+    }
     let tracking = mask(300, true).replace(
         &format!("<ParameterControlType>11</ParameterControlType><StartKeyframe>{STATIC},false,"),
         &format!("<ParameterControlType>11</ParameterControlType><StartKeyframe>{STATIC},true,"),
@@ -320,16 +374,37 @@ fn opacity_masks_outside_the_supported_form_omit_the_occurrence() {
         "<Bypass>false</Bypass><Intrinsic>false</Intrinsic><ArchivedType>0</ArchivedType>",
         "<Intrinsic>false</Intrinsic><ArchivedType>0</ArchivedType>",
     );
+    // Mask Path keys are read as Source Text keys are, and fail closed alike.
+    let path_keys_off = mask(300, true).replace(
+        "<StartKeyframeValue",
+        &format!("<Keyframes>0,{PEN_PATH};</Keyframes><StartKeyframeValue"),
+    );
     for (case, xml, reason) in [
         (
-            "keyed Mask Opacity",
-            masked_clip(keyed_opacity, &[]),
-            "VideoComponentParam:308: keyframed Mask Opacity is not supported; only static values convert",
+            "unterminated Mask Path keys",
+            masked_clip(keyed_mask(300, &format!("0,{PEN_PATH}")), &[]),
+            "ArbVideoComponentParam:306: unterminated Mask Path key list",
         ),
         (
-            "Expansion",
-            masked_clip(expansion, &[]),
-            "VideoComponentParam:309: Mask Expansion is not converted",
+            "Mask Path keys out of order",
+            masked_clip(
+                keyed_mask(300, &format!("{TICKS},{PEN_PATH};0,{PEN_PATH};")),
+                &[],
+            ),
+            "ArbVideoComponentParam:306: Mask Path keys must have strictly increasing source times",
+        ),
+        (
+            "malformed Mask Path key",
+            masked_clip(
+                keyed_mask(300, &format!("0,{};", RECTANGLE_PATH.replacen('M', "N", 1))),
+                &[],
+            ),
+            "ArbVideoComponentParam:306: unknown Mask Path magic",
+        ),
+        (
+            "Mask Path keys under IsTimeVarying false",
+            masked_clip(path_keys_off, &[]),
+            "ArbVideoComponentParam:306: animated or unknown Mask Path is unsupported",
         ),
         (
             "tracking control on",
@@ -349,7 +424,7 @@ fn opacity_masks_outside_the_supported_form_omit_the_occurrence() {
         (
             "feather above the written bound",
             masked_clip(feather("3000."), &[]),
-            "Mask Feather must be finite and within 0..=1000, the written record's bound",
+            "Feather must be finite and within 0..=1000",
         ),
         (
             "unknown ParameterID",
@@ -417,7 +492,7 @@ fn opacity_masks_outside_the_supported_form_omit_the_occurrence() {
                     ) + &mask(300, true),
                 )],
             ),
-            "carries a mask (AE.ADBE AEMask sub-component; JRB-2028)",
+            "masked effect has no editable mapping",
         ),
         (
             "Opacity mask with a Crop",
@@ -444,7 +519,89 @@ fn opacity_masks_outside_the_supported_form_omit_the_occurrence() {
     }
 }
 
-/// The Premiere 26.5.1 fixture (Oracle run 17): five masked clips A to E.
+/// Unchanged human-authored Opacity/Object Mask records; typed saved-raster references.
+const OBJECT_MASK: &str = include_str!("../../../tests/fixtures/object_mask/opacity.xml");
+
+#[test]
+fn native_saved_object_mask_retains_typed_tracker_for_source_bound_recovery() {
+    let xml = with_chain(
+        SOURCE,
+        "<DefaultMotion>true</DefaultMotion><DefaultMotionComponentID>1</DefaultMotionComponentID>",
+        &[(665, OBJECT_MASK.to_owned())],
+    );
+    let (project, omissions) = inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let clip = project.sequences[0].video_occurrences().next().unwrap();
+    let mask = clip.opacity_mask.as_ref().unwrap();
+    let Some(crate::schema::RasterMask::Saved(tracker)) = &mask.raster else {
+        panic!("missing saved Tracker")
+    };
+    assert_eq!(
+        tracker.propagation.to_string(),
+        "dd06d550-fb83-4fb0-b9e8-6d3d6fcdedf1"
+    );
+    assert_eq!(tracker.frame_ticks, 8_511_237_907);
+    assert_eq!(tracker.frame_count, 204);
+}
+
+#[test]
+fn object_mask_nondefault_coverage_control_still_omits_safely() {
+    let records = edit_start(OBJECT_MASK.to_owned(), 1256, ",0.,", ",10.,");
+    let reason = omitted_occurrence_reason(
+        "<DefaultMotion>true</DefaultMotion><DefaultMotionComponentID>1</DefaultMotionComponentID>",
+        &[(665, records)],
+    );
+    assert!(
+        reason.contains("Object Mask raster requires zero Feather/Expansion"),
+        "{reason}"
+    );
+}
+
+#[test]
+fn object_mask_does_not_inherit_vector_tracker_admission() {
+    let wrapped = format!("<Records>{OBJECT_MASK}</Records>");
+    let dom = roxmltree::Document::parse(&wrapped).unwrap();
+    let value = dom
+        .descendants()
+        .find(|n| n.attribute("ObjectID") == Some("1037"))
+        .unwrap()
+        .children()
+        .find(|n| n.has_tag_name("StartKeyframeValue"))
+        .unwrap()
+        .text()
+        .unwrap()
+        .trim();
+    let mut bytes = STANDARD.decode(value).unwrap();
+    for index in [6, 15] {
+        bytes[4 + index * 4..8 + index * 4].copy_from_slice(&0.25_f32.to_le_bytes());
+    }
+    assert!(crate::schema::decode_mask_tracker(&bytes).is_ok());
+    let records = OBJECT_MASK.replace(value, &STANDARD.encode(bytes));
+    let reason =
+        omitted_occurrence_reason("<DefaultMotion>true</DefaultMotion>", &[(665, records)]);
+    assert!(
+        reason.contains("mask control 6 (Tracker) holds an unknown value"),
+        "{reason}"
+    );
+}
+
+#[test]
+fn native_type_0_aemask2_keeps_the_generic_control_reason() {
+    // AEMask2 alone is not evidence of an Object Mask. Type 0 keeps the
+    // existing fail-closed nondefault-control reason on the active mask.
+    let records = edit_start(OBJECT_MASK.to_owned(), 1262, ",4,", ",0,");
+    let reason = omitted_occurrence_reason(
+        "<DefaultMotion>true</DefaultMotion><DefaultMotionComponentID>1</DefaultMotionComponentID>",
+        &[(665, records)],
+    );
+    assert!(
+        reason.contains("mask control 24 (Tracker) holds an unknown value"),
+        "{reason}"
+    );
+    assert!(!reason.contains("Object Mask"), "{reason}");
+}
+
+/// The Premiere 26.5.1 fixture: five masked clips A to E.
 const FIXTURE_26_5: &str = "feature_opacity_masks_26_5_strict.prproj";
 
 /// The records with ObjectIDs `roots` of [`FIXTURE_26_5`] and every record
@@ -489,7 +646,7 @@ fn fixture_closure(roots: &[&str]) -> String {
 /// The 26.5.1 mask record `mask_id` of the fixture (A 157, B 161, C 176, D
 /// 180, E 184) and its 35 parameters, with mask A's records, whose tracker,
 /// User Interactions and private data values B to E name by `BinaryHash`.
-fn fixture_mask_26_5(mask_id: u32) -> String {
+pub(in crate::format) fn fixture_mask_26_5(mask_id: u32) -> String {
     let id = mask_id.to_string();
     let roots: Vec<&str> = if mask_id == 157 {
         vec![&id]
@@ -565,7 +722,13 @@ fn premiere_26_5_masks_import_in_the_saved_form() {
             "A",
             masked_clip_26_5(157, |records| records),
             PrMask {
+                raster: None,
+                feather_keys: Vec::new(),
+                expansion: 0.0,
+                expansion_keys: Vec::new(),
+                opacity_keys: Vec::new(),
                 path: fixture_rectangle(),
+                path_keys: Vec::new(),
                 feather: 0.0,
                 opacity: 50.0,
                 inverted: false,
@@ -575,7 +738,13 @@ fn premiere_26_5_masks_import_in_the_saved_form() {
             "B",
             masked_clip_26_5(161, |records| records),
             PrMask {
+                raster: None,
+                feather_keys: Vec::new(),
+                expansion: 0.0,
+                expansion_keys: Vec::new(),
+                opacity_keys: Vec::new(),
                 path: fixture_rectangle(),
+                path_keys: Vec::new(),
                 feather: 0.0,
                 opacity: 100.0,
                 inverted: false,
@@ -585,6 +754,11 @@ fn premiere_26_5_masks_import_in_the_saved_form() {
             "C",
             masked_clip_26_5(176, |records| records),
             PrMask {
+                raster: None,
+                feather_keys: Vec::new(),
+                expansion: 0.0,
+                expansion_keys: Vec::new(),
+                opacity_keys: Vec::new(),
                 path: crate::schema::text::PrShapePath {
                     vertices: vec![
                         ellipse(0.5, 0.25, [tangent, 0.25], [far, 0.25]),
@@ -594,6 +768,7 @@ fn premiere_26_5_masks_import_in_the_saved_form() {
                     ],
                     closed: true,
                 },
+                path_keys: Vec::new(),
                 feather: 60.0,
                 opacity: 100.0,
                 inverted: false,
@@ -603,7 +778,13 @@ fn premiere_26_5_masks_import_in_the_saved_form() {
             "D not inverted",
             masked_clip_26_5(180, |records| edit_start(records, 320, ",true,", ",false,")),
             PrMask {
+                raster: None,
+                feather_keys: Vec::new(),
+                expansion: 0.0,
+                expansion_keys: Vec::new(),
+                opacity_keys: Vec::new(),
                 path: pen,
+                path_keys: Vec::new(),
                 feather: 0.0,
                 opacity: 50.0,
                 inverted: false,
@@ -697,12 +878,12 @@ fn premiere_26_5_masks_off_their_saved_defaults_omit_the_occurrence() {
             masked_clip_26_5(157, |records| {
                 edit_start(records, 192, "AQAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/", "AQAAAAAAgD8AAAAAAAAAAAAAAAAAAIA+")
             }),
-            "ArbVideoComponentParam:192: mask control 6 (Tracker) holds an unknown value; only the saved default converts",
+            "ArbVideoComponentParam:192: unsupported vector mask Tracker matrix or reference controls",
         ),
         (
             "Feather above the written bound",
             masked_clip_26_5(176, |records| edit_start(records, 282, ",60.,", ",3000.,")),
-            "Mask Feather must be finite and within 0..=1000, the written record's bound",
+            "Feather must be finite and within 0..=1000",
         ),
         (
             // Unobserved: a bypassed 26.5.1 mask.
@@ -723,22 +904,630 @@ fn premiere_26_5_masks_off_their_saved_defaults_omit_the_occurrence() {
             }),
             "VideoFilterComponent:157: unsupported mask record form (MatchName Some(\"AE.ADBE AEMask\"), VideoFilterComponent Some(\"9\"), Component Some(\"7\"))",
         ),
+
+    ] {
+        let (project, omissions) =
+            inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+        let kept: Vec<_> = project.sequences[0]
+            .video_occurrences()
+            .map(|clip| clip.id.as_deref())
+            .collect();
+        assert_eq!(kept, [Some("VideoClipTrackItem:9")], "{case}");
+        let occurrence = omissions
+            .iter()
+            .find(|omission| omission.scope == OmissionScope::Occurrence)
+            .unwrap_or_else(|| panic!("{case}: {omissions:?}"));
+        assert!(
+            occurrence.reason.contains(reason),
+            "{case}: {}",
+            occurrence.reason
+        );
+    }
+}
+
+#[test]
+fn a_still_with_mask_path_keys_is_omitted_beside_its_sibling_without_a_guide() {
+    // Only a video clip's mask converts its Mask Path keys. A keyed mask
+    // omits the still, and the second still converts with no guide left
+    // behind; static still masks remain supported.
+    let still = masked_clip(keyed_mask(300, &two_path_keys()), &[]).replace(
+        "<VideoStream ObjectID=\"8\"><Duration>2540160000000</Duration>",
+        "<VideoStream ObjectID=\"8\"><IsStill>true</IsStill><Duration>2540160000000</Duration>",
+    );
+    let (project, mut omissions) =
+        inspect_project_with_omissions(&still, Some("sequence-1")).unwrap();
+    let sequence = &project.sequences[0];
+    let kept: Vec<_> = sequence
+        .video_occurrences()
+        .map(|clip| clip.id.as_deref())
+        .collect();
+    assert_eq!(kept, [Some("VideoClipTrackItem:9")]);
+    let occurrences: Vec<_> = omissions
+        .iter()
+        .filter(|omission| omission.scope == OmissionScope::Occurrence)
+        .map(|omission| omission.reason.as_str())
+        .collect();
+    let [reason] = occurrences.as_slice() else {
+        panic!("{omissions:?}");
+    };
+    assert!(
+        reason.contains("Mask Path keys on a still are not converted; only a video clip's Opacity mask converts keyed"),
+        "{reason}"
+    );
+    let document = crate::convert::premiere_to_tesseract(
+        sequence,
+        &project.media,
+        &crate::tesseract_output::asset_ids_in_order(sequence, &project.media),
+        &mut omissions,
+    )
+    .unwrap()
+    .to_json_value()
+    .unwrap();
+    let types: Vec<_> = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|layer| layer["type"].as_str().unwrap())
+        .collect();
+    assert_eq!(types, ["Image", "Rect"]);
+}
+
+/// The native Premiere 26.5.1 save, packaged without its absolute
+/// media and peak-file paths, and its one sequence.
+const KEYED_MASK_26_5: &str = "feature_keyed_mask_path_26_5_saved.prproj";
+const KEYED_MASK_SEQUENCE: &str = "5fe2e712-90a9-4044-b93a-7a75b79b1320";
+
+#[test]
+fn saved_affine_tracking_becomes_editable_path_keys_on_its_native_clock() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/feature_mask_tracker_26_5.prproj");
+    let xml = crate::format::read_xml(&fixture).unwrap();
+    let (project, omissions) =
+        inspect_project_with_omissions(&xml, Some("247c489b-caaf-40c3-a920-a10162ac0240")).unwrap();
+    assert!(
+        omissions
+            .iter()
+            .all(|item| item.scope != OmissionScope::Occurrence),
+        "{omissions:?}"
+    );
+    assert!(omissions
+        .iter()
+        .any(|item| item.reason.contains("Saved affine mask tracking")));
+    let sequence = project.single_sequence().unwrap();
+    let frame = 8_511_237_907;
+    assert_eq!(sequence.frame_rate.ticks_per_frame(), frame);
+    let clip = sequence.video_occurrences().next().unwrap();
+    let mask = clip.opacity_mask.as_ref().unwrap();
+    let document = roxmltree::Document::parse(&xml).unwrap();
+    let tracker = document
+        .root_element()
+        .children()
+        .find(|node| node.attribute("ObjectID") == Some("1201"))
+        .unwrap();
+    let raw_keys = tracker
+        .children()
+        .find(|node| node.has_tag_name("Keyframes"))
+        .unwrap()
+        .text()
+        .unwrap();
+    let times: Vec<i64> = raw_keys
+        .split_terminator(';')
+        .map(|key| key.split_once(',').unwrap().0.parse().unwrap())
+        .collect();
+    assert_eq!(times.len(), 184);
+    assert_eq!((times[0], times[183]), (170_224_758_140, 1_727_781_295_121));
+    assert_eq!(mask.path_keys.len(), times.len());
+    // Native keys differ by individual ticks from index * rounded frame duration.
+    for (key, time) in mask.path_keys.iter().zip(&times) {
+        assert_eq!(key.source_ticks, *time);
+        assert_eq!(key.path.vertices.len(), 4);
+    }
+    // The original ellipse centre, then centres saved in the second Tracker
+    // matrix. The first matrix must place the outline at those observations.
+    for (index, centre) in [
+        (0, [0.48159513, 0.45504087]),
+        (1, [0.48199415, 0.45453885]),
+        (90, [0.47533980, 0.50409293]),
+        (183, [0.51308346, 0.49770007]),
+    ] {
+        for (axis, expected) in centre.into_iter().enumerate() {
+            let actual = mask.path_keys[index]
+                .path
+                .vertices
+                .iter()
+                .map(|vertex| f64::from(vertex.point[axis]))
+                .sum::<f64>()
+                / 4.0;
+            assert!(
+                (actual - expected).abs() < 1e-6,
+                "key {index}, axis {axis}: {actual}"
+            );
+        }
+    }
+    assert_eq!(mask.path, mask.path_keys[0].path);
+    // The native ellipse stores absolute handle positions: both handles share
+    // the top vertex's y coordinate, not a zero relative y offset.
+    let top = &mask.path.vertices[0];
+    assert_eq!(top.point, [0.48159513, 0.19891007]);
+    assert_eq!(top.in_tangent, [0.42568898, 0.19891007]);
+    assert_eq!(top.out_tangent, [0.5375013, 0.19891007]);
+    // The last saved affine matrix has translation [-0.22245486, -0.22462192].
+    // These control positions include it, just as the anchor positions do.
+    let top = &mask.path_keys[183].path.vertices[0];
+    assert_eq!(top.in_tangent, [0.43054572, 0.100648336]);
+    assert_eq!(top.out_tangent, [0.6027959, 0.10559781]);
+    let mut trimmed = sequence.clone();
+    let clip = trimmed.video_tracks[0].clip_mut(0);
+    clip.in_ticks += TICKS;
+    clip.start_ticks += TICKS;
+    let editable = crate::tests::support::project_document_with_media(&trimmed, &project.media);
+    let track = editable["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["target"]["propertyType"] == "shapePath")
+        .unwrap();
+    let keys = track["animator"]["keyframes"].as_array().unwrap();
+    assert_eq!(keys.len(), times.len());
+    for (key, time) in keys.iter().zip(&times) {
+        let expected = ((*time - TICKS) as f64 * 1000.0 / TICKS as f64).round() as i64;
+        assert_eq!(key["layerTime"].as_i64(), Some(expected));
+        assert_eq!(key["easing"]["type"], "linear");
+    }
+    assert_ne!(keys[0]["value"], keys[183]["value"]);
+    // The editable cubic consumes absolute control positions in the native
+    // 1280x720 source frame. Relative vectors would displace both controls.
+    let segment = &keys[183]["value"]["value"]["commands"][1];
+    assert_eq!(segment["type"], "cubicTo");
+    for (field, coordinate, pixels) in [
+        ("c1x", 0.6027959_f32, 1280.0),
+        ("c1y", 0.10559781, 720.0),
+        ("c2x", 0.67100793, 1280.0),
+        ("c2y", 0.28426215, 720.0),
+    ] {
+        assert_eq!(
+            segment[field].as_f64(),
+            Some(f64::from(coordinate) * pixels)
+        );
+    }
+    // Supplementary writer check on a new catalogue-rate output owner, not a
+    // change to the native input clock above. Native sequence rates are import
+    // only; ordinary export selects its output profile. File inspection would
+    // normally supply the codec. Edited FX export is covered by the mask-path
+    // source-In regression in convert/tests/tesseract_to_premiere.rs.
+    let expected = mask.clone();
+    let mut output = crate::tests::support::video_sequence();
+    let owner = output.video_tracks[0].clip_mut(0);
+    owner.opacity_mask = Some(expected.clone());
+    owner.end_ticks = 10 * TICKS;
+    owner.out_ticks = 10 * TICKS;
+    output.timeline_end_ticks = 10 * TICKS;
+    let mut writable = crate::schema::PrProjectFile {
+        sequences: vec![output],
+        media: crate::tests::support::video_media(),
+    };
+    for media in writable.media.values_mut() {
+        media.absolute_paths = vec![(
+            crate::schema::records::MediaPathField::FilePath,
+            std::env::temp_dir().join(&media.name),
+        )];
+        let relative = format!("./media/{}", media.name);
+        media.relative_path = Some(relative.clone());
+        media.relative_paths = vec![relative];
+        if let Some(video) = &mut media.video {
+            video.kind = crate::schema::PrMediaKind::Video {
+                codec: Some(crate::schema::VideoCodec::H264),
+                hdr_profile: None,
+            };
+        }
+    }
+    let written = project_xml(&writable).unwrap();
+    let (reopened, _) = inspect_project_with_omissions(&written, None).unwrap();
+    let reopened = reopened.single_sequence().unwrap();
+    assert_eq!(reopened.frame_rate, crate::schema::FrameRate::Fps30);
+    assert_eq!(
+        reopened
+            .video_occurrences()
+            .next()
+            .unwrap()
+            .opacity_mask
+            .as_ref()
+            .unwrap(),
+        &expected
+    );
+}
+
+#[test]
+fn tracker_samples_reject_truncation_perspective_and_inconsistent_centres() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/feature_mask_tracker_26_5.prproj");
+    let xml = crate::format::read_xml(&fixture).unwrap();
+    let document = roxmltree::Document::parse(&xml).unwrap();
+    let parameter = document
+        .root_element()
+        .children()
+        .find(|node| node.attribute("ObjectID") == Some("1201"))
+        .unwrap();
+    let keys = parameter
+        .children()
+        .find(|node| node.has_tag_name("Keyframes"))
+        .unwrap()
+        .text()
+        .unwrap();
+    let (_, encoded) = keys.split(';').nth(1).unwrap().split_once(',').unwrap();
+    let payload = STANDARD.decode(encoded).unwrap();
+    let mut perspective = payload.clone();
+    perspective[12..16].copy_from_slice(&0.25_f32.to_le_bytes());
+    let mut different_centre = payload.clone();
+    different_centre[64..68].copy_from_slice(&1.0_f32.to_le_bytes());
+    for malformed in [payload[..3].to_vec(), perspective, different_centre] {
+        assert!(crate::schema::decode_mask_tracker(&malformed).is_err());
+    }
+}
+
+#[test]
+fn a_saved_keyed_mask_path_reads_only_beside_identical_centre_keys() {
+    // Clip K (`VideoClipTrackItem:82`) keys its Path at 0.5 s, 1.5 s and 2 s
+    // (4, 4 and 5 vertices), and its mask Position (176) and Anchor Point
+    // (182) with identical records: the same three keys at the outlines'
+    // centres, automatic spatial tangents, and 0:0 as the static start.
+    // Position minus Anchor Point stays zero, so the mask transform stays
+    // the identity and only the Path converts.
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(KEYED_MASK_26_5);
+    let saved = crate::format::read_xml(&path).unwrap();
+    let read = |xml: &str| inspect_project_with_omissions(xml, Some(KEYED_MASK_SEQUENCE)).unwrap();
+    let (project, omissions) = read(&saved);
+    assert!(
+        omissions
+            .iter()
+            .all(|omission| omission.scope != OmissionScope::Occurrence),
+        "{omissions:?}"
+    );
+    let k = project.sequences[0]
+        .video_occurrences()
+        .find(|clip| clip.id.as_deref() == Some("VideoClipTrackItem:82"))
+        .unwrap();
+    let mask = k.opacity_mask.as_ref().unwrap();
+    assert_eq!(
+        mask.path_keys
+            .iter()
+            .map(|key| (key.source_ticks, key.path.vertices.len()))
+            .collect::<Vec<_>>(),
+        [(TICKS / 2, 4), (3 * TICKS / 2, 4), (2 * TICKS, 5)]
+    );
+    assert_eq!(mask.path, mask.path_keys[0].path);
+    // A centre that moves another way between equal keys, or two identical
+    // centres that the point reader rejects, omit K alone.
+    let tangent = "-1.5308079514744108e-18,-0.0083333303531010951;";
+    let automatic = ",5,4,0,0,0.041666666666666664,0;";
+    let unsupported = ",5,3,0,0,0.041666666666666664,0;";
+    for (case, xml, reason) in [
         (
-            // Fixture clip E: a masked effect omits its clip in this form as
-            // in the corpus form; the clip never imports unblurred.
-            "mask on Gaussian Blur",
-            with_chain(
-                &with_second_clip(SOURCE),
-                DEFAULT_FLAGS,
-                &[(
-                    20,
-                    blur(20).replace(
-                        "</Component><MatchName>AE.ADBE Gaussian Blur 2</MatchName>",
-                        "</Component><SubComponents Version=\"1\"><SubComponent Index=\"0\" ObjectRef=\"184\"/></SubComponents><MatchName>AE.ADBE Gaussian Blur 2</MatchName>",
-                    ) + &fixture_mask_26_5(184),
-                )],
+            "an Anchor Point tangent of the middle key",
+            edit_start(
+                saved.clone(),
+                182,
+                tangent,
+                "-1.5308079514744108e-18,-0.0125;",
             ),
-            "carries a mask (AE.ADBE AEMask2 sub-component; JRB-2028); the clip is not converted without it",
+            "PointComponentParam:182: mask Position and Anchor Point differ; the mask transform is not converted",
+        ),
+        (
+            "identical unsupported spatial flags",
+            edit_start(
+                edit_start(saved.clone(), 176, automatic, unsupported),
+                182,
+                automatic,
+                unsupported,
+            ),
+            "PointComponentParam:176: unsupported spatial interpolation mode 5 with flags 3",
+        ),
+    ] {
+        let (project, omissions) = read(&xml);
+        assert_eq!(
+            project.sequences[0].video_occurrences().count(),
+            7,
+            "{case}"
+        );
+        let occurrences: Vec<_> = omissions
+            .iter()
+            .filter(|omission| omission.scope == OmissionScope::Occurrence)
+            .collect();
+        let [omission] = occurrences.as_slice() else {
+            panic!("{case}: {omissions:?}");
+        };
+        assert_eq!(omission.record, "82", "{case}");
+        assert!(
+            omission.reason.contains(reason),
+            "{case}: {}",
+            omission.reason
+        );
+    }
+}
+
+/// Whether a 26.5.1 mask parameter is one that Premiere 26.3 does not save:
+/// the sharpness and levels controls.
+fn sharpness_or_levels(id: u32) -> bool {
+    (30..=37).contains(&id)
+}
+
+/// [`fixture_mask_26_5`] `mask_id` without its parameters whose
+/// `ParameterID` is `dropped`, their records and their `Params` entries, the
+/// others renumbered in their saved order: with [`sharpness_or_levels`], the
+/// 26.3 form of both masks of the observed 26.3 project. The kept records are
+/// the fixture's.
+fn fixture_mask_without(mask_id: u32, dropped: impl Fn(u32) -> bool) -> String {
+    let records = fixture_mask_26_5(mask_id);
+    let wrapped = format!("<Records>{records}</Records>");
+    let document = roxmltree::Document::parse(&wrapped).unwrap();
+    let parameter_id = |node: roxmltree::Node<'_, '_>| {
+        node.children()
+            .find(|child| child.has_tag_name("ParameterID"))
+            .and_then(|id| id.text()?.parse::<u32>().ok())
+    };
+    let dropped: std::collections::BTreeSet<&str> = document
+        .root_element()
+        .children()
+        .filter(|node| {
+            parameter_id(*node).is_some_and(&dropped) && node.has_tag_name("VideoComponentParam")
+        })
+        .filter_map(|node| node.attribute("ObjectID"))
+        .collect();
+    let mut output = String::new();
+    for node in document
+        .root_element()
+        .children()
+        .filter(|node| node.is_element())
+    {
+        if node
+            .attribute("ObjectID")
+            .is_some_and(|id| dropped.contains(id))
+        {
+            continue;
+        }
+        let text = &wrapped[node.range()];
+        let params = node
+            .children()
+            .find(|child| child.has_tag_name("Component"))
+            .and_then(|component| {
+                component
+                    .children()
+                    .find(|child| child.has_tag_name("Params"))
+            });
+        let Some(params) = params else {
+            output.push_str(text);
+            continue;
+        };
+        let kept: String = params
+            .children()
+            .filter_map(|param| param.attribute("ObjectRef"))
+            .filter(|id| !dropped.contains(id))
+            .enumerate()
+            .map(|(index, id)| format!("<Param Index=\"{index}\" ObjectRef=\"{id}\"/>"))
+            .collect();
+        let offset = node.range().start;
+        output.push_str(&text[..params.range().start - offset]);
+        output.push_str(&format!("<Params Version=\"1\">{kept}</Params>"));
+        output.push_str(&text[params.range().end - offset..]);
+    }
+    output
+}
+
+/// The tracker state of every fixture mask (`ArbVideoComponentParam:193`,
+/// which masks B to E name by `BinaryHash`).
+const FIXTURE_TRACKER_STATE: &str = "DAAAAAgADAAEAAgACAAAABgAAABMAAAAEAAMAAAAAAAAAAcAAAAIABAAAAAAAAAABAAAACQAAAA0NTA1NGJlOC0xODg5LTQyNGYtOTdlYi1mN2Y1MDJkZGIxOTgAAAAAAAAAAA==";
+
+/// `records` whose saved tracker state is `edit`ed.
+fn with_tracker_state(records: String, edit: impl Fn(&mut Vec<u8>)) -> String {
+    let mut state = STANDARD.decode(FIXTURE_TRACKER_STATE).unwrap();
+    edit(&mut state);
+    let edited = records.replace(FIXTURE_TRACKER_STATE, &STANDARD.encode(state));
+    assert_ne!(edited, records, "the records name no edited tracker state");
+    edited
+}
+
+/// Name the tracker `uuid`: the 36 bytes from offset 56 of the state.
+fn naming_tracker(uuid: &'static str) -> impl Fn(&mut Vec<u8>) {
+    move |state| state[56..92].copy_from_slice(uuid.as_bytes())
+}
+
+/// [`masked_clip_26_5`] with the fixture mask `mask_id` without its
+/// parameters `dropped` ([`fixture_mask_without`]), after `edit`.
+fn masked_clip_without(
+    mask_id: u32,
+    dropped: impl Fn(u32) -> bool,
+    edit: impl Fn(String) -> String,
+) -> String {
+    with_chain(
+        &with_second_clip(SOURCE),
+        "<DefaultMotion>true</DefaultMotion><DefaultMotionComponentID>1</DefaultMotionComponentID>",
+        &[(
+            900,
+            masked_opacity(900, mask_id) + &edit(fixture_mask_without(mask_id, dropped)),
+        )],
+    )
+}
+
+/// [`masked_clip_26_5`] with the 26.3 form of the fixture mask `mask_id`,
+/// after `edit`.
+fn masked_clip_26_3(mask_id: u32, edit: impl Fn(String) -> String) -> String {
+    masked_clip_without(mask_id, sharpness_or_levels, edit)
+}
+
+#[test]
+fn premiere_26_3_masks_import_naming_any_tracker() {
+    // Fixture clip C's feathered ellipse in the 27-parameter form, its saved
+    // tracker state naming another tracker, as a 26.3 save names its own;
+    // then inverted at Mask Opacity 100, the shape of an expanded background
+    // that shows the clip below through a feathered hole.
+    let ellipse = |x: f32, y: f32, [ix, iy]: [f32; 2], [ox, oy]: [f32; 2]| PrPathVertex {
+        smooth: true,
+        point: [x, y],
+        in_tangent: [ix, iy],
+        out_tangent: [ox, oy],
+    };
+    let (tangent, far) = (0.361_925_f32, 0.638_075_f32);
+    let expected = PrMask {
+        raster: None,
+        feather_keys: Vec::new(),
+        expansion: 0.0,
+        expansion_keys: Vec::new(),
+        opacity_keys: Vec::new(),
+        path: crate::schema::text::PrShapePath {
+            vertices: vec![
+                ellipse(0.5, 0.25, [tangent, 0.25], [far, 0.25]),
+                ellipse(0.75, 0.5, [0.75, tangent], [0.75, far]),
+                ellipse(0.5, 0.75, [far, 0.75], [tangent, 0.75]),
+                ellipse(0.25, 0.5, [0.25, far], [0.25, tangent]),
+            ],
+            closed: true,
+        },
+        path_keys: Vec::new(),
+        feather: 60.0,
+        opacity: 100.0,
+        inverted: false,
+    };
+    let another = naming_tracker("0f8e3c55-2b1d-4a6e-9c7f-3d2a1b0c9e8d");
+    for (case, xml, expected) in [
+        (
+            "saved tracker",
+            masked_clip_26_3(176, |records| records),
+            expected.clone(),
+        ),
+        (
+            "another tracker",
+            masked_clip_26_3(176, |records| with_tracker_state(records, &another)),
+            expected.clone(),
+        ),
+        (
+            "inverted",
+            masked_clip_26_3(176, |records| {
+                edit_start(
+                    with_tracker_state(records, &another),
+                    285,
+                    ",false,",
+                    ",true,",
+                )
+            }),
+            PrMask {
+                raster: None,
+                inverted: true,
+                ..expected.clone()
+            },
+        ),
+    ] {
+        let (occurrence, omissions) = read(&xml);
+        assert!(omissions.is_empty(), "{case}: {omissions:?}");
+        assert_eq!(occurrence.opacity_mask, Some(expected), "{case}");
+    }
+    // The 26.5.1 form names any tracker too.
+    let (occurrence, omissions) = read(&masked_clip_26_5(176, |records| {
+        with_tracker_state(records, &another)
+    }));
+    assert!(omissions.is_empty(), "{omissions:?}");
+    assert_eq!(occurrence.opacity_mask, Some(expected));
+}
+
+#[test]
+fn premiere_26_3_masks_outside_the_saved_profile_omit_the_occurrence() {
+    let unknown_tracker = "mask control 24 (Tracker) holds an unknown value; only the saved default, naming any tracker, converts";
+    for (case, xml, reason) in [
+        (
+            "one control fewer",
+            masked_clip_without(
+                176,
+                |id| sharpness_or_levels(id) || id == 25,
+                |records| records,
+            ),
+            "VideoFilterComponent:176: unsupported mask parameter layout",
+        ),
+        (
+            "one sharpness control kept",
+            masked_clip_without(
+                176,
+                |id| id != 30 && sharpness_or_levels(id),
+                |records| records,
+            ),
+            "VideoFilterComponent:176: unsupported mask parameter layout",
+        ),
+        (
+            "a tracker UUID in capitals",
+            masked_clip_26_3(176, |records| {
+                with_tracker_state(
+                    records,
+                    naming_tracker("0F8E3C55-2B1D-4A6E-9C7F-3D2A1B0C9E8D"),
+                )
+            }),
+            unknown_tracker,
+        ),
+        (
+            "tracker text that is no UUID",
+            masked_clip_26_3(176, |records| {
+                with_tracker_state(
+                    records,
+                    naming_tracker("0f8e3c55-2b1d-4a6e-9c7f-3d2a1b0c9e8z"),
+                )
+            }),
+            unknown_tracker,
+        ),
+        (
+            "tracker state holding other data",
+            masked_clip_26_3(176, |records| {
+                with_tracker_state(records, |state| state[32] = 1)
+            }),
+            unknown_tracker,
+        ),
+        (
+            "tracker state one byte longer",
+            masked_clip_26_3(176, |records| {
+                with_tracker_state(records, |state| state.push(0))
+            }),
+            unknown_tracker,
+        ),
+        (
+            "a tracked mask transform",
+            masked_clip_26_3(176, |records| {
+                edit_start(
+                    records,
+                    192,
+                    "AQAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/",
+                    "AQAAAAAAgD8AAAAAAAAAAAAAAAAAAIA+",
+                )
+            }),
+            "unsupported vector mask Tracker matrix or reference controls",
+        ),
+        (
+            "tracked Path keys",
+            masked_clip_26_3(176, |records| {
+                edit_start(
+                    records,
+                    264,
+                    "<Name>Path</Name>",
+                    "<Name>Path</Name><IsTimeVarying>true</IsTimeVarying>",
+                )
+            }),
+            "ArbVideoComponentParam:264: animated or unknown Path is unsupported",
+        ),
+        (
+            "Feather with unmeasured velocity",
+            masked_clip_26_3(176, |records| {
+                edit_start(
+                    records,
+                    282,
+                    "</StartKeyframe>",
+                    "</StartKeyframe><Keyframes>0,60.,5,0,0,0,2,0.3;254016000000,30.,0,0,0,0,0,0;</Keyframes>",
+                )
+            }),
+            "VideoComponentParam:282: Feather supports only all-Linear keys or zero-speed handles, with temporal flags 0",
+        ),
+        (
+            "a kept control in another layout",
+            masked_clip_26_3(176, |records| {
+                edit_start(records, 282, "<UpperBound>5000<", "<UpperBound>1000<")
+            }),
+            "VideoComponentParam:282: unexpected Feather layout",
         ),
     ] {
         let (project, omissions) =
@@ -761,24 +1550,19 @@ fn premiere_26_5_masks_off_their_saved_defaults_omit_the_occurrence() {
 }
 
 #[test]
-fn a_still_with_an_opacity_mask_is_omitted_through_the_classifier() {
+fn a_still_keeps_its_opacity_mask_through_the_classifier() {
     // The classifier row (`OccurrenceEdit::OpacityMask`) reaches the still
-    // reader: `keep_occurrence` names the edit.
+    // reader: `keep_occurrence` keeps a still's one mask, as a flat video's.
     let still = masked_clip(mask(300, true), &[]).replace(
         "<VideoStream ObjectID=\"8\"><Duration>2540160000000</Duration>",
         "<VideoStream ObjectID=\"8\"><IsStill>true</IsStill><Duration>2540160000000</Duration>",
     );
     let (project, omissions) = inspect_project_with_omissions(&still, Some("sequence-1")).unwrap();
-    assert_eq!(project.sequences[0].video_occurrences().count(), 1);
-    assert!(
-        omissions
-            .iter()
-            .any(|omission| omission.scope == OmissionScope::Occurrence
-                && omission
-                    .reason
-                    .contains("Opacity mask on a still image is unsupported; occurrence omitted")),
-        "{omissions:?}"
-    );
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let occurrences: Vec<_> = project.sequences[0].video_occurrences().collect();
+    assert_eq!(occurrences.len(), 2);
+    assert!(occurrences[0].opacity_mask.is_some());
+    assert!(occurrences[1].opacity_mask.is_none());
 }
 
 #[test]
@@ -860,4 +1644,156 @@ fn written_opacity_mask_records_read_back_in_the_v7_form() {
     let clip = reread.sequences[0].video_tracks[0].clip(0);
     assert_eq!(clip.opacity_mask, Some(opacity_mask()));
     assert_eq!(clip.opacity, 100.0);
+}
+
+/// Source-derived numeric mutation; not an Adobe-authored numeric-key oracle.
+pub(super) fn numeric_mask_record_keys(records: String, name: &str, keys: &str) -> String {
+    let wrapped = format!("<Records>{records}</Records>");
+    let doc = roxmltree::Document::parse(&wrapped).unwrap();
+    let node = doc
+        .descendants()
+        .find(|node| {
+            node.has_tag_name("VideoComponentParam")
+                && node
+                    .children()
+                    .any(|child| child.has_tag_name("Name") && child.text() == Some(name))
+        })
+        .unwrap();
+    let original = &wrapped[node.range()];
+    let edited = original.replace("<IsTimeVarying>false</IsTimeVarying>", "");
+    let edited = edited.replace(
+        "</StartKeyframe>",
+        &format!(
+            "</StartKeyframe><IsTimeVarying>true</IsTimeVarying><Keyframes>{keys}</Keyframes>"
+        ),
+    );
+    assert_ne!(original, edited);
+    records.replacen(original, &edited, 1)
+}
+
+#[test]
+fn numeric_mask_native_scalar_layouts_read_signed_controls_and_zero_speed_curves() {
+    use crate::schema::PrKeyframeEasing;
+    for (modern, records) in [
+        (false, mask(300, false)),
+        (false, mask(300, true)),
+        (true, fixture_mask_26_5(157)),
+        (true, fixture_mask_without(157, sharpness_or_levels)),
+    ] {
+        let prefix = if modern { "" } else { "Mask " };
+        let records = numeric_mask_record_keys(
+            records,
+            &format!("{prefix}Feather"),
+            &format!("0,0,5,0,0,0,0,0.3;{TICKS},20,0,0,0,0.4,0,0;"),
+        );
+        let records = numeric_mask_record_keys(
+            records,
+            &format!("{prefix}Expansion"),
+            &format!("0,-12,0,0,0,0,0,0;{TICKS},24,0,0,0,0,0,0;"),
+        );
+        let records = numeric_mask_record_keys(
+            records,
+            &format!("{prefix}Opacity"),
+            &format!("0,100,4,0,0,0,0,0;{TICKS},35,0,0,0,0,0,0;"),
+        );
+        let xml = if modern {
+            masked_clip_26_5(157, |_| records.clone())
+        } else {
+            masked_clip(records, &[])
+        };
+        let still = xml.replace(
+            "<VideoStream ObjectID=\"8\"><Duration>2540160000000</Duration>",
+            "<VideoStream ObjectID=\"8\"><IsStill>true</IsStill><Duration>2540160000000</Duration>",
+        );
+        assert_ne!(still, xml);
+        let (stills, omissions) =
+            inspect_project_with_omissions(&still, Some("sequence-1")).unwrap();
+        assert!(stills.sequences[0]
+            .video_occurrences()
+            .all(|clip| clip.opacity_mask.is_none()));
+        let reason = "numeric Opacity mask keys on a still are not converted";
+        assert!(
+            omissions
+                .iter()
+                .any(|omission| omission.reason.contains(reason)),
+            "{omissions:?}"
+        );
+        let (project, omissions) =
+            inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+        let mask = project.sequences[0]
+            .video_occurrences()
+            .find_map(|clip| clip.opacity_mask.as_ref())
+            .unwrap_or_else(|| panic!("{omissions:?}"));
+        assert_eq!(mask.expansion, -12.0);
+        assert_eq!(
+            mask.expansion_keys
+                .iter()
+                .map(|key| (key.source_ticks, key.value))
+                .collect::<Vec<_>>(),
+            [(0, -12.0), (TICKS, 24.0)]
+        );
+        assert_eq!(mask.opacity_keys[1].easing, PrKeyframeEasing::Hold);
+        assert_eq!(
+            mask.feather_keys[1].easing,
+            PrKeyframeEasing::CubicBezier {
+                x1: 0.3,
+                y1: 0.0,
+                x2: 0.6,
+                y2: 1.0
+            }
+        );
+    }
+}
+
+#[test]
+fn numeric_mask_invalid_native_keys_omit_only_the_masked_occurrence() {
+    for (name, keys, reason) in [
+        ("Mask Feather", "0,-1,0,0,0,0,0,0;", "Mask Feather key"),
+        ("Mask Expansion", "0,1001,0,0,0,0,0,0;", "Mask Expansion"),
+        ("Mask Opacity", "0,101,0,0,0,0,0,0;", "Mask Opacity key"),
+        ("Mask Expansion", "0,NaN,0,0,0,0,0,0;", "nonfinite"),
+        ("Mask Expansion", "0,1,2,0,0,0,0,0;", "interpolation mode"),
+        ("Mask Expansion", "0,1,5,0,0,0,2,0.3;", "zero-speed"),
+        (
+            "Mask Expansion",
+            "0,0,0,0,0,0.16666666666666666,36,0.16666666666666666;169344000000,24,5,0,0,0.16666666666666666,0,0.16666666666666666;",
+            "zero-speed",
+        ),
+        ("Mask Expansion", "0,1,0,1,0,0,0,0;", "temporal flags"),
+        (
+            "Mask Expansion",
+            "0,1,0,0,0,0,0,0;0,2,0,0,0,0,0,0;",
+            "increasing",
+        ),
+    ] {
+        let xml = masked_clip(numeric_mask_record_keys(mask(300, false), name, keys), &[]);
+        let (project, omissions) =
+            inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+        assert_eq!(
+            project.sequences[0].video_occurrences().count(),
+            1,
+            "{name}: {omissions:?}"
+        );
+        assert!(
+            omissions.iter().any(|o| o.reason.contains(reason)),
+            "{reason}: {omissions:?}"
+        );
+    }
+    let inverted = edit_start(mask(300, false), 310, ",false,", ",true,");
+    let xml = masked_clip(
+        numeric_mask_record_keys(
+            inverted,
+            "Mask Opacity",
+            &format!("0,100,0,0,0,0,0,0;{TICKS},50,0,0,0,0,0,0;"),
+        ),
+        &[],
+    );
+    let (project, omissions) = inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+    assert_eq!(project.sequences[0].video_occurrences().count(), 1);
+    assert!(
+        omissions.iter().any(|o| o
+            .reason
+            .contains("inverted mask with Mask Opacity below 100")),
+        "{omissions:?}"
+    );
 }

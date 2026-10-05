@@ -1,0 +1,21 @@
+<!-- Derived from VideoClip1638 and VideoStream1036 in Premiere source
+     dff8bc0a167fb5882413a1190d819f9e530cc038334d04f9676a749b11806721.
+     Native InPoint, OutPoint, PlayBackwards, FrameRate and Duration are unchanged.
+     References are renumbered; labels/markers/audio are removed. A 16x16 generated
+     MOV replaces the rotated HEVC pictures. The second placement deliberately
+     has a mismatched frame rectangle to test admission despite an effect/geometry
+     omission. It is not a native render oracle. -->
+<PremiereData Version="3">
+  <Sequence ObjectUID="sequence-1"><Name>Irregular reverse</Name><TrackGroups><TrackGroup><Second ObjectRef="1"/></TrackGroup></TrackGroups></Sequence>
+  <VideoTrackGroup ObjectID="1"><TrackGroup><Tracks><Track ObjectURef="track-1"/></Tracks><FrameRate>8475667200</FrameRate></TrackGroup><FrameRect>0,0,16,16</FrameRect><ComponentOwner><Components ObjectRef="2"/></ComponentOwner></VideoTrackGroup>
+  <VideoComponentChain ObjectID="2"><ComponentChain/></VideoComponentChain>
+  <VideoClipTrack ObjectUID="track-1"><ClipTrack><Track><ID>1</ID></Track><ClipItems><TrackItems><TrackItem ObjectRef="3"/><TrackItem ObjectRef="9"/></TrackItems></ClipItems></ClipTrack></VideoClipTrack>
+  <VideoClipTrackItem ObjectID="3"><ClipTrackItem><ComponentOwner><Components ObjectRef="4"/></ComponentOwner><TrackItem><End>118659340800</End></TrackItem><SubClip ObjectRef="5"/></ClipTrackItem><FrameRect>0,0,16,16</FrameRect><PixelAspectRatio>1,1</PixelAspectRatio></VideoClipTrackItem>
+  <VideoClipTrackItem ObjectID="9"><ClipTrackItem><ComponentOwner><Components ObjectRef="4"/></ComponentOwner><TrackItem><Start>118659340800</Start><End>237318681600</End></TrackItem><SubClip ObjectRef="5"/></ClipTrackItem><FrameRect>0,0,8,8</FrameRect><PixelAspectRatio>1,1</PixelAspectRatio></VideoClipTrackItem>
+  <VideoComponentChain ObjectID="4"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>
+  <SubClip ObjectID="5"><Clip ObjectRef="6"/><Name>Irregular picture</Name></SubClip>
+  <VideoClip ObjectID="6"><Clip><Source ObjectRef="7"/><InPoint>2178246470400</InPoint><OutPoint>2296905811200</OutPoint><PlayBackwards>true</PlayBackwards></Clip></VideoClip>
+  <VideoMediaSource ObjectID="7"><MediaSource><Media ObjectURef="media-1"/></MediaSource><OriginalDuration>9137866167575</OriginalDuration></VideoMediaSource>
+  <Media ObjectUID="media-1"><VideoStream ObjectRef="8"/><RelativePath>media/source.mov</RelativePath></Media>
+  <VideoStream ObjectID="8"><Duration>9137866167575</Duration><FrameRate>8500340621</FrameRate><FrameRect>0,0,16,16</FrameRect></VideoStream>
+</PremiereData>

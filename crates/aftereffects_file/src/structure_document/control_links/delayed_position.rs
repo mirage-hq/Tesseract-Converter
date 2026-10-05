@@ -471,10 +471,16 @@ fn ease_out(time: f64, start: f64, end: f64, from: f64, to: f64) -> f64 {
         return to;
     }
     let progress = (time - start) / (end - start);
-    // Lottie's AE-compatible ExpressionManager uses these easeOut handles.
-    // This compatibility model is not an independently sampled Adobe oracle.
-    let eased = cubic_bezier_progress(progress, 0.167, 0.167, 0.667, 1.0);
+    let eased = ae_ease_out_progress(progress);
     from + (to - from) * eased
+}
+
+/// AE's `easeOut` is a cubic Hermite with unit start slope and zero end slope.
+/// Independently measured from AE 26.5 `easeOut()` readback: 0.109 at 0.1,
+/// 0.232 at 0.2 and 0.625 at 0.5 (the `expression_apis` native fixture of #5063).
+fn ae_ease_out_progress(progress: f64) -> f64 {
+    let p = progress.clamp(0.0, 1.0);
+    p * p * (3.0 - 2.0 * p) + p * (1.0 - p) * (1.0 - p)
 }
 
 fn cubic_bezier_progress(progress: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {

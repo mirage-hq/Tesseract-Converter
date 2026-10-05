@@ -253,10 +253,8 @@ pub(crate) struct PrOpacityParamSpec {
     pub(crate) control: Option<&'static str>,
     pub(crate) lower_bound: &'static str,
     pub(crate) upper_bound: &'static str,
-    /// A second `UpperBound` the reader accepts: Premiere 26.5.1 re-saves an
-    /// older Opacity record with its existing bound 26 on the primary Blend
-    /// Mode (fixture `feature_opacity_masks_26_5_strict` clips A to D,
-    /// `oracle/17/facts.md`); the bound is the enumeration length, not a value.
+    /// Another saved enumeration bound, not an additional supported value.
+    /// Re-saved 26.5 records keep 26; legacy controls can also save 27.
     /// The writer emits `upper_bound`.
     pub(crate) older_upper_bound: Option<&'static str>,
     pub(crate) animation: Option<PrAnimatedProperty>,
@@ -287,7 +285,7 @@ pub(crate) const OPACITY_PARAMS: [PrOpacityParamSpec; OPACITY_PARAM_COUNT] = [
         control: Some("10"),
         lower_bound: "0",
         upper_bound: "26",
-        older_upper_bound: None,
+        older_upper_bound: Some("27"),
         animation: None,
     },
     PrOpacityParamSpec {

@@ -42,7 +42,7 @@ pub(super) fn linked_root(
     parent: LayerId,
     source_end: Time,
     placement: std::result::Result<f64, &'static str>,
-    scope: &mut LayerScope<'_, '_, '_>,
+    scope: &mut LayerScope<'_, '_>,
     dynamics: &mut AnimationGraph,
     omissions: &mut Vec<Omission>,
 ) -> Result<std::result::Result<(Layer, Option<MotionBlurSettings>), String>> {

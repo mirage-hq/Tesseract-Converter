@@ -10,6 +10,15 @@ The executable is named `tsrct-conv`. It uses editable FX documents packaged
 as `.tsrct` files for interchange. Here, **FX** names the editable format and
 its rendered output; the existing CLI option `--to tesseract` selects FX output.
 
+## Development source of truth
+
+[`bungeeapp/jerboa`](https://github.com/bungeeapp/jerboa), under `opensource/conv/`,
+is the source of truth for converter code, documentation and tests. Make changes
+and submit issues and pull requests in Jerboa. Standalone/public distribution
+repositories are downstream mirrors, not upstream development sources. Repository
+redirects do not change this authority. See [Contributing](CONTRIBUTING.md) for the
+separate sync and publication restrictions.
+
 ## Supported formats
 
 Choose the conversion direction by the file you have and the file you need.
@@ -27,7 +36,7 @@ result and any warnings. See [supported features and limitations](docs/formats/R
 
 | tsrct-conv version | fxSchemaVersion in this source revision |
 | --- | --- |
-| 0.1.0 | 67 |
+| 0.2.0 | 69 |
 
 `fxSchemaVersion` is the FX schema inventory revision, not the `.tsrct` container
 format version or a compatibility gate. New `.tsrct` files record it in
@@ -234,8 +243,8 @@ tsrct-conv convert edited.tsrct --to premiere --output exported-premiere
 ```
 
 The default output rate is **30fps**. `--fps` accepts `23.976`, `24`, `25`, `29.97`,
-`30` or `59.94` for native Premiere output. If linked AEPs are needed, only **24,
-25 or 30fps** are accepted; fractional-rate requests fail rather than silently
+`30`, `50`, `59.94` or `60` for native Premiere output. If linked AEPs are needed,
+only **24, 25 or 30fps** are accepted; other rates fail rather than silently
 changing clocks. `--fps` is not accepted for AEP/PRPROJ → TSRCT.
 
 The package contains **one `project.prproj`** and its required media. When the
@@ -308,11 +317,18 @@ Boa's VM loop, recursion, and stack limits are defensive execution bounds, not
 a wall-clock or heap sandbox. No format adapter claims fidelity without
 independent validation; each adapter must document its own conversion behavior.
 
+## Conversion performance
+
+See the [bounded CPU regression measurements](docs/conversion-performance.md)
+for AEP/Premiere import and hybrid Premiere export optimizations, exact-output
+checks, workload-specific results and proof limits. These measurements do not
+change the supported-feature or Adobe-fidelity claims.
+
 ## Conversion test tooling
 
 For After Effects, start with the [feature × direction ledger](docs/after-effects-support.md).
 The Rust workspace and offline helper tests are the standalone development surface.
-The 38 strict Premiere cases and AE Adobe reference media are checked into
+The 41 strict Premiere cases and AE Adobe reference media are checked into
 `tests/references/`; the former 85-case `structural_only` Premiere diagnostic
 corpus is no longer registered or distributed as test coverage. Create an
 isolated Python environment for the pytest-dependent tests; do not install

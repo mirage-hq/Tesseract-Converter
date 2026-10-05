@@ -13,7 +13,7 @@
 
 use super::records::{self, XmlRecordDefinition};
 use super::text_shadow::PrTextShadow;
-use super::{PrAnimatedProperty, PrGraphic, PrPropertyAnimation};
+use super::{PrAnimatedProperty, PrGraphic, PrMask, PrPropertyAnimation};
 use std::collections::BTreeSet;
 
 /// An 8-bit RGB paint as stored by Premiere text.
@@ -184,9 +184,10 @@ pub(crate) enum SourceTextField {
     FillColor,
     Tracking,
     Leading,
-    /// Only the switch: an FX text layer has no stroke color or width track,
-    /// so the enabled keys share one stroke.
     StrokeEnabled,
+    /// Carried by an all-character text animator's additive width, not the
+    /// vector-only FX layer StrokeWidth property.
+    StrokeWidth,
     AllCaps,
 }
 
@@ -200,6 +201,7 @@ impl std::fmt::Display for SourceTextField {
             Self::Tracking => "tracking",
             Self::Leading => "leading",
             Self::StrokeEnabled => "stroke switch",
+            Self::StrokeWidth => "stroke width",
             Self::AllCaps => "all caps",
         })
     }
@@ -208,13 +210,17 @@ impl std::fmt::Display for SourceTextField {
 /// One editable text layer: its Essential Graphics name, document, and transform.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PrText {
+    /// Static Horizontal Scale when Uniform Scale is off. `transform.scale`
+    /// and its Scale keys then affect only the vertical axis.
+    pub(crate) horizontal_scale: Option<f64>,
     pub(crate) name: String,
     /// The document shown before the first Source Text key, which is the
     /// first key's document when there are keys (Premiere 26.5.1 renders it
     /// there, not the saved start value), or the static Source Text.
     pub(crate) document: PrTextDocument,
     pub(crate) transform: PrTextTransform,
-    /// Position, uniform Scale, Rotation and Opacity keys of the text object
+    /// Position, Scale, Rotation and Opacity keys of the text object. Scale
+    /// is vertical only when `horizontal_scale` is present, otherwise uniform;
     /// on the generator clock, composed like `transform`. Position keys are
     /// normalized to the sequence frame.
     pub(crate) animations: Vec<PrPropertyAnimation>,
@@ -222,6 +228,20 @@ pub(crate) struct PrText {
     /// static text. Their documents differ from `document` only in
     /// [`SourceTextField`]s ([`PrText::keyed_fields`]).
     pub(crate) source_text_keys: Vec<PrSourceTextKey>,
+    pub(crate) mask_source: Option<PrMaskSource>,
+}
+
+/// A graphic object's Mask with Shape (Shape Appearance slots 12 and 13) or
+/// Mask with Text (Source Text document slots 21 and 22), as AME renders of
+/// Premiere 26.5.1 saves measured it: the object is not
+/// drawn, and the composite of every object below it in its group keeps only
+/// where the object's rendered alpha covers it (its fill, stroke, shadow and
+/// opacity), or with `inverted` only where it does not. Objects above it are
+/// untouched, a SubGroup bounds it, and several masks of one group multiply
+/// in chain order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PrMaskSource {
+    pub(crate) inverted: bool,
 }
 
 /// Static point text whose styles cover complete lines. Its transform and
@@ -287,12 +307,14 @@ pub(crate) struct PrPathVertex {
     /// Premiere 26.5.1 and AME build 85 draw a smooth vertex's tangents and
     /// ignore a corner's, drawing straight segments, as measured on native
     /// smooth vertices and the rounded bar; every corner that Premiere saved
-    /// has both tangents on its point (`oracle/EX2b/curved-path/facts.md`).
+    /// has both tangents on its point.
     pub(crate) smooth: bool,
     pub(crate) point: [f32; 2],
-    /// The control point of the segment that ends at this vertex.
+    /// Absolute control-point coordinates for the segment ending at this vertex,
+    /// in the same coordinate space as `point`, not a vector from it.
     pub(crate) in_tangent: [f32; 2],
-    /// The control point of the segment that starts at this vertex.
+    /// Absolute control-point coordinates for the segment starting at this vertex,
+    /// in the same coordinate space as `point`, not a vector from it.
     pub(crate) out_tangent: [f32; 2],
 }
 
@@ -465,7 +487,7 @@ pub(crate) enum PrFill {
 }
 
 /// A gradient fill in the form that Premiere 26.5.1 saved and AME drew for
-/// fixture `premiere_isolated_gradient_fills_26_5` (Oracle run 23, G1-G5):
+/// fixture `premiere_isolated_gradient_fills_26_5`:
 /// every stop's midpoint at 50 %, on the shape's x axis. Premiere
 /// interpolates the color stops component-wise on encoded RGB (G4) and the
 /// opacity stops apart from them (G5).
@@ -535,7 +557,7 @@ pub(crate) const GRADIENT_Y_UNCONVERTED: &str =
 /// run 1, solid shapes), and no rendered gradient shape had one.
 pub(crate) const GRADIENT_SHADOW_APPROXIMATION: &str = "paint order of a gradient fill under a shadow is unmeasured against Premiere (the shadow under fill and stroke was measured on solid shapes)";
 
-/// The most color stops of a rendered gradient: C's three (Oracle run 23).
+/// The most color stops of a rendered gradient: three.
 const MEASURED_GRADIENT_STOPS: usize = 3;
 
 /// The shortest gradient axis that converts, in layer pixels: FX's gradient
@@ -596,6 +618,7 @@ pub(crate) struct PrAppearance {
     /// [`SHAPE_SHADOW_ANGLE`] in the text shadow's units. Like the text
     /// shadow, the conversion checks its ranges and form.
     pub(crate) shadow: Option<PrTextShadow>,
+    pub(crate) mask_source: Option<PrMaskSource>,
 }
 
 /// The fill that Premiere draws when an Appearance has no fill color
@@ -623,6 +646,8 @@ pub(crate) struct PrShape {
     /// scales x by it and y by `transform.scale`, before the rotation
     /// (fixture render G7). `None` scales both axes by `transform.scale`.
     pub(crate) horizontal_scale: Option<f64>,
+    /// Static owner-only mask in graphic-frame coordinates, after the object transform.
+    pub(crate) mask: Option<PrMask>,
 }
 
 impl PrShape {
@@ -658,7 +683,7 @@ impl PrShape {
 
     /// The warnings, one per approximation, for converting this shape's
     /// gradient fill in either direction: what no Premiere render measured
-    /// beside a gradient (Oracle run 23). That is geometry under the shape's
+    /// beside a gradient. That is geometry under the shape's
     /// Scale, Horizontal Scale or Rotation or `graphic`'s kept Vector Motion
     /// (FX draws the gradient in layer space, so it moves with the shape as a
     /// solid fill does), a shadow that the converted shape keeps
@@ -755,14 +780,51 @@ pub(crate) enum PrGraphicObject {
     Text(PrText),
     TextLines(PrTextLines),
     Shape(PrShape),
+    Group(PrGraphicGroup),
 }
+
+/// A graphic SubGroup (`AE.ADBE Graphic SubGroup`) at its identity
+/// transform, and its objects in chain order. The chain lists it before its
+/// objects, which its `ComponentGroupMap` pins to it. Its boundary bounds
+/// the Mask with Shape and Text of the objects inside it; Premiere stores no opacity for it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PrGraphicGroup {
+    /// The Essential Graphics group name (`InstanceName`).
+    pub(crate) name: String,
+    pub(crate) objects: Vec<PrGraphicObject>,
+}
+
+/// Why a Mask with Shape or Text is outside the forms that
+/// the native mask controls covered, named in omissions.
+pub(crate) const MASK_OVER_SUBGROUP_UNVERIFIED: &str =
+    "a Mask with Shape or Text over a lower SubGroup is unverified against Premiere";
 
 impl PrGraphicObject {
     pub(crate) fn validate(&self) -> crate::format::Result<()> {
         match self {
             Self::Text(text) => text.validate(),
             Self::TextLines(text) => text.validate(),
-            Self::Shape(shape) => shape.validate(),
+            Self::Shape(shape) => {
+                shape.validate()?;
+                if let Some(mask) = &shape.mask {
+                    crate::format::ensure_valid!(
+                        mask.path_keys.is_empty(),
+                        "Shape-attached Mask Path keys are unsupported"
+                    );
+                    mask.validate()?;
+                }
+                Ok(())
+            }
+            Self::Group(group) => group.objects.iter().try_for_each(Self::validate),
+        }
+    }
+
+    /// This object's Mask with Shape or Text; a SubGroup has none.
+    pub(crate) fn mask_source(&self) -> Option<PrMaskSource> {
+        match self {
+            Self::Text(text) => text.mask_source,
+            Self::Shape(shape) => shape.appearance.mask_source,
+            Self::TextLines(_) | Self::Group(_) => None,
         }
     }
 
@@ -781,8 +843,11 @@ impl PrGraphicObject {
         match &mut composed {
             Self::Text(text) => text.compose_static_vector_motion(motion, frame),
             // Keep the graphic motion as the common parent of the line block.
-            Self::TextLines(_) => return false,
-            Self::Shape(shape) => shape.compose_static_vector_motion(motion),
+            Self::TextLines(_) | Self::Group(_) => return false,
+            Self::Shape(shape) if shape.mask.is_none() => {
+                shape.compose_static_vector_motion(motion)
+            }
+            Self::Shape(_) => return false,
         }
         let folds = composed.validate().is_ok();
         if folds {
@@ -790,6 +855,85 @@ impl PrGraphicObject {
         }
         folds
     }
+}
+
+/// The omission reason of a graphic part that does not convert from
+/// Premiere, the reader's and the importer's: `reason`, and the `below`
+/// objects under a mask that go with it.
+pub(crate) fn omitted_part(reason: &str, below: usize) -> String {
+    match below {
+        0 => format!("{reason}; the object is not converted"),
+        1 => format!("{reason}; the mask and the 1 object below it are not converted"),
+        below => format!("{reason}; the mask and the {below} objects below it are not converted"),
+    }
+}
+
+/// The first object of `objects`, one group's objects in chain order at
+/// SubGroup `depth` (0 for the graphic's own objects), whose Mask with Shape
+/// or Text composite is outside the forms covered by the native mask controls,
+/// and why. That composite is the mask object and every object below it in
+/// its group; the objects above it are unaffected. Rendered: Shapes of one
+/// closed path with a solid fill or none, a stroke, a shadow and any opacity,
+/// and Texts without stroke, shadow or background, as masks of the graphic's
+/// objects or of one SubGroup's, over Texts, Shapes and masks of the same
+/// polarity. A lower SubGroup, a nested SubGroup, masks of both polarities,
+/// a gradient fill, an open path and a mask attached to the mask object were
+/// not, so both directions keep such a composite out.
+pub(crate) fn unverified_mask_composite(
+    objects: &[PrGraphicObject],
+    depth: usize,
+) -> Option<(usize, &'static str)> {
+    let mut polarity = None;
+    for (index, object) in objects.iter().enumerate() {
+        let Some(mask) = object.mask_source() else {
+            continue;
+        };
+        let lower = &objects[index + 1..];
+        let reason = if depth > 1 {
+            Some(
+                "a Mask with Shape or Text inside a nested SubGroup is unverified against Premiere",
+            )
+        } else if lower
+            .iter()
+            .any(|object| matches!(object, PrGraphicObject::Group(_)))
+        {
+            Some(MASK_OVER_SUBGROUP_UNVERIFIED)
+        } else if polarity.is_some_and(|inverted| inverted != mask.inverted) {
+            Some("Masks with Shape or Text of both polarities in one group are unverified against Premiere")
+        } else {
+            match object {
+                PrGraphicObject::Shape(shape) => [
+                    (
+                        shape.mask.is_some(),
+                        "a Mask with Shape with an attached mask is unverified against Premiere",
+                    ),
+                    (
+                        matches!(shape.appearance.fill, Some(PrFill::Gradient(_))),
+                        "a Mask with Shape with a gradient fill is unverified against Premiere",
+                    ),
+                    (
+                        !shape.path.closed,
+                        "a Mask with Shape of an open path is unverified against Premiere",
+                    ),
+                ]
+                .into_iter()
+                .find_map(|(unverified, reason)| unverified.then_some(reason)),
+                PrGraphicObject::Text(text) => {
+                    let document = &text.document;
+                    (document.stroke.is_some()
+                        || document.shadow.is_some()
+                        || document.background.is_some())
+                    .then_some("a Mask with Text with a stroke, shadow or background is unverified against Premiere")
+                }
+                PrGraphicObject::TextLines(_) | PrGraphicObject::Group(_) => None,
+            }
+        };
+        if let Some(reason) = reason {
+            return Some((index, reason));
+        }
+        polarity = Some(mask.inverted);
+    }
+    None
 }
 
 /// A static Vector Motion as the similarity that it applies to its objects,
@@ -917,6 +1061,12 @@ pub(crate) fn validate_stroke_width(width: f32, owner: &str) -> crate::format::R
     Ok(())
 }
 
+/// The editable FX `(font_family, font_style)` of an empty Text object that
+/// Premiere saved without a font (a Source Text without runs): FX's font
+/// for new text, so that the object takes text without a font edit. Premiere
+/// saved no font for it; the reader reports the substitution.
+pub(crate) const EMPTY_TEXT_FONT: [&str; 2] = ["Inter", "Regular"];
+
 /// Maps CR and CRLF paragraph breaks to the model's LF.
 pub(crate) fn normalize_line_breaks(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
@@ -954,17 +1104,11 @@ impl PrTextDocument {
             line_spacing_supported,
             "text line spacing below 0.8 em is unsupported"
         );
-        crate::format::ensure_valid!(
-            !document.font.is_empty() && !document.font.contains('\0'),
-            "text font must be a nonempty PostScript name"
-        );
-        // FX font keys join family and style with '/', and a PostScript
-        // name (OpenType name ID 6) cannot contain '/'.
-        crate::format::ensure_valid!(
-            !document.font.contains('/'),
-            "text font {:?} contains '/', so it is not a PostScript name and cannot form a family/style key",
-            document.font
-        );
+        // Zero characters draw no glyph: an empty Text object that Premiere
+        // saves without runs names no font.
+        if !(document.text.is_empty() && document.font.is_empty()) {
+            document.validate_font()?;
+        }
         if let Some(stroke) = &document.stroke {
             validate_stroke_width(stroke.width, "text")?;
         }
@@ -986,6 +1130,24 @@ impl PrTextDocument {
         }
         Ok(())
     }
+
+    /// Checks the font as a PostScript name. The writer stores every text as
+    /// one run that names its font, so an exported text needs one even when
+    /// it has no characters.
+    pub(crate) fn validate_font(&self) -> crate::format::Result<()> {
+        crate::format::ensure_valid!(
+            !self.font.is_empty() && !self.font.contains('\0'),
+            "text font must be a nonempty PostScript name"
+        );
+        // FX font keys join family and style with '/', and a PostScript
+        // name (OpenType name ID 6) cannot contain '/'.
+        crate::format::ensure_valid!(
+            !self.font.contains('/'),
+            "text font {:?} contains '/', so it is not a PostScript name and cannot form a family/style key",
+            self.font
+        );
+        Ok(())
+    }
 }
 
 impl PrText {
@@ -993,10 +1155,8 @@ impl PrText {
     /// text layer animates each of them; otherwise the first differing field
     /// that none does. Fixed fields are compared with the document; fills
     /// and strokes are compared among the keys that have one, wherever the
-    /// switch is off in between, so a fill or stroke switched on after a key
-    /// without one still has one color and width. Enabled strokes must share
-    /// theirs, because FX text has no stroke color or width track
-    /// (`fx_composition` rejects `StrokeColor` and `StrokeWidth` on text).
+    /// switch is off in between. Enabled strokes must share their color;
+    /// width changes use an all-character text animator.
     pub(crate) fn keyed_fields(&self) -> crate::format::Result<BTreeSet<SourceTextField>> {
         let first = &self.document;
         let keys = self.source_text_keys.iter().map(|key| &key.document);
@@ -1013,8 +1173,8 @@ impl PrText {
             (
                 keys.clone()
                     .filter_map(|key| key.stroke)
-                    .any(|stroke| Some(stroke) != first_stroke),
-                "stroke color or width",
+                    .any(|stroke| Some(stroke.color) != first_stroke.map(|stroke| stroke.color)),
+                "stroke color",
             ),
         ];
         if let Some((_, field)) = fixed.iter().find(|(differs, _)| *differs) {
@@ -1052,6 +1212,12 @@ impl PrText {
                 StrokeEnabled,
             ),
             (
+                keys.clone()
+                    .filter_map(|key| key.stroke)
+                    .any(|stroke| Some(stroke.width) != first_stroke.map(|stroke| stroke.width)),
+                StrokeWidth,
+            ),
+            (
                 keys.clone().any(|key| key.all_caps != first.all_caps),
                 AllCaps,
             ),
@@ -1080,15 +1246,20 @@ impl PrText {
             key.document.validate()?;
         }
         self.keyed_fields()?;
+        crate::format::ensure_valid!(
+            self.horizontal_scale
+                .is_none_or(|scale| TEXT_PARAMS[3].holds(scale)),
+            "text Horizontal Scale must be within Premiere's bounds"
+        );
         validate_transform(&self.transform, "text")?;
         validate_animations(&self.animations, &TEXT_PARAMS, "text")
     }
 
     /// Folds a static Vector Motion into this text layer's transform and keys.
     ///
-    /// Both are similarity transforms, `x -> position + scale * R(rotation) * (x - anchor)`,
-    /// with clockwise rotation in y-down frame coordinates, and Vector Motion
-    /// scale is uniform. So the text draws the same: its position, the
+    /// Vector Motion is a similarity transform, with clockwise rotation in
+    /// y-down frame coordinates. Its uniform scale multiplies both text axes,
+    /// including a separately held Horizontal Scale. So the text draws the same: its position, the
     /// position keys and their spatial tangents move through the Vector
     /// Motion, scale and its keys multiply, and rotation and its keys add.
     /// Key times and easing do not change. `motion` must have no keys.
@@ -1103,6 +1274,9 @@ impl PrText {
         );
         let similarity = Similarity::of(motion);
         similarity.compose(&mut self.transform);
+        if let Some(scale) = &mut self.horizontal_scale {
+            *scale *= similarity.scale;
+        }
         let size = frame.map(f64::from);
         for animation in &mut self.animations {
             match animation {
@@ -1308,6 +1482,11 @@ use GraphicParamRole::{
 
 pub(crate) const TEXT_PARAM_COUNT: usize = 21;
 
+/// Legacy static Text ends at Parent Rotation (ID 21). The later unnamed
+/// false Boolean ID 22 has no control in that layout; all earlier masking,
+/// edge and parent controls remain present and must keep their defaults.
+pub(crate) const LEGACY_TEXT_PARAM_COUNT: usize = 20;
+
 /// Text component parameters after Source Text (ParameterID 1), in native order.
 /// Unnamed booleans and sliders are responsive-design and masking controls.
 pub(crate) const TEXT_PARAMS: [GraphicParamSpec; TEXT_PARAM_COUNT] = [
@@ -1346,9 +1525,9 @@ pub(crate) const TEXT_PARAMS: [GraphicParamSpec; TEXT_PARAM_COUNT] = [
         None,
         "100.",
         (Some("0"), Some("4000")),
-        Fixed,
+        HorizontalScale,
     ),
-    param(6, Some(" "), BOOL, None, "true", (None, None), Fixed),
+    param(6, Some(" "), BOOL, None, "true", (None, None), Uniform),
     param(
         7,
         Some("Rotation"),
@@ -1649,7 +1828,7 @@ mod tests {
                 .map(|spec| spec.id)
                 .collect()
         };
-        assert_eq!(roles(&TEXT_PARAMS), [3, 4, 7, 8, 9, 13, 14]);
+        assert_eq!(roles(&TEXT_PARAMS), [3, 4, 5, 6, 7, 8, 9, 13, 14]);
         // Shape Position, Scale, Horizontal Scale, Uniform Scale, Rotation,
         // Opacity and Anchor Point.
         assert_eq!(roles(&SHAPE_PARAMS), [4, 5, 6, 7, 8, 9, 10]);

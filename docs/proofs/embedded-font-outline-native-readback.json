@@ -1,0 +1,297 @@
+{
+  "scope": "FX to AE bounded static embedded physical-font outlines; Opacity dynamics only",
+  "import": "unchanged",
+  "native_operation": "managed headless-adobe run_jsx",
+  "request_id": "accuracy-w03-p032-outline-numeric-acceptance-3cfc5487-v1",
+  "job_id": "ae9070718e7748498f9f8924f2187588",
+  "artifact_sha256": "92aba985b8190480bd4319da055187698a462b30f9afa9917e43111bda74d4ce",
+  "application_version": "26.5x89",
+  "converter_commit": "3cfc5487f",
+  "converter_build_receipt_sha256": "bc32a9cec1909a164e5220df256c236d1a66a043da992ebb7893f4640a40d01b",
+  "source_sha256": "27a98e5ebc0aa3944da1397327857e44f00f2c7d3dfec44ee3b85fd82e82bcf3",
+  "script_sha256": "ac7991bd392c77cdb04644cc0333ece4ba37ab5c35741e492a6a66e746f5151b",
+  "independent_control_job_id": "5bb6433d1605490d97ee20ef9ff3afe6",
+  "independent_control_aep_sha256": "93d742d4cfa728cb0bba42e38e878a3eaa71707652821e5bf3f063e1a93d0a6e",
+  "result": {
+    "editResponse": true,
+    "editableTextCount": 8,
+    "enclosureChecks": 8,
+    "numericOnly": true,
+    "projects": [
+      [
+        {
+          "anchor": [
+            0,
+            0,
+            0
+          ],
+          "duration": 7,
+          "glyphHeight": 32.5500018149614,
+          "glyphLeft": -192.569996997714,
+          "glyphTop": -31.1640018224716,
+          "glyphWidth": 191.897989556193,
+          "height": 1138,
+          "opacityKeys": [
+            {
+              "time": 0,
+              "value": 0
+            },
+            {
+              "time": 1.55999348958333,
+              "value": 0
+            },
+            {
+              "time": 1.88001302083333,
+              "value": 100
+            }
+          ],
+          "position": [
+            1881,
+            124,
+            0
+          ],
+          "width": 2079
+        },
+        {
+          "anchor": [
+            0,
+            0,
+            0
+          ],
+          "duration": 7,
+          "glyphHeight": 41.8320021629333,
+          "glyphLeft": -363.132008716464,
+          "glyphTop": -31.7520017623901,
+          "glyphWidth": 362.837999507785,
+          "height": 1138,
+          "opacityKeys": [
+            {
+              "time": 0,
+              "value": 0
+            },
+            {
+              "time": 3.04000651041667,
+              "value": 0
+            },
+            {
+              "time": 3.34000651041667,
+              "value": 100
+            }
+          ],
+          "position": [
+            1882,
+            124,
+            0
+          ],
+          "width": 2080
+        },
+        {
+          "anchor": [
+            0,
+            0,
+            0
+          ],
+          "duration": 7,
+          "glyphHeight": 33.13800175488,
+          "glyphLeft": -176.819996997714,
+          "glyphTop": -31.7520017623901,
+          "glyphWidth": 174.762004777789,
+          "height": 1138,
+          "opacityKeys": [
+            {
+              "time": 0,
+              "value": 0
+            },
+            {
+              "time": 4,
+              "value": 0
+            },
+            {
+              "time": 4.3,
+              "value": 100
+            }
+          ],
+          "position": [
+            1883,
+            124,
+            0
+          ],
+          "width": 2081
+        },
+        {
+          "anchor": [
+            0,
+            0,
+            0
+          ],
+          "duration": 7,
+          "glyphHeight": 32.5500018149614,
+          "glyphLeft": -178.373997852206,
+          "glyphTop": -31.1640018224716,
+          "glyphWidth": 178.080003902316,
+          "height": 1138,
+          "opacityKeys": [
+            {
+              "time": 0,
+              "value": 0
+            },
+            {
+              "time": 4.95999348958333,
+              "value": 0
+            },
+            {
+              "time": 5.25999348958333,
+              "value": 100
+            }
+          ],
+          "position": [
+            1883,
+            124,
+            0
+          ],
+          "width": 2081
+        }
+      ],
+      [
+        {
+          "anchor": [
+            0,
+            0,
+            0
+          ],
+          "duration": 7,
+          "glyphHeight": 325.500018149614,
+          "glyphLeft": -1925.69984790683,
+          "glyphTop": -311.640018224716,
+          "glyphWidth": 1918.97992607951,
+          "height": 1326,
+          "opacityKeys": [
+            {
+              "time": 0,
+              "value": 0
+            },
+            {
+              "time": 1.55999348958333,
+              "value": 0
+            },
+            {
+              "time": 1.88001302083333,
+              "value": 100
+            }
+          ],
+          "position": [
+            1926,
+            312,
+            0
+          ],
+          "width": 2124
+        },
+        {
+          "anchor": [
+            0,
+            0,
+            0
+          ],
+          "duration": 7,
+          "glyphHeight": 41.8320021629333,
+          "glyphLeft": -363.132008716464,
+          "glyphTop": -31.7520017623901,
+          "glyphWidth": 362.837999507785,
+          "height": 1138,
+          "opacityKeys": [
+            {
+              "time": 0,
+              "value": 0
+            },
+            {
+              "time": 3.04000651041667,
+              "value": 0
+            },
+            {
+              "time": 3.34000651041667,
+              "value": 100
+            }
+          ],
+          "position": [
+            1882,
+            124,
+            0
+          ],
+          "width": 2080
+        },
+        {
+          "anchor": [
+            0,
+            0,
+            0
+          ],
+          "duration": 7,
+          "glyphHeight": 33.13800175488,
+          "glyphLeft": -176.819996997714,
+          "glyphTop": -31.7520017623901,
+          "glyphWidth": 174.762004777789,
+          "height": 1138,
+          "opacityKeys": [
+            {
+              "time": 0,
+              "value": 0
+            },
+            {
+              "time": 4,
+              "value": 0
+            },
+            {
+              "time": 4.3,
+              "value": 100
+            }
+          ],
+          "position": [
+            1883,
+            124,
+            0
+          ],
+          "width": 2081
+        },
+        {
+          "anchor": [
+            0,
+            0,
+            0
+          ],
+          "duration": 7,
+          "glyphHeight": 32.5500018149614,
+          "glyphLeft": -178.373997852206,
+          "glyphTop": -31.1640018224716,
+          "glyphWidth": 178.080003902316,
+          "height": 1138,
+          "opacityKeys": [
+            {
+              "time": 0,
+              "value": 0
+            },
+            {
+              "time": 4.95999348958333,
+              "value": 0
+            },
+            {
+              "time": 5.25999348958333,
+              "value": 100
+            }
+          ],
+          "position": [
+            1883,
+            124,
+            0
+          ],
+          "width": 2081
+        }
+      ]
+    ]
+  },
+  "limitations": [
+    "No native Source Text/CUSTOM_VALUE read",
+    "Not general font shaping or substitution proof",
+    "RGB/alpha/audio and formal native reference Asset fidelity not established",
+    "Import unchanged"
+  ]
+}

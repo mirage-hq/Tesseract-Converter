@@ -1,4 +1,4 @@
-//! Conservative finite all-time bounds for native hierarchy precompositions.
+//! Conservative finite bounds for native hierarchy precompositions.
 //!
 //! This module deliberately reasons from finite independent animator tracks. It
 //! never samples frames: temporal and spatial cubic control hulls, interval
@@ -8,33 +8,88 @@ use std::collections::BTreeMap;
 
 use fx_schema::{
     Dimensions, GroupLayer, Layer, LayerData, LayerId, Position, PropType, PropertyValue,
-    ShapeContent, ShapeLineJoin, ShapePath, ShapePolyStar, ShapeStrokeStyle, Transform,
-    animator::{AnimationGraphEntry, AnimatorData, PropertyKeyframeEasing, PropertyKeyframeTrack},
+    ShapeContent, ShapeLineJoin, ShapePath, ShapePolyStar, ShapeStrokeStyle, TimeRangeProperty,
+    Transform,
+    animator::{AnimatorData, PropertyKeyframeEasing, PropertyKeyframeTrack},
     effect::{EffectData, EffectPayload, LayerEffect},
 };
 
-use super::{Bounds, media};
+use super::{Bounds, SourceInterval, media};
 
 /// Computes one finite enclosure for every child over all values reachable from
 /// independent native-exportable tracks. The root group's own transform is not
 /// applied; the caller owns the precomposition occurrence transform.
-pub(super) fn child_union(
+pub(super) fn child_union_in_interval(
     group: &GroupLayer,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     resolved_media: &BTreeMap<String, media::ResolvedMediaSource>,
     canvas: Dimensions,
+    source_interval: Option<SourceInterval>,
 ) -> Result<Option<Bounds>, &'static str> {
     Analyzer {
         dynamics,
         resolved_media,
         canvas,
+        source_interval: source_interval
+            .filter(|_| !group.motion_blur && !temporal_effects(&group.effects)),
     }
     .layers_union(&group.layers)
 }
 
+/// A certified final-output or planar-consumer source can leave planar Text
+/// unbounded: its visible raster demand is not a guessed glyph box. Validate
+/// every remaining branch with the ordinary analyzer so sibling order cannot
+/// hide a near-plane crossing behind the first unknown Text extent.
+pub(super) fn validate_spatial_source_with_planar_text(
+    group: &GroupLayer,
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+    resolved_media: &BTreeMap<String, media::ResolvedMediaSource>,
+    canvas: Dimensions,
+) -> Result<(), &'static str> {
+    let analyzer = Analyzer {
+        dynamics,
+        resolved_media,
+        canvas,
+        source_interval: None,
+    };
+    let layers = group
+        .layers
+        .iter()
+        .filter_map(|layer| {
+            analyzer
+                .without_planar_text(layer, group.id, false)
+                .transpose()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    analyzer.layers_union(&layers)?;
+    Ok(())
+}
+
+pub(super) fn validate_masked_source(
+    group: &GroupLayer,
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+    resolved_media: &BTreeMap<String, media::ResolvedMediaSource>,
+    canvas: Dimensions,
+) -> Result<(), &'static str> {
+    let analyzer = Analyzer {
+        dynamics,
+        resolved_media,
+        canvas,
+        source_interval: None,
+    };
+    let layer = Layer::from_data(&LayerData::Group(group.clone()))
+        .map_err(|_| "Source-mask validation could not rebuild its Group")?;
+    if let Some(normalized) =
+        analyzer.without_planar_text(&layer, group.parent.unwrap_or(group.id), false)?
+    {
+        analyzer.layer_bounds(&normalized)?;
+    }
+    Ok(())
+}
+
 pub(super) fn layer_bounds(
     layer: &Layer,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     resolved_media: &BTreeMap<String, media::ResolvedMediaSource>,
     canvas: Dimensions,
 ) -> Result<Option<Bounds>, &'static str> {
@@ -42,6 +97,7 @@ pub(super) fn layer_bounds(
         dynamics,
         resolved_media,
         canvas,
+        source_interval: None,
     }
     .layer_bounds(layer)
 }
@@ -53,7 +109,7 @@ pub(super) fn inverse_planar_demand(
     demand: &mut super::Demand,
     id: LayerId,
     transform: &Transform,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     canvas: Dimensions,
 ) -> Result<(), &'static str> {
     let Position::TwoD([x, y]) = transform.position else {
@@ -67,10 +123,15 @@ pub(super) fn inverse_planar_demand(
     {
         return Err("Out-of-plane or skewed occurrence has no certified inverse");
     }
-    if !dynamics
-        .iter()
-        .any(|entry| entry.target.layer_id() == Some(id))
-    {
+    // Alpha-only animation does not change a spatial inverse. Treating it as
+    // motion would replace an exact identity rectangle with a circumcircle,
+    // inflating P047's nested source demand despite unchanged geometry.
+    if dynamics.for_layer(id).all(|entry| {
+        entry
+            .target
+            .as_property()
+            .is_some_and(|target| target.property_type() == PropType::Opacity)
+    }) {
         let matrix = super::skew::matrix_components(
             transform.scale,
             transform.rotation,
@@ -94,6 +155,7 @@ pub(super) fn inverse_planar_demand(
         dynamics,
         resolved_media: &empty_media,
         canvas,
+        source_interval: None,
     };
     analyzer.validate_layer_animators(id)?;
     // Reject properties which can change the native geometry independently of
@@ -169,12 +231,133 @@ pub(super) fn inverse_planar_demand(
 }
 
 struct Analyzer<'a> {
-    dynamics: &'a [AnimationGraphEntry],
+    dynamics: &'a crate::export_document::AnimationIndex<'a>,
     resolved_media: &'a BTreeMap<String, media::ResolvedMediaSource>,
     canvas: Dimensions,
+    source_interval: Option<SourceInterval>,
+}
+
+pub(super) fn temporal_effects(effects: &[fx_schema::EffectRecord]) -> bool {
+    effects.iter().any(|record| match record.data() {
+        EffectData::Identified { enabled: false, .. } => false,
+        EffectData::Identified { effect, .. } | EffectData::Legacy(effect) => matches!(
+            effect,
+            EffectPayload::Unknown(_)
+                | EffectPayload::Known(
+                    LayerEffect::PosterizeTime { .. }
+                        | LayerEffect::PixelMotionBlur { .. }
+                        | LayerEffect::CustomShader { .. }
+                )
+        ),
+    })
 }
 
 impl Analyzer<'_> {
+    fn without_planar_text(
+        &self,
+        layer: &Layer,
+        structural_parent: LayerId,
+        projective_ancestor: bool,
+    ) -> Result<Option<Layer>, &'static str> {
+        if layer
+            .parent_id()
+            .is_some_and(|parent| parent != structural_parent)
+        {
+            return Err("Final-root Text validation cannot follow an external coordinate parent");
+        }
+        self.validate_layer_animators(layer.id())?;
+        match layer.data() {
+            LayerData::Text(text) => {
+                if projective_ancestor
+                    || super::super::transform3d::requires_native_3d(
+                        self.dynamics,
+                        &text.transform,
+                        text.id,
+                    )
+                {
+                    return Err(
+                        "Projective Text glyph geometry has no proved near-plane enclosure",
+                    );
+                }
+                // Validate finite authored transform values/tracks without
+                // treating the viewport as the Text's actual glyph extent.
+                self.transform_bounds(
+                    Bounds {
+                        min: [0.0; 2],
+                        max: [f64::from(self.canvas.width), f64::from(self.canvas.height)],
+                    },
+                    text.id,
+                    &text.transform,
+                )?;
+                Ok(None)
+            }
+            LayerData::Group(group) => {
+                super::check_static_nested_group(group)?;
+                let source_mask =
+                    super::super::source_rect_mask_bounds(group, self.dynamics, self.canvas);
+                let projective = source_mask.is_none()
+                    && (projective_ancestor
+                        || super::super::transform3d::requires_native_3d(
+                            self.dynamics,
+                            &group.transform,
+                            group.id,
+                        ));
+                let mut normalized = group.clone();
+                normalized.layers = group
+                    .layers
+                    .iter()
+                    .filter_map(|child| {
+                        self.without_planar_text(child, group.id, projective)
+                            .transpose()
+                    })
+                    .collect::<Result<_, _>>()?;
+                if source_mask.is_some() {
+                    // Retain the real finite source guide as analysis geometry,
+                    // even when it is hidden from the painted child stack.
+                    for child in &mut normalized.layers {
+                        if group
+                            .masks
+                            .iter()
+                            .any(|mask| mask.layer == Some(child.id()))
+                            && let LayerData::Rect(rect) = child.data()
+                        {
+                            let mut rect = rect.clone();
+                            rect.is_hidden = false;
+                            *child = Layer::from_data(&LayerData::Rect(rect)).map_err(|_| {
+                                "Source-mask validation could not rebuild its native Rect guide"
+                            })?;
+                        }
+                    }
+                }
+                Layer::from_data(&LayerData::Group(normalized))
+                    .map(Some)
+                    .map_err(
+                        |_| "Final-root Text validation could not rebuild analysis-only geometry",
+                    )
+            }
+            LayerData::Adjustment(adjustment) => {
+                if !adjustment
+                    .effects
+                    .iter()
+                    .all(super::root_viewport::pointwise_adjustment)
+                {
+                    return Err("Spatial Adjustment cannot certify an unknown planar Text input");
+                }
+                // This analysis-only stack already excludes unknown planar
+                // glyphs. Certified pointwise effects preserve the support of
+                // every retained sibling; actual export keeps their effects.
+                let mut normalized = adjustment.clone();
+                normalized.effects.clear();
+                Layer::from_data(&LayerData::Adjustment(normalized))
+                    .map(Some)
+                    .map_err(
+                        |_| "Final-root Text validation could not rebuild analysis-only Adjustment",
+                    )
+            }
+            _ => Ok(Some(layer.clone())),
+        }
+    }
+
     fn layers_union(&self, layers: &[Layer]) -> Result<Option<Bounds>, &'static str> {
         // FX stores siblings top-to-bottom. Walk from the bottom so an
         // Adjustment can reason from exactly the already-enclosed suffix that
@@ -200,6 +383,11 @@ impl Analyzer<'_> {
         adjustment: &fx_schema::AdjustmentLayer,
         lower_stack: Option<Bounds>,
     ) -> Result<Option<Bounds>, &'static str> {
+        // An omitted Adjustment has no native geometry or sampling domain.
+        // Do not let its animators discard the supported containing Group.
+        if super::super::effects::omitted_shader_adjustment(&adjustment.effects) {
+            return Ok(None);
+        }
         self.validate_layer_animators(adjustment.id)?;
         let Some(lower_stack) = lower_stack else {
             return Ok(None);
@@ -248,6 +436,90 @@ impl Analyzer<'_> {
     }
 
     fn layer_bounds(&self, layer: &Layer) -> Result<Option<Bounds>, &'static str> {
+        let Some(interval) = self.source_interval else {
+            return self.layer_bounds_inner(layer);
+        };
+        // Boolean operands share one native vector-layer clock and retain the
+        // owner's active range; they are not separately timed child layers.
+        if matches!(layer.data(), LayerData::BooleanOperation(_)) {
+            return Analyzer {
+                source_interval: None,
+                ..*self
+            }
+            .layer_bounds_inner(layer);
+        }
+        let window = interval.range;
+        let active = layer.active_range();
+        // Ordinary leaf starts/ends use rects::apply_timing's fixed 24576-Hz
+        // clock. Unproved rounded phase or an intersecting rounded tail must
+        // keep all-time geometry. Group/Video source clocks use exact rationals.
+        if !matches!(layer.data(), LayerData::Group(_) | LayerData::Video(_)) {
+            let clock = crate::writer::PropertyClock::DEFAULT;
+            let exact = |time: fx_schema::Time| {
+                i64::try_from(time.as_millis())
+                    .ok()
+                    .and_then(|millis| clock.units(millis).ok())
+                    .is_some_and(|units| {
+                        i128::from(units) * 1000
+                            == i128::from(time.as_millis()) * i128::from(clock.ticks())
+                    })
+            };
+            if !exact(active.start)
+                || (active.end() >= window.start
+                    && active.end() <= window.end()
+                    && !exact(active.end()))
+            {
+                return Analyzer {
+                    source_interval: None,
+                    ..*self
+                }
+                .layer_bounds_inner(layer);
+            }
+        }
+        let start = window.start.max(active.start);
+        let end = window.end().min(active.end());
+        if start >= end {
+            return Ok(None);
+        }
+        let window = TimeRangeProperty::new(
+            start,
+            fx_schema::Duration::from_millis(end.as_millis() - start.as_millis()),
+        );
+        let motion_blur = match layer.data() {
+            LayerData::Rect(v) => v.motion_blur,
+            LayerData::Shape(v) => v.motion_blur,
+            LayerData::Group(v) => v.motion_blur,
+            LayerData::BooleanOperation(v) => v.motion_blur,
+            LayerData::Image(v) => v.motion_blur,
+            LayerData::Video(v) => v.motion_blur,
+            _ => true,
+        };
+        let source_interval = if motion_blur || temporal_effects(layer.data().effects()) {
+            None
+        } else {
+            match layer.data() {
+                LayerData::Group(group) => {
+                    super::super::hierarchy_clock::affine_source_interval(&group.playback, window)
+                        .ok()
+                        .flatten()
+                }
+                // Video animator clocks follow source playback, whose remaps
+                // need a separate enclosure. Static video bounds are unchanged.
+                LayerData::Video(_) => None,
+                _ => Some(TimeRangeProperty::new(
+                    fx_schema::Time::from_millis(start.as_millis() - active.start.as_millis()),
+                    window.duration,
+                )),
+            }
+        };
+        Analyzer {
+            source_interval: source_interval.map(|range| SourceInterval { range, ..interval }),
+            ..*self
+        }
+        .layer_bounds_inner(layer)
+    }
+
+    fn layer_bounds_inner(&self, layer: &Layer) -> Result<Option<Bounds>, &'static str> {
         self.validate_layer_animators(layer.id())?;
         match layer.data() {
             LayerData::Rect(rect) => {
@@ -277,7 +549,11 @@ impl Analyzer<'_> {
                     return Ok(None);
                 }
                 let mut bounds = self.shape_content_bounds(shape.id, &shape.shape)?;
-                bounds = expand(bounds, self.shape_modifier_reach(shape.id, &shape.shape)?)?;
+                bounds = expand(
+                    bounds,
+                    self.shape_modifier_reach(shape.id, &shape.shape)?
+                        + super::blur_bounds::shape_reach(shape, self.dynamics),
+                )?;
                 self.transform_bounds(bounds, shape.id, &shape.transform)
                     .map(Some)
             }
@@ -286,15 +562,47 @@ impl Analyzer<'_> {
                     return Ok(None);
                 }
                 super::check_static_nested_group(group)?;
-                let Some(bounds) = self.layers_union(&group.layers)? else {
-                    return Ok(None);
+                let source_mask =
+                    super::super::source_rect_mask_bounds(group, self.dynamics, self.canvas)
+                        .or_else(|| {
+                            super::super::logical_bulge_output_bounds(
+                                group,
+                                self.dynamics,
+                                self.canvas,
+                            )
+                        });
+                let bounds = match self.layers_union(&group.layers) {
+                    Ok(Some(bounds)) => source_mask
+                        .or_else(|| super::collapsed::mask_output(group, self.dynamics))
+                        .unwrap_or(bounds),
+                    Ok(None) => return Ok(None),
+                    Err("Text/font glyph bounds are not known from the FX text box")
+                        if source_mask.is_some() =>
+                    {
+                        // Validate every real input before using mask output
+                        // support. The existing analysis-only Text projection
+                        // checks transforms/references and all known siblings;
+                        // actual lowering retains every original child.
+                        validate_masked_source(
+                            group,
+                            self.dynamics,
+                            self.resolved_media,
+                            self.canvas,
+                        )?;
+                        source_mask.expect("guarded native source-mask certificate")
+                    }
+                    Err(reason) => return Err(reason),
                 };
-                // Inspect the entire input first, including geometry outside
-                // the mask that can contribute through child Glow. Only its
-                // masked output has the independently certified finite hull.
-                let bounds = super::collapsed::mask_output(group, self.dynamics).unwrap_or(bounds);
-                self.transform_bounds(bounds, group.id, &group.transform)
-                    .map(Some)
+                let bounds = super::group_effect_bounds(bounds, group, self.dynamics)?;
+                // The occurrence writer rebases Group-owned Transform keys;
+                // those native keys do not follow the child source clock.
+                // Retain their established all-time enclosure independently.
+                Analyzer {
+                    source_interval: None,
+                    ..*self
+                }
+                .transform_bounds(bounds, group.id, &group.transform)
+                .map(Some)
             }
             LayerData::BooleanOperation(boolean) => {
                 if boolean.is_hidden {
@@ -336,7 +644,12 @@ impl Analyzer<'_> {
             .resolved_media
             .get(request.asset_id.as_str())
             .ok_or("Visual media archive source was not resolved for animated bounds")?;
-        let spec = media::lower(layer, source, self.canvas)?;
+        // Visibility, blend and matte live on the native occurrence wrapper;
+        // they do not enlarge the decoded media plane. Use the same content
+        // view as emission, retaining the original transform for its geometry.
+        let content = super::super::media_wrapper_content_view(layer)
+            .map_err(|_| "Media bounds could not rebuild native wrapper content")?;
+        let spec = media::lower_with_transform(&content, source, self.canvas, transform)?;
         let size = spec.source.dimensions.map(f64::from);
         let geometry = spec.source_geometry;
         let bounds = normalized_bounds(
@@ -492,12 +805,78 @@ impl Analyzer<'_> {
         id: LayerId,
         transform: &Transform,
     ) -> Result<Bounds, &'static str> {
+        const NEAR_PLANE: &str = "3D descendant reaches the root camera near plane";
+        match self.transform_bounds_window(bounds, id, transform, None) {
+            Err(NEAR_PLANE) => {}
+            result => return result,
+        }
+        let properties = [
+            PropType::AnchorPointX,
+            PropType::AnchorPointY,
+            PropType::PositionX,
+            PropType::PositionY,
+            PropType::PositionZ,
+            PropType::ScaleX,
+            PropType::ScaleY,
+            PropType::Rotation,
+            PropType::RotationX,
+            PropType::RotationY,
+            PropType::Skew,
+            PropType::SkewAxis,
+        ];
+        let mut times = Vec::new();
+        for property in properties {
+            if let Some(Source::Track(track)) = self.source(id, property)? {
+                times.extend(track.keyframes().iter().map(|key| key.layer_time()));
+            }
+        }
+        times.sort_unstable();
+        times.dedup();
+        // Include constant extrapolation on both sides of every owner's tracks.
+        if times.is_empty() || times.len() + 1 > 256 {
+            return Err(NEAR_PLANE);
+        }
+        let mut result: Option<Bounds> = None;
+        for index in 0..=times.len() {
+            let window = (
+                index.checked_sub(1).map(|previous| times[previous]),
+                times.get(index).copied(),
+            );
+            // The child's ALL-TIME hull is deliberately unchanged in each window.
+            let projected = self.transform_bounds_window(bounds, id, transform, Some(window))?;
+            result = Some(match result {
+                Some(mut previous) => {
+                    previous.include(projected);
+                    previous
+                }
+                None => projected,
+            });
+        }
+        result.ok_or(NEAR_PLANE)
+    }
+
+    fn transform_bounds_window(
+        &self,
+        bounds: Bounds,
+        id: LayerId,
+        transform: &Transform,
+        window: Option<TimeWindow>,
+    ) -> Result<Bounds, &'static str> {
         if transform.orientation != [0.0; 3] {
             return Err("Orientation descendant bounds are not proven for precomposition");
         }
+        // A visible source interval narrows only the uncorrelated pass; the
+        // correlated near-plane retry windows keep their all-time track union.
+        let scalar = |property, base| {
+            if window.is_none() && self.source_interval.is_some() {
+                self.scalar_range(id, property, base)
+            } else {
+                self.scalar_range_window(id, property, base, window)
+            }
+        };
         let anchor = [
-            self.scalar_range(id, PropType::AnchorPointX, transform.anchor_point[0])?,
-            self.scalar_range(id, PropType::AnchorPointY, transform.anchor_point[1])?,
+            scalar(PropType::AnchorPointX, transform.anchor_point[0])?,
+            scalar(PropType::AnchorPointY, transform.anchor_point[1])?,
         ];
         let (base_position, is_3d) = match transform.position {
             Position::TwoD([x, y]) => {
@@ -509,32 +888,19 @@ impl Analyzer<'_> {
             Position::ThreeD(position) => (position, true),
         };
         let position = [
-            self.scalar_range(id, PropType::PositionX, base_position[0])?,
-            self.scalar_range(id, PropType::PositionY, base_position[1])?,
-            self.scalar_range(id, PropType::PositionZ, base_position[2])?,
+            scalar(PropType::PositionX, base_position[0])?,
+            scalar(PropType::PositionY, base_position[1])?,
+            scalar(PropType::PositionZ, base_position[2])?,
         ];
         let scale = [
-            self.scalar_range(id, PropType::ScaleX, transform.scale[0])?
-                .scaled(0.01)?,
-            self.scalar_range(id, PropType::ScaleY, transform.scale[1])?
-                .scaled(0.01)?,
+            scalar(PropType::ScaleX, transform.scale[0])?.scaled(0.01)?,
+            scalar(PropType::ScaleY, transform.scale[1])?.scaled(0.01)?,
         ];
-        let rotation = self
-            .scalar_range_with_motion(id, PropType::Rotation, transform.rotation)?
-            .0;
-        let rotation_x = self
-            .scalar_range_with_motion(id, PropType::RotationX, transform.rotation_x)?
-            .0;
-        let rotation_y = self
-            .scalar_range_with_motion(id, PropType::RotationY, transform.rotation_y)?
-            .0;
-        let skew = self
-            .scalar_range_with_motion(id, PropType::Skew, transform.skew)?
-            .0
-            .clamp(-89.9, 89.9)?;
-        let skew_axis = self
-            .scalar_range_with_motion(id, PropType::SkewAxis, transform.skew_axis)?
-            .0;
+        let rotation = scalar(PropType::Rotation, transform.rotation)?;
+        let rotation_x = scalar(PropType::RotationX, transform.rotation_x)?;
+        let rotation_y = scalar(PropType::RotationY, transform.rotation_y)?;
+        let skew = scalar(PropType::Skew, transform.skew)?.clamp(-89.9, 89.9)?;
+        let skew_axis = scalar(PropType::SkewAxis, transform.skew_axis)?;
         let local = [
             Interval::new(bounds.min[0], bounds.max[0])?
                 .subtract(anchor[0])?
@@ -588,11 +954,7 @@ impl Analyzer<'_> {
     }
 
     fn validate_layer_animators(&self, id: LayerId) -> Result<(), &'static str> {
-        for entry in self
-            .dynamics
-            .iter()
-            .filter(|entry| entry.target.layer_id() == Some(id))
-        {
+        for entry in self.dynamics.for_layer(id) {
             if !entry.dependencies.is_empty()
                 || entry.random_seed_target.is_some()
                 || !entry.layer_refs.is_empty()
@@ -691,8 +1053,34 @@ impl Analyzer<'_> {
                 Ok((Interval::point(*value)?, false))
             }
             Some(Source::Constant(_)) => Err("Animator value is not scalar"),
+            Some(Source::Track(track)) => Ok((
+                track_component_range_in_interval(
+                    track,
+                    Component::Scalar,
+                    if matches!(property, PropType::ScaleX | PropType::ScaleY) {
+                        None
+                    } else {
+                        self.source_interval
+                    },
+                )?,
+                true,
+            )),
+        }
+    }
+
+    fn scalar_range_window(
+        &self,
+        id: LayerId,
+        property: PropType,
+        base: f64,
+        window: Option<TimeWindow>,
+    ) -> Result<Interval, &'static str> {
+        match self.source(id, property)? {
+            None => Interval::point(base),
+            Some(Source::Constant(PropertyValue::Float(value))) => Interval::point(*value),
+            Some(Source::Constant(_)) => Err("Animator value is not scalar"),
             Some(Source::Track(track)) => {
-                Ok((track_component_range(track, Component::Scalar)?, true))
+                track_component_range_window(track, Component::Scalar, window)
             }
         }
     }
@@ -710,19 +1098,25 @@ impl Analyzer<'_> {
             }
             Some(Source::Constant(_)) => Err("Animator value is not a two-dimensional vector"),
             Some(Source::Track(track)) => Ok([
-                track_component_range(track, Component::Vector(0))?,
-                track_component_range(track, Component::Vector(1))?,
+                track_component_range_in_interval(
+                    track,
+                    Component::Vector(0),
+                    self.source_interval,
+                )?,
+                track_component_range_in_interval(
+                    track,
+                    Component::Vector(1),
+                    self.source_interval,
+                )?,
             ]),
         }
     }
 
     fn source(&self, id: LayerId, property: PropType) -> Result<Option<Source<'_>>, &'static str> {
-        let Some(entry) = self.dynamics.iter().find(|entry| {
-            entry
-                .target
-                .as_property()
-                .is_some_and(|target| target.layer_id() == id && target.property_type() == property)
-        }) else {
+        let Some(entry) = self
+            .dynamics
+            .first(fx_schema::property::Property::new(id, property))
+        else {
             return Ok(None);
         };
         match entry.animator.data() {
@@ -749,6 +1143,47 @@ impl Analyzer<'_> {
     }
 }
 
+/// Bound effect-owned support controls with the same analytical easing hulls as
+/// layer geometry. Unknown scripts and duplicate targets cannot certify a crop.
+pub(super) fn effect_scalar_max(
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+    id: Option<fx_schema::EffectId>,
+    name: &str,
+    base: f64,
+) -> Result<f64, &'static str> {
+    let mut entries = dynamics.iter().filter(|entry| {
+        matches!(&entry.target, fx_schema::PropertyTarget::EffectProperty(target)
+            if Some(target.effect_id()) == id && target.param_name() == name)
+    });
+    let range = if let Some(entry) = entries.next() {
+        if entries.next().is_some() {
+            return Err("Effect support control has duplicate animator targets");
+        }
+        match entry.animator.data() {
+            AnimatorData::Constant { value }
+            | AnimatorData::Keyframes {
+                enabled: false,
+                disabled_value: Some(value),
+                ..
+            } => Interval::point(component(value, Component::Scalar)?)?,
+            AnimatorData::Keyframes {
+                enabled: true,
+                track,
+                ..
+            } => track_component_range(track, Component::Scalar)?,
+            _ => return Err("Effect support control has no finite independent track"),
+        }
+    } else {
+        Interval::point(base)?
+    };
+    if !range.min.is_finite() || !range.max.is_finite() || range.min < 0.0 {
+        return Err("Effect support control is negative or non-finite");
+    }
+    Ok(range.max)
+}
+
+type TimeWindow = (Option<fx_schema::TimeOffset>, Option<fx_schema::TimeOffset>);
+
 enum Source<'a> {
     Constant(&'a PropertyValue),
     Track(&'a PropertyKeyframeTrack),
@@ -772,15 +1207,40 @@ fn track_component_range(
     track: &PropertyKeyframeTrack,
     component_kind: Component,
 ) -> Result<Interval, &'static str> {
+    track_component_range_window(track, component_kind, None)
+}
+
+fn track_component_range_window(
+    track: &PropertyKeyframeTrack,
+    component_kind: Component,
+    window: Option<TimeWindow>,
+) -> Result<Interval, &'static str> {
     let keys = track.keyframes();
     let first = keys.first().ok_or("Animator keyframe track is empty")?;
-    let mut result = Interval::point(component(first.value(), component_kind)?)?;
-    for key in &keys[1..] {
-        result.include(component(key.value(), component_kind)?)?;
+    let last = keys.last().ok_or("Animator keyframe track is empty")?;
+    let mut result = None;
+    let mut include = |range: Interval| match &mut result {
+        Some(result) => Interval::include_interval(result, range),
+        None => result = Some(range),
+    };
+    if window.is_none_or(|(start, _)| start.is_none_or(|start| start <= first.layer_time())) {
+        include(Interval::point(component(first.value(), component_kind)?)?);
+    }
+    if window.is_none_or(|(_, end)| end.is_none_or(|end| end >= last.layer_time())) {
+        include(Interval::point(component(last.value(), component_kind)?)?);
     }
     for pair in keys.windows(2) {
         let from = &pair[0];
         let to = &pair[1];
+        if window.is_some_and(|(start, end)| {
+            start.is_some_and(|start| start >= to.layer_time())
+                || end.is_some_and(|end| end <= from.layer_time())
+        }) {
+            continue;
+        }
+        // Enclose the ENTIRE overlapping segment, including both Hold endpoints.
+        include(Interval::point(component(from.value(), component_kind)?)?);
+        include(Interval::point(component(to.value(), component_kind)?)?);
         if to.easing() == PropertyKeyframeEasing::Hold {
             continue;
         }
@@ -800,14 +1260,185 @@ fn track_component_range(
                 to_value,
                 progress,
             )?;
-            result.include_interval(segment);
+            include(segment);
         } else {
-            result.include_interval(
+            include(
                 Interval::point(from_value)?
                     .add(Interval::point(to_value - from_value)?.multiply(progress)?)?,
             );
         }
     }
+    result.ok_or("Animator window has no finite enclosure")
+}
+
+/// Enclose the intersecting segments analytically, including held endpoint
+/// extrapolation. Authored keys and their native serialization stay untouched.
+fn track_component_range_in_interval(
+    track: &PropertyKeyframeTrack,
+    kind: Component,
+    window: Option<SourceInterval>,
+) -> Result<Interval, &'static str> {
+    let Some(window) = window else {
+        return track_component_range(track, kind);
+    };
+    // AE spatial Bezier follows arc length; a source parameter subinterval
+    // cannot certify that native path's phase. Preserve its full control hull.
+    if track
+        .keyframes()
+        .iter()
+        .any(|key| key.spatial_in_tangent().is_some() || key.spatial_out_tangent().is_some())
+    {
+        return track_component_range(track, kind);
+    }
+    let mut result = component_range_for_clock(track, kind, window.range, None)?;
+    result.include_interval(component_range_for_clock(
+        track,
+        kind,
+        window.range,
+        Some(window.clock),
+    )?);
+    Ok(result)
+}
+
+fn component_range_for_clock(
+    track: &PropertyKeyframeTrack,
+    kind: Component,
+    window: TimeRangeProperty,
+    clock: Option<crate::writer::PropertyClock>,
+) -> Result<Interval, &'static str> {
+    // Native coordinates use milli-ticks: key ticks are integral, while
+    // millisecond in/out points remain exact rationals (no boundary rounding).
+    let ticks = clock.map_or(1, crate::writer::PropertyClock::ticks);
+    let start = i128::from(window.start.as_millis()) * i128::from(ticks);
+    let end = i128::from(window.end().as_millis()) * i128::from(ticks);
+    let coordinate = |millis: i64| -> Result<i128, &'static str> {
+        clock.map_or(Ok(i128::from(millis)), |clock| {
+            clock
+                .units(millis)
+                .map(|units| i128::from(units) * 1000)
+                .map_err(|_| "Bounds key exceeds the native property clock")
+        })
+    };
+    let keys = track.keyframes();
+    let first = keys.first().ok_or("Animator keyframe track is empty")?;
+    let last = keys.last().ok_or("Animator keyframe track is empty")?;
+    let mut result: Option<Interval> = None;
+    let mut include = |range: Interval| {
+        if let Some(result) = &mut result {
+            result.include_interval(range);
+        } else {
+            result = Some(range);
+        }
+    };
+    for key in keys {
+        let time = coordinate(key.layer_time().as_millis())?;
+        if (start..=end).contains(&time)
+            || (key == first && start < time)
+            || (key == last && end > time)
+        {
+            include(Interval::point(component(key.value(), kind)?)?);
+        }
+    }
+    for pair in keys.windows(2) {
+        let (from, to) = (&pair[0], &pair[1]);
+        let left = coordinate(from.layer_time().as_millis())?;
+        let right = coordinate(to.layer_time().as_millis())?;
+        if left >= right {
+            return Err("Bounds keys collide in the native property clock");
+        }
+        let lower = start.max(left);
+        let upper = end.min(right);
+        if lower >= upper {
+            continue;
+        }
+        let from_value = component(from.value(), kind)?;
+        let to_value = component(to.value(), kind)?;
+        if to.easing() == PropertyKeyframeEasing::Hold {
+            include(Interval::point(from_value)?);
+            continue;
+        }
+        let duration = (right - left) as f64;
+        // Widen division rounding outward before enclosing the cubic's
+        // parameter. Keyframe clocks are exact integer milliseconds.
+        let progress = Interval::new(
+            (((lower - left) as f64 / duration) - 2.0 * f64::EPSILON).max(0.0),
+            (((upper - left) as f64 / duration) + 2.0 * f64::EPSILON).min(1.0),
+        )?;
+        let progress = match to.easing() {
+            PropertyKeyframeEasing::Linear => progress,
+            PropertyKeyframeEasing::CubicBezier { x1, y1, x2, y2 } => {
+                let authored_duration = (i128::from(to.layer_time().as_millis())
+                    - i128::from(from.layer_time().as_millis()))
+                    as f64;
+                let ratio = duration / (authored_duration * f64::from(ticks));
+                let y1 = y1 * ratio;
+                let y2 = 1.0 - (1.0 - y2) * ratio;
+                let parameter = Interval::new(
+                    bezier_parameter_bracket(progress.min, x1, x2).min,
+                    bezier_parameter_bracket(progress.max, x1, x2).max,
+                )?;
+                clipped_cubic_range([0.0, y1, y2, 1.0], parameter)?
+            }
+            PropertyKeyframeEasing::Hold => unreachable!("held segment handled above"),
+        };
+        include(
+            Interval::point(from_value)?
+                .add(Interval::point(to_value - from_value)?.multiply(progress)?)?,
+        );
+    }
+    result.ok_or("Bounds source interval has no reachable keyframe value")
+}
+
+fn bezier_parameter_bracket(progress: f64, x1: f64, x2: f64) -> Interval {
+    let mut lower = Interval { min: 0.0, max: 1.0 };
+    let mut upper = lower;
+    let evaluate =
+        |t: f64| 3.0 * (1.0 - t).powi(2) * t * x1 + 3.0 * (1.0 - t) * t.powi(2) * x2 + t.powi(3);
+    for _ in 0..48 {
+        // Bracket rather than choose a rounded inverse. This arithmetic error
+        // bound covers the normalized cubic sum, including flat x derivatives.
+        let rounding = 16.0 * f64::EPSILON;
+        let middle = (lower.min + lower.max) * 0.5;
+        if evaluate(middle) + rounding < progress {
+            lower.min = middle;
+        } else {
+            lower.max = middle;
+        }
+        let middle = (upper.min + upper.max) * 0.5;
+        if evaluate(middle) - rounding > progress {
+            upper.max = middle;
+        } else {
+            upper.min = middle;
+        }
+    }
+    Interval {
+        min: lower.min,
+        max: upper.max,
+    }
+}
+
+/// The subcurve's four controls enclose it even for easing overshoot outside
+/// 0..1. Retaining the original full-curve controls would defeat time clipping.
+fn clipped_cubic_range(control: [f64; 4], parameter: Interval) -> Result<Interval, &'static str> {
+    let [p0, p1, p2, p3] = control;
+    let evaluate = |t: f64| {
+        let inverse = 1.0 - t;
+        inverse.powi(3) * p0
+            + 3.0 * inverse.powi(2) * t * p1
+            + 3.0 * inverse * t.powi(2) * p2
+            + t.powi(3) * p3
+    };
+    let derivative = |t: f64| {
+        3.0 * ((1.0 - t).powi(2) * (p1 - p0)
+            + 2.0 * (1.0 - t) * t * (p2 - p1)
+            + t.powi(2) * (p3 - p2))
+    };
+    let start = evaluate(parameter.min);
+    let end = evaluate(parameter.max);
+    let reach = (parameter.max - parameter.min) / 3.0;
+    let mut result = Interval::new(start, end)?;
+    result.include(start + reach * derivative(parameter.min))?;
+    result.include(end - reach * derivative(parameter.max))?;
     Ok(result)
 }
 
@@ -1141,6 +1772,312 @@ mod tests {
         }
     }
 
+    fn interval(start: u64, duration: u64) -> SourceInterval {
+        SourceInterval::new(
+            TimeRangeProperty::new(
+                fx_schema::Time::from_millis(start),
+                fx_schema::Duration::from_millis(duration),
+            ),
+            crate::timing::FrameRate::new(24.0).unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn timed_rect(start: u64, duration: u64) -> Layer {
+        serde_json::from_value(serde_json::json!({
+            "type":"Rect","id":7,"name":"offset Rect","activeRange":{"start":start,"duration":duration},
+            "transform":{"anchorPoint":[0,0],"position":[0,0],"scale":[100,100],"rotation":0,"opacity":100},
+            "rect":{"position":[0,0],"size":[10,10],"fillEnabled":true,"fillColor":[1,0,0,1],"strokeEnabled":false}
+        })).unwrap()
+    }
+
+    #[test]
+    fn visible_interval_keeps_group_transform_rebased_native_phase_enclosed() {
+        let child = timed_rect(0, 2000);
+        let group: Layer = serde_json::from_value(serde_json::json!({
+            "type":"Group","id":8,"name":"trimmed animated Group",
+            "transform":{"anchorPoint":[0,0],"position":[0,0],"scale":[100,100],"rotation":0,"opacity":100},
+            "playback":{"type":"windowed","inputRange":{"start":1000,"duration":1000},"inputOffsetMs":0,
+                "mapping":{"type":"linear","input":{"start":1000,"duration":1000},"output":{"start":500,"duration":1000}}},
+            "layers":[child]
+        })).unwrap();
+        let track = PropertyKeyframeTrack::new(vec![
+            key("a", 0, 0.0, PropertyKeyframeEasing::Linear),
+            key("b", 1000, 1000.0, PropertyKeyframeEasing::Linear),
+        ])
+        .unwrap();
+        let mut own = entry(
+            PropType::PositionX,
+            PropertyAnimator::keyframes(track.clone()),
+        );
+        own.target = PropertyTarget::layer(LayerId::new(8), PropType::PositionX);
+        let LayerData::Group(data) = group.data() else {
+            panic!("Group")
+        };
+        let domain = TimeRangeProperty::new(
+            fx_schema::Time::ZERO,
+            fx_schema::Duration::from_millis(2000),
+        );
+        let clock = crate::export_document::hierarchy_clock::plan(
+            data,
+            &crate::export_document::AnimationIndex::new(&[own.clone()]),
+            crate::export_document::hierarchy_clock::ChildClockDomains {
+                default_domain: domain,
+                lifetime_domain: domain,
+            },
+            false,
+        )
+        .unwrap();
+        let mut native = crate::export_document::scalar_track(
+            Some(crate::export_document::NativeTrack::Keyframes(&track)),
+            1.0,
+        )
+        .unwrap()
+        .unwrap();
+        clock
+            .occurrence_clock
+            .rebase_track_times(&mut native)
+            .unwrap();
+        assert_eq!(
+            native
+                .keys
+                .iter()
+                .map(|key| key.time_millis)
+                .collect::<Vec<_>>(),
+            [500, 1500]
+        );
+        assert_eq!(clock.occurrence_clock.source_time_millis(350).unwrap(), 850);
+        assert_eq!(clock.occurrence_clock.source_time_millis(450).unwrap(), 950);
+        let media = BTreeMap::new();
+        let dynamics = [own];
+        let bounds = Analyzer {
+            source_interval: Some(interval(1350, 100)),
+            dynamics: &crate::export_document::AnimationIndex::new(&dynamics),
+            resolved_media: &media,
+            canvas: Dimensions {
+                width: 1920,
+                height: 1080,
+            },
+        }
+        .layer_bounds(&group)
+        .unwrap()
+        .unwrap();
+        // At source850..950, emitted keys500..1500 yield nativeX350..450.
+        // The original FX own-track yields850..950; both remain enclosed.
+        assert!(
+            bounds.min[0] <= 350.0 && bounds.max[0] >= 960.0,
+            "{bounds:?}"
+        );
+    }
+
+    #[test]
+    fn visible_interval_keeps_boolean_operands_on_the_shared_native_clock() {
+        let mut child = serde_json::to_value(timed_rect(1000, 1000)).unwrap();
+        child["parent"] = serde_json::json!(8);
+        let mut sibling = child.clone();
+        sibling["id"] = serde_json::json!(9);
+        let boolean: Layer = serde_json::from_value(serde_json::json!({
+            "type":"BooleanOperation","id":8,"name":"shared clock","activeRange":{"start":1000,"duration":1000},
+            "transform":{"anchorPoint":[0,0],"position":[0,0],"scale":[100,100],"rotation":0,"opacity":100},
+            "op":"union","layers":[child,sibling],"fills":[{"paint":{"type":"solid","color":[1,0,0,1]}}],"strokes":[]
+        })).unwrap();
+        let dynamics = [entry(
+            PropType::PositionX,
+            PropertyAnimator::keyframes(
+                PropertyKeyframeTrack::new(vec![
+                    key("a", 0, 0.0, PropertyKeyframeEasing::Linear),
+                    key("b", 1000, 1000.0, PropertyKeyframeEasing::Linear),
+                ])
+                .unwrap(),
+            ),
+        )];
+        let LayerData::BooleanOperation(data) = boolean.data() else {
+            panic!("BooleanOperation")
+        };
+        for operand in &data.layers {
+            crate::export_document::boolean_operand_program(
+                operand,
+                data.id,
+                data.active_range,
+                &crate::export_document::AnimationIndex::new(&dynamics),
+                0,
+            )
+            .expect("admitted native Boolean operand");
+        }
+        let media = BTreeMap::new();
+        let bounds = Analyzer {
+            source_interval: Some(interval(1500, 100)),
+            dynamics: &crate::export_document::AnimationIndex::new(&dynamics),
+            resolved_media: &media,
+            canvas: Dimensions {
+                width: 1920,
+                height: 1080,
+            },
+        }
+        .layer_bounds(&boolean)
+        .unwrap()
+        .expect("visible Boolean operands share their owner's vector clock");
+        assert!(
+            bounds.min[0] <= 0.0 && bounds.max[0] >= 1010.0,
+            "{bounds:?}"
+        );
+    }
+
+    #[test]
+    fn visible_interval_encloses_crossing_keys_and_cubic_overshoot() {
+        let track = PropertyKeyframeTrack::new(vec![
+            key("a", 0, 0.0, PropertyKeyframeEasing::Linear),
+            key("b", 1000, 1000.0, PropertyKeyframeEasing::Linear),
+        ])
+        .unwrap();
+        let range =
+            track_component_range_in_interval(&track, Component::Scalar, Some(interval(125, 250)))
+                .unwrap();
+        assert!(range.min <= 125.0 && range.min > 124.9, "{range:?}");
+        assert!(range.max >= 375.0 && range.max < 375.1, "{range:?}");
+        let track = PropertyKeyframeTrack::new(vec![
+            key("a", 0, 0.0, PropertyKeyframeEasing::Linear),
+            key(
+                "b",
+                1000,
+                10.0,
+                PropertyKeyframeEasing::CubicBezier {
+                    x1: 1.0 / 3.0,
+                    y1: 2.0,
+                    x2: 2.0 / 3.0,
+                    y2: 2.0,
+                },
+            ),
+        ])
+        .unwrap();
+        let range =
+            track_component_range_in_interval(&track, Component::Scalar, Some(interval(250, 500)))
+                .unwrap();
+        assert!(range.min > 0.0 && range.max >= 16.25, "{range:?}");
+    }
+
+    #[test]
+    fn visible_interval_includes_native_tick_rounding_and_written_ease_speeds() {
+        let track = PropertyKeyframeTrack::new(vec![
+            key("a", 0, 0.0, PropertyKeyframeEasing::Linear),
+            key(
+                "b",
+                1002,
+                1_000_000.0,
+                PropertyKeyframeEasing::CubicBezier {
+                    x1: 1.0 / 3.0,
+                    y1: 0.0,
+                    x2: 2.0 / 3.0,
+                    y2: 1.0 / 3.0,
+                },
+            ),
+        ])
+        .unwrap();
+        let window = interval(1000, 1);
+        assert_eq!(window.clock.units(1002).unwrap(), 24625);
+        let authored =
+            component_range_for_clock(&track, Component::Scalar, window.range, None).unwrap();
+        let native =
+            component_range_for_clock(&track, Component::Scalar, window.range, Some(window.clock))
+                .unwrap();
+        assert!(
+            native.max > authored.max,
+            "native {native:?}, authored {authored:?}"
+        );
+        let combined =
+            track_component_range_in_interval(&track, Component::Scalar, Some(window)).unwrap();
+        assert!(combined.min <= authored.min && combined.max >= native.max);
+
+        let held = PropertyKeyframeTrack::new(vec![
+            key("a", 0, 0.0, PropertyKeyframeEasing::Linear),
+            key("b", 1001, 1_000_000.0, PropertyKeyframeEasing::Hold),
+        ])
+        .unwrap();
+        let window = interval(1001, 1);
+        let range =
+            track_component_range_in_interval(&held, Component::Scalar, Some(window)).unwrap();
+        assert_eq!(range.min, 0.0);
+        assert_eq!(range.max, 1_000_000.0);
+    }
+
+    #[test]
+    fn visible_interval_skips_no_overlap_and_maps_nested_group_offsets() {
+        let child = timed_rect(250, 1000);
+        let dynamics = vec![entry(
+            PropType::PositionX,
+            PropertyAnimator::keyframes(
+                PropertyKeyframeTrack::new(vec![
+                    key("a", 0, 0.0, PropertyKeyframeEasing::Linear),
+                    key("b", 1000, 1000.0, PropertyKeyframeEasing::Linear),
+                ])
+                .unwrap(),
+            ),
+        )];
+        let media = BTreeMap::new();
+        let analyzer = Analyzer {
+            source_interval: Some(interval(0, 100)),
+            dynamics: &crate::export_document::AnimationIndex::new(&dynamics),
+            resolved_media: &media,
+            canvas: Dimensions {
+                width: 1920,
+                height: 1080,
+            },
+        };
+        assert!(analyzer.layer_bounds(&child).unwrap().is_none());
+        let group: Layer = serde_json::from_value(serde_json::json!({
+            "type":"Group","id":8,"name":"offset Group",
+            "transform":{"anchorPoint":[0,0],"position":[0,0],"scale":[100,100],"rotation":0,"opacity":100},
+            "playback":{"type":"windowed","inputRange":{"start":1000,"duration":1000},"inputOffsetMs":-100,
+                "mapping":{"type":"linear","input":{"start":900,"duration":1000},"output":{"start":0,"duration":1000}}},
+            "layers":[child.clone()]
+        })).unwrap();
+        let bounds = Analyzer {
+            source_interval: Some(interval(1350, 100)),
+            ..analyzer
+        }
+        .layer_bounds(&group)
+        .unwrap()
+        .unwrap();
+        assert!(bounds.min[0] <= 100.0 && bounds.min[0] > 99.9, "{bounds:?}");
+        assert!(
+            bounds.max[0] >= 210.0 && bounds.max[0] < 210.1,
+            "{bounds:?}"
+        );
+
+        // Neither authored no-overlap nor a rounded end can discard a sliver
+        // which the native leaf clock may still render.
+        for (start, duration, visible_start) in [(1002, 1000, 1001), (0, 1001, 1001)] {
+            let mut leaf = serde_json::to_value(&child).unwrap();
+            leaf["activeRange"] = serde_json::json!({"start":start,"duration":duration});
+            let leaf: Layer = serde_json::from_value(leaf).unwrap();
+            let bounds = Analyzer {
+                source_interval: Some(interval(visible_start, 1)),
+                ..analyzer
+            }
+            .layer_bounds(&leaf)
+            .unwrap()
+            .unwrap();
+            assert!(
+                bounds.min[0] <= 0.0 && bounds.max[0] >= 1010.0,
+                "{bounds:?}"
+            );
+        }
+        let mut leaf = serde_json::to_value(&child).unwrap();
+        leaf["motionBlur"] = serde_json::json!(true);
+        let leaf: Layer = serde_json::from_value(leaf).unwrap();
+        let bounds = Analyzer {
+            source_interval: Some(interval(350, 100)),
+            ..analyzer
+        }
+        .layer_bounds(&leaf)
+        .unwrap()
+        .unwrap();
+        assert!(
+            bounds.min[0] <= 0.0 && bounds.max[0] >= 1010.0,
+            "{bounds:?}"
+        );
+    }
+
     fn find_group_with_adjustment<'a>(group: &'a GroupLayer, name: &str) -> Option<&'a GroupLayer> {
         if group
             .layers
@@ -1196,7 +2133,10 @@ mod tests {
 
         let sources = BTreeMap::new();
         let analyzer = Analyzer {
-            dynamics: converted.document.composition().dynamics().entries(),
+            source_interval: None,
+            dynamics: &crate::export_document::AnimationIndex::new(
+                converted.document.composition().dynamics().entries(),
+            ),
             resolved_media: &sources,
             canvas: converted.document.dimensions(),
         };
@@ -1307,7 +2247,8 @@ mod tests {
         )];
         let sources = BTreeMap::new();
         let analyzer = Analyzer {
-            dynamics: &entries,
+            source_interval: None,
+            dynamics: &crate::export_document::AnimationIndex::new(&entries),
             resolved_media: &sources,
             canvas: Dimensions::new(320, 180),
         };
@@ -1345,7 +2286,10 @@ mod tests {
         assert_eq!(constant_path_owners.len(), 3);
         let sources = BTreeMap::new();
         let analyzer = Analyzer {
-            dynamics: composition.dynamics().entries(),
+            source_interval: None,
+            dynamics: &crate::export_document::AnimationIndex::new(
+                composition.dynamics().entries(),
+            ),
             resolved_media: &sources,
             canvas: converted.document.dimensions(),
         };
@@ -1397,7 +2341,8 @@ mod tests {
         )];
         let media = BTreeMap::new();
         let analyzer = Analyzer {
-            dynamics: &entries,
+            source_interval: None,
+            dynamics: &crate::export_document::AnimationIndex::new(&entries),
             resolved_media: &media,
             canvas: Dimensions::new(100, 100),
         };
@@ -1411,7 +2356,8 @@ mod tests {
             PropertyAnimator::constant(PropertyValue::Path(path(35.0))).unwrap(),
         )];
         let analyzer = Analyzer {
-            dynamics: &entries,
+            source_interval: None,
+            dynamics: &crate::export_document::AnimationIndex::new(&entries),
             resolved_media: &media,
             canvas: Dimensions::new(100, 100),
         };
@@ -1482,7 +2428,8 @@ mod tests {
         )];
         let media = BTreeMap::new();
         let analyzer = Analyzer {
-            dynamics: &entries,
+            source_interval: None,
+            dynamics: &crate::export_document::AnimationIndex::new(&entries),
             resolved_media: &media,
             canvas: Dimensions::new(1920, 1080),
         };
@@ -1521,7 +2468,8 @@ mod tests {
         let entries = vec![entry(PropType::ScaleX, disabled)];
         let media = BTreeMap::new();
         let analyzer = Analyzer {
-            dynamics: &entries,
+            source_interval: None,
+            dynamics: &crate::export_document::AnimationIndex::new(&entries),
             resolved_media: &media,
             canvas: Dimensions::new(1, 1),
         };
@@ -1557,7 +2505,8 @@ mod tests {
         )];
         let media = BTreeMap::new();
         let analyzer = Analyzer {
-            dynamics: &entries,
+            source_interval: None,
+            dynamics: &crate::export_document::AnimationIndex::new(&entries),
             resolved_media: &media,
             canvas: Dimensions::new(1, 1),
         };

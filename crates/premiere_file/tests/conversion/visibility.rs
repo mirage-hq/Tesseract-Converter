@@ -1,3 +1,5 @@
+#![cfg(feature = "ffmpeg-library")]
+
 //! Clip Enable and track video output through the public conversion API.
 use super::support::*;
 use premiere_file::PrProjectFile;

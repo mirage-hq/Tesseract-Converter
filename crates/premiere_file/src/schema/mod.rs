@@ -22,32 +22,43 @@ pub(crate) mod text;
 pub(crate) mod text_shadow;
 mod timeline;
 mod timing;
-mod video_codec;
+pub(crate) mod video_codec;
 
 pub(crate) use audio::{
-    AudioChannels, PrAudioOccurrence, PrAudioStream, PrVolumeKeys, PrVolumeLayout,
+    AudioChannels, CustomFadeShape, PrAudioFade, PrAudioOccurrence, PrAudioSourceChannel,
+    PrAudioStream, PrFadeCurve, PrVolumeKeys, PrVolumeLayout, RUNTIME_PITCH_RATES,
 };
 pub(crate) use color::{ColorSpace, HdrProfile, ToneMapSettings};
 pub(crate) use color_matte::PrColorMatte;
 pub(crate) use crop::{PrStaticCrop, CROP_PARAMS, CROP_PARAMS_26_5, CROP_PARAM_COUNT};
-pub(crate) use effects::scalar_range;
 pub(crate) use effects::{
-    chain_render_order, is_coverage_effect, EffectParamBinding, EffectParamSpec, EffectSpec,
-    PrBrightnessContrast, PrColour, PrColourKeyframe, PrCornerPin, PrDirectionalBlur, PrEffect,
-    PrEffectParamAnimation, PrEffectParamKeys, PrEffectParams, PrFilmImpactBlur,
-    PrFilmImpactDirectionalBlur, PrGaussianBlur, PrInvert, PrLevels, PrMosaic, PrRamp, PrTint,
-    PrTransform, BLACK_WHITE, BLUR_DIMENSIONS_HORIZONTAL_AND_VERTICAL, BRIGHTNESS_CONTRAST,
-    BRIGHTNESS_CONTRAST_BRIGHTNESS, BRIGHTNESS_CONTRAST_CONTRAST, CORNER_PIN, DIRECTIONAL_BLUR,
-    DIRECTIONAL_BLUR_DIRECTION, DIRECTIONAL_BLUR_LENGTH, FILM_IMPACT_BLUR, FILM_IMPACT_BLUR_26_2,
-    FILM_IMPACT_BLUR_26_2_DEFAULTS, FILM_IMPACT_BLUR_AMOUNT, FILM_IMPACT_BLUR_ANGLE,
-    FILM_IMPACT_BLUR_CHROMATIC, FILM_IMPACT_BLUR_CONTROLS, FILM_IMPACT_BLUR_DEFAULTS,
-    FILM_IMPACT_BLUR_EDGE, FILM_IMPACT_BLUR_THICKNESS, FILM_IMPACT_BLUR_UNIFORM,
-    FILM_IMPACT_DIRECTIONAL_BLUR, FILM_IMPACT_DIRECTIONAL_BLUR_AMOUNT,
-    FILM_IMPACT_DIRECTIONAL_BLUR_ANGLE, FILM_IMPACT_DIRECTIONAL_BLUR_DEFAULTS, GAUSSIAN_BLUR,
-    GAUSSIAN_BLUR_BLURRINESS, GAUSSIAN_BLUR_DIMENSIONS, GAUSSIAN_BLUR_MAX_BLURRINESS,
-    GAUSSIAN_BLUR_REPEAT_EDGE_PIXELS, INVERT, INVERT_BLEND, INVERT_CHANNEL, INVERT_CHANNEL_RGB,
-    LEVELS, LEVELS_NEUTRAL, MASK_EFFECT_ORDER_REASON, MOSAIC, MOSAIC_HORIZONTAL_BLOCKS,
-    MOSAIC_SHARP_COLORS, MOSAIC_VERTICAL_BLOCKS, PREMIERE_NATIVE_FILTER_VERSIONS,
+    alpha_glow_size, lens_curvature, scalar_range, turn_corners, turns, PrPosterize, ALPHA_GLOW,
+    ALPHA_GLOW_APPROXIMATION, ALPHA_GLOW_BRIGHTNESS, ALPHA_GLOW_END, ALPHA_GLOW_FADE,
+    ALPHA_GLOW_SIZE, ALPHA_GLOW_START, ALPHA_GLOW_USE_END, LENS_APPROXIMATION, LENS_CURVATURE,
+    LENS_DISTORTION, POSTERIZE, POSTERIZE_LEVEL,
+};
+pub(crate) use effects::{
+    chain_render_order, is_coverage_effect, normalize_legacy_luma, validate_legacy_luma,
+    EffectParamBinding, EffectParamSpec, EffectSpec, PrBrightnessContrast, PrColour,
+    PrColourKeyframe, PrCornerPin, PrDirectionalBlur, PrEffect, PrEffectParamAnimation,
+    PrEffectParamKeys, PrEffectParams, PrFilmImpactBlur, PrFilmImpactDirectionalBlur, PrFindEdges,
+    PrGaussianBlur, PrInvert, PrLevelChannel, PrLevels, PrMosaic, PrRamp, PrTint, PrTransform,
+    ADJUSTMENT_GEOMETRY2, BLACK_WHITE, BLUR_DIMENSIONS_HORIZONTAL_AND_VERTICAL,
+    BRIGHTNESS_CONTRAST, BRIGHTNESS_CONTRAST_BRIGHTNESS, BRIGHTNESS_CONTRAST_CONTRAST, CORNER_PIN,
+    DIRECTIONAL_BLUR, DIRECTIONAL_BLUR_DIRECTION, DIRECTIONAL_BLUR_LENGTH, FILM_IMPACT_BLUR,
+    FILM_IMPACT_BLUR_26_2, FILM_IMPACT_BLUR_26_2_DEFAULTS, FILM_IMPACT_BLUR_AMOUNT,
+    FILM_IMPACT_BLUR_ANGLE, FILM_IMPACT_BLUR_CHROMATIC, FILM_IMPACT_BLUR_CONTROLS,
+    FILM_IMPACT_BLUR_DEFAULTS, FILM_IMPACT_BLUR_EDGE, FILM_IMPACT_BLUR_THICKNESS,
+    FILM_IMPACT_BLUR_UNIFORM, FILM_IMPACT_DIRECTIONAL_BLUR, FILM_IMPACT_DIRECTIONAL_BLUR_AMOUNT,
+    FILM_IMPACT_DIRECTIONAL_BLUR_ANGLE, FILM_IMPACT_DIRECTIONAL_BLUR_DEFAULTS, FIND_EDGES,
+    FIND_EDGES_BLEND, FIND_EDGES_INVERT, GAUSSIAN_BLUR, GAUSSIAN_BLUR_BLURRINESS,
+    GAUSSIAN_BLUR_DIMENSIONS, GAUSSIAN_BLUR_MAX_BLURRINESS, GAUSSIAN_BLUR_REPEAT_EDGE_PIXELS,
+    INVERT, INVERT_BLEND, INVERT_CHANNEL, INVERT_CHANNEL_RGB, LEGACY_LUMA_CUTOFF, LEGACY_LUMA_KEY,
+    LEGACY_LUMA_KEY_MAPPING_REASON, LEGACY_LUMA_KEY_MATCH_NAME, LEGACY_LUMA_THRESHOLD, LEVELS,
+    LEVELS_NEUTRAL, LUMETRI_EXPOSURE, LUMETRI_SATURATION, LUMETRI_TEMPERATURE, LUMETRI_TINT,
+    LUMETRI_VIGNETTE_AMOUNT, LUMETRI_VIGNETTE_FEATHER, LUMETRI_VIGNETTE_MIDPOINT,
+    MASK_EFFECT_ORDER_REASON, MOSAIC, MOSAIC_HORIZONTAL_BLOCKS, MOSAIC_SHARP_COLORS,
+    MOSAIC_VERTICAL_BLOCKS, OFFSET, OFFSET_CENTER, PREMIERE_NATIVE_FILTER_VERSIONS,
     PREMIERE_NATIVE_PARAMETER_ID, RAMP, RAMP_BLEND, RAMP_END, RAMP_END_COLOR, RAMP_SCATTER,
     RAMP_SHAPE, RAMP_SHAPE_LINEAR, RAMP_START, RAMP_START_COLOR, TINT, TINT_AMOUNT,
     TINT_MAP_BLACK_TO, TINT_MAP_WHITE_TO, TRACK_MATTE_KEY, TRACK_MATTE_KEY_COMPOSITE,
@@ -57,15 +68,26 @@ pub(crate) use effects::{
     TRANSFORM_SCALE_HEIGHT, TRANSFORM_SCALE_WIDTH, TRANSFORM_SHUTTER_ANGLE, TRANSFORM_SKEW,
     TRANSFORM_SKEW_AXIS, TRANSFORM_UNIFORM_SCALE,
 };
-#[cfg(test)]
-pub(crate) use mask::decode_mask_path;
-pub(crate) use mask::MASK_FEATHER_APPROXIMATION;
-pub(crate) use mask::{
-    at_default, encode_mask_path, mask_match_name, MaskControl, MaskForm, MaskParamRole, PrMask,
-    MASK_FORM_V7, MASK_PATH_RECORD_VERSION, MASK_PRIVATE_DATA,
+pub(crate) use effects::{PrReplicate, REPLICATE, REPLICATE_COUNT};
+pub(crate) use effects::{PrSharpen, SHARPEN, SHARPEN_AMOUNT};
+pub(crate) use effects::{
+    MODERN_NOISE, NOISE, NOISE_AMOUNT, NOISE_APPROXIMATION, NOISE_CLIPPING, NOISE_COLOR,
 };
+pub(crate) use effects::{POSTERIZE_TIME, POSTERIZE_TIME_FRAME_RATE};
+pub(crate) use mask::mask_numeric_easing;
+pub(crate) use mask::{
+    at_default, decode_mask_tracker, encode_mask_path, is_saved_tracker_state, mask_match_name,
+    MaskControl, MaskForm, MaskParamRole, MaskTrackerTransform, PrMask, PrMaskPathKey, RasterMask,
+    MASK_FORM_V7, MASK_MATCH_NAME_26_5, MASK_PATH_RECORD_VERSION, MASK_PRIVATE_DATA,
+    MASK_TYPE_26_5, OBJECT_MASK_TYPE,
+};
+#[cfg(test)]
+pub(crate) use mask::{decode_mask_path, MASK_FEATHER_APPROXIMATION};
 pub(crate) use motion::{MotionParamSpec, MOTION_PARAMS, MOTION_PARAMS_26_5, MOTION_PARAM_COUNT};
-pub(crate) use nested::{PrNestOccurrence, MAX_NEST_DEPTH};
+pub(crate) use nested::{
+    nested_transform_canvas_reason, nested_transform_import_canvas_reason, PrNestOccurrence,
+    MAX_NEST_DEPTH,
+};
 pub(crate) use opacity::{PrBlendMode, OPACITY_PARAMS, OPACITY_PARAMS_26_5, OPACITY_PARAM_COUNT};
 pub(crate) use records::VIDEO_MEDIA;
 use std::{
@@ -76,10 +98,10 @@ pub(crate) use still::{
     PrMediaKind, STILL_CODEC_TYPE, STILL_INTRINSIC_TICKS, STILL_STRAIGHT_ALPHA_TYPE,
 };
 pub(crate) use text::PrText;
-pub(crate) use timeline::check_track_matte;
+pub(crate) use timeline::{check_track_matte, linear_tail_within_media, source_span_matches};
 
-pub use timing::FrameRate;
 pub(crate) use timing::{seconds, SourceFrameRate, VideoOrientation, TICKS, TICKS_PER_MILLISECOND};
+pub use timing::{FrameRate, NativeFrameRate};
 pub(crate) use video_codec::VideoCodec;
 
 /// One supported Premiere project in structured form.
@@ -166,6 +188,9 @@ pub struct PrSequence {
     /// Sound placements. The reader orders them by start; native track membership is not retained.
     pub(crate) audio: Vec<PrAudioOccurrence>,
     pub(crate) frame_rate: FrameRate,
+    /// Saved sequence grid when only the editable sampling rate is approximated.
+    /// Native occurrence boundaries and media/audio clocks remain unchanged.
+    pub(crate) native_frame_ticks: Option<i64>,
     pub(crate) width: u32,
     pub(crate) height: u32,
     /// The last native video item end on input, including omitted items, or the
@@ -210,7 +235,14 @@ impl PrSequence {
     pub(crate) fn media_in_order(&self) -> Vec<&MediaId> {
         let mut seen = BTreeSet::new();
         self.video_occurrences()
-            .map(|clip| &clip.media)
+            .flat_map(|clip| {
+                std::iter::once(&clip.media).chain(clip.opacity_mask.as_ref().and_then(|mask| {
+                    match &mask.raster {
+                        Some(RasterMask::Prepared(media)) => Some(media),
+                        _ => None,
+                    }
+                }))
+            })
             .chain(self.audio.iter().map(|clip| &clip.media))
             .chain(self.nested_media())
             .filter(|id| seen.insert(*id))
@@ -241,7 +273,7 @@ pub(crate) enum PrVideoTransitionKind {
     FilmImpactPop,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PrVideoTransition {
     pub(crate) id: String,
     pub(crate) kind: PrVideoTransitionKind,
@@ -277,9 +309,6 @@ impl PrVideoTrack {
 }
 
 /// One non-overlapping item on a video track.
-// A media placement holds every clip edit and is the common item; a graphic
-// wastes the difference, a few hundred bytes per Type-tool graphic.
-#[expect(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum PrVideoItem {
     /// A placement of shared source media.
@@ -340,6 +369,12 @@ pub struct PrGraphic {
     /// would take the object outside its native ranges; a graphic with
     /// several objects keeps it here.
     pub(crate) vector_motion: Option<text::PrVectorMotion>,
+    /// The clip's own static Motion (`AE.ADBE Motion`), which moves the whole
+    /// graphic after its Vector Motion. Only a Source Graphic placement, whose
+    /// objects its master clip holds, reads one other than the default; other
+    /// graphics keep the default. Export keeps the default, the only Motion
+    /// that the graphic writer writes.
+    pub(crate) clip_motion: PrStaticTransform,
     /// The clip's own Opacity (`AE.ADBE Opacity`), over the whole graphic: 100
     /// under `DefaultOpacity` `true`. A chain with neither a `DefaultOpacity`
     /// nor an Opacity component also reads as 100; that reading is inferred,
@@ -347,13 +382,27 @@ pub struct PrGraphic {
     pub(crate) opacity: f64,
     pub(crate) blend_mode: PrBlendMode,
     /// Keys on the clip Opacity, on the generator clock like the text keys.
-    /// The clip's Motion keeps its default, so no other property is keyed.
+    /// The clip's Motion has no keys, so no other property is keyed.
     pub(crate) animations: Vec<PrPropertyAnimation>,
+    /// The one mask on the clip Opacity (`SubComponents`), its outline
+    /// in unit fractions of the sequence frame. Premiere applies it to the
+    /// whole graphic after the Vector Motion (fixture
+    /// `feature_graphic_masks_d_26_5`, probe d1).
+    pub(crate) opacity_mask: Option<PrMask>,
     /// The graphic's objects, in the order that its component chain lists
     /// them.
     pub(crate) objects: Vec<text::PrGraphicObject>,
+    /// Converter-local loss retained until mask/matte admission; never an FX field.
+    pub(crate) effect_loss: Option<PrGraphicEffectLoss>,
     /// Effective picture output, flattened like `PrVideoOccurrence::enabled`.
     pub(crate) enabled: bool,
+}
+
+/// An active Ramp omitted from a graphic. Saved paints retain editable content,
+/// but its luma changes and unchanged graphic-host alpha has not been established.
+#[derive(Debug, Clone)]
+pub(crate) struct PrGraphicEffectLoss {
+    pub(crate) ramp_component: String,
 }
 
 impl PrGraphic {
@@ -367,17 +416,39 @@ impl PrGraphic {
         self.start_ticks..self.end_ticks
     }
 
+    /// Leaf objects in native chain order, including SubGroup members.
+    fn object_leaves(&self) -> Vec<&text::PrGraphicObject> {
+        fn visit<'a>(
+            objects: &'a [text::PrGraphicObject],
+            out: &mut Vec<&'a text::PrGraphicObject>,
+        ) {
+            for object in objects {
+                match object {
+                    text::PrGraphicObject::Group(group) => visit(&group.objects, out),
+                    object => out.push(object),
+                }
+            }
+        }
+        let mut leaves = Vec::new();
+        visit(&self.objects, &mut leaves);
+        leaves
+    }
+
     /// The text objects, in chain order.
     pub(crate) fn texts(&self) -> impl Iterator<Item = &PrText> {
-        self.objects.iter().filter_map(|object| match object {
-            text::PrGraphicObject::Text(text) => Some(text),
-            text::PrGraphicObject::TextLines(_) | text::PrGraphicObject::Shape(_) => None,
-        })
+        self.object_leaves()
+            .into_iter()
+            .filter_map(|object| match object {
+                text::PrGraphicObject::Text(text) => Some(text),
+                text::PrGraphicObject::TextLines(_)
+                | text::PrGraphicObject::Shape(_)
+                | text::PrGraphicObject::Group(_) => None,
+            })
     }
 
     /// Every editable line's font/style document, including a mixed-style block.
     pub(crate) fn text_documents(&self) -> impl Iterator<Item = (&str, &text::PrTextDocument)> {
-        self.objects.iter().flat_map(|object| {
+        self.object_leaves().into_iter().flat_map(|object| {
             let (name, documents) = match object {
                 text::PrGraphicObject::Text(text) => {
                     (text.name.as_str(), std::slice::from_ref(&text.document))
@@ -385,7 +456,7 @@ impl PrGraphic {
                 text::PrGraphicObject::TextLines(text) => {
                     (text.name.as_str(), text.documents.as_slice())
                 }
-                text::PrGraphicObject::Shape(_) => ("", &[][..]),
+                text::PrGraphicObject::Shape(_) | text::PrGraphicObject::Group(_) => ("", &[][..]),
             };
             documents.iter().map(move |document| (name, document))
         })
@@ -440,6 +511,8 @@ pub struct PrMedia {
 /// Video-stream facts of one source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PrVideoStream {
+    pub(crate) pixel_aspect: records::PixelAspectRatio,
+    pub(crate) interpretation: SourceInterpretation,
     pub(crate) orientation: VideoOrientation,
     pub(crate) intrinsic_ticks: i64,
     pub(crate) frame_rate: SourceFrameRate,
@@ -448,9 +521,44 @@ pub(crate) struct PrVideoStream {
     pub(crate) kind: PrMediaKind,
 }
 
+/// Saved picture declaration, never a measurement of the file's cadence.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) enum SourceInterpretation {
+    #[default]
+    Original,
+    Rate(SourceFrameRate),
+    Invalid(String),
+}
+
 impl PrVideoStream {
+    pub(crate) fn interpreted_duration(&self) -> crate::error::Result<i64> {
+        use crate::error::{ensure, unsupported};
+        let rate = match &self.interpretation {
+            SourceInterpretation::Original => return Ok(self.intrinsic_ticks),
+            SourceInterpretation::Invalid(reason) => return Err(unsupported(reason)),
+            SourceInterpretation::Rate(rate) => rate,
+        };
+        let period = self.frame_rate.ticks_per_frame();
+        ensure!(
+            self.intrinsic_ticks > 0 && self.intrinsic_ticks % period == 0,
+            "interpreted source Duration must contain an exact positive native frame count"
+        );
+        (self.intrinsic_ticks / period)
+            .checked_mul(rate.ticks_per_frame())
+            .ok_or_else(|| unsupported("interpreted source duration exceeds Premiere's tick range"))
+    }
+
     pub(crate) fn display_dimensions(&self) -> [u32; 2] {
         self.orientation.display_dimensions(self.width, self.height)
+    }
+
+    /// Pixel interpretation follows the decoded picture's axes after its container rotation.
+    pub(crate) fn pixel_scale(&self) -> [f64; 2] {
+        let aspect = self.pixel_aspect.scale();
+        match self.orientation {
+            VideoOrientation::Clockwise | VideoOrientation::CounterClockwise => [1.0, aspect],
+            VideoOrientation::Identity | VideoOrientation::HalfTurn => [aspect, 1.0],
+        }
     }
 }
 
@@ -507,6 +615,9 @@ pub struct PrVideoOccurrence {
     pub(crate) opacity: f64,
     pub(crate) blend_mode: PrBlendMode,
     pub(crate) transform: PrStaticTransform,
+    /// The clip's one Crop, in its source frame: an active Crop effect's or
+    /// the static Motion Crop of the Premiere 26.5 Motion layout, which
+    /// applies with Motion after every effect.
     pub(crate) crop: PrStaticCrop,
     pub(crate) animations: Vec<PrPropertyAnimation>,
     /// Convertible standard effects in stack order, the order they apply.
@@ -523,9 +634,19 @@ pub struct PrVideoOccurrence {
     /// ([`Self::transform_stage`]). The count saturates at `u8::MAX`; only
     /// that rule's `> 1` reads it.
     pub(crate) active_transforms: u8,
+    /// The source effects of the placement's master clip, apart from its own
+    /// `effects`; `None` when the master clip names no chain. Import converts
+    /// them on the placement's picture before its own effects, or reports why
+    /// not (`convert::effects::import_source_effects`); export writes every
+    /// effect of a picture in its placement's own chain.
+    pub(crate) source_effects: Option<PrSourceEffects>,
+    /// The FrameHold or native Time Remapping curve, with its key times in
+    /// input ticks after the source In: the clip reaches a key
+    /// `timeline_ticks / playback_rate` ticks after its start, so at unit
+    /// speed, as always for a FrameHold, key times are on the clip's clock.
     pub(crate) time_remap: Option<PrTimeRemap>,
     pub(crate) linear_wipe: Option<PrLinearWipe>,
-    /// The one static mask on the clip's intrinsic Opacity, which Premiere
+    /// The one mask on the clip's intrinsic Opacity, which Premiere
     /// applies after every standard effect, Crop and Linear Wipe included.
     pub(crate) opacity_mask: Option<PrMask>,
     /// The one active Track Matte Key, a standard effect at the chain position
@@ -538,6 +659,41 @@ pub struct PrVideoOccurrence {
     /// because the FX document has per-layer `is_hidden` and no tracks.
     pub(crate) enabled: bool,
 }
+
+/// The standard effects of a master clip's own `VideoComponentChain`, which
+/// Premiere applies to the source before each placement's own pipeline (the
+/// pinned `premiere_isolated_source_effects_26_5` render: its Corner Pin before
+/// the placement's Motion). Each placement reads them for itself, as it reads
+/// [`PrVideoOccurrence::effects`]: in stack order, bypassed ones kept, keys on
+/// the source clock, unconvertible ones reported and left out. The reader
+/// admits no chain with an active effect that changes what the clip covers
+/// or its transparency, or with an active Transform, or a Geometry2 that does
+/// not convert, that can hide the picture at some source time: by an Opacity
+/// or rendered Scale that reaches 0, by moving the whole picture out of the
+/// clip's frame ([`PrTransform::hiding_geometry`]), or by moving, scaling or
+/// turning it beside another effect that changes which part of the picture
+/// shows, a Transform, Geometry2, Corner Pin or Mosaic, since their combined
+/// geometry is not evaluated ([`PrTransform::changes_geometry`]); or with one
+/// whose values cannot be read. Import converts no source Transform. One that
+/// keeps part of the picture in the frame on its own is reported as not
+/// converted, and the picture shows without it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PrSourceEffects {
+    /// The master clip that owns the chain (`MasterClip:<uid>`), which every
+    /// placement of that master clip shares.
+    pub(crate) master: String,
+    pub(crate) effects: Vec<PrEffect>,
+    /// Active Transform records of the chain, convertible or not, as
+    /// [`PrVideoOccurrence::active_transforms`] counts them. The two counts
+    /// stay apart: a source Transform is never the placement's one Transform.
+    pub(crate) active_transforms: u8,
+}
+
+/// The report, on `MasterClip:<uid>`, of a master clip's `VideoComponentChain`
+/// that no conversion applies: the reader's for a chain that it does not carry
+/// (an element that is no graph edge, a nest placement's), the importer's for
+/// source effects that it does not convert on any layer.
+pub(crate) const SOURCE_CHAIN_NOT_CONVERTED: &str = "VideoComponentChain not converted";
 
 /// The static Track Matte Key (`AE.ADBE Legacy Key Track Matte`) of a media
 /// or nest placement: Premiere keys the placement's source frame by one
@@ -597,6 +753,7 @@ impl PrMatteChannel {
 #[derive(Debug, Clone)]
 pub(crate) struct PrLinearWipe {
     pub(crate) initial_completion: f64,
+    /// Empty for a constant `initial_completion`; otherwise source-clock keys.
     pub(crate) completion: Vec<PrScalarKeyframe>,
     pub(crate) angle_degrees: i16,
     pub(crate) feather: f64,
@@ -622,6 +779,26 @@ impl Default for PrStaticTransform {
             scale: [100.0, 100.0],
             rotation: 0.0,
         }
+    }
+}
+
+/// Largest difference, in units of the frame, between a Position and an
+/// Anchor Point that name one point: single-precision noise. Premiere saves
+/// the two 6e-9 apart on an unmoved adjustment layer.
+const SAME_POINT_TOLERANCE: f64 = f32::EPSILON as f64;
+
+impl PrStaticTransform {
+    /// Whether this Motion keeps every pixel of a sequence-sized source in
+    /// place, as the default does: Scale 100 and Rotation 0 with Position on
+    /// the Anchor Point, which are then normalized to one frame.
+    pub(crate) fn is_identity_on_canvas(&self) -> bool {
+        self.scale == [100.0, 100.0]
+            && self.rotation == 0.0
+            && self
+                .position
+                .iter()
+                .zip(self.anchor_point)
+                .all(|(position, anchor)| (position - anchor).abs() <= SAME_POINT_TOLERANCE)
     }
 }
 
@@ -768,6 +945,98 @@ pub(crate) struct PrTimeRemap {
     pub(crate) keys: Vec<PrTimeRemapKeyframe>,
 }
 
+impl PrTimeRemap {
+    /// Native Speed modes for forward ramps whose handles follow their plateaus.
+    ///
+    /// The saved Speed curve uses 6 for plateau keys and 7/8 for the start/end
+    /// of a ramp. It stores no independent handles: the adjacent linear slopes
+    /// determine the cubic with time controls at one third and two thirds.
+    pub(crate) fn ramp_modes(&self) -> Option<Vec<u8>> {
+        let keys = &self.keys;
+        if keys.len() < 4
+            || keys.first()?.easing != PrKeyframeEasing::Linear
+            || keys.last()?.easing != PrKeyframeEasing::Linear
+            || keys.iter().any(|key| key.source_ticks < 0)
+            || keys.windows(2).any(|pair| {
+                pair[0].timeline_ticks >= pair[1].timeline_ticks
+                    || pair[0].source_ticks >= pair[1].source_ticks
+            })
+        {
+            return None;
+        }
+        let slope = |a: &PrTimeRemapKeyframe, b: &PrTimeRemapKeyframe| {
+            (i128::from(b.source_ticks) - i128::from(a.source_ticks)) as f64
+                / (i128::from(b.timeline_ticks) - i128::from(a.timeline_ticks)) as f64
+        };
+        // Only floating-point roundoff is tolerated, not an edited curve or
+        // the millisecond rounding of imported key times/source values.
+        let same = |a: f64, b: f64| (a - b).abs() <= 64.0 * f64::EPSILON;
+        let mut modes = vec![6; keys.len()];
+        let mut has_ramp = false;
+        for end in 1..keys.len() {
+            match keys[end].easing {
+                PrKeyframeEasing::Linear => {}
+                PrKeyframeEasing::CubicBezier { x1, y1, x2, y2 }
+                    if end >= 2
+                        && end + 1 < keys.len()
+                        && keys[end - 1].easing == PrKeyframeEasing::Linear
+                        && keys[end + 1].easing == PrKeyframeEasing::Linear =>
+                {
+                    let scale = 1.0 / slope(&keys[end - 1], &keys[end]);
+                    let incoming = slope(&keys[end - 2], &keys[end - 1]) * scale / 3.0;
+                    let outgoing = 1.0 - slope(&keys[end], &keys[end + 1]) * scale / 3.0;
+                    if !same(x1, 1.0 / 3.0)
+                        || !same(x2, 2.0 / 3.0)
+                        || !same(y1, incoming)
+                        || !same(y2, outgoing)
+                        || !(0.0..=1.0).contains(&y1)
+                        || !(0.0..=1.0).contains(&y2)
+                    {
+                        return None;
+                    }
+                    modes[end - 1] = 7;
+                    modes[end] = 8;
+                    has_ramp = true;
+                }
+                _ => return None,
+            }
+        }
+        has_ramp.then_some(modes)
+    }
+
+    /// The measured explicit native Frame Hold over a placement of `duration`
+    /// ticks: two Linear keys at its ends on the held `source_ticks`.
+    pub(crate) fn frame_hold(source_ticks: i64, duration: i64) -> Self {
+        Self {
+            keys: [0, duration]
+                .into_iter()
+                .map(|timeline_ticks| PrTimeRemapKeyframe {
+                    timeline_ticks,
+                    source_ticks,
+                    easing: PrKeyframeEasing::Linear,
+                })
+                .collect(),
+        }
+    }
+
+    /// The held source tick when this curve is the explicit Frame Hold
+    /// ([`Self::frame_hold`]) over a placement of `duration` ticks.
+    pub(crate) fn held_source_ticks(&self, duration: i64) -> Option<i64> {
+        match self.keys.as_slice() {
+            [first, last]
+                if first.timeline_ticks == 0
+                    && last.timeline_ticks == duration
+                    && first.source_ticks == last.source_ticks
+                    && first.easing == PrKeyframeEasing::Linear
+                    && last.easing == PrKeyframeEasing::Linear =>
+            {
+                Some(first.source_ticks)
+            }
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PrTimeRemapKeyframe {
     pub(crate) timeline_ticks: i64,
@@ -844,6 +1113,7 @@ impl PrVideoOccurrence {
             effects_above_mask: 0,
             stroke: None,
             active_transforms: 0,
+            source_effects: None,
             time_remap: None,
             linear_wipe: None,
             opacity_mask: None,
@@ -865,6 +1135,51 @@ impl PrVideoOccurrence {
     /// Returns the source interval in Premiere ticks.
     pub fn source_ticks(&self) -> std::ops::Range<i64> {
         self.in_ticks..self.out_ticks
+    }
+
+    /// The source tick shown over the whole placement when it is an explicit
+    /// Frame Hold ([`PrTimeRemap::held_source_ticks`]).
+    pub(crate) fn held_source_ticks(&self) -> Option<i64> {
+        self.time_remap
+            .as_ref()?
+            .held_source_ticks(self.end_ticks - self.start_ticks)
+    }
+
+    /// Whether the clip plays a native Time Remapping curve from a source In
+    /// other than 0 or at a speed other than 1, at input
+    /// `In + speed × elapsed`. Adobe measured that clock on physical video
+    /// only ([`Self::validate`]), and not the clock of the clip's effect keys.
+    /// A FrameHold, which shows one source instant, is not such a curve.
+    pub(crate) fn remaps_from_in_or_speed(&self) -> bool {
+        (self.in_ticks != 0 || self.playback_rate != 1.0)
+            && self.time_remap.as_ref().is_some_and(|remap| {
+                remap
+                    .keys
+                    .windows(2)
+                    .any(|pair| pair[0].source_ticks != pair[1].source_ticks)
+            })
+    }
+
+    /// Linear Rotation keys on a strictly forward native remap use media time.
+    /// Holds, other properties and masks retain their existing admission rules.
+    /// The caller must also require physical video outside a nest or stage.
+    pub(crate) fn has_media_clock_rotation(&self) -> bool {
+        !self.animations.is_empty()
+            && self.animations.iter().all(|animation| {
+                matches!(animation, PrPropertyAnimation::Rotation(keys)
+                    if keys.iter().all(|key| key.easing == PrKeyframeEasing::Linear))
+            })
+            && self.time_remap.as_ref().is_some_and(|remap| {
+                remap.keys.len() >= 2
+                    && remap
+                        .keys
+                        .windows(2)
+                        .all(|pair| pair[0].source_ticks < pair[1].source_ticks)
+            })
+            && self.crop.is_default()
+            && self.linear_wipe.is_none()
+            && self.opacity_mask.is_none()
+            && self.track_matte.is_none()
     }
 
     /// Returns the identity used to bind the referenced media bytes.
@@ -909,7 +1224,7 @@ impl PrVideoOccurrence {
     /// measured Linear Position Transform on an Alpha-keyed picture: both
     /// saved effect orders move the video and its static matte together. A
     /// second active Transform on the clip (`active_transforms`),
-    /// convertible or not, omits them all: Oracle run E11 measured one per
+    /// convertible or not, omits them all: native measurements cover one per
     /// clip, and their composition is unmeasured. The source frame must be the
     /// canvas: E11 could not separate the frame that Position is
     /// normalized to.
@@ -931,17 +1246,19 @@ impl PrVideoOccurrence {
         };
         if self.active_transforms > 1 {
             return Err(
-                "another active Transform on the same clip is not converted with this one: Oracle run E11 measured one Transform per clip, and Premiere's composition of two is unmeasured",
+                "another active Transform on the same clip is not converted with this one: native measurements cover one Transform per clip, and Premiere's composition of two is unmeasured",
             );
         }
         if !self.crop.is_default() || self.linear_wipe.is_some() || self.opacity_mask.is_some() {
             return Err(
-                "a Transform with a Crop, Linear Wipe or Opacity mask on one clip is not converted: the mask keeps its stage group, which carries one shape (supervisor decision D22-6)",
+                "a Transform with a Crop, Linear Wipe or Opacity mask on one clip is not converted: the mask keeps its stage group, which carries one shape",
             );
         }
         let owner = if let Some(matte) = self.track_matte {
             if !self.measured_matte_transform(stage.1, matte) {
-                return Err("a Transform with a Track Matte Key on one clip is not converted outside the measured A4 form: one Linear Position Transform, Alpha key, default Motion and other Transform values, normal blend, opaque and unretimed clip");
+                return Err(
+                    "a Transform with a Track Matte Key on one clip is not converted outside the measured A4 form: one Linear Position Transform, Alpha key, default Motion and other Transform values, normal blend, opaque and unretimed clip",
+                );
             }
             TransformOwner::KeyedPicture
         } else {
@@ -950,7 +1267,7 @@ impl PrVideoOccurrence {
 
         if source != canvas {
             return Err(
-                "a Transform on media that is not sequence-sized is not converted: the frame that Premiere normalizes its Position to is unmeasured there (Oracle run E11 measured 1920 x 1080 media on a 1920 x 1080 sequence; supervisor decision D22-4)",
+                "a Transform on media that is not sequence-sized is not converted: the frame that Premiere normalizes its Position to is unmeasured there (native measurements cover 1920 x 1080 media on a 1920 x 1080 sequence)",
             );
         }
         Ok(Some((stage.0, stage.1, owner)))
@@ -998,13 +1315,17 @@ impl PrVideoOccurrence {
     }
 
     /// How the Crop, Linear Wipe, Opacity mask, Track Matte Key or Transform
-    /// of this media occurrence converts, or why the occurrence is omitted.
-    /// `source` is the media frame and `canvas` the sequence frame, in pixels.
+    /// of this media occurrence converts when `source_effects` of its source
+    /// effects apply on its picture before them, or why it does not convert
+    /// so. `source` is the media frame and `canvas` the sequence frame, in
+    /// pixels.
     ///
-    /// Premiere applies a clip's standard effects in descending chain `Index`,
-    /// Crop, Linear Wipe and Track Matte Key among them, and then Motion and
-    /// Opacity, whose mask therefore applies after every effect; FX applies a
-    /// layer's masks and track matte before its effects. Rules, in order:
+    /// Premiere applies a clip's source effects ([`Self::source_effects`]),
+    /// then its standard effects in descending chain `Index`, Crop, Linear
+    /// Wipe and Track Matte Key among them, and then Motion and Opacity, whose
+    /// mask therefore applies after every effect; FX applies a layer's masks
+    /// and track matte before its effects. Source effects are thus applied
+    /// before any mask of the clip. Rules, in order:
     ///
     /// 1. Crop and Linear Wipe together, an Opacity mask with either, or a
     ///    Track Matte Key with any of the three: omitted. Export writes one
@@ -1016,6 +1337,11 @@ impl PrVideoOccurrence {
     ///    frame that Premiere wipes or keys on such media is unverified.
     /// 3. Converted effects on both sides of the mask: the reader omits them
     ///    all (`MASK_EFFECT_ORDER_REASON`), so rules 4 to 8 see no effects.
+    ///    Source effects are on both sides of it too when an effect of the
+    ///    clip's own applies after its Crop, Linear Wipe or Track Matte Key:
+    ///    that is refused, and the caller converts the clip without them
+    ///    (`source_effects` 0). A Transform is never drawn as an effect after
+    ///    the mask: it is a stage's transform or omitted.
     /// 4. No mask, with the one Transform of [`Self::transform_stage`]:
     ///    [`MaskBoundary::Staged`] without a mask; the video carries the
     ///    Transform.
@@ -1027,13 +1353,15 @@ impl PrVideoOccurrence {
     ///    on a clip at default static Motion without Motion keys: flat. By
     ///    rule 2 its sequence-sized guide or matte is then the clip frame.
     /// 8. Otherwise [`MaskBoundary::Staged`]: so an Opacity mask with any
-    ///    converted effect, since every effect applies before it, and a Track
-    ///    Matte Key on a moved clip, whose Motion moves the keyed picture and
-    ///    so the matte with it (fixture G5).
+    ///    converted effect, since every effect applies before it, a mask
+    ///    under source effects, and a Track Matte Key on a moved clip, whose
+    ///    Motion moves the keyed picture and so the matte with it (fixture
+    ///    G5).
     pub(crate) fn mask_boundary(
         &self,
         source: [u32; 2],
         canvas: [u32; 2],
+        source_effects: usize,
     ) -> Result<MaskBoundary, &'static str> {
         let crop = !self.crop.is_default();
         let wipe = self.linear_wipe.is_some();
@@ -1062,13 +1390,25 @@ impl PrVideoOccurrence {
                 .iter()
                 .any(|animation| animation.property() != PrAnimatedProperty::Opacity);
         let masked = crop || wipe || opacity_mask || track_matte;
+        let drawn_after_mask = self
+            .effects
+            .iter()
+            .skip(self.effects_above_mask)
+            .any(|effect| !matches!(effect.params, PrEffectParams::Transform(_)));
+        if masked && source_effects > 0 && drawn_after_mask {
+            return Err(
+                "they apply before the Crop, Linear Wipe or Track Matte Key, and effects of the clip's own chain after it; one FX mask keeps the effects of only one side in order",
+            );
+        }
         Ok(match self.transform_stage(source, canvas) {
             // A4's Transform stages the whole Alpha-keyed picture; E11's
             // stages the video, and only without a mask (rule 4).
             Ok(Some((_, _, TransformOwner::KeyedPicture))) => MaskBoundary::Staged,
             Ok(Some((_, _, TransformOwner::Video))) if !masked => MaskBoundary::Staged,
             _ if !masked => MaskBoundary::Flat,
-            _ if self.effects_above_mask > 0 || ((wipe || track_matte) && moved) => {
+            _ if self.effects_above_mask + source_effects > 0
+                || ((wipe || track_matte) && moved) =>
+            {
                 MaskBoundary::Staged
             }
             _ => MaskBoundary::Flat,
@@ -1361,6 +1701,7 @@ mod tests {
         let edited = |edit: &dyn Fn(&mut PrVideoOccurrence)| {
             let mut clip = clip_of("source", 0..TICKS, 0);
             clip.effects = vec![PrEffect {
+                mask: None,
                 enabled: true,
                 params: PrEffectParams::GaussianBlur(PrGaussianBlur {
                     blurriness: 40.0,
@@ -1510,7 +1851,55 @@ mod tests {
                 Err("an Opacity mask with a Crop or Linear Wipe on one clip is not converted"),
             ),
         ] {
-            assert_eq!(clip.mask_boundary(source, frame), expected, "{case}");
+            assert_eq!(clip.mask_boundary(source, frame, 0), expected, "{case}");
+        }
+
+        // Source effects apply before every effect of the clip's own, and so
+        // before its mask.
+        let bare = |edit: &dyn Fn(&mut PrVideoOccurrence)| {
+            edited(&|clip| {
+                clip.effects.clear();
+                edit(clip);
+            })
+        };
+        let both_sides = "they apply before the Crop, Linear Wipe or Track Matte Key, and effects of the clip's own chain after it; one FX mask keeps the effects of only one side in order";
+        for (case, clip, expected) in [
+            ("source effects without a mask", edited(&|_| {}), Ok(Flat)),
+            ("source effects over a Crop", bare(&crop), Ok(Staged)),
+            ("source effects over a wipe", bare(&wipe), Ok(Staged)),
+            (
+                "source effects over an Opacity mask",
+                bare(&masked),
+                Ok(Staged),
+            ),
+            (
+                "source effects and the clip's effect over a Crop",
+                edited(&|clip| {
+                    crop(clip);
+                    clip.effects_above_mask = 1;
+                }),
+                Ok(Staged),
+            ),
+            (
+                "source effects over a Crop that the clip's effect follows",
+                edited(&crop),
+                Err(both_sides),
+            ),
+            (
+                "source effects over a wipe that the clip's effect follows",
+                edited(&wipe),
+                Err(both_sides),
+            ),
+            (
+                "source effects over Crop and wipe",
+                bare(&|clip| {
+                    crop(clip);
+                    wipe(clip);
+                }),
+                Err("Crop and Linear Wipe on one clip are not converted"),
+            ),
+        ] {
+            assert_eq!(clip.mask_boundary(frame, frame, 1), expected, "{case}");
         }
     }
 
@@ -1534,11 +1923,22 @@ mod tests {
                 clip.transform_stage(canvas, canvas),
                 Ok(Some((_, _, TransformOwner::KeyedPicture)))
             ));
-            assert_eq!(
-                clip.mask_boundary(canvas, canvas),
-                Ok(super::MaskBoundary::Staged)
-            );
+            // In both saved orders the Transform is the stage, never an
+            // effect after the matte, so source effects stay before it.
+            for source_effects in [0, 1] {
+                assert_eq!(
+                    clip.mask_boundary(canvas, canvas, source_effects),
+                    Ok(super::MaskBoundary::Staged)
+                );
+            }
         }
+        assert_eq!(
+            clips
+                .iter()
+                .map(|clip| clip.effects_above_mask)
+                .collect::<std::collections::BTreeSet<_>>(),
+            std::collections::BTreeSet::from([0, 1])
+        );
         type Edit = fn(&mut PrVideoOccurrence);
         let cases: [(&str, Edit); 12] = [
             ("Scale", |clip| {
@@ -1600,6 +2000,7 @@ mod tests {
         use crate::tests::support::{transform_effect, DEFAULT_PR_TRANSFORM};
         let transform = || transform_effect(DEFAULT_PR_TRANSFORM, Vec::new());
         let blur = || PrEffect {
+            mask: None,
             enabled: true,
             params: PrEffectParams::GaussianBlur(PrGaussianBlur {
                 blurriness: 40.0,
@@ -1709,7 +2110,11 @@ mod tests {
                     assert!(actual.starts_with(reason), "{case}: {actual}");
                 }
             }
-            assert_eq!(clip.mask_boundary(source, canvas), Ok(boundary), "{case}");
+            assert_eq!(
+                clip.mask_boundary(source, canvas, 0),
+                Ok(boundary),
+                "{case}"
+            );
         }
     }
 }

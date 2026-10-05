@@ -143,6 +143,8 @@ fn gradient_fill_and_solid_stroke_retain_parametric_rect_and_group_ownership() {
             animations: Vec::new(),
             warnings: Vec::new(),
             frame_fade_lowered: false,
+            evaluated_shapes: Default::default(),
+            mapped_expressions: Vec::new(),
         };
         let layers = lower(
             &mut collector,
@@ -261,6 +263,8 @@ fn gradient_pair_does_not_freeze_axes_during_rect_geometry_motion() {
             animations: Vec::new(),
             warnings: Vec::new(),
             frame_fade_lowered: false,
+            evaluated_shapes: Default::default(),
+            mapped_expressions: Vec::new(),
         };
         assert!(
             lower(

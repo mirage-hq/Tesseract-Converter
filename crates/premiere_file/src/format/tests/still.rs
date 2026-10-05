@@ -19,7 +19,7 @@ const SOURCE: &str = include_str!("../../../tests/fixtures/one-clip.xml");
 /// The one-clip fixture as a Premiere still: `IsStill`, the twelve-hour
 /// synthetic duration, a one-hour placed in-point, and a master clip that
 /// keeps its own 0–5 s range (the `corporate_slideshow` shape).
-fn still_xml(alpha: bool) -> String {
+pub(in crate::format) fn still_xml(alpha: bool) -> String {
     let alpha_type = if alpha {
         "<AlphaType>1</AlphaType>"
     } else {
@@ -400,7 +400,7 @@ fn corpus_panorama_still_pans_at_its_native_size() {
 }
 
 #[test]
-fn still_motion_and_opacity_import_as_a_video_clips_do() {
+fn still_motion_opacity_and_crop_import_as_a_video_clips_do() {
     // The pinned static-Motion fixture (Position 0.64:0.43, Scale 135 and
     // Scale Width 70 without Uniform Scale, Rotation 27, Anchor Point
     // 0.25:0.75), whose AME render pins the video mapping, imports the same
@@ -432,17 +432,113 @@ fn still_motion_and_opacity_import_as_a_video_clips_do() {
         video_layer["source"]["sourceRect"]
     );
 
-    // A Crop still is omitted, so that fixture's only clip leaves no content.
-    let error = inspect_project_with_media(
-        &feature_fixture_as_stills("feature_media_fit_crop_strict.prproj"),
-        sequence,
-    )
-    .unwrap_err()
-    .to_string();
-    assert!(
-        error.contains("nondefault Crop on a still image is unsupported; occurrence omitted"),
-        "{error}"
-    );
+    // A still keeps a static Crop effect as a video clip does. The one clip of
+    // the derived `feature_media_fit_crop_strict` (26.3 Crop Left 12.5, Top
+    // 7.5, Right 22.5 and Bottom 17.5, Edge Feather 24, on 1080x1920 media at
+    // a moved Motion), flagged as a still, keeps the video's mask and Crop
+    // guide: the same part of its own frame, in the same place.
+    let fixture = "feature_media_fit_crop_strict.prproj";
+    let path = path.with_file_name(fixture);
+    let video =
+        inspect_project_with_media(&crate::format::read_xml(&path).unwrap(), sequence).unwrap();
+    let still = inspect_project_with_media(&feature_fixture_as_stills(fixture), sequence).unwrap();
+    // The one `kind` layer and the guide of its mask.
+    let cropped = |project: &PrProjectFile, kind: &str| {
+        let document = crate::tests::support::project_document_with_media(
+            project.single_sequence().unwrap(),
+            &project.media,
+        );
+        let layers = document["composition"]["layers"].as_array().unwrap();
+        let layer = layers
+            .iter()
+            .find(|layer| layer["type"] == kind)
+            .unwrap_or_else(|| panic!("no {kind} layer: {layers:#?}"));
+        let guide = layers
+            .iter()
+            .find(|guide| guide["id"] == layer["masks"][0]["layer"])
+            .unwrap_or_else(|| panic!("{kind} without a mask guide: {layer}"));
+        (layer.clone(), guide.clone())
+    };
+    let (video_layer, video_guide) = cropped(&video, "Video");
+    let (image, guide) = cropped(&still, "Image");
+    assert_eq!(guide["rect"]["position"], serde_json::json!([135.0, 144.0]));
+    assert_eq!(guide["rect"]["size"], serde_json::json!([702.0, 1440.0]));
+    assert_eq!(image["masks"], video_layer["masks"]);
+    assert_eq!(image["transform"], video_layer["transform"]);
+    assert_eq!(image["activeRange"], video_layer["playback"]["inputRange"]);
+    for field in ["rect", "transform", "activeRange"] {
+        assert_eq!(guide[field], video_guide[field], "{field}");
+    }
+}
+
+#[test]
+fn still_opacity_masks_import_as_a_video_clips_do() {
+    // Premiere 26.5.1's masked clips A to C (`feature_opacity_masks_26_5_strict`,
+    // the first at Mask Opacity 50, the second at Scale 50, the third a
+    // feathered ellipse): as stills, each image keeps its clip's mask, whose
+    // guide draws the same outline in the same frame as the video's guide.
+    // D (inverted at Mask Opacity 50) and E (a masked effect) stay omitted as
+    // stills. Video E has a separate effect scope outside this comparison.
+    let fixture = "feature_opacity_masks_26_5_strict.prproj";
+    let sequence = Some("5fe2e712-90a9-4044-b93a-7a75b79b1320");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(fixture);
+    let video =
+        inspect_project_with_media(&crate::format::read_xml(&path).unwrap(), sequence).unwrap();
+    let still = inspect_project_with_media(&feature_fixture_as_stills(fixture), sequence).unwrap();
+    // Each masked layer's masks, transform and timeline range (a video's
+    // playback input, an image's active range) beside its guide's.
+    let masked = |project: &PrProjectFile, kind: &str, range: &str| {
+        let document = crate::tests::support::project_document_with_media(
+            project.single_sequence().unwrap(),
+            &project.media,
+        );
+        let layers = document["composition"]["layers"]
+            .as_array()
+            .unwrap()
+            .clone();
+        layers
+            .iter()
+            .filter(|layer| {
+                layer["type"] == kind
+                    && layer["masks"]
+                        .as_array()
+                        .is_some_and(|masks| !masks.is_empty())
+            })
+            .map(|layer| {
+                let guide = layers
+                    .iter()
+                    .find(|guide| guide["id"] == layer["masks"][0]["layer"])
+                    .unwrap_or_else(|| panic!("{kind} without a mask guide: {layer}"));
+                // Resolve the guide first, then compare controls rather than
+                // IDs allocated beside each document's other occurrences.
+                let mut masks = layer["masks"].clone();
+                for mask in masks.as_array_mut().unwrap() {
+                    let mask = mask.as_object_mut().unwrap();
+                    mask.remove("id");
+                    mask.remove("layer");
+                }
+                (
+                    [
+                        masks,
+                        layer["transform"].clone(),
+                        layer.pointer(range).unwrap().clone(),
+                    ],
+                    [
+                        &guide["type"],
+                        &guide["shape"],
+                        &guide["transform"],
+                        &guide["activeRange"],
+                    ]
+                    .map(Clone::clone),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let videos = masked(&video, "Video", "/playback/inputRange");
+    assert_eq!(videos.len(), 3);
+    assert_eq!(masked(&still, "Image", "/activeRange"), videos);
 }
 
 fn still_project(alpha: bool, name: &str) -> PrProjectFile {
@@ -471,9 +567,11 @@ fn still_project(alpha: bool, name: &str) -> PrProjectFile {
         effects_above_mask: 0,
         stroke: None,
         active_transforms: 0,
+        source_effects: None,
     };
     PrProjectFile::from_sequences(
         vec![PrSequence {
+            native_frame_ticks: None,
             audio: Vec::new(),
             id: None,
             name: "Stills".into(),
@@ -495,6 +593,8 @@ fn still_project(alpha: bool, name: &str) -> PrProjectFile {
                     format!("/tmp/stills/media/{name}").into(),
                 )],
                 video: Some(crate::schema::PrVideoStream {
+                    pixel_aspect: Default::default(),
+                    interpretation: Default::default(),
                     orientation: crate::schema::VideoOrientation::Identity,
                     intrinsic_ticks: STILL_INTRINSIC_TICKS,
                     frame_rate: (FrameRate::Fps30).into(),
@@ -665,6 +765,360 @@ fn still_linear_wipe_omits_only_the_affected_occurrence() {
     );
     let document = crate::tests::support::project_document_with_media(sequence, &project.media);
     assert_eq!(document["composition"]["layers"][0]["type"], "Image");
+}
+
+const IMAGES_NESTS_SEQUENCE: &str = "f3c651e6-0302-4499-b6f5-814b7b22c207";
+
+/// `xml` with the first `from` inside the native record that starts `record`
+/// replaced by `to`: a derived edit of one record.
+fn edit_record(xml: &str, record: &str, from: &str, to: &str) -> String {
+    let start = xml.find(record).unwrap_or_else(|| panic!("no {record}"));
+    let offset = start
+        + xml[start..]
+            .find(from)
+            .unwrap_or_else(|| panic!("{record}: no {from}"));
+    assert!(
+        !xml[start + record.len()..offset].contains("ObjectID="),
+        "{from} is not in {record}"
+    );
+    format!("{}{to}{}", &xml[..offset], &xml[offset + from.len()..])
+}
+
+/// The Premiere 26.5.1 save `feature_images_nests_26_5.prproj` with each
+/// [`edit_record`] edit. Its still E (`VideoClipTrackItem:145`, the 1080x1350
+/// in_portrait.png at 8-10 s, `VideoClip:267` from InPoint 914449132800000,
+/// one hour minus a frame) has Position and Scale keys 0.5 s and 1.5 s after
+/// that InPoint; `VideoComponentParam` 287-290 are its Motion Crop Left, Top,
+/// Right and Bottom.
+fn images_nests_with(edits: &[(&str, &str, &str)]) -> String {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/feature_images_nests_26_5.prproj");
+    edits.iter().fold(
+        crate::format::read_xml(&path).unwrap(),
+        |xml, (record, from, to)| edit_record(&xml, record, from, to),
+    )
+}
+
+const ZERO_EDGE: &str = "<StartKeyframe>-91445760000000000,0.,0,0,0,0,0,0</StartKeyframe>";
+
+/// A static Motion Crop edge of `value` percent, as Premiere saves a nonzero
+/// one (`CurrentValue` after the start key).
+fn motion_crop_edge(value: &str) -> String {
+    format!("<StartKeyframe>-91445760000000000,{value},0,0,0,0,0,0</StartKeyframe><CurrentValue>{value}</CurrentValue>")
+}
+
+#[test]
+fn a_still_motion_crop_becomes_its_image_crop_guide() {
+    // Still E with Motion Crop Left 10: the Motion Crop is part of the Motion
+    // that a still converts, so the still keeps it as its Crop, and import
+    // draws the flat video Crop guide in the image's own 1080x1350 frame.
+    let left = motion_crop_edge("10.");
+    let cropped = [(
+        "<VideoComponentParam ObjectID=\"287\"",
+        ZERO_EDGE,
+        left.as_str(),
+    )];
+    let muted = [
+        cropped[0],
+        (
+            "<VideoClipTrackItem ObjectID=\"145\"",
+            "</ClipTrackItem>",
+            "<IsMuted>true</IsMuted></ClipTrackItem>",
+        ),
+    ];
+    for (case, edits, hidden) in [
+        ("shown", &cropped[..], None),
+        ("muted", &muted[..], Some(true)),
+    ] {
+        let (project, omissions) = crate::format::inspect_project_with_omissions(
+            &images_nests_with(edits),
+            Some(IMAGES_NESTS_SEQUENCE),
+        )
+        .unwrap();
+        assert!(
+            !omissions.iter().any(|omission| {
+                omission.scope == crate::OmissionScope::Occurrence
+                    && omission.record.ends_with("145")
+            }),
+            "{case}: {omissions:#?}"
+        );
+        let sequence = project.single_sequence().unwrap();
+        let still = sequence
+            .video_occurrences()
+            .find(|clip| clip.id.as_deref() == Some("VideoClipTrackItem:145"))
+            .expect("the still keeps its Motion Crop");
+        assert_eq!(
+            still.crop,
+            crate::schema::PrStaticCrop {
+                left: 10.0,
+                top: 0.0,
+                right: 0.0,
+                bottom: 0.0,
+                edge_feather: 0.0,
+            },
+            "{case}"
+        );
+        let document = crate::tests::support::project_document_with_media(sequence, &project.media);
+        let layers = document["composition"]["layers"].as_array().unwrap();
+        let index = layers
+            .iter()
+            .position(|layer| layer["type"] == "Image" && layer["activeRange"]["start"] == 8000)
+            .unwrap();
+        let (image, guide) = (&layers[index], &layers[index + 1]);
+        assert_eq!(
+            image["activeRange"],
+            serde_json::json!({"start": 8000, "duration": 2000}),
+            "{case}"
+        );
+        assert_eq!(
+            image.get("isHidden").and_then(serde_json::Value::as_bool),
+            hidden,
+            "{case}"
+        );
+        assert_eq!(
+            image["transform"]["anchorPoint"],
+            serde_json::json!([540.0, 675.0]),
+            "{case}"
+        );
+        assert_eq!(
+            image["masks"],
+            serde_json::json!([{
+                "id": image["masks"][0]["id"], "mode": "add", "inverted": false,
+                "layer": guide["id"], "feather": [0.0, 0.0], "expansion": 0.0, "opacity": 1.0
+            }]),
+            "{case}"
+        );
+        // The guide crops the left 10 % of the image's own frame, beside it
+        // with its range and transform; a hidden image keeps its Crop.
+        assert_eq!(guide["type"], "Rect", "{case}");
+        assert!(guide.get("isHidden").is_none(), "{case}");
+        assert_eq!(
+            guide["rect"]["position"],
+            serde_json::json!([108.0, 0.0]),
+            "{case}"
+        );
+        assert_eq!(
+            guide["rect"]["size"],
+            serde_json::json!([972.0, 1350.0]),
+            "{case}"
+        );
+        assert_eq!(guide["activeRange"], image["activeRange"], "{case}");
+        assert_eq!(guide["transform"], image["transform"], "{case}");
+        // The guide repeats the image's Motion keys on the InPoint clock.
+        let entries = document["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap();
+        let keys = |layer: &serde_json::Value| -> Vec<(
+            serde_json::Value,
+            Vec<(serde_json::Value, serde_json::Value)>,
+        )> {
+            entries
+                .iter()
+                .filter(|entry| entry["target"]["layerId"] == layer["id"])
+                .map(|entry| {
+                    let keys = entry["animator"]["keyframes"].as_array().unwrap().iter();
+                    (
+                        entry["target"]["propertyType"].clone(),
+                        keys.map(|key| (key["layerTime"].clone(), key["value"]["value"].clone()))
+                            .collect(),
+                    )
+                })
+                .collect()
+        };
+        let image_keys = keys(image);
+        assert_eq!(
+            image_keys,
+            [
+                ("positionX", [(500, 960.0), (1500, 960.0)]),
+                ("positionY", [(500, 540.0), (1500, 324.0)]),
+                ("scaleX", [(500, 100.0), (1500, 60.0)]),
+                ("scaleY", [(500, 100.0), (1500, 60.0)]),
+            ]
+            .map(|(property, keys)| {
+                (
+                    serde_json::json!(property),
+                    keys.map(|(time, value)| (serde_json::json!(time), serde_json::json!(value)))
+                        .to_vec(),
+                )
+            }),
+            "{case}"
+        );
+        assert_eq!(keys(guide), image_keys, "{case}");
+    }
+}
+
+#[test]
+fn a_still_keeps_its_placement_and_in_point_when_its_source_span_differs() {
+    // A still has no media clock, so a source span that differs from its
+    // placement shows the same picture: F of the unedited Premiere 26.5.1
+    // save spans 5 s on its 2 s placement, and a still whose span is two
+    // frames short or 3 s long keeps its placement and its InPoint, the
+    // origin of its Motion keys. The same span on a video still omits it.
+    // (A unit-speed Out at most one frame off its played end reads as that
+    // end for any media, so these spans lie beyond that tolerance.)
+    let frame = FrameRate::Fps30.ticks_per_frame();
+    let respan = |xml: &str, in_ticks: i64, out_offset: i64| {
+        let span = |out: i64| format!("<InPoint>{in_ticks}</InPoint><OutPoint>{out}</OutPoint>");
+        let full = span(in_ticks + 5 * TICKS);
+        assert_eq!(xml.matches(&full).count(), 1);
+        xml.replace(&full, &span(in_ticks + 5 * TICKS + out_offset))
+    };
+    for out_offset in [-2 * frame, 3 * TICKS] {
+        let error = inspect_project(&respan(SOURCE, 0, out_offset), None)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("source span does not match the constant playback rate"),
+            "{out_offset}: {error}"
+        );
+        let still = respan(&still_xml(false), STILL_SOURCE_IN_TICKS, out_offset);
+        let (project, omissions) =
+            crate::format::inspect_project_with_omissions(&still, None).unwrap();
+        assert!(omissions.is_empty(), "{out_offset}: {omissions:#?}");
+        let sequence = project.single_sequence().unwrap();
+        let clip = sequence.video_occurrences().next().unwrap();
+        assert_eq!(clip.timeline_ticks(), 0..5 * TICKS, "{out_offset}");
+        assert_eq!(
+            clip.source_ticks(),
+            STILL_SOURCE_IN_TICKS..STILL_SOURCE_IN_TICKS + 5 * TICKS + out_offset,
+            "{out_offset}"
+        );
+        let document = crate::tests::support::project_document_with_media(sequence, &project.media);
+        assert_eq!(
+            document["composition"]["layers"][0]["activeRange"],
+            serde_json::json!({"start": 0, "duration": 5000}),
+            "{out_offset}"
+        );
+    }
+
+    // E two frames short (`VideoClip:267`), beside the unedited F.
+    let xml = images_nests_with(&[(
+        "<VideoClip ObjectID=\"267\"",
+        "<OutPoint>914957164800000</OutPoint>",
+        &format!("<OutPoint>{}</OutPoint>", 914_957_164_800_000 - 2 * frame),
+    )]);
+    let (project, omissions) =
+        crate::format::inspect_project_with_omissions(&xml, Some(IMAGES_NESTS_SEQUENCE)).unwrap();
+    assert!(
+        !omissions.iter().any(|omission| {
+            omission.scope == crate::OmissionScope::Occurrence
+                && ["145", "146"]
+                    .iter()
+                    .any(|id| omission.record.ends_with(id))
+        }),
+        "{omissions:#?}"
+    );
+    let sequence = project.single_sequence().unwrap();
+    let clip = |id: &str| {
+        sequence
+            .video_occurrences()
+            .find(|clip| clip.id.as_deref() == Some(id))
+            .unwrap_or_else(|| panic!("{id} is kept"))
+    };
+    let in_ticks = 914_449_132_800_000;
+    for (id, timeline, source) in [
+        (
+            "VideoClipTrackItem:145",
+            8..10,
+            in_ticks..914_957_164_800_000 - 2 * frame,
+        ),
+        (
+            "VideoClipTrackItem:146",
+            0..2,
+            in_ticks..in_ticks + 5 * TICKS,
+        ),
+    ] {
+        assert_eq!(
+            clip(id).timeline_ticks(),
+            timeline.start * TICKS..timeline.end * TICKS,
+            "{id}"
+        );
+        assert_eq!(clip(id).source_ticks(), source, "{id}");
+    }
+    let document = crate::tests::support::project_document_with_media(sequence, &project.media);
+    let e = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Image" && layer["activeRange"]["start"] == 8000)
+        .unwrap();
+    assert_eq!(
+        e["activeRange"],
+        serde_json::json!({"start": 8000, "duration": 2000})
+    );
+    let key_times: Vec<_> = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["target"]["layerId"] == e["id"])
+        .flat_map(|entry| entry["animator"]["keyframes"].as_array().unwrap())
+        .map(|key| key["layerTime"].as_i64().unwrap())
+        .collect();
+    assert_eq!(key_times, [500, 1500, 500, 1500, 500, 1500, 500, 1500]);
+}
+
+#[test]
+fn a_still_motion_crop_that_cannot_convert_still_omits_the_still() {
+    // A still's Motion Crop follows the clip rules: a keyed or empty crop
+    // omits the still; the Motion Crop admits none of a still's other masks,
+    // and beside its Opacity mask the one-mask rule of every clip omits it.
+    let keyed = format!(
+        "<IsTimeVarying>true</IsTimeVarying>{}<Keyframes>914576140800000,0.,0,0,0,0.16666666666666666,10,0.16666666666666666;914830156800000,10.,0,0,10,0.16666666666666666,0,0.16666666666666666;</Keyframes>",
+        ZERO_EDGE
+    );
+    let (sixty, forty) = (motion_crop_edge("60."), motion_crop_edge("40."));
+    for (case, xml, sequence, record, reason) in [
+        (
+            "keyed Crop Left",
+            images_nests_with(&[("<VideoComponentParam ObjectID=\"287\"", ZERO_EDGE, &keyed)]),
+            Some(IMAGES_NESTS_SEQUENCE),
+            "145",
+            "unsupported conversion: VideoComponentParam:287: animated Motion Crop Left is unsupported",
+        ),
+        (
+            "no visible area",
+            images_nests_with(&[
+                ("<VideoComponentParam ObjectID=\"287\"", ZERO_EDGE, &sixty),
+                ("<VideoComponentParam ObjectID=\"289\"", ZERO_EDGE, &forty),
+            ]),
+            Some(IMAGES_NESTS_SEQUENCE),
+            "145",
+            "VideoFilterComponent:266: Motion Crop: invalid Premiere project: opposing Crop edges must leave a positive visible area",
+        ),
+        // Clip 87 of the Premiere 26.5.1 save `feature_opacity_masks_26_5_strict`
+        // as a still, with Motion Crop Left 10 beside its Opacity mask.
+        (
+            "beside an Opacity mask",
+            edit_record(
+                &feature_fixture_as_stills("feature_opacity_masks_26_5_strict.prproj"),
+                "<VideoComponentParam ObjectID=\"169\"",
+                ZERO_EDGE,
+                &motion_crop_edge("10."),
+            ),
+            None,
+            "VideoClipTrackItem:87",
+            "track 1, range 508032000000..1016064000000 ticks: an Opacity mask with a Crop or Linear Wipe on one clip is not converted; occurrence omitted",
+        ),
+    ] {
+        let (project, omissions) =
+            crate::format::inspect_project_with_omissions(&xml, sequence).unwrap();
+        let omitted: Vec<_> = omissions
+            .iter()
+            .filter(|omission| {
+                omission.scope == crate::OmissionScope::Occurrence && omission.record == record
+            })
+            .map(|omission| omission.reason.as_str())
+            .collect();
+        assert_eq!(omitted, [reason], "{case}: {omissions:#?}");
+        assert!(
+            project
+                .single_sequence()
+                .unwrap()
+                .video_occurrences()
+                .all(|clip| !clip.id.as_deref().unwrap_or_default().ends_with(record)),
+            "{case}"
+        );
+    }
 }
 
 #[test]

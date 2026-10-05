@@ -109,6 +109,27 @@ fn drop_shadow(
     clock: super::keyframes::PropertyClock,
 ) -> Result<Chunk, AepWriteError> {
     clocked_style!(clock, scalar, toggle, color, blend, animated_scalar);
+    // Layer Style numeric controls are not Transform scalar leaves. Independent
+    // Adobe records use unrestricted float descriptors and visible storage flags;
+    // localLightingAngle alone uses the native fixed-point angle representation.
+    let scalar = |value: f64, range: Option<(f64, f64)>| {
+        views::property_with_clock(ValueKind::EffectFloat, &[value], range, None, clock)
+    };
+    let animated_scalar = |value: f64,
+                           range: Option<(f64, f64)>,
+                           animations: &[NativeLayerStyleAnimation],
+                           name: &str| {
+        let animation = animations
+            .iter()
+            .find(|animation| animation.property == name);
+        views::property_with_clock(
+            ValueKind::EffectFloat,
+            &[value],
+            range,
+            animation.map(|animation| &animation.track),
+            clock,
+        )
+    };
     let (rgb, opacity) = split_color(shadow.color);
     let (angle, distance) = polar(shadow.offset);
     // Invert the existing PAG/libpag-compatible conversion:
@@ -132,7 +153,10 @@ fn drop_shadow(
             ("dropShadow/color", color(rgb)?),
             ("dropShadow/opacity", scalar(opacity, Some((0.0, 100.0)))?),
             ("dropShadow/useGlobalAngle", toggle(0.0)?),
-            ("dropShadow/localLightingAngle", scalar(angle, None)?),
+            (
+                "dropShadow/localLightingAngle",
+                views::property_with_clock(ValueKind::EffectScalar, &[angle], None, None, clock)?,
+            ),
             (
                 "dropShadow/distance",
                 scalar(distance, Some((0.0, 30_000.0)))?,
@@ -717,6 +741,64 @@ pub(super) fn apply_with_clock(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn native_drop_shadow_numeric_descriptors_are_editable() {
+        fn named<'a>(chunks: &'a [Chunk], name: &str) -> Option<&'a [Chunk]> {
+            for pair in chunks.windows(2) {
+                if pair[0].id() == *b"tdmn"
+                    && pair[0].data_payload().is_some_and(|data| {
+                        data.split(|byte| *byte == 0).next() == Some(name.as_bytes())
+                    })
+                    && pair[1].list_kind() == Some(*b"tdbs")
+                {
+                    return pair[1].children();
+                }
+            }
+            chunks
+                .iter()
+                .filter_map(Chunk::children)
+                .find_map(|child| named(child, name))
+        }
+        let native = crate::rifx::Rifx::parse_with(
+            include_bytes!("../../tests/fixtures/layer_styles/native-shadow-descriptors.rifx"),
+            |_| false,
+        )
+        .unwrap();
+        let clock = super::super::keyframes::PropertyClock::for_rate(
+            crate::timing::FrameRate::new(24.0).unwrap(),
+        )
+        .unwrap();
+        let fresh = super::drop_shadow(
+            &crate::layer_styles::NativeDropShadow {
+                enabled: true,
+                color: [0.0, 0.0, 0.0, 0.61],
+                offset: [0.0, 28.0],
+                size: 65.0,
+                spread: 0.0,
+                blend_mode: fx_schema::BlendMode::Normal,
+                animations: Vec::new(),
+            },
+            clock,
+        )
+        .unwrap();
+        for name in [
+            "dropShadow/opacity",
+            "dropShadow/localLightingAngle",
+            "dropShadow/distance",
+            "dropShadow/blur",
+            "dropShadow/noise",
+        ] {
+            let expected = named(native.chunks(), name).unwrap();
+            let actual = named(fresh.children().unwrap(), name).unwrap();
+            for tag in [*b"tdsb", *b"tdb4"] {
+                assert_eq!(
+                    crate::properties::data(actual, tag).unwrap(),
+                    crate::properties::data(expected, tag).unwrap(),
+                    "{name}: native editable descriptor"
+                );
+            }
+        }
+    }
     use super::*;
 
     fn decode(entries: Vec<(&str, Chunk)>) -> crate::layer_styles::DecodedLayerStyles {

@@ -41,7 +41,7 @@ fn signed_scalar(mut text: &str) -> Option<(f64, SiblingReference<'_>)> {
 }
 
 /// `[var] name =`: the start of one plain binding statement.
-fn binding<'a>(text: &mut &'a str) -> Option<&'a str> {
+pub(super) fn binding<'a>(text: &mut &'a str) -> Option<&'a str> {
     *text = text.trim_start();
     if let Some(rest) = text.strip_prefix("var")
         && rest.starts_with(char::is_whitespace)

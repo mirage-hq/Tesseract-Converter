@@ -21,6 +21,23 @@ file that needs conversion; retry only a failed invocation. A map is bound to
 one target, so select that target when
 inspecting with a map in a multi-target project.
 
+## Hybrid export destination preparation
+
+Selected AE picture scopes can prepare otherwise unsupported whole video sources
+with the library backend and recheck the result through native AE admission.
+Exact H.264 and ProRes-alpha clocks remux into video-only MOV without edit lists;
+eligible opaque sources use the existing H.264 profile. Original assets and FX
+clocks stay unchanged. Already-admitted sources, including supported MP4, need
+no preparation. Audio/timecode, unsupported colour/timing/topology and unverified
+alpha precision retain the complete native Premiere picture scope.
+
+Enabled unmapped effects withhold video preparation for the selected scope.
+All original assets still undergo archive lookup, kind/integrity checks and
+ordinary interpretation. Existing still/audio preparation is unchanged. A source
+policy rejection retains native fallback; I/O, cancellation, malformed output and
+backend failures abort publication. Preparation does not prove native RGB, alpha,
+audio, relocation or edit propagation. See the [linked-picture limits](after-effects-support.md#linked-picture-destination-media-and-source-clocks).
+
 ## Inspection is admission, not render proof
 
 Default `inspect` emits schema version 2: the original scene inventory plus
@@ -80,8 +97,8 @@ FFMPEG_PKG_CONFIG_PATH=/path/to/ffmpeg-7/lib/pkgconfig make build-ffmpeg
 make check-media-library FFMPEG_PKG_CONFIG_PATH=/path/to/ffmpeg-7/lib/pkgconfig
 ```
 
-Plain `make build` produces the FFmpeg-independent CLI, supporting the external
-backend without native linkage.
+Plain `make build` also requires FFmpeg 7 development libraries: the default CLI
+features enable read-only native inspection and both transcode backends.
 
 Headers and matching shared libraries must be installed for that build and
 available to the CLI's platform loader at execution. An incompatible FFmpeg ABI,
@@ -108,15 +125,25 @@ with libx264 is not represented as the existing LGPL-only bundled build.
 A call works on a whole media source, not a clip trim or baked timeline. A
 compatible source is copied unchanged when its container already matches, or
 remuxed where supported; it is not recompressed merely to normalize GOPs.
+H.264 copy/remux requires decoded progressive 8-bit 4:2:0 (`yuv420p` or
+full-range `yuvj420p`). Higher chroma/depth, including 10-bit 4:2:2, uses the
+existing lossy H.264 8-bit 4:2:0 encoding profile in both general and AE
+preparation. Encoded output is re-probed for that pixel layout before publication;
+this does not relax downstream native admission or any source safety gate.
 Video outputs use `.mp4` or `.mov`; standalone audio outputs use `.wav`.
 Encoding uses a fixed quality-first profile: opaque SDR H.264, or ProRes 4444
 in `.mov` for verified 8-bit alpha sources. Higher or
 unknown alpha precision is blocked when re-encoding would be necessary; remuxing
 retains the existing coded precision. Alpha is handled independently of color
 scaling to avoid FFmpeg 7's packed-RGB alpha expansion bias. These profiles are
-not advertised as lossless RGB encodings. The single-file command is independent
-of downstream project formats; notably, Premiere import currently does not admit
-the ProRes-alpha route even though the media file can be transcoded. Standalone audio is prepared as PCM WAVE
+not advertised as lossless RGB encodings. Premiere import admits ProRes 4444
+`ap4h` through its existing native decoder and retains original packets, including
+coded alpha precision. WebCodecs playback is unavailable and native RGB/alpha
+fidelity remains unverified. QuickTime Animation (`rle ` / QTRLE) still needs
+explicit whole-source preparation and a source-bound `--media-map`; no import
+silently encodes media. `--media-map` and `--media-relink` cannot currently be
+combined, so projects requiring both relocation and preparation remain blocked
+on that composition. Standalone audio is prepared as PCM WAVE
 without silently reducing sample rate, channel layout or sample precision.
 AIFF/WAVE's implicit mono/stereo order is normalized when their demuxer omits a
 layout label; unknown multichannel layouts are not inferred.
@@ -126,15 +153,31 @@ seek-friendly maximum one-second GOP with no B frames. Remuxing does not rewrite
 an existing GOP. Source frame cadence/count, dimensions, time origins, color
 metadata, alpha presence and audio layout/timing are checked again after output.
 Unknown/unsupported preservation cases (including VFR, HDR/wide gamut, interlace,
-non-identity display transforms, ICC-managed sources, non-square pixels,
+unsupported display transforms, ICC-managed sources, non-square pixels,
 nonzero starts and unsupported multi-stream layouts)
 are rejected rather than silently tone-mapped, resampled, downmixed or dropped.
 Explicit RGB identity-matrix signaling is not re-encoded as a mislabeled YUV
 stream. Asserted matrix/range settings configure native pixel conversion as
 well as output tags. Unspecified color enums retain FFmpeg's defaults; that is
 not evidence of a match to an independently color-managed Adobe render.
-A sole recognized MOV `tmcd` timecode track is copied with its packet timing and
-metadata; unknown data, subtitle and attachment tracks are not silently dropped.
+General single-file preparation preserves unit quarter-turn display matrices,
+including zero or canonical coded-bounds translation. It retains coded dimensions
+and pixels without autorotation, and verifies the complete output matrix, not
+just its angle. Mirrors, scale, skew, perspective and arbitrary translations are
+rejected. Automatic AE destination preparation still requires identity orientation.
+
+One recognized MOV `tmcd` timecode track is copied with its packet timing and
+metadata, including when it follows other data tracks. Explicit preparation also
+accepts MOV/MP4 camera data tagged `rtmd` or `mebx`. Byte-for-byte compatible copies
+retain these tracks without a loss warning. Remuxing or encoding **omits these
+camera tracks**: FFmpeg cannot write their valid sample entries. The result's
+`warnings` (also shown in human output) name each omitted track and any timecode
+label it carried. An `rtmd` label is not converted into a fabricated `tmcd` track.
+Original files are unchanged. Picture/sound selection and all existing A/V
+validation remain unchanged; this does not relax rotation, VFR, source-profile,
+colour or timing gates. Unknown data, subtitle, attachment and extra video/audio
+tracks remain rejected. Automatic AE destination preparation does not acquire
+this metadata-loss policy.
 
 Progress is emitted to stderr about every five seconds, starting before input
 hashing/probing. Short operations normally finish before the first heartbeat.
@@ -225,6 +268,13 @@ H.264 uses VideoToolbox here; Linux/Windows encoder and deployment parity remain
 unverified. The compatible-copy, cancellation/cleanup, no-clobber publication, exact decoded
 frame count, matrix/ICC rejection, Essential override reachability, and omitted
 Premiere placement regressions have separate CPU tests.
+
+The focused `crates/media_transcode/tests/rotation_smoke.py` accepts the same
+`--converter`, `--ffmpeg`, `--ffprobe` and fresh `--work-dir` arguments. It generates
+two one-second corner-pattern sources and checks copy, remux and re-encode on both
+backends: exact display matrices, unchanged coded dimensions, and coded/displayed
+first-frame corner orientation. Re-encoded RGB uses a bounded smoke comparison,
+not lossless equality or Adobe fidelity proof.
 
 ## Reported QTRLE files: single-file CLI verification
 

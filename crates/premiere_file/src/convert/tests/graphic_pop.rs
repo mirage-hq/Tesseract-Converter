@@ -352,6 +352,10 @@ fn graphic_pop_rejects_unsupported_hosts_keyed_geometry_and_retained_shadows_ato
         ("Normal blend", |s| {
             graphic_mut(s, 1).blend_mode = PrBlendMode::Multiply
         }),
+        // The mask's guide stays in the sequence frame.
+        ("clip Opacity mask", |s| {
+            graphic_mut(s, 1).opacity_mask = Some(crate::tests::support::opacity_mask())
+        }),
         ("static point-text", |s| {
             let PrGraphicObject::Text(text) = &mut graphic_mut(s, 1).objects[0] else {
                 unreachable!()
@@ -520,7 +524,15 @@ fn graphic_pop_geometry_conflict_preserves_existing_graph_and_rejects_both_halve
     let mut effects = crate::convert::effects::EffectIdAllocator::default();
     let mut shutter = None;
     let mut linked = crate::linked_compositions::LinkedCompositions::default();
-    let mut scope = LayerScope::root(&mut next, &mut effects, &mut shutter, &mut linked);
+    let clocks = crate::media::PictureClocks::new();
+    let mut scope = LayerScope::root(
+        sequence.dimensions(),
+        &mut next,
+        &mut effects,
+        &mut shutter,
+        &clocks,
+        &mut linked,
+    );
     for item in &sequence.video_tracks[0].items {
         let graphic = item.graphic().unwrap();
         let start = super::time_from_ticks(graphic.start_ticks).unwrap();

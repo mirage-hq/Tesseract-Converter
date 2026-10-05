@@ -2,6 +2,7 @@ use super::*;
 use crate::structure::{ItemKind, read_project};
 use crate::structure_document::to_structural_fx_document;
 use crate::writer::{NativeMatteRef, NullLayerSpec};
+use fx_schema::animator::AnimationGraphEntry;
 use serde_json::{Value, json};
 
 fn imported_value() -> Value {
@@ -122,7 +123,7 @@ fn skew_plan_conjugates_nonzero_anchor_and_parents_matte_roots() {
         &group,
         Time::from_millis(2000),
         duration,
-        &[],
+        &crate::export_document::AnimationIndex::new(&[]),
         &BTreeMap::new(),
         fx_schema::Dimensions {
             width: 1920,
@@ -328,7 +329,12 @@ fn uniform_scale_keys_preserve_static_skew_factorization() {
     let mut value = imported_value();
     let group = skew_group(&value, "normal");
     let typed_group: GroupLayer = serde_json::from_value(group.clone()).unwrap();
-    let baseline = skew::lower(&typed_group, &[], LayerId::new(70_044)).unwrap();
+    let baseline = skew::lower(
+        &typed_group,
+        &crate::export_document::AnimationIndex::new(&[]),
+        LayerId::new(70_044),
+    )
+    .unwrap();
     let entries: Vec<Value> = ["scaleX", "scaleY"].into_iter().map(|property| json!({
         "target":{"kind":"layer","layerId":70_040,"propertyType":property},
         "animator":{"type":"keyframes","enabled":true,"keyframes":[
@@ -341,7 +347,12 @@ fn uniform_scale_keys_preserve_static_skew_factorization() {
     value["composition"]["layers"] = json!([group]);
     value["composition"]["dynamics"] = json!({"entries":entries});
     let typed_entries: Vec<AnimationGraphEntry> = serde_json::from_value(json!(entries)).unwrap();
-    let lowered = skew::lower(&typed_group, &typed_entries, LayerId::new(70_044)).unwrap();
+    let lowered = skew::lower(
+        &typed_group,
+        &crate::export_document::AnimationIndex::new(&typed_entries),
+        LayerId::new(70_044),
+    )
+    .unwrap();
     let track = lowered.outer_animations.scale.unwrap();
     assert_eq!(
         track
@@ -352,7 +363,7 @@ fn uniform_scale_keys_preserve_static_skew_factorization() {
         [0, 250, 1000]
     );
     let unfactored = super::super::transform_animations(
-        &typed_entries,
+        &crate::export_document::AnimationIndex::new(&typed_entries),
         typed_group.id,
         &typed_group.transform,
         typed_group.id,
@@ -450,7 +461,12 @@ fn zero_base_skew_keeps_flying_headline_position_opacity_and_uniform_scale() {
             {"id":"op0","layerTime":0,"value":{"type":"float","value":0.0},"easing":{"type":"linear"}},
             {"id":"op1","layerTime":60,"value":{"type":"float","value":100.0},"easing":{"type":"linear"}}]}}
     ])).unwrap();
-    let lowering = skew::lower(&group, &entries, LayerId::new(40_411)).unwrap();
+    let lowering = skew::lower(
+        &group,
+        &crate::export_document::AnimationIndex::new(&entries),
+        LayerId::new(40_411),
+    )
+    .unwrap();
     assert_eq!(lowering.outer.scale, [0.0; 2]);
     let animations = lowering.outer_animations;
     let scale = animations.scale.unwrap();
@@ -494,7 +510,14 @@ fn zero_base_skew_keeps_flying_headline_position_opacity_and_uniform_scale() {
     changed[1]["animator"]["keyframes"][1]["easing"] =
         json!({"type":"cubicBezier","x1":0.2,"y1":0.3,"x2":0.8,"y2":0.9});
     different = serde_json::from_value(changed).unwrap();
-    assert!(skew::lower(&group, &different, LayerId::new(40_411)).is_err());
+    assert!(
+        skew::lower(
+            &group,
+            &crate::export_document::AnimationIndex::new(&different),
+            LayerId::new(40_411)
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -519,10 +542,15 @@ fn skewed_shockwave_keeps_nonuniform_scale_and_opacity_in_vector_group() {
             {"id":"op1","layerTime":40,"value":{"type":"float","value":90.0},"easing":{"type":"linear"}},
             {"id":"op2","layerTime":220,"value":{"type":"float","value":0.0},"easing":{"type":"linear"}}]}}
     ])).unwrap();
-    let animations =
-        super::super::transform_animations(&entries, group.id, &group.transform, group.id).unwrap();
+    let animations = super::super::transform_animations(
+        &crate::export_document::AnimationIndex::new(&entries),
+        group.id,
+        &group.transform,
+        group.id,
+    )
+    .unwrap();
     let vector_keys = super::super::vector_animation::program_transform_animations(
-        &entries,
+        &crate::export_document::AnimationIndex::new(&entries),
         group.id,
         &group.transform,
     )
@@ -550,7 +578,7 @@ fn skewed_shockwave_keeps_nonuniform_scale_and_opacity_in_vector_group() {
     let ((layer, layer_keys), contents) = super::super::program_transform(
         &group.transform,
         animations,
-        &entries,
+        &crate::export_document::AnimationIndex::new(&entries),
         group.id,
         Vec::new(),
     )
@@ -663,7 +691,14 @@ fn skew_controls_reject_effect_phase_animation_and_singular_scale() {
         }))
         .unwrap(),
     );
-    assert!(skew::lower(&group, &[], LayerId::new(80_000)).is_err());
+    assert!(
+        skew::lower(
+            &group,
+            &crate::export_document::AnimationIndex::new(&[]),
+            LayerId::new(80_000)
+        )
+        .is_err()
+    );
 
     group.effects.clear();
     let animation = fx_schema::animator::AnimationGraphEntry {
@@ -676,8 +711,22 @@ fn skew_controls_reject_effect_phase_animation_and_singular_scale() {
         random_seed_target: None,
         layer_refs: Default::default(),
     };
-    assert!(skew::lower(&group, &[animation], LayerId::new(80_000)).is_err());
+    assert!(
+        skew::lower(
+            &group,
+            &crate::export_document::AnimationIndex::new(&[animation]),
+            LayerId::new(80_000)
+        )
+        .is_err()
+    );
 
     group.transform.scale[0] = 0.0;
-    assert!(skew::lower(&group, &[], LayerId::new(80_000)).is_err());
+    assert!(
+        skew::lower(
+            &group,
+            &crate::export_document::AnimationIndex::new(&[]),
+            LayerId::new(80_000)
+        )
+        .is_err()
+    );
 }

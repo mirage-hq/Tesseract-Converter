@@ -26,9 +26,10 @@ def version_at(ref):
     return version
 
 
-def api(path):
+def api(path, *, token=None):
     repo = os.environ["GITHUB_REPOSITORY"]
-    token = os.environ["GH_TOKEN"]
+    if token is None:
+        token = os.environ["GH_TOKEN"]
     url = f"https://api.github.com/repos/{repo}" + (f"/{path}" if path else "")
     request = Request(url, headers={
         "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",

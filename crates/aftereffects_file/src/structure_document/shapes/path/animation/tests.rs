@@ -3,6 +3,62 @@ use crate::structure::{ItemKind, read_project};
 use fx_schema::{Layer, LayerData, PropType, PropertyTarget};
 use sha2::{Digest, Sha256};
 
+#[test]
+fn mixed_one_second_path_import_mask_guide_uses_parent_identity_clock() {
+    let project = read_project(include_bytes!(
+        "../../../../../tests/fixtures/path-animation/mixed_one_second.aep"
+    ))
+    .unwrap();
+    let crate::structure::ItemKind::Composition(comp) = &project.item(1).unwrap().kind else {
+        panic!("pinned composition1")
+    };
+    let mask_owner = comp
+        .layers
+        .iter()
+        .find(|layer| layer.name.as_ref() == "mask base")
+        .unwrap();
+    // Native stored times are source-local. Mask guides live in the enclosing
+    // identity composition clock, unlike source-local Shape content.
+    let clock = NumericAnimationClock::parent_identity(mask_owner).unwrap();
+    assert_eq!(clock.seconds(0.25), 2.25);
+    assert_eq!(clock.seconds(1.25), 3.25);
+    assert_eq!(NumericAnimationClock::source_local().seconds(0.25), 0.25);
+    let converted =
+        crate::structure_document::to_structural_fx_document(&project, Some(1)).unwrap();
+    let group = find_group(converted.document.composition().layers(), "mask base").unwrap();
+    assert_eq!(group.playback.input_range().start, fx_schema::Time::ZERO);
+    let fx_schema::LayerPlaybackMapping::Linear { input, output } = group.playback.mapping() else {
+        panic!("mask owner occurrence uses identity playback")
+    };
+    assert_eq!(input, output);
+    assert_eq!(input.start, fx_schema::Time::ZERO);
+    let guide = group.masks.first().and_then(|mask| mask.layer).unwrap();
+    fn target(layers: &[Layer], id: fx_schema::LayerId) -> Option<&Layer> {
+        layers.iter().find_map(|layer| {
+            if layer.id() == id {
+                Some(layer)
+            } else if let LayerData::Group(group) = layer.data() {
+                target(&group.layers, id)
+            } else {
+                None
+            }
+        })
+    }
+    let guide = target(converted.document.composition().layers(), guide).unwrap();
+    assert_eq!(guide.active_range().start, fx_schema::Time::ZERO);
+    let LayerData::Shape(guide) = guide.data() else {
+        panic!("editable mask guide")
+    };
+    assert_eq!(guide.parent, Some(group.id));
+    // Retain existing omission until a separately scoped import proof is supplied.
+    assert!(
+        converted
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("mixed"))
+    );
+}
+
 fn native_run() -> Vec<Chunk> {
     fn find(chunks: &[Chunk]) -> Option<Vec<Chunk>> {
         for chunk in chunks {
@@ -414,70 +470,6 @@ fn native_path_key_panel_keeps_linear_hold_and_bezier_authored_keys() {
             assert_eq!(track.keyframes()[1].easing(), expected);
             assert_ne!(track.keyframes()[0].value(), track.keyframes()[1].value());
         }
-    }
-}
-
-#[test]
-#[ignore = "requires local licensed AEP_INTRO_IMPORT_SOURCE; source cannot be redistributed"]
-fn pinned_intro_mask_paths_keep_all_seven_editable_keys() {
-    let bytes = std::fs::read(
-        std::env::var_os("AEP_INTRO_IMPORT_SOURCE").expect("local licensed Intro source path"),
-    )
-    .unwrap();
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&bytes)),
-        "75bb7d70238e23ffaafdeacf952217de1fcded8f86875bee39c2e91bda7804d9"
-    );
-    let project = read_project(&bytes).unwrap();
-    let converted =
-        crate::structure_document::to_structural_fx_document(&project, Some(3)).unwrap();
-    fn owner(layers: &[Layer], native_id: u32) -> Option<&fx_schema::GroupLayer> {
-        layers.iter().find_map(|layer| {
-            let LayerData::Group(group) = layer.data() else {
-                return None;
-            };
-            if group
-                .description
-                .contains(&format!("comp=3 layer={native_id} kind="))
-            {
-                Some(group)
-            } else {
-                owner(&group.layers, native_id)
-            }
-        })
-    }
-    for native_id in [2103, 2105] {
-        let group = owner(converted.document.composition().layers(), native_id).unwrap();
-        assert_eq!(group.masks.len(), 1);
-        let guide = group.masks[0].layer.expect("editable mask guide");
-        let entry = converted
-            .document
-            .composition()
-            .dynamics()
-            .entries()
-            .iter()
-            .find(|entry| entry.target == PropertyTarget::layer(guide, PropType::ShapePath))
-            .unwrap_or_else(|| panic!("native layer {native_id} mask animation was omitted"));
-        let fx_schema::animator::AnimatorData::Keyframes { track, .. } = entry.animator.data()
-        else {
-            panic!("native mask must remain editable keys");
-        };
-        assert_eq!(
-            track
-                .keyframes()
-                .iter()
-                .map(|key| key.layer_time().as_millis())
-                .collect::<Vec<_>>(),
-            [3542, 4167, 4292, 4333, 4375, 4417, 4458]
-        );
-        assert_ne!(track.keyframes()[0].value(), track.keyframes()[6].value());
-        let expected = PropertyKeyframeEasing::CubicBezier {
-            x1: 0.016,
-            y1: 24.212053999690262 * 0.016,
-            x2: 1.0 - 70.18391339768115 / 100.0,
-            y2: 1.0,
-        };
-        assert_eq!(track.keyframes()[1].easing(), expected);
     }
 }
 

@@ -185,6 +185,60 @@ fn gzip_truncation_still_fails() {
 }
 
 #[test]
+fn native_plain_xml_and_gzip_list_the_same_sequence() {
+    use std::io::Write;
+    // Unchanged native Sequence record and framing; omitted records are not
+    // needed to discover its identity. See native-input-compatibility.md.
+    let xml = include_str!("../../../tests/fixtures/native-plain-xml-sequence.prproj");
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("input.prproj");
+    let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    gzip.write_all(xml.as_bytes()).unwrap();
+    for bytes in [xml.as_bytes().to_vec(), gzip.finish().unwrap()] {
+        std::fs::write(&path, bytes).unwrap();
+        assert_eq!(read_xml(&path).unwrap(), xml);
+        let targets = crate::PrProjectFile::import_targets(&path).unwrap();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].id, "5944a579-ddf0-4cd0-a38a-aab6bf1f2819");
+        assert_eq!(targets[0].name, "Sequence 01");
+    }
+}
+
+#[test]
+fn xml_framing_keeps_utf8_and_graph_validation() {
+    use std::io::Write;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("input.prproj");
+    for bytes in [
+        b"<PremiereData>\xff</PremiereData>".as_slice(),
+        b"<PremiereData>",
+        b"<notPremiere/>",
+        b"<!DOCTYPE PremiereData [<!ENTITY x 'x'>]><PremiereData>&x;</PremiereData>",
+    ] {
+        let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gzip.write_all(bytes).unwrap();
+        for input in [bytes.to_vec(), gzip.finish().unwrap()] {
+            std::fs::write(&path, input).unwrap();
+            assert!(crate::PrProjectFile::import_targets(&path).is_err());
+        }
+    }
+}
+
+#[test]
+fn gzip_checksum_failure_is_not_retried_as_plain_xml() {
+    use std::io::Write;
+    let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    gzip.write_all(b"<PremiereData/>").unwrap();
+    let mut bytes = gzip.finish().unwrap();
+    let checksum = bytes.len() - 8;
+    bytes[checksum] ^= 1;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("input.prproj");
+    std::fs::write(&path, bytes).unwrap();
+    assert!(read_xml(&path).is_err());
+}
+
+#[test]
 fn decode_errors_carry_the_record_identity() {
     let graph = Graph::parse("<PremiereData><Media ObjectUID='media-1'><RelativePath><Nested/></RelativePath></Media></PremiereData>").unwrap();
     let error = graph

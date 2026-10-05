@@ -26,9 +26,12 @@ fn source(duration_millis: u64) -> media::ResolvedMediaSource {
         format: NativeSourceFormat::Wave,
         dimensions: [0, 0],
         duration_millis,
+        duration_millis_floor: duration_millis,
+        duration_native_ticks: None,
         frame_rate: NativeFrameRate::integer(0),
         audio_sample_rate: 48_000.0,
         wave_metadata: None,
+        native_duration: None,
     }
 }
 
@@ -399,6 +402,106 @@ fn audio_export_hidden_layer_keeps_editable_source_with_audio_disabled() {
     assert!(!flags.enabled);
     assert!(!flags.audio_enabled);
     assert!((audio_levels(&layers(&fresh)[0]).values[0] - 20.0 * 0.5_f64.log10()).abs() < 1e-9);
+}
+
+#[test]
+fn video_export_exact_zero_mutes_without_disabling_picture_and_gain_edits_restore_audio() {
+    let mut video = json!({
+        "type":"Video", "id":700, "name":"movie", "parent":null,
+        "playback":fixture_linear_playback(json!({"start":1000,"duration":2000}), json!({"start":500,"duration":2000})),
+        "sourceRange":{"start":500,"duration":2000},
+        "sourceIntrinsicDuration":8000,
+        "transform":serde_json::to_value(identity_fx_transform()).unwrap(),
+        "source":{"assetId":"sound","fit":"contain"}, "volume":0.0
+    });
+    let mut movie = source(8000);
+    movie.path = RelativeMediaPath::new("media/movie.mov").unwrap();
+    movie.format = NativeSourceFormat::QuickTime;
+    movie.dimensions = [320, 180];
+    movie.frame_rate = NativeFrameRate::integer(24);
+    let mut sources = BTreeMap::from([("sound".to_owned(), movie)]);
+    let zero_override = AnimationGraphEntry {
+        target: fx_schema::PropertyTarget::layer(LayerId::new(700), PropType::AudioVolume),
+        animator: PropertyAnimator::constant(PropertyValue::Float(0.0)).unwrap(),
+        dependencies: Vec::new(),
+        random_seed_target: None,
+        layer_refs: Default::default(),
+    };
+    for (gain, entries, expected_enabled, expected_keys) in [
+        (0.5, vec![zero_override], false, 1),
+        (0.0, Vec::new(), false, 0),
+        (0.5, Vec::new(), true, 0),
+        (
+            0.0,
+            vec![gain_keys(700, PropertyKeyframeEasing::Hold)],
+            true,
+            2,
+        ),
+        (
+            0.5,
+            vec![gain_keys_at(
+                700,
+                PropertyKeyframeEasing::Hold,
+                [(0, 0.0), (1000, 0.0)],
+            )],
+            false,
+            2,
+        ),
+    ] {
+        video["volume"] = json!(gain);
+        let exported =
+            to_aep_with_media(&document(vec![video.clone()], entries), &sources).unwrap();
+        let fresh = read_project(&exported.bytes).unwrap();
+        assert_eq!(layers(&fresh).len(), 1, "{:?}", exported.diagnostics);
+        let layer = &layers(&fresh)[0];
+        assert!(
+            layer.record.flags().enabled,
+            "picture remains editable and enabled"
+        );
+        assert_eq!(
+            layer.record.flags().audio_enabled,
+            expected_enabled,
+            "gain {gain}"
+        );
+        if !expected_enabled {
+            let levels = audio_levels(layer);
+            if levels.keyframes.is_empty() {
+                assert_eq!(levels.values, vec![-192.0, -192.0]);
+            } else {
+                assert_eq!(levels.keyframes.len(), expected_keys);
+                assert!(
+                    levels
+                        .keyframes
+                        .iter()
+                        .all(|key| key.values == vec![-192.0, -192.0])
+                );
+            }
+        }
+    }
+    // Native visibility and missing source audio are independent of positive gain.
+    for (hidden, sample_rate, gain) in [(true, 48_000.0, 0.5), (false, 0.0, 0.5), (false, 0.0, 0.0)]
+    {
+        video["volume"] = json!(gain);
+        video["isHidden"] = json!(hidden);
+        sources.get_mut("sound").unwrap().audio_sample_rate = sample_rate;
+        let exported =
+            to_aep_with_media(&document(vec![video.clone()], Vec::new()), &sources).unwrap();
+        let fresh = read_project(&exported.bytes).unwrap();
+        if hidden {
+            // Hidden Video remains unsupported; gain cannot create source audio.
+            assert!(layers(&fresh).is_empty());
+            assert!(
+                exported
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.layer_id == Some(LayerId::new(700)))
+            );
+        } else {
+            assert_eq!(layers(&fresh).len(), 1, "{:?}", exported.diagnostics);
+            assert!(!layers(&fresh)[0].record.flags().audio_enabled);
+            assert!(layers(&fresh)[0].record.flags().enabled);
+        }
+    }
 }
 
 #[test]
@@ -1004,4 +1107,56 @@ fn audio_export_unsupported_gain_hull_retains_supported_sibling() {
             .any(|diagnostic| diagnostic.layer_id == Some(LayerId::new(700))
                 && diagnostic.message.contains("gain control hull is negative"))
     );
+}
+
+#[test]
+fn review_hidden_group_mutes_video_without_losing_gain_keys() {
+    for hidden in [false, true] {
+        for opacity in [100.0, 75.0] {
+            let mut group = imported()["composition"]["layers"][0].clone();
+            group["id"] = json!(701);
+            group["parent"] = Value::Null;
+            group["isHidden"] = json!(hidden);
+            group["transform"] = json!(identity_fx_transform());
+            group["transform"]["opacity"] = json!(opacity);
+            group["playback"] = fixture_linear_playback(
+                json!({"start":0,"duration":30000}),
+                json!({"start":0,"duration":30000}),
+            );
+            group["layers"] = json!([{
+                "type":"Video", "id":700, "name":"review movie", "parent":701,
+                "playback":fixture_linear_playback(json!({"start":1000,"duration":2000}), json!({"start":500,"duration":2000})),
+                "sourceRange":{"start":500,"duration":2000},
+                "sourceIntrinsicDuration":8000,
+                "transform":identity_fx_transform(),
+                "source":{"assetId":"sound","fit":"contain"}, "volume":0.5
+            }]);
+            let mut movie = source(8000);
+            movie.path = RelativeMediaPath::new("media/movie.mov").unwrap();
+            movie.format = NativeSourceFormat::QuickTime;
+            movie.dimensions = [320, 180];
+            movie.frame_rate = NativeFrameRate::integer(24);
+            let exported = to_aep_with_media(
+                &document(
+                    vec![group],
+                    vec![gain_keys(700, PropertyKeyframeEasing::Hold)],
+                ),
+                &BTreeMap::from([("sound".to_owned(), movie)]),
+            )
+            .unwrap();
+            let fresh = read_project(&exported.bytes).unwrap();
+            let movies: Vec<_> = fresh
+                .items
+                .iter()
+                .flat_map(|item| match &item.kind {
+                    ItemKind::Composition(comp) => comp.layers.as_slice(),
+                    _ => &[],
+                })
+                .filter(|layer| layer.name.as_ref() == "review movie")
+                .collect();
+            assert_eq!(movies.len(), 1, "{:?}", exported.diagnostics);
+            assert_eq!(movies[0].record.flags().audio_enabled, !hidden);
+            assert_eq!(audio_levels(movies[0]).keyframes.len(), 2);
+        }
+    }
 }

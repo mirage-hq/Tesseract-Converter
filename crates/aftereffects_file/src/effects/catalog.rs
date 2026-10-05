@@ -13,6 +13,7 @@ pub(crate) fn effect_type(effect: &LayerEffect) -> &'static str {
         LayerEffect::Mosaic { .. } => "mosaic",
         LayerEffect::LookTransform { .. } => "lookTransform",
         LayerEffect::PrimaryGrade(_) => "primaryGrade",
+        LayerEffect::TonalColor(_) => "tonalColor",
         LayerEffect::ColorCurves { .. } => "colorCurves",
         LayerEffect::BrightnessContrast { .. } => "brightnessContrast",
         LayerEffect::ShiftChannels { .. } => "shiftChannels",
@@ -64,6 +65,7 @@ pub(crate) fn unsupported_reason(effect: &LayerEffect) -> Option<&'static str> {
         }
         LayerEffect::LookTransform { .. }
         | LayerEffect::PrimaryGrade(_)
+        | LayerEffect::TonalColor(_)
         | LayerEffect::ColorCurves { .. } => {
             Some("reader-specific color operation has no native effect equivalent")
         }
@@ -128,6 +130,7 @@ pub(crate) fn animatable_params(effect: &LayerEffect) -> &'static [&'static str]
         | LayerEffect::DepthMatte { .. }
         | LayerEffect::LookTransform { .. }
         | LayerEffect::PrimaryGrade(_)
+        | LayerEffect::TonalColor(_)
         | LayerEffect::ColorCurves { .. }
         | LayerEffect::ShiftChannels { .. }
         | LayerEffect::PosterizeTime { .. }

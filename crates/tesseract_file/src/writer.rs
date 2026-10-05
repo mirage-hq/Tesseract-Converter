@@ -60,19 +60,23 @@ pub(crate) fn save(
     project_bytes: &[u8],
     pending_assets: &BTreeMap<String, PendingAsset>,
 ) -> Result<SaveReport, TesseractFileError> {
+    // Reused central records keep their stored local-header offsets, so the
+    // append route is only valid for archives without prepended bytes.
     #[cfg(target_os = "macos")]
-    if let Some(temporary_path) = clone_to_sibling(source, destination)? {
-        let result =
-            append_changed_entries(&temporary_path, metadata, project_bytes, pending_assets)
-                .and_then(|report| {
-                    crate::TesseractFile::open(&temporary_path)?;
-                    publish_clone(&temporary_path, destination)?;
-                    Ok(report)
-                });
-        if result.is_err() {
-            let _ = std::fs::remove_file(&temporary_path);
+    if ZipArchive::new(File::open(source).at(source)?)?.offset() == 0 {
+        if let Some(temporary_path) = clone_to_sibling(source, destination)? {
+            let result =
+                append_changed_entries(&temporary_path, metadata, project_bytes, pending_assets)
+                    .and_then(|report| {
+                        crate::TesseractFile::open(&temporary_path)?;
+                        publish_clone(&temporary_path, destination)?;
+                        Ok(report)
+                    });
+            if result.is_err() {
+                let _ = std::fs::remove_file(&temporary_path);
+            }
+            return result;
         }
-        return result;
     }
 
     save_compacted(source, destination, metadata, project_bytes, pending_assets)
@@ -140,11 +144,22 @@ fn rewrite_archive(
         }
     }
 
-    writer.start_file(PROJECT_PATH, options)?;
+    writer.start_file(
+        PROJECT_PATH,
+        options.large_file(needs_zip64(project_bytes.len() as u64)),
+    )?;
     writer.write_all(project_bytes).at(destination)?;
 
     for (asset_id, pending) in pending_assets.iter_mut() {
-        writer.start_file(&pending.descriptor.path, options)?;
+        // zip aborts a non-ZIP64 entry once it passes 4 GiB, so size it up front.
+        let length = std::fs::metadata(&pending.source)
+            .at(&pending.source)?
+            .len()
+            .max(pending.descriptor.byte_length);
+        writer.start_file(
+            &pending.descriptor.path,
+            options.large_file(needs_zip64(length)),
+        )?;
         let integrity = copy_pending_asset(pending, &mut writer, destination)?;
         if !pending.integrity_ready {
             pending.descriptor.byte_length = integrity.byte_length;
@@ -159,7 +174,10 @@ fn rewrite_archive(
     metadata.validate()?;
     let metadata_bytes = serialize_metadata(metadata)?;
 
-    writer.start_file(METADATA_PATH, options)?;
+    writer.start_file(
+        METADATA_PATH,
+        options.large_file(needs_zip64(metadata_bytes.len() as u64)),
+    )?;
     writer.write_all(&metadata_bytes).at(destination)?;
     writer.finish()?;
     temporary.as_file_mut().sync_all().at(temporary.path())?;
@@ -513,6 +531,11 @@ struct ObservedIntegrity {
     byte_length: u64,
     sha256: String,
     crc32: u32,
+}
+
+/// Whether a Stored entry of `length` bytes needs ZIP64 size fields.
+fn needs_zip64(length: u64) -> bool {
+    length >= u64::from(u32::MAX)
 }
 
 fn copy_pending_asset(

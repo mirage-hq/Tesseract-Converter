@@ -1,0 +1,207 @@
+<PremiereData Version="3">
+  <Sequence ObjectUID="sequence-1"><Name>Main</Name><TrackGroups><TrackGroup><Second ObjectRef="1"/></TrackGroup></TrackGroups></Sequence>
+  <VideoTrackGroup ObjectID="1"><TrackGroup><Tracks><Track ObjectURef="track-1"/></Tracks><FrameRate>8467200000</FrameRate></TrackGroup><FrameRect>0,0,1920,1080</FrameRect><ComponentOwner><Components ObjectRef="2"/></ComponentOwner></VideoTrackGroup>
+  <VideoComponentChain ObjectID="2"><ComponentChain/></VideoComponentChain>
+  <VideoClipTrack ObjectUID="track-1"><ClipTrack><Track><ID>1</ID></Track><ClipItems><TrackItems><TrackItem ObjectRef="3"/></TrackItems></ClipItems></ClipTrack></VideoClipTrack>
+  <VideoClipTrackItem ObjectID="3"><ClipTrackItem><ComponentOwner><Components ObjectRef="4"/></ComponentOwner><TrackItem><End>1270080000000</End></TrackItem><SubClip ObjectRef="5"/></ClipTrackItem><FrameRect>0,0,1920,1080</FrameRect><PixelAspectRatio>1,1</PixelAspectRatio></VideoClipTrackItem>
+  <VideoComponentChain ObjectID="4"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain><Components><Component Index="0" ObjectRef="560"/></Components></ComponentChain></VideoComponentChain>
+  <SubClip ObjectID="5"><Clip ObjectRef="6"/><Name>Source</Name></SubClip>
+  <VideoClip ObjectID="6"><Clip><Source ObjectRef="7"/><InPoint>0</InPoint><OutPoint>1270080000000</OutPoint></Clip></VideoClip>
+  <VideoMediaSource ObjectID="7"><MediaSource><Media ObjectURef="media-1"/></MediaSource><OriginalDuration>2540160000000</OriginalDuration></VideoMediaSource>
+  <Media ObjectUID="media-1"><VideoStream ObjectRef="8"/><RelativePath>media/source.mp4</RelativePath></Media>
+  <VideoStream ObjectID="8"><Duration>2540160000000</Duration><FrameRate>8467200000</FrameRate><FrameRect>0,0,1920,1080</FrameRect></VideoStream>
+<VideoFilterComponent ObjectID="560" ClassID="d10da199-beea-4dd1-b941-ed3a78766d50" Version="9">
+		<Component Version="7">
+			<Params Version="1">
+				<Param Index="0" ObjectRef="903"/>
+				<Param Index="1" ObjectRef="904"/>
+				<Param Index="2" ObjectRef="905"/>
+				<Param Index="3" ObjectRef="906"/>
+				<Param Index="4" ObjectRef="907"/>
+				<Param Index="5" ObjectRef="908"/>
+				<Param Index="6" ObjectRef="909"/>
+				<Param Index="7" ObjectRef="910"/>
+				<Param Index="8" ObjectRef="911"/>
+				<Param Index="9" ObjectRef="912"/>
+				<Param Index="10" ObjectRef="913"/>
+				<Param Index="11" ObjectRef="914"/>
+				<Param Index="12" ObjectRef="915"/>
+				<Param Index="13" ObjectRef="916"/>
+				<Param Index="14" ObjectRef="917"/>
+				<Param Index="15" ObjectRef="918"/>
+				<Param Index="16" ObjectRef="919"/>
+				<Param Index="17" ObjectRef="920"/>
+				<Param Index="18" ObjectRef="921"/>
+				<Param Index="19" ObjectRef="922"/>
+			</Params>
+			<ID>3</ID>
+			<DisplayName>Levels</DisplayName>
+		</Component>
+		<PremiereFilterPrivateData Encoding="base64" BinaryHash="89d87785-7931-1016-32e7-d52e00000034">HgD/AAAA/wBkAAAAyAAAAP8AAgAAAP8AAAD/AGQAAAD/AAAA/wBkAA==
+		</PremiereFilterPrivateData>
+		<VideoFilterType>1</VideoFilterType>
+		<MatchName>PR.ADBE Levels</MatchName>
+	</VideoFilterComponent>
+<VideoComponentParam ObjectID="903" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>(RGB) Black Input Level</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<IsTimeVarying>true</IsTimeVarying>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,30,0,0,0,0,0,0</StartKeyframe>
+		<Keyframes>0,30,0,0,0,0.16666666666666666,13.565807869952446,0.16666666666666666;561741701862,60,0,0,13.565807869952446,0.16666666666666666,0,0.16666666666666666;</Keyframes>
+		<LowerBound>0</LowerBound>
+		<UpperBound>255</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="904" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>(RGB) White Input Level</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,255,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>0</LowerBound>
+		<UpperBound>255</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="905" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>(RGB) Black Output Level</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,0,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>0</LowerBound>
+		<UpperBound>255</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="906" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>(RGB) White Output Level</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,255,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>0</LowerBound>
+		<UpperBound>255</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="907" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>(RGB) Gamma</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,100,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>0</LowerBound>
+		<UpperBound>1000</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="908" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>(R) Black Input Level</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,0,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>0</LowerBound>
+		<UpperBound>255</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="909" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>(R) White Input Level</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,200,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>0</LowerBound>
+		<UpperBound>255</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="910" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>(R) Black Output Level</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,0,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>0</LowerBound>
+		<UpperBound>255</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="911" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>(R) White Output Level</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,255,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>0</LowerBound>
+		<UpperBound>255</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="912" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>(R) Gamma</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,2,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>0</LowerBound>
+		<UpperBound>1000</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="913" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>(G) Black Input Level</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,0,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>0</LowerBound>
+		<UpperBound>255</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="914" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>(G) White Input Level</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,255,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>0</LowerBound>
+		<UpperBound>255</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="915" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>(G) Black Output Level</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,0,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>0</LowerBound>
+		<UpperBound>255</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="916" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>(G) White Output Level</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,255,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>0</LowerBound>
+		<UpperBound>255</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="917" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>(G) Gamma</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,100,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>0</LowerBound>
+		<UpperBound>1000</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="918" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>(B) Black Input Level</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,0,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>0</LowerBound>
+		<UpperBound>255</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="919" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>(B) White Input Level</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,255,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>0</LowerBound>
+		<UpperBound>255</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="920" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>(B) Black Output Level</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,0,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>0</LowerBound>
+		<UpperBound>255</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="921" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>(B) White Output Level</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,255,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>0</LowerBound>
+		<UpperBound>255</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="922" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>(B) Gamma</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>-1</ParameterID>
+		<StartKeyframe>-91445760000000000,100,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>0</LowerBound>
+		<UpperBound>1000</UpperBound>
+	</VideoComponentParam>
+</PremiereData>

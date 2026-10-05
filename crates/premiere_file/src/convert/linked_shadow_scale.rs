@@ -550,6 +550,7 @@ mod tests {
             effects_above_mask: 0,
             stroke: None,
             active_transforms: 0,
+            source_effects: None,
             time_remap: None,
             linear_wipe: None,
             opacity_mask: None,

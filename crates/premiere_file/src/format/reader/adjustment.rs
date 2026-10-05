@@ -13,7 +13,7 @@ use crate::schema::{
 
 /// Whether `item` places a clip whose `AdjustmentLayer` flag is `true`, so
 /// that its Black Video media is read as an adjustment layer rather than as a
-/// graphic generator. Any traversal failure returns `false`, so the media
+/// black solid. Any traversal failure returns `false`, so the media
 /// reader keeps its own errors; `read_placement` reads the flag strictly.
 pub(super) fn is_flagged(graph: &Graph<'_>, item: &Located<VideoClipTrackItem>) -> bool {
     let Some(sub_reference) = item
@@ -114,6 +114,8 @@ pub(super) fn read_adjustment_media(graph: &Graph<'_>, media: Located<Media>) ->
         relative_paths: Vec::new(),
         absolute_paths: Vec::new(),
         video: Some(PrVideoStream {
+            pixel_aspect: Default::default(),
+            interpretation: Default::default(),
             orientation: crate::schema::VideoOrientation::Identity,
             intrinsic_ticks,
             frame_rate: frame_rate.into(),

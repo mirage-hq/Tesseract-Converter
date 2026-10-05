@@ -121,6 +121,8 @@ fn ellipse_with_fill_and_stroke_keeps_independent_static_paint_opacity() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     // Reversing the native stack must not select FX's fixed fill-then-stroke
     // order; the generic ordered-paint lowering still owns this case.

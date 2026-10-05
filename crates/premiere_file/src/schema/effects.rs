@@ -22,11 +22,11 @@ use std::{cmp::Ordering, collections::BTreeSet, ops::RangeInclusive};
 /// to the FX order, the order they apply, to get the chain's `Index` order.
 ///
 /// Premiere renders a chain in descending `Index`: the component at Index 0
-/// renders last. This is Adobe evidence from Oracle run C6
+/// renders last. The native reference
 /// (`premiere_isolated_stage_order_26_5`). AME rendered a Crop or Linear Wipe
 /// at Index 0 and a Gaussian Blur at Index 1 with a sharp edge, so the blur
 /// applied first, and the swapped layout with a soft edge. With the `ID`s
-/// swapped, the render matched that one at all 12 frames the Oracle compared
+/// swapped, the render matched that one at all 12 compared frames
 /// (mean difference 0.000), so `ID` does not order it. FX applies a layer's
 /// effects in list order, so each order is the reverse of the other.
 pub(crate) fn chain_render_order<I>(components: I) -> std::iter::Rev<I::IntoIter>
@@ -44,6 +44,8 @@ pub(crate) struct PrEffect {
     /// The inverse of Premiere's `Bypass`. A bypassed effect keeps its stack
     /// position and values, like a disabled FX `EffectRecord`.
     pub(crate) enabled: bool,
+    /// Spatial scope of this effect, not the clip's intrinsic Opacity mask.
+    pub(crate) mask: Option<super::PrMask>,
     pub(crate) params: PrEffectParams,
     /// Keyed parameters in native `Params` order. The static value of a keyed
     /// parameter in `params` is its first key's value: before a later first
@@ -92,7 +94,7 @@ impl PrEffectParamKeys {
 }
 
 /// One key of a colour parameter. Premiere interpolates a Linear segment per
-/// channel (Oracle run E6, Tint clip E); a Bezier segment between colours is
+/// channel; a Bezier segment between colours is
 /// unverified and rejected, so `easing` is Linear or Hold.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct PrColourKeyframe {
@@ -106,9 +108,9 @@ pub(crate) struct PrColourKeyframe {
 /// Premiere stores a colour as a u64 of four 16-bit channels, alpha, red,
 /// green and blue from the high end, with the 8-bit value in each channel's
 /// high byte: every one of the 1,050 corpus channel values has a zero low
-/// byte (Oracle run E6). Alpha is 0 on Tint's defaults and 0xff00 on every
-/// authored colour, and the default white with alpha 0 renders as white (E6
-/// clip A), so import ignores it and export writes 0xff00.
+/// byte. Alpha is 0 on Tint's defaults and 0xff00 on every
+/// authored colour, and the default white with alpha 0 renders as white,
+/// so import ignores it and export writes 0xff00.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PrColour {
     /// Red, green and blue.
@@ -184,20 +186,72 @@ pub(crate) enum PrEffectParams {
     FilmImpactDirectionalBlur(PrFilmImpactDirectionalBlur),
     Levels(PrLevels),
     BrightnessContrast(PrBrightnessContrast),
+    /// Import-only normalized Offset center; edited MotionTile uses linked export.
+    Offset([f64; 2]),
+    /// Import-only selected Lumetri controls. Never serialize as native Lumetri;
+    /// edited FX exports through the linked-AEP route.
+    LumetriExposure(f64),
+    LumetriTemperature(f64),
+    LumetriTint(f64),
+    LumetriSaturation(f64),
+    LumetriVignette([f64; 3]),
     Invert(PrInvert),
+    FindEdges(PrFindEdges),
     Tint(PrTint),
     /// `AE.ADBE Black & White`, which has no parameters: Premiere 26.5.1's
-    /// grayscale, the same render as a default Tint (Oracle run E7).
+    /// grayscale, the same render as a default Tint.
     BlackWhite,
     Ramp(PrRamp),
     Mosaic(PrMosaic),
+    Replicate(PrReplicate),
+    Posterize(PrPosterize),
+    Sharpen(PrSharpen),
+    AlphaGlow {
+        size: f64,
+        brightness: f64,
+        color: PrColour,
+    },
+    LegacyLuma {
+        threshold: f64,
+        cutoff: f64,
+    },
+    LensDistortion(f64),
+    /// Import-only modern controls; canonical export is Legacy Noise via Grain.
+    ModernNoise {
+        amount: f64,
+        seed: f64,
+    },
+    /// Legacy strength; color/clipping modes use a diagnosed Grain surrogate.
+    Noise {
+        amount: f64,
+    },
+
+    /// Initial native rate; FX cannot animate its Posterize Time clock.
+    PosterizeTime {
+        frame_rate: f64,
+    },
     Transform(PrTransform),
+    /// Geometry2 on a flagged adjustment: transforms the composed lower picture.
+    AdjustmentGeometry2(PrTransform),
+}
+
+/// Native Find Edges controls; blend keys are deliberately not mapped to FX.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct PrFindEdges {
+    pub(crate) invert: bool,
+    pub(crate) blend: f64,
+    pub(crate) blend_animated: bool,
+}
+
+impl PrFindEdges {
+    pub(crate) const APPROXIMATION: &str = "FX uses a grayscale Sobel edge detector, not Adobe's colored edge detector; edge/color and alpha fidelity are unmeasured";
+    pub(crate) const BLEND_OMISSION: &str = "Blend With Original and its keys were not imported: FX Find Edges has no original-image blend control; full-strength edges were kept";
 }
 
 /// Static `AE.ADBE Geometry` ("Transform") values, which the video of a
 /// mask-less stage group carries as its FX transform.
 /// Premiere applies the effect in the clip's source frame before
-/// Motion (Oracle run E11 T10: clip E's Transform displacement follows the
+/// Motion (the native Transform displacement follows the
 /// rotated Motion axes) and clips nothing to the source frame (T2: 476,960
 /// content pixels outside the Motion-only rectangle), so the effect is the
 /// staged video's transform under the group's Motion: output = Position +
@@ -215,7 +269,8 @@ pub(crate) enum PrEffectParams {
 pub(crate) struct PrTransform {
     /// Anchor Point, normalized to the source frame.
     pub(crate) anchor_point: [f64; 2],
-    /// Position, normalized to the source frame, which must match the canvas.
+    /// Position, normalized to the source frame. Ordinary physical hosts require
+    /// a matching canvas; nests separately bound differing-canvas admission.
     pub(crate) position: [f64; 2],
     /// The Uniform Scale checkbox (`ParameterID` 11): Scale Height drives
     /// both axes and Scale Width is saved but not rendered (T3).
@@ -233,9 +288,9 @@ pub(crate) struct PrTransform {
     pub(crate) skew: f64,
     /// Skew Axis in degrees. At rotation 0 and scale 100 Premiere renders
     /// Skew `s` at Skew Axis `a` as R(90° − a) · [[1, −tan s], [0, 1]] ·
-    /// R(a − 90°) (y down): the slice 22 export gate measured Skew 30 at
+    /// R(a − 90°) (y down): the export comparison measured Skew 30 at
     /// Skew Axis −30 as `[[0.7498, −0.1444], [0.4329, 1.2497]]` within
-    /// 0.0003 per coefficient, and Oracle run E11's Skew Axis 45 (T5) fits
+    /// 0.0003 per coefficient, and the native Skew Axis 45 sample fits
     /// this form as it fits the negated axis, which the gate ruled out. FX
     /// shears by R(−axis) · [[1, −tan skew], [0, 1]] · R(axis)
     /// (`scene::Affine::from_components_with_skew`), so under a nonzero Skew
@@ -259,7 +314,7 @@ pub(crate) struct PrTransform {
 
 impl PrTransform {
     /// Why keyed Skew or Skew Axis is not converted in either direction.
-    pub(crate) const KEYED_SKEW: &'static str = "keyed Skew or Skew Axis is not converted: Oracle run E11 measured a static skew only (T5), and Motion has no skew for the export to key";
+    pub(crate) const KEYED_SKEW: &'static str = "keyed Skew or Skew Axis is not converted: native measurements cover static skew only, and Motion has no skew for the export to key";
 
     /// Degrees between a Skew Axis and the FX `skew_axis` that renders the
     /// same shear ([`Self::skew_axis`]).
@@ -382,10 +437,10 @@ impl PrTransform {
             } else {
                 format!("Transform Opacity {}", self.opacity)
             };
-            warnings.push(format!("{opacity} blends in linear light in Premiere; converted as sRGB opacity (Oracle run E11 clip A, Transform Opacity 50 with clip Opacity 50: mean error ≈ 22 levels, p99 ≈ 80)"));
+            warnings.push(format!("{opacity} blends in linear light in Premiere; converted as sRGB opacity (Transform Opacity 50 with clip Opacity 50: mean error ≈ 22 levels, p99 ≈ 80)"));
         }
         if let Some(angle) = self.motion_blur_shutter_angle() {
-            warnings.push(format!("Transform motion blur (Shutter Angle {angle}) approximated by FX motion blur (Oracle run E11 clip F at 180°: blur edges 13.1-13.7 px wide against Premiere's 12.0-12.2; FX's blur is one frame late at every start and stop of the motion)"));
+            warnings.push(format!("Transform motion blur (Shutter Angle {angle}) approximated by FX motion blur (at 180°: blur edges 13.1-13.7 px wide against Premiere's 12.0-12.2; FX's blur is one frame late at every start and stop of the motion)"));
         }
         if keyed(&TRANSFORM_SHUTTER_ANGLE) && !self.composition_shutter_angle {
             warnings.push(format!("keyed Transform Shutter Angle converts as its first key's value {}: the FX composition shutter has no keys (unmeasured against Premiere)", self.shutter_angle));
@@ -414,7 +469,7 @@ impl PrTransform {
             };
             if let Some(with) = with {
                 warnings.push(format!(
-                    "Transform Skew {} with {with} converts with FX's composition of skew, rotation and scale; skew with rotation or non-uniform scale is unmeasured (Oracle run E11 measured the shear at Rotation 0 and Scale 100/100 only, T5)",
+                    "Transform Skew {} with {with} converts with FX's composition of skew, rotation and scale; skew with rotation or non-uniform scale is unmeasured (native measurements cover Rotation 0 and Scale 100/100 only)",
                     self.skew
                 ));
             }
@@ -434,16 +489,157 @@ impl PrTransform {
             && animations
                 .iter()
                 .any(|animation| animation.param.id == TRANSFORM_SCALE_WIDTH.id))
-        .then_some("Transform Scale Width keys under Uniform Scale were not imported: Premiere renders Scale Height on both axes (inferred from Oracle run E11 T3's static Scale Width)")
+        .then_some("Transform Scale Width keys under Uniform Scale were not imported: Premiere renders Scale Height on both axes (inferred from a static Scale Width sample)")
     }
+
+    /// Why this Transform, with its keys `animations`, can hide its whole
+    /// picture at some time by its geometry; `None` while part of the picture
+    /// stays in the clip's frame at every time. Import converts no source
+    /// Transform, and a Geometry2 only as a centered positive zoom, so the
+    /// reader omits a placement whose picture a left-out one can hide
+    /// (`SplitChain::reject_hiding_transforms`).
+    ///
+    /// The rendered Scale, Scale Height on both axes under Uniform Scale
+    /// (T3), must not reach 0. Unrotated and unskewed, the picture spans
+    /// Position + Scale × ([0, 1] − Anchor Point) on each axis in frame units
+    /// (T7) and must overlap the frame [0, 1] there; keys are bounded by
+    /// their extremes ([`scalar_range`], [`point_axis_range`]), whose
+    /// pairings bound each edge because a Scale that does not reach 0 keeps
+    /// its sign. Under a Rotation or Skew, whose composition with the Scale
+    /// is unmeasured ([`Self::approximations`]), the picture point at the
+    /// Anchor Point still lands on the Position, so only an Anchor Point on
+    /// the picture with a Position inside the frame at every time keeps part
+    /// of the picture there. The reader keeps no curved Position path and no
+    /// Anchor Point keys for a Transform.
+    pub(crate) fn hiding_geometry(&self, animations: &[PrEffectParamAnimation]) -> Option<String> {
+        let TransformExtremes {
+            scale,
+            position,
+            turned,
+        } = self.extremes(animations);
+        for (label, [least, greatest]) in scale {
+            if (least..=greatest).contains(&0.0) {
+                return Some(if least == greatest {
+                    format!("its {label} is {least}")
+                } else {
+                    format!("its {label} keys reach {least} to {greatest}, which includes 0")
+                });
+            }
+        }
+        if turned {
+            let anchored = self
+                .anchor_point
+                .iter()
+                .all(|value| (0.0..=1.0).contains(value))
+                && position
+                    .iter()
+                    .all(|&[least, greatest]| 0.0 < least && greatest < 1.0);
+            return (!anchored).then(|| {
+                "under its Rotation or Skew, its Anchor Point or Position can move the whole picture out of its frame".to_owned()
+            });
+        }
+        for (axis, name) in ["x", "y"].into_iter().enumerate() {
+            let anchor = self.anchor_point[axis];
+            let outside = position[axis].into_iter().any(|at| {
+                scale[axis].1.into_iter().any(|percent| {
+                    let edges = [
+                        at - percent / 100.0 * anchor,
+                        at + percent / 100.0 * (1.0 - anchor),
+                    ];
+                    edges.iter().all(|&edge| edge <= 0.0) || edges.iter().all(|&edge| edge >= 1.0)
+                })
+            });
+            if outside {
+                return Some(format!(
+                    "its Position, Anchor Point and Scale can move the whole picture out of its frame on the {name} axis"
+                ));
+            }
+        }
+        None
+    }
+
+    /// Whether this Transform, with its keys `animations`, moves, scales,
+    /// mirrors or turns its picture at some time: a Position away from its
+    /// Anchor Point, a rendered Scale other than 100 or a Rotation or Skew
+    /// ([`Self::hiding_geometry`]'s extremes). [`Self::hiding_geometry`]
+    /// checks the whole picture alone in its frame, so the reader omits a
+    /// placement whose left-out Transform does so beside another effect that
+    /// changes which part of the picture shows
+    /// (`SplitChain::reject_hiding_transforms`).
+    pub(crate) fn changes_geometry(&self, animations: &[PrEffectParamAnimation]) -> bool {
+        let TransformExtremes {
+            scale,
+            position,
+            turned,
+        } = self.extremes(animations);
+        turned
+            || scale.iter().any(|&(_, range)| range != [100.0; 2])
+            || position
+                .iter()
+                .zip(self.anchor_point)
+                .any(|(&range, anchor)| range != [anchor; 2])
+    }
+
+    /// The extremes of this Transform's geometry over its keys `animations`.
+    fn extremes(&self, animations: &[PrEffectParamAnimation]) -> TransformExtremes {
+        let keys = |param: &EffectParamSpec| {
+            animations
+                .iter()
+                .find(|animation| animation.param.id == param.id)
+                .map(|animation| &animation.keys)
+        };
+        // The least and greatest value of the scalar `param`, static at `value`.
+        let range = |param: &EffectParamSpec, value: f64| match keys(param)
+            .and_then(PrEffectParamKeys::scalar)
+        {
+            Some(keys) => {
+                let keys: Vec<_> = keys
+                    .iter()
+                    .map(|key| (key.value, key.easing.bezier()))
+                    .collect();
+                scalar_range(&keys)
+            }
+            None => [value; 2],
+        };
+        let axes = if self.uniform_scale {
+            [(&TRANSFORM_SCALE_HEIGHT, self.scale_height); 2]
+        } else {
+            [
+                (&TRANSFORM_SCALE_WIDTH, self.scale_width),
+                (&TRANSFORM_SCALE_HEIGHT, self.scale_height),
+            ]
+        };
+        TransformExtremes {
+            scale: axes.map(|(param, value)| (param.label, range(param, value))),
+            position: match keys(&TRANSFORM_POSITION).and_then(PrEffectParamKeys::point) {
+                Some(keys) => [0, 1].map(|axis| point_axis_range(keys, axis)),
+                None => self.position.map(|value| [value; 2]),
+            },
+            turned: range(&TRANSFORM_ROTATION, self.rotation) != [0.0; 2]
+                || range(&TRANSFORM_SKEW, self.skew) != [0.0; 2],
+        }
+    }
+}
+
+/// The least and greatest values of a Transform's geometry over its keys
+/// ([`scalar_range`], [`point_axis_range`]), for
+/// [`PrTransform::hiding_geometry`] and [`PrTransform::changes_geometry`].
+struct TransformExtremes {
+    /// The label and range, in percent, of the Scale rendered on each axis:
+    /// Scale Height on both under Uniform Scale (T3).
+    scale: [(&'static str, [f64; 2]); 2],
+    /// The range of the Position on each axis, in frame units.
+    position: [[f64; 2]; 2],
+    /// Whether a Rotation or Skew turns the picture at some time.
+    turned: bool,
 }
 
 /// Static `AE.ADBE Mosaic` ("Mosaic (Legacy)") values with Sharp Colors on,
 /// which FX `mosaic` uses unchanged: both divide the clip frame into
 /// `horizontal` × `vertical` blocks from the top-left corner, with fractional
 /// block widths when the counts do not divide the frame, and fill each block
-/// with the source at its centre (Oracle run E8: flat blocks equal to the
-/// centre pixel within 0.09–1.42 levels; probe P2 measured the 7 × 5 grid's
+/// with the source at its centre (flat blocks equal to the
+/// centre pixel within 0.09–1.42 levels; the native 7 × 5 grid's
 /// edges at k·1920/7 and k·216). Block counts are fractions of the frame in
 /// both engines and Premiere renders clip effects before Motion, so the host's
 /// Motion does not enter (inferred beyond the fixture's default Motion,
@@ -460,7 +656,7 @@ pub(crate) struct PrMosaic {
 
 impl PrMosaic {
     /// Why a Mosaic with Sharp Colors off is omitted in both directions.
-    pub(crate) const SHARP_COLORS_OFF: &'static str = "Sharp Colors is off: Premiere then averages each block, while the FX mosaic samples the block's centre (Oracle run E8 probe P1, 29.5–35.1 levels apart; supervisor decision D-18a-1)";
+    pub(crate) const SHARP_COLORS_OFF: &'static str = "Sharp Colors is off: Premiere then averages each block, while the FX mosaic samples the block's centre (native sample differences of 29.5–35.1 levels)";
 
     /// The whole block count that `value` of the count parameter `param` is,
     /// or why it is none, naming the value as `{label}{what} {value}`:
@@ -473,7 +669,7 @@ impl PrMosaic {
     ) -> std::result::Result<u32, String> {
         if value.fract() != 0.0 || !value.is_finite() {
             return Err(format!(
-                "{}{what} {value} is not a whole number of blocks; Premiere counts whole blocks and no rounding is applied (supervisor decision D-18a-2)",
+                "{}{what} {value} is not a whole number of blocks; Premiere counts whole blocks and no rounding is applied",
                 param.label
             ));
         }
@@ -521,7 +717,7 @@ impl PrMosaic {
                     PrKeyframeEasing::Hold => unreachable!("the pair was found by its easing"),
                 };
                 return Err(format!(
-                    "{} keys are {kind} between source times {} s and {} s; only Hold keys convert, because the FX mosaic renders fractional block counts between keys and Premiere's stepping there is unmeasured (supervisor decision D-18a-2)",
+                    "{} keys are {kind} between source times {} s and {} s; only Hold keys convert, because the FX mosaic renders fractional block counts between keys and Premiere's stepping there is unmeasured",
                     animation.param.label,
                     seconds(pair[0].source_ticks),
                     seconds(pair[1].source_ticks)
@@ -532,11 +728,251 @@ impl PrMosaic {
     }
 }
 
+/// Static `AE.ADBE Replicate` value, a whole Count, which FX `motionTile`
+/// draws as Count × Count whole copies of its layer's frame: tiles of
+/// [`Self::tile_size`] percent whose first tile is centred at
+/// [`Self::tile_center`] of the frame on both axes, over the whole frame
+/// ([`Self::FULL_FRAME_PERCENT`]), without mirrored edges or phase. The FX
+/// shader samples each axis at `fract((uv − centre) / (size / 100) + 0.5)`,
+/// which is `fract(Count · uv)` at that centre: copies that start at the
+/// frame's top-left corner, where the FX default centre 0.5 would shift an
+/// even Count by half a tile. Every converted Replicate is reported once as
+/// an approximation ([`Self::TILING_APPROXIMATION`]); whole Counts with Hold
+/// keys are the forms that convert ([`Self::new`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PrReplicate {
+    /// Count, the copies in each row and column: a whole number from 2 to 16.
+    pub(crate) count: u8,
+}
+
+impl PrReplicate {
+    /// What every converted Replicate approximates, which import and export
+    /// report once per effect: the grid converts, the sampling of each copy
+    /// is the FX shader's.
+    pub(crate) const TILING_APPROXIMATION: &'static str = "the Count × Count grid of whole copies converts as FX motionTile tiles of 100/Count percent, the first centred at 1/(2·Count); each FX tile samples the layer's whole frame with samples clamped 1.5 source pixels inside its edges, while Premiere's grid origin, its resampling of each copy, its tile edges and alpha are unmeasured";
+
+    /// The FX size of the whole frame, in percent: a Replicate's
+    /// `outputWidth` and `outputHeight`, which its tiles divide by the Count.
+    pub(crate) const FULL_FRAME_PERCENT: f64 = 100.0;
+
+    /// The Replicate of the native `count`, a keyed Count's first key, with
+    /// the Count keys in `animations`, or why it does not convert. A Count
+    /// that is not a whole number, static or on a key, is not rounded. Keys
+    /// must hold: Premiere's Count between interpolated keys is unmeasured,
+    /// and the FX motionTile would interpolate the tile size and centre,
+    /// reciprocals of the Count, linearly. Called by the reader and the
+    /// exporter on the values and keys each writes.
+    pub(crate) fn new(
+        count: f64,
+        animations: &[PrEffectParamAnimation],
+    ) -> std::result::Result<Self, String> {
+        for animation in animations {
+            let Some(keys) = animation.keys.scalar() else {
+                continue;
+            };
+            for key in keys {
+                Self::whole_count(" key value", key.value)?;
+            }
+            // A key's easing describes the segment that ends at it.
+            let interpolated = keys.windows(2).find_map(|pair| {
+                let kind = match pair[1].easing {
+                    PrKeyframeEasing::Hold => return None,
+                    PrKeyframeEasing::Linear => "Linear",
+                    PrKeyframeEasing::CubicBezier { .. } => "Bézier",
+                };
+                Some((kind, pair[0].source_ticks, pair[1].source_ticks))
+            });
+            if let Some((kind, start, end)) = interpolated {
+                return Err(format!(
+                    "{} keys are {kind} between source times {} s and {} s; only Hold keys convert, because Premiere's Count between interpolated keys is unmeasured and the FX motionTile would interpolate the tile size and centre, reciprocals of the Count, linearly",
+                    animation.param.label,
+                    seconds(start),
+                    seconds(end)
+                ));
+            }
+        }
+        Ok(Self {
+            count: Self::whole_count("", count)?,
+        })
+    }
+
+    /// The whole Count that `value` is, or why it is none, naming it as
+    /// `Count{what} {value}`. The range is the parameter's.
+    fn whole_count(what: &str, value: f64) -> std::result::Result<u8, String> {
+        let param = &REPLICATE_COUNT;
+        if value.fract() != 0.0 || !value.is_finite() {
+            return Err(format!(
+                "{}{what} {value} is not a whole number; Premiere counts whole copies and no rounding is applied",
+                param.label
+            ));
+        }
+        if !param
+            .value_range()
+            .is_some_and(|range| range.contains(&value))
+        {
+            return Err(format!(
+                "{}{what} {value} is outside Premiere's {} to {} range",
+                param.label, param.lower_bound, param.upper_bound
+            ));
+        }
+        // Fits: a whole number from 2 to 16.
+        Ok(value as u8)
+    }
+
+    /// The FX `tileWidth` and `tileHeight` of Count `count`: the frame's
+    /// [`Self::FULL_FRAME_PERCENT`] divided into Count tiles.
+    pub(crate) fn tile_size(count: f64) -> f64 {
+        Self::FULL_FRAME_PERCENT / count
+    }
+
+    /// The FX `tileCenterX` and `tileCenterY` of Count `count`: the centre of
+    /// the first tile, half of its 1/Count of the frame.
+    pub(crate) fn tile_center(count: f64) -> f64 {
+        0.5 / count
+    }
+
+    /// The Count whose grid FX tiles of `size` percent (`[width, height]`)
+    /// whose first tile is centred at `center` (`[x, y]`) draw, or `None`
+    /// when they draw none: a whole Count from 2 to 16 whose
+    /// [`Self::tile_size`] and [`Self::tile_center`] they equal exactly, as
+    /// import writes them. Nothing is rounded, and another centre that draws
+    /// the same grid, such as 0.5 for an odd Count, is not recognized.
+    pub(crate) fn grid_count(size: [f64; 2], center: [f64; 2]) -> Option<u8> {
+        let range = REPLICATE_COUNT.value_range()?;
+        (0..=u8::MAX).find(|&count| {
+            let count = f64::from(count);
+            range.contains(&count)
+                && size == [Self::tile_size(count); 2]
+                && center == [Self::tile_center(count); 2]
+        })
+    }
+}
+
+/// Native integer Amount, in the same nominal units as FX `sharpen`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PrSharpen {
+    pub(crate) amount: u16,
+}
+
+impl PrSharpen {
+    pub(crate) const KERNEL_APPROXIMATION: &'static str = "Sharpen Amount converts unchanged in nominal units, but Premiere and FX use different sharpening kernels; appearance, clipping and high-gain fidelity are not equivalent or certified";
+
+    /// Reject edited fractions rather than silently rounding the native integer control.
+    pub(crate) fn new(
+        amount: f64,
+        animations: &[PrEffectParamAnimation],
+    ) -> std::result::Result<Self, String> {
+        let whole = |value: f64| {
+            if !value.is_finite() || value.fract() != 0.0 || !(0.0..=4000.0).contains(&value) {
+                return Err(format!("Sharpen Amount {value} must be a whole number from 0 to 4000; no rounding or clamping is applied"));
+            }
+            // Checked above: an integer in 0..=4000 fits u16.
+            Ok(value as u16)
+        };
+        for animation in animations {
+            if let Some(keys) = animation.keys.scalar() {
+                for key in keys {
+                    whole(key.value)?;
+                    if matches!(key.easing, PrKeyframeEasing::CubicBezier { .. }) {
+                        return Err("Sharpen Amount keys must be Linear or Hold; Bezier fidelity is unverified".to_owned());
+                    }
+                }
+            }
+        }
+        Ok(Self {
+            amount: whole(amount)?,
+        })
+    }
+}
+
+/// Static `AE.ADBE Posterize` value, a whole Level, which FX `posterize`
+/// keeps as `levels`. Both reduce each channel to Level values from black to
+/// white, by different rules ([`Self::QUANTIZER_APPROXIMATION`]). Whole
+/// Levels and Hold keys are the forms that convert ([`Self::new`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PrPosterize {
+    /// Level, the number of values in each channel: a whole number from 2 to
+    /// 255.
+    pub(crate) level: u8,
+}
+
+impl PrPosterize {
+    /// What every converted Posterize approximates, which import and export
+    /// report once per effect: the Level converts unchanged, the quantizer
+    /// does not.
+    pub(crate) const QUANTIZER_APPROXIMATION: &'static str = "Premiere Posterize quantizes each channel into Level equal input bins, floor(v·n/256)·255/(n − 1), and FX posterize rounds it to the nearest of as many levels, round(v·(n − 1)/255)·255/(n − 1); the Level converts unchanged and colours near a bin edge render differently";
+
+    /// The Posterize of the native `level`, a keyed Level's first key, with
+    /// the Level keys in `animations`, or why it does not convert. A Level
+    /// that is not a whole number, static or on a key, is not rounded:
+    /// Premiere's rendering of a fractional Level is unmeasured. Keys must
+    /// hold: Premiere holds each Level until the next key, while its stepping
+    /// between Linear or Bézier keys, where the FX shader floors the
+    /// interpolated levels, is unmeasured. Called by the reader and the
+    /// exporter on the values and keys each writes.
+    pub(crate) fn new(
+        level: f64,
+        animations: &[PrEffectParamAnimation],
+    ) -> std::result::Result<Self, String> {
+        for animation in animations {
+            let Some(keys) = animation.keys.scalar() else {
+                continue;
+            };
+            for key in keys {
+                Self::level(" key value", key.value)?;
+            }
+            // A key's easing describes the segment that ends at it.
+            let interpolated = keys.windows(2).find_map(|pair| {
+                let kind = match pair[1].easing {
+                    PrKeyframeEasing::Hold => return None,
+                    PrKeyframeEasing::Linear => "Linear",
+                    PrKeyframeEasing::CubicBezier { .. } => "Bézier",
+                };
+                Some((kind, pair[0].source_ticks, pair[1].source_ticks))
+            });
+            if let Some((kind, start, end)) = interpolated {
+                return Err(format!(
+                    "{} keys are {kind} between source times {} s and {} s; only Hold keys convert, because the FX posterize floors the levels between keys and Premiere's stepping there is unmeasured",
+                    animation.param.label,
+                    seconds(start),
+                    seconds(end)
+                ));
+            }
+        }
+        Ok(Self {
+            level: Self::level("", level)?,
+        })
+    }
+
+    /// The whole Level that `value` is, or why it is none, naming it as
+    /// `Level{what} {value}`. The range is the parameter's.
+    fn level(what: &str, value: f64) -> std::result::Result<u8, String> {
+        let param = &POSTERIZE_LEVEL;
+        if value.fract() != 0.0 || !value.is_finite() {
+            return Err(format!(
+                "{}{what} {value} is not a whole number; Premiere's rendering of a fractional Level is unmeasured and no rounding is applied",
+                param.label
+            ));
+        }
+        if !param
+            .value_range()
+            .is_some_and(|range| range.contains(&value))
+        {
+            return Err(format!(
+                "{}{what} {value} is outside Premiere's {} to {} range",
+                param.label, param.lower_bound, param.upper_bound
+            ));
+        }
+        // Fits: a whole number from 2 to 255.
+        Ok(value as u8)
+    }
+}
+
 /// Static `AE.ADBE Ramp` values of a linear ramp with no scatter, which FX
 /// `gradientRamp` uses as frame-UV points, channel shares of 255 and
 /// `blend` = 1 − Blend With Original. Both mix the two colours on encoded
 /// values along the axis from `start` to `end` and mix the result with the
-/// original (Oracle run E10: mean 0.26–0.75 levels on the unblended frames).
+/// original (mean differences of 0.26–0.75 levels on the native unblended frames).
 ///
 /// Premiere measures the ramp in clip pixels and the FX shader in the layer
 /// frame's UV, so the two agree only on an axis-aligned ramp on a clip whose
@@ -595,7 +1031,7 @@ impl PrRamp {
     /// whose endpoints coincide, meet or come within [`Self::MIN_LENGTH`] of
     /// each other, or whose keys leave the axis: Premiere measures the ramp in
     /// clip pixels and the FX shader in frame UV, which agree only along an
-    /// axis-aligned line on a frame-size host (Oracle run E10 probe)
+    /// axis-aligned line on a frame-size host
     /// and only while the shader divides by the
     /// axis ([`Self::SHADER_AXIS_FLOOR`]). A keyed coordinate is bounded by
     /// its keys, Bézier overshoot included ([`scalar_range`]).
@@ -627,7 +1063,7 @@ impl PrRamp {
             (false, true) => RampAxis::Horizontal,
             (false, false) => {
                 return Err(format!(
-                    "Start of Ramp {}:{} to End of Ramp {}:{} is not aligned with the frame at every time; Premiere measures a ramp in clip pixels and the FX gradientRamp in frame UV, which agree only along the frame's axes (Oracle run E10 probe; supervisor decision D-24a)",
+                    "Start of Ramp {}:{} to End of Ramp {}:{} is not aligned with the frame at every time; Premiere measures a ramp in clip pixels and the FX gradientRamp in frame UV, which agree only along the frame's axes",
                     self.start[0], self.start[1], self.end[0], self.end[1]
                 ))
             }
@@ -668,7 +1104,7 @@ fn point_axis_range(keys: &[PrPointKeyframe], axis: usize) -> [f64; 2] {
 
 /// Static `AE.ADBE Tint` values, which FX `tintTritone` uses as channel
 /// shares of 255 and an unchanged Amount: both map luma (Rec. 601 weights on
-/// encoded values, Oracle run E6) from `black` to `white` and mix the result
+/// encoded values) from `black` to `white` and mix the result
 /// with the original by `amount` percent.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct PrTint {
@@ -713,7 +1149,7 @@ pub(crate) struct PrFilmImpactBlur {
 }
 
 /// Static `AE.ADBE Motion Blur` values in the clip's own frame: Premiere blurs
-/// a clip before its Motion (Oracle run E2, whose scaled and rotated clip
+/// a clip before its Motion (the native scaled and rotated clip
 /// blurs along its own vertical axis). The converter maps them to FX
 /// `directionalBlur`, which blurs in composition space, through the host's
 /// static Scale and Rotation.
@@ -745,12 +1181,12 @@ pub(crate) struct PrBrightnessContrast {
     pub(crate) contrast: f64,
 }
 
-/// Static `AE.ADBE Invert` value of every channel (Channel 0, RGB), the only
-/// Channel that converts: FX has no invert effect and expresses it as a
-/// `levels` with complementary outputs (see `convert::effects`). The reader
-/// rejects the other channels, which FX `levels` cannot single out.
+/// Saved `AE.ADBE Invert` selection. RGB uses complementary Levels; Alpha
+/// requires an ordinary-occurrence coverage graph, never RGB Levels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct PrInvert {
+    /// Saved Premiere popup: RGB 0 or Alpha 15 (not AE's Alpha 16).
+    pub(crate) channel: u8,
     /// Native Blend With Original, the original's share of the render in
     /// percent: 0 is the full inversion.
     pub(crate) blend: f64,
@@ -759,7 +1195,7 @@ pub(crate) struct PrInvert {
 /// Static `AE.ADBE Corner Pin` corners, which FX `cornerPin` uses unchanged.
 ///
 /// Each corner is normalized to the clip's own frame, origin top left and y
-/// down, and may lie outside it: Oracle run E1 measured this on a portrait
+/// down, and may lie outside it: native measurements used a portrait
 /// clip in a landscape sequence, and Premiere's warp as a perspective
 /// (projective) one, as FX draws it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -832,14 +1268,15 @@ const DRAWING_ORDER: [usize; 4] = [0, 1, 3, 2];
 
 /// The native indices of the corners of turn `turn`: a corner's predecessor
 /// in drawing order, the corner and its successor.
-fn turn_corners(turn: usize) -> [usize; 3] {
+pub(crate) fn turn_corners(turn: usize) -> [usize; 3] {
     [0, 1, 2].map(|offset| DRAWING_ORDER[(turn + offset) % 4])
 }
 
 /// Each turn of the quad: the cross product of the edges into and out of a
 /// corner, which is twice the signed area of the triangle of that corner and
-/// its two neighbours.
-fn turns(corners: [[f64; 2]; 4]) -> [f64; 4] {
+/// its two neighbours. A Corner Pin's quad is convex when all four turn one
+/// strict way.
+pub(crate) fn turns(corners: [[f64; 2]; 4]) -> [f64; 4] {
     std::array::from_fn(|turn| {
         let [a, b, c] = turn_corners(turn).map(|index| corners[index]);
         cross(difference(b, a), difference(c, b))
@@ -1192,22 +1629,52 @@ fn cubic_bezier_range([x1, y1, x2, y2]: [f64; 4], times: [f64; 2]) -> [f64; 2] {
         )
 }
 
-/// Static `PR.ADBE Levels` master values in native units, which FX `levels`
-/// uses through each parameter's [`EffectParamBinding::Integer`] divisor. The
-/// (R), (G) and (B) rows are [`LEVELS_NEUTRAL`], because FX has only the
-/// master.
+/// Static native Levels: the existing master mapping, or bounded RGB selectors
+/// with a neutral master. Both forms serialize the same twenty native controls.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct PrLevels {
-    /// (RGB) Black Input Level, White Input Level, Black Output Level, White
-    /// Output Level and Gamma, in native `Params` order.
-    pub(crate) rgb: [f64; 5],
+pub(crate) enum PrLevels {
+    Master {
+        rgb: [f64; 5],
+    },
+    Channels([PrLevelChannel; 3]),
+    /// Static RGB corrections lowered to ordinary editable channel branches.
+    Corrections([[f64; 5]; 3]),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PrLevelChannel {
+    Keep,
+    Off,
+    On,
+}
+
+impl PrLevelChannel {
+    pub(crate) fn values(self) -> [f64; 5] {
+        match self {
+            Self::Keep => LEVELS_NEUTRAL,
+            Self::Off => [0.0, 255.0, 0.0, 0.0, 100.0],
+            Self::On => [0.0, 255.0, 255.0, 255.0, 100.0],
+        }
+    }
+
+    pub(crate) fn from_values(values: [f64; 5]) -> Option<Self> {
+        [Self::Keep, Self::Off, Self::On]
+            .into_iter()
+            .find(|channel| channel.values() == values)
+    }
 }
 
 impl PrLevels {
-    /// The `StartKeyframe` values of all 20 parameters in native `Params`
-    /// order, which Levels' private data repeats (Oracle run E4).
+    /// Visible controls and private little-endian u16 data share this order.
     pub(crate) fn start_values(&self) -> [f64; 20] {
-        let rows = [self.rgb, LEVELS_NEUTRAL, LEVELS_NEUTRAL, LEVELS_NEUTRAL];
+        let rows = match self {
+            Self::Master { rgb } => [*rgb, LEVELS_NEUTRAL, LEVELS_NEUTRAL, LEVELS_NEUTRAL],
+            Self::Corrections([red, green, blue]) => [LEVELS_NEUTRAL, *red, *green, *blue],
+            Self::Channels(channels) => {
+                let [red, green, blue] = channels.map(PrLevelChannel::values);
+                [LEVELS_NEUTRAL, red, green, blue]
+            }
+        };
         std::array::from_fn(|index| rows[index / 5][index % 5])
     }
 
@@ -1219,12 +1686,19 @@ impl PrLevels {
         &self,
         animations: &[PrEffectParamAnimation],
     ) -> std::result::Result<(), String> {
+        let Self::Master { rgb } = self else {
+            return if animations.is_empty() {
+                Ok(())
+            } else {
+                Err("Levels channel selectors must be static".to_owned())
+            };
+        };
         let range = |index: usize| {
             animations
                 .iter()
                 .find(|animation| animation.param.id == LEVELS.params[index].id)
                 .and_then(|animation| animation.keys.scalar())
-                .map_or([self.rgb[index]; 2], |keys| {
+                .map_or([rgb[index]; 2], |keys| {
                     let keys: Vec<_> = keys
                         .iter()
                         .map(|key| (key.value, key.easing.bezier()))
@@ -1282,12 +1756,30 @@ impl PrEffect {
             PrEffectParams::FilmImpactDirectionalBlur(_) => &FILM_IMPACT_DIRECTIONAL_BLUR,
             PrEffectParams::Levels(_) => &LEVELS,
             PrEffectParams::BrightnessContrast(_) => &BRIGHTNESS_CONTRAST,
+            PrEffectParams::Offset(_) => &OFFSET,
+            PrEffectParams::LumetriExposure(_) => &LUMETRI_EXPOSURE_SPEC,
+            PrEffectParams::LumetriTemperature(_) => &LUMETRI_TEMPERATURE_SPEC,
+            PrEffectParams::LumetriTint(_) => &LUMETRI_TINT_SPEC,
+            PrEffectParams::LumetriSaturation(_) => &LUMETRI_SATURATION_SPEC,
+            PrEffectParams::LumetriVignette(_) => &LUMETRI_VIGNETTE_SPEC,
             PrEffectParams::Invert(_) => &INVERT,
+            PrEffectParams::FindEdges(_) => &FIND_EDGES,
             PrEffectParams::Tint(_) => &TINT,
             PrEffectParams::BlackWhite => &BLACK_WHITE,
             PrEffectParams::Ramp(_) => &RAMP,
             PrEffectParams::Mosaic(_) => &MOSAIC,
+            PrEffectParams::Replicate(_) => &REPLICATE,
+            PrEffectParams::Posterize(_) => &POSTERIZE,
+            PrEffectParams::Sharpen(_) => &SHARPEN,
+            PrEffectParams::AlphaGlow { .. } => &ALPHA_GLOW,
+            PrEffectParams::LegacyLuma { .. } => &LEGACY_LUMA_KEY,
+            PrEffectParams::LensDistortion(_) => &LENS_DISTORTION,
+            PrEffectParams::Noise { .. } => &NOISE,
+            PrEffectParams::ModernNoise { .. } => &MODERN_NOISE,
+
+            PrEffectParams::PosterizeTime { .. } => &POSTERIZE_TIME,
             PrEffectParams::Transform(_) => &TRANSFORM,
+            PrEffectParams::AdjustmentGeometry2(_) => &ADJUSTMENT_GEOMETRY2,
         }
     }
 
@@ -1300,8 +1792,25 @@ impl PrEffect {
     }
 
     pub(crate) fn validate(&self) -> Result<()> {
+        if let Some(mask) = &self.mask {
+            mask.validate()?;
+        }
         let spec = self.spec();
+        if matches!(self.params, PrEffectParams::Levels(PrLevels::Channels(_))) {
+            ensure_valid!(
+                self.animations.is_empty(),
+                "Levels channel selectors must be static"
+            );
+        }
         match &self.params {
+            PrEffectParams::LumetriVignette(values) => {
+                for (value, param) in values.iter().zip(LUMETRI_VIGNETTE_SPEC.params) {
+                    ensure_valid!(param.value_range().is_some_and(|range| range.contains(value)), "Lumetri Vignette value outside saved range");
+                }
+            }
+            PrEffectParams::LumetriExposure(value) | PrEffectParams::LumetriSaturation(value) | PrEffectParams::LumetriTemperature(value) | PrEffectParams::LumetriTint(value) => {
+                ensure_valid!(spec.params[0].value_range().is_some_and(|range| range.contains(value)), "Lumetri replacement value is outside its saved control range");
+            }
             PrEffectParams::GaussianBlur(blur) => ensure_valid!(
                 blur.blurriness.is_finite()
                     && (0.0..=GAUSSIAN_BLUR_MAX_BLURRINESS).contains(&blur.blurriness),
@@ -1317,6 +1826,7 @@ impl PrEffect {
                 FILM_IMPACT_BLUR_AMOUNT.lower_bound,
                 FILM_IMPACT_BLUR_AMOUNT.upper_bound
             ),
+            PrEffectParams::Offset(center) => ensure_valid!(center.iter().all(|value| value.is_finite()), "Offset center must be finite"),
             PrEffectParams::CornerPin(pin) => ensure_valid!(
                 pin.corners.iter().flatten().all(|value| value.is_finite()),
                 "Corner Pin corners must be finite"
@@ -1361,13 +1871,13 @@ impl PrEffect {
                 }
             }
             PrEffectParams::Levels(levels) => ensure_valid!(
-                LEVELS.params.iter().zip(levels.rgb).all(|(param, value)| param
+                LEVELS.params.iter().zip(levels.start_values()).all(|(param, value)| param
                     .value_range()
                     .is_some_and(|range| range.contains(&value))),
                 "Levels values {:?} are outside Premiere's ranges",
-                levels.rgb
+                levels.start_values()
             ),
-            PrEffectParams::Invert(PrInvert { blend }) => ensure_valid!(
+            PrEffectParams::Invert(PrInvert { blend, .. }) => ensure_valid!(
                 INVERT_BLEND
                     .value_range()
                     .is_some_and(|range| range.contains(blend)),
@@ -1387,6 +1897,31 @@ impl PrEffect {
                 TINT_AMOUNT.label,
                 TINT_AMOUNT.lower_bound,
                 TINT_AMOUNT.upper_bound
+            ),
+            PrEffectParams::FindEdges(edges) => {
+                ensure_valid!(
+                    FIND_EDGES_BLEND
+                        .value_range()
+                        .is_some_and(|range| range.contains(&edges.blend)),
+                    "Find Edges Blend With Original must be from 0 to 1"
+                );
+                ensure_valid!(
+                    self.animations.is_empty(),
+                    "Find Edges controls have no keyframe mapping"
+                );
+            }
+            PrEffectParams::ModernNoise { amount, seed } => {
+                ensure_valid!(
+                    (0.0..=100.0).contains(amount),
+                    "invalid Modern Noise intensity"
+                );
+                ensure_valid!((0.0..=99999.0).contains(seed), "invalid Modern Noise seed");
+            }
+            PrEffectParams::Noise { amount } => ensure_valid!(
+                NOISE_AMOUNT
+                    .value_range()
+                    .is_some_and(|range| range.contains(amount)),
+                "Noise Amount of Noise must be finite and within 0 to 100"
             ),
             PrEffectParams::BlackWhite => {}
             // The colours are 8-bit by construction; the axis rule is the
@@ -1432,9 +1967,55 @@ impl PrEffect {
                     );
                 }
             }
+            // A whole Count by construction; the Hold-only keys are the
+            // reader's and the exporter's (`PrReplicate::new`).
+            PrEffectParams::Replicate(PrReplicate { count }) => ensure_valid!(
+                REPLICATE_COUNT
+                    .value_range()
+                    .is_some_and(|range| range.contains(&f64::from(*count))),
+                "{} {} {count} is outside Premiere's {} to {} range",
+                spec.display_name,
+                REPLICATE_COUNT.label,
+                REPLICATE_COUNT.lower_bound,
+                REPLICATE_COUNT.upper_bound
+            ),
+            PrEffectParams::Sharpen(sharpen) => {
+                ensure_valid!(
+                    PrSharpen::new(f64::from(sharpen.amount), &self.animations).is_ok(),
+                    "Sharpen requires integer Amount 0 to 4000 and Linear/Hold keys"
+                );
+            }
+            PrEffectParams::AlphaGlow { size, brightness, .. } => {
+                alpha_glow_size(*size, &self.animations).map_err(invalid)?;
+                ensure_valid!((0.0..=255.0).contains(brightness) && brightness.fract() == 0.0, "Alpha Glow Brightness must be whole in 0..255");
+            }
+            PrEffectParams::LegacyLuma { threshold, cutoff } => {
+                validate_legacy_luma(*threshold, *cutoff, &self.animations).map_err(invalid)?;
+            }
+            PrEffectParams::LensDistortion(curvature) => {
+                lens_curvature(*curvature, &self.animations).map_err(invalid)?;
+            }
+            // A whole Level by construction; the Hold-only keys are the
+            // reader's and the exporter's (`PrPosterize::new`).
+            PrEffectParams::Posterize(PrPosterize { level }) => ensure_valid!(
+                POSTERIZE_LEVEL
+                    .value_range()
+                    .is_some_and(|range| range.contains(&f64::from(*level))),
+                "{} {} {level} is outside Premiere's {} to {} range",
+                spec.display_name,
+                POSTERIZE_LEVEL.label,
+                POSTERIZE_LEVEL.lower_bound,
+                POSTERIZE_LEVEL.upper_bound
+            ),
+            PrEffectParams::PosterizeTime { frame_rate } => ensure_valid!(
+                POSTERIZE_TIME_FRAME_RATE
+                    .value_range()
+                    .is_some_and(|range| range.contains(frame_rate)),
+                "Posterize Time Frame Rate {frame_rate} is outside Premiere's range"
+            ),
             // The skew key rule is the reader's and the exporter's
             // (`PrTransform::ensure_convertible`).
-            PrEffectParams::Transform(transform) => {
+            PrEffectParams::Transform(transform) | PrEffectParams::AdjustmentGeometry2(transform) => {
                 ensure_valid!(
                     transform
                         .anchor_point
@@ -1486,7 +2067,8 @@ impl PrEffect {
                     Some(
                         EffectParamBinding::Scalar(_)
                         | EffectParamBinding::ScaledScalar { .. }
-                        | EffectParamBinding::Integer { .. },
+                        | EffectParamBinding::Integer { .. }
+                        | EffectParamBinding::TileCount { .. },
                     ),
                 ) => {
                     let range = param.value_range();
@@ -1574,16 +2156,18 @@ pub(crate) struct EffectSpec {
     /// Parameters in native `Params` order.
     pub(crate) params: &'static [EffectParamSpec],
     /// A Premiere-native filter in the form Premiere 26.5.1 saves `PR.ADBE
-    /// Levels` (Oracle run E4): records [`PREMIERE_NATIVE_FILTER_VERSIONS`],
+    /// Levels`: records [`PREMIERE_NATIVE_FILTER_VERSIONS`],
     /// every `ParameterID` [`PREMIERE_NATIVE_PARAMETER_ID`], so parameters are
     /// identified by `Name`, a `PremiereFilterPrivateData`, and no `Bypass` or
     /// `Intrinsic`, whose form on such a filter is unverified.
+    /// Lens uses the same native IDs/versions but resolves slots by Index and
+    /// does not interpret or author its unestablished private data.
     /// Other effects number their parameters from 1.
     pub(crate) premiere_native: bool,
     /// Whether the record carries a `PremiereFilterPrivateData` that holds no
     /// parameter data, which the reader accepts and ignores and the writer
     /// does not write: Invert's is uninitialized process memory, saved once
-    /// and named by `BinaryHash` from the other records (Oracle run E5). A
+    /// and named by `BinaryHash` from the other records. A
     /// Premiere-native filter's private data holds its values instead.
     pub(crate) opaque_private_data: bool,
 }
@@ -1641,6 +2225,17 @@ pub(crate) enum EffectParamBinding {
         green: &'static str,
         blue: &'static str,
     },
+    /// Scalar keys of a whole Replicate Count whose FX values are its grid
+    /// ([`PrReplicate`]): keys on the FX scalar parameters `width` and
+    /// `height` of [`PrReplicate::tile_size`] and on `center_x` and
+    /// `center_y` of [`PrReplicate::tile_center`], at the same times and with
+    /// the same easing.
+    TileCount {
+        width: &'static str,
+        height: &'static str,
+        center_x: &'static str,
+        center_y: &'static str,
+    },
 }
 
 impl EffectParamBinding {
@@ -1652,6 +2247,12 @@ impl EffectParamBinding {
             }
             Self::Point { x, y } => vec![x, y],
             Self::Colour { red, green, blue } => vec![red, green, blue],
+            Self::TileCount {
+                width,
+                height,
+                center_x,
+                center_y,
+            } => vec![width, height, center_x, center_y],
         }
     }
 }
@@ -1671,7 +2272,7 @@ impl EffectParamSpec {
     /// Whether a native parameter's `Name` is this parameter's: equal to the
     /// spec name, or blank or absent for a spec whose name is blank, the
     /// checkbox forms: Premiere 26.5.1 saves Mosaic's Sharp Colors without
-    /// the element (Oracle run E8) and the corpus Gaussian Blur checkbox has
+    /// the element and the corpus Gaussian Blur checkbox has
     /// `<Name> </Name>`. The writer writes the spec name when it is not empty.
     pub(crate) fn accepts_name(&self, name: Option<&str>) -> bool {
         name == Some(self.name)
@@ -1894,7 +2495,7 @@ pub(crate) const FILM_IMPACT_BLUR_APPLIED_VERSION: EffectParamSpec =
 
 /// The parameters of a Film Impact effect in the order Premiere 26.5.1 saves
 /// them: its `controls` between the hidden parameters that both Film Impact
-/// blurs save alike (Oracle run A catalog). The `@26_2` form lacks the hidden
+/// blurs save alike. The `@26_2` form lacks the hidden
 /// ParameterIDs 8300 and 8301, as Film Impact 26.2 saves its blur.
 macro_rules! film_impact_params {
     ($($control:expr),+ $(,)?) => {
@@ -2032,9 +2633,22 @@ const fn point_param(
     }
 }
 
+/// Selected native Offset control; import-only replacement metadata.
+/// Blend With Original is deliberately ignored, not serialized from this spec.
+pub(crate) const OFFSET_CENTER: EffectParamSpec =
+    point_param(1, "Shift Center To", "tileCenterX", "tileCenterY");
+pub(crate) const OFFSET: EffectSpec = EffectSpec {
+    match_name: "AE.ADBE Offset",
+    display_name: "Offset",
+    filter_type: "2",
+    params: &[OFFSET_CENTER],
+    premiere_native: false,
+    opaque_private_data: false,
+};
+
 /// `AE.ADBE Corner Pin`, the only corner-pin effect in the corpus (Premiere
-/// 12.1, 7/5 records) and in Premiere 26.5.1 (9/7 records, Oracle runs A and
-/// E1), with the same four parameters. Its corner defaults are 0:0, 1:0, 0:1
+/// 12.1, 7/5 records) and in Premiere 26.5.1 (9/7 records),
+/// with the same four parameters. Its corner defaults are 0:0, 1:0, 0:1
 /// and 1:1.
 pub(crate) const CORNER_PIN: EffectSpec = EffectSpec {
     match_name: "AE.ADBE Corner Pin",
@@ -2051,7 +2665,7 @@ pub(crate) const CORNER_PIN: EffectSpec = EffectSpec {
 };
 
 /// `VideoFilterComponent` and `Component` versions of a Premiere-native
-/// filter, as Premiere 26.5.1 saves `PR.ADBE Levels` (Oracle run E4).
+/// filter, as Premiere 26.5.1 saves `PR.ADBE Levels`.
 pub(crate) const PREMIERE_NATIVE_FILTER_VERSIONS: [&str; 2] = ["9", "7"];
 
 /// The `ParameterID` of every parameter of a Premiere-native filter.
@@ -2104,7 +2718,7 @@ const fn levels_master(id: usize, name: &'static str, fx_param: &'static str) ->
     )
 }
 
-/// `PR.ADBE Levels`, Premiere's own Levels (Oracle run E4, Premiere 26.5.1):
+/// `PR.ADBE Levels`, Premiere's own Levels (Premiere 26.5.1):
 /// the (RGB), (R), (G) and (B) rows of Black Input Level, White Input Level,
 /// Black Output Level, White Output Level and Gamma. Only the master (RGB)
 /// row converts; FX `levels` has no per-channel rows.
@@ -2118,7 +2732,7 @@ pub(crate) const LEVELS: EffectSpec = EffectSpec {
         levels_master(3, "(RGB) Black Output Level", "outputBlack"),
         levels_master(4, "(RGB) White Output Level", "outputWhite"),
         // Native Gamma is FX gamma in hundredths: 150 is an exponent of 1 / 1.5
-        // on encoded values (Oracle run E4).
+        // on encoded values.
         levels_param(
             5,
             "(RGB) Gamma",
@@ -2182,7 +2796,7 @@ pub(crate) const DIRECTIONAL_BLUR_LENGTH: EffectParamSpec = EffectParamSpec {
 
 /// `AE.ADBE Motion Blur`, "Directional Blur" in the corpus records (Premiere
 /// 12.1 7/5 and 14.4 8/6) and "Directional Blur (Legacy)" in Premiere 26.5.1
-/// (9/7, Oracle run E2), with the same two parameters and bounds. Export writes
+/// (9/7), with the same two parameters and bounds. Export writes
 /// the corpus name, which Premiere 26.5.1 shows as "Directional Blur (Legacy)".
 /// Premiere 26's default "Directional Blur" is Film Impact's
 /// [`FILM_IMPACT_DIRECTIONAL_BLUR`].
@@ -2221,8 +2835,8 @@ pub(crate) const FILM_IMPACT_DIRECTIONAL_BLUR_AMOUNT: EffectParamSpec = EffectPa
 
 /// Premiere 26.5.1's current "Directional Blur", Film Impact
 /// `AE.Impact_Directional_Blur_FX`, in the 9/7 form it saves: the current
-/// Gaussian Blur's parameters without Thickness and Uniform Blur (Oracle run A
-/// catalog). Like Legacy, it blurs in the clip's frame before Motion, and
+/// Gaussian Blur's parameters without Thickness and Uniform Blur.
+/// Like Legacy, it blurs in the clip's frame before Motion, and
 /// Angle 0 blurs vertically and Angle 90 horizontally, clockwise positive.
 /// Edge Behavior 2, a transparent exterior, is the Legacy blur's; Seed leaves
 /// the blur unchanged (same probe).
@@ -2280,8 +2894,8 @@ pub(crate) const BRIGHTNESS_CONTRAST_CONTRAST: EffectParamSpec =
     brightness_contrast_param(2, "Contrast", "contrast");
 
 /// `AE.ADBE Brightness & Contrast 2`, "Brightness & Contrast" in the corpus
-/// records (Premiere 12.1 7/5 and 14.4 8/6) and in Premiere 26.5.1 (9/7,
-/// Oracle run E3), with the same two parameters and bounds.
+/// records (Premiere 12.1 7/5 and 14.4 8/6) and in Premiere 26.5.1 (9/7),
+/// with the same two parameters and bounds.
 pub(crate) const BRIGHTNESS_CONTRAST: EffectSpec = EffectSpec {
     match_name: "AE.ADBE Brightness & Contrast 2",
     display_name: "Brightness & Contrast",
@@ -2289,6 +2903,113 @@ pub(crate) const BRIGHTNESS_CONTRAST: EffectSpec = EffectSpec {
     params: &[BRIGHTNESS_CONTRAST_BRIGHTNESS, BRIGHTNESS_CONTRAST_CONTRAST],
     premiere_native: false,
     opaque_private_data: false,
+};
+
+// Import metadata only: these specs describe selected saved controls, not a
+// complete Lumetri record layout. The native writer explicitly rejects them.
+pub(crate) const LUMETRI_TEMPERATURE: EffectParamSpec = EffectParamSpec {
+    id: 7,
+    name: "Temperature",
+    label: "Lumetri saved Temperature",
+    lower_bound: "-300",
+    upper_bound: "300",
+    binding: Some(EffectParamBinding::ScaledScalar {
+        name: "temperature",
+        multiplier: 1.0 / 3.0,
+    }),
+    ..BRIGHTNESS_CONTRAST_CONTRAST
+};
+pub(crate) const LUMETRI_TINT: EffectParamSpec = EffectParamSpec {
+    id: 8,
+    name: "Tint",
+    label: "Lumetri saved Tint",
+    lower_bound: "-300",
+    upper_bound: "300",
+    binding: Some(EffectParamBinding::ScaledScalar {
+        name: "tint",
+        multiplier: -1.0 / 3.0,
+    }),
+    ..BRIGHTNESS_CONTRAST_CONTRAST
+};
+const LUMETRI_TEMPERATURE_SPEC: EffectSpec = EffectSpec {
+    match_name: "AE.ADBE Lumetri",
+    display_name: "Lumetri Temperature replacement",
+    params: &[LUMETRI_TEMPERATURE],
+    ..BRIGHTNESS_CONTRAST
+};
+const LUMETRI_TINT_SPEC: EffectSpec = EffectSpec {
+    match_name: "AE.ADBE Lumetri",
+    display_name: "Lumetri Tint replacement",
+    params: &[LUMETRI_TINT],
+    ..BRIGHTNESS_CONTRAST
+};
+pub(crate) const LUMETRI_EXPOSURE: EffectParamSpec = EffectParamSpec {
+    id: 11,
+    name: "Exposure",
+    label: "Lumetri saved Exposure",
+    lower_bound: "-5",
+    upper_bound: "5",
+    binding: Some(EffectParamBinding::Scalar("exposure")),
+    ..BRIGHTNESS_CONTRAST_CONTRAST
+};
+pub(crate) const LUMETRI_SATURATION: EffectParamSpec = EffectParamSpec {
+    id: 20,
+    name: "Saturation",
+    label: "Lumetri saved Saturation",
+    lower_bound: "0",
+    upper_bound: "200",
+    binding: Some(EffectParamBinding::Scalar("saturation")),
+    ..BRIGHTNESS_CONTRAST_CONTRAST
+};
+pub(crate) const LUMETRI_VIGNETTE_AMOUNT: EffectParamSpec = EffectParamSpec {
+    id: 51,
+    name: "Amount",
+    label: "Lumetri Vignette Amount",
+    lower_bound: "-5",
+    upper_bound: "5",
+    binding: None,
+    ..BRIGHTNESS_CONTRAST_CONTRAST
+};
+pub(crate) const LUMETRI_VIGNETTE_MIDPOINT: EffectParamSpec = EffectParamSpec {
+    id: 52,
+    name: "Midpoint",
+    label: "Lumetri Vignette Midpoint",
+    lower_bound: "0",
+    upper_bound: "100",
+    binding: None,
+    ..BRIGHTNESS_CONTRAST_CONTRAST
+};
+pub(crate) const LUMETRI_VIGNETTE_FEATHER: EffectParamSpec = EffectParamSpec {
+    id: 54,
+    name: "Feather",
+    label: "Lumetri Vignette Feather",
+    lower_bound: "0",
+    upper_bound: "100",
+    binding: None,
+    ..BRIGHTNESS_CONTRAST_CONTRAST
+};
+const LUMETRI_VIGNETTE_SPEC: EffectSpec = EffectSpec {
+    match_name: "AE.ADBE Lumetri",
+    display_name: "Lumetri Vignette replacement",
+    params: &[
+        LUMETRI_VIGNETTE_AMOUNT,
+        LUMETRI_VIGNETTE_MIDPOINT,
+        LUMETRI_VIGNETTE_FEATHER,
+    ],
+    ..BRIGHTNESS_CONTRAST
+};
+
+const LUMETRI_EXPOSURE_SPEC: EffectSpec = EffectSpec {
+    match_name: "AE.ADBE Lumetri",
+    display_name: "Lumetri Exposure replacement",
+    params: &[LUMETRI_EXPOSURE],
+    ..BRIGHTNESS_CONTRAST
+};
+const LUMETRI_SATURATION_SPEC: EffectSpec = EffectSpec {
+    match_name: "AE.ADBE Lumetri",
+    display_name: "Lumetri Saturation replacement",
+    params: &[LUMETRI_SATURATION],
+    ..BRIGHTNESS_CONTRAST
 };
 
 /// Invert Channel popup value for RGB, the only channel FX `levels` inverts:
@@ -2332,7 +3053,7 @@ pub(crate) const INVERT_BLEND: EffectParamSpec = EffectParamSpec {
 };
 
 /// `AE.ADBE Invert`, "Invert" in the corpus records (Premiere 14.4, 8/6) and in
-/// Premiere 26.5.1 (9/7, Oracle run E5), with the same two parameters and
+/// Premiere 26.5.1 (9/7), with the same two parameters and
 /// bounds. Every saved record carries an opaque `PremiereFilterPrivateData`.
 pub(crate) const INVERT: EffectSpec = EffectSpec {
     match_name: "AE.ADBE Invert",
@@ -2343,11 +3064,61 @@ pub(crate) const INVERT: EffectSpec = EffectSpec {
     opaque_private_data: true,
 };
 
+/// The human-authored Premiere 2026 checkbox, ParameterID 1, without Name,
+/// bounds or control type. Adobe checked means bright edges on black, the
+/// opposite polarity to the existing FX shader's `invert > 0.5`.
+pub(crate) const FIND_EDGES_INVERT: EffectParamSpec = EffectParamSpec {
+    id: 1,
+    name: "",
+    label: "Invert",
+    record: XmlRecordDefinition {
+        version: "10",
+        ..records::VIDEO_BOOL_COMPONENT_PARAM
+    },
+    control: "",
+    lower_bound: "",
+    upper_bound: "",
+    lower_ui_bound: None,
+    upper_ui_bound: None,
+    discontinuous_interpolate: false,
+    binding: None,
+};
+
+/// Native fraction of original image. The reader admits its scalar keys to
+/// diagnose their loss; neither this control nor its keys exist in FX Find Edges.
+pub(crate) const FIND_EDGES_BLEND: EffectParamSpec = EffectParamSpec {
+    id: 2,
+    name: "Blend With Original",
+    label: "Blend With Original",
+    record: XmlRecordDefinition {
+        version: "10",
+        ..records::VIDEO_COMPONENT_PARAM
+    },
+    control: "",
+    lower_bound: "0",
+    upper_bound: "1",
+    lower_ui_bound: None,
+    upper_ui_bound: None,
+    discontinuous_interpolate: false,
+    binding: None,
+};
+
+/// `AE.ADBE Find Edges`, pinned native component 537 and parameters 714/715
+/// in `tests/fixtures/find-edges-26.5.xml` (component versions 9/7).
+pub(crate) const FIND_EDGES: EffectSpec = EffectSpec {
+    match_name: "AE.ADBE Find Edges",
+    display_name: "Find Edges",
+    filter_type: "2",
+    params: &[FIND_EDGES_INVERT, FIND_EDGES_BLEND],
+    premiere_native: false,
+    opaque_private_data: false,
+};
+
 /// A colour parameter (a Tint map colour, a Ramp colour), whose keys move the
 /// FX channel scalars `red`, `green` and `blue`. The written record follows
 /// the corpus Tint and Ramp records (Premiere 12.1: `ParameterControlType` 5,
 /// bounds 0 to 2^64 − 1); Premiere 26.5.1 saves version 10 without a control
-/// type or bounds (Oracle runs E6, E10).
+/// type or bounds.
 const fn colour_param(
     id: usize,
     name: &'static str,
@@ -2394,7 +3165,7 @@ pub(crate) const TINT_AMOUNT: EffectParamSpec = EffectParamSpec {
 };
 
 /// `AE.ADBE Tint`, "Tint" in the corpus records (Premiere 12.1, 7/5) and in
-/// Premiere 26.5.1 (9/7, Oracle run E6), with the same three parameters.
+/// Premiere 26.5.1 (9/7), with the same three parameters.
 pub(crate) const TINT: EffectSpec = EffectSpec {
     match_name: "AE.ADBE Tint",
     display_name: "Tint",
@@ -2404,8 +3175,7 @@ pub(crate) const TINT: EffectSpec = EffectSpec {
     opaque_private_data: false,
 };
 
-/// `AE.ADBE Black & White`, Premiere 26.5.1's "Black & White" (9/7, Oracle run
-/// E7): a record without parameters (no `Params` element). The corpus's older
+/// `AE.ADBE Black & White`, Premiere 26.5.1's "Black & White" (9/7): a record without parameters (no `Params` element). The corpus's older
 /// `PR.ADBE Black & White` (`VideoFilterType` 1, one unnamed
 /// `ArbVideoComponentParam`) is another effect and stays unknown.
 pub(crate) const BLACK_WHITE: EffectSpec = EffectSpec {
@@ -2479,7 +3249,7 @@ pub(crate) const RAMP_BLEND: EffectParamSpec = EffectParamSpec {
 };
 
 /// `AE.ADBE Ramp`, "Ramp" in the corpus records (Premiere 12.1 and 14.x, 7/5
-/// and 8/5–6) and in Premiere 26.5.1 (9/7, Oracle run E10), with the same
+/// and 8/5–6) and in Premiere 26.5.1 (9/7), with the same
 /// seven parameters. Its defaults are a vertical black-to-white ramp, 0.5:0 to
 /// 0.5:1, linear, no scatter, Blend 0.
 pub(crate) const RAMP: EffectSpec = EffectSpec {
@@ -2524,7 +3294,7 @@ pub(crate) const MOSAIC_VERTICAL_BLOCKS: EffectParamSpec =
     mosaic_count(2, "Vertical Blocks", "verticalBlocks");
 
 /// Mosaic Sharp Colors checkbox. Premiere 26.5.1 saves it without a `Name`
-/// element (Oracle run E8) and the corpus records likewise, so its spec name
+/// element and the corpus records likewise, so its spec name
 /// is empty: the reader accepts a missing name for it
 /// ([`EffectParamSpec::accepts_name`]) and the writer omits the element.
 pub(crate) const MOSAIC_SHARP_COLORS: EffectParamSpec = EffectParamSpec {
@@ -2541,7 +3311,7 @@ pub(crate) const MOSAIC_SHARP_COLORS: EffectParamSpec = EffectParamSpec {
     binding: None,
 };
 
-/// `AE.ADBE Mosaic`, "Mosaic (Legacy)" in Premiere 26.5.1 (Oracle run E8; the
+/// `AE.ADBE Mosaic`, "Mosaic (Legacy)" in Premiere 26.5.1 (the
 /// corpus records are the 8/5 and 7/5 generations of the same layout).
 /// Premiere 26's default "Mosaic" is the unrelated Film Impact
 /// `AE.Impact_Mosaic_FX`, which stays an unknown effect.
@@ -2558,11 +3328,705 @@ pub(crate) const MOSAIC: EffectSpec = EffectSpec {
     opaque_private_data: false,
 };
 
+/// Replicate Count, whose keys move the four FX `motionTile` tile fields
+/// together ([`EffectParamBinding::TileCount`]): the integer class
+/// `6e02e8bb` with control type 1 (integer slider), whole values from 2 to 16
+/// and the default 2, which Premiere 26.5.1 saves as version 10 without UI
+/// bounds. The written record follows the writer's corpus generation of that
+/// class, version 9, as Mosaic's counts do.
+pub(crate) const REPLICATE_COUNT: EffectParamSpec = EffectParamSpec {
+    id: 1,
+    name: "Count",
+    label: "Count",
+    record: records::VIDEO_POPUP_PARAM,
+    control: "1",
+    lower_bound: "2",
+    upper_bound: "16",
+    lower_ui_bound: None,
+    upper_ui_bound: None,
+    discontinuous_interpolate: false,
+    binding: Some(EffectParamBinding::TileCount {
+        width: "tileWidth",
+        height: "tileHeight",
+        center_x: "tileCenterX",
+        center_y: "tileCenterY",
+    }),
+};
+
+/// `AE.ADBE Replicate`, "Replicate" in Premiere 26.5.1 (saved as 9/7), with
+/// its one parameter, Count.
+pub(crate) const REPLICATE: EffectSpec = EffectSpec {
+    match_name: "AE.ADBE Replicate",
+    display_name: "Replicate",
+    filter_type: "2",
+    params: &[REPLICATE_COUNT],
+    premiere_native: false,
+    opaque_private_data: false,
+};
+
+/// Premiere's integer Sharpen slider; Scalar binding deliberately avoids rounding.
+/// Reads the saved version 10; writes the shared version 9 integer record,
+/// whose Adobe acceptance for Sharpen remains unverified.
+pub(crate) const SHARPEN_AMOUNT: EffectParamSpec = EffectParamSpec {
+    id: 1,
+    name: "Sharpen Amount",
+    label: "Sharpen Amount",
+    record: records::VIDEO_POPUP_PARAM,
+    control: "1",
+    lower_bound: "0",
+    upper_bound: "4000",
+    lower_ui_bound: None,
+    upper_ui_bound: Some("100"),
+    discontinuous_interpolate: false,
+    binding: Some(EffectParamBinding::Scalar("amount")),
+};
+
+pub(crate) const SHARPEN: EffectSpec = EffectSpec {
+    match_name: "AE.ADBE Sharpen",
+    display_name: "Sharpen",
+    filter_type: "2",
+    params: &[SHARPEN_AMOUNT],
+    premiere_native: false,
+    opaque_private_data: false,
+};
+
+/// Deliberate amplitude normalization, not a measured native calibration.
+pub(crate) const NOISE_APPROXIMATION: &str = "Noise and Grain use different random kernels and temporal patterns; monochrome and wrapping modes approximate color/clipped noise; modern tonal weighting, Uniform Intensity, Saturation, Blend Mode and Master are not reproduced; Preserve Alpha off approximates alpha-preserving Grain; modern Intensity uses the same monotonic 0.4 strength surrogate, not calibrated equivalence; Legacy Grain amount = native Amount of Noise × 0.4, size 1, softness 0, aspectRatio 1, seed 0; Modern retains numeric Seed but not its native RNG sequence; strength, spatial behavior and alpha fidelity are unmeasured";
+
+pub(crate) const NOISE_AMOUNT: EffectParamSpec = EffectParamSpec {
+    id: 1,
+    name: "Amount of Noise",
+    label: "Amount of Noise",
+    record: XmlRecordDefinition::new(
+        "VideoComponentParam",
+        "fe47129e-6c94-4fc0-95d5-c056a517aaf3",
+        "10",
+    ),
+    control: "",
+    lower_bound: "0",
+    upper_bound: "100",
+    lower_ui_bound: None,
+    upper_ui_bound: None,
+    discontinuous_interpolate: false,
+    binding: Some(EffectParamBinding::ScaledScalar {
+        // Grain persists amount, but its authorable shader target is intensity.
+        name: "intensity",
+        multiplier: 0.4,
+    }),
+};
+pub(crate) const NOISE_COLOR: EffectParamSpec = EffectParamSpec {
+    id: 2,
+    name: "Noise Type",
+    label: "Noise Type",
+    record: XmlRecordDefinition {
+        version: "10",
+        ..records::VIDEO_BOOL_COMPONENT_PARAM
+    },
+    control: "",
+    lower_bound: "",
+    upper_bound: "",
+    ..MOSAIC_SHARP_COLORS
+};
+pub(crate) const NOISE_CLIPPING: EffectParamSpec = EffectParamSpec {
+    id: 3,
+    name: "Clipping",
+    label: "Clipping",
+    record: XmlRecordDefinition {
+        version: "10",
+        ..records::VIDEO_BOOL_COMPONENT_PARAM
+    },
+    control: "",
+    lower_bound: "",
+    upper_bound: "",
+    ..MOSAIC_SHARP_COLORS
+};
+pub(crate) const NOISE: EffectSpec = EffectSpec {
+    match_name: "AE.ADBE Noise2",
+    display_name: "Noise (Legacy)",
+    filter_type: "2",
+    params: &[NOISE_AMOUNT, NOISE_COLOR, NOISE_CLIPPING],
+    premiere_native: false,
+    opaque_private_data: false,
+};
+
+/// Import-only ABI from noise-native-records.xml, records 733–757.
+pub(crate) const MODERN_NOISE: EffectSpec = EffectSpec {
+    match_name: "AE.ADBE_Noise_FX",
+    display_name: "Noise",
+    params: &[
+        EffectParamSpec {
+            id: 8100,
+            name: "Error occurred",
+            label: "Error occurred",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "cc12343e-f113-4d3b-ae05-b287db77d461",
+                "10",
+            ),
+            control: "16",
+            lower_bound: "",
+            upper_bound: "",
+            discontinuous_interpolate: false,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 1,
+            name: "Controls",
+            label: "Controls",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "cc12343e-f113-4d3b-ae05-b287db77d461",
+                "10",
+            ),
+            control: "11",
+            lower_bound: "",
+            upper_bound: "false",
+            discontinuous_interpolate: false,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 8040,
+            name: "",
+            label: "internal control",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "cc12343e-f113-4d3b-ae05-b287db77d461",
+                "10",
+            ),
+            control: "16",
+            lower_bound: "",
+            upper_bound: "",
+            discontinuous_interpolate: false,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 8041,
+            name: "Seed",
+            label: "Seed",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "a4ff2d6e-7ac2-44f8-9d52-17d9ca50e542",
+                "10",
+            ),
+            control: "",
+            lower_bound: "0",
+            upper_bound: "99999",
+            discontinuous_interpolate: false,
+            binding: Some(EffectParamBinding::Scalar("seed")),
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 3,
+            name: "Intensity",
+            label: "Intensity",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "a4ff2d6e-7ac2-44f8-9d52-17d9ca50e542",
+                "10",
+            ),
+            control: "",
+            lower_bound: "0",
+            upper_bound: "100",
+            discontinuous_interpolate: false,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 4,
+            name: "Shadows",
+            label: "Shadows",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "a4ff2d6e-7ac2-44f8-9d52-17d9ca50e542",
+                "10",
+            ),
+            control: "",
+            lower_bound: "0",
+            upper_bound: "100",
+            discontinuous_interpolate: false,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 5,
+            name: "Midtones",
+            label: "Midtones",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "a4ff2d6e-7ac2-44f8-9d52-17d9ca50e542",
+                "10",
+            ),
+            control: "",
+            lower_bound: "0",
+            upper_bound: "100",
+            discontinuous_interpolate: false,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 6,
+            name: "Highlights",
+            label: "Highlights",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "a4ff2d6e-7ac2-44f8-9d52-17d9ca50e542",
+                "10",
+            ),
+            control: "",
+            lower_bound: "0",
+            upper_bound: "100",
+            discontinuous_interpolate: false,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 7,
+            name: "Uniform Intensity",
+            label: "Uniform Intensity",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "cc12343e-f113-4d3b-ae05-b287db77d461",
+                "10",
+            ),
+            control: "",
+            lower_bound: "",
+            upper_bound: "",
+            discontinuous_interpolate: false,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 8,
+            name: "Saturation",
+            label: "Saturation",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "a4ff2d6e-7ac2-44f8-9d52-17d9ca50e542",
+                "10",
+            ),
+            control: "",
+            lower_bound: "0",
+            upper_bound: "100",
+            discontinuous_interpolate: false,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 9,
+            name: "Blend Mode",
+            label: "Blend Mode",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8",
+                "10",
+            ),
+            control: "",
+            lower_bound: "0",
+            upper_bound: "4",
+            discontinuous_interpolate: true,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 10,
+            name: "Master",
+            label: "Master",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "a4ff2d6e-7ac2-44f8-9d52-17d9ca50e542",
+                "10",
+            ),
+            control: "",
+            lower_bound: "0",
+            upper_bound: "100",
+            discontinuous_interpolate: false,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 11,
+            name: "Preserve Alpha",
+            label: "Preserve Alpha",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "cc12343e-f113-4d3b-ae05-b287db77d461",
+                "10",
+            ),
+            control: "",
+            lower_bound: "",
+            upper_bound: "",
+            discontinuous_interpolate: false,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 8240,
+            name: "",
+            label: "internal control",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "cc12343e-f113-4d3b-ae05-b287db77d461",
+                "10",
+            ),
+            control: "16",
+            lower_bound: "",
+            upper_bound: "",
+            discontinuous_interpolate: false,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 2,
+            name: "Controls",
+            label: "Controls",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "cc12343e-f113-4d3b-ae05-b287db77d461",
+                "10",
+            ),
+            control: "12",
+            lower_bound: "",
+            upper_bound: "false",
+            discontinuous_interpolate: false,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 8280,
+            name: "_ Overlay Mode",
+            label: "_ Overlay Mode",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8",
+                "10",
+            ),
+            control: "",
+            lower_bound: "0",
+            upper_bound: "2",
+            discontinuous_interpolate: true,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 8281,
+            name: "_ Overlay Info",
+            label: "_ Overlay Info",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "cc12343e-f113-4d3b-ae05-b287db77d461",
+                "10",
+            ),
+            control: "",
+            lower_bound: "",
+            upper_bound: "",
+            discontinuous_interpolate: false,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 8141,
+            name: "",
+            label: "internal control",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "cc12343e-f113-4d3b-ae05-b287db77d461",
+                "10",
+            ),
+            control: "16",
+            lower_bound: "",
+            upper_bound: "",
+            discontinuous_interpolate: false,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 8140,
+            name: "_ Applied Version",
+            label: "_ Applied Version",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "a4ff2d6e-7ac2-44f8-9d52-17d9ca50e542",
+                "10",
+            ),
+            control: "",
+            lower_bound: "0",
+            upper_bound: "999999",
+            discontinuous_interpolate: false,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 8300,
+            name: "",
+            label: "internal control",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "a4ff2d6e-7ac2-44f8-9d52-17d9ca50e542",
+                "10",
+            ),
+            control: "",
+            lower_bound: "0",
+            upper_bound: "16777215",
+            discontinuous_interpolate: false,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 8301,
+            name: "",
+            label: "internal control",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "a4ff2d6e-7ac2-44f8-9d52-17d9ca50e542",
+                "10",
+            ),
+            control: "",
+            lower_bound: "0",
+            upper_bound: "16777215",
+            discontinuous_interpolate: false,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 9020,
+            name: "_ Overlay Enabled",
+            label: "_ Overlay Enabled",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "cc12343e-f113-4d3b-ae05-b287db77d461",
+                "10",
+            ),
+            control: "",
+            lower_bound: "",
+            upper_bound: "",
+            discontinuous_interpolate: false,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 9040,
+            name: "_ Sequence Width",
+            label: "_ Sequence Width",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "a4ff2d6e-7ac2-44f8-9d52-17d9ca50e542",
+                "10",
+            ),
+            control: "",
+            lower_bound: "-1",
+            upper_bound: "1000000000",
+            discontinuous_interpolate: false,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 9041,
+            name: "_ Sequence Height",
+            label: "_ Sequence Height",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "a4ff2d6e-7ac2-44f8-9d52-17d9ca50e542",
+                "10",
+            ),
+            control: "",
+            lower_bound: "-1",
+            upper_bound: "1000000000",
+            discontinuous_interpolate: false,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+        EffectParamSpec {
+            id: 9042,
+            name: "_ Sequence Pixel Ratio",
+            label: "_ Sequence Pixel Ratio",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "a4ff2d6e-7ac2-44f8-9d52-17d9ca50e542",
+                "10",
+            ),
+            control: "",
+            lower_bound: "-1",
+            upper_bound: "1000000000",
+            discontinuous_interpolate: false,
+            binding: None,
+            ..NOISE_AMOUNT
+        },
+    ],
+    ..NOISE
+};
+
+/// Posterize Level, whose keys move FX `levels`: the float slider class
+/// `a4ff2d6e` from 2 to 255 with a UI bound of 32 and the default 7, which
+/// Premiere 26.5.1 saves as version 10 without a control type. The written
+/// record follows the writer's corpus generation of that class, version 9
+/// with `ParameterControlType` 8 as the corpus Gaussian Blur Blurriness
+/// records have it; Premiere's reading of a written one is unverified.
+pub(crate) const POSTERIZE_LEVEL: EffectParamSpec = EffectParamSpec {
+    id: 1,
+    name: "Level",
+    label: "Level",
+    record: records::VIDEO_FILTER_AMOUNT_PARAM,
+    control: "8",
+    lower_bound: "2",
+    upper_bound: "255",
+    lower_ui_bound: None,
+    upper_ui_bound: Some("32"),
+    discontinuous_interpolate: false,
+    binding: Some(EffectParamBinding::Scalar("levels")),
+};
+
+/// `AE.ADBE Posterize`, "Posterize" in Premiere 26.5.1 (saved as 9/7), with
+/// its one parameter, Level.
+pub(crate) const POSTERIZE: EffectSpec = EffectSpec {
+    match_name: "AE.ADBE Posterize",
+    display_name: "Posterize",
+    filter_type: "2",
+    params: &[POSTERIZE_LEVEL],
+    premiere_native: false,
+    opaque_private_data: false,
+};
+
+/// A deliberate signed slider normalization, not a measured lens equation.
+/// Positive native convex distortion expands the centre. FX inverse sampling
+/// expands it with a negative coefficient (sample UV moves toward the centre).
+pub(crate) const LENS_CURVATURE: EffectParamSpec = EffectParamSpec {
+    lower_bound: "-100",
+    binding: Some(EffectParamBinding::ScaledScalar {
+        name: "amount",
+        multiplier: -0.01,
+    }),
+    ..levels_param(1, "Curvature", "100", None)
+};
+
+pub(crate) const LENS_APPROXIMATION: &str = "centered radial approximation: FX amount = -Curvature/100 (export uses the inverse), a deliberate slider normalization, not a measured coefficient law; FX uses UV cubic inverse sampling and transparent bounds, not Premiere's native kernel; only an identity canvas-sized input plane, zero decentering/prism and Fill Alpha on convert; native private data is not replayed or authored and native acceptance is unverified";
+
+/// Native seven-control layout from the human-authored Lens fixture. Only
+/// Curvature is editable in this bounded mapping; other controls are guarded.
+pub(crate) const LENS_DISTORTION: EffectSpec = EffectSpec {
+    match_name: "PR.ADBE Lens Distortion",
+    display_name: "Lens Distortion",
+    filter_type: "1",
+    params: &[
+        LENS_CURVATURE,
+        EffectParamSpec {
+            lower_bound: "-100",
+            ..levels_param(2, "Vertical Decentering", "100", None)
+        },
+        EffectParamSpec {
+            lower_bound: "-100",
+            ..levels_param(3, "Horizontal Decentering", "100", None)
+        },
+        EffectParamSpec {
+            lower_bound: "-100",
+            ..levels_param(4, "Vertical Prism FX", "100", None)
+        },
+        EffectParamSpec {
+            lower_bound: "-100",
+            ..levels_param(5, "Horizontal Prism FX", "100", None)
+        },
+        EffectParamSpec {
+            id: 6,
+            name: "",
+            label: "Fill Alpha",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "cc12343e-f113-4d3b-ae05-b287db77d461",
+                "10",
+            ),
+            control: "",
+            lower_bound: "",
+            upper_bound: "",
+            lower_ui_bound: None,
+            upper_ui_bound: None,
+            discontinuous_interpolate: false,
+            binding: None,
+        },
+        EffectParamSpec {
+            id: 7,
+            name: "Fill Color",
+            label: "Fill Color",
+            record: XmlRecordDefinition::new(
+                "VideoComponentParam",
+                "0fde4e9f-f895-4ba3-b0fe-9a6feafda583",
+                "10",
+            ),
+            control: "",
+            lower_bound: "",
+            upper_bound: "",
+            lower_ui_bound: None,
+            upper_ui_bound: Some("0"),
+            discontinuous_interpolate: false,
+            binding: None,
+        },
+    ],
+    premiere_native: true,
+    opaque_private_data: false,
+};
+
+/// Curvature supports only bounded Linear/Hold tracks, without Bézier overshoot.
+pub(crate) fn lens_curvature(
+    curvature: f64,
+    animations: &[PrEffectParamAnimation],
+) -> std::result::Result<f64, String> {
+    if !(-100.0..=100.0).contains(&curvature) {
+        return Err("Lens Curvature must be finite and within -100 to 100".to_owned());
+    }
+    for animation in animations {
+        let Some(keys) = animation.keys.scalar() else {
+            return Err("Lens Curvature requires scalar keys".to_owned());
+        };
+        if animation.param != &LENS_CURVATURE
+            || keys.iter().any(|key| {
+                !(-100.0..=100.0).contains(&key.value)
+                    || matches!(key.easing, PrKeyframeEasing::CubicBezier { .. })
+            })
+        {
+            return Err(
+                "Lens Distortion supports only Curvature Linear/Hold keys within -100 to 100"
+                    .to_owned(),
+            );
+        }
+    }
+    Ok(curvature)
+}
+
+/// Human-saved Premiere 2026 Frame Rate (parameter 717). The binding reads
+/// native keys only; the converter reports and keeps their initial rate,
+/// because FX `frameRate` is not animatable.
+pub(crate) const POSTERIZE_TIME_FRAME_RATE: EffectParamSpec = EffectParamSpec {
+    id: 1,
+    name: "Frame Rate",
+    label: "Frame Rate",
+    record: XmlRecordDefinition {
+        version: "10",
+        ..records::VIDEO_COMPONENT_PARAM
+    },
+    control: "",
+    lower_bound: "0.0099945068359375",
+    upper_bound: "99",
+    lower_ui_bound: Some("1"),
+    upper_ui_bound: Some("64"),
+    discontinuous_interpolate: true,
+    binding: Some(EffectParamBinding::Scalar("frameRate")),
+};
+
+/// Human-saved Premiere 2026 Posterize Time (component 540, versions 9/7).
+pub(crate) const POSTERIZE_TIME: EffectSpec = EffectSpec {
+    match_name: "AE.ADBE Posterize Time",
+    display_name: "Posterize Time",
+    filter_type: "2",
+    params: &[POSTERIZE_TIME_FRAME_RATE],
+    premiere_native: false,
+    opaque_private_data: false,
+};
+
 /// A Transform scalar (class `fe47129e`) whose keys, when `fx_property` names
 /// a layer property, become the staged video's keys on it. The written
 /// record follows the corpus records (Premiere 12.1 7/5 and 14.4 8/6:
 /// `ParameterControlType` 2, or 3 for the angles) with Premiere 26.5.1's
-/// bounds (Oracle run E11, `A-static.xml`), which saves no control type but
+/// bounds (`A-static.xml`), which saves no control type but
 /// the angles'.
 const fn transform_scalar(
     id: usize,
@@ -2707,8 +4171,7 @@ pub(crate) const TRANSFORM_SAMPLING_BICUBIC: &str = "1";
 /// approximately ([`TRANSFORM_OPACITY`]).
 pub(crate) const TRANSFORM_OPAQUE: f64 = 100.0;
 
-/// `AE.ADBE Geometry`, "Transform" in Premiere 26.5.1 (9/7 records, Oracle
-/// run E11) and in the corpus (Premiere 12.1 7/5 and 14.4 8/6), with the same
+/// `AE.ADBE Geometry`, "Transform" in Premiere 26.5.1 (9/7 records) and in the corpus (Premiere 12.1 7/5 and 14.4 8/6), with the same
 /// 12 parameters in this `Params` order: the checkboxes are `ParameterID` 11
 /// and 9 at indexes 2 and 9. Its defaults are Anchor Point and Position
 /// 0.5:0.5, Scale 100/100, Uniform Scale off, Skew, Skew Axis and Rotation 0,
@@ -2737,6 +4200,33 @@ pub(crate) const TRANSFORM: EffectSpec = EffectSpec {
     ],
     premiere_native: false,
     opaque_private_data: false,
+};
+
+/// The same native controls as Transform, with editable Anchor keys for the
+/// adjustment-composite mapping. Other Geometry2 hosts retain zoom admission.
+pub(crate) const ADJUSTMENT_GEOMETRY2: EffectSpec = EffectSpec {
+    match_name: "AE.ADBE Geometry2",
+    params: &[
+        EffectParamSpec {
+            binding: Some(EffectParamBinding::Point {
+                x: "anchorPointX",
+                y: "anchorPointY",
+            }),
+            ..TRANSFORM_ANCHOR_POINT
+        },
+        TRANSFORM_POSITION,
+        TRANSFORM_UNIFORM_SCALE,
+        TRANSFORM_SCALE_HEIGHT,
+        TRANSFORM_SCALE_WIDTH,
+        TRANSFORM_SKEW,
+        TRANSFORM_SKEW_AXIS,
+        TRANSFORM_ROTATION,
+        TRANSFORM_OPACITY,
+        TRANSFORM_COMPOSITION_SHUTTER_ANGLE,
+        TRANSFORM_SHUTTER_ANGLE,
+        TRANSFORM_SAMPLING,
+    ],
+    ..TRANSFORM
 };
 
 /// Track Matte Key's Matte popup: the persistent `Track/ID` of the matte
@@ -2809,11 +4299,125 @@ pub(crate) const TRACK_MATTE_KEY: EffectSpec = EffectSpec {
     opaque_private_data: false,
 };
 
+/// Premiere's saved two-control keyer, not After Effects' `ADBE Luma Key`.
+pub(crate) const LEGACY_LUMA_KEY_MATCH_NAME: &str = "AE.ADBE Legacy Key Luma";
+
+/// Deliberate percent normalization, not an Adobe coverage equation or AE Tolerance.
+pub(crate) const LEGACY_LUMA_KEY_MAPPING_REASON: &str = "Legacy Luma Key approximation: Threshold transparency level / 100 maps to FX threshold and Cutoff falloff / 100 to softness; export uses the inverse normalization, not an established Adobe coverage equation or AE Tolerance. FX uses smoothstep over premultiplied Rec. 601 luma; native edge, polarity and alpha fidelity are unmeasured. No native invert control is invented";
+
+// At threshold <= 1 this produces distinct f32 smoothstep edges, even at 1.
+pub(crate) const LEGACY_LUMA_MIN_CUTOFF: f64 = 0.01;
+pub(crate) const LEGACY_LUMA_THRESHOLD: EffectParamSpec = EffectParamSpec {
+    id: 1,
+    name: "Threshold",
+    label: "Threshold",
+    record: XmlRecordDefinition {
+        version: "10",
+        ..records::VIDEO_COMPONENT_PARAM
+    },
+    control: "",
+    lower_bound: "0",
+    upper_bound: "100",
+    lower_ui_bound: None,
+    upper_ui_bound: None,
+    discontinuous_interpolate: false,
+    binding: Some(EffectParamBinding::ScaledScalar {
+        name: "threshold",
+        multiplier: 0.01,
+    }),
+};
+pub(crate) const LEGACY_LUMA_CUTOFF: EffectParamSpec = EffectParamSpec {
+    id: 2,
+    name: "Cutoff",
+    label: "Cutoff",
+    binding: Some(EffectParamBinding::ScaledScalar {
+        name: "softness",
+        multiplier: 0.01,
+    }),
+    ..LEGACY_LUMA_THRESHOLD
+};
+pub(crate) const LEGACY_LUMA_KEY: EffectSpec = EffectSpec {
+    match_name: LEGACY_LUMA_KEY_MATCH_NAME,
+    display_name: "Luma Key",
+    filter_type: "2",
+    params: &[LEGACY_LUMA_THRESHOLD, LEGACY_LUMA_CUTOFF],
+    premiere_native: false,
+    opaque_private_data: false,
+};
+
+/// Validate endpoint domains before the bounded easing/falloff approximation.
+pub(crate) fn validate_legacy_luma(
+    threshold: f64,
+    cutoff: f64,
+    animations: &[PrEffectParamAnimation],
+) -> std::result::Result<(), String> {
+    if ![threshold, cutoff]
+        .into_iter()
+        .all(|value| (0.0..=100.0).contains(&value))
+    {
+        return Err("Legacy Luma Threshold/Cutoff must be finite percentages in 0..100".to_owned());
+    }
+    for animation in animations {
+        let Some(keys) = animation.keys.scalar() else {
+            return Err("Legacy Luma requires scalar keys".to_owned());
+        };
+        if keys.iter().any(|key| !(0.0..=100.0).contains(&key.value)) {
+            return Err("Legacy Luma keys must be finite percentages in 0..100".to_owned());
+        }
+    }
+    Ok(())
+}
+
+/// Normalize only at the native/FX boundary in either direction. Linearizing
+/// Bezier keeps authored endpoints/times without permitting width overshoot.
+pub(crate) fn normalize_legacy_luma(effect: &mut PrEffect) -> Vec<String> {
+    let PrEffectParams::LegacyLuma { cutoff, .. } = &mut effect.params else {
+        return Vec::new();
+    };
+    let mut notes = Vec::new();
+    let mut floored = *cutoff < LEGACY_LUMA_MIN_CUTOFF;
+    *cutoff = cutoff.max(LEGACY_LUMA_MIN_CUTOFF);
+    for animation in &mut effect.animations {
+        let PrEffectParamKeys::Scalar(keys) = &mut animation.keys else {
+            continue;
+        };
+        let mut linearized = false;
+        for key in keys {
+            if matches!(key.easing, PrKeyframeEasing::CubicBezier { .. }) {
+                key.easing = PrKeyframeEasing::Linear;
+                linearized = true;
+            }
+            if animation.param == &LEGACY_LUMA_CUTOFF && key.value < LEGACY_LUMA_MIN_CUTOFF {
+                key.value = LEGACY_LUMA_MIN_CUTOFF;
+                floored = true;
+            }
+        }
+        if linearized {
+            notes.push(format!("{} Bezier keys approximated as Linear with values/times retained; bounded interpolation prevents falloff overshoot", animation.param.label));
+        }
+    }
+    if floored {
+        notes.push("Cutoff falloff below 0.01 percent was raised to 0.01 percent (FX softness 0.0001) at affected static values/key endpoints to avoid equal smoothstep edges; near-zero intervals are approximate".to_owned());
+    }
+    notes
+}
+
+impl PrEffect {
+    pub(crate) fn is_legacy_luma(&self) -> bool {
+        matches!(self.params, PrEffectParams::LegacyLuma { .. })
+    }
+
+    /// Dropping an enabled key must never leave an opaque occurrence behind.
+    pub(crate) fn requires_coverage(&self) -> bool {
+        self.enabled && self.is_legacy_luma()
+    }
+}
+
 /// Standard effects that change what their clip covers or its transparency,
 /// each named by a prefix of its match name or English display name.
 ///
 /// An active such effect omits its whole occurrence: converting the clip
-/// without it would leave the clip opaque over everything below. Every other
+/// without it may expose previously keyed pixels or cover underlying content. Every other
 /// standard effect keeps the clip and omits only itself. The list is
 /// Premiere's Keying effects (Ultra Key, Luma Key, Chroma Key, Color Key,
 /// Image Matte Key, Difference Matte, Non Red Key, Alpha Adjust), and the
@@ -2822,7 +4426,8 @@ pub(crate) const TRACK_MATTE_KEY: EffectSpec = EffectSpec {
 /// ([`TRACK_MATTE_KEY`]) matches the first entry but converts as the clip's
 /// mask, so the chain reader skips it before this list applies. Premiere
 /// renders a clip without its bypassed effects, so a bypassed entry keeps its
-/// clip and is reported like any unmapped effect; a missing `Bypass` reads as
+/// clip and is reported like any unmapped effect. Supported Legacy Luma controls
+/// convert before this guard; a missing `Bypass` reads as
 /// active (inferred) and an invalid one counts as active.
 ///
 /// Failure direction: a prefix can only catch more effects, so a wrong entry
@@ -2831,12 +4436,12 @@ pub(crate) const TRACK_MATTE_KEY: EffectSpec = EffectSpec {
 /// unknown-effect omission still reports the effect.
 const COVERAGE_EFFECTS: [&str; 10] = [
     // The Legacy Key family, inferred from Track Matte Key's match name
-    // (20 corpus records in 3 projects); no other member occurs in the corpus.
+    // (20 corpus records in 3 projects); Legacy Luma is also native-fixture-backed.
     "AE.ADBE Legacy Key ",
     // Radial Wipe: 2 corpus clip-effect records, both in `transition_countdown`.
     "AE.ADBE Radial Wipe",
-    // English display names: no corpus record, repository file or Premiere 26
-    // bundle string names these effects' match names.
+    // English display-name fallbacks: apart from Legacy Luma above, no native
+    // fixture or Premiere 26 bundle string identifies these effects' match names.
     "Ultra Key",
     "Luma Key",
     "Chroma Key",
@@ -2855,22 +4460,115 @@ pub(crate) fn is_coverage_effect(match_name: Option<&str>, display_name: Option<
         .any(|name| COVERAGE_EFFECTS.iter().any(|entry| name.starts_with(entry)))
 }
 
+/// Deliberate single-colour fading surrogate, not a calibrated pixel transfer.
+pub(crate) const ALPHA_GLOW_APPROXIMATION: &str = "Alpha Glow uses a single-color soft normal OuterGlow surrogate: one Glow unit per intrinsic FX pixel, Brightness/255 as opacity, spread 0 and range 0.5; radius, falloff and transformed/nested halo extent are uncalibrated. Export uses current size/RGBA, rounds static sliders to integers and RGB to 8 bits, limits size to 100 and writes inactive End Color from current Start Color; unsupported style controls and animation are approximated with diagnostics";
+pub(crate) const ALPHA_GLOW_SIZE: EffectParamSpec = EffectParamSpec {
+    record: XmlRecordDefinition {
+        version: "10",
+        ..records::VIDEO_POPUP_PARAM
+    },
+    lower_bound: "0",
+    upper_bound: "100",
+    upper_ui_bound: None,
+    ..mosaic_count(1, "Glow", "size")
+};
+pub(crate) const ALPHA_GLOW_BRIGHTNESS: EffectParamSpec = EffectParamSpec {
+    id: 2,
+    name: "Brightness",
+    label: "Brightness",
+    upper_bound: "255",
+    binding: None,
+    ..ALPHA_GLOW_SIZE
+};
+pub(crate) const ALPHA_GLOW_START: EffectParamSpec = EffectParamSpec {
+    record: XmlRecordDefinition {
+        version: "10",
+        ..records::VIDEO_COLOR_PARAM
+    },
+    control: "",
+    lower_bound: "",
+    upper_bound: "",
+    binding: None,
+    ..colour_param(3, "Start Color", "", "", "")
+};
+pub(crate) const ALPHA_GLOW_END: EffectParamSpec = EffectParamSpec {
+    id: 4,
+    name: "End Color",
+    label: "End Color",
+    ..ALPHA_GLOW_START
+};
+pub(crate) const ALPHA_GLOW_USE_END: EffectParamSpec = EffectParamSpec {
+    record: XmlRecordDefinition {
+        version: "10",
+        ..records::VIDEO_BOOL_COMPONENT_PARAM
+    },
+    control: "",
+    lower_bound: "",
+    upper_bound: "",
+    id: 5,
+    name: "Use End Color",
+    label: "Use End Color",
+    ..MOSAIC_SHARP_COLORS
+};
+pub(crate) const ALPHA_GLOW_FADE: EffectParamSpec = EffectParamSpec {
+    id: 6,
+    name: "Fade Out",
+    label: "Fade Out",
+    ..ALPHA_GLOW_USE_END
+};
+pub(crate) const ALPHA_GLOW: EffectSpec = EffectSpec {
+    match_name: "AE.ADBE Alpha Glow",
+    display_name: "Alpha Glow",
+    filter_type: "2",
+    params: &[
+        ALPHA_GLOW_SIZE,
+        ALPHA_GLOW_BRIGHTNESS,
+        ALPHA_GLOW_START,
+        ALPHA_GLOW_END,
+        ALPHA_GLOW_USE_END,
+        ALPHA_GLOW_FADE,
+    ],
+    premiere_native: false,
+    opaque_private_data: false,
+};
+/// Integer native slider endpoints; interpolation between endpoints stays continuous.
+pub(crate) fn alpha_glow_size(
+    size: f64,
+    animations: &[PrEffectParamAnimation],
+) -> std::result::Result<(), String> {
+    let valid = |v: f64| (0.0..=100.0).contains(&v) && v.fract() == 0.0;
+    if !valid(size)
+        || animations.iter().any(|a| {
+            a.param.id != 1
+                || a.keys
+                    .scalar()
+                    .is_none_or(|keys| keys.iter().any(|k| !valid(k.value)))
+        })
+    {
+        return Err(
+            "Alpha Glow requires whole size endpoints in 0..100 and only size animation".to_owned(),
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         corner_at, cubic_bezier_progress, cubic_bezier_range, point_axis_range, stays_convex_along,
         stays_convex_in_box, EffectParamBinding, EffectParamSpec, PrColour, PrColourKeyframe,
         PrCornerPin, PrDirectionalBlur, PrEffect, PrEffectParamAnimation, PrEffectParamKeys,
-        PrEffectParams, PrGaussianBlur, PrInvert, PrMosaic, PrRamp, PrTint, PrTransform,
-        CORNER_PIN, DIRECTIONAL_BLUR, DIRECTIONAL_BLUR_DIRECTION, DIRECTIONAL_BLUR_LENGTH,
-        FILM_IMPACT_BLUR, FILM_IMPACT_BLUR_AMOUNT, GAUSSIAN_BLUR, GAUSSIAN_BLUR_BLURRINESS,
-        GAUSSIAN_BLUR_DIMENSIONS, GAUSSIAN_BLUR_MAX_BLURRINESS, GAUSSIAN_BLUR_REPEAT_EDGE_PIXELS,
-        INVERT, INVERT_BLEND, MOSAIC, MOSAIC_HORIZONTAL_BLOCKS, MOSAIC_SHARP_COLORS,
-        MOSAIC_VERTICAL_BLOCKS, RAMP, RAMP_BLEND, RAMP_END, RAMP_END_COLOR, RAMP_START,
-        RAMP_START_COLOR, TINT, TINT_AMOUNT, TINT_MAP_BLACK_TO, TINT_MAP_WHITE_TO, TRANSFORM,
-        TRANSFORM_ANCHOR_POINT, TRANSFORM_COMPOSITION_SHUTTER_ANGLE, TRANSFORM_OPACITY,
-        TRANSFORM_ROTATION, TRANSFORM_SCALE_HEIGHT, TRANSFORM_SCALE_WIDTH, TRANSFORM_SHUTTER_ANGLE,
-        TRANSFORM_SKEW, TRANSFORM_SKEW_AXIS, TRANSFORM_UNIFORM_SCALE,
+        PrEffectParams, PrGaussianBlur, PrInvert, PrMosaic, PrPosterize, PrRamp, PrReplicate,
+        PrTint, PrTransform, CORNER_PIN, DIRECTIONAL_BLUR, DIRECTIONAL_BLUR_DIRECTION,
+        DIRECTIONAL_BLUR_LENGTH, FILM_IMPACT_BLUR, FILM_IMPACT_BLUR_AMOUNT, GAUSSIAN_BLUR,
+        GAUSSIAN_BLUR_BLURRINESS, GAUSSIAN_BLUR_DIMENSIONS, GAUSSIAN_BLUR_MAX_BLURRINESS,
+        GAUSSIAN_BLUR_REPEAT_EDGE_PIXELS, INVERT, INVERT_BLEND, MOSAIC, MOSAIC_HORIZONTAL_BLOCKS,
+        MOSAIC_SHARP_COLORS, MOSAIC_VERTICAL_BLOCKS, POSTERIZE, POSTERIZE_LEVEL, RAMP, RAMP_BLEND,
+        RAMP_END, RAMP_END_COLOR, RAMP_START, RAMP_START_COLOR, REPLICATE, REPLICATE_COUNT, TINT,
+        TINT_AMOUNT, TINT_MAP_BLACK_TO, TINT_MAP_WHITE_TO, TRANSFORM, TRANSFORM_ANCHOR_POINT,
+        TRANSFORM_COMPOSITION_SHUTTER_ANGLE, TRANSFORM_OPACITY, TRANSFORM_ROTATION,
+        TRANSFORM_SCALE_HEIGHT, TRANSFORM_SCALE_WIDTH, TRANSFORM_SHUTTER_ANGLE, TRANSFORM_SKEW,
+        TRANSFORM_SKEW_AXIS, TRANSFORM_UNIFORM_SCALE,
     };
     use crate::schema::{PrKeyframeEasing, PrPointKeyframe, PrScalarKeyframe, TICKS};
     use std::collections::BTreeSet;
@@ -2899,6 +4597,7 @@ mod tests {
     #[test]
     fn scalar_effect_keys_past_the_former_limit_keep_their_range_and_order_checks() {
         let blur = |keys: Vec<PrScalarKeyframe>| PrEffect {
+            mask: None,
             enabled: true,
             params: PrEffectParams::GaussianBlur(PrGaussianBlur {
                 blurriness: 0.0,
@@ -2939,6 +4638,7 @@ mod tests {
     #[test]
     fn point_effect_keys_past_the_former_limit_keep_their_finite_and_order_checks() {
         let ramp = |keys: Vec<PrPointKeyframe>| PrEffect {
+            mask: None,
             enabled: true,
             params: PrEffectParams::Ramp(PrRamp {
                 start: [0.5, 0.0],
@@ -2981,6 +4681,7 @@ mod tests {
     #[test]
     fn colour_effect_keys_past_the_former_limit_keep_their_easing_and_order_checks() {
         let tint = |keys: Vec<PrColourKeyframe>| PrEffect {
+            mask: None,
             enabled: true,
             params: PrEffectParams::Tint(PrTint {
                 amount: 100.0,
@@ -3368,6 +5069,7 @@ mod tests {
     fn blurriness_outside_the_native_range_is_invalid() {
         for blurriness in [-1.0, 30000.5, f64::NAN, f64::INFINITY] {
             let effect = PrEffect {
+                mask: None,
                 enabled: true,
                 params: PrEffectParams::GaussianBlur(PrGaussianBlur {
                     blurriness,
@@ -3382,6 +5084,7 @@ mod tests {
     #[test]
     fn keys_need_a_bound_parameter_and_native_range() {
         let keyed = |param, values: &[f64]| PrEffect {
+            mask: None,
             enabled: true,
             params: PrEffectParams::GaussianBlur(PrGaussianBlur {
                 blurriness: values[0],
@@ -3426,6 +5129,7 @@ mod tests {
             assert_eq!(param.value_range(), Some(range));
         }
         let effect = |direction, blur_length| PrEffect {
+            mask: None,
             enabled: true,
             params: PrEffectParams::DirectionalBlur(PrDirectionalBlur {
                 direction,
@@ -3448,8 +5152,9 @@ mod tests {
     #[test]
     fn invert_blend_outside_the_native_range_is_invalid() {
         let effect = |blend| PrEffect {
+            mask: None,
             enabled: true,
-            params: PrEffectParams::Invert(PrInvert { blend }),
+            params: PrEffectParams::Invert(PrInvert { blend, channel: 0 }),
             animations: Vec::new(),
         };
         assert_eq!(INVERT.bound_param("outputWhite"), Some(&INVERT_BLEND));
@@ -3513,6 +5218,7 @@ mod tests {
         }
         assert_eq!(TINT.bound_param("blackA"), None);
         let effect = |amount, easing| PrEffect {
+            mask: None,
             enabled: true,
             params: PrEffectParams::Tint(PrTint {
                 amount,
@@ -3576,6 +5282,7 @@ mod tests {
         assert_eq!(RAMP.bound_param("scatter"), None);
         assert_eq!(PrRamp::fx_blend(0.25), 0.75);
         let effect = |blend, start: [f64; 2]| PrEffect {
+            mask: None,
             enabled: true,
             params: PrEffectParams::Ramp(PrRamp {
                 start,
@@ -3752,10 +5459,10 @@ mod tests {
             Ok(4000)
         );
         for (what, value, expected) in [
-            ("", 12.5, "Horizontal Blocks 12.5 is not a whole number of blocks; Premiere counts whole blocks and no rounding is applied (supervisor decision D-18a-2)"),
+            ("", 12.5, "Horizontal Blocks 12.5 is not a whole number of blocks; Premiere counts whole blocks and no rounding is applied"),
             (" key value", 0.0, "Horizontal Blocks key value 0 is outside Premiere's 1 to 4000 range"),
             ("", 4001.0, "Horizontal Blocks 4001 is outside Premiere's 1 to 4000 range"),
-            ("", f64::NAN, "Horizontal Blocks NaN is not a whole number of blocks; Premiere counts whole blocks and no rounding is applied (supervisor decision D-18a-2)"),
+            ("", f64::NAN, "Horizontal Blocks NaN is not a whole number of blocks; Premiere counts whole blocks and no rounding is applied"),
         ] {
             assert_eq!(
                 PrMosaic::count(&MOSAIC_HORIZONTAL_BLOCKS, what, value).unwrap_err(),
@@ -3763,6 +5470,7 @@ mod tests {
             );
         }
         let effect = |horizontal| PrEffect {
+            mask: None,
             enabled: true,
             params: PrEffectParams::Mosaic(PrMosaic {
                 horizontal,
@@ -3809,7 +5517,7 @@ mod tests {
             x2: 0.75,
             y2: 0.9,
         };
-        let hold_rule = "; only Hold keys convert, because the FX mosaic renders fractional block counts between keys and Premiere's stepping there is unmeasured (supervisor decision D-18a-2)";
+        let hold_rule = "; only Hold keys convert, because the FX mosaic renders fractional block counts between keys and Premiere's stepping there is unmeasured";
         // (Sharp Colors, keys, the reason or "")
         #[rustfmt::skip]
         let cases = [
@@ -3840,9 +5548,226 @@ mod tests {
     }
 
     #[test]
+    fn replicate_converts_whole_counts_with_hold_keys_only() {
+        use PrKeyframeEasing::{CubicBezier, Hold, Linear};
+        // One Count keys the four tile fields; no other motionTile field is bound.
+        for field in ["tileWidth", "tileHeight", "tileCenterX", "tileCenterY"] {
+            assert_eq!(
+                REPLICATE.bound_param(field),
+                Some(&REPLICATE_COUNT),
+                "{field}"
+            );
+        }
+        for field in ["outputWidth", "outputHeight", "mirrorEdges", "phase"] {
+            assert_eq!(REPLICATE.bound_param(field), None, "{field}");
+        }
+        assert!(REPLICATE_COUNT.accepts_name(Some("Count")));
+        // Key times on the source clock: 1, 1.5 and 2.5 s.
+        let keys = |values: [(f64, PrKeyframeEasing); 3]| {
+            vec![PrEffectParamAnimation {
+                param: &REPLICATE_COUNT,
+                keys: PrEffectParamKeys::Scalar(
+                    values
+                        .into_iter()
+                        .zip([TICKS, 3 * TICKS / 2, 5 * TICKS / 2])
+                        .map(|((value, easing), source_ticks)| PrScalarKeyframe {
+                            source_ticks,
+                            value,
+                            easing,
+                        })
+                        .collect(),
+                ),
+            }]
+        };
+        let bezier = CubicBezier {
+            x1: 0.25,
+            y1: 0.1,
+            x2: 0.75,
+            y2: 0.9,
+        };
+        let whole =
+            " is not a whole number; Premiere counts whole copies and no rounding is applied";
+        let hold_rule = "; only Hold keys convert, because Premiere's Count between interpolated keys is unmeasured and the FX motionTile would interpolate the tile size and centre, reciprocals of the Count, linearly";
+        // (the static Count, keys, the Count or the reason)
+        #[rustfmt::skip]
+        let cases: [(f64, Vec<PrEffectParamAnimation>, Result<u8, String>); 11] = [
+            (2.0, vec![], Ok(2)),
+            (16.0, vec![], Ok(16)),
+            // The first key's own easing has no segment before it.
+            (3.0, keys([(3.0, Linear), (5.0, Hold), (2.0, Hold)]), Ok(3)),
+            (2.5, vec![], Err(format!("Count 2.5{whole}"))),
+            (f64::NAN, vec![], Err(format!("Count NaN{whole}"))),
+            (1.0, vec![], Err("Count 1 is outside Premiere's 2 to 16 range".to_owned())),
+            (17.0, vec![], Err("Count 17 is outside Premiere's 2 to 16 range".to_owned())),
+            (3.0, keys([(3.0, Linear), (5.0, Linear), (2.0, Hold)]), Err(format!("Count keys are Linear between source times 1.000 s and 1.500 s{hold_rule}"))),
+            (3.0, keys([(3.0, Linear), (5.0, Hold), (2.0, bezier)]), Err(format!("Count keys are Bézier between source times 1.500 s and 2.500 s{hold_rule}"))),
+            (3.0, keys([(3.0, Linear), (4.5, Hold), (2.0, Hold)]), Err(format!("Count key value 4.5{whole}"))),
+            (3.0, keys([(3.0, Linear), (17.0, Hold), (2.0, Hold)]), Err("Count key value 17 is outside Premiere's 2 to 16 range".to_owned())),
+        ];
+        for (count, animations, expected) in cases {
+            assert_eq!(
+                PrReplicate::new(count, &animations).map(|replicate| replicate.count),
+                expected,
+                "{count} {animations:?}"
+            );
+        }
+        let effect = |count| PrEffect {
+            mask: None,
+            enabled: true,
+            params: PrEffectParams::Replicate(PrReplicate { count }),
+            animations: Vec::new(),
+        };
+        assert!(effect(16).validate().is_ok());
+        let error = effect(1).validate().unwrap_err().to_string();
+        assert!(error.contains("Replicate Count 1 is outside"), "{error}");
+    }
+
+    #[test]
+    fn replicate_grids_start_at_the_frame_corner_at_even_and_odd_counts() {
+        // The FX motionTile's position in its tile on one axis, without
+        // mirror or phase: fract((uv - centre) / (size / 100) + 0.5).
+        let tile_position = |uv: f64, (size, center): (f64, f64)| {
+            ((uv - center) / (size / 100.0) + 0.5).rem_euclid(1.0)
+        };
+        // Distance on the unit circle, so that 0 and almost 1 agree.
+        let near = |a: f64, b: f64| {
+            let distance = (a - b).abs();
+            distance.min(1.0 - distance) < 1e-9
+        };
+        // Whole copies from the frame's top-left corner sit at fract(Count · uv)
+        // at every Count, even or odd.
+        for count in [2.0, 3.0, 4.0, 7.0, 16.0] {
+            let tiles = (
+                PrReplicate::tile_size(count),
+                PrReplicate::tile_center(count),
+            );
+            for uv in [0.0, 0.125, 0.3, 0.7, 0.99] {
+                let expected = (count * uv).rem_euclid(1.0);
+                assert!(
+                    near(tile_position(uv, tiles), expected),
+                    "Count {count} at {uv}: {tiles:?}"
+                );
+            }
+        }
+        assert_eq!(
+            [2.0, 4.0, 16.0].map(|count| (
+                PrReplicate::tile_size(count),
+                PrReplicate::tile_center(count)
+            )),
+            [(50.0, 0.25), (25.0, 0.125), (6.25, 0.03125)]
+        );
+        // The FX default centre 0.5 shifts an even Count by half a tile (0.75
+        // and 0 instead of 0.25 and 0.5 at uv 0.125) and draws the corner
+        // grid at an odd one.
+        assert!(near(tile_position(0.125, (50.0, 0.5)), 0.75));
+        assert!(near(tile_position(0.125, (25.0, 0.5)), 0.0));
+        assert!(near(tile_position(0.125, (100.0 / 3.0, 0.5)), 0.375));
+        // Every Count's tiles convert back exactly, and nothing else does.
+        for count in 2..=16 {
+            let tiles = f64::from(count);
+            assert_eq!(
+                PrReplicate::grid_count(
+                    [PrReplicate::tile_size(tiles); 2],
+                    [PrReplicate::tile_center(tiles); 2]
+                ),
+                Some(count)
+            );
+        }
+        #[rustfmt::skip]
+        let others = [
+            // The default centre at an even Count, and at an odd one, which
+            // draws the same grid but is not import's form.
+            ([50.0; 2], [0.5; 2]),
+            ([100.0 / 3.0; 2], [0.5; 2]),
+            // Unequal sizes or centres, and a rounded size.
+            ([50.0, 25.0], [0.25; 2]),
+            ([50.0; 2], [0.25, 0.125]),
+            ([33.33; 2], [1.0 / 6.0; 2]),
+            // Counts 1 and 17 are outside Premiere's range.
+            ([100.0; 2], [0.5; 2]),
+            ([100.0 / 17.0; 2], [0.5 / 17.0; 2]),
+        ];
+        for (size, center) in others {
+            assert_eq!(
+                PrReplicate::grid_count(size, center),
+                None,
+                "{size:?} {center:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn posterize_converts_whole_levels_with_hold_keys_only() {
+        use PrKeyframeEasing::{CubicBezier, Hold, Linear};
+        assert_eq!(POSTERIZE.bound_param("levels"), Some(&POSTERIZE_LEVEL));
+        assert!(POSTERIZE_LEVEL.accepts_name(Some("Level")));
+        // The fixture's Level key times on the source clock: 1, 1.5 and 2.5 s.
+        let keys = |values: [(f64, PrKeyframeEasing); 3]| {
+            vec![PrEffectParamAnimation {
+                param: &POSTERIZE_LEVEL,
+                keys: PrEffectParamKeys::Scalar(
+                    values
+                        .into_iter()
+                        .zip([TICKS, 3 * TICKS / 2, 5 * TICKS / 2])
+                        .map(|((value, easing), source_ticks)| PrScalarKeyframe {
+                            source_ticks,
+                            value,
+                            easing,
+                        })
+                        .collect(),
+                ),
+            }]
+        };
+        let bezier = CubicBezier {
+            x1: 0.25,
+            y1: 0.1,
+            x2: 0.75,
+            y2: 0.9,
+        };
+        let whole = " is not a whole number; Premiere's rendering of a fractional Level is unmeasured and no rounding is applied";
+        let hold_rule = "; only Hold keys convert, because the FX posterize floors the levels between keys and Premiere's stepping there is unmeasured";
+        // (the static Level, keys, the Level or the reason)
+        #[rustfmt::skip]
+        let cases: [(f64, Vec<PrEffectParamAnimation>, Result<u8, String>); 12] = [
+            (2.0, vec![], Ok(2)),
+            (255.0, vec![], Ok(255)),
+            // The first key's own easing has no segment before it.
+            (3.0, keys([(3.0, Linear), (8.0, Hold), (5.0, Hold)]), Ok(3)),
+            (3.0, keys([(3.0, Hold), (8.0, Hold), (5.0, Hold)]), Ok(3)),
+            (7.5, vec![], Err(format!("Level 7.5{whole}"))),
+            (f64::NAN, vec![], Err(format!("Level NaN{whole}"))),
+            (1.0, vec![], Err("Level 1 is outside Premiere's 2 to 255 range".to_owned())),
+            (256.0, vec![], Err("Level 256 is outside Premiere's 2 to 255 range".to_owned())),
+            (3.0, keys([(3.0, Linear), (8.0, Linear), (5.0, Hold)]), Err(format!("Level keys are Linear between source times 1.000 s and 1.500 s{hold_rule}"))),
+            (3.0, keys([(3.0, Linear), (8.0, Hold), (5.0, bezier)]), Err(format!("Level keys are Bézier between source times 1.500 s and 2.500 s{hold_rule}"))),
+            (3.0, keys([(3.0, Linear), (8.5, Hold), (5.0, Hold)]), Err(format!("Level key value 8.5{whole}"))),
+            (3.0, keys([(3.0, Linear), (300.0, Hold), (5.0, Hold)]), Err("Level key value 300 is outside Premiere's 2 to 255 range".to_owned())),
+        ];
+        for (level, animations, expected) in cases {
+            assert_eq!(
+                PrPosterize::new(level, &animations).map(|posterize| posterize.level),
+                expected,
+                "{level} {animations:?}"
+            );
+        }
+        let effect = |level| PrEffect {
+            mask: None,
+            enabled: true,
+            params: PrEffectParams::Posterize(PrPosterize { level }),
+            animations: Vec::new(),
+        };
+        assert!(effect(7).validate().is_ok());
+        let error = effect(1).validate().unwrap_err().to_string();
+        assert!(
+            error.contains("Posterize Level 1 is outside Premiere's 2 to 255 range"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn transform_layout_names_the_staged_properties_and_accepts_the_unnamed_checkboxes() {
         // The 12 parameters in `Params` order with their `ParameterID`s
-        // (Oracle run E11, `A-static.xml`); the keyed ones name the staged
+        // (`A-static.xml`); the keyed ones name the staged
         // video's layer property, the checkboxes and the static-only
         // parameters bind nothing.
         let layout: Vec<_> = TRANSFORM
@@ -3926,6 +5851,7 @@ mod tests {
         assert_eq!(TRANSFORM_ANCHOR_POINT.record.tag, "PointComponentParam");
         // Values outside the native bounds are invalid.
         let effect = |skew| PrEffect {
+            mask: None,
             enabled: true,
             params: PrEffectParams::Transform(PrTransform {
                 skew,
@@ -3990,9 +5916,9 @@ mod tests {
                 shutter_angle: shutter.1,
                 ..CENTERED_TRANSFORM
             };
-        let rotation = "Transform Skew 30 with a Rotation converts with FX's composition of skew, rotation and scale; skew with rotation or non-uniform scale is unmeasured (Oracle run E11 measured the shear at Rotation 0 and Scale 100/100 only, T5)";
+        let rotation = "Transform Skew 30 with a Rotation converts with FX's composition of skew, rotation and scale; skew with rotation or non-uniform scale is unmeasured (native measurements cover Rotation 0 and Scale 100/100 only)";
         let stretch = "Transform Skew 30 with unequal Scale Width and Scale Height converts";
-        let opacity_error = "converted as sRGB opacity (Oracle run E11 clip A, Transform Opacity 50 with clip Opacity 50: mean error ≈ 22 levels, p99 ≈ 80)";
+        let opacity_error = "converted as sRGB opacity (Transform Opacity 50 with clip Opacity 50: mean error ≈ 22 levels, p99 ≈ 80)";
         /// (values, keys, the rejection or the start of each warning)
         type Case<'a> = (
             PrTransform,
@@ -4028,7 +5954,7 @@ mod tests {
             // Scale Width keys under Uniform Scale are an omission (below).
             (transform(true, 100.0, 0.0, 0.0, (true, 0.0)), vec![keys(&TRANSFORM_SCALE_WIDTH, [100.0, 70.0])], Ok(&[])),
             // Clip F: box off at 180 blurs; a keyed angle converts as its first key.
-            (transform(false, 100.0, 0.0, 0.0, (false, 180.0)), vec![], Ok(&["Transform motion blur (Shutter Angle 180) approximated by FX motion blur (Oracle run E11 clip F at 180°: blur edges 13.1-13.7 px wide against Premiere's 12.0-12.2; FX's blur is one frame late at every start and stop of the motion)"])),
+            (transform(false, 100.0, 0.0, 0.0, (false, 180.0)), vec![], Ok(&["Transform motion blur (Shutter Angle 180) approximated by FX motion blur (at 180°: blur edges 13.1-13.7 px wide against Premiere's 12.0-12.2; FX's blur is one frame late at every start and stop of the motion)"])),
             (transform(false, 100.0, 0.0, 0.0, (false, 180.0)), vec![keys(&TRANSFORM_SHUTTER_ANGLE, [180.0, 90.0])], Ok(&["Transform motion blur (Shutter Angle 180)", "keyed Transform Shutter Angle converts as its first key's value 180: the FX composition shutter has no keys (unmeasured against Premiere)"])),
             // Clip A: Opacity 50 (T6), static or keyed; bicubic Sampling.
             (PrTransform { opacity: 50.0, bicubic_sampling: true, ..CENTERED_TRANSFORM }, vec![], Ok(&["Transform Opacity 50 blends in linear light in Premiere; ", "Transform Sampling 1 (bicubic) has no FX equivalent; bilinear used (unmeasured against Premiere)"])),
@@ -4055,7 +5981,7 @@ mod tests {
         assert_eq!(
             transform(true, 100.0, 0.0, 0.0, (true, 0.0))
                 .unimported_scale_width_keys(&[keys(&TRANSFORM_SCALE_WIDTH, [100.0, 70.0])]),
-            Some("Transform Scale Width keys under Uniform Scale were not imported: Premiere renders Scale Height on both axes (inferred from Oracle run E11 T3's static Scale Width)")
+            Some("Transform Scale Width keys under Uniform Scale were not imported: Premiere renders Scale Height on both axes (inferred from a static Scale Width sample)")
         );
         // The FX scale: Scale Height on both axes under Uniform Scale.
         assert_eq!(

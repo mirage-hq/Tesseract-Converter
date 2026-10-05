@@ -12,11 +12,29 @@ use crate::{rifx::Chunk, schema::view_records::StaticPropertyRecord};
 
 use super::{AepWriteError, views};
 
+/// Verified outline kind. AE26 native-authored controls with byte-backed font
+/// locations establish glyf = `/2 1`, CFF = `/2 0`; unknown kinds remain absent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum FontFormat {
+    TrueType,
+    Cff,
+}
+
+impl FontFormat {
+    pub(super) fn cos_value(self) -> &'static str {
+        match self {
+            Self::TrueType => "1",
+            Self::Cff => "0",
+        }
+    }
+}
+
 /// One whole-layer native Source Text document.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct TextDocumentSpec {
     pub text: String,
     pub font_postscript: String,
+    pub font_format: Option<FontFormat>,
     pub font_size: f64,
     pub apply_fill: bool,
     pub fill_color: [f64; 4],
@@ -31,6 +49,7 @@ pub(crate) struct TextDocumentSpec {
     pub baseline_shift: f64,
     pub box_size: Option<[f64; 2]>,
     pub box_position: Option<[f64; 2]>,
+    pub vertical_align: Option<fx_schema::VerticalAlign>,
     pub all_caps: bool,
 }
 
@@ -67,9 +86,15 @@ impl TextDocumentTimeline {
                 "static Source Text needs one zero-time document",
             ));
         }
+        let first = &self.keys[0].document;
         let mut previous = None;
         for key in &self.keys {
             key.document.validate()?;
+            if first.box_size.is_some() && key.document.vertical_align != first.vertical_align {
+                return Err(AepWriteError::Invalid(
+                    "keyed box Text changes vertical alignment",
+                ));
+            }
             let units = clock.units(key.time_millis)?;
             if previous.is_some_and(|value| value >= units) {
                 return Err(AepWriteError::Invalid(
@@ -156,14 +181,16 @@ pub(super) fn source_property_with_clock(
     ))
 }
 
-fn source_metadata(
+pub(super) fn source_metadata(
     timeline: &TextDocumentTimeline,
     clock: super::keyframes::PropertyClock,
 ) -> Result<Chunk, AepWriteError> {
-    // This is the inverse of the pinned AE26 Source Text decoder: the static
-    // descriptor recipe is source-backed by text_ranges.aep, while keyed
-    // documents are linked by ordinal to signed times in list/ldat.
-    let mut descriptor = StaticPropertyRecord::new(1, 1, 0, 0x1_0004, 1, 8, false).encode();
+    // Point, Box and text_ranges native Source Text descriptors all store
+    // 0x00010008 at bytes56..60 and zero at byte60. This is one packed storage
+    // word, not mode1 followed by subtype8. Its general semantics are unknown;
+    // keep the correction local to this source-backed property recipe.
+    // Keyed documents still link by ordinal to signed times in list/ldat.
+    let mut descriptor = StaticPropertyRecord::new(1, 1, 0, 0x1_0004, 0x1_0008, 0, false).encode();
     descriptor[12..16].copy_from_slice(&clock.ticks().to_be_bytes());
     if timeline.keyed {
         descriptor = super::keyframes::animated_descriptor(descriptor, false);
@@ -209,12 +236,15 @@ fn source_metadata(
 }
 
 fn encode_cos(timeline: &TextDocumentTimeline) -> Vec<u8> {
-    let mut fonts = Vec::<&str>::new();
-    let mut font_indices = BTreeMap::<&str, usize>::new();
+    let mut fonts = Vec::new();
+    let mut font_indices = BTreeMap::new();
     let mut document_font_indices = Vec::with_capacity(timeline.keys.len());
     for key in &timeline.keys {
-        let font = key.document.font_postscript.as_str();
-        let index = if let Some(index) = font_indices.get(font) {
+        let font = (
+            key.document.font_postscript.as_str(),
+            key.document.font_format,
+        );
+        let index = if let Some(index) = font_indices.get(&font) {
             *index
         } else {
             let index = fonts.len();
@@ -228,12 +258,15 @@ fn encode_cos(timeline: &TextDocumentTimeline) -> Vec<u8> {
     // multiple of all source text (which can overflow or over-reserve).
     let mut out = String::new();
     out.push_str("<< /0 << /1 << /0 [ ");
-    // AE-authored entries are `<< /0 << /99 /CoolTypeFont /0 << /0 (name) /2 n
-    // /5 (version) >> >> >>`. FX has no face format (`/2`) or font-file version
-    // (`/5`), so only the tag and PostScript name are written, never guesses.
-    for font in &fonts {
+    // Only archive-byte-backed format identity is emitted. Unknown vendor
+    // versions remain absent; native template defaults are separate records.
+    for (font, format) in &fonts {
         out.push_str("<< /0 << /99 /CoolTypeFont /0 << /0 ");
         push_utf16_hex(&mut out, font);
+        if let Some(format) = format {
+            out.push_str(" /2 ");
+            out.push_str(format.cos_value());
+        }
         out.push_str(" >> >> >> ");
     }
     out.push_str("] >>");
@@ -250,7 +283,13 @@ fn encode_cos(timeline: &TextDocumentTimeline) -> Vec<u8> {
             push_number(&mut out, value);
             out.push(' ');
         }
-        out.push_str("] >> >> >> ] >>");
+        out.push_str("] >> /2 <<");
+        out.push_str(match first.vertical_align {
+            Some(fx_schema::VerticalAlign::Center) => " /13 1",
+            Some(fx_schema::VerticalAlign::Bottom) => " /13 2",
+            None | Some(fx_schema::VerticalAlign::Top) => "",
+        });
+        out.push_str(" >> >> >> ] >>");
     }
     out.push_str(" >> /1 << /1 [ ");
     for (key, font_index) in timeline.keys.iter().zip(document_font_indices) {
@@ -260,9 +299,9 @@ fn encode_cos(timeline: &TextDocumentTimeline) -> Vec<u8> {
             .text
             .replace("\r\n", "\n")
             .replace(['\n', '\r'], "\r");
-        if !native_text.ends_with('\r') {
-            native_text.push('\r');
-        }
+        // AE's terminal paragraph marker is separate from authored trailing
+        // line breaks; reusing the last editable break would lose a paragraph.
+        native_text.push('\r');
         push_utf16_hex(&mut out, &native_text);
         out.push_str(" /6 << /0 [ << /0 << /0 << /6 << /0 ");
         out.push_str(&font_index.to_string());
@@ -360,6 +399,100 @@ fn push_utf16_hex(out: &mut String, value: &str) {
 mod tests {
     use super::*;
 
+    fn at<'a>(
+        mut value: &'a crate::structure_document::text::cos::Value,
+        keys: &[&str],
+    ) -> &'a crate::structure_document::text::cos::Value {
+        for key in keys {
+            value = value.get(key).unwrap();
+        }
+        value
+    }
+
+    fn native_payload(chunk: &Chunk) -> Option<&[u8]> {
+        if chunk.list_kind() == Some(*b"btdk") {
+            return chunk.opaque_payload();
+        }
+        chunk.children()?.iter().find_map(native_payload)
+    }
+
+    #[test]
+    fn point_text_native_oracle_identity_and_controls() {
+        use crate::structure_document::text::cos;
+        use sha2::{Digest, Sha256};
+
+        let native = include_bytes!("../../tests/fixtures/point_text_envelope/native_point_n.aep");
+        assert_eq!(
+            format!("{:x}", Sha256::digest(native)),
+            "5e67c21a5c0b3ce9c7f08f33a27189ef1d5078858e4d22f4716f842afffe2d3e"
+        );
+        let project = crate::aep::Project::parse(native).unwrap();
+        let payload = project.chunks.iter().find_map(native_payload).unwrap();
+        let native = cos::parse(payload).unwrap();
+        assert!(payload.starts_with(b" /98 << /0 14 >>"));
+        assert_eq!(
+            at(&native, &["0", "1", "0"])
+                .index(0)
+                .unwrap()
+                .get("0")
+                .unwrap()
+                .get("0")
+                .unwrap()
+                .get("0")
+                .unwrap()
+                .as_str(),
+            Some("ArialMT")
+        );
+        let native_document = at(&native, &["1", "1"]).index(0).unwrap().get("0").unwrap();
+        assert_eq!(native_document.get("0").unwrap().as_str(), Some("n\r"));
+        for name in ["5", "6"] {
+            let run = at(native_document, &[name, "0"]).index(0).unwrap();
+            assert_eq!(run.get("1").unwrap().as_i64(), Some(2));
+        }
+        let native_run = at(native_document, &["6", "0"]).index(0).unwrap();
+        let native_style = at(native_run, &["0", "0", "6"]);
+        assert_eq!(native_style.get("1").unwrap().as_f64(), Some(64.0));
+        for paint in ["53", "54"] {
+            assert_eq!(
+                at(native_style, &[paint, "99"]).as_str(),
+                Some("SimplePaint")
+            );
+            assert_eq!(at(native_style, &[paint, "0", "0"]).as_i64(), Some(1));
+        }
+    }
+
+    fn native_source(chunk: &Chunk) -> Option<&Chunk> {
+        if chunk.list_kind() == Some(*b"btds") {
+            return Some(chunk);
+        }
+        chunk.children()?.iter().find_map(native_source)
+    }
+
+    #[test]
+    fn source_text_descriptor_matches_independent_native_point_storage() {
+        let bytes = include_bytes!("../../tests/fixtures/point_text_envelope/native_point_n.aep");
+        let project = crate::aep::Project::parse(bytes).unwrap();
+        let source = project.chunks.iter().find_map(native_source).unwrap();
+        let native = crate::properties::unique_list(source.children().unwrap(), *b"tdbs").unwrap();
+        let native = crate::properties::data(native, *b"tdb4").unwrap();
+        assert_eq!(&native[56..61], &[0, 1, 0, 8, 0]);
+        let timeline = timeline(document());
+        for rate in [24.0, 30.0] {
+            let clock = super::super::keyframes::PropertyClock::for_rate(
+                crate::timing::FrameRate::new(rate).unwrap(),
+            )
+            .unwrap();
+            let metadata = source_metadata(&timeline, clock).unwrap();
+            let actual = crate::properties::data(metadata.children().unwrap(), *b"tdb4").unwrap();
+            let mut expected = native.to_vec();
+            expected[12..16].copy_from_slice(&clock.ticks().to_be_bytes());
+            assert_eq!(
+                actual, expected,
+                "complete native Source Text descriptor, selected rate {rate}"
+            );
+        }
+    }
+
     #[test]
     fn source_text_thirty_fps_descriptor_and_hold_times_match_native_clock() {
         let clock = super::super::keyframes::PropertyClock::for_rate(
@@ -393,6 +526,7 @@ mod tests {
         TextDocumentSpec {
             text: "Hello\n世界".into(),
             font_postscript: "Inter-Regular".into(),
+            font_format: None,
             font_size: 72.0,
             apply_fill: true,
             fill_color: [1.0, 0.25, 0.0, 1.0],
@@ -406,6 +540,7 @@ mod tests {
             baseline_shift: 3.0,
             box_size: Some([320.0, 180.0]),
             box_position: Some([-160.0, -90.0]),
+            vertical_align: None,
             all_caps: false,
         }
     }
@@ -429,6 +564,81 @@ mod tests {
         assert!(text.contains("/8 << /0"));
         assert!(text.contains("/0 2"));
         assert!(!text.contains("Hello"), "text is encoded as UTF-16BE hex");
+    }
+
+    #[test]
+    fn trailing_paragraph_native_import_preserves_authored_empty_paragraphs() {
+        use sha2::{Digest, Sha256};
+
+        fn collect_text(layers: &[fx_schema::Layer], output: &mut Vec<String>) {
+            for layer in layers {
+                match layer.data() {
+                    fx_schema::LayerData::Text(text) => {
+                        output.push(text.source_text.text.clone());
+                    }
+                    fx_schema::LayerData::Group(group) => collect_text(&group.layers, output),
+                    _ => {}
+                }
+            }
+        }
+
+        let bytes = include_bytes!("../../tests/fixtures/trailing_paragraph/native.aep");
+        assert_eq!(
+            format!("{:x}", Sha256::digest(bytes)),
+            "7d194b82b6248ce18809210a39892eb8ad652ba80fcb0561102a40a7e70c9979"
+        );
+        let native = crate::structure::read_project(bytes).unwrap();
+        let imported =
+            crate::structure_document::to_structural_fx_document(&native, Some(1)).unwrap();
+        let mut texts = Vec::new();
+        collect_text(imported.document.composition().layers(), &mut texts);
+        texts.sort();
+        assert_eq!(
+            texts,
+            ["A", "A\n\n"],
+            "fresh native import removes only the storage marker, retaining editable paragraphs"
+        );
+    }
+
+    #[test]
+    fn trailing_paragraph_point_text_matches_native_authored_control() {
+        use crate::structure_document::text::cos;
+        use sha2::{Digest, Sha256};
+
+        let bytes = include_bytes!("../../tests/fixtures/trailing_paragraph/native.aep");
+        assert_eq!(
+            format!("{:x}", Sha256::digest(bytes)),
+            "7d194b82b6248ce18809210a39892eb8ad652ba80fcb0561102a40a7e70c9979"
+        );
+        let project = crate::aep::Project::parse(bytes).unwrap();
+        let native = cos::parse(project.chunks.iter().find_map(native_payload).unwrap()).unwrap();
+        let native_document = at(&native, &["1", "1"]).index(0).unwrap();
+        let expected = at(native_document, &["0", "0"]).as_str().unwrap();
+        assert_eq!(
+            expected, "A\r\r\r",
+            "two authored trailing breaks plus native terminator"
+        );
+        for input in ["A\n\n", "A\r\r", "A\r\n\r\n"] {
+            let mut spec = document();
+            spec.text = input.into();
+            spec.box_size = None;
+            spec.box_position = None;
+            let emitted = cos::parse(&encode_cos(&timeline(spec))).unwrap();
+            let emitted_document = at(&emitted, &["1", "1"]).index(0).unwrap();
+            assert_eq!(at(emitted_document, &["0", "0"]).as_str(), Some(expected));
+        }
+        for (input, expected) in [
+            ("", "\r"),
+            ("A", "A\r"),
+            ("A\n", "A\r\r"),
+            ("😀\n", "😀\r\r"),
+        ] {
+            let mut spec = document();
+            spec.text = input.into();
+            let emitted = cos::parse(&encode_cos(&timeline(spec))).unwrap();
+            let emitted_document = at(&emitted, &["1", "1"]).index(0).unwrap();
+            assert_eq!(at(emitted_document, &["0", "0"]).as_str(), Some(expected));
+        }
     }
 
     #[test]
@@ -456,6 +666,44 @@ mod tests {
             utf16_hex(&document().font_postscript)
         );
         assert!(cos.contains(&entry), "{cos}");
+    }
+
+    #[test]
+    fn verified_font_formats_are_distinct_entries_even_with_the_same_name() {
+        let mut first = document();
+        first.font_format = Some(FontFormat::TrueType);
+        let mut second = first.clone();
+        second.font_format = Some(FontFormat::Cff);
+        let timeline = keyed_timeline([first, second]);
+        let cos = String::from_utf8(encode_cos(&timeline)).unwrap();
+        assert!(cos.contains(" /2 1 >> >> >>"));
+        assert!(cos.contains(" /2 0 >> >> >>"));
+        assert_eq!(document_font_indices(&cos), vec![0, 1]);
+    }
+
+    #[test]
+    fn generic_box_vertical_alignment_uses_native_integer_codes() {
+        use crate::structure_document::text::cos;
+
+        for (alignment, code) in [
+            (None, None),
+            (Some(fx_schema::VerticalAlign::Top), None),
+            (Some(fx_schema::VerticalAlign::Center), Some(1)),
+            (Some(fx_schema::VerticalAlign::Bottom), Some(2)),
+        ] {
+            let spec = TextDocumentSpec {
+                vertical_align: alignment,
+                ..document()
+            };
+            let emitted = cos::parse(&encode_cos(&timeline(spec))).unwrap();
+            let frame = at(&emitted, &["0", "8", "0"]).index(0).unwrap();
+            assert_eq!(
+                at(frame, &["0", "2"])
+                    .get("13")
+                    .and_then(cos::Value::as_i64),
+                code
+            );
+        }
     }
 
     #[test]

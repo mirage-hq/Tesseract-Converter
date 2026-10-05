@@ -12,7 +12,9 @@ mod package;
 mod script_bake;
 mod staging;
 
-pub use staging::{StagedAfterEffectsExport, StagedAfterEffectsPictureExport};
+pub use staging::{
+    AepPreparationControl, StagedAfterEffectsExport, StagedAfterEffectsPictureExport,
+};
 
 impl ExportFromTesseract for AfterEffects {
     type Options = AfterEffectsExportOptions;
@@ -61,11 +63,22 @@ impl ExportFromTesseract for AfterEffects {
                 AepConversionError::io("create AEP export staging", parent, source)
             })?
         };
-        let staged =
-            staging::prepare_with_progress(&archive, archive.project(), staged, options, progress)?;
+        let staged = staging::prepare_with_progress(
+            &archive,
+            archive.project(),
+            staged,
+            options,
+            (!mode.is_check()).then_some(destination.as_path()),
+            progress,
+        )?;
         if !mode.is_check() {
             progress.stage("publish AEP");
-            package::publish_package(staged.directory(), &destination, &staged.publication_files)?;
+            package::publish_package(
+                staged.directory(),
+                &destination,
+                &staged.publication_files,
+                &staged.font_files,
+            )?;
         }
         Ok(staged.report)
     }

@@ -1,0 +1,22 @@
+{
+  "source": "Human-authored Premiere source; reduced selected audio records only",
+  "source_sha256": "dff8bc0a167fb5882413a1190d819f9e530cc038334d04f9676a749b11806721",
+  "source_sequence": "d40c25d5-0359-473e-974e-24f423007763",
+  "selected_items": [
+    "1199",
+    "1206",
+    "1217"
+  ],
+  "fixture_sha256": "3f7662c8418f04f3e1a939d10c0931e848a7ea95d7b3b8c10e2766a4c4f5b9c5",
+  "derivation": "Reachable records for three channel-0 mono selections only. Unrelated pictures, tracks, transitions, markers, transcript, and nonintrinsic audio inserts removed. Native sequence rate/canvas, item positions, In/Out, volume controls, channel index and 27916-sample source duration unchanged. Paths and names sanitized. Licensed MP3 replaced by generated 440 Hz left / 880 Hz right tones at the same sample rate and presentation sample count. This is source-backed structure, not native audio fidelity proof. Nondefault picture-only color-management settings removed from the empty picture group.",
+  "media": [
+    {
+      "path": "channel-selection-stereo.mp3",
+      "sha256": "1dba3fbd8fbaa5dbfa6104bbaf59bd810f1af248e10dc02fffadad49b897f806",
+      "samples": 27916,
+      "sample_rate": 48000,
+      "encoding": "FFmpeg libmp3lame 128k from PCM16 sine tones, no source recordings"
+    }
+  ],
+  "native_validation": "Original XML fields inspected offline only. No human UI inspection, Adobe generated-project reopening or independent rendered-audio comparison."
+}

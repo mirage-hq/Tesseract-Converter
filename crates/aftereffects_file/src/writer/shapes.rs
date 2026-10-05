@@ -6,6 +6,8 @@ mod gradient_tests;
 #[cfg(test)]
 mod tests;
 
+use std::borrow::Cow;
+
 use fx_schema::{
     BlendMode,
     layer::{
@@ -369,8 +371,6 @@ pub(super) fn validate(spec: &VectorShapeSpec) -> Result<(), AepWriteError> {
 }
 
 pub(super) fn validate_boolean(spec: &VectorBooleanSpec) -> Result<(), AepWriteError> {
-    const MAX_BOOLEAN_DEPTH: usize = 48;
-
     validate_appearance(&spec.appearance)?;
     if spec.operands.is_empty() {
         return Err(AepWriteError::Invalid(
@@ -378,23 +378,13 @@ pub(super) fn validate_boolean(spec: &VectorBooleanSpec) -> Result<(), AepWriteE
         ));
     }
     let mut count = 0usize;
-    validate_operands(&spec.operands, 0, &mut count, MAX_BOOLEAN_DEPTH)
+    validate_operands(&spec.operands, &mut count)
 }
 
-fn validate_operands(
-    operands: &[VectorGeometry],
-    depth: usize,
-    count: &mut usize,
-    max_depth: usize,
-) -> Result<(), AepWriteError> {
+fn validate_operands(operands: &[VectorGeometry], count: &mut usize) -> Result<(), AepWriteError> {
     if operands.is_empty() {
         return Err(AepWriteError::Invalid(
             "nested native Boolean requires at least one geometry operand",
-        ));
-    }
-    if depth > max_depth {
-        return Err(AepWriteError::Invalid(
-            "native Boolean nesting exceeds the writer depth limit",
         ));
     }
     for operand in operands {
@@ -405,13 +395,6 @@ fn validate_operands(
             VectorGeometry::Path(path) => {
                 let contour_count = super::path_geometry::validated_contours(path)?.len();
                 if contour_count > 1 {
-                    // The operand itself is a Group; its contours occupy one
-                    // additional native geometry level, just like a nested Boolean.
-                    if depth >= max_depth {
-                        return Err(AepWriteError::Invalid(
-                            "native Boolean nesting exceeds the writer depth limit",
-                        ));
-                    }
                     *count = count
                         .checked_add(contour_count)
                         .ok_or(AepWriteError::Invalid(
@@ -474,7 +457,7 @@ fn validate_operands(
                 }
             }
             VectorGeometry::Boolean { operands, .. } => {
-                validate_operands(operands, depth + 1, count, max_depth)?;
+                validate_operands(operands, count)?;
             }
         }
     }
@@ -654,7 +637,7 @@ fn validate_contents(
                             "Rectangle geometry keys exceed native bounds or belong to another shape kind",
                         ));
                     }
-                    validate_operands(std::slice::from_ref(geometry), depth, count, 48)?;
+                    validate_operands(std::slice::from_ref(geometry), count)?;
                 }
                 VectorGeometry::Boolean { .. } => {
                     if animations != &GeometryAnimations::default() {
@@ -662,7 +645,7 @@ fn validate_contents(
                             "Boolean vector-program geometry cannot carry parametric keys",
                         ));
                     }
-                    validate_operands(std::slice::from_ref(geometry), depth, count, 48)?;
+                    validate_operands(std::slice::from_ref(geometry), count)?;
                 }
             },
             VectorContent::Group(group) => {
@@ -1000,7 +983,8 @@ fn encode_paint(
     let animated_property = |kind, values: &[f64], bounds, animation: Option<&NumericTrack>| {
         views::property_with_clock(kind, values, bounds, animation, clock)
     };
-    match paint {
+    let paint = native_static_alpha(paint);
+    match paint.as_ref() {
         VectorPaintSpec::Fill {
             paint,
             fill_rule,
@@ -1183,6 +1167,57 @@ fn encode_paint(
             Ok((name, views::group(1, "Stroke", entries)?))
         }
     }
+}
+
+/// Native solid vector Color does not draw its stored alpha. Carry a static
+/// alpha on that paint's Opacity instead, including paint-presence keys, without
+/// moving the layer/group compositing gate. Gradient alpha stays on its stops.
+/// Keyed colors require a separate varying-alpha product and are not normalized
+/// here; their unused static base must not scale the live opacity controls.
+fn native_static_alpha(paint: &VectorPaintSpec) -> Cow<'_, VectorPaintSpec> {
+    let (source, animations) = match paint {
+        VectorPaintSpec::Fill {
+            paint, animations, ..
+        }
+        | VectorPaintSpec::Stroke {
+            paint, animations, ..
+        } => (paint, animations),
+    };
+    let ShapePaint::Solid { color } = source else {
+        return Cow::Borrowed(paint);
+    };
+    if color[3] == 1.0 || animations.color.is_some() {
+        return Cow::Borrowed(paint);
+    }
+    let mut native = paint.clone();
+    let (source, opacity, animations) = match &mut native {
+        VectorPaintSpec::Fill {
+            paint,
+            opacity,
+            animations,
+            ..
+        }
+        | VectorPaintSpec::Stroke {
+            paint,
+            opacity,
+            animations,
+            ..
+        } => (paint, opacity, animations),
+    };
+    let ShapePaint::Solid { color } = source else {
+        unreachable!("cloned solid paint retains its kind");
+    };
+    let alpha = color[3];
+    color[3] = 1.0;
+    *opacity *= alpha;
+    if let Some(track) = &mut animations.opacity {
+        for key in &mut track.keys {
+            for value in &mut key.values {
+                *value *= alpha;
+            }
+        }
+    }
+    Cow::Owned(native)
 }
 
 fn native_color_track(track: &NumericTrack) -> NumericTrack {

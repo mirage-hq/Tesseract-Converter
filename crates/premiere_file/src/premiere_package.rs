@@ -7,7 +7,7 @@ use crate::{
     format::{FrameRate, PrProjectFile, PremiereProjectXml},
     hash::{hash, hash_reader},
     image_media::{inspect_image_media, ImageFormat},
-    media::{admitted_container, inspect_video_media, unsupported_media_reason, MediaFacts},
+    media::{admitted_container, unsupported_media_reason, MediaFacts},
     publication::publish_file,
     schema::records::MediaPathField,
 };
@@ -20,7 +20,6 @@ use tesseract_file::TesseractFile;
 
 mod losses;
 pub(crate) mod prepared;
-pub(crate) mod staging;
 
 fn output_is_fresh(path: &Path) -> Result<()> {
     match fs::symlink_metadata(path) {
@@ -86,7 +85,7 @@ pub(crate) fn save_tesseract_as_premiere_with_progress(
     if source.to_str().is_none() {
         return Err(unsupported("input path must be UTF-8"));
     }
-    let output = absolute_output_path(output, &std::env::current_dir()?)?;
+    let output = absolute_output_path(output, Path::new("."))?;
     output_is_fresh(&output)?;
     let source_hash = hash(&source)?;
     let file = TesseractFile::open(&source)?;
@@ -188,13 +187,21 @@ fn inspect_media(
             } else {
                 // Name the container before reading bytes, as import does.
                 crate::video_format::validate_video_file_name(Path::new(&asset.descriptor().path))?;
-                let video = inspect_video_media(
+                let container =
+                    crate::media::MediaContainer::from_path(Path::new(&asset.descriptor().path))
+                        .ok_or_else(|| unsupported("unsupported packaged video container"))?;
+                if asset.descriptor().kind != container.asset_kind()
+                    || asset.descriptor().content_type != container.content_type()
+                {
+                    return Err(unsupported(
+                        "packaged video kind or content type conflicts with its container",
+                    ));
+                }
+                crate::media::inspect_export_video_media(
                     asset.open()?,
                     asset.open()?,
                     asset.descriptor().byte_length,
-                )?;
-                video.timing.supported()?;
-                MediaFacts::Video(video)
+                )?
             };
             if hash_reader(asset.open()?)? != asset.descriptor().sha256 {
                 return Err(unsupported("packaged media bytes failed their source hash"));
@@ -215,9 +222,9 @@ fn inspect_media(
 }
 
 /// Inspects the sound of each asset that an audio layer of the baked
-/// `document` plays, at the top level or in a nest (`exported_audio_layers`),
-/// or that the audible video of a top-level clip that export writes plays
-/// (`exported_clip_videos`, `embedded_sound_asset`).
+/// `document` plays (`AudioSource::active_asset_id`), at the top level or in
+/// a nest (`exported_audio_layers`), or that the audible video of a top-level
+/// clip that export writes plays (`exported_clip_videos`, `embedded_sound_asset`).
 /// A picture source without sound has no entry. Sound that conversion does not
 /// support is recorded for the converter to report; failing to read an asset or
 /// verify its bytes stops the export.
@@ -245,7 +252,9 @@ fn inspect_audio(
     for layer in sounds.chain(pictures) {
         let picture = video_data(layer)?;
         let asset_id = match layer.data() {
-            fx_schema::LayerData::Audio(sound) => sound.source.asset_id.as_str(),
+            // An enabled enhancement plays its output; the inactive asset is
+            // never read, and the active one has no fallback.
+            fx_schema::LayerData::Audio(sound) => sound.source.active_asset_id().as_str(),
             _ => match picture
                 .as_deref()
                 .and_then(|picture| embedded_sound_asset(picture, composition.dynamics()))
@@ -291,6 +300,7 @@ fn inspect_audio(
                         Some(picture_ticks) => SourceSound::PaddedToPicture {
                             file_ticks: facts.intrinsic_ticks,
                             stream: crate::schema::PrAudioStream {
+                                prepared_clock: None,
                                 intrinsic_ticks: picture_ticks,
                                 ..facts
                             },

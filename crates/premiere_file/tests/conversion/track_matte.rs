@@ -1,4 +1,6 @@
-//! Track Matte Key (JRB-2023) through the public conversion API: an FX video
+#![cfg(feature = "ffmpeg-library")]
+
+//! Track Matte Key through the public conversion API: an FX video
 //! keyed by a sibling video exports as a Premiere clip with a Track Matte Key
 //! whose matte is the source's clip on the track above, and the written
 //! project imports back to the same key; Premiere 26.5.1's own save of eight
@@ -7,7 +9,7 @@
 use super::support::*;
 use premiere_file::{OmissionScope, PrProjectFile};
 use serde_json::{json, Value};
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 use tesseract_file::TesseractFile;
 
 #[test]
@@ -428,16 +430,153 @@ fn unconsumed_images(document: &Value) -> Vec<Value> {
         .collect()
 }
 
+/// Compare settings with the independently saved native records, ignoring only
+/// the allocated ObjectID and reference numbers.
+fn assert_native_settings_record(actual: roxmltree::Node<'_, '_>, native: roxmltree::Node<'_, '_>) {
+    assert_eq!(actual.tag_name(), native.tag_name());
+    for attribute in ["ClassID", "Version"] {
+        assert_eq!(actual.attribute(attribute), native.attribute(attribute));
+    }
+    let fields = |node: roxmltree::Node<'_, '_>| {
+        node.children()
+            .filter(roxmltree::Node::is_element)
+            .map(|child| {
+                (
+                    child.tag_name().name().to_owned(),
+                    child.text().map(str::to_owned),
+                    child.attribute("ObjectRef").is_some(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(fields(actual), fields(native));
+}
+
+#[test]
+fn supplied_track_matte_export_resolves_native_project_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(TRACK_MATTE_FIXTURE);
+    let converted = dir.path().join("converted");
+    premiere_to_tesseract(&source, &converted, Some(TRACK_MATTE_SEQUENCE), false).unwrap();
+    let native = dir.path().join("native");
+    let omissions = tesseract_to_premiere(first_project(&converted), &native, false).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let exported = native.join("project.prproj");
+    let xml = read_xml(&exported);
+    let document = roxmltree::Document::parse(&xml).unwrap();
+    let root = document.root_element();
+    let mut ids = HashMap::new();
+    let mut uids = HashMap::new();
+    for record in root.children().filter(roxmltree::Node::is_element) {
+        for (attribute, index) in [("ObjectID", &mut ids), ("ObjectUID", &mut uids)] {
+            if let Some(id) = record.attribute(attribute) {
+                assert!(
+                    index.insert(id, record).is_none(),
+                    "duplicate {attribute} {id}"
+                );
+            }
+        }
+    }
+    let mut unresolved = Vec::new();
+    for node in root.descendants().filter(roxmltree::Node::is_element) {
+        for (attribute, index) in [("ObjectRef", &ids), ("ObjectURef", &uids)] {
+            if let Some(id) = node.attribute(attribute) {
+                if !index.contains_key(id) {
+                    unresolved.push((node.tag_name().name(), attribute, id));
+                }
+            }
+        }
+    }
+    assert!(
+        unresolved.is_empty(),
+        "unresolved references: {unresolved:?}"
+    );
+
+    // The matte fixture saves the same six default settings records as the
+    // supplied native project: four project slots and separate compile targets.
+    let source_xml = read_xml(&source);
+    let source_document = roxmltree::Document::parse(&source_xml).unwrap();
+    let source_root = source_document.root_element();
+    let source_ids: HashMap<_, _> = source_root
+        .children()
+        .filter_map(|record| Some((record.attribute("ObjectID")?, record)))
+        .collect();
+    let settings = ids["3"];
+    assert!(settings.has_tag_name("ProjectSettings"));
+    for (tag, id) in [
+        ("VideoSettings", "12"),
+        ("AudioSettings", "13"),
+        ("VideoCompileSettings", "14"),
+        ("AudioCompileSettings", "15"),
+    ] {
+        let slot = settings
+            .children()
+            .find(|node| node.has_tag_name(tag))
+            .unwrap();
+        assert_eq!(slot.attribute("ObjectRef"), Some(id));
+        let actual = ids[id];
+        let expected = source_ids[id];
+        assert_native_settings_record(actual, expected);
+        if let Some(nested) = expected
+            .children()
+            .find(|node| node.attribute("ObjectRef").is_some())
+        {
+            let actual_nested = actual
+                .children()
+                .find(|node| node.has_tag_name(nested.tag_name().name()))
+                .unwrap();
+            let target_id = actual_nested.attribute("ObjectRef").unwrap();
+            assert_ne!(target_id, "12");
+            assert_ne!(target_id, "13");
+            assert_native_settings_record(
+                ids[target_id],
+                source_ids[nested.attribute("ObjectRef").unwrap()],
+            );
+        }
+    }
+
+    // Resolving the shell must not disturb any of the eight keyed fills or
+    // their upper-track matte placements and exact timeline ranges.
+    let (project, omissions) = PrProjectFile::load(&exported).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let tracks: Vec<_> = project.sequences().next().unwrap().video_tracks().collect();
+    assert_eq!(tracks.len(), 3);
+    let ranges: Vec<_> = [
+        (0, 2000),
+        (2000, 4000),
+        (4000, 4500),
+        (4500, 5000),
+        (5000, 5500),
+        (5500, 6000),
+        (6000, 7000),
+        (7000, 8500),
+    ]
+    .map(|(start, end)| start * TICKS / 1000..end * TICKS / 1000)
+    .into_iter()
+    .collect();
+    for track in &tracks[1..] {
+        assert_eq!(
+            track
+                .iter()
+                .map(|item| item.timeline_ticks())
+                .collect::<Vec<_>>(),
+            ranges
+        );
+    }
+}
+
 #[test]
 fn adobe_track_matte_key_fixture_imports_each_clip_and_writes_the_keys_back() {
-    // `premiere_isolated_track_matte_key_26_5` (Oracle run 13): V1 base
+    // `premiere_isolated_track_matte_key_26_5`: V1 base
     // clips, V2 the keyed fills and V3 their matte stills over the same
     // ranges. A (0-2 s) Matte Alpha; B (2-4 s) the same at Scale 50; C1-C4
     // (4-6 s) Matte Luma from red, green, blue and grey-128 stills; D (6-7 s)
     // Matte Alpha with Reverse; F (7-8.5 s) Matte Alpha after a Gaussian Blur
-    // (Legacy) 25; E (8.5-10 s) Matte Luma with Reverse. E fails closed (G3b)
-    // and its matte item 146 is a disclosed fixture limit (its source span
-    // does not match its duration); the fill's own key consumed nothing there.
+    // (Legacy) 25; E (8.5-10 s) Matte Luma with Reverse. E fails closed (G3b),
+    // and its matte still 146, whose source span differs from its placement
+    // but shows the same picture, is not drawn while E's key names it.
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -477,8 +616,8 @@ fn adobe_track_matte_key_fixture_imports_each_clip_and_writes_the_keys_back() {
             ),
             (
                 OmissionScope::Occurrence,
-                "146".to_owned(),
-                "invalid Premiere project: source span does not match the constant playback rate".to_owned(),
+                "VideoClipTrackItem:146".to_owned(),
+                "matte source of the omitted clip VideoClipTrackItem:137 was not converted: Premiere does not draw a track-matte source".to_owned(),
             ),
             luma_approximation("VideoClipTrackItem:131"),
             luma_approximation("VideoClipTrackItem:132"),

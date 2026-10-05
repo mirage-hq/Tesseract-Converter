@@ -94,16 +94,13 @@ pub(crate) fn validate_path_track(track: &PathTrack) -> Result<(), AepWriteError
             ));
         }
         let side = sides(pair[1].easing)?;
-        if side[0].0 != side[1].0 && pair[1].time_millis - pair[0].time_millis != 2000 {
+        let duration = pair[1].time_millis - pair[0].time_millis;
+        // Independent native Shape/Mask controls establish only this additional
+        // one-second Linear-out/zero-speed Bezier-in profile (90% influence).
+        let pinned_one_second = duration == 1000 && side[0].0 == 1 && side[1] == (2, 0.9);
+        if side[0].0 != side[1].0 && duration != 2000 && !pinned_one_second {
             return Err(AepWriteError::Invalid(
-                "mixed Path easing outside the pinned two-second segment is unproved",
-            ));
-        }
-        if pair[1].easing != KeyframeEasing::Hold
-            && folded_seam(&pair[0].path) != folded_seam(&pair[1].path)
-        {
-            return Err(AepWriteError::Invalid(
-                "Path keys change native seam topology",
+                "mixed Path easing outside the pinned segment profiles is unproved",
             ));
         }
     }
@@ -162,6 +159,12 @@ pub(in crate::writer) fn animated_property(track: &PathTrack) -> Result<Chunk, A
     if track.keyframes.len() == 1 {
         return property(&track.keyframes[0].path);
     }
+    // Folding a repeated terminal point at only some keys changes the native
+    // vertex count even though the authored command topology matches. Keep
+    // those authored points instead: no vertex is added and the closing segment
+    // remains exact, including its zero-length state. Independent Adobe native
+    // save/reopen controls retain and interpolate these coincident vertices.
+    let fold_seam = track.keyframes.iter().all(|key| folded_seam(&key.path));
     let mut records = vec![vec![0u8; 64]; track.keyframes.len()];
     for (record, key) in records.iter_mut().zip(&track.keyframes) {
         record[..4].copy_from_slice(&keyframes::time_units(key.time_millis)?.to_be_bytes());
@@ -195,7 +198,7 @@ pub(in crate::writer) fn animated_property(track: &PathTrack) -> Result<Chunk, A
                 track
                     .keyframes
                     .iter()
-                    .map(|key| shape(&key.path))
+                    .map(|key| super::shape_with_seam(&key.path, fold_seam))
                     .collect::<Result<_, _>>()?,
             ),
         ],

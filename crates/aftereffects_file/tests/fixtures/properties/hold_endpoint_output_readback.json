@@ -1,0 +1,379 @@
+{
+  "passed": true,
+  "proof": "numeric native output acceptance/readback; not render/Asset/RGB/alpha/audio or complete bidirectional proof",
+  "script_sha256": "9e046c5d6eef221a44f30aa9980d616e7559be8093e7e6ea786da2c3985b9be5",
+  "input_sha256": {
+    "oracle": "70b9804ecc4f95f6ad8fb4d95a976168d4b6184181a763aabbf2778ba6a14f4d",
+    "original": "dd921685c6599a9131939b0b01e1ae0f1e3eeee24b26e47dd0d923d13f5aec34",
+    "edited": "631c45500c8dbc8d551fe720ce0ba20edee9994f12d86be2b4b521547784ded3"
+  },
+  "fx_input_sha256": {
+    "100": "ad5cae560af8f3c1144f569fdbd1d99fc16db995d1abe66ddff40c22ffa63e7c",
+    "40": "bed504b4c03069b77e0a53fcbac93645c935cf6ec53577389de1a92861ecbb26"
+  },
+  "native_artifact_sha256": "c142c8de4095c214c59a847a0681505f9811a6ed4ee76d7410a29871301d663c",
+  "job_id": "7ca07da819784cd1ba00d172b07e47a0",
+  "samples_compared": 14,
+  "max_absolute_percent_error": 0.0,
+  "result": {
+    "independent": {
+      "before": {
+        "composition": "endpoint-flags",
+        "duration": 2,
+        "fps": 24,
+        "keys": [
+          {
+            "incoming": 6612,
+            "outgoing": 6614,
+            "time": -0.5,
+            "value": 0
+          },
+          {
+            "incoming": 6614,
+            "outgoing": 6612,
+            "time": 0.5,
+            "value": 100
+          },
+          {
+            "incoming": 6612,
+            "outgoing": 6612,
+            "time": 1.5,
+            "value": 40
+          }
+        ],
+        "layer": "control-2",
+        "samples": [
+          {
+            "time": -0.5,
+            "value": 0
+          },
+          {
+            "time": 0,
+            "value": 0
+          },
+          {
+            "time": 0.25,
+            "value": 0
+          },
+          {
+            "time": 0.5,
+            "value": 100
+          },
+          {
+            "time": 0.75,
+            "value": 85
+          },
+          {
+            "time": 1.5,
+            "value": 40
+          },
+          {
+            "time": 1.75,
+            "value": 40
+          }
+        ]
+      },
+      "edited": {
+        "composition": "endpoint-flags",
+        "duration": 2,
+        "fps": 24,
+        "keys": [
+          {
+            "incoming": 6612,
+            "outgoing": 6614,
+            "time": -0.5,
+            "value": 0
+          },
+          {
+            "incoming": 6614,
+            "outgoing": 6612,
+            "time": 0.5,
+            "value": 40
+          },
+          {
+            "incoming": 6612,
+            "outgoing": 6612,
+            "time": 1.5,
+            "value": 40
+          }
+        ],
+        "layer": "control-2",
+        "samples": [
+          {
+            "time": -0.5,
+            "value": 0
+          },
+          {
+            "time": 0,
+            "value": 0
+          },
+          {
+            "time": 0.25,
+            "value": 0
+          },
+          {
+            "time": 0.5,
+            "value": 40
+          },
+          {
+            "time": 0.75,
+            "value": 40
+          },
+          {
+            "time": 1.5,
+            "value": 40
+          },
+          {
+            "time": 1.75,
+            "value": 40
+          }
+        ]
+      }
+    },
+    "outputs": [
+      {
+        "asset": "original",
+        "middle": 100,
+        "opened": {
+          "composition": "Hold editable output",
+          "duration": 2,
+          "fps": 24,
+          "keys": [
+            {
+              "incoming": 6612,
+              "outgoing": 6614,
+              "time": -0.5,
+              "value": 0
+            },
+            {
+              "incoming": 6614,
+              "outgoing": 6612,
+              "time": 0.5,
+              "value": 100
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 1.5,
+              "value": 40
+            }
+          ],
+          "layer": "Current solid 9901",
+          "samples": [
+            {
+              "time": -0.5,
+              "value": 0
+            },
+            {
+              "time": 0,
+              "value": 0
+            },
+            {
+              "time": 0.25,
+              "value": 0
+            },
+            {
+              "time": 0.5,
+              "value": 100
+            },
+            {
+              "time": 0.75,
+              "value": 85
+            },
+            {
+              "time": 1.5,
+              "value": 40
+            },
+            {
+              "time": 1.75,
+              "value": 40
+            }
+          ]
+        },
+        "reopened": {
+          "composition": "Hold editable output",
+          "duration": 2,
+          "fps": 24,
+          "keys": [
+            {
+              "incoming": 6612,
+              "outgoing": 6614,
+              "time": -0.5,
+              "value": 0
+            },
+            {
+              "incoming": 6614,
+              "outgoing": 6612,
+              "time": 0.5,
+              "value": 100
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 1.5,
+              "value": 40
+            }
+          ],
+          "layer": "Current solid 9901",
+          "samples": [
+            {
+              "time": -0.5,
+              "value": 0
+            },
+            {
+              "time": 0,
+              "value": 0
+            },
+            {
+              "time": 0.25,
+              "value": 0
+            },
+            {
+              "time": 0.5,
+              "value": 100
+            },
+            {
+              "time": 0.75,
+              "value": 85
+            },
+            {
+              "time": 1.5,
+              "value": 40
+            },
+            {
+              "time": 1.75,
+              "value": 40
+            }
+          ]
+        }
+      },
+      {
+        "asset": "edited",
+        "middle": 40,
+        "opened": {
+          "composition": "Hold editable output",
+          "duration": 2,
+          "fps": 24,
+          "keys": [
+            {
+              "incoming": 6612,
+              "outgoing": 6614,
+              "time": -0.5,
+              "value": 0
+            },
+            {
+              "incoming": 6614,
+              "outgoing": 6612,
+              "time": 0.5,
+              "value": 40
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 1.5,
+              "value": 40
+            }
+          ],
+          "layer": "Current solid 9901",
+          "samples": [
+            {
+              "time": -0.5,
+              "value": 0
+            },
+            {
+              "time": 0,
+              "value": 0
+            },
+            {
+              "time": 0.25,
+              "value": 0
+            },
+            {
+              "time": 0.5,
+              "value": 40
+            },
+            {
+              "time": 0.75,
+              "value": 40
+            },
+            {
+              "time": 1.5,
+              "value": 40
+            },
+            {
+              "time": 1.75,
+              "value": 40
+            }
+          ]
+        },
+        "reopened": {
+          "composition": "Hold editable output",
+          "duration": 2,
+          "fps": 24,
+          "keys": [
+            {
+              "incoming": 6612,
+              "outgoing": 6614,
+              "time": -0.5,
+              "value": 0
+            },
+            {
+              "incoming": 6614,
+              "outgoing": 6612,
+              "time": 0.5,
+              "value": 40
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 1.5,
+              "value": 40
+            }
+          ],
+          "layer": "Current solid 9901",
+          "samples": [
+            {
+              "time": -0.5,
+              "value": 0
+            },
+            {
+              "time": 0,
+              "value": 0
+            },
+            {
+              "time": 0.25,
+              "value": 0
+            },
+            {
+              "time": 0.5,
+              "value": 40
+            },
+            {
+              "time": 0.75,
+              "value": 40
+            },
+            {
+              "time": 1.5,
+              "value": 40
+            },
+            {
+              "time": 1.75,
+              "value": 40
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "converter": {
+    "commit": "36ea3119e57754f5f8698c1712edd215b70ab421",
+    "operation": "build-converter",
+    "profile": "dev",
+    "sha256": "99f240f723f81bc4c9ee7b510dc6a51cc9e33ac297e0b301a69078720bbdd5ed",
+    "rust_build_job": 1692
+  },
+  "request_id": "accuracy-r02-hold-generated-output-20261003-v1",
+  "application_version": "26.5x89",
+  "native_source_edit": "Pinned independent control-2 middle key edited100->40in memory only; no save/source modification.",
+  "reopen_scope": "Generated files opened, closed without saving, reopened unchanged in one owned host; not native normalized-save/reopen or render proof."
+}

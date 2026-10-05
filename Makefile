@@ -16,6 +16,10 @@ help: ## Show converter-owned commands (run from this directory)
 build: ## Build the standalone converter
 	cargo build --locked -p tsrct-conv
 
+.PHONY: build-release
+build-release: ## Build the library-enabled release converter (requires FFmpeg 7)
+	cargo build --locked --release -p tsrct-conv --features ffmpeg-library
+
 check: ## Check the workspace (requires FFmpeg 7 development libraries)
 	cargo check --locked --workspace --all-targets
 
@@ -67,6 +71,11 @@ test-offline: ## Run Python/JS helper regressions without Adobe/network/GPU
 	node scripts/test-aep-path-animator.mjs
 	python3 scripts/conversion-ci-classify.py --self-test
 
+.PHONY: premiere-audio-test-check
+premiere-audio-test-check: ## Test Premiere audio artifact comparison (offline, no Adobe)
+	python3 scripts/test_premiere_audio_test.py
+	python3 scripts/test-aep-audio-test.py
+
 aep-audio-test-check: ## Run offline audio comparison/orchestration tests
 	python3 scripts/test-aep-audio-test.py
 	python3 scripts/test-aep-audio-e2e.py
@@ -96,14 +105,14 @@ generate-third-party-notices: ## Generate locked release dependency notices with
 	cargo about generate --locked --fail -m apps/tesseract-conv/Cargo.toml --features ffmpeg-library -c about.toml -o target/THIRD_PARTY_NOTICES.md about.hbs
 
 .PHONY: test-premiere-file clippy-premiere-file
-test-premiere-file: ## Run Premiere CPU tests (optional filter=name)
-	cargo test --locked -p premiere_file $(filter)
+test-premiere-file: ## Run Premiere CPU tests (optional filter=name, cargo_args=--no-default-features, test_args=--ignored)
+	cargo test --locked -p premiere_file $(cargo_args) $(filter) -- $(test_args)
 
 clippy-premiere-file: ## Lint Premiere library and CPU tests
-	cargo clippy --locked -p premiere_file --all-targets -- -D warnings
+	cargo clippy --locked -p premiere_file $(cargo_args) --all-targets -- -D warnings
 
-test-tesseract-file: ## Run document roundtrip and archive validation tests
-	cargo test --locked -p tesseract_file
+test-tesseract-file: ## Run document roundtrip and archive validation tests (optional filter=name)
+	cargo test --locked -p tesseract_file $(filter)
 
 test-fx-keyframe-bake: ## Run shared FX keyframe baking tests
 	cargo test --locked -p fx_keyframe_bake

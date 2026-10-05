@@ -94,9 +94,17 @@ fn source_owned_skew_keys_survive_fresh_vector_writer_with_zero_static_skew() {
         panic!("source Shape");
     };
     let owner = LayerId::new(40_105);
-    assert!(has_skew_tracks(entries, owner));
+    assert!(has_skew_tracks(
+        &crate::export_document::AnimationIndex::new(entries),
+        owner
+    ));
     let base = &shape.transform;
-    let keys = program_transform_animations(entries, owner, base).unwrap();
+    let keys = program_transform_animations(
+        &crate::export_document::AnimationIndex::new(entries),
+        owner,
+        base,
+    )
+    .unwrap();
     assert_eq!(keys.skew.as_ref().unwrap().keys[0].values, [-12.0]);
     assert_eq!(keys.skew_axis.as_ref().unwrap().keys[1].values, [30.0]);
     assert_eq!(keys.rotation, None);
@@ -212,7 +220,9 @@ fn keyed_skew_keeps_native_3d_and_position_partition_guards() {
     };
     assert!(
         super::super::transform_animations_partitioned(
-            document.composition().dynamics().entries(),
+            &crate::export_document::AnimationIndex::new(
+                document.composition().dynamics().entries()
+            ),
             shape.id,
             &shape.transform,
             shape.id,
@@ -286,7 +296,12 @@ fn keyed_skew_helper_writes_native_vector_properties_without_baking() {
         panic!("source Shape");
     };
     let entries = document.composition().dynamics().entries();
-    let keys = program_transform_animations(entries, shape.id, &shape.transform).unwrap();
+    let keys = program_transform_animations(
+        &crate::export_document::AnimationIndex::new(entries),
+        shape.id,
+        &shape.transform,
+    )
+    .unwrap();
     let group = VectorGroupSpec {
         name: "Source-owned Transform".into(),
         blend_mode: Default::default(),
@@ -357,13 +372,25 @@ fn owned_transform_keys_do_not_consume_geometry_or_foreign_skew() {
         panic!("source Shape");
     };
     let base = &shape.transform;
-    let keys = program_transform_animations(&entries, owner, base).unwrap();
+    let keys = program_transform_animations(
+        &crate::export_document::AnimationIndex::new(&entries),
+        owner,
+        base,
+    )
+    .unwrap();
     assert_eq!(keys.skew.as_ref().unwrap().keys.len(), 2);
-    assert!(!has_skew_tracks(&entries, LayerId::new(40_107)));
+    assert!(!has_skew_tracks(
+        &crate::export_document::AnimationIndex::new(&entries),
+        LayerId::new(40_107)
+    ));
     let duplicate = entries[0].clone();
     entries.push(duplicate);
     assert_eq!(
-        program_transform_animations(&entries, owner, base),
+        program_transform_animations(
+            &crate::export_document::AnimationIndex::new(&entries),
+            owner,
+            base
+        ),
         Err("Duplicate source-owned Transform animator cannot be written natively")
     );
 }

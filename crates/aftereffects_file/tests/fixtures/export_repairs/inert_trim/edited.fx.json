@@ -1,0 +1,135 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "formatVersion": 1,
+  "dimensions": {
+    "width": 320,
+    "height": 180
+  },
+  "duration": 2.0,
+  "backgroundColor": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "composition": {
+    "id": "main",
+    "name": "inert-trim-control",
+    "layers": [
+      {
+        "type": "Shape",
+        "id": 400,
+        "name": "Inert Trim stroke",
+        "transform": {
+          "anchorPoint": [
+            0,
+            0
+          ],
+          "position": [
+            80,
+            40
+          ],
+          "scale": [
+            100,
+            100
+          ],
+          "rotation": 0,
+          "opacity": 100
+        },
+        "activeRange": {
+          "start": 0,
+          "duration": 2000
+        },
+        "shape": {
+          "path": {
+            "commands": [
+              {
+                "type": "moveTo",
+                "x": 0,
+                "y": 0
+              },
+              {
+                "type": "lineTo",
+                "x": 100,
+                "y": 0
+              },
+              {
+                "type": "lineTo",
+                "x": 140,
+                "y": 80
+              },
+              {
+                "type": "close"
+              }
+            ]
+          },
+          "fills": [],
+          "strokes": [
+            {
+              "paint": {
+                "type": "solid",
+                "color": [
+                  0.2,
+                  0.4,
+                  0.6,
+                  1
+                ]
+              },
+              "width": 12,
+              "cap": "butt",
+              "join": "miter",
+              "miterLimit": 4
+            }
+          ]
+        }
+      }
+    ],
+    "segmentLayerIds": [],
+    "dynamics": {
+      "entries": [
+        {
+          "target": {
+            "kind": "layer",
+            "layerId": 400,
+            "propertyType": "trimEnd"
+          },
+          "animator": {
+            "type": "keyframes",
+            "keyframes": [
+              {
+                "id": "trim0",
+                "layerTime": 0,
+                "value": {
+                  "type": "float",
+                  "value": 0
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "trim1",
+                "layerTime": 500,
+                "value": {
+                  "type": "float",
+                  "value": 100
+                },
+                "easing": {
+                  "type": "linear"
+                }
+              }
+            ],
+            "enabled": true
+          }
+        }
+      ]
+    },
+    "motionBlur": {
+      "enabled": false,
+      "shutterAngle": 180,
+      "shutterPhase": 0,
+      "samplesPerFrame": 16,
+      "adaptiveSampleLimit": 128
+    }
+  }
+}

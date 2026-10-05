@@ -1,0 +1,31 @@
+{
+  "provenance": {
+    "source": "C20250911_0924.mp4",
+    "sha256": "1a60eeaec7cabfb0d17fcc7c1601df0c051db39133e1248ee3fa4db1af249eaa",
+    "description": "Numeric descriptor extracted from unchanged native Sony XAVC source; no media bytes."
+  },
+  "video_clock": { "num": 1001, "den": 30000 },
+  "frames": 165,
+  "audio": {
+    "codec": "pcm_s16be",
+    "sample_format": "s16",
+    "sample_rate": 48000,
+    "channels": 2,
+    "channel_layout": "stereo",
+    "start_seconds": 0.0,
+    "duration_seconds": 5.5055
+  },
+  "source_movie_timescale": 90000,
+  "source_edit_duration": 495495,
+  "source_audio_samples": 264264,
+  "baseline_aac": {
+    "movie_timescale": 1000,
+    "edit_duration": 5505,
+    "media_time": 1024,
+    "mdhd_timescale": 48000,
+    "mdhd_duration": 265288,
+    "stts": [[259, 1024], [1, 72]],
+    "decoded_samples_after_priming": 265216,
+    "last_demuxed_packet_duration": 48
+  }
+}

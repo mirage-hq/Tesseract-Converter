@@ -668,22 +668,54 @@ fn compound_path_keeps_one_operand_for_non_associative_booleans() {
 }
 
 #[test]
-fn compound_boolean_operand_wrapper_respects_depth_limit() {
+fn compound_boolean_operand_wrapper_counts_every_contour() {
     let operands = [VectorGeometry::Path(compound_path())];
-    for (max_depth, valid) in [(0, false), (1, true)] {
-        let mut count = 0;
-        let result = validate_operands(&operands, 0, &mut count, max_depth);
-        assert_eq!(result.is_ok(), valid);
-        if valid {
-            assert_eq!(count, 4, "one Group and its three contours");
-        }
-    }
+    let mut count = 0;
+    validate_operands(&operands, &mut count).unwrap();
+    assert_eq!(count, 4, "one Group and its three contours");
     let single = super::super::path_geometry::contours(&compound_path())
         .unwrap()
         .remove(0);
     let mut count = 0;
-    validate_operands(&[VectorGeometry::Path(single)], 0, &mut count, 0).unwrap();
+    validate_operands(&[VectorGeometry::Path(single)], &mut count).unwrap();
     assert_eq!(count, 1, "a single contour needs no wrapper");
+}
+
+#[test]
+fn nested_boolean_exceeds_former_depth_policy() {
+    let mut operand = VectorGeometry::Path(compound_path());
+    for _ in 0..49 {
+        operand = VectorGeometry::Boolean {
+            op: BooleanOp::Union,
+            operands: vec![operand],
+        };
+    }
+    let spec = VectorBooleanSpec {
+        appearance: appearance(),
+        op: BooleanOp::Union,
+        operands: vec![operand],
+        stroke_animations: Default::default(),
+        animations: TransformAnimations::default(),
+    };
+    validate_boolean(&spec).unwrap();
+    let bytes = super::super::write_composition(
+        &super::super::CompositionSpec {
+            name: "Deep Boolean".into(),
+            width: 640,
+            height: 480,
+            duration_frames: 24,
+        },
+        &[super::super::LayerSpec::Boolean(spec)],
+    )
+    .unwrap();
+    // Every nested Boolean plus the compound contour wrapper emits a Merge.
+    assert_eq!(
+        bytes
+            .windows(b"ADBE Vector Filter - Merge".len())
+            .filter(|window| *window == b"ADBE Vector Filter - Merge")
+            .count(),
+        51
+    );
 }
 
 #[test]
@@ -699,8 +731,7 @@ fn aggregate_vector_contour_and_boolean_counts_exceed_old_policy_boundary() {
 
     let operands = vec![VectorGeometry::Ellipse(ShapeEllipse::default()); COUNT];
     let mut count = 0;
-    validate_operands(&operands, 0, &mut count, 48)
-        .expect("Boolean operands above the old policy limit");
+    validate_operands(&operands, &mut count).expect("Boolean operands above the old policy limit");
     assert_eq!(count, COUNT);
 
     let mut commands = Vec::with_capacity(COUNT * 2);
@@ -1247,6 +1278,167 @@ fn solid_stroke() -> VectorContent {
         dashes: Default::default(),
         animations: VectorPaintAnimations::default(),
     })
+}
+
+#[test]
+fn static_solid_alpha_is_carried_by_each_native_paint_opacity() {
+    for stroke in [false, true] {
+        for (alpha, opacity, expected) in [
+            (0.27, 100.0, 27.0),
+            (0.82, 50.0, 41.0),
+            (0.0, 75.0, 0.0),
+            (1.0, 75.0, 75.0),
+        ] {
+            let mut content = if stroke { solid_stroke() } else { solid_fill() };
+            let VectorContent::Paint(paint) = &mut content else {
+                unreachable!()
+            };
+            let (ShapePaint::Solid { color }, paint_opacity) = (match paint {
+                VectorPaintSpec::Fill { paint, opacity, .. }
+                | VectorPaintSpec::Stroke { paint, opacity, .. } => (paint, opacity),
+            }) else {
+                unreachable!()
+            };
+            color[3] = alpha;
+            *paint_opacity = opacity;
+            validate_paint(paint).unwrap();
+            let original = paint.clone();
+            let (_, encoded) = encode_paint(
+                paint,
+                false,
+                super::super::keyframes::PropertyClock::DEFAULT,
+            )
+            .unwrap();
+            let kind = if stroke { "Stroke" } else { "Fill" };
+            let native_opacity = native_numeric(
+                std::slice::from_ref(&encoded),
+                &format!("ADBE Vector {kind} Opacity"),
+            )
+            .unwrap();
+            assert!((native_opacity.values[0] - expected).abs() < 1.0e-6);
+            let native_color = native_numeric(
+                std::slice::from_ref(&encoded),
+                &format!("ADBE Vector {kind} Color"),
+            )
+            .unwrap();
+            assert_eq!(
+                native_color.values[3], 1.0,
+                "alpha must not be applied again on import"
+            );
+            assert_eq!(paint, &original, "writer must not mutate editable input");
+        }
+    }
+}
+
+#[test]
+fn static_solid_alpha_scales_paint_keys_without_changing_clock_or_easing() {
+    for stroke in [false, true] {
+        let mut content = if stroke { solid_stroke() } else { solid_fill() };
+        let VectorContent::Paint(paint) = &mut content else {
+            unreachable!()
+        };
+        let (ShapePaint::Solid { color }, animations) = (match paint {
+            VectorPaintSpec::Fill {
+                paint, animations, ..
+            }
+            | VectorPaintSpec::Stroke {
+                paint, animations, ..
+            } => (paint, animations),
+        }) else {
+            unreachable!()
+        };
+        color[3] = 0.27;
+        let mut keys = group_track(&[100.0]);
+        keys.keys[0].time_millis = 250;
+        keys.keys[0].easing = vec![super::super::KeyframeEasing::Hold];
+        let mut last = keys.keys[0].clone();
+        last.time_millis = 750;
+        last.values = vec![0.0];
+        keys.keys.push(last);
+        animations.opacity = Some(keys);
+        validate_paint(paint).unwrap();
+        let (_, encoded) = encode_paint(
+            paint,
+            false,
+            super::super::keyframes::PropertyClock::DEFAULT,
+        )
+        .unwrap();
+        let kind = if stroke { "Stroke" } else { "Fill" };
+        let native = native_numeric(
+            std::slice::from_ref(&encoded),
+            &format!("ADBE Vector {kind} Opacity"),
+        )
+        .unwrap();
+        assert_eq!(native.keyframes.len(), 2);
+        assert_eq!(native.keyframes[0].values, [27.0]);
+        assert_eq!(native.keyframes[1].values, [0.0]);
+        assert_eq!(native.keyframes[0].time_secs, 0.25);
+        assert_eq!(native.keyframes[1].time_secs, 0.75);
+        assert_eq!(native.keyframes[0].out_interpolation, 3); // Native Hold ordinal.
+        assert_eq!(native.keyframes[1].in_interpolation, 3);
+    }
+}
+
+#[test]
+fn static_solid_alpha_retains_animated_color_and_gradient_controls() {
+    let VectorContent::Paint(mut paint) = solid_fill() else {
+        unreachable!()
+    };
+    let VectorPaintSpec::Fill {
+        paint: ShapePaint::Solid { color },
+        animations,
+        ..
+    } = &mut paint
+    else {
+        unreachable!()
+    };
+    color[3] = 0.27;
+    animations.color = Some(group_track(&[0.3, 0.4, 0.5, 1.0]));
+    let (_, encoded) = encode_paint(
+        &paint,
+        false,
+        super::super::keyframes::PropertyClock::DEFAULT,
+    )
+    .unwrap();
+    let native =
+        native_numeric(std::slice::from_ref(&encoded), "ADBE Vector Fill Opacity").unwrap();
+    assert_eq!(
+        native.values,
+        [100.0],
+        "unused color base must not scale keyed colors"
+    );
+    let VectorContent::Paint(gradient) = gradient_fill() else {
+        unreachable!()
+    };
+    assert_eq!(native_static_alpha(&gradient).as_ref(), &gradient);
+}
+
+#[test]
+fn static_solid_alpha_does_not_admit_invalid_paint_values() {
+    for stroke in [false, true] {
+        for invalid in [-0.1, 1.1, f64::NAN, f64::INFINITY] {
+            let mut content = if stroke { solid_stroke() } else { solid_fill() };
+            let VectorContent::Paint(paint) = &mut content else {
+                unreachable!()
+            };
+            let (ShapePaint::Solid { color }, animations) = (match paint {
+                VectorPaintSpec::Fill {
+                    paint, animations, ..
+                }
+                | VectorPaintSpec::Stroke {
+                    paint, animations, ..
+                } => (paint, animations),
+            }) else {
+                unreachable!()
+            };
+            color[3] = invalid;
+            animations.opacity = Some(group_track(&[0.0]));
+            assert!(
+                validate_paint(paint).is_err(),
+                "invalid alpha must not disappear behind zero opacity"
+            );
+        }
+    }
 }
 
 fn gradient_stroke() -> VectorContent {

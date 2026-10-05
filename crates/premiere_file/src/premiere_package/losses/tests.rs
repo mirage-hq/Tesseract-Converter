@@ -2,14 +2,18 @@
 
 use std::{fs, path::Path};
 
+use fx_schema::LayerId;
+#[cfg(feature = "ffmpeg-library")]
 use fx_schema::{
     animator::{AnimationGraph, AnimationGraphEntry, PropertyAnimator},
-    EffectId, FxItemId, LayerId, PropType, PropertyTarget, PropertyValue,
+    EffectId, FxItemId, PropType, PropertyTarget, PropertyValue,
 };
 use serde_json::{json, Value};
 use tesseract_file::{AssetKind, TesseractFileBuilder};
 
-use crate::{ExportField, ExportLossDomain, ExportLossKind, ExportLossSource, FrameRate, Premiere};
+#[cfg(feature = "ffmpeg-library")]
+use crate::{ExportField, ExportLossDomain, ExportLossKind};
+use crate::{ExportLossSource, FrameRate, Premiere};
 
 fn write_archive(directory: &Path, value: &Value) -> tesseract_file::TesseractFile {
     TesseractFileBuilder::from_project_json(&serde_json::to_vec(value).unwrap())
@@ -41,6 +45,7 @@ fn legacy_check(
     )
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn ordinary_native_document_retains_the_existing_diagnostics_without_output() {
     let root = tempfile::tempdir().unwrap();
@@ -58,6 +63,7 @@ fn ordinary_native_document_retains_the_existing_diagnostics_without_output() {
     assert_eq!(fs::read(root.path().join("input.tsrct")).unwrap(), original);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn actual_field_guards_distinguish_metadata_picture_and_audio() {
     let mut value = crate::test_support::editable_document();
@@ -96,6 +102,7 @@ fn script_document(code: &str) -> Value {
     value
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn supported_script_preparation_matches_ordinary_export_diagnostics() {
     let root = tempfile::tempdir().unwrap();
@@ -119,6 +126,7 @@ fn supported_script_preparation_matches_ordinary_export_diagnostics() {
     assert_eq!(summary.kind, ExportLossKind::Unclassified);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn rejected_script_preparation_matches_ordinary_export_diagnostics() {
     let root = tempfile::tempdir().unwrap();
@@ -139,6 +147,7 @@ fn rejected_script_preparation_matches_ordinary_export_diagnostics() {
             && loss.domain == ExportLossDomain::Unclassified));
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn discarded_script_keys_match_ordinary_export_diagnostics() {
     let root = tempfile::tempdir().unwrap();
@@ -196,6 +205,7 @@ fn unsupported_only_baked_script_reports_discarded_keys() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn a_description_alone_is_not_a_picture_loss() {
     let mut value = crate::test_support::editable_document();
@@ -211,6 +221,7 @@ fn a_description_alone_is_not_a_picture_loss() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn entry(target: PropertyTarget) -> AnimationGraphEntry {
     AnimationGraphEntry {
         target,
@@ -221,6 +232,7 @@ fn entry(target: PropertyTarget) -> AnimationGraphEntry {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn graph_targets_keep_typed_namespaces_even_when_human_messages_deduplicate() {
     let targets = [
@@ -278,6 +290,7 @@ fn unsupported_picture_retains_losses_even_when_no_native_content_exists() {
     assert!(!root.path().join("output").exists());
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn audio_layer_description_and_captions_are_not_misclassified_as_sound() {
     let mut value = crate::test_support::editable_document();
@@ -329,6 +342,7 @@ fn audio_layer_description_and_captions_are_not_misclassified_as_sound() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn audio_animation_losses_do_not_become_picture_losses() {
     let mut value = crate::test_support::editable_document();
@@ -351,6 +365,7 @@ fn audio_animation_losses_do_not_become_picture_losses() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn nested_child_losses_do_not_steal_the_parents_buffered_motion_context() {
     let mut value = crate::test_support::editable_document();
@@ -400,6 +415,7 @@ fn nested_child_losses_do_not_steal_the_parents_buffered_motion_context() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn stage_and_child_descriptions_keep_two_owners_before_human_deduplication() {
     let mut value = crate::test_support::editable_document();

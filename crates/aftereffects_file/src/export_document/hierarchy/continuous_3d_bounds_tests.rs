@@ -95,7 +95,8 @@ fn constant_three_d_transform_projects_through_the_root_camera() {
     let media = BTreeMap::new();
     let canvas = Dimensions::new(100, 100);
     let analyzer = Analyzer {
-        dynamics: &[],
+        source_interval: None,
+        dynamics: &crate::export_document::AnimationIndex::new(&[]),
         resolved_media: &media,
         canvas,
     };
@@ -164,7 +165,8 @@ fn animated_skew_cubic_overshoot_and_negative_scale_stay_enclosed() {
     let media = BTreeMap::new();
     let canvas = Dimensions::new(200, 120);
     let analyzer = Analyzer {
-        dynamics: &entries,
+        source_interval: None,
+        dynamics: &crate::export_document::AnimationIndex::new(&entries),
         resolved_media: &media,
         canvas,
     };
@@ -215,7 +217,8 @@ fn interior_position_z_overshoot_that_crosses_the_camera_is_rejected() {
     )];
     let media = BTreeMap::new();
     let analyzer = Analyzer {
-        dynamics: &entries,
+        source_interval: None,
+        dynamics: &crate::export_document::AnimationIndex::new(&entries),
         resolved_media: &media,
         canvas: Dimensions::new(100, 100),
     };
@@ -237,7 +240,8 @@ fn interior_position_z_overshoot_that_crosses_the_camera_is_rejected() {
 fn tilted_corner_crossing_is_rejected_even_when_the_layer_origin_is_in_front() {
     let media = BTreeMap::new();
     let analyzer = Analyzer {
-        dynamics: &[],
+        source_interval: None,
+        dynamics: &crate::export_document::AnimationIndex::new(&[]),
         resolved_media: &media,
         canvas: Dimensions::new(100, 100),
     };
@@ -261,7 +265,8 @@ fn tilted_corner_crossing_is_rejected_even_when_the_layer_origin_is_in_front() {
 fn nonfinite_transform_values_are_rejected() {
     let media = BTreeMap::new();
     let analyzer = Analyzer {
-        dynamics: &[],
+        source_interval: None,
+        dynamics: &crate::export_document::AnimationIndex::new(&[]),
         resolved_media: &media,
         canvas: Dimensions::new(100, 100),
     };
@@ -278,6 +283,165 @@ fn nonfinite_transform_values_are_rejected() {
                 &transform,
             )
             .is_err()
+    );
+}
+
+fn correlated_entries(simultaneous: bool) -> Vec<AnimationGraphEntry> {
+    let linear = PropertyKeyframeEasing::Linear;
+    vec![
+        track_entry(
+            PropType::RotationY,
+            vec![
+                key("r0", 0, 0.0, linear),
+                key("r1", 100, 90.0, linear),
+                key("r2", 200, 0.0, linear),
+                key("r3", 300, 0.0, linear),
+            ],
+        ),
+        track_entry(
+            PropType::ScaleX,
+            vec![
+                key("s0", 0, 100.0, linear),
+                key("s1", 100, if simultaneous { 190.0 } else { 103.5 }, linear),
+                key("s2", 200, 103.5, linear),
+                key("s3", 300, 190.0, linear),
+            ],
+        ),
+    ]
+}
+
+fn correlated_bounds(entries: &[AnimationGraphEntry]) -> Result<Bounds, &'static str> {
+    let media = BTreeMap::new();
+    let index = crate::export_document::AnimationIndex::new(entries);
+    let analyzer = Analyzer {
+        dynamics: &index,
+        resolved_media: &media,
+        canvas: Dimensions::new(100, 100),
+        source_interval: None,
+    };
+    analyzer.transform_bounds(
+        Bounds {
+            min: [-100.0, -10.0],
+            max: [100.0, 10.0],
+        },
+        LayerId::new(7),
+        &transform(Position::ThreeD([50.0, 50.0, 0.0])),
+    )
+}
+
+#[test]
+fn disjoint_scale_peak_and_quarter_turn_are_continuously_enclosed() {
+    let entries = correlated_entries(false);
+    let media = BTreeMap::new();
+    let index = crate::export_document::AnimationIndex::new(&entries);
+    let analyzer = Analyzer {
+        dynamics: &index,
+        resolved_media: &media,
+        canvas: Dimensions::new(100, 100),
+        source_interval: None,
+    };
+    assert_eq!(
+        analyzer
+            .transform_bounds_window(
+                Bounds {
+                    min: [-100.0, -10.0],
+                    max: [100.0, 10.0]
+                },
+                LayerId::new(7),
+                &transform(Position::ThreeD([50.0, 50.0, 0.0])),
+                None,
+            )
+            .unwrap_err(),
+        "3D descendant reaches the root camera near plane"
+    );
+    assert!(correlated_bounds(&entries).is_ok());
+    assert_eq!(
+        correlated_bounds(&correlated_entries(true)).unwrap_err(),
+        "3D descendant reaches the root camera near plane"
+    );
+}
+
+#[test]
+fn correlated_windows_retain_temporal_and_spatial_overshoot() {
+    let mut entries = correlated_entries(false);
+    entries.push(track_entry(
+        PropType::PositionZ,
+        vec![
+            key("z0", 0, 0.0, PropertyKeyframeEasing::Linear),
+            key(
+                "z1",
+                100,
+                10.0,
+                PropertyKeyframeEasing::CubicBezier {
+                    x1: 0.2,
+                    y1: -100.0,
+                    x2: 0.8,
+                    y2: -100.0,
+                },
+            ),
+        ],
+    ));
+    assert!(correlated_bounds(&entries).is_err());
+    entries.pop();
+    entries.push(track_entry(
+        PropType::PositionX,
+        vec![
+            key("x0", 0, 50.0, PropertyKeyframeEasing::Linear)
+                .with_spatial_tangents(None, Some(1000.0)),
+            key("x1", 100, 50.0, PropertyKeyframeEasing::Linear)
+                .with_spatial_tangents(Some(1000.0), None),
+        ],
+    ));
+    // Translation is not a depth change; nevertheless its complete spatial hull
+    // must survive the same windowed scalar enclosure used for projection.
+    let AnimatorData::Keyframes { track, .. } = entries.last().unwrap().animator.data() else {
+        panic!("expected position keys")
+    };
+    let range = track_component_range_window(
+        track,
+        Component::Scalar,
+        Some((
+            Some(TimeOffset::from_millis(25)),
+            Some(TimeOffset::from_millis(75)),
+        )),
+    )
+    .unwrap();
+    assert!(range.max >= 1050.0);
+}
+
+#[test]
+fn correlated_proof_cannot_receive_a_nonfinite_track() {
+    // Invalid key values are rejected before the analyzer can retry a proof.
+    assert!(
+        PropertyKeyframeTrack::new(vec![key(
+            "bad",
+            0,
+            f64::NAN,
+            PropertyKeyframeEasing::Linear,
+        )])
+        .is_err()
+    );
+}
+
+#[test]
+fn correlated_window_budget_exhaustion_keeps_near_plane_rejection() {
+    let mut entries = correlated_entries(false);
+    entries.push(track_entry(
+        PropType::Rotation,
+        (0..256)
+            .map(|time| {
+                key(
+                    &format!("extra-{time}"),
+                    time,
+                    0.0,
+                    PropertyKeyframeEasing::Linear,
+                )
+            })
+            .collect(),
+    ));
+    assert_eq!(
+        correlated_bounds(&entries).unwrap_err(),
+        "3D descendant reaches the root camera near plane"
     );
 }
 
@@ -317,7 +481,8 @@ fn rect_layer(masked: bool) -> Layer {
 fn multiplicative_masks_retain_the_unmasked_animated_enclosure() {
     let media = BTreeMap::new();
     let analyzer = Analyzer {
-        dynamics: &[],
+        source_interval: None,
+        dynamics: &crate::export_document::AnimationIndex::new(&[]),
         resolved_media: &media,
         canvas: Dimensions::new(640, 360),
     };

@@ -60,6 +60,8 @@ pub enum ExportField {
     AudioPlaybackSettings,
     /// Pitch preservation during audio retiming.
     AudioPitchPreservation,
+    /// Picture media that cannot be emitted by the native writer.
+    PictureMedia,
     /// Picture effects.
     Effects,
     /// Spatial placement.
@@ -100,6 +102,7 @@ impl ExportField {
             Self::TrackMatte
             | Self::Masks
             | Self::CornerRadius
+            | Self::PictureMedia
             | Self::Effects
             | Self::Placement
             | Self::CaptionPresentation
@@ -125,6 +128,7 @@ impl std::fmt::Display for ExportField {
             Self::CornerRadius => "corner radius",
             Self::AudioPlaybackSettings => "playback settings",
             Self::AudioPitchPreservation => "audio pitch preservation",
+            Self::PictureMedia => "picture media",
             Self::Effects => "effects",
             Self::Placement => "placement",
             Self::CaptionPresentation => "caption presentation",
@@ -192,6 +196,20 @@ pub(crate) struct ExportContext {
 pub(crate) trait OmissionSink {
     /// Emits one human diagnostic.
     fn emit(&mut self, omission: Omission);
+
+    /// Reports proven, root-sequence-sampled direct-still grouping normalization.
+    /// Unlike an approximation of visible content, this is not a routing loss.
+    fn emit_timed_image_normalization(&mut self, omission: Omission) {
+        self.emit(omission);
+    }
+
+    /// Reports a deliberately retained native Lens/Alpha Glow/Grain approximation.
+    /// The current editable effect was emitted successfully; replacing its
+    /// picture with linked AE would discard the chosen native representation.
+    /// Missing/failed effects must still use ordinary loss reporting.
+    fn emit_retained_native_effect(&mut self, omission: Omission) {
+        self.emit(omission);
+    }
 
     /// Returns the current typed context, if this sink tracks one.
     fn context(&self) -> Option<&ExportContext> {
@@ -311,6 +329,14 @@ impl LossCollector {
 }
 
 impl OmissionSink for LossCollector {
+    fn emit_retained_native_effect(&mut self, omission: Omission) {
+        self.push_diagnostic(omission);
+    }
+
+    fn emit_timed_image_normalization(&mut self, omission: Omission) {
+        self.push_diagnostic(omission);
+    }
+
     fn emit(&mut self, omission: Omission) {
         self.record_loss(
             self.context.source.clone(),
@@ -351,6 +377,55 @@ mod tests {
             record: record.into(),
             reason: reason.into(),
         }
+    }
+
+    #[test]
+    fn timed_image_normalization_retains_diagnostic_but_not_picture_loss() {
+        let mut collector = LossCollector::default();
+        let event = omission("layer 7", "sampled grouping normalization");
+        collector.emit_timed_image_normalization(event.clone());
+        omit_field(
+            &mut collector,
+            LayerId::new(7),
+            ExportField::Placement,
+            "layer 7",
+            "visible off-grid picture change",
+        );
+        let report = collector.finish(true);
+        assert_eq!(report.diagnostics.len(), 2);
+        assert_eq!(report.diagnostics[0], event);
+        assert_eq!(report.losses.len(), 1);
+        assert_eq!(
+            report.losses[0].kind,
+            ExportLossKind::Field(ExportField::Placement)
+        );
+        assert_eq!(report.losses[0].domain, ExportLossDomain::Picture);
+    }
+
+    #[test]
+    fn alpha_glow_retained_native_diagnostic_preserves_other_picture_losses() {
+        let mut collector = LossCollector::default();
+        let event = omission(
+            "layer 7",
+            "retained native Alpha Glow falloff approximation",
+        );
+        collector.emit_retained_native_effect(event.clone());
+        omit_field(
+            &mut collector,
+            LayerId::new(7),
+            ExportField::Effects,
+            "layer 7",
+            "another picture effect has no native mapping",
+        );
+        let report = collector.finish(true);
+        assert_eq!(report.diagnostics.len(), 2);
+        assert_eq!(report.diagnostics[0], event);
+        assert_eq!(report.losses.len(), 1);
+        assert_eq!(report.losses[0].domain, ExportLossDomain::Picture);
+        assert_eq!(
+            report.losses[0].kind,
+            ExportLossKind::Field(ExportField::Effects)
+        );
     }
 
     #[test]

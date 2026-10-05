@@ -3,6 +3,8 @@
 //! Converted Premiere text stores the PostScript name as its family with an
 //! empty style. The editable schema fills an absent style with `Regular`, so an
 //! empty style is written only on purpose: it marks a stored PostScript name.
+//! An empty Text saved without a font imports as a family and style instead
+//! ([`crate::schema::text::EMPTY_TEXT_FONT`]).
 //! `tsrct` renders only fonts packaged in the document, and export follows the
 //! same rule.
 

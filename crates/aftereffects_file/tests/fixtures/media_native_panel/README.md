@@ -12,7 +12,8 @@ FX/hand-authored expected-contract paths. The structural test is
 in `tests.rs` under the existing opt-in feature. The test packages actual
 primary media via `TesseractFileBuilder`, fresh-exports FX→AEP, asserts native
 editable sources/layer ranges, media descriptors and byte-identical publication,
-and checks contextual omissions. `AEP_EFFECTS_FX_PANEL_DIR` writes `<case>.fx.json`,
+and checks contextual omissions. The fixed converter-workspace scratch directory
+`target/adobe-test/fx_exports/` receives `<case>.fx.json`,
 `<case>.expected.json`, `<case>.aep`, and standalone `<case>/project.aep` plus
 `<case>/media/` for Adobe; only the separately authored `native/<case-id>.aep`
 will be an independent oracle. No import assertion is supplied here.

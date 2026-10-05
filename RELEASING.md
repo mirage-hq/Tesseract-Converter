@@ -24,12 +24,12 @@ publishing.
 
 ## Publication hold for relocated tooling
 
-The newly included reference-rendering and Asset API integration helpers are
+The newly included reference-rendering integration helpers are
 pending a separate publication review. **Do not sync them to a public repository
 or publicly release a revision containing them before that review is complete.** The staging
-inventory, MIT license and ZIP checks are not publication approval. This hold
-does not change the existing Asset API retrieval implementation or introduce a
-separate tooling directory; see the [scope notice](README.md#conversion-test-tooling).
+inventory, MIT license and ZIP checks are not publication approval. Checked-in
+fixtures and references need no Asset API retrieval, and this hold does not
+introduce a separate tooling directory; see the [scope notice](README.md#conversion-test-tooling).
 The procedure below is available for authorized non-public testing, or after
 public-distribution clearance, not permission to bypass this hold. The release
 workflow does **not** upload to the CDN. Public CDN distribution is a separate,
@@ -119,7 +119,11 @@ files, changed hashes, unapproved configurations and mismatched source/license
 material. macOS signing regenerates both native file hashes and the ZIP checksum.
 
 The native H.264 encoder remains VideoToolbox on macOS and Media Foundation on
-Windows. **Linux has no approved bundled H.264 encoder:** compatible copy/remux,
+Windows. VideoToolbox prefers hardware but permits Apple's software encoder when
+hardware encoding is unavailable; it does not force software on hardware-capable
+hosts or switch to an external FFmpeg process. Both native encoders use the numeric
+H.264 High profile value, since Media Foundation does not accept the `high` alias.
+**Linux has no approved bundled H.264 encoder:** compatible copy/remux,
 PCM and ProRes work, but new H.264 encoding reports an explicit policy error.
 An explicitly selected external FFmpeg with an appropriate encoder is separate;
 the release does not silently switch backends or add GPL/nonfree codecs.

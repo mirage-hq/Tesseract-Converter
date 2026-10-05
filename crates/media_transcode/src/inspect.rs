@@ -28,6 +28,10 @@ pub struct StreamInfo {
     pub codec_name: String,
     pub width: u32,
     pub height: u32,
+    /// Resolved stream/codec pixel ratio; None means FFmpeg reports it unspecified.
+    pub sample_aspect_ratio: Option<[i32; 2]>,
+    /// Native fixed-point display matrix, or None when no matrix is present.
+    pub display_matrix: Option<[i32; 9]>,
     pub sample_rate: u32,
     pub channels: u32,
     pub time_base_num: i32,
@@ -68,17 +72,28 @@ pub fn inspect(
     size: u64,
     scan_video_packets: bool,
 ) -> Result<MediaInspection, InspectError> {
-    imp::inspect(reader, size, scan_video_packets)
+    imp::inspect_with_edits(reader, size, scan_video_packets, false)
+}
+
+/// Inspect the displayed MOV/MP4 clock, applying native edit lists to packet PTS.
+/// Existing `inspect` callers retain their unedited media-clock behavior.
+/// Like `inspect`, this never decodes or rewrites media.
+pub fn inspect_presentation(
+    reader: impl Read + Seek,
+    size: u64,
+) -> Result<MediaInspection, InspectError> {
+    imp::inspect_with_edits(reader, size, true, true)
 }
 
 #[cfg(not(feature = "ffmpeg-library"))]
 mod imp {
     use super::*;
 
-    pub(super) fn inspect(
+    pub(super) fn inspect_with_edits(
         _reader: impl Read + Seek,
         _size: u64,
         _scan_video_packets: bool,
+        _apply_edits: bool,
     ) -> Result<MediaInspection, InspectError> {
         Err(InspectError::Unavailable)
     }
@@ -257,16 +272,26 @@ mod imp {
         }
     }
 
-    pub(super) fn inspect<R: Read + Seek>(
+    #[cfg(test)]
+    fn inspect<R: Read + Seek>(
         reader: R,
         size: u64,
         scan_video_packets: bool,
+    ) -> Result<MediaInspection, InspectError> {
+        inspect_with_edits(reader, size, scan_video_packets, false)
+    }
+
+    pub(super) fn inspect_with_edits<R: Read + Seek>(
+        reader: R,
+        size: u64,
+        scan_video_packets: bool,
+        apply_edits: bool,
     ) -> Result<MediaInspection, InspectError> {
         ffmpeg::init().map_err(|error| InspectError::Invalid(error.to_string()))?;
         let mut input = allocate_input(reader, size)?;
         let mut options = ptr::null_mut();
         let option_name = b"ignore_editlist\0";
-        let option_value = b"1\0";
+        let option_value = if apply_edits { b"0\0" } else { b"1\0" };
         unsafe {
             ffi::av_dict_set(
                 &mut options,
@@ -421,6 +446,30 @@ mod imp {
             };
             let codec_tag = unsafe { (*parameters).codec_tag.to_le_bytes() };
             let time_base = unsafe { (*stream).time_base };
+            let aspect =
+                unsafe { ffi::av_guess_sample_aspect_ratio(format, stream, ptr::null_mut()) };
+            let sample_aspect_ratio = (aspect.num != 0).then_some([aspect.num, aspect.den]);
+            let display_matrix = unsafe {
+                let side = ffi::av_packet_side_data_get(
+                    (*parameters).coded_side_data,
+                    (*parameters).nb_coded_side_data,
+                    ffi::AVPacketSideDataType::AV_PKT_DATA_DISPLAYMATRIX,
+                );
+                if side.is_null() {
+                    None
+                } else {
+                    if (*side).size != 9 * std::mem::size_of::<i32>() || (*side).data.is_null() {
+                        return Err(InspectError::Invalid(format!(
+                            "stream {index} has invalid display matrix data"
+                        )));
+                    }
+                    let mut matrix = [0; 9];
+                    for (index, value) in matrix.iter_mut().enumerate() {
+                        *value = ptr::read_unaligned((*side).data.add(index * 4).cast::<i32>());
+                    }
+                    Some(matrix)
+                }
+            };
             streams.push(StreamInfo {
                 index,
                 id: unsafe { (*stream).id },
@@ -429,6 +478,8 @@ mod imp {
                 codec_name,
                 width: u32::try_from(unsafe { (*parameters).width }).unwrap_or(0),
                 height: u32::try_from(unsafe { (*parameters).height }).unwrap_or(0),
+                sample_aspect_ratio,
+                display_matrix,
                 sample_rate: u32::try_from(unsafe { (*parameters).sample_rate }).unwrap_or(0),
                 channels: u32::try_from(unsafe { (*parameters).ch_layout.nb_channels })
                     .unwrap_or(0),
@@ -493,6 +544,55 @@ mod imp {
     mod tests {
         use super::*;
         use std::io::Cursor;
+
+        #[test]
+        fn inspection_reports_non_square_pixels_and_native_display_matrix() {
+            let non_square = include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../premiere_file/tests/fixtures/video-nonsquare.mp4"
+            ));
+            let result = super::inspect(
+                std::io::Cursor::new(non_square),
+                non_square.len() as u64,
+                false,
+            )
+            .unwrap();
+            let video = result
+                .streams
+                .iter()
+                .find(|stream| stream.kind == StreamKind::Video)
+                .unwrap();
+            let [num, den] = video.sample_aspect_ratio.unwrap();
+            assert!(num > 0 && den > 0 && num != den);
+
+            // Supplementary container mutation checks FFmpeg's matrix extraction,
+            // not independently authored rotation fidelity or native export proof.
+            let mut bytes = MP4.to_vec();
+            let identity = [65536_i32, 0, 0, 0, 65536, 0, 0, 0, 1073741824];
+            let identity_bytes: Vec<_> = identity.into_iter().flat_map(i32::to_be_bytes).collect();
+            let offset = bytes
+                .windows(identity_bytes.len())
+                .position(|window| window == identity_bytes)
+                .unwrap();
+            // The first matrix is mvhd; edit the subsequent video tkhd matrix.
+            let start = offset + identity_bytes.len();
+            let offset = bytes[start..]
+                .windows(identity_bytes.len())
+                .position(|window| window == identity_bytes)
+                .unwrap()
+                + start;
+            let rotation = [0_i32, 65536, 0, -65536, 0, 0, 0, 0, 1073741824];
+            let rotation_bytes: Vec<_> = rotation.into_iter().flat_map(i32::to_be_bytes).collect();
+            bytes[offset..offset + rotation_bytes.len()].copy_from_slice(&rotation_bytes);
+            let result =
+                super::inspect(std::io::Cursor::new(&bytes), bytes.len() as u64, false).unwrap();
+            let video = result
+                .streams
+                .iter()
+                .find(|stream| stream.kind == StreamKind::Video)
+                .unwrap();
+            assert_eq!(video.display_matrix, Some(rotation));
+        }
 
         const MP4: &[u8] =
             include_bytes!("../../premiere_file/tests/fixtures/feature_rate_24_blue.mp4");

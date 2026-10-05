@@ -187,6 +187,10 @@ pub(super) fn property(path: &ShapePath) -> Result<Chunk, AepWriteError> {
 }
 
 fn shape(path: &ShapePath) -> Result<Chunk, AepWriteError> {
+    shape_with_seam(path, true)
+}
+
+fn shape_with_seam(path: &ShapePath, fold_seam: bool) -> Result<Chunk, AepWriteError> {
     let mut vertices: Vec<Vertex> = Vec::new();
     let mut closed = false;
     for (index, command) in path.commands.iter().enumerate() {
@@ -262,7 +266,8 @@ fn shape(path: &ShapePath) -> Result<Chunk, AepWriteError> {
             "native Path vertex count must fit a u16 triple list",
         ));
     }
-    if closed
+    if fold_seam
+        && closed
         && vertices
             .last()
             .is_some_and(|last| last.point == vertices[0].point)
@@ -270,11 +275,9 @@ fn shape(path: &ShapePath) -> Result<Chunk, AepWriteError> {
         let last = vertices.pop().expect("at least two vertices");
         vertices[0].incoming = last.incoming;
     }
-    if closed && vertices.len() < 2 {
-        return Err(AepWriteError::Invalid(
-            "closed native Path needs at least two distinct vertices",
-        ));
-    }
+    // A closed cubic may return to its sole vertex. After seam folding its
+    // outgoing/incoming handles still define a drawable native Bezier loop;
+    // Adobe does not require two distinct vertices for a closed contour.
     let mut bounds = [
         f64::INFINITY,
         f64::INFINITY,

@@ -27,6 +27,7 @@ fn convert(
         (
             "premiere-video-1".to_owned(),
             MediaFacts::Video(VideoMedia {
+                pixel_aspect: Default::default(),
                 orientation: crate::schema::VideoOrientation::Identity,
                 codec: crate::schema::VideoCodec::H264,
                 bit_depth: 8,
@@ -279,12 +280,22 @@ fn hidden_fx_video_layer_exports_as_a_disabled_clip() {
 }
 
 #[test]
-fn hidden_only_span_requires_the_black_canvas_on_export() {
+fn hidden_only_span_exports_without_the_black_canvas() {
     let mut wire = editable_document();
     wire["composition"]["layers"][0]["isHidden"] = json!(true);
     wire["composition"]["layers"].as_array_mut().unwrap().pop();
-    let error = convert(wire, 1000).unwrap_err().to_string();
-    assert!(error.contains("gaps require an explicit"), "{error}");
+    let (project, omissions) = convert(wire, 1000).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let sequence = project.single_sequence().unwrap();
+    let clip = sequence.video_occurrences().next().unwrap();
+    assert!(!clip.enabled);
+    assert_eq!(clip.timeline_ticks(), 0..TICKS);
+    assert_eq!(clip.source_ticks(), 0..TICKS);
+    assert_eq!(sequence.end_ticks(), TICKS);
+    assert_eq!(
+        sequence.gaps(&project.media),
+        Vec::from_iter(Some(0..TICKS))
+    );
 }
 
 #[test]

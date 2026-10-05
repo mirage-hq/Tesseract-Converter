@@ -1,0 +1,125 @@
+{
+  "passed": true,
+  "scope": "Current generated output native open/keys/clock readback only, not render/Asset/RGB/alpha/audio fidelity",
+  "converter_head": "ed8b15022c981a077a8b0a9cb286dac2ada771ad",
+  "build_job": 1728,
+  "converter_sha256": "eb2b383520fa3810992e955639bf06390a1df6c9580e809829a325a888834700",
+  "script_sha256": "65f5585f08cea9031e8e95fafc2150b7ac92bed567a3aa8d76eaf80b070f6aa8",
+  "input_sha256": {
+    "project": "2c680ebe04e980ab7b951eb23d5ed29877ac858e87409039e2e49cebf1ae4ee9",
+    "clip": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292"
+  },
+  "native_job": "91bbd3c06010434fb01fac0bc3026be6",
+  "native_artifact_sha256": "bf21e620614c61642ed4182f0178db5269a050a49a63d1abac479d760b35b498",
+  "application_version": "26.5x89",
+  "native_result": {
+    "compositions": [
+      {
+        "duration": 8,
+        "id": 15,
+        "layers": [
+          {
+            "inPoint": 0,
+            "keys": [],
+            "name": "Authored source remap",
+            "outPoint": 8,
+            "sourceDuration": 8,
+            "start": 0,
+            "stretch": 100
+          },
+          {
+            "inPoint": 0,
+            "keys": [],
+            "name": "Authored source remap audio",
+            "outPoint": 8,
+            "sourceDuration": 8,
+            "start": 0,
+            "stretch": 100
+          }
+        ],
+        "name": "Authored source remap"
+      },
+      {
+        "duration": 8,
+        "id": 13,
+        "layers": [
+          {
+            "inPoint": 0,
+            "keys": [],
+            "name": "Source content clock",
+            "outPoint": 8,
+            "sourceDuration": 8,
+            "start": 0,
+            "stretch": 100
+          }
+        ],
+        "name": "Held Blue Frame"
+      },
+      {
+        "duration": 2,
+        "id": 1,
+        "layers": [
+          {
+            "inPoint": 0.25,
+            "keys": [],
+            "name": "Held Blue Frame",
+            "outPoint": 1.25,
+            "sourceDuration": 8,
+            "start": -0.25,
+            "stretch": 100
+          },
+          {
+            "inPoint": 0,
+            "keys": [],
+            "name": "media-static-remap",
+            "outPoint": 2,
+            "sourceDuration": 0,
+            "start": 0,
+            "stretch": 100
+          }
+        ],
+        "name": "media-static-remap"
+      },
+      {
+        "duration": 8,
+        "id": 14,
+        "layers": [
+          {
+            "inPoint": 0,
+            "keys": [
+              {
+                "incoming": 6612,
+                "outgoing": 6612,
+                "time": 0,
+                "value": 0.75
+              },
+              {
+                "incoming": 6612,
+                "outgoing": 6612,
+                "time": 2,
+                "value": 0.75
+              },
+              {
+                "incoming": 6612,
+                "outgoing": 6612,
+                "time": 8,
+                "value": 8
+              }
+            ],
+            "name": "Authored source remap",
+            "outPoint": 8,
+            "sourceDuration": 8,
+            "start": 0,
+            "stretch": 100
+          }
+        ],
+        "name": "Source content clock"
+      }
+    ],
+    "footage": 1,
+    "outer": 1,
+    "remaps": 1
+  },
+  "request_id": "accuracy-r02-finite-remap-current-head-20261003-v1",
+  "provenance": "Independent Adobe native getters on freshly generated current-HEAD edited output, not own-reader output or pixel proof."
+}

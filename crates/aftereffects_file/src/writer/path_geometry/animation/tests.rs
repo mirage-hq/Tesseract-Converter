@@ -104,6 +104,117 @@ fn native_path_keys_write_signed_times_parallel_shapes_and_ease_records() {
 }
 
 #[test]
+fn native_path_keys_keep_authored_coincident_seam_vertices() {
+    // Independently AE-authored/reopened control: four closed vertices, with
+    // the final vertex moving from [0, 0] to [0, 80] over one Linear second.
+    // Adobe retains all four even at the coincident initial key.
+    let contour = |y| {
+        let mut commands: Vec<_> = [[0.0, 0.0], [80.0, 0.0], [80.0, 80.0], [0.0, y]]
+            .into_iter()
+            .enumerate()
+            .map(|(index, [x, y])| {
+                if index == 0 {
+                    ShapePathCommand::MoveTo {
+                        x,
+                        y,
+                        mirror: None,
+                        corner_radius: None,
+                    }
+                } else {
+                    ShapePathCommand::LineTo {
+                        x,
+                        y,
+                        mirror: None,
+                        corner_radius: None,
+                    }
+                }
+            })
+            .collect();
+        commands.push(ShapePathCommand::Close);
+        ShapePath { commands }
+    };
+    let mut value = PathTrack {
+        keyframes: vec![
+            PathKeyframe {
+                time_millis: 0,
+                path: contour(0.0),
+                easing: KeyframeEasing::Linear,
+            },
+            PathKeyframe {
+                time_millis: 1000,
+                path: contour(80.0),
+                easing: KeyframeEasing::Linear,
+            },
+        ],
+    };
+    let triples = |value: &PathTrack| {
+        let native = animated_property(value).unwrap();
+        unique_list(native.children().unwrap(), *b"omks")
+            .unwrap()
+            .iter()
+            .map(|shape| {
+                let list = unique_list(shape.children().unwrap(), *b"list").unwrap();
+                let header = data(list, *b"lhd3").unwrap();
+                u16::from_be_bytes([header[10], header[11]])
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(triples(&value), [12, 12]);
+    assert_eq!(value.keyframes[0].path, contour(0.0));
+    assert_eq!(value.keyframes[1].path, contour(80.0));
+    // A consistently folded track keeps the established compact encoding.
+    value.keyframes[1].path = contour(0.0);
+    assert_eq!(triples(&value), [9, 9]);
+}
+
+#[test]
+fn mixed_one_second_path_admits_only_pinned_linear_out_bezier_in() {
+    let easing = KeyframeEasing::CubicBezier {
+        x1: 1.0 / 6.0,
+        y1: 1.0 / 6.0,
+        x2: 0.1,
+        y2: 1.0,
+    };
+    let mut value = track(easing);
+    value.keyframes[0].time_millis = 250;
+    value.keyframes[1].time_millis = 1250;
+    assert!(validate_path_track(&value).is_ok());
+    for unsupported in [
+        KeyframeEasing::CubicBezier {
+            x1: 0.1,
+            y1: 0.0,
+            x2: 1.0 - 1.0 / 6.0,
+            y2: 1.0 - 1.0 / 6.0,
+        },
+        KeyframeEasing::CubicBezier {
+            x1: 1.0 / 6.0,
+            y1: 1.0 / 6.0,
+            x2: 0.2,
+            y2: 1.0,
+        },
+        KeyframeEasing::CubicBezier {
+            x1: 1.0 / 6.0,
+            y1: 1.0 / 6.0,
+            x2: 0.1,
+            y2: 0.9,
+        },
+    ] {
+        value.keyframes[1].easing = unsupported;
+        assert!(validate_path_track(&value).is_err(), "{unsupported:?}");
+    }
+    value.keyframes[1].easing = easing;
+    for duration in [999, 1001, 1500, 3000] {
+        value.keyframes[1].time_millis = 250 + duration;
+        assert!(validate_path_track(&value).is_err(), "{duration}ms");
+    }
+    value.keyframes[1].time_millis = 2250;
+    assert!(
+        validate_path_track(&value).is_ok(),
+        "existing two-second profile"
+    );
+}
+
+#[test]
 fn native_path_keys_exceed_old_policy_boundary() {
     let value = PathTrack {
         keyframes: (0..=10_000)
@@ -162,7 +273,13 @@ fn native_path_keys_reject_unproved_speed_and_morph_but_allow_hold_topology() {
         );
     }
     assert!(
-        validate_path_track(&value).is_err(),
-        "only the first key folds its closing seam"
+        validate_path_track(&value).is_ok(),
+        "animated paths must retain authored seam vertices when only one key repeats the first point"
     );
+    let native = animated_property(&value).unwrap();
+    for shape in unique_list(native.children().unwrap(), *b"omks").unwrap() {
+        let list = unique_list(shape.children().unwrap(), *b"list").unwrap();
+        let header = data(list, *b"lhd3").unwrap();
+        assert_eq!(u16::from_be_bytes([header[10], header[11]]), 9);
+    }
 }

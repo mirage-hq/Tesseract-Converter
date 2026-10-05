@@ -1,0 +1,201 @@
+{
+  "native_version": "26.5x89",
+  "source_sha256": "9908039bd36629cf8121841cbaea381558bc0c4b5d445395a394d53f1e89f753",
+  "author_request": "w06-one-vertex-loop-author-v1",
+  "readback_request": "w06-one-vertex-loop-readback-v1",
+  "reference_request": "w06-one-vertex-loop-reference-v1",
+  "reference_sha256": "9e15978b50c922557535c3f8048b15973e7c2898f160a8271522e52bc3a7e5ee",
+  "reference_status": "local_only_asset_publication_incomplete",
+  "reference_validation": {
+    "stream": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "width": 320,
+          "height": 240,
+          "r_frame_rate": "30/1",
+          "nb_frames": "60"
+        }
+      ],
+      "format": {
+        "duration": "2.000000"
+      }
+    },
+    "frames": 60,
+    "min_nonblack_pixels": 3230,
+    "max_nonblack_pixels": 3234
+  },
+  "controls": [
+    {
+      "name": "source",
+      "paths": [
+        {
+          "closed": true,
+          "inTangents": [
+            [
+              90,
+              -100
+            ]
+          ],
+          "outTangents": [
+            [
+              -90,
+              -100
+            ]
+          ],
+          "vertices": [
+            [
+              0,
+              0
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "exported",
+      "paths": [
+        {
+          "closed": true,
+          "inTangents": [
+            [
+              90,
+              -100
+            ]
+          ],
+          "outTangents": [
+            [
+              -90,
+              -100
+            ]
+          ],
+          "vertices": [
+            [
+              0,
+              0
+            ]
+          ]
+        },
+        {
+          "closed": true,
+          "inTangents": [
+            [
+              90,
+              -100
+            ]
+          ],
+          "outTangents": [
+            [
+              -90,
+              -100
+            ]
+          ],
+          "vertices": [
+            [
+              0,
+              0
+            ]
+          ]
+        },
+        {
+          "closed": true,
+          "inTangents": [
+            [
+              90,
+              -100
+            ]
+          ],
+          "outTangents": [
+            [
+              -90,
+              -100
+            ]
+          ],
+          "vertices": [
+            [
+              0,
+              0
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "edited",
+      "paths": [
+        {
+          "closed": true,
+          "inTangents": [
+            [
+              90,
+              -100
+            ]
+          ],
+          "outTangents": [
+            [
+              -90,
+              -100
+            ]
+          ],
+          "vertices": [
+            [
+              40,
+              0
+            ]
+          ]
+        },
+        {
+          "closed": true,
+          "inTangents": [
+            [
+              90,
+              -100
+            ]
+          ],
+          "outTangents": [
+            [
+              -90,
+              -100
+            ]
+          ],
+          "vertices": [
+            [
+              40,
+              0
+            ]
+          ]
+        },
+        {
+          "closed": true,
+          "inTangents": [
+            [
+              90,
+              -100
+            ]
+          ],
+          "outTangents": [
+            [
+              -90,
+              -100
+            ]
+          ],
+          "vertices": [
+            [
+              40,
+              0
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "converter_receipt": {
+    "commit": "750567cf2479b810506319cdd56f63771fffc093",
+    "binary_sha256": "2fdb28e7b05500b651e948d856aa3665da4609ad4851372fb159420ea53b879a"
+  },
+  "fresh_export_sha256": "c4f3decfc93e1714da986561c0eace725259319a6b691fea9e646bfeb8bc33da",
+  "edited_export_sha256": "b3ed8899039498a501593e63f75eef49f132599e5aa6dac869d9b45e8063cb88",
+  "rgb_comparison": "unmeasured",
+  "alpha_fidelity": "unverified"
+}

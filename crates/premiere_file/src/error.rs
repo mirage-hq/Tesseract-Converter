@@ -25,26 +25,25 @@ impl EditableBuildError {
     }
 }
 
-/// Failure to create the former private project-mutation host.
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum CreationError {
-    #[error("invalid input: video_metadata.display_dimensions width and height must be non-zero")]
-    MissingDimensions,
-}
-
 /// Failure to inspect, validate, or publish a conversion in either direction.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum BuildError {
-    #[error("linked composition import failed: {0}")]
-    LinkedImport(#[source] anyhow::Error),
     #[error("{context}: {source}")]
     Context {
         context: String,
         #[source]
         source: Box<BuildError>,
     },
+    #[error("{context}: {source}")]
+    Capsule {
+        context: String,
+        #[source]
+        source: Box<crate::capsule::CapsuleError>,
+    },
     #[error("unsupported conversion: {0}")]
     Unsupported(String),
+    #[error("unsupported conversion: {0}")]
+    UnsupportedVideoCodec(String),
     #[error("missing media: {0}")]
     MissingMedia(String),
     #[error(transparent)]
@@ -71,10 +70,10 @@ pub(crate) enum BuildError {
     Document(#[from] fx_schema::EditableFxDocumentError),
     #[error("could not build editable document: {0}")]
     Mutation(#[from] EditableBuildError),
-    #[error("could not create project mutation host: {0}")]
-    Creation(#[from] CreationError),
     #[error("invalid MP4 media: {0}")]
     Mp4(#[from] media_transcode::inspect::InspectError),
+    #[error("audio source preparation failed: {0}")]
+    AudioPreparation(#[from] media_transcode::TranscodeError),
     #[error("invalid audio media: {0}")]
     Audio(#[from] symphonia::core::errors::Error),
     #[error("{0} path must be UTF-8")]

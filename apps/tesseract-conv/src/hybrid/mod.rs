@@ -1,6 +1,7 @@
 //! Premiere CLI orchestration using native conversion and editable linked AEP scopes.
 mod automatic;
 mod dependencies;
+mod empty_root;
 mod owners;
 mod package;
 

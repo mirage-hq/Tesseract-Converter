@@ -202,67 +202,58 @@ def test_ffprobe_rejects_missing_empty_corrupt_or_nonvideo_outputs(ctx):
         export.probe_mp4(video)
 
 
-def test_success_requires_event_and_mp4_before_provenance(ctx):
-
-    def complete(status_path, job_id, timeout):
-        package = status_path.parent / "package"
-        assert (
-            str(package / "media/scene.mov")
-            in gzip.decompress((package / "one_case.prproj").read_bytes()).decode()
-        )
-        output = ctx.cache / "expected-candidates/one_case" / f"{job_id}.mp4"
-        output.write_bytes(b"mock independent MP4")
-        return {"ame_build": "85", "message": "onItemEncodeComplete=true"}
+def test_success_requires_typed_worker_and_mp4_before_provenance(ctx):
+    def complete(operation, request, work, **options):
+        assert operation == 'render_premiere_ame'
+        assert request['sequence_id'] == 'sequence-one'
+        assert options == {'timeout': 60, 'ame_app': ctx.app}
+        package = work.parent / 'package'
+        assert str(package / 'media/scene.mov') in gzip.decompress((package / 'one_case.prproj').read_bytes()).decode()
+        assert request['source']['sha256'] == export.adobe_native.sha256(Path(request['source']['path']))
+        assert request['source']['dependencies']['media-0']['sha256'] == ctx.case['files'][1]['sha256']
+        artifact_path = work.parent / 'verified.mp4'
+        artifact_path.write_bytes(b'mock independent MP4')
+        return {'path': str(artifact_path), 'sha256': export.adobe_native.sha256(artifact_path),
+                'kind': 'video', 'metadata': {'build': '85', 'completion': 'onItemEncodeComplete'}}
 
     with (
-        patch.object(export, "ame_running", return_value=False),
-        patch.object(export, "launch_ame"),
-        patch.object(export, "wait_for_status", side_effect=complete),
-        patch.object(
-            export,
-            "probe_mp4",
-            return_value=(2.1, [{"codec_type": "video", "width": 1280, "height": 720}]),
-        ),
+        patch.object(export.adobe_native, 'execute', side_effect=complete),
+        patch.object(export, 'launch_ame', side_effect=AssertionError('direct launch prohibited')),
+        patch.object(export, 'probe_mp4', return_value=(2.1, [{'codec_type': 'video', 'width': 1280, 'height': 720}])),
     ):
-        output = export.regenerate("one_case", ctx.preset, ctx.cache, None, 60, ctx.app)
-    record = json.loads(output.with_suffix(".provenance.json").read_text())
-    assert record["source_project_sha256"] == ctx.case["files"][0]["sha256"]
-    assert record["sequence_uid"] == "sequence-one"
-    assert record["ame_build"] == "85"
-    assert record["media_paths_checked"] == ["media/scene.mov"]
-    assert record["output_sha256"] == hashlib.sha256(b"mock independent MP4").hexdigest()
-    assert json.loads(ctx.manifest.read_text())["cases"] == [ctx.case]
+        output = export.regenerate('one_case', ctx.preset, ctx.cache, None, 60, ctx.app)
+    record = json.loads(output.with_suffix('.provenance.json').read_text())
+    assert record['source_project_sha256'] == ctx.case['files'][0]['sha256']
+    assert record['sequence_uid'] == 'sequence-one'
+    assert record['ame_build'] == '85'
+    assert record['media_paths_checked'] == ['media/scene.mov']
+    assert record['output_sha256'] == hashlib.sha256(b'mock independent MP4').hexdigest()
+    assert record['headless_adobe']['metadata']['completion'] == 'onItemEncodeComplete'
+    assert json.loads(ctx.manifest.read_text())['cases'] == [ctx.case]
 
 
-def test_running_ame_prevents_launch_or_output_creation(ctx):
+def test_foreign_session_refusal_never_uses_direct_launch_or_publishes(ctx):
     with (
-        patch.object(export, "ame_running", return_value=True),
-        patch.object(export, "launch_ame", side_effect=AssertionError("should not launch")),
-        pytest.raises(export.ExportError, match="already running"),
+        patch.object(export.adobe_native, 'execute', side_effect=export.adobe_native.NativeAdobeError('foreign Adobe session')),
+        patch.object(export, 'launch_ame', side_effect=AssertionError('direct launch prohibited')),
+        pytest.raises(export.adobe_native.NativeAdobeError, match='foreign Adobe session'),
     ):
-        export.regenerate("one_case", ctx.preset, ctx.cache, None, 60, ctx.app)
-    assert not (ctx.cache / "expected-candidates").exists()
+        export.regenerate('one_case', ctx.preset, ctx.cache, None, 60, ctx.app)
+    assert list((ctx.cache / 'expected-candidates/one_case').glob('*.mp4')) == []
+    assert list((ctx.cache / 'expected-candidates/one_case').glob('*.provenance.json')) == []
 
 
-def test_timeout_error_and_missing_mp4_never_publish_provenance(ctx):
-    for scenario in (
-        export.ExportError("timed out waiting"),
-        export.ExportError("offline media"),
-        {"ame_build": "85", "message": "onItemEncodeComplete=true"},
-    ):
+def test_timeout_error_and_missing_native_provenance_never_publish(ctx):
+    for scenario in (export.adobe_native.NativeAdobeError('timed out'),
+                     export.adobe_native.NativeAdobeError('offline media'), {'metadata': {}}):
         with (
-            patch.object(export, "ame_running", return_value=False),
-            patch.object(export, "launch_ame"),
-            patch.object(
-                export,
-                "wait_for_status",
-                side_effect=scenario if isinstance(scenario, Exception) else None,
-                return_value=scenario if isinstance(scenario, dict) else None,
-            ),
-            pytest.raises(export.ExportError),
+            patch.object(export.adobe_native, 'execute',
+                         side_effect=scenario if isinstance(scenario, Exception) else None,
+                         return_value=scenario if isinstance(scenario, dict) else None),
+            pytest.raises((export.ExportError, export.adobe_native.NativeAdobeError)),
         ):
-            export.regenerate("one_case", ctx.preset, ctx.cache, None, 60, ctx.app)
-    assert list((ctx.cache / "expected-candidates/one_case").glob("*.provenance.json")) == []
+            export.regenerate('one_case', ctx.preset, ctx.cache, None, 60, ctx.app)
+    assert list((ctx.cache / 'expected-candidates/one_case').glob('*.provenance.json')) == []
 
 
 def test_existing_candidate_never_overwritten(ctx):

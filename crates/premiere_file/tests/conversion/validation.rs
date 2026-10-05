@@ -1,7 +1,11 @@
 use super::support::*;
 use serde_json::json;
-use std::{fs, path::Path};
-use tesseract_file::{AssetKind, TesseractFile, TesseractFileBuilder};
+use std::fs;
+#[cfg(feature = "ffmpeg-library")]
+use std::path::Path;
+use tesseract_file::TesseractFileBuilder;
+#[cfg(feature = "ffmpeg-library")]
+use tesseract_file::{AssetKind, TesseractFile};
 
 #[test]
 fn malformed_input_and_nonframe_ranges_fail_without_output() {
@@ -34,6 +38,7 @@ fn malformed_input_and_nonframe_ranges_fail_without_output() {
         .to_string();
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn premiere_to_tesseract_rejects_duration_drift_and_invalid_sequence_or_source_clocks() {
     let dir = tempfile::tempdir().unwrap();
@@ -62,17 +67,19 @@ fn premiere_to_tesseract_rejects_duration_drift_and_invalid_sequence_or_source_c
         "{error}"
     );
     assert!(!root.join("drift").exists());
-    // Sequence clocks retain the whitelist; physical source clocks may be
-    // unlisted but must still agree with the inspected frame count and duration.
+    // Sequence clocks must be positive. Physical source clocks may be unlisted
+    // but must still agree with the inspected frame count and duration.
     let xml = one_second();
-    for (tag, output_name, reason) in [
+    for (tag, ticks, output_name, reason) in [
         (
             "VideoTrackGroup",
+            0,
             "sequence-fps",
             "unsupported video frame rate",
         ),
         (
             "VideoStream",
+            123,
             "source-fps",
             "native VideoStream Duration does not match its constant frame duration and file sample count",
         ),
@@ -87,7 +94,7 @@ fn premiere_to_tesseract_rejects_duration_drift_and_invalid_sequence_or_source_c
             .find(|node| node.has_tag_name("FrameRate"))
             .unwrap();
         let mut invalid = xml.clone();
-        invalid.replace_range(rate.range(), "<FrameRate>123</FrameRate>");
+        invalid.replace_range(rate.range(), &format!("<FrameRate>{ticks}</FrameRate>"));
         fixture(root, &invalid);
         let output = root.join(output_name);
         let error = premiere_to_tesseract(root.join("project.prproj"), &output, None, false)
@@ -102,6 +109,7 @@ fn premiere_to_tesseract_rejects_duration_drift_and_invalid_sequence_or_source_c
 }
 
 /// The direct `FrameRect` of every native record `tag` in `xml`.
+#[cfg(feature = "ffmpeg-library")]
 fn frames<'a>(xml: &'a roxmltree::Document<'_>, tag: &str) -> Vec<&'a str> {
     xml.descendants()
         .filter(|node| node.has_tag_name(tag))
@@ -113,6 +121,7 @@ fn frames<'a>(xml: &'a roxmltree::Document<'_>, tag: &str) -> Vec<&'a str> {
         .collect()
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn custom_canvas_premiere_build_writes_the_document_size_and_reimports_it() {
     // A 1920x1080 source centred on its own frame at Scale 50, a quarter of
@@ -229,6 +238,7 @@ fn custom_canvas_premiere_build_writes_the_document_size_and_reimports_it() {
     assert_eq!(layers[4]["rect"]["size"], json!([1080.0, 1920.0]));
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn a_group_on_a_custom_canvas_exports_as_a_nest_of_that_size_and_reimports_it() {
     // The portrait document's 1920x1080 source, at Scale 50 a quarter of the
@@ -303,6 +313,7 @@ fn a_group_on_a_custom_canvas_exports_as_a_nest_of_that_size_and_reimports_it() 
     assert_eq!(layers[1]["rect"]["size"], json!([1080.0, 1920.0]));
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn tesseract_to_premiere_check_builds_native_records_and_rejects_corrupt_media_payloads() {
     let dir = tempfile::tempdir().unwrap();
@@ -338,6 +349,7 @@ fn tesseract_to_premiere_check_builds_native_records_and_rejects_corrupt_media_p
     assert!(!root.join("long-out").exists());
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn omitted_video_source_rect_uses_inspected_media_dimensions() {
     for fit in [None, Some("cover"), Some("contain"), Some("stretch")] {
@@ -402,8 +414,9 @@ fn omitted_video_source_rect_uses_inspected_media_dimensions() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
-fn nonlinear_video_without_source_rect_is_omitted_without_inspecting_its_media() {
+fn reversing_video_without_source_rect_is_omitted_without_inspecting_its_media() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let mut doc = document(root);
@@ -423,7 +436,7 @@ fn nonlinear_video_without_source_rect_is_omitted_without_inspecting_its_media()
         "mapping": {"type": "timeRemap", "property": {
             "before": "inactive", "after": "inactive", "keyframes": [
                 {"id": "in", "time": 0, "value": 0, "easing": {"type": "linear"}},
-                {"id": "middle", "time": 500, "value": 300, "easing": {"type": "linear"}},
+                {"id": "middle", "time": 500, "value": 1100, "easing": {"type": "linear"}},
                 {"id": "out", "time": 1000, "value": 1000, "easing": {"type": "linear"}}
             ]
         }}, "inputOffsetMs": 0
@@ -473,6 +486,7 @@ fn nonlinear_video_without_source_rect_is_omitted_without_inspecting_its_media()
     assert_eq!(fs::read(output.join("media/source.mp4")).unwrap(), MEDIA);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn source_rect_cannot_disagree_with_packaged_video_frame() {
     let dir = tempfile::tempdir().unwrap();
@@ -495,6 +509,7 @@ fn source_rect_cannot_disagree_with_packaged_video_frame() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn tesseract_to_premiere_preserves_supported_opacity_and_output_safety() {
     let directory = tempfile::tempdir().unwrap();
@@ -528,6 +543,7 @@ fn tesseract_to_premiere_preserves_supported_opacity_and_output_safety() {
     assert_eq!(fs::read(existing.join("sentinel")).unwrap(), b"keep");
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn tesseract_to_premiere_rejects_inexact_media_duration_and_endpoints_before_output() {
     for (label, duration, intrinsic, start, length, expected) in [
@@ -594,6 +610,7 @@ fn text_the_premiere_writer_cannot_encode_fails_check_and_execution_alike() {
     assert_eq!(check, execute);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn native_stream_rate_and_absolute_aliases_must_match_the_source() {
     let dir = tempfile::tempdir().unwrap();
@@ -654,6 +671,7 @@ fn native_stream_rate_and_absolute_aliases_must_match_the_source() {
     assert!(!root.join("missing-out").exists());
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn media_metadata_and_edit_lists_are_checked_in_both_directions() {
     let dir = tempfile::tempdir().unwrap();
@@ -705,11 +723,13 @@ fn media_metadata_and_edit_lists_are_checked_in_both_directions() {
         .position(|bytes| bytes == b"pasp")
         .unwrap();
     container_aspect[aspect + 4..aspect + 8].copy_from_slice(&2_u32.to_be_bytes());
+    let mut invalid_aspect = MEDIA.to_vec();
+    invalid_aspect[aspect + 4..aspect + 8].copy_from_slice(&0_u32.to_be_bytes());
     for (name, bytes, message) in [
         (
-            "nonsquare",
-            include_bytes!("../fixtures/video-nonsquare.mp4").as_slice(),
-            "pixel aspect ratio",
+            "zero-pixel-aspect",
+            invalid_aspect.as_slice(),
+            "pixel aspect ratio must be positive",
         ),
         (
             // The fixture's one chunk holds 30 samples, so the 31st one-byte
@@ -769,6 +789,7 @@ fn media_metadata_and_edit_lists_are_checked_in_both_directions() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn generated_media_paths_must_match_packaged_files() {
     let dir = tempfile::tempdir().unwrap();
@@ -792,6 +813,7 @@ fn generated_media_paths_must_match_packaged_files() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn malformed_mp4_boxes_fail_check_and_execution_without_outputs() {
     for (box_type, field_offset, value) in [
@@ -843,6 +865,7 @@ fn malformed_mp4_boxes_fail_check_and_execution_without_outputs() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn repeated_media_still_validates_each_occurrences_source_duration() {
     let dir = tempfile::tempdir().unwrap();
@@ -871,6 +894,7 @@ fn repeated_media_still_validates_each_occurrences_source_duration() {
     assert!(!output.exists());
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn archive_media_validation_still_rejects_wrong_kind_and_container() {
     for (name, kind, expected) in [
@@ -916,6 +940,7 @@ fn web_project_file_is_not_an_editable_document_archive() {
     assert!(!output.exists());
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn container_color_profiles_are_validated_in_both_directions() {
     for (payload, error) in [
@@ -970,6 +995,7 @@ fn container_color_profiles_are_validated_in_both_directions() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn with_container_color(payload: &[u8]) -> Vec<u8> {
     let mut bytes = MEDIA.to_vec();
     let pasp = bytes.windows(4).position(|b| b == b"pasp").unwrap();

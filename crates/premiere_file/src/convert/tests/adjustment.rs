@@ -5,8 +5,9 @@ use crate::{
     schema::{
         records::MediaPathField, PrColour, PrCornerPin, PrEffect, PrEffectParamAnimation,
         PrEffectParamKeys, PrEffectParams, PrGaussianBlur, PrInvert, PrKeyframeEasing, PrLevels,
-        PrMediaKind, PrMosaic, PrPropertyAnimation, PrRamp, PrScalarKeyframe, PrVideoTrack,
-        VideoCodec, GAUSSIAN_BLUR_BLURRINESS, STILL_INTRINSIC_TICKS, TICKS, TICKS_PER_MILLISECOND,
+        PrMediaKind, PrMosaic, PrPropertyAnimation, PrRamp, PrScalarKeyframe, PrSourceEffects,
+        PrVideoTrack, VideoCodec, GAUSSIAN_BLUR_BLURRINESS, STILL_INTRINSIC_TICKS, TICKS,
+        TICKS_PER_MILLISECOND,
     },
     test_support::editable_document,
     tests::support::{
@@ -31,6 +32,8 @@ fn adjustment_media() -> (MediaId, PrMedia) {
             relative_paths: Vec::new(),
             absolute_paths: Vec::new(),
             video: Some(crate::schema::PrVideoStream {
+                pixel_aspect: Default::default(),
+                interpretation: Default::default(),
                 orientation: crate::schema::VideoOrientation::Identity,
                 intrinsic_ticks: STILL_INTRINSIC_TICKS,
                 frame_rate: (FrameRate::Fps30).into(),
@@ -67,6 +70,7 @@ fn adjustment_occurrence(start_secs: i64, end_secs: i64) -> PrVideoOccurrence {
         effects_above_mask: 0,
         stroke: None,
         active_transforms: 0,
+        source_effects: None,
     }
 }
 
@@ -80,14 +84,16 @@ fn key(source_ticks: i64, value: f64, easing: PrKeyframeEasing) -> PrScalarKeyfr
 
 fn levels(rgb: [f64; 5]) -> PrEffect {
     PrEffect {
+        mask: None,
         enabled: true,
-        params: PrEffectParams::Levels(PrLevels { rgb }),
+        params: PrEffectParams::Levels(PrLevels::Master { rgb }),
         animations: Vec::new(),
     }
 }
 
 fn gaussian_blur(enabled: bool, blurriness: f64, repeat_edge_pixels: bool) -> PrEffect {
     PrEffect {
+        mask: None,
         enabled,
         params: PrEffectParams::GaussianBlur(PrGaussianBlur {
             blurriness,
@@ -100,6 +106,7 @@ fn gaussian_blur(enabled: bool, blurriness: f64, repeat_edge_pixels: bool) -> Pr
 /// A static Corner Pin whose lower corners lean inwards by a tenth.
 fn corner_pin(enabled: bool) -> PrEffect {
     PrEffect {
+        mask: None,
         enabled,
         params: PrEffectParams::CornerPin(PrCornerPin {
             corners: [[0.0, 0.0], [1.0, 0.0], [0.1, 1.0], [0.9, 1.0]],
@@ -113,8 +120,9 @@ fn corner_pin(enabled: bool) -> PrEffect {
 /// complement).
 fn invert(blend: f64) -> PrEffect {
     PrEffect {
+        mask: None,
         enabled: true,
-        params: PrEffectParams::Invert(PrInvert { blend }),
+        params: PrEffectParams::Invert(PrInvert { blend, channel: 0 }),
         animations: Vec::new(),
     }
 }
@@ -124,6 +132,7 @@ fn invert(blend: f64) -> PrEffect {
 /// frame is the canvas.
 fn ramp() -> PrEffect {
     PrEffect {
+        mask: None,
         enabled: true,
         params: PrEffectParams::Ramp(PrRamp {
             start: [0.25, 0.5],
@@ -167,6 +176,147 @@ fn import(sequence: &crate::format::PrSequence) -> (Value, Vec<Omission>) {
     (document, omissions)
 }
 
+fn static_wipe() -> crate::schema::PrLinearWipe {
+    crate::schema::PrLinearWipe {
+        initial_completion: 50.0,
+        completion: Vec::new(),
+        angle_degrees: 90,
+        feather: 0.0,
+    }
+}
+
+#[test]
+fn adjustment_wipe_preserves_a_matte_binding_across_its_stack_boundary() {
+    let mut fill = crate::tests::support::clip_of("source", 0..TICKS, 0);
+    fill.track_matte = Some(crate::schema::PrTrackMatte {
+        track_index: 2,
+        channel: crate::schema::PrMatteChannel::Alpha,
+    });
+    let mut adjustment = adjustment_occurrence(0, 1);
+    adjustment.linear_wipe = Some(static_wipe());
+    let sequence = sequence_of(
+        "Cross-boundary matte",
+        vec![
+            PrVideoTrack::media([fill]),
+            PrVideoTrack::media([adjustment]),
+            PrVideoTrack::media([crate::tests::support::clip_of("source", 0..TICKS, 0)]),
+        ],
+    );
+    let (document, import_omissions) = import(&sequence);
+    let (project, omissions) = export_with_duration(document, 10000).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let sequence = project.single_sequence().unwrap();
+    let fill = sequence
+        .video_items()
+        .filter_map(|item| item.media())
+        .find(|clip| clip.track_matte.is_some())
+        .expect("exported consumer survives");
+    let matte = fill.track_matte.unwrap();
+    let source = sequence.video_tracks[matte.track_index].clip(0);
+    assert_eq!((fill.start_ticks, fill.end_ticks), (0, TICKS));
+    assert_eq!((source.start_ticks, source.end_ticks), (0, TICKS));
+    assert_eq!(fill.media, source.media);
+    assert_eq!(matte.channel, crate::schema::PrMatteChannel::Alpha);
+    assert_eq!(import_omissions.len(), 1, "{import_omissions:?}");
+    assert!(
+        import_omissions[0]
+            .reason
+            .contains("crosses its lower-composite boundary"),
+        "{import_omissions:?}"
+    );
+}
+
+#[test]
+fn adjustment_wipe_preserves_the_picture_at_the_native_nesting_limit() {
+    for count in [
+        crate::schema::MAX_NEST_DEPTH,
+        crate::schema::MAX_NEST_DEPTH + 1,
+    ] {
+        let mut wipes = Vec::new();
+        for index in 0..count {
+            let mut clip = adjustment_occurrence(0, 1);
+            clip.start_ticks = index as i64 * TICKS / 10;
+            clip.end_ticks = clip.start_ticks + TICKS / 10;
+            clip.out_ticks = clip.in_ticks + TICKS / 10;
+            clip.linear_wipe = Some(static_wipe());
+            wipes.push(clip);
+        }
+        let sequence = sequence_of(
+            "Depth boundary",
+            vec![
+                PrVideoTrack::media([crate::tests::support::clip_of("source", 0..TICKS, 0)]),
+                PrVideoTrack::media(wipes),
+            ],
+        );
+        let (document, import_omissions) = import(&sequence);
+        let (project, omissions) = export_with_duration(document, 10000).unwrap();
+        assert!(omissions.is_empty(), "{omissions:?}");
+        let mut sequence = project.single_sequence().unwrap();
+        for _ in 0..crate::schema::MAX_NEST_DEPTH {
+            sequence = &sequence
+                .nest_occurrences()
+                .next()
+                .expect("admitted Wipe nest survives")
+                .sequence;
+        }
+        let pictures: Vec<_> = sequence
+            .video_items()
+            .filter_map(|item| item.media())
+            .filter(|clip| {
+                matches!(
+                    project.media(clip).unwrap().video.as_ref().unwrap().kind,
+                    PrMediaKind::Video { .. }
+                )
+            })
+            .collect();
+        assert_eq!(pictures.len(), 1, "base picture survives all wrappers");
+        assert_eq!((pictures[0].start_ticks, pictures[0].end_ticks), (0, TICKS));
+        assert_eq!(
+            import_omissions.len(),
+            count - crate::schema::MAX_NEST_DEPTH,
+            "{import_omissions:?}"
+        );
+        assert!(
+            import_omissions
+                .iter()
+                .all(|omission| omission.reason.contains("native nesting limit")),
+            "{import_omissions:?}"
+        );
+    }
+}
+
+#[test]
+fn an_adjustments_source_effects_are_reported_and_its_own_effects_convert() {
+    // Supplementary: Premiere's order for the source effects of an
+    // adjustment clip's master clip is unmeasured, so they do not convert.
+    let mut adjustment = adjustment_occurrence(1, 4);
+    adjustment.effects = vec![levels([40.0, 220.0, 0.0, 255.0, 100.0])];
+    adjustment.source_effects = Some(PrSourceEffects {
+        master: "MasterClip:adjustment".to_owned(),
+        effects: vec![gaussian_blur(true, 25.0, false)],
+        active_transforms: 0,
+    });
+    let (document, omissions) = import(&sequence_with_adjustments(vec![adjustment]));
+    assert_eq!(
+        omissions,
+        [Omission {
+            scope: OmissionScope::Feature,
+            kind: OmissionKind::Omitted,
+            record: "MasterClip:adjustment".into(),
+            reason: crate::schema::SOURCE_CHAIN_NOT_CONVERTED.into(),
+        }]
+    );
+    let adjustment = &document["composition"]["layers"][0];
+    assert_eq!(adjustment["type"], "Adjustment");
+    let types: Vec<_> = adjustment["effects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|effect| effect["effect"]["type"].as_str().unwrap())
+        .collect();
+    assert_eq!(types, ["levels"]);
+}
+
 #[test]
 fn an_adjustment_imports_as_an_fx_adjustment_layer_with_opacity_keys_and_effects() {
     use PrKeyframeEasing::{Hold, Linear};
@@ -200,6 +350,7 @@ fn an_adjustment_imports_as_an_fx_adjustment_layer_with_opacity_keys_and_effects
         invert(30.0),
         ramp(),
         PrEffect {
+            mask: None,
             enabled: true,
             params: PrEffectParams::Mosaic(PrMosaic {
                 horizontal: 16,
@@ -218,7 +369,7 @@ fn an_adjustment_imports_as_an_fx_adjustment_layer_with_opacity_keys_and_effects
             scope: OmissionScope::Feature,
             kind: OmissionKind::Omitted,
             record: "adjustment".into(),
-            reason: "Transform effect at stack position 9 was not imported: a Transform converts only as the transform of a media clip's stage group; FX has no transform effect, and an adjustment layer's geometric transform does not render".into(),
+            reason: "Transform effect at stack position 9 was not imported: a Transform converts only as the transform of a media clip's stage group; FX has no transform effect, a still image imports no stage group, and an adjustment layer's geometric transform does not render".into(),
         }]
     );
     let layers = document["composition"]["layers"].as_array().unwrap();
@@ -365,6 +516,186 @@ fn an_adjustment_inside_a_nest_is_trimmed_with_the_inner_stack() {
     assert_eq!(group_layers[0]["effects"][0]["effect"]["gamma"], 1.5);
 }
 
+/// The first adjustment layer in `layers` or a group inside them.
+fn nested_adjustment(layers: &Value) -> Option<&Value> {
+    layers
+        .as_array()?
+        .iter()
+        .find_map(|layer| match layer["type"].as_str() {
+            Some("Adjustment") => Some(layer),
+            _ => nested_adjustment(&layer["layers"]),
+        })
+}
+
+#[test]
+fn an_adjustment_corner_pin_converts_only_in_a_sequence_of_the_document_canvas() {
+    use crate::schema::{PrPointKeyframe, CORNER_PIN};
+    use PrKeyframeEasing::Linear;
+    // Premiere pins a Corner Pin's corners to the adjustment's own frame, its
+    // sequence's canvas, and FX draws an adjustment layer's effects in the
+    // document frame at any nesting depth. Each adjusted sequence holds the
+    // source video under a 1–3 s adjustment, of the sequence's size as the
+    // reader requires, whose Corner Pin shifts the frame right by an eighth,
+    // (1/8, 0), (9/8, 0), (1/8, 1), (9/8, 1): by 80 pixels on a 640x360
+    // canvas, by 160 on the 1280x720 document. Its upper-left corner is keyed
+    // back to the identity over the first second, as the reader keys the
+    // Corner Pin that it lowers a Geometry2 zoom to, and a keyed Gaussian
+    // Blur follows it.
+    let mut media = media();
+    let mut adjusted = |[width, height]: [u32; 2]| {
+        let (_, mut sized) = adjustment_media();
+        let stream = sized.video.as_mut().unwrap();
+        [stream.width, stream.height] = [width, height];
+        let id = MediaId(format!("adjustment {width}x{height}"));
+        media.insert(id.clone(), sized);
+        let mut adjustment = adjustment_occurrence(1, 3);
+        adjustment.media = id;
+        let corner = |source_ticks: i64, value: [f64; 2]| PrPointKeyframe {
+            source_ticks,
+            value,
+            easing: Linear,
+            spatial_in_tangent: None,
+            spatial_out_tangent: None,
+        };
+        let mut blur = gaussian_blur(true, 10.0, false);
+        blur.animations = vec![PrEffectParamAnimation {
+            param: &GAUSSIAN_BLUR_BLURRINESS,
+            keys: PrEffectParamKeys::Scalar(vec![
+                key(IN_TICKS, 10.0, Linear),
+                key(IN_TICKS + TICKS, 20.0, Linear),
+            ]),
+        }];
+        adjustment.effects = vec![
+            PrEffect {
+                mask: None,
+                enabled: true,
+                params: PrEffectParams::CornerPin(PrCornerPin {
+                    corners: [[0.125, 0.0], [1.125, 0.0], [0.125, 1.0], [1.125, 1.0]],
+                }),
+                animations: vec![PrEffectParamAnimation {
+                    param: &CORNER_PIN.params[0],
+                    keys: PrEffectParamKeys::Point(vec![
+                        corner(IN_TICKS, [0.125, 0.0]),
+                        corner(IN_TICKS + TICKS, [0.0, 0.0]),
+                    ]),
+                }],
+            },
+            blur,
+        ];
+        let mut sequence = sequence_of(
+            "Adjusted",
+            sequence_with_adjustments(vec![adjustment]).video_tracks,
+        );
+        [sequence.width, sequence.height] = [width, height];
+        sequence
+    };
+    // A sequence of `canvas` that places `inner` at 0–3 s from its start.
+    let nesting = |name: &str, [width, height]: [u32; 2], inner| {
+        let mut sequence = sequence_of(
+            name,
+            vec![PrVideoTrack {
+                items: Vec::new(),
+                nests: vec![nest_of(inner, 0..3 * TICKS, 0)],
+                transitions: Vec::new(),
+            }],
+        );
+        [sequence.width, sequence.height] = [width, height];
+        sequence
+    };
+    let document = [1280, 720];
+    // A 640x360 sequence in the document, and one of the document's canvas
+    // inside a 640x360 one, its own parent's canvas being another.
+    let shifted = nesting("Outer", document, adjusted([640, 360]));
+    let unshifted = nesting(
+        "Outer",
+        document,
+        nesting("Middle", [640, 360], adjusted(document)),
+    );
+    let convert = |sequence: &crate::format::PrSequence| {
+        let ids = crate::tesseract_output::asset_ids_in_order(sequence, &media);
+        let mut omissions = Vec::new();
+        let document =
+            crate::convert::premiere_to_tesseract(sequence, &media, &ids, &mut omissions)
+                .unwrap()
+                .to_json_value()
+                .unwrap();
+        (document, omissions)
+    };
+    // The adjustment's effect types, and each keyed effect parameter by the
+    // type of the adjustment effect that it keys ("none" for no such effect).
+    let adjustment_effects = |document: &Value| {
+        let adjustment = nested_adjustment(&document["composition"]["layers"]).unwrap();
+        let effects = adjustment["effects"].as_array().unwrap();
+        let effect_type = |id: &Value| {
+            effects
+                .iter()
+                .find(|effect| &effect["id"] == id)
+                .map_or("none", |effect| effect["effect"]["type"].as_str().unwrap())
+        };
+        let keyed: Vec<_> = document["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|entry| entry["target"]["kind"] == "effectProperty")
+            .map(|entry| {
+                let target = &entry["target"];
+                (
+                    effect_type(&target["effectId"]).to_owned(),
+                    target["paramName"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect();
+        let types: Vec<_> = effects
+            .iter()
+            .map(|effect| effect["effect"]["type"].as_str().unwrap().to_owned())
+            .collect();
+        (types, keyed)
+    };
+    let pair = |effect: &str, param: &str| (effect.to_owned(), param.to_owned());
+
+    // FX would shift the 640x360 frame by 160 pixels: the Corner Pin and its
+    // keys are omitted with the two frames, the video and the keyed blur stay.
+    let (document, omissions) = convert(&shifted);
+    assert_eq!(
+        omissions,
+        [Omission {
+            scope: OmissionScope::Feature,
+            kind: OmissionKind::Omitted,
+            record: "adjustment 640x360".into(),
+            reason: "Corner Pin effect at stack position 1 was not imported: its picture's FX layer lays effects over 1280x720 pixels, and Premiere over the clip's 640x360 frame; a Corner Pin, Mosaic or Blur that repeats edge pixels converts only on a picture whose FX layer lays its effects over the clip's own frame, where Premiere applies them; FX lays a linked After Effects composition's group effects over the canvas".into(),
+        }]
+    );
+    let group = &document["composition"]["layers"][0];
+    assert!(group["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|layer| layer["type"] == "Video"));
+    assert_eq!(
+        adjustment_effects(&document),
+        (
+            vec!["gaussianBlur".to_owned()],
+            vec![pair("gaussianBlur", "blurriness")]
+        )
+    );
+
+    // Two levels down, a sequence of the document's canvas keeps its Corner
+    // Pin and the Pin's keys, though the sequence around it is smaller.
+    let (document, omissions) = convert(&unshifted);
+    assert!(omissions.is_empty(), "{omissions:?}");
+    assert_eq!(
+        adjustment_effects(&document),
+        (
+            vec!["cornerPin".to_owned(), "gaussianBlur".to_owned()],
+            vec![
+                pair("cornerPin", "upperLeftX"),
+                pair("cornerPin", "upperLeftY"),
+                pair("gaussianBlur", "blurriness"),
+            ]
+        )
+    );
+}
+
 /// The one-clip document (source 0–1 s) with `adjustment` above the video.
 fn document_with_adjustment(adjustment: Value) -> Value {
     let mut document = editable_document();
@@ -391,10 +722,18 @@ fn adjustment_layer(effects: Value) -> Value {
 }
 
 fn export_with_omissions(document: Value) -> crate::error::Result<(PrProjectFile, Vec<Omission>)> {
+    export_with_duration(document, 1000)
+}
+
+fn export_with_duration(
+    document: Value,
+    duration_ms: i64,
+) -> crate::error::Result<(PrProjectFile, Vec<Omission>)> {
     let document = EditableFxCompositionDocument::from_json_value(document).unwrap();
     let facts = BTreeMap::from([(
         "premiere-video-1".to_owned(),
         MediaFacts::Video(VideoMedia {
+            pixel_aspect: Default::default(),
             orientation: crate::schema::VideoOrientation::Identity,
             codec: VideoCodec::H264,
             bit_depth: 8,
@@ -403,7 +742,7 @@ fn export_with_omissions(document: Value) -> crate::error::Result<(PrProjectFile
             height: 1080,
             timing: crate::media::VideoTiming::for_test(
                 FrameRate::Fps30,
-                1000 * TICKS_PER_MILLISECOND,
+                duration_ms * TICKS_PER_MILLISECOND,
             ),
         }),
     )]);
@@ -518,7 +857,7 @@ fn an_fx_adjustment_layer_exports_as_a_flagged_black_video_clip_and_rereads() {
     assert_eq!(clip.effects[6].params, ramp().params);
     assert_eq!(
         clip.effects[0].params,
-        PrEffectParams::Levels(PrLevels {
+        PrEffectParams::Levels(PrLevels::Master {
             rgb: [40.0, 220.0, 0.0, 255.0, 100.0]
         })
     );
@@ -854,8 +1193,7 @@ fn an_adjustment_covers_no_gap_while_a_disabled_clip_still_ends_the_timeline() {
 }
 
 #[test]
-fn an_exported_adjustment_does_not_stand_in_for_the_black_canvas() {
-    const GAP_REASON: &str = "gaps require an explicit bottommost opaque black canvas";
+fn an_exported_adjustment_preserves_gaps_without_requiring_a_black_canvas() {
     let levels = json!([
         {"id": 1, "enabled": true, "effect": {"type": "levels", "inputBlack": 0.0, "inputWhite": 255.0, "gamma": 1.5, "outputBlack": 0.0, "outputWhite": 255.0}},
     ]);
@@ -870,43 +1208,39 @@ fn an_exported_adjustment_does_not_stand_in_for_the_black_canvas() {
     );
     let mut canvas = two_seconds.clone();
     canvas["composition"]["layers"][2]["activeRange"] = json!({"start": 0, "duration": 2000});
-    for (case, mut wire, expected) in [
-        ("uncovered tail", two_seconds, Err(GAP_REASON)),
-        ("leading gap", leading_gap, Err(GAP_REASON)),
-        (
-            "explicit canvas",
-            canvas,
-            Ok(vec![
-                (
-                    0,
-                    PrMediaKind::Video {
-                        codec: Some(VideoCodec::H264),
-                        hdr_profile: None,
-                    },
-                    0,
-                    1,
-                ),
-                (1, PrMediaKind::Adjustment, 0, 2),
-            ]),
-        ),
+    for (case, mut wire, video_start, video_end, gap) in [
+        ("uncovered tail", two_seconds, 0, 1, TICKS..2 * TICKS),
+        ("leading gap", leading_gap, 1, 2, 0..TICKS),
+        ("explicit canvas", canvas, 0, 1, TICKS..2 * TICKS),
     ] {
         if case != "explicit canvas" {
-            // Without a canvas the adjustment is the only layer over the gap.
+            // The adjustment has no picture of its own over the gap.
             wire["composition"]["layers"]
                 .as_array_mut()
                 .unwrap()
                 .remove(2);
         }
-        match (export_with_omissions(wire), expected) {
-            (Ok((project, omissions)), Ok(placements_expected)) => {
-                assert_eq!(placements(&project), placements_expected, "{case}");
-                assert!(omissions.is_empty(), "{case}: {omissions:?}");
-            }
-            (Err(error), Err(reason)) => {
-                assert!(error.to_string().contains(reason), "{case}: {error}");
-            }
-            (result, _) => panic!("{case}: {result:?}"),
-        }
+        let (project, omissions) = export_with_omissions(wire).unwrap();
+        assert_eq!(
+            placements(&project),
+            [
+                (
+                    0,
+                    PrMediaKind::Video {
+                        codec: Some(VideoCodec::H264),
+                        hdr_profile: None
+                    },
+                    video_start,
+                    video_end
+                ),
+                (1, PrMediaKind::Adjustment, 0, 2),
+            ],
+            "{case}"
+        );
+        assert!(omissions.is_empty(), "{case}: {omissions:?}");
+        let sequence = project.single_sequence().unwrap();
+        assert_eq!(sequence.end_ticks(), 2 * TICKS, "{case}");
+        assert_eq!(sequence.gaps(&project.media), [gap], "{case}");
     }
 }
 
@@ -951,6 +1285,93 @@ fn adjustment_coverage_guide_shares_nested_parent_and_trimmed_range() {
     assert_eq!(guide["transform"]["scale"], json!([50.0, 50.0]));
     assert_eq!(adjustment["transform"]["scale"], json!([100.0, 100.0]));
     assert_eq!(guide["rect"]["fillEnabled"], false);
+}
+
+#[test]
+fn adjustment_coverage_export_rejects_nonuniform_geometry_and_unmeasured_effects() {
+    let mut native = adjustment_occurrence(0, 1);
+    native.transform.scale = [50.0; 2];
+    native.effects = vec![invert(0.0)];
+    let (imported, omissions) = import(&sequence_with_adjustments(vec![native]));
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let layers = imported["composition"]["layers"].as_array().unwrap();
+    let mut adjustment = layers
+        .iter()
+        .find(|layer| layer["type"] == "Adjustment")
+        .unwrap()
+        .clone();
+    let mut guide = layers
+        .iter()
+        .find(|layer| layer["id"] == adjustment["masks"][0]["layer"])
+        .unwrap()
+        .clone();
+    adjustment["id"] = json!(3);
+    adjustment["masks"][0]["id"] = json!(5);
+    adjustment["masks"][0]["layer"] = json!(4);
+    guide["id"] = json!(4);
+    let mut document = document_with_adjustment(adjustment);
+    document["composition"]["layers"]
+        .as_array_mut()
+        .unwrap()
+        .insert(1, guide);
+    let (exported, omissions) = export_with_omissions(document.clone()).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    assert_eq!(exported.single_sequence().unwrap().video_items().count(), 2);
+    // A guide never paints, on either side of its adjustment in layer order.
+    let mut reordered = document.clone();
+    reordered["composition"]["layers"]
+        .as_array_mut()
+        .unwrap()
+        .swap(0, 1);
+    let (reordered, omissions) = export_with_omissions(reordered).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    assert_eq!(
+        reordered.single_sequence().unwrap().video_items().count(),
+        2
+    );
+
+    let mut invalid_reference = document.clone();
+    let layers = invalid_reference["composition"]["layers"]
+        .as_array_mut()
+        .unwrap();
+    layers.remove(1);
+    let video_id = layers
+        .iter()
+        .find(|layer| layer["type"] == "Video")
+        .unwrap()["id"]
+        .clone();
+    layers[0]["masks"][0]["layer"] = video_id;
+    let (retained, omissions) = export_with_omissions(invalid_reference).unwrap();
+    assert_eq!(retained.single_sequence().unwrap().video_items().count(), 1);
+    assert!(
+        omissions.iter().any(|omission| omission
+            .reason
+            .contains("masks on an adjustment layer are not exported")),
+        "{omissions:?}"
+    );
+
+    document["composition"]["layers"][1]["transform"]["scale"] = json!([50.0, 75.0]);
+    let (rejected, omissions) = export_with_omissions(document.clone()).unwrap();
+    assert_eq!(rejected.single_sequence().unwrap().video_items().count(), 1);
+    assert!(
+        omissions
+            .iter()
+            .any(|omission| omission.reason.contains("positive uniform")),
+        "{omissions:?}"
+    );
+
+    document["composition"]["layers"][1]["transform"]["scale"] = json!([50.0, 50.0]);
+    document["composition"]["layers"][0]["effects"] = json!([
+        {"type": "gaussianBlur", "blurriness": 25.0}
+    ]);
+    let (rejected, omissions) = export_with_omissions(document).unwrap();
+    assert_eq!(rejected.single_sequence().unwrap().video_items().count(), 1);
+    assert!(
+        omissions
+            .iter()
+            .any(|omission| omission.reason.contains("static full RGB Invert")),
+        "{omissions:?}"
+    );
 }
 
 #[test]

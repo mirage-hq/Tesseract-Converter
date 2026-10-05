@@ -10,6 +10,8 @@ for case in json.load(open(sys.argv[1]))['cases']:
     if case['proof'] == 'video_reference':
         print(f"{case['id']}\t{case['reference_video']['repo_path']}")
 PY
+# Letterbox each side so vertical canvases keep their aspect ratio.
+fit='scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2'
 while IFS=$'\t' read -r case_id repo_path; do
   reference="$root/$repo_path"
   actual="$output/$case_id/tesseract.mp4"
@@ -21,6 +23,6 @@ while IFS=$'\t' read -r case_id repo_path; do
   esac
   ffmpeg -hide_banner -loglevel error -ss "$time" -i "$reference" \
     -ss "$time" -i "$actual" \
-    -filter_complex '[0:v]scale=960:540[left];[1:v]scale=960:540[right];[left][right]hstack=inputs=2' \
+    -filter_complex "[0:v]${fit}[left];[1:v]${fit}[right];[left][right]hstack=inputs=2" \
     -frames:v 1 -y "$output/$case_id/adobe-left_tesseract-right.png"
 done < "$output/references.tsv"

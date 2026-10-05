@@ -134,6 +134,20 @@ class AudioGateTests(unittest.TestCase):
         with self.assertRaises(AudioTestError):
             compare(mono, self.ref, self.policy)
 
+    def test_duration_failure_can_report_metrics_but_cannot_pass(self):
+        # Losing a silent tail leaves waveform error zero, but still fails time.
+        reference = self.base[:-4800] + [(0.0, 0.0)] * 4800
+        wav(self.ref, reference)
+        wav(self.actual, reference[:-1000])
+        with self.assertRaises(AudioTestError):
+            compare(self.actual, self.ref, self.policy)
+        result = compare(self.actual, self.ref, self.policy, report_duration_failure=True)
+        self.assertFalse(result["passed"])
+        self.assertFalse(result["duration"]["passed"])
+        self.assertTrue(all(channel["passed"] for channel in result["channel_results"]))
+        self.assertEqual(result["actual_frames"], 47000)
+        self.assertEqual(result["reference_frames"], 48000)
+
     def test_aac_packet_padding_is_not_presentation_duration_drift(self):
         encoded = self.root / "encoded.m4a"
         subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-i", str(self.ref),

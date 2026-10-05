@@ -1,0 +1,13 @@
+<PremiereData Version="3">
+  <Sequence ObjectUID="source-span-sequence"><Name>Native timing regression</Name><TrackGroups><TrackGroup><Second ObjectRef="1"/></TrackGroup></TrackGroups></Sequence>
+  <VideoTrackGroup ObjectID="1"><TrackGroup><Tracks><Track ObjectURef="track-1"/></Tracks><FrameRate>8475667200</FrameRate></TrackGroup><FrameRect>0,0,1920,1080</FrameRect><ComponentOwner><Components ObjectRef="2"/></ComponentOwner></VideoTrackGroup>
+  <VideoComponentChain ObjectID="2"><ComponentChain/></VideoComponentChain>
+  <VideoClipTrack ObjectUID="track-1"><ClipTrack><Track><ID>1</ID></Track><ClipItems><TrackItems><TrackItem ObjectRef="1159"/></TrackItems></ClipItems></ClipTrack></VideoClipTrack>
+  <VideoClipTrackItem ObjectID="1159"><ClipTrackItem><ComponentOwner><Components ObjectRef="1348"/></ComponentOwner><TrackItem><Start>5526135014400</Start><End>5661745689600</End></TrackItem><SubClip ObjectRef="1349"/></ClipTrackItem><FrameRect>0,0,1920,1080</FrameRect><PixelAspectRatio>1,1</PixelAspectRatio></VideoClipTrackItem>
+  <VideoComponentChain ObjectID="1348"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>
+  <SubClip ObjectID="1349"><Clip ObjectRef="1643"/><Name>Source</Name></SubClip>
+  <VideoClip ObjectID="1643"><Clip><Source ObjectRef="299"/><InPoint>600830630396</InPoint><OutPoint>999052454391</OutPoint><PlaybackSpeed>2.936507936515802</PlaybackSpeed></Clip></VideoClip>
+  <VideoMediaSource ObjectID="299"><MediaSource><Media ObjectURef="media-1"/></MediaSource><OriginalDuration>2540160000000</OriginalDuration></VideoMediaSource>
+  <Media ObjectUID="media-1"><VideoStream ObjectRef="8"/><RelativePath>media/source.mp4</RelativePath></Media>
+  <VideoStream ObjectID="8"><Duration>2540160000000</Duration><FrameRate>8467200000</FrameRate><FrameRect>0,0,1920,1080</FrameRect></VideoStream>
+</PremiereData>

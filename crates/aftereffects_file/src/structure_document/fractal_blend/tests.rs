@@ -88,6 +88,7 @@ fn stage(id: u64, ordinal: usize, mode: BlendMode, opacity: f64) -> Stage {
     Stage {
         native_ordinal: ordinal,
         generator: identified(id, generator),
+        animations: Vec::new(),
         blend_mode: mode,
         opacity: PercentageProperty::new(opacity).unwrap(),
     }
@@ -222,6 +223,8 @@ fn multiple_stages_preserve_original_targets_prefix_order_and_outer_suffix() {
             &stages,
             context(false),
             State {
+                animation_budget: &mut AnimationBudget::default(),
+                animations: &mut Vec::new(),
                 next: &mut next,
                 budget: &mut budget
             }
@@ -297,6 +300,8 @@ fn generated_plane_keeps_nonzero_visibility_and_neutral_disabled_paint() {
                 &[stage(101, 2, mode, 25.)],
                 context(hidden),
                 State {
+                    animation_budget: &mut AnimationBudget::default(),
+                    animations: &mut Vec::new(),
                     next: &mut next,
                     budget: &mut budget,
                 },
@@ -348,6 +353,8 @@ fn helper_failures_restore_owner_identity_cursor_and_serialized_accounting() {
             &stages,
             context(false),
             State {
+                animation_budget: &mut AnimationBudget::default(),
+                animations: &mut Vec::new(),
                 next: &mut next,
                 budget: &mut budget
             }
@@ -366,6 +373,8 @@ fn helper_failures_restore_owner_identity_cursor_and_serialized_accounting() {
             &stages,
             context(false),
             State {
+                animation_budget: &mut AnimationBudget::default(),
+                animations: &mut Vec::new(),
                 next: &mut next,
                 budget: &mut budget
             }
@@ -386,6 +395,8 @@ fn helper_failures_restore_owner_identity_cursor_and_serialized_accounting() {
             &stages[..1],
             deep,
             State {
+                animation_budget: &mut AnimationBudget::default(),
+                animations: &mut Vec::new(),
                 next: &mut next,
                 budget: &mut budget
             }
@@ -409,6 +420,8 @@ fn one_native_prefix_stage_can_expand_into_multiple_identified_records() {
         &[stage(101, 2, BlendMode::Multiply, 100.)],
         context,
         State {
+            animation_budget: &mut AnimationBudget::default(),
+            animations: &mut Vec::new(),
             next: &mut next,
             budget: &mut budget,
         },
@@ -518,6 +531,8 @@ fn effect_only_disable_retains_opaque_carrier_over_transparent_prefix() {
             &[stage(101, 2, mode, 25.)],
             context(false),
             State {
+                animation_budget: &mut AnimationBudget::default(),
+                animations: &mut Vec::new(),
                 next: &mut next,
                 budget: &mut budget,
             },
@@ -545,5 +560,65 @@ fn effect_only_disable_retains_opaque_carrier_over_transparent_prefix() {
         let prefix_alpha = retained.transform.opacity.value() / 100.;
         let carrier_alpha = disabled.rect.fill_color[3] * noise.transform.opacity.value() / 100.;
         assert_eq!(carrier_alpha + prefix_alpha * (1. - carrier_alpha), 0.25);
+    }
+}
+
+#[test]
+fn keyed_fractal_stage_commits_or_rolls_back_tracks_with_wrappers() {
+    let mut keyed = stage(101, 2, BlendMode::Multiply, 100.);
+    keyed.animations.push(serde_json::from_value(serde_json::json!({
+        "target":{"kind":"effectProperty","effectId":101,"paramName":"contrast"},
+        "animator":{"type":"keyframes","enabled":true,"keyframes":[
+            {"id":"fractal-a","layerTime":0,"value":{"type":"float","value":100.},"easing":{"type":"linear"}},
+            {"id":"fractal-b","layerTime":1000,"value":{"type":"float","value":130.},"easing":{"type":"linear"}}
+        ]}
+    })).unwrap());
+    for failure in [None, Some("shapes"), Some("animations")] {
+        let original = owner();
+        let mut candidate = original.clone();
+        let mut next = 300;
+        let mut shapes = if failure == Some("shapes") {
+            OutputBudget::with_limit(0)
+        } else {
+            OutputBudget::default()
+        };
+        let mut animation_budget = if failure == Some("animations") {
+            AnimationBudget::with_limit(0)
+        } else {
+            AnimationBudget::default()
+        };
+        let mut animations = Vec::new();
+        let result = apply(
+            &mut candidate,
+            std::slice::from_ref(&keyed),
+            context(false),
+            State {
+                next: &mut next,
+                budget: &mut shapes,
+                animation_budget: &mut animation_budget,
+                animations: &mut animations,
+            },
+        );
+        if failure.is_some() {
+            assert!(result.is_err());
+            assert_eq!(candidate, original);
+            assert_eq!(next, 300);
+            assert!(animations.is_empty());
+            assert_eq!(animation_budget.used(), 0);
+            assert_eq!(shapes.checkpoint(), 0);
+        } else {
+            assert_eq!(result, Ok(true));
+            assert_eq!(animations, keyed.animations);
+            assert_eq!(
+                animation_budget.used(),
+                committed_entry_reservation_bytes(&animations[0]).unwrap()
+            );
+            let output = group_data(&candidate.layers[0]);
+            let noise = group_data(&output.layers[0]);
+            let LayerData::Rect(rect) = noise.layers[0].data() else {
+                panic!()
+            };
+            assert_eq!(effect_id(&rect.effects[0]), EffectId::new(101));
+        }
     }
 }

@@ -12,20 +12,30 @@ use fx_schema::{
 };
 
 use crate::{
+    expression_samples::{EvaluatedProperty, ExpressionSamples, PropertyIdentity},
     properties::{NumericProperty, PropertyError, read_numeric, root_runs, runs, unique_list},
     rifx::Chunk,
     structure::Layer,
 };
 
 use super::{
-    animation::{NumericAnimationClock, NumericAnimationTarget, numeric_entries},
+    animation::{
+        NumericAnimationClock, NumericAnimationTarget, evaluated_numeric_entries, numeric_entries,
+        rebased_samples_with,
+    },
     animation_budget::AnimationBudget,
     control_links,
 };
 
 mod alternating;
-mod cos;
+pub(crate) mod cos;
 mod expression_links;
+mod path_reference;
+mod source_alias;
+#[cfg(test)]
+mod source_alias_cases;
+#[cfg(test)]
+mod source_alias_tests;
 
 use cos::Value;
 use expression_links::ExpressionLinks;
@@ -60,6 +70,7 @@ fn import(
 /// importer. A lowered Slider percent expression replaces the authored
 /// documents, and a lowered alternating Expression Selector expands its
 /// animators, only if the whole expansion is admitted.
+#[cfg(test)]
 pub(super) fn import_with_mask_guides(
     layer: &Layer,
     occurrence: &GroupLayer,
@@ -67,8 +78,50 @@ pub(super) fn import_with_mask_guides(
     next_id: &mut u64,
     budget: &mut AnimationBudget,
 ) -> TextImport {
+    import_text(
+        layer,
+        None,
+        None,
+        occurrence,
+        mask_guide_ids,
+        next_id,
+        budget,
+    )
+}
+
+/// Resolves direct Source Text content aliases against the effective, occurrence-local
+/// composition. Unsupported animator expressions remain separately diagnosed.
+pub(super) fn import_in_composition(
+    layer: &Layer,
+    composition: &crate::structure::Composition,
+    evaluations: Option<(u32, &ExpressionSamples)>,
+    occurrence: &GroupLayer,
+    mask_guide_ids: &[(u32, LayerId)],
+    next_id: &mut u64,
+    budget: &mut AnimationBudget,
+) -> TextImport {
+    import_text(
+        layer,
+        Some(composition),
+        evaluations,
+        occurrence,
+        mask_guide_ids,
+        next_id,
+        budget,
+    )
+}
+
+fn import_text(
+    layer: &Layer,
+    composition: Option<&crate::structure::Composition>,
+    evaluations: Option<(u32, &ExpressionSamples)>,
+    occurrence: &GroupLayer,
+    mask_guide_ids: &[(u32, LayerId)],
+    next_id: &mut u64,
+    budget: &mut AnimationBudget,
+) -> TextImport {
     let mut warnings = Vec::new();
-    let source = match read_source(layer) {
+    let mut source = match read_source(layer) {
         Ok(Some(source)) => source,
         Ok(None) => return TextImport::default(),
         Err(error) => {
@@ -87,6 +140,63 @@ pub(super) fn import_with_mask_guides(
         };
     }
 
+    if let Some(composition) = composition {
+        source_alias::lower(layer, composition, &mut source);
+    }
+    if source.percent.is_none()
+        && let Some((comp_id, samples)) = evaluations
+        && let Some(evaluated) = samples
+            .texts
+            .iter()
+            .find(|text| text.composition_id == comp_id && text.layer_id == layer.record.id())
+    {
+        match evaluated_text_holds(layer, evaluated) {
+            Ok(holds) => {
+                source
+                    .warnings
+                    .retain(|warning| !warning.contains("enabled expression not lowered"));
+                source.warnings.push(format!(
+                    "Source Text expression evaluated by the converter into {} held text segment(s) at source frames; live expression linkage is not retained",
+                    holds.texts.len()
+                ));
+                source.percent = Some(holds);
+            }
+            Err(reason) => source.warnings.push(format!(
+                "Source Text expression samples not lowered: {reason}"
+            )),
+        }
+    }
+    if let Some((comp_id, samples)) = evaluations {
+        let clock = [
+            layer.record.start_time().unwrap_or(f64::NAN),
+            layer.record.stretch().unwrap_or(f64::NAN),
+        ];
+        for (index, animator) in source.animators.iter_mut().enumerate() {
+            let Ok(native_index) = u32::try_from(index + 1) else {
+                continue;
+            };
+            for (name, numeric) in &animator.properties {
+                if !numeric
+                    .as_ref()
+                    .is_ok_and(|numeric| numeric.expression_enabled)
+                {
+                    continue;
+                }
+                if let Some(sample) = samples.lookup(
+                    comp_id,
+                    layer.record.id(),
+                    &PropertyIdentity::TextAnimator {
+                        animator: native_index,
+                        match_name: name.clone(),
+                    },
+                ) {
+                    animator
+                        .evaluated
+                        .push((name.clone(), sample.clone(), clock));
+                }
+            }
+        }
+    }
     let mut rejected_expansion = None;
     if let Some(percent) = &source.percent {
         match import_percent_holds(
@@ -513,6 +623,31 @@ pub(super) fn cached_caption_width(layer: &Layer) -> Result<f64, &'static str> {
             return Err("caption animator may change cached horizontal bounds");
         }
     }
+    cached_glyph_width(document)
+}
+
+/// Average source glyph extent is only a diagnosed layout approximation for an
+/// edited capsule string; it is not a sourceRectAtTime evaluation.
+pub(super) fn saved_graphic_width(layer: &Layer, current: &TextDocument) -> Result<f64, TextError> {
+    let source = read_source(layer)?.ok_or(TextError::Layout("missing Source Text layout"))?;
+    let (original, _) =
+        convert_document(&source.documents[0], &source.fonts, source.frame.as_ref());
+    let count = original.text.trim_end_matches(['\r', '\n']).chars().count();
+    if count == 0 || current.text.contains(['\r', '\n']) {
+        return Err(TextError::Layout(
+            "single-line cached advance approximation unavailable",
+        ));
+    }
+    Ok(
+        cached_glyph_width(&source.documents[0]).map_err(TextError::Layout)?
+            * current.text.chars().count() as f64
+            / count as f64
+            * current.font_size.value()
+            / original.font_size.value(),
+    )
+}
+
+fn cached_glyph_width(document: &Value) -> Result<f64, &'static str> {
     let layout = document
         .get("1")
         .and_then(|value| value.get("2"))
@@ -520,41 +655,36 @@ pub(super) fn cached_caption_width(layer: &Layer) -> Result<f64, &'static str> {
     let mut lines = 0;
     let mut boxes = Vec::new();
     fn collect(value: &Value, lines: &mut usize, boxes: &mut Vec<[f64; 4]>) -> Option<()> {
-        match value.get("99").and_then(Value::as_str) {
-            Some("L") => *lines += 1,
-            Some("G") => {
-                let bounds = value.get("8")?.as_array()?;
-                if bounds.len() != 4 {
-                    return None;
+        let mut pending = vec![value];
+        while let Some(value) = pending.pop() {
+            match value.get("99").and_then(Value::as_str) {
+                Some("L") => *lines += 1,
+                Some("G") => {
+                    let bounds = value.get("8")?.as_array()?;
+                    if bounds.len() != 4 {
+                        return None;
+                    }
+                    let bounds = [
+                        bounds[0].as_f64()?,
+                        bounds[1].as_f64()?,
+                        bounds[2].as_f64()?,
+                        bounds[3].as_f64()?,
+                    ];
+                    if !bounds.into_iter().all(f64::is_finite)
+                        || bounds[2] <= bounds[0]
+                        || bounds[3] <= bounds[1]
+                    {
+                        return None;
+                    }
+                    boxes.push(bounds);
                 }
-                let bounds = [
-                    bounds[0].as_f64()?,
-                    bounds[1].as_f64()?,
-                    bounds[2].as_f64()?,
-                    bounds[3].as_f64()?,
-                ];
-                if !bounds.into_iter().all(f64::is_finite)
-                    || bounds[2] <= bounds[0]
-                    || bounds[3] <= bounds[1]
-                {
-                    return None;
-                }
-                boxes.push(bounds);
+                _ => {}
             }
-            _ => {}
-        }
-        match value {
-            Value::Array(values) => {
-                for value in values {
-                    collect(value, lines, boxes)?;
-                }
+            match value {
+                Value::Array(values) => pending.extend(values.iter().rev()),
+                Value::Dict(values) => pending.extend(values.values().rev()),
+                _ => {}
             }
-            Value::Dict(values) => {
-                for value in values.values() {
-                    collect(value, lines, boxes)?;
-                }
-            }
-            _ => {}
         }
         Some(())
     }
@@ -800,6 +930,66 @@ struct AnimatorSource {
     name: String,
     properties: Vec<(String, Result<NumericProperty, PropertyError>)>,
     selectors: Vec<SelectorSource>,
+    /// Expression samples of enabled animator properties, in the parent
+    /// composition clock, with the owner layer's start/stretch.
+    evaluated: Vec<(String, EvaluatedProperty, [f64; 2])>,
+}
+
+/// Enabled Text Animators in native order with their animator-property leaves.
+/// Indices are one-based over enabled animators, exactly as text import
+/// numbers them; the expression model uses the same identity.
+/// One enabled animator: its one-based index and named property leaf runs.
+pub(crate) type AnimatorLeaves<'a> = (u32, Vec<(&'a str, &'a [Chunk])>);
+
+pub(crate) fn animator_property_leaves(layer: &Layer) -> Vec<AnimatorLeaves<'_>> {
+    let mut ignored = Vec::new();
+    let mut result = Vec::new();
+    let Some(text_group) = root_runs(&layer.content).ok().and_then(|roots| {
+        roots
+            .into_iter()
+            .find(|(name, _)| *name == "ADBE Text Properties")
+            .and_then(|(_, run)| unique_list(run, *b"tdgp").ok())
+    }) else {
+        return result;
+    };
+    let Ok(text_runs) = runs(text_group) else {
+        return result;
+    };
+    let mut animators = Vec::new();
+    for (name, run) in text_runs {
+        match name {
+            "ADBE Text Animators" => {
+                if let Ok(children) = unique_list(run, *b"tdgp").and_then(runs) {
+                    animators.extend(
+                        children
+                            .into_iter()
+                            .filter(|(name, _)| *name == "ADBE Text Animator")
+                            .map(|(_, run)| run),
+                    );
+                }
+            }
+            "ADBE Text Animator" => animators.push(run),
+            _ => {}
+        }
+    }
+    for run in animators {
+        if !crate::properties::group_enabled_or_warn(run, "ADBE Text Animator", &mut ignored) {
+            continue;
+        }
+        let index = u32::try_from(result.len() + 1).unwrap_or(u32::MAX);
+        let leaves = unique_list(run, *b"tdgp")
+            .and_then(runs)
+            .ok()
+            .and_then(|children| {
+                children
+                    .into_iter()
+                    .find(|(name, _)| *name == "ADBE Text Animator Properties")
+            })
+            .and_then(|(_, run)| unique_list(run, *b"tdgp").and_then(runs).ok())
+            .unwrap_or_default();
+        result.push((index, leaves));
+    }
+    result
 }
 
 #[derive(Clone)]
@@ -819,6 +1009,39 @@ enum SelectorSource {
         name: String,
         properties: Vec<(String, Result<NumericProperty, PropertyError>)>,
     },
+}
+
+/// Read the same static, uniform document used by ordinary AEP text import.
+/// Capsule controllers bind native layer IDs before calling this decoder.
+pub(crate) fn saved_graphic_document(
+    layer: &Layer,
+) -> Result<(TextDocument, String, Vec<String>), TextError> {
+    let source =
+        read_source(layer)?.ok_or(TextError::Layout("controller source has no Source Text"))?;
+    if !source.document_is_static
+        || source.documents.len() != 1
+        || !source.document_starts.is_empty()
+        || run_count(&source.documents[0], "6") != 1
+    {
+        return Err(TextError::Layout(
+            "capsule Source Text requires one static character style",
+        ));
+    }
+    let (document, mut warnings) =
+        convert_document(&source.documents[0], &source.fonts, source.frame.as_ref());
+    warnings.extend(source.warnings);
+    if !source.animators.is_empty()
+        || !source.path_options.is_empty()
+        || !source.more_options.is_empty()
+    {
+        warnings.push("capsule static text snapshot does not reconstruct Text animators, path or More Options controllers".into());
+    }
+    let font = if document.font_style.as_ref().is_empty() {
+        document.font_family.to_string()
+    } else {
+        format!("{}-{}", document.font_family, document.font_style)
+    };
+    Ok((document, font, warnings))
 }
 
 fn read_source(layer: &Layer) -> Result<Option<SourceText>, TextError> {
@@ -856,7 +1079,7 @@ fn read_source(layer: &Layer) -> Result<Option<SourceText>, TextError> {
         .ok()
         .and_then(|metadata| {
             let flags = only_data(metadata, *b"tdb4").ok()?;
-            (flags.len() == 124).then(|| {
+            (flags.len() == 124 && flags[..2] == [0xdb, 0x99]).then(|| {
                 let expression_present = flags[120] & 1 != 0
                     || metadata
                         .iter()
@@ -890,7 +1113,7 @@ fn read_source(layer: &Layer) -> Result<Option<SourceText>, TextError> {
     let percent = lower_source_text_expression(layer, wrapper, documents.len(), &mut warnings);
     let links = ExpressionLinks::new(&layer.content, text_group);
     let (animators, more_options, path_options, mut property_warnings) =
-        read_text_properties(text_group, &links);
+        read_text_properties(text_group, &links, &layer.content);
     warnings.append(&mut property_warnings);
     Ok(Some(SourceText {
         document_is_static,
@@ -911,6 +1134,7 @@ type NumericProperties = Vec<(String, Result<NumericProperty, PropertyError>)>;
 fn read_text_properties<'a>(
     text_group: &'a [Chunk],
     links: &ExpressionLinks<'a>,
+    source_content: &[Chunk],
 ) -> (
     Vec<AnimatorSource>,
     NumericProperties,
@@ -965,10 +1189,14 @@ fn read_text_properties<'a>(
                 Ok(properties) => more_options = properties,
                 Err(error) => warnings.push(format!("Text More Options omitted: {error}")),
             },
-            "ADBE Text Path Options" => match unique_list(run, *b"tdgp").and_then(numeric_runs) {
-                Ok(properties) => path_options = properties,
-                Err(error) => warnings.push(format!("Text Path Options omitted: {error}")),
-            },
+            "ADBE Text Path Options" => {
+                match unique_list(run, *b"tdgp")
+                    .and_then(|group| path_reference::read(group, source_content))
+                {
+                    Ok(properties) => path_options = properties,
+                    Err(error) => warnings.push(format!("Text Path Options omitted: {error}")),
+                }
+            }
             _ => {}
         }
     }
@@ -1045,6 +1273,7 @@ fn read_animator<'a>(
         name: format!("Animator {}", index + 1),
         properties,
         selectors,
+        evaluated: Vec::new(),
     })
 }
 
@@ -1070,7 +1299,7 @@ fn lower_links<'a>(
                 warnings.push(format!("{context} {name}: bounded same-layer control expression lowered to independent editable values/keys; live control linkage is not retained"));
             }
             Err(error) => warnings.push(format!(
-                "{context} {name}: control link not lowered ({error}); the stored/keyed value is used"
+                "{context} {name}: control link not lowered ({error}); the stored/keyed value is the fallback unless converter expression evaluation is admitted"
             )),
         }
     }
@@ -1184,6 +1413,53 @@ fn append_numeric_animation(
     output.warnings.append(&mut property_warnings);
 }
 
+/// Animator properties with converter expression samples use those samples on
+/// the same editable target; everything else imports native keys/values.
+fn append_animator_property(
+    source: &AnimatorSource,
+    source_name: &str,
+    context: &str,
+    target: NumericAnimationTarget,
+    clock: NumericAnimationClock,
+    output: TextAnimationOutput<'_>,
+) {
+    if let Some((_, samples, owner_clock)) = source
+        .evaluated
+        .iter()
+        .find(|(name, _, _)| name == source_name)
+    {
+        let name = format!("{context} {source_name}");
+        match rebased_samples_with(samples, *owner_clock, clock) {
+            Ok(rebased) => {
+                let (mut entries, mut warnings) = evaluated_numeric_entries(
+                    &name,
+                    &rebased,
+                    std::slice::from_ref(&target),
+                    &[],
+                    output.budget,
+                );
+                output.warnings.append(&mut warnings);
+                if !entries.is_empty() {
+                    output.warnings.push(format!("{name}: animator-property expression evaluated once per layer, not per character"));
+                    output.entries.append(&mut entries);
+                    return;
+                }
+            }
+            Err(error) => output
+                .warnings
+                .push(format!("{name}: {error}; expression samples not lowered")),
+        }
+    }
+    append_numeric_animation(
+        &source.properties,
+        source_name,
+        context,
+        target,
+        clock,
+        output,
+    );
+}
+
 fn append_animator_animation(
     source: &AnimatorSource,
     animator: &TextAnimator,
@@ -1209,8 +1485,8 @@ fn append_animator_animation(
         ("ADBE Text Scale 3D", vector("scale")),
         ("ADBE Text Blur", vector("blur")),
     ] {
-        append_numeric_animation(
-            &source.properties,
+        append_animator_property(
+            source,
             source_name,
             context,
             target,
@@ -1229,8 +1505,8 @@ fn append_animator_animation(
         ("ADBE Text Character Offset", "characterOffset"),
         ("ADBE Text Character Replace", "characterValue"),
     ] {
-        append_numeric_animation(
-            &source.properties,
+        append_animator_property(
+            source,
             source_name,
             context,
             scalar(target_name),
@@ -1238,8 +1514,8 @@ fn append_animator_animation(
             TextAnimationOutput::new(entries, warnings, budget),
         );
     }
-    append_numeric_animation(
-        &source.properties,
+    append_animator_property(
+        source,
         "ADBE Text Line Spacing",
         context,
         NumericAnimationTarget::float(PropertyTarget::fx_item(animator.id, "lineSpacing"), 1, 1.0),
@@ -1250,8 +1526,8 @@ fn append_animator_animation(
         ("ADBE Text Fill Color", "fillColor"),
         ("ADBE Text Stroke Color", "strokeColor"),
     ] {
-        append_numeric_animation(
-            &source.properties,
+        append_animator_property(
+            source,
             source_name,
             context,
             NumericAnimationTarget::color(
@@ -1495,6 +1771,19 @@ fn convert_text_properties(
             &prefix,
             &mut warnings,
         );
+        for (name, neutral) in [
+            ("ADBE Text Anchor Point 3D", 0.0),
+            ("ADBE Text Position 3D", 0.0),
+            ("ADBE Text Scale 3D", 100.0),
+        ] {
+            report_dropped_z(
+                &source_animator.properties,
+                name,
+                neutral,
+                &prefix,
+                &mut warnings,
+            );
+        }
         animator.rotation = scalar_property(
             &source_animator.properties,
             "ADBE Text Rotation",
@@ -1621,6 +1910,28 @@ fn convert_text_properties(
                     "{prefix} selector {name} has no existing destination selector equivalent and was omitted"
                 )),
             }
+        }
+        if !source_animator.selectors.is_empty()
+            && animator.selectors.is_empty()
+            && animator.wiggly_selectors.is_empty()
+        {
+            let Some(selector_id) = allocate_item_id(next_id) else {
+                warnings.push(format!(
+                    "{prefix} omitted: no identifier remains for the unsupported-selector safety gate"
+                ));
+                break;
+            };
+            // An empty FX selector stack selects every glyph. Retain editable
+            // values without globally applying operations whose native selection
+            // could not be represented. Unsupported selector keys have no target.
+            animator.selectors.push(RangeSelector {
+                id: selector_id,
+                amount: 0.0,
+                ..RangeSelector::default()
+            });
+            warnings.push(format!(
+                "{prefix} has no imported native selector; an editable zero-amount Range Selector bypasses its operations to preserve source text. Native selection/reveal animation is omitted, not reproduced"
+            ));
         }
         let unsupported = source_animator
             .properties
@@ -1957,6 +2268,29 @@ fn vector2_property(
     value.into_iter().all(f64::is_finite).then_some(value)
 }
 
+/// Editable text animators are 2D: report a non-neutral static or keyed Z
+/// component that the XY import necessarily omits.
+fn report_dropped_z(
+    properties: &[(String, Result<NumericProperty, PropertyError>)],
+    name: &str,
+    neutral: f64,
+    prefix: &str,
+    warnings: &mut Vec<String>,
+) {
+    let Some((_, Ok(numeric))) = properties.iter().find(|(candidate, _)| candidate == name) else {
+        return;
+    };
+    let dropped = std::iter::once(&numeric.values)
+        .chain(numeric.keyframes.iter().map(|key| &key.values))
+        .filter_map(|values| values.get(2))
+        .any(|z| *z != neutral);
+    if dropped {
+        warnings.push(format!(
+            "{prefix} {name} Z component is not representable in 2D editable text animators; Z omitted and XY retained"
+        ));
+    }
+}
+
 fn color_property(
     properties: &[(String, Result<NumericProperty, PropertyError>)],
     name: &str,
@@ -1987,7 +2321,7 @@ fn numeric_property<'a>(
     let (_, result) = properties.iter().find(|(candidate, _)| candidate == name)?;
     match result {
         Ok(numeric) if numeric.expression_enabled => {
-            warnings.push(format!("{prefix} {name} has an enabled AE expression; expression is not evaluated as FX script and the stored/keyed value is used"));
+            warnings.push(format!("{prefix} {name} has an enabled AE expression; no FX script is generated and the stored/keyed value is the static fallback (converter expression evaluation, when admitted, is diagnosed separately)"));
             Some(numeric)
         }
         Ok(numeric) => Some(numeric),
@@ -2205,6 +2539,29 @@ fn expression_not_lowered(reason: &str) -> String {
 /// Source Text's descriptor carries the numeric-leaf expression flags read by
 /// `properties::read_numeric`: tdb4 byte 120 marks a stored expression and
 /// byte 119 disables it. Returns the descriptor only for an enabled expression.
+/// Pre-expression Source Text and the metadata list holding its enabled
+/// expression, for converter evaluation of single-document Source Text.
+pub(crate) fn source_text_expression_input(layer: &Layer) -> Option<(String, &[Chunk])> {
+    let text_group = root_runs(&layer.content)
+        .ok()?
+        .into_iter()
+        .find(|(name, _)| *name == "ADBE Text Properties")
+        .and_then(|(_, run)| unique_list(run, *b"tdgp").ok())?;
+    let (_, document_run) = runs(text_group)
+        .ok()?
+        .into_iter()
+        .find(|(name, _)| *name == "ADBE Text Document")?;
+    let wrapper = unique_list(document_run, *b"btds").ok()?;
+    let metadata = enabled_expression_descriptor(wrapper).ok()??;
+    let source = read_source(layer).ok()??;
+    if source.documents.len() != 1 {
+        return None;
+    }
+    let (document, _) =
+        convert_document(&source.documents[0], &source.fonts, source.frame.as_ref());
+    Some((document.text.to_string(), metadata))
+}
+
 fn enabled_expression_descriptor(wrapper: &[Chunk]) -> Result<Option<&[Chunk]>, TextError> {
     if !wrapper
         .iter()
@@ -2406,7 +2763,8 @@ fn convert_document(
     } else {
         Some(positive(
             character.and_then(|style| number(style, "5")),
-            font_size.value() * 1.2,
+            // A finite but huge source size must not overflow the fallback.
+            (font_size.value() * 1.2).min(f64::MAX),
             "leading",
             &mut warnings,
         ))
@@ -2573,17 +2931,26 @@ fn first_layout_line_baseline(document: &Value) -> Option<f64> {
 }
 
 fn first_named_line_baseline(value: &Value) -> Option<f64> {
-    if value.get("99").and_then(Value::as_str) == Some("L") {
-        return value
-            .get("10")
-            .and_then(Value::as_f64)
-            .filter(|baseline| baseline.is_finite());
+    let mut pending = vec![value];
+    while let Some(value) = pending.pop() {
+        if value.get("99").and_then(Value::as_str) == Some("L") {
+            if let Some(baseline) = value
+                .get("10")
+                .and_then(Value::as_f64)
+                .filter(|baseline| baseline.is_finite())
+            {
+                return Some(baseline);
+            }
+            // A named line is a leaf for this search even if its baseline is bad.
+            continue;
+        }
+        match value {
+            Value::Array(values) => pending.extend(values.iter().rev()),
+            Value::Dict(values) => pending.extend(values.values().rev()),
+            _ => {}
+        }
     }
-    match value {
-        Value::Array(values) => values.iter().find_map(first_named_line_baseline),
-        Value::Dict(values) => values.values().find_map(first_named_line_baseline),
-        _ => None,
-    }
+    None
 }
 
 fn run_count(document: &Value, key: &str) -> usize {
@@ -2595,7 +2962,7 @@ fn run_count(document: &Value, key: &str) -> usize {
 /// A dash-less name such as `ArialMT` has no style to split off: it is kept
 /// whole with an empty style, the FX convention for an exact PostScript
 /// identity, instead of a guessed `Regular` that export cannot tell apart.
-fn split_font_identity(postscript: &str) -> (&str, &str) {
+pub(crate) fn split_font_identity(postscript: &str) -> (&str, &str) {
     postscript
         .rsplit_once('-')
         .filter(|(family, style)| !family.is_empty() && !style.is_empty())
@@ -2726,7 +3093,7 @@ fn at<'a>(value: &'a Value, path: &[Key<'_>]) -> Option<&'a Value> {
 }
 
 #[derive(Debug, thiserror::Error)]
-enum TextError {
+pub(crate) enum TextError {
     #[error("{0}")]
     Property(#[from] PropertyError),
     #[error("{0}")]
@@ -2735,8 +3102,129 @@ enum TextError {
     Layout(&'static str),
 }
 
+/// Group composition-clock Source Text samples into held texts with
+/// source-local start times, as keyed Source Text documents are held.
+fn evaluated_text_holds(
+    layer: &Layer,
+    evaluated: &crate::expression_samples::EvaluatedText,
+) -> Result<PercentHolds, String> {
+    let (Some(start), Some(stretch)) = (layer.record.start_time(), layer.record.stretch()) else {
+        return Err("invalid layer clock".into());
+    };
+    if !start.is_finite() || !stretch.is_finite() || stretch <= 0.0 {
+        return Err(format!(
+            "unsupported layer clock start={start} stretch={stretch}"
+        ));
+    }
+    let mut starts = Vec::new();
+    let mut texts: Vec<String> = Vec::new();
+    for (time, text) in evaluated.sample_times_seconds.iter().zip(&evaluated.texts) {
+        let local = (time - start) / stretch;
+        if local < 0.0 {
+            continue;
+        }
+        if texts.last() != Some(text) {
+            starts.push(local);
+            texts.push(text.clone());
+        }
+    }
+    if texts.is_empty() {
+        return Err("no Source Text samples inside the layer's local clock".into());
+    }
+    Ok(PercentHolds { starts, texts })
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn huge_finite_font_size_does_not_overflow_the_manual_leading_fallback() {
+        // 1.7e308 is a finite, positive COS decimal; times 1.2 it overflows.
+        let size = format!("17{}.0", "0".repeat(307));
+        let source = format!(
+            "<< /0 << /0 (A) /6 << /0 [ << /0 << /0 << /6 << /1 {size} /4 false >> >> >> >> ] >> >> >>"
+        );
+        let document = cos::parse(source.as_bytes()).unwrap();
+        let (document, _) = super::convert_document(&document, &[], None);
+        assert!(document.font_size.value().is_finite());
+    }
+
+    #[test]
+    fn review_layout_baseline_search_keeps_native_preorder_and_line_leaves() {
+        let layout = cos::parse(
+            br#"[ << /99 /L /10 (bad) /child << /99 /L /10 999 >> >>
+                << /a << /99 /L /10 12 >> /b << /99 /L /10 24 >> >> ]"#,
+        )
+        .unwrap();
+        assert_eq!(first_named_line_baseline(&layout), Some(12.0));
+    }
+
+    #[test]
+    fn review_source_text_deep_containers_survive_production_walks() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024)
+            .spawn(|| {
+                let project = read_project(include_bytes!(
+                    "../../tests/fixtures/text/text_ranges.aep"
+                ))
+                .unwrap();
+                let ItemKind::Composition(composition) = &project.item(1).unwrap().kind else {
+                    panic!("native text composition")
+                };
+                let mut layer = composition
+                    .layers
+                    .iter()
+                    .find(|layer| layer.record.id() == 14)
+                    .unwrap()
+                    .clone();
+                // A native layer shell with supplemental COS, not Adobe-authored
+                // deep nesting or independent native fidelity evidence.
+                let depth = 10_000;
+                let nested = |leaf: &str| {
+                    format!("{}{}{}", "[ << /child ".repeat(depth), leaf, " >> ]".repeat(depth))
+                };
+                let style = nested("42");
+                let layout = nested("[ << /99 /L /10 27 >> << /99 /G /8 [ 3 4 23 14 ] >> ]");
+                let frame = nested("true");
+                let payload = format!(
+                    "<< /1 << /1 [ << /0 << /0 (A\\r\\r) /5 << /0 [ << /0 {style} /1 2 >> << /0 {style} /1 1 >> ] >> /6 << /0 [ << >> ] >> >> /1 << /2 {layout} >> >> ] >> /0 << /8 << /0 [ << /0 {frame} >> ] >> >> >>"
+                );
+                let mut flags = vec![0; 124];
+                flags[..2].copy_from_slice(&[0xdb, 0x99]);
+                let mut name = b"ADBE Text Document".to_vec();
+                name.resize(40, 0);
+                let document = vec![
+                    Chunk::data(*b"tdmn", name).unwrap(),
+                    Chunk::list(
+                        *b"btds",
+                        vec![
+                            Chunk::opaque_list(*b"btdk", payload.into_bytes()),
+                            Chunk::list(
+                                *b"tdbs",
+                                vec![Chunk::data(*b"tdb4", flags).unwrap()],
+                            ),
+                        ],
+                    ),
+                ];
+                layer.content = vec![Chunk::list(
+                    *b"tdgp",
+                    text_run("ADBE Text Properties", document),
+                )];
+                let source = read_source(&layer).unwrap().unwrap();
+                let cloned = source.documents[0].clone();
+                assert!(source.documents[0] == cloned);
+                let cloned_frame = source.frame.as_ref().unwrap().clone();
+                assert_eq!(cloned_frame.as_array().unwrap().len(), 1);
+                let layout = at(&cloned, &[Key::Name("1"), Key::Name("2")]).unwrap();
+                assert_eq!(first_named_line_baseline(layout), Some(27.0));
+                assert_eq!(cached_caption_width(&layer), Ok(20.0));
+                let (document, _) = convert_document(&cloned, &source.fonts, source.frame.as_ref());
+                assert_eq!(document.text, "A\n");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
     #[test]
     fn native_cached_box_baseline_consumes_placement_without_legacy_centering() {
         let project =
@@ -2968,7 +3456,7 @@ mod tests {
         Vec<String>,
     ) {
         let (animators, more_options, path_options, mut warnings) =
-            read_text_properties(text_group, &ExpressionLinks::new(&[], text_group));
+            read_text_properties(text_group, &ExpressionLinks::new(&[], text_group), &[]);
         let source = SourceText {
             document_is_static: true,
             fonts: Vec::new(),
@@ -3187,6 +3675,7 @@ mod tests {
                     properties: wiggly_properties,
                 },
             ],
+            evaluated: Vec::new(),
         };
         let animator = TextAnimator {
             id: FxItemId::new(100),
@@ -3291,6 +3780,7 @@ mod tests {
                 property("ADBE Text Skew", &[8.0]),
             ],
             selectors: Vec::new(),
+            evaluated: Vec::new(),
         };
         let source = SourceText {
             document_is_static: true,
@@ -3572,6 +4062,7 @@ mod tests {
                         ),
                     ],
                 }],
+                evaluated: Vec::new(),
             }],
             more_options: vec![(
                 "ADBE Text Anchor Point Option".into(),
@@ -3624,6 +4115,7 @@ mod tests {
                     property("ADBE Text Percent Start", &[10.0]),
                 ],
             }],
+            evaluated: Vec::new(),
         };
         let animator = TextAnimator {
             id: FxItemId::new(10),
@@ -3755,7 +4247,7 @@ mod tests {
         ]
         .concat();
         let (animators, _, path, warnings) =
-            read_text_properties(&chunks, &ExpressionLinks::new(&[], &chunks));
+            read_text_properties(&chunks, &ExpressionLinks::new(&[], &chunks), &[]);
         assert_eq!(animators.len(), 1);
         assert_eq!(animators[0].selectors.len(), 1);
         assert!(path.is_empty());
@@ -3766,6 +4258,72 @@ mod tests {
                 .count(),
             3
         );
+    }
+
+    #[test]
+    fn unsupported_only_text_selector_does_not_select_every_glyph() {
+        fn numeric_leaf(name: &str, values: &[f64]) -> Vec<Chunk> {
+            let mut match_name = name.as_bytes().to_vec();
+            match_name.resize(40, 0);
+            vec![
+                Chunk::data(*b"tdmn", match_name).unwrap(),
+                Chunk::list(*b"tdbs", numeric_storage(values, false)),
+            ]
+        }
+        let text_group = text_run(
+            "ADBE Text Animators",
+            text_run(
+                "ADBE Text Animator",
+                [
+                    text_run(
+                        "ADBE Text Animator Properties",
+                        [
+                            numeric_leaf("ADBE Text Opacity", &[0.0]),
+                            numeric_leaf("ADBE Text Scale 3D", &[0.0, 0.0, 0.0]),
+                        ]
+                        .concat(),
+                    ),
+                    text_run(
+                        "ADBE Text Selectors",
+                        text_run("ADBE Text Expressible Selector", Vec::new()),
+                    ),
+                ]
+                .concat(),
+            ),
+        );
+        let (animators, _, _, warnings) = convert_test_text(&text_group);
+        assert_eq!(animators.len(), 1);
+        assert_eq!(animators[0].opacity, Some(0.0));
+        assert_eq!(animators[0].scale, Some([0.0, 0.0]));
+        assert_eq!(animators[0].selectors.len(), 1);
+        assert_eq!(animators[0].selectors[0].amount, 0.0);
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("zero-amount"))
+        );
+
+        let (mut sources, _, _, _) =
+            read_text_properties(&text_group, &ExpressionLinks::new(&[], &text_group), &[]);
+        sources[0].properties[0] = property("ADBE Text Opacity", &[0.0]);
+        let mut entries = Vec::new();
+        append_animator_animation(
+            &sources[0],
+            &animators[0],
+            "unsupported selector regression",
+            NumericAnimationClock::source_local(),
+            &mut entries,
+            &mut Vec::new(),
+            &mut AnimationBudget::default(),
+        );
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].target,
+            PropertyTarget::fx_item(animators[0].id, "opacity")
+        );
+        assert!(entries.iter().all(|entry| {
+            entry.target != PropertyTarget::fx_item(animators[0].selectors[0].id, "amount")
+        }));
     }
 
     #[test]

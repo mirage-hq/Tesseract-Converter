@@ -1,3 +1,7 @@
+#[cfg(not(windows))]
+mod foreign_collected;
+mod foreign_relative;
+
 use super::*;
 use sha2::{Digest, Sha256};
 
@@ -7,6 +11,7 @@ fn request(path: &str) -> MediaAssetRequest {
         source_item_id: 0,
         authored_path: path.into(),
         relative_location: None,
+        relative_hint_malformed: false,
         kind: MediaAssetKind::Audio,
         photoshop_source: None,
         dimensions: [0, 0],
@@ -50,6 +55,7 @@ fn media_descriptor(
         authored_path: authored_path.into(),
         target_is_folder,
         relative_location: None,
+        relative_hint_malformed: false,
         sequence_names: Vec::new(),
         kind: if target_is_folder {
             MediaKind::ImageSequence
@@ -381,6 +387,65 @@ fn unsafe_paths_are_omitted_without_network_or_platform_guessing() {
 }
 
 #[test]
+fn missing_inspection_distinguishes_absence_from_unassessed_path_omissions() {
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("project.aep");
+    fs::write(directory.path().join("blocker"), b"not a directory").unwrap();
+    for (path, malformed, expected) in [
+        ("missing.mov", false, MediaStatus::Missing),
+        ("missing.mov", true, MediaStatus::Unassessed),
+        (
+            "https://example.invalid/movie.mov",
+            false,
+            MediaStatus::Unassessed,
+        ),
+        (".", false, MediaStatus::Unassessed),
+        ("blocker/movie.mov", false, MediaStatus::Unassessed),
+    ] {
+        let mut preflight = MediaPreflight::new(&input);
+        let mut source = request(path);
+        source.kind = MediaAssetKind::Video;
+        source.relative_hint_malformed = malformed;
+        for _ in 0..2 {
+            let inspected = preflight.inspect(&source, "1".into(), "video".into(), vec![]);
+            assert_eq!(inspected.status, expected, "{path}: {inspected:?}");
+            assert!(inspected.selected.is_none());
+        }
+        assert_eq!(preflight.diagnostics.len(), 1);
+        assert!(
+            preflight.require(&source).is_ok(),
+            "standalone omission is unchanged"
+        );
+    }
+}
+
+#[test]
+fn missing_native_relative_ancestor_is_not_unsafe_alias_metadata() {
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("project.aep");
+    for (ascend, components, expected) in [
+        (u32::MAX, 1, MediaStatus::Missing),
+        (1, u32::MAX, MediaStatus::Unassessed),
+        // Validate the authored tail even when the current ancestor is unavailable.
+        (u32::MAX, u32::MAX, MediaStatus::Unassessed),
+    ] {
+        let mut source = request("/missing/native/movie.mov");
+        source.kind = MediaAssetKind::Video;
+        source.relative_location = RelativeLocation::new(ascend, components);
+        let mut preflight = MediaPreflight::new(&input);
+        let inspected = preflight.inspect(&source, "1".into(), "video".into(), vec![]);
+        assert_eq!(inspected.status, expected, "{inspected:?}");
+        assert!(
+            inspected
+                .reason
+                .unwrap()
+                .contains("does not fit this AEP's location")
+        );
+        assert!(preflight.require(&source).is_ok());
+    }
+}
+
+#[test]
 fn review_audit_missing_media_keeps_identity_for_conflict_detection() {
     let directory = tempfile::tempdir().unwrap();
     let input = directory.path().join("project.aep");
@@ -701,6 +766,7 @@ fn sequence_png_resolution_preserves_bytes_dimensions_and_missing_siblings() {
         source_item_id: 0,
         authored_path: path.to_str().unwrap().into(),
         relative_location: None,
+        relative_hint_malformed: false,
         kind: MediaAssetKind::SequenceImage,
         photoshop_source: None,
         dimensions: [4, 2],
@@ -753,74 +819,6 @@ fn sequence_png_resolution_preserves_bytes_dimensions_and_missing_siblings() {
 }
 
 #[test]
-#[ignore = "requires local licensed AEP_IMAGE_SEQUENCE_SOURCE and original PNG media"]
-fn local_intro_sequence_preflight_pins_frame_22_and_mixed_native_sizes() {
-    let source_path = std::env::var_os("AEP_IMAGE_SEQUENCE_SOURCE")
-        .map(PathBuf::from)
-        .expect("licensed source path");
-    let source_bytes = fs::read(&source_path).expect("read pinned Intro AEP");
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&source_bytes)),
-        "28bbce1b8c9f9625105d632504a97c598394a4753d6b0d923fb19942e302bb5d"
-    );
-    let sequence = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../../tmp/ordinary-intro/original/Play_OFintro/(Footage)/Footage/png/Sh06");
-    let frame_22 = fs::read(sequence.join("Sh06_0022.png")).expect("read source frame 22");
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&frame_22)),
-        "a8426e97756af31a98d9174889a19b1ef0159f86c9846fbc161d79b4ee627c8f"
-    );
-
-    let mut preflight = MediaPreflight::new(&source_path);
-    let mut dimensions = Vec::new();
-    let mut resolved = 0;
-    for frame in 0..=70 {
-        let path = sequence.join(format!("Sh06_{frame:04}.png"));
-        dimensions.push(image::image_dimensions(&path).expect("read original PNG dimensions"));
-        let request = MediaAssetRequest {
-            logical_id: AssetId::new(format!("aep-local-item-1034-sequence-frame-{frame}"))
-                .unwrap(),
-            source_item_id: 1034,
-            authored_path: path.to_str().unwrap().into(),
-            relative_location: None,
-            kind: MediaAssetKind::SequenceImage,
-            photoshop_source: None,
-            dimensions: [7_680, 3_200],
-        };
-        match preflight.resolve_media(&request) {
-            MediaResolution::AssetDimensions([7_680, 3_200]) if frame <= 56 => resolved += 1,
-            MediaResolution::Unavailable if frame >= 57 => {}
-            _ => panic!("source frame {frame} resolution contract changed"),
-        }
-    }
-    assert!(preflight.failure.is_none());
-    assert_eq!(
-        dimensions
-            .iter()
-            .filter(|size| **size == (7_680, 3_200))
-            .count(),
-        57
-    );
-    assert_eq!(
-        dimensions
-            .iter()
-            .filter(|size| **size == (3_840, 1_600))
-            .count(),
-        14
-    );
-    assert_eq!(resolved, 57);
-    assert_eq!(preflight.resolved.len(), 57);
-    assert_eq!(preflight.missing.len(), 14);
-    assert!(preflight.diagnostics.iter().any(|diagnostic| {
-        diagnostic.message.contains("sequence frame is 3840x1600")
-            && diagnostic
-                .message
-                .contains("native fixed footage canvas is 7680x3200")
-            && diagnostic.message.contains("no guessed normalization")
-    }));
-}
-
-#[test]
 fn malformed_sequence_png_is_an_item_local_omission() {
     let directory = tempfile::tempdir().unwrap();
     let input = directory.path().join("project.aep");
@@ -830,6 +828,7 @@ fn malformed_sequence_png_is_an_item_local_omission() {
         source_item_id: 0,
         authored_path: "broken.png".into(),
         relative_location: None,
+        relative_hint_malformed: false,
         kind: MediaAssetKind::SequenceImage,
         photoshop_source: None,
         dimensions: [4, 2],

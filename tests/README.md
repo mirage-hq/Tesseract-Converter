@@ -278,3 +278,25 @@ Historical comparison screenshots and run reports are not distributed with this
 workspace. Removing those supplementary reports does not change a case's recorded
 status or establish new proof. Reproduce a comparison using the pinned inputs and
 independent reference before claiming a current visual pass.
+
+### Sharpen
+
+The Sharpen structural tests use the native-derived Premiere 26.5.1 source
+`feature_sharpen_strict.prproj` (SHA-256
+`9f7f263d7110e0440a9a08191a44e0e38486c175d0c16256cd56b77b980a295c`),
+sequence `72a26059-6f85-4033-827d-63692bb9859b`. An ID-only MasterClip Node
+was removed from the native save; controls, keys and media are unchanged.
+Amounts A–F are 0/40/100/keyed/4000/100. D starts at 6 s with source In
+0.5 s and source keys (1 s,20), (1.5 s,80), (2.5 s,50), Linear then Hold.
+F has Scale 50 and its Sharpen is omitted by the bounded host policy.
+
+`format::tests::effects::sharpen_native_source_reads_amounts_and_source_keys`
+checks saved records; `convert::effects::tests::sharpen_native_import_keeps_amount_defaults_keys_and_rejects_scaled_host`
+checks editable mapping. The `sharpen_edited_export_*` and
+`sharpen_edited_keys_*` tests cover current FX export and record readback.
+The fixture is structural-only evidence: no published reference or converter
+fidelity pass. It is distributed via `conversion-export-files.json`, not enrolled
+in `manifest.json`, which admits only strict video-reference cases.
+Retained high-gain calibration failed; native non-default Motion order, alpha
+and independently Adobe-read/rendered generated export remain unproved. See the
+[Sharpen boundary](../crates/premiere_file/README.md#effect-stacks).

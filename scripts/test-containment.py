@@ -86,6 +86,14 @@ class ContainmentTests(unittest.TestCase):
                 relative = path.relative_to(CONV).as_posix()
                 self.assertTrue(relative in published, relative)
 
+    def test_random_expression_sources_and_attribution_are_exported(self):
+        published = set(json.loads((CONV / 'scripts/conversion-export-files.json').read_text()))
+        for name in ('random.js', 'random_tests.rs', 'RANDOM-APIS.md'):
+            relative = f'crates/aftereffects_file/src/expression_eval/{name}'
+            with self.subTest(path=relative):
+                self.assertTrue(relative in published, f'missing export source: {relative}')
+                self.assertTrue((CONV / relative).is_file())
+
     def test_tracked_public_tree_matches_export_inventory(self):
         result = subprocess.run(['git', 'ls-files', '-z', '--', '.'], cwd=CONV,
                                 capture_output=True, text=True, timeout=15)

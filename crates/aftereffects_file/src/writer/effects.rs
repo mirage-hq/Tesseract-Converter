@@ -178,7 +178,7 @@ fn plugin_with_clock(
         }
     }
     let root_name = format!("{}-0000", effect.match_name);
-    let mut root = views::property_with_clock(ValueKind::Toggle, &[0.0], None, None, clock)?;
+    let mut root = views::property_with_clock(ValueKind::EffectRoot, &[0.0], None, None, clock)?;
     if let Some(children) = root.children_mut() {
         children.push(Chunk::data(*b"tdpi", owner_id.to_be_bytes())?);
         children.push(Chunk::data(*b"tdps", 0_u32.to_be_bytes())?);
@@ -219,12 +219,10 @@ fn plugin_with_clock(
                 }
             }
         } else {
-            // Plugin animation records depend on the native parameter type,
-            // not the generic FX numeric arity. Transform-style records expose
-            // keys in Adobe but can freeze continuous rendering at the first key.
-            // Keep static serialization unchanged, including the established
-            // Brightness & Contrast scalar variant.
-            let kind = if animation.is_some() {
+            // Static controls need native plugin descriptors too: generic
+            // transform/toggle records can expose values but reject Adobe edits.
+            // Color descriptors have their own separately validated storage ABI.
+            let kind = if !matches!(property.kind, ValueKind::Color) || animation.is_some() {
                 match parameter.kind {
                     1 => ValueKind::EffectInteger,
                     4 | 7 => ValueKind::EffectToggle,
@@ -233,10 +231,6 @@ fn plugin_with_clock(
                     10 => ValueKind::EffectFloat,
                     _ => property.kind,
                 }
-            } else if effect.match_name == "ADBE Brightness & Contrast 2"
-                && property.kind == ValueKind::Scalar
-            {
-                ValueKind::EffectScalar
             } else {
                 property.kind
             };
@@ -705,12 +699,7 @@ mod tests {
 
     #[test]
     fn canonical_plugin_panel_can_be_freshly_serialized() {
-        let directory =
-            std::env::var_os("AEP_EFFECTS_NATIVE_PANEL_DIR").map(std::path::PathBuf::from);
-        if let Some(path) = &directory {
-            std::fs::create_dir_all(path).unwrap();
-        }
-        for (index, definition) in definitions::registry().iter().enumerate() {
+        for definition in definitions::registry() {
             let solid = SolidLayerSpec {
                 name: "Subject".into(),
                 width: 120,
@@ -760,14 +749,6 @@ mod tests {
             let (effects, _) =
                 crate::effects::native::read_effects(&comp.layers[0].content, [120.0, 80.0]);
             assert_eq!(effects[0].match_name, definition.match_name);
-            if let Some(path) = &directory {
-                std::fs::write(path.join(format!("effect-{index:02}.aep")), bytes).unwrap();
-                std::fs::write(
-                    path.join(format!("effect-{index:02}.name")),
-                    &definition.match_name,
-                )
-                .unwrap();
-            }
         }
     }
 
@@ -806,7 +787,7 @@ mod tests {
                 opacity: 100.0,
             },
         };
-        let mut options = NativeLayerOptions {
+        let options = NativeLayerOptions {
             fx_id: fx_schema::LayerId::new(1),
             parent: None,
             matte: None,
@@ -879,30 +860,5 @@ mod tests {
             Some((0.0, 50.0)),
             "native floating slider requires its declared UI bounds"
         );
-        if let Some(path) = std::env::var_os("AEP_EFFECTS_PROBE_DIR") {
-            let path = std::path::PathBuf::from(path);
-            std::fs::create_dir_all(&path).unwrap();
-            std::fs::write(path.join("fresh-gaussian.aep"), bytes).unwrap();
-            let spec = CompositionSpec {
-                name: "FreshEffect".into(),
-                width: 320,
-                height: 180,
-                duration_frames: 48,
-            };
-            for property in &mut options.effects[0].properties {
-                property.animation = None;
-            }
-            let static_bytes = crate::writer::write_composition(
-                &spec,
-                &[LayerSpec::Options(
-                    Box::new(LayerSpec::Solid(solid.clone())),
-                    options,
-                )],
-            )
-            .unwrap();
-            std::fs::write(path.join("fresh-gaussian-static.aep"), static_bytes).unwrap();
-            let plain_bytes = crate::writer::write_solid_composition(&spec, &[solid]).unwrap();
-            std::fs::write(path.join("fresh-no-effects.aep"), plain_bytes).unwrap();
-        }
     }
 }

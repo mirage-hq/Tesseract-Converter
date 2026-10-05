@@ -1,3 +1,6 @@
+#[path = "effects/posterize_time.rs"]
+mod posterize_time;
+
 use crate::{
     format::{FrameRate, PrProjectFile},
     media::{MediaFacts, VideoMedia},
@@ -5,16 +8,18 @@ use crate::{
         PrBrightnessContrast, PrColour, PrColourKeyframe, PrCornerPin, PrEffect,
         PrEffectParamAnimation, PrEffectParamKeys, PrEffectParams, PrFilmImpactBlur,
         PrFilmImpactDirectionalBlur, PrGaussianBlur, PrInvert, PrKeyframeEasing, PrLevels,
-        PrMosaic, PrPointKeyframe, PrRamp, PrScalarKeyframe, PrTint, PrVideoItem,
-        BRIGHTNESS_CONTRAST_BRIGHTNESS, BRIGHTNESS_CONTRAST_CONTRAST, CORNER_PIN,
-        FILM_IMPACT_BLUR_AMOUNT, INVERT_BLEND, LEVELS, MOSAIC_HORIZONTAL_BLOCKS,
-        MOSAIC_VERTICAL_BLOCKS, RAMP_BLEND, RAMP_END, RAMP_START_COLOR, TICKS,
-        TICKS_PER_MILLISECOND, TINT_AMOUNT, TINT_MAP_BLACK_TO, TINT_MAP_WHITE_TO,
+        PrMosaic, PrPointKeyframe, PrPosterize, PrRamp, PrReplicate, PrScalarKeyframe,
+        PrSourceEffects, PrTint, PrVideoItem, PrVideoTrack, BRIGHTNESS_CONTRAST_BRIGHTNESS,
+        BRIGHTNESS_CONTRAST_CONTRAST, CORNER_PIN, FILM_IMPACT_BLUR_AMOUNT, INVERT_BLEND, LEVELS,
+        MOSAIC_HORIZONTAL_BLOCKS, MOSAIC_VERTICAL_BLOCKS, POSTERIZE_LEVEL, RAMP_BLEND, RAMP_END,
+        RAMP_START_COLOR, REPLICATE_COUNT, TICKS, TICKS_PER_MILLISECOND, TINT_AMOUNT,
+        TINT_MAP_BLACK_TO, TINT_MAP_WHITE_TO,
     },
     test_support::editable_document,
     tests::support::{
-        amount, current_blur_export, directional_blur, exported_blur, keyed_directional,
-        project_document, video_sequence,
+        amount, clip_of, current_blur_export, directional_blur, exported_blur, keyed_directional,
+        left_crop, opacity_mask, project_document, sequence_of, transform_effect, video_media,
+        video_sequence, DEFAULT_PR_TRANSFORM,
     },
     Omission, OmissionKind, OmissionScope,
 };
@@ -30,6 +35,7 @@ const SOURCE_MILLIS: i64 = 10_000;
 
 fn blur(enabled: bool, blurriness: f64, repeat_edge_pixels: bool) -> PrEffect {
     PrEffect {
+        mask: None,
         enabled,
         params: PrEffectParams::GaussianBlur(PrGaussianBlur {
             blurriness,
@@ -67,6 +73,7 @@ fn corner_pin(
     animations: Vec<PrEffectParamAnimation>,
 ) -> PrEffect {
     PrEffect {
+        mask: None,
         enabled,
         params: PrEffectParams::CornerPin(PrCornerPin { corners }),
         animations,
@@ -165,6 +172,7 @@ fn export_at(wire: Value, frame_rate: FrameRate) -> (PrProjectFile, Vec<Omission
     let facts = BTreeMap::from([(
         "premiere-video-1".to_owned(),
         MediaFacts::Video(VideoMedia {
+            pixel_aspect: Default::default(),
             orientation: crate::schema::VideoOrientation::Identity,
             codec: crate::schema::VideoCodec::H264,
             bit_depth: 8,
@@ -199,6 +207,352 @@ fn exported_effects(project: &PrProjectFile) -> Vec<PrEffect> {
         .unwrap()
         .effects
         .clone()
+}
+
+fn legacy_luma_xml() -> String {
+    let fragment = include_str!("../../../tests/fixtures/legacy-luma-key.xml")
+        .replace("<PremiereData>", "<PremiereData Version=\"3\">");
+    find_edges_native_xml(&fragment).replace("ObjectRef=\"537\"", "ObjectRef=\"543\"")
+}
+
+#[test]
+fn legacy_luma_key_import_and_edited_export_preserve_controls_and_keys() {
+    let (original, notes) = find_edges_import(&legacy_luma_xml());
+    assert_eq!(
+        original["composition"]["layers"][0]["effects"][0]["effect"],
+        json!({"type":"lumaKey", "threshold":0.4, "softness":0.2, "invert":0.0})
+    );
+    assert_eq!(
+        original["composition"]["layers"][0]["source"]["assetId"],
+        "premiere-video-1"
+    );
+    assert!(
+        notes
+            .iter()
+            .any(|n| n.kind == OmissionKind::Approximated
+                && n.reason.contains("Threshold transparency")),
+        "{notes:?}"
+    );
+    // Bypass and zero falloff are synthetic variants of the pinned controls.
+    let (bypassed, _) = find_edges_import(
+        &legacy_luma_xml().replace("<ID>3</ID>", "<ID>3</ID><Bypass>true</Bypass>"),
+    );
+    assert_eq!(
+        bypassed["composition"]["layers"][0]["effects"][0]["enabled"],
+        false
+    );
+    let (zero, notes) = find_edges_import(
+        &legacy_luma_xml()
+            .replace(",20.,0,0,0,0,0,0", ",0.,0,0,0,0,0,0")
+            .replace(
+                "<CurrentValue>20</CurrentValue>",
+                "<CurrentValue>0</CurrentValue>",
+            ),
+    );
+    assert_eq!(
+        zero["composition"]["layers"][0]["effects"][0]["effect"]["softness"],
+        0.0001
+    );
+    assert!(notes
+        .iter()
+        .any(|n| n.reason.contains("equal smoothstep edges")));
+    let document = EditableFxCompositionDocument::from_json_value(original.clone()).unwrap();
+    let tracks = effect_tracks(&document);
+    assert_eq!(tracks.len(), 1);
+    assert_eq!(tracks[0].1, "threshold");
+    assert_eq!(
+        tracks[0]
+            .2
+            .iter()
+            .map(|k| (k.1, k.2, k.3))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, 0.4, PropertyKeyframeEasing::Linear),
+            (2412, 0.7, PropertyKeyframeEasing::Linear)
+        ]
+    );
+    for enabled in [true, false] {
+        let mut wire = original.clone();
+        wire["composition"]["layers"][0]["effects"][0]["enabled"] = json!(enabled);
+        wire["composition"]["layers"][0]["effects"][0]["effect"]["softness"] = json!(0.15);
+        let entries = &mut wire["composition"]["dynamics"]["entries"];
+        entries[0]["animator"]["keyframes"] = json!([
+            fx_key("edited-0", 0, 0.25, json!({"type":"linear"})),
+            fx_key("edited-1", 2000, 0.6, json!({"type":"linear"}))
+        ]);
+        let (mut project, notes) = export(wire);
+        assert_eq!(exported_effects(&project).len(), 1, "{notes:?}");
+        assert!(
+            notes.iter().any(|n| n.kind == OmissionKind::Approximated),
+            "{notes:?}"
+        );
+        for media in project.media.values_mut() {
+            media.name = "source.mp4".to_owned();
+            media.relative_path = Some("./media/source.mp4".to_owned());
+            media.relative_paths = vec!["./media/source.mp4".to_owned()];
+            media.absolute_paths = vec![(
+                crate::schema::records::MediaPathField::FilePath,
+                "/tmp/source.mp4".into(),
+            )];
+        }
+        let output = tempfile::tempdir().unwrap();
+        let path = output.path().join("project.prproj");
+        crate::format::PremiereProjectXml::new(&project)
+            .unwrap()
+            .write_new(&path)
+            .unwrap();
+        let xml = crate::format::read_xml(&path).unwrap();
+        let tree = roxmltree::Document::parse(&xml).unwrap();
+        let native = tree
+            .descendants()
+            .find(|n| {
+                n.has_tag_name("VideoFilterComponent")
+                    && n.descendants().any(|c| {
+                        c.has_tag_name("MatchName") && c.text() == Some("AE.ADBE Legacy Key Luma")
+                    })
+            })
+            .unwrap();
+        assert_eq!(
+            native
+                .descendants()
+                .find(|n| n.has_tag_name("Bypass"))
+                .and_then(|n| n.text()),
+            (!enabled).then_some("true")
+        );
+        let refs: Vec<_> = native
+            .descendants()
+            .filter(|n| n.has_tag_name("Param"))
+            .map(|n| n.attribute("ObjectRef").unwrap())
+            .collect();
+        assert_eq!(refs.len(), 2);
+        for (id, name, value, object) in [
+            ("1", "Threshold", 25.0, refs[0]),
+            ("2", "Cutoff", 15.0, refs[1]),
+        ] {
+            let param = tree
+                .descendants()
+                .find(|n| n.attribute("ObjectID") == Some(object))
+                .unwrap();
+            let text = |tag| {
+                param
+                    .children()
+                    .find(|n| n.has_tag_name(tag))
+                    .and_then(|n| n.text())
+                    .unwrap()
+            };
+            assert_eq!(text("ParameterID"), id);
+            assert_eq!(text("Name"), name);
+            assert_eq!(text("LowerBound"), "0");
+            assert_eq!(text("UpperBound"), "100");
+            assert_eq!(
+                text("StartKeyframe")
+                    .split(',')
+                    .nth(1)
+                    .unwrap()
+                    .parse::<f64>()
+                    .unwrap(),
+                value
+            );
+            if id == "1" {
+                let keys: Vec<_> = text("Keyframes")
+                    .split(';')
+                    .filter(|k| !k.is_empty())
+                    .map(|k| {
+                        let mut parts = k.split(',');
+                        (
+                            parts.next().unwrap().parse::<i64>().unwrap(),
+                            parts.next().unwrap().parse::<f64>().unwrap(),
+                        )
+                    })
+                    .collect();
+                assert_eq!(keys, vec![(0, 25.0), (2 * TICKS, 60.0)]);
+            }
+        }
+        let (roundtrip, _) = find_edges_import(&xml);
+        assert_eq!(
+            roundtrip["composition"]["layers"][0]["effects"][0]["enabled"],
+            enabled
+        );
+        assert_eq!(
+            roundtrip["composition"]["layers"][0]["effects"][0]["effect"]["softness"],
+            0.15
+        );
+    }
+}
+
+#[test]
+fn legacy_luma_key_boundary_and_unrepresentable_edits_are_explicit() {
+    for (payload, expected) in [
+        (json!({"type":"lumaKey","softness":0.0}), Some(0.01)),
+        (json!({"type":"lumaKey","invert":1.0}), None),
+        (json!({"type":"lumaKey","threshold":1.1}), None),
+    ] {
+        for enabled in [true, false] {
+            let (project, notes) = export(document_with_effects(json!([
+                {"id":1,"enabled":enabled,"effect":payload},
+                {"id":2,"effect":{"type":"gaussianBlur","blurriness":7.0}}
+            ])));
+            let effects = exported_effects(&project);
+            assert_eq!(effects.len(), if expected.is_some() { 2 } else { 1 });
+            assert_eq!(
+                notes
+                    .iter()
+                    .any(|n| n.reason.contains("omitting the enabled key")),
+                enabled && expected.is_none(),
+                "{notes:?}"
+            );
+            assert!(notes.iter().any(|n|n.reason.contains("stack position 1") || n.reason.contains("effect 1")), "{notes:?}");
+            if let Some(expected) = expected {
+                let PrEffectParams::LegacyLuma { cutoff, .. } = effects[0].params else {
+                    panic!("missing key")
+                };
+                assert_eq!(cutoff, expected);
+                assert!(notes
+                    .iter()
+                    .any(|n| n.reason.contains("equal smoothstep edges")));
+            }
+        }
+    }
+}
+
+#[test]
+fn legacy_luma_key_color_matte_retains_key_and_failed_keys_omit_only_the_occurrence() {
+    let (mut native, _) =
+        crate::format::inspect_project_with_omissions(&legacy_luma_xml(), None).unwrap();
+    let mut sequence = native.single_sequence().unwrap().clone();
+    // Supplementary host mutation: the authored controls stay unchanged.
+    let media = native
+        .media
+        .values_mut()
+        .next()
+        .unwrap()
+        .video
+        .as_mut()
+        .unwrap();
+    media.kind = crate::schema::PrMediaKind::ColorMatte(crate::schema::PrColorMatte {
+        rgb: [128, 128, 128],
+    });
+    media.intrinsic_ticks = crate::schema::color_matte::COLOR_MATTE_INTRINSIC_TICKS;
+    let (wire, notes) = imported_with_omissions(&sequence, &native.media);
+    let matte = wire["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| {
+            l["name"]
+                .as_str()
+                .is_some_and(|n| n.starts_with("Premiere color matte"))
+        })
+        .unwrap();
+    assert_eq!(
+        matte["effects"][0]["effect"],
+        json!({"type":"lumaKey","threshold":0.4,"softness":0.2,"invert":0.0})
+    );
+    assert!(notes
+        .iter()
+        .any(|n| n.reason.contains("Color Matte retains Legacy Luma")));
+
+    // Two native keys round to one FX millisecond: record import fails. The
+    // coverage owner must omit that occurrence, not leave an opaque rectangle.
+    let mut safe = sequence.video_tracks[0].clip(0).clone();
+    safe.id = Some("safe-sibling".to_owned());
+    safe.effects.clear();
+    safe.start_ticks += 5 * TICKS;
+    safe.end_ticks += 5 * TICKS;
+    sequence.video_tracks[0]
+        .items
+        .push(PrVideoItem::Media(safe));
+    let PrEffectParamKeys::Scalar(keys) =
+        &mut sequence.video_tracks[0].clip_mut(0).effects[0].animations[0].keys
+    else {
+        panic!("scalar")
+    };
+    keys[1].source_ticks = 1;
+    let (wire, notes) = imported_with_omissions(&sequence, &native.media);
+    let mattes: Vec<_> = wire["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|l| {
+            l["name"]
+                .as_str()
+                .is_some_and(|n| n.starts_with("Premiere color matte"))
+        })
+        .collect();
+    assert_eq!(mattes.len(), 1);
+    assert!(mattes[0].get("effects").is_none());
+    assert!(
+        notes.iter().any(|n| n.scope == OmissionScope::Occurrence
+            && n.reason.contains("AE.ADBE Legacy Key Luma")
+            && n.reason.contains("stack position 1")
+            && n.reason.contains("coverage would change")),
+        "{notes:?}"
+    );
+}
+
+#[test]
+fn legacy_luma_key_bezier_export_preserves_values_times_and_hold() {
+    let mut wire =
+        document_with_effects(json!([{"id":1,"effect":{"type":"lumaKey","invert":0.5}}]));
+    wire["composition"]["dynamics"] = json!({"entries":[{
+    "target":{"kind":"effectProperty","effectId":1,"paramName":"softness"},
+    "animator":{"type":"keyframes","enabled":true,"keyframes":[
+        fx_key("a",0,0.0,json!({"type":"linear"})),
+        fx_key("b",1000,0.0,json!({"type":"cubicBezier","x1":0.2,"y1":-2.0,"x2":0.8,"y2":2.0})),
+        fx_key("c",2000,0.2,json!({"type":"hold"}))
+    ]}}]});
+    let (project, notes) = export(wire);
+    let effects = exported_effects(&project);
+    let keys = effects[0].animations[0].keys.scalar().unwrap();
+    assert_eq!(
+        keys.iter()
+            .map(|k| (k.source_ticks, k.value, k.easing))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, 0.01, PrKeyframeEasing::Linear),
+            (TICKS, 0.01, PrKeyframeEasing::Linear),
+            (2 * TICKS, 20.0, PrKeyframeEasing::Hold)
+        ]
+    );
+    assert!(notes.iter().any(|n| n
+        .reason
+        .contains("Cutoff Bezier keys approximated as Linear")));
+    assert!(notes.iter().any(|n| n
+        .reason
+        .contains("Cutoff falloff below 0.01 percent was raised")));
+}
+
+#[test]
+fn legacy_luma_key_animated_invert_omission_warns_only_when_enabled() {
+    for enabled in [true, false] {
+        let mut wire = document_with_effects(json!([
+            {"id":1,"enabled":enabled,"effect":{"type":"lumaKey"}},
+            {"id":2,"effect":{"type":"gaussianBlur","blurriness":7.0}}
+        ]));
+        wire["composition"]["dynamics"] = json!({"entries":[{
+        "target":{"kind":"effectProperty","effectId":1,"paramName":"invert"},
+        "animator":{"type":"keyframes","enabled":true,"keyframes":[
+            fx_key("a",0,0.0,json!({"type":"linear"})),
+            fx_key("b",1000,1.0,json!({"type":"linear"}))
+        ]}}]});
+        let (project, notes) = export(wire);
+        assert_eq!(exported_effects(&project).len(), 1);
+        assert!(matches!(
+            exported_effects(&project)[0].params,
+            PrEffectParams::FilmImpactBlur(_)
+        ));
+        let omission = notes
+            .iter()
+            .find(|n| n.reason.contains("animated FX invert"))
+            .unwrap();
+        assert!(omission
+            .reason
+            .contains("lumaKey effect 1 at stack position 1"));
+        assert_eq!(
+            omission.reason.contains("omitting the enabled key"),
+            enabled
+        );
+    }
 }
 
 #[test]
@@ -352,6 +706,97 @@ fn keyed_blurriness_imports_as_effect_parameter_tracks() {
                 ]
             ),
         ]
+    );
+}
+
+#[test]
+fn effect_keys_under_time_remapping_from_another_in_keep_their_static_value() {
+    use crate::schema::{PrTimeRemap, PrTimeRemapKeyframe};
+    use PrKeyframeEasing::Linear;
+    // The first clip, at 0 to 2 s, plays a curve from In 0.4 s at 0.8x; its
+    // sibling at 5 to 7 s plays at unit speed. Each has a keyed Blurriness.
+    let mut sequence = video_sequence();
+    let mut sibling = sequence.video_tracks[0].clip(0).clone();
+    (sibling.start_ticks, sibling.end_ticks) = (5 * TICKS, 7 * TICKS);
+    (sibling.in_ticks, sibling.out_ticks) = (0, 2 * TICKS);
+    sibling.effects = vec![keyed(
+        blur(true, 0.0, false),
+        vec![key(0, 30.0, Linear), key(TICKS, 0.0, Linear)],
+    )];
+    let clip = sequence.video_tracks[0].clip_mut(0);
+    clip.end_ticks = 2 * TICKS;
+    (clip.in_ticks, clip.out_ticks) = (2 * TICKS / 5, 2 * TICKS);
+    clip.playback_rate = 0.8;
+    // The curve's keys, at input 0 and 2 s, in input ticks after In.
+    clip.time_remap = Some(PrTimeRemap {
+        keys: [(-2 * TICKS / 5, 0), (8 * TICKS / 5, 2 * TICKS)]
+            .map(|(timeline_ticks, source_ticks)| PrTimeRemapKeyframe {
+                timeline_ticks,
+                source_ticks,
+                easing: Linear,
+            })
+            .to_vec(),
+    });
+    clip.effects = vec![keyed(
+        blur(true, 0.0, true),
+        vec![key(TICKS, 20.0, Linear), key(2 * TICKS, 0.0, Linear)],
+    )];
+    sequence.video_tracks[0]
+        .items
+        .push(PrVideoItem::Media(sibling));
+    let media = crate::tests::support::video_media();
+    let ids = crate::tesseract_output::asset_ids_in_order(&sequence, &media);
+    let mut omissions = Vec::new();
+    let wire = crate::convert::premiere_to_tesseract(&sequence, &media, &ids, &mut omissions)
+        .unwrap()
+        .to_json_value()
+        .unwrap();
+    // The remapped clip keeps its whole curve and its blur at the first key's
+    // value; only the keys are reported, and no occurrence is omitted.
+    let layer = &wire["composition"]["layers"][0];
+    let playback = &layer["playback"];
+    assert_eq!(playback["inputOffsetMs"], 500);
+    let keys = playback["mapping"]["property"]["keyframes"]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        keys.iter()
+            .map(|key| (
+                key["time"].as_u64().unwrap(),
+                key["value"].as_u64().unwrap()
+            ))
+            .collect::<Vec<_>>(),
+        [(0, 0), (2500, 2000)]
+    );
+    assert_eq!(
+        layer["effects"],
+        json!([
+            {"id": 1, "enabled": true, "effect": {"type": "gaussianBlur", "blurriness": 20.0, "repeatEdgePixels": true}},
+        ])
+    );
+    let reason = "Gaussian Blur effect at stack position 1: Blurriness keys were not imported: their clock under Time Remapping from a source In or at another speed is unmeasured; the static value was kept";
+    assert_eq!(
+        omissions
+            .iter()
+            .filter(|omission| omission.reason == reason)
+            .count(),
+        1,
+        "{omissions:?}"
+    );
+    assert!(
+        omissions
+            .iter()
+            .all(|omission| omission.scope == OmissionScope::Feature),
+        "{omissions:?}"
+    );
+    // The sibling's keys still import.
+    let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
+    assert_eq!(
+        effect_tracks(&document)
+            .into_iter()
+            .map(|(id, param, _)| (id, param))
+            .collect::<Vec<_>>(),
+        [(2, "blurriness".to_owned())]
     );
 }
 
@@ -583,6 +1028,7 @@ fn keyed_brightness_contrast_imports_as_editable_tracks_and_exports_back() {
         y2: 0.9,
     };
     let effect = |enabled, [brightness, contrast]: [f64; 2], animations| PrEffect {
+        mask: None,
         enabled,
         params: PrEffectParams::BrightnessContrast(PrBrightnessContrast {
             brightness,
@@ -652,8 +1098,9 @@ fn keyed_brightness_contrast_imports_as_editable_tracks_and_exports_back() {
 /// empty. A keyed static value is its first key's.
 fn invert(enabled: bool, blend: f64, keys: Vec<PrScalarKeyframe>) -> PrEffect {
     PrEffect {
+        mask: None,
         enabled,
-        params: PrEffectParams::Invert(PrInvert { blend }),
+        params: PrEffectParams::Invert(PrInvert { blend, channel: 0 }),
         animations: (!keys.is_empty())
             .then_some(PrEffectParamAnimation {
                 param: &INVERT_BLEND,
@@ -770,17 +1217,17 @@ fn invalid_model_values_are_reported_instead_of_imported() {
     );
 }
 
-/// Stills and mattes become Image and Rect layers, which import no effects:
-/// each effect on them is reported, and the layer is kept.
+/// A Color Matte becomes a Rect layer, which imports no effects: each effect
+/// on it is reported, and the layer is kept. A still's effects import on its
+/// image layer; its source chain is reported as not converted (`still_effects_import_in_stack_order_with_keys_from_the_still_in_point`).
 #[test]
-fn effects_on_stills_and_mattes_are_reported_instead_of_dropped() {
+fn effects_on_mattes_are_reported_instead_of_dropped() {
     use crate::schema::{
         color_matte::COLOR_MATTE_INTRINSIC_TICKS, MediaId, PrColorMatte, PrMedia, PrMediaKind,
-        PrVideoOccurrence, PrVideoStream, PrVideoTrack, STILL_INTRINSIC_TICKS,
+        PrVideoOccurrence, PrVideoStream, PrVideoTrack,
     };
     // Generator placements on the 30 fps test sequence start one hour in.
     const COLOR_MATTE_SOURCE_IN_TICKS: i64 = crate::FrameRate::Fps30.generator_in_ticks();
-    const STILL_SOURCE_IN_TICKS: i64 = COLOR_MATTE_SOURCE_IN_TICKS;
     let mut sequence = video_sequence();
     let template = sequence.video_tracks[0].clip(0).clone();
     let placement = |media: &str, start: i64, source_in: i64, effects| PrVideoOccurrence {
@@ -790,83 +1237,60 @@ fn effects_on_stills_and_mattes_are_reported_instead_of_dropped() {
         in_ticks: source_in,
         out_ticks: source_in + 2 * TICKS,
         effects,
+        source_effects: Some(PrSourceEffects {
+            master: format!("MasterClip:{media}"),
+            effects: vec![blur(true, 10.0, false)],
+            active_transforms: 0,
+        }),
         ..template.clone()
     };
-    sequence.video_tracks.push(PrVideoTrack::media([
-        placement(
-            "photo",
-            0,
-            STILL_SOURCE_IN_TICKS,
-            vec![
-                keyed(
-                    blur(true, 0.0, false),
+    sequence.video_tracks.push(PrVideoTrack::media([placement(
+        "red",
+        2 * TICKS,
+        COLOR_MATTE_SOURCE_IN_TICKS,
+        vec![
+            blur(true, 10.0, false),
+            corner_pin(
+                true,
+                [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
+                vec![corner_keys(
+                    0,
                     vec![
-                        key(STILL_SOURCE_IN_TICKS, 25.0, PrKeyframeEasing::Linear),
-                        key(STILL_SOURCE_IN_TICKS + TICKS, 0.0, PrKeyframeEasing::Linear),
+                        point_key(
+                            COLOR_MATTE_SOURCE_IN_TICKS,
+                            [0.0, 0.0],
+                            PrKeyframeEasing::Linear,
+                        ),
+                        point_key(
+                            COLOR_MATTE_SOURCE_IN_TICKS + TICKS,
+                            [0.2, 0.1],
+                            PrKeyframeEasing::Linear,
+                        ),
                     ],
-                ),
-                blur(false, 80.0, true),
-            ],
-        ),
-        placement(
-            "red",
-            2 * TICKS,
-            COLOR_MATTE_SOURCE_IN_TICKS,
-            vec![
-                blur(true, 10.0, false),
-                corner_pin(
-                    true,
-                    [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
-                    vec![corner_keys(
-                        0,
-                        vec![
-                            point_key(
-                                COLOR_MATTE_SOURCE_IN_TICKS,
-                                [0.0, 0.0],
-                                PrKeyframeEasing::Linear,
-                            ),
-                            point_key(
-                                COLOR_MATTE_SOURCE_IN_TICKS + TICKS,
-                                [0.2, 0.1],
-                                PrKeyframeEasing::Linear,
-                            ),
-                        ],
-                    )],
-                ),
-            ],
-        ),
-    ]));
-    let generated = |name: &str, intrinsic_ticks, kind| PrMedia {
-        name: name.into(),
-        relative_path: None,
-        relative_paths: Vec::new(),
-        absolute_paths: Vec::new(),
-        video: Some(PrVideoStream {
-            orientation: crate::schema::VideoOrientation::Identity,
-            intrinsic_ticks,
-            frame_rate: (FrameRate::Fps30).into(),
-            width: 1920,
-            height: 1080,
-            kind,
-        }),
-        audio: None,
-    };
+                )],
+            ),
+        ],
+    )]));
     let mut media = crate::tests::support::video_media();
     media.insert(
-        MediaId("photo".into()),
-        generated(
-            "photo.jpg",
-            STILL_INTRINSIC_TICKS,
-            PrMediaKind::Still { alpha: false },
-        ),
-    );
-    media.insert(
         MediaId("red".into()),
-        generated(
-            "Color Matte",
-            COLOR_MATTE_INTRINSIC_TICKS,
-            PrMediaKind::ColorMatte(PrColorMatte { rgb: [255, 0, 0] }),
-        ),
+        PrMedia {
+            name: "Color Matte".into(),
+            relative_path: None,
+            relative_paths: Vec::new(),
+            absolute_paths: Vec::new(),
+            video: Some(PrVideoStream {
+                pixel_aspect: Default::default(),
+                interpretation: Default::default(),
+                orientation: crate::schema::VideoOrientation::Identity,
+                intrinsic_ticks: COLOR_MATTE_INTRINSIC_TICKS,
+                frame_rate: (FrameRate::Fps30).into(),
+                width: 1920,
+                height: 1080,
+                kind: PrMediaKind::ColorMatte(PrColorMatte { rgb: [255, 0, 0] }),
+            }),
+            audio: None,
+        },
     );
     let ids = crate::tesseract_output::asset_ids_in_order(&sequence, &media);
     let mut omissions = Vec::new();
@@ -880,13 +1304,13 @@ fn effects_on_stills_and_mattes_are_reported_instead_of_dropped() {
             .iter()
             .map(|layer| layer["type"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        ["Image", "Rect", "Video", "Rect"]
+        ["Rect", "Video", "Rect"]
     );
     assert!(
         layers.iter().all(|layer| layer.get("effects").is_none()),
         "{layers:?}"
     );
-    // The keyed blur's keys are reported with it, not imported.
+    // The keyed Corner Pin's keys are reported with it, not imported.
     assert!(wire["composition"]["dynamics"]["entries"]
         .as_array()
         .is_none_or(Vec::is_empty));
@@ -899,12 +1323,323 @@ fn effects_on_stills_and_mattes_are_reported_instead_of_dropped() {
     assert_eq!(
         omissions,
         [
-            omission("photo", "Gaussian Blur effect at stack position 1 was not imported: effects on a still image are not converted"),
-            omission("photo", "bypassed Gaussian Blur effect at stack position 2 was not imported: effects on a still image are not converted"),
             omission("red", "Gaussian Blur effect at stack position 1 was not imported: effects on a Color Matte are not converted"),
             omission("red", "Corner Pin effect at stack position 2 was not imported: effects on a Color Matte are not converted"),
+            omission("MasterClip:red", "VideoComponentChain not converted"),
         ]
     );
+}
+
+/// A trimmed still's In on the 30 fps test sequence: one second past the
+/// generator In-point, where an untrimmed still begins.
+const STILL_IN_TICKS: i64 = FrameRate::Fps30.generator_in_ticks() + TICKS;
+
+/// The shared one-clip sequence and, on a track above it from 1 s to 3 s, a
+/// placement of the 1920x1080 still `photo` from [`STILL_IN_TICKS`] that
+/// `edit` changes, with the media of both. The still's layer id is 2.
+fn still_over_video(
+    edit: impl FnOnce(&mut crate::schema::PrVideoOccurrence),
+) -> (
+    crate::format::PrSequence,
+    BTreeMap<crate::MediaId, crate::schema::PrMedia>,
+) {
+    use crate::schema::{
+        MediaId, PrMedia, PrMediaKind, PrVideoOccurrence, PrVideoStream, PrVideoTrack,
+        STILL_INTRINSIC_TICKS,
+    };
+    let mut sequence = video_sequence();
+    let mut still = PrVideoOccurrence {
+        media: MediaId("photo".into()),
+        start_ticks: TICKS,
+        end_ticks: 3 * TICKS,
+        in_ticks: STILL_IN_TICKS,
+        out_ticks: STILL_IN_TICKS + 2 * TICKS,
+        ..sequence.video_tracks[0].clip(0).clone()
+    };
+    edit(&mut still);
+    sequence.video_tracks.push(PrVideoTrack::media([still]));
+    let mut media = crate::tests::support::video_media();
+    media.insert(
+        MediaId("photo".into()),
+        PrMedia {
+            name: "photo.jpg".into(),
+            relative_path: None,
+            relative_paths: Vec::new(),
+            absolute_paths: Vec::new(),
+            video: Some(PrVideoStream {
+                pixel_aspect: Default::default(),
+                interpretation: Default::default(),
+                orientation: crate::schema::VideoOrientation::Identity,
+                intrinsic_ticks: STILL_INTRINSIC_TICKS,
+                frame_rate: (FrameRate::Fps30).into(),
+                width: 1920,
+                height: 1080,
+                kind: PrMediaKind::Still { alpha: false },
+            }),
+            audio: None,
+        },
+    );
+    (sequence, media)
+}
+
+/// The imported document of `sequence` and the omissions of its import.
+fn imported_with_omissions(
+    sequence: &crate::format::PrSequence,
+    media: &BTreeMap<crate::MediaId, crate::schema::PrMedia>,
+) -> (Value, Vec<Omission>) {
+    let ids = crate::tesseract_output::asset_ids_in_order(sequence, media);
+    let mut omissions = Vec::new();
+    let wire = crate::convert::premiere_to_tesseract(sequence, media, &ids, &mut omissions)
+        .unwrap()
+        .to_json_value()
+        .unwrap();
+    (wire, omissions)
+}
+
+/// A Brightness & Contrast whose Brightness is keyed at `keys`, its static
+/// value the first key's.
+fn keyed_brightness(contrast: f64, keys: Vec<PrScalarKeyframe>) -> PrEffect {
+    PrEffect {
+        mask: None,
+        enabled: true,
+        params: PrEffectParams::BrightnessContrast(PrBrightnessContrast {
+            brightness: keys[0].value,
+            contrast,
+        }),
+        animations: vec![PrEffectParamAnimation {
+            param: &BRIGHTNESS_CONTRAST_BRIGHTNESS,
+            keys: PrEffectParamKeys::Scalar(keys),
+        }],
+    }
+}
+
+#[test]
+fn still_effects_import_in_stack_order_with_keys_from_the_still_in_point() {
+    use PrKeyframeEasing::{Hold, Linear};
+    let (black, white) = ([0, 0, 0], [255, 255, 255]);
+    // A Brightness & Contrast keyed half a second before and one second after
+    // the still's In, then a bypassed Tint.
+    let stack = || {
+        vec![
+            keyed_brightness(
+                15.0,
+                vec![
+                    key(STILL_IN_TICKS - TICKS / 2, 10.0, Linear),
+                    key(STILL_IN_TICKS + TICKS, -20.0, Hold),
+                ],
+            ),
+            tint(false, (black, white, 60.0), (vec![], vec![], vec![])),
+        ]
+    };
+    let effects = json!([
+        {"id": 1, "enabled": true, "effect": {"type": "brightnessContrast", "brightness": 10.0, "contrast": 15.0}},
+        tint_tritone(2, false, (black, white, 60.0)),
+    ]);
+    let (sequence, media) = still_over_video(|still| still.effects = stack());
+    let (wire, omissions) = imported_with_omissions(&sequence, &media);
+    assert!(omissions.is_empty(), "{omissions:?}");
+    // The still's image layer holds both effects in stack order, the Tint
+    // bypassed.
+    let image = &wire["composition"]["layers"][0];
+    assert_eq!((&image["type"], &image["id"]), (&json!("Image"), &json!(2)));
+    assert_eq!(image["effects"], effects);
+    // Its Brightness keys are the one editable track of effect 1, at layer
+    // times from the still's In, with key ids that name the image layer.
+    let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
+    assert_eq!(
+        effect_tracks(&document),
+        [(
+            1,
+            "brightness".to_owned(),
+            vec![
+                (
+                    "premiere-effect-1-brightness-2-0".to_owned(),
+                    -500,
+                    10.0,
+                    PropertyKeyframeEasing::Linear
+                ),
+                (
+                    "premiere-effect-1-brightness-2-1".to_owned(),
+                    1000,
+                    -20.0,
+                    PropertyKeyframeEasing::Hold
+                ),
+            ]
+        )]
+    );
+    // A retimed still keeps the effects at their static values, as it keeps
+    // its Motion's: their keys are on the source clock.
+    let (sequence, media) = still_over_video(|still| {
+        still.effects = stack();
+        (still.playback_rate, still.out_ticks) = (2.0, STILL_IN_TICKS + 4 * TICKS);
+    });
+    let (wire, omissions) = imported_with_omissions(&sequence, &media);
+    assert_eq!(wire["composition"]["layers"][0]["effects"], effects);
+    assert!(!wire["composition"]["dynamics"]
+        .to_string()
+        .contains("effectProperty"));
+    assert_eq!(
+        omissions,
+        [Omission {
+            scope: OmissionScope::Feature,
+            kind: OmissionKind::Omitted,
+            record: "photo".into(),
+            reason: "effect animation was not imported: keys on a retimed, reversed or time-remapped clip are not converted; static values were kept".into(),
+        }]
+    );
+}
+
+#[test]
+fn still_effects_before_a_still_mask_or_on_a_matte_are_reported_and_the_mask_kept() {
+    use crate::schema::{PrMatteChannel, PrTrackMatte};
+    use crate::tests::support::{left_crop, opacity_mask, transform_effect, DEFAULT_PR_TRANSFORM};
+    let (black, white) = ([0, 0, 0], [255, 255, 255]);
+    let stack = || {
+        let linear = PrKeyframeEasing::Linear;
+        vec![
+            keyed_brightness(
+                15.0,
+                vec![
+                    key(STILL_IN_TICKS, 10.0, linear),
+                    key(STILL_IN_TICKS + TICKS, 20.0, linear),
+                ],
+            ),
+            tint(false, (black, white, 60.0), (vec![], vec![], vec![])),
+        ]
+    };
+    let imported_stack = json!([
+        {"id": 1, "enabled": true, "effect": {"type": "brightnessContrast", "brightness": 10.0, "contrast": 15.0}},
+        tint_tritone(2, false, (black, white, 60.0)),
+    ]);
+    // Both effects of the stack, reported for `reason`.
+    let both = |reason: &str| {
+        vec![
+            format!("Brightness & Contrast effect at stack position 1 was not imported: {reason}"),
+            format!("bypassed Tint effect at stack position 2 was not imported: {reason}"),
+        ]
+    };
+    let before_mask = |mask: &str| {
+        both(&format!("it applies before the still's {mask}, which FX applies before the image layer's effects, and a still imports no stage group"))
+    };
+    type Edit = fn(&mut crate::schema::PrVideoOccurrence);
+    // (case, still edit, whether a Track Matte Key on the video below uses the
+    // still as its matte, the still's mask guide type, the reported effects,
+    // and whether the stack imports)
+    type Case = (
+        &'static str,
+        Edit,
+        bool,
+        Option<&'static str>,
+        Vec<String>,
+        bool,
+    );
+    let cases: [Case; 5] = [
+        // A standard Crop that applies first: FX applies it before the effects too.
+        (
+            "after a Crop",
+            |still| still.crop = left_crop(),
+            false,
+            Some("Rect"),
+            Vec::new(),
+            true,
+        ),
+        (
+            "before a Crop",
+            |still| (still.crop, still.effects_above_mask) = (left_crop(), 2),
+            false,
+            Some("Rect"),
+            before_mask("Crop"),
+            false,
+        ),
+        // An Opacity mask applies after every effect (`reader/video.rs`).
+        (
+            "before an Opacity mask",
+            |still| (still.opacity_mask, still.effects_above_mask) = (Some(opacity_mask()), 2),
+            false,
+            Some("Shape"),
+            before_mask("Opacity mask"),
+            false,
+        ),
+        (
+            "Track Matte Key's matte",
+            |still| (still.start_ticks, still.end_ticks) = (0, 5 * TICKS),
+            true,
+            None,
+            both("the still is a Track Matte Key's matte, which converts without effects: a key over a matte still with effects is unmeasured"),
+            false,
+        ),
+        // Only a media clip's stage group carries a Transform; the effects on
+        // either side of it keep their order.
+        (
+            "a Transform between the effects",
+            |still| still.effects.insert(1, transform_effect(DEFAULT_PR_TRANSFORM, Vec::new())),
+            false,
+            None,
+            vec![format!(
+                "Transform effect at stack position 2 was not imported: {}",
+                super::TRANSFORM_HOST_REASON
+            )],
+            true,
+        ),
+    ];
+    for (case, edit, matte, guide, reported, imports) in cases {
+        let (mut sequence, media) = still_over_video(|still| {
+            still.effects = stack();
+            edit(still);
+            still.out_ticks = still.in_ticks + still.end_ticks - still.start_ticks;
+        });
+        if matte {
+            sequence.video_tracks[0].clip_mut(0).track_matte = Some(PrTrackMatte {
+                track_index: 1,
+                channel: PrMatteChannel::Alpha,
+            });
+        }
+        let (wire, omissions) = imported_with_omissions(&sequence, &media);
+        let layers = wire["composition"]["layers"].as_array().unwrap();
+        let image = &layers[0];
+        assert_eq!(image["type"], "Image", "{case}");
+        // The mask keeps its guide, the image's only mask.
+        let guides: Vec<_> = image["masks"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|mask| {
+                let guide = layers
+                    .iter()
+                    .find(|layer| layer["id"] == mask["layer"])
+                    .unwrap();
+                guide["type"].as_str().unwrap()
+            })
+            .collect();
+        assert_eq!(guides, Vec::from_iter(guide), "{case}");
+        if matte {
+            assert_eq!(layers[1]["trackMatte"]["layer"], image["id"], "{case}");
+        }
+        let reports: Vec<_> = omissions
+            .iter()
+            .filter(|omission| omission.reason.contains("effect at stack position"))
+            .map(|omission| {
+                assert_eq!(
+                    (omission.scope, omission.kind, omission.record.as_str()),
+                    (OmissionScope::Feature, OmissionKind::Omitted, "photo"),
+                    "{case}"
+                );
+                omission.reason.clone()
+            })
+            .collect();
+        assert_eq!(reports, reported, "{case}");
+        // An imported stack keeps its Brightness keys; a reported one leaves
+        // neither the effects nor their keys.
+        let keyed = wire["composition"]["dynamics"]
+            .to_string()
+            .contains("effectProperty");
+        if imports {
+            assert_eq!(image["effects"], imported_stack, "{case}");
+        } else {
+            assert!(image.get("effects").is_none(), "{case}: {image}");
+        }
+        assert_eq!(keyed, imports, "{case}");
+    }
 }
 
 // Writing and rereading exported stacks is covered by `format::tests::effects`,
@@ -942,7 +1677,7 @@ fn bypassed_effect_exports_as_bypassed() {
 fn unmapped_effects_are_reported_and_the_rest_keep_their_order() {
     let (project, omissions) = export(document_with_effects(json!([
         {"id": 1, "effect": {"type": "gaussianBlur", "blurriness": 10.0}},
-        {"id": 9, "effect": {"type": "posterize", "levels": 7.0}},
+        {"id": 9, "effect": {"type": "vignette", "amount": 0.5}},
         {"id": 2, "effect": {"type": "gaussianBlur", "blurriness": 20.0}},
     ])));
     assert_eq!(
@@ -959,10 +1694,714 @@ fn unmapped_effects_are_reported_and_the_rest_keep_their_order() {
             kind: OmissionKind::Omitted,
             record: "layer 1 (\"Source\")".to_owned(),
             reason:
-                "effects: posterize effect 9 was not exported: it has no Premiere effect mapping"
+                "effects: vignette effect 9 was not exported: it has no Premiere effect mapping"
                     .to_owned(),
         }]
     );
+}
+
+/// The original effect and Crop records, placed on the existing full-canvas
+/// CPU host. The human occurrence's placement/media clock is not exercised.
+fn alpha_glow_native_xml() -> String {
+    let source = include_str!("../../../tests/fixtures/alpha-glow-native.xml");
+    let doc = roxmltree::Document::parse(source).unwrap();
+    let records: String = doc
+        .root_element()
+        .children()
+        .filter(|node| {
+            node.is_element() && !matches!(node.attribute("ObjectID"), Some("328" | "392"))
+        })
+        .map(|node| &source[node.range()])
+        .collect();
+    include_str!("../../../tests/fixtures/one-clip.xml")
+        .replace("<DefaultOpacity>true</DefaultOpacity><ComponentChain/>", "<DefaultOpacity>true</DefaultOpacity><ComponentChain><Components><Component Index=\"0\" ObjectRef=\"553\"/><Component Index=\"1\" ObjectRef=\"554\"/></Components></ComponentChain>")
+        .replace("</PremiereData>", &format!("{records}</PremiereData>"))
+}
+
+#[test]
+fn alpha_glow_native_import_is_editable_after_crop() {
+    let (wire, notes) = find_edges_import(&alpha_glow_native_xml());
+    let effect = &wire["composition"]["layers"][0]["effects"][0]["effect"];
+    assert_eq!(effect["type"], "outerGlow", "{wire:#} {notes:?}");
+    assert_eq!(effect["size"], 30.0);
+    assert_eq!(
+        effect["color"],
+        json!([192.0 / 255.0, 192.0 / 255.0, 192.0 / 255.0, 150.0 / 255.0])
+    );
+    assert_eq!(effect["spread"], 0.0);
+    assert_eq!(effect["range"], 0.5);
+    let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
+    let tracks = effect_tracks(&document);
+    assert_eq!(tracks.len(), 1);
+    assert_eq!(tracks[0].1, "size");
+    assert_eq!(
+        tracks[0].2.iter().map(|k| k.1).collect::<Vec<_>>(),
+        [0, 2848]
+    );
+    assert_eq!(
+        tracks[0].2.iter().map(|k| k.2).collect::<Vec<_>>(),
+        [30.0, 100.0]
+    );
+    assert!(notes
+        .iter()
+        .any(|n| n.kind == OmissionKind::Approximated && n.reason.contains("uncalibrated")));
+}
+
+#[test]
+fn alpha_glow_edited_export_writes_current_controls_and_order() {
+    let mut wire = document_with_effects(json!([
+        {"id": 1, "enabled": false, "effect": {"type": "gaussianBlur", "blurriness": 10.0}},
+        {"id": 9, "effect": {"type": "outerGlow", "enabled": true,
+            "color": [0.2, 0.4, 0.8, 0.6], "size": 42.4, "spread": 0.0,
+            "range": 0.5, "blendMode": "normal"}},
+        {"id": 2, "effect": {"type": "gaussianBlur", "blurriness": 20.0}}
+    ]));
+    wire["composition"]["layers"][0]["masks"] = json!([
+        {"id":1,"mode":"add","layer":2,"feather":[0.0,0.0],"opacity":1.0}
+    ]);
+    let mut canvas = wire["composition"]["layers"][1].clone();
+    canvas["id"] = json!(3);
+    wire["composition"]["layers"]
+        .as_array_mut()
+        .unwrap()
+        .push(canvas);
+    wire["composition"]["layers"][1]["rect"]["position"] = json!([480.0, 270.0]);
+    wire["composition"]["layers"][1]["rect"]["size"] = json!([1440.0, 810.0]);
+    let (mut project, notes) = export(wire);
+    let effects = exported_effects(&project);
+    assert_eq!(effects.len(), 3, "{notes:?}");
+    assert_eq!(effects[0], exported_blur(false, 10.0, false));
+    assert_eq!(
+        effects[1].params,
+        PrEffectParams::AlphaGlow {
+            size: 42.0,
+            brightness: 153.0,
+            color: PrColour {
+                rgb: [51, 102, 204]
+            }
+        }
+    );
+    assert_eq!(effects[2], exported_blur(true, 20.0, false));
+    assert!(notes
+        .iter()
+        .any(|n| n.kind == OmissionKind::Approximated && n.reason.contains("uncalibrated")));
+    for media in project.media.values_mut() {
+        media.name = "source.mp4".to_owned();
+        media.relative_path = Some("./media/source.mp4".to_owned());
+        media.relative_paths = vec!["./media/source.mp4".to_owned()];
+        media.absolute_paths = vec![(
+            crate::schema::records::MediaPathField::FilePath,
+            "/tmp/source.mp4".into(),
+        )];
+    }
+    let output = tempfile::tempdir().unwrap();
+    let path = output.path().join("project.prproj");
+    crate::format::PremiereProjectXml::new(&project)
+        .unwrap()
+        .write_new(&path)
+        .unwrap();
+    let xml = crate::format::read_xml(&path).unwrap();
+    let tree = roxmltree::Document::parse(&xml).unwrap();
+    fn text<'a>(node: roxmltree::Node<'a, '_>, tag: &str) -> Option<&'a str> {
+        node.children()
+            .find(|n| n.has_tag_name(tag))
+            .and_then(|n| n.text())
+    }
+    let native = tree
+        .descendants()
+        .find(|n| {
+            n.has_tag_name("VideoFilterComponent")
+                && text(*n, "MatchName") == Some("AE.ADBE Alpha Glow")
+        })
+        .unwrap();
+    let params: Vec<_> = native
+        .descendants()
+        .filter(|n| n.has_tag_name("Param"))
+        .map(|n| {
+            let id = n.attribute("ObjectRef").unwrap();
+            tree.descendants()
+                .find(|n| n.attribute("ObjectID") == Some(id))
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(params.len(), 6);
+    assert_eq!(
+        params[0].attribute("ClassID"),
+        Some("6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8")
+    );
+    assert_eq!(text(params[0], "ParameterControlType"), Some("1"));
+    assert_eq!(text(params[0], "LowerBound"), Some("0"));
+    assert_eq!(text(params[0], "UpperBound"), Some("100"));
+    assert_eq!(text(params[1], "UpperBound"), Some("255"));
+
+    for (param, (id, value)) in params.iter().zip([
+        (1, "42".to_owned()),
+        (2, "153".to_owned()),
+        (
+            3,
+            PrColour {
+                rgb: [51, 102, 204],
+            }
+            .native()
+            .to_string(),
+        ),
+        (
+            4,
+            PrColour {
+                rgb: [51, 102, 204],
+            }
+            .native()
+            .to_string(),
+        ),
+        (5, "false".to_owned()),
+        (6, "true".to_owned()),
+    ]) {
+        assert_eq!(text(*param, "ParameterID"), Some(id.to_string().as_str()));
+        assert_eq!(
+            text(*param, "StartKeyframe").unwrap().split(',').nth(1),
+            Some(value.as_str())
+        );
+    }
+    // Native descending Index remains the inverse of editable effect order.
+    let glow_id = native.attribute("ObjectID").unwrap();
+    let glow_index = tree
+        .descendants()
+        .find(|n| n.has_tag_name("Component") && n.attribute("ObjectRef") == Some(glow_id))
+        .unwrap()
+        .attribute("Index")
+        .unwrap()
+        .parse::<usize>()
+        .unwrap();
+    let crop = tree
+        .descendants()
+        .find(|n| {
+            n.has_tag_name("VideoFilterComponent")
+                && text(*n, "MatchName") == Some("AE.ADBE AECrop")
+        })
+        .unwrap();
+    let crop_index = tree
+        .descendants()
+        .find(|n| {
+            n.has_tag_name("Component") && n.attribute("ObjectRef") == crop.attribute("ObjectID")
+        })
+        .unwrap()
+        .attribute("Index")
+        .unwrap()
+        .parse::<usize>()
+        .unwrap();
+    assert!(crop_index > glow_index);
+}
+
+/// Mutate only a selected saved Glow control, never a similarly valued Crop.
+fn alpha_glow_edit_control(xml: &str, id: &str, edit: impl FnOnce(&str) -> String) -> String {
+    let doc = roxmltree::Document::parse(xml).unwrap();
+    let range = doc
+        .root_element()
+        .children()
+        .find(|n| n.attribute("ObjectID") == Some(id))
+        .unwrap()
+        .range();
+    format!(
+        "{}{}{}",
+        &xml[..range.start],
+        edit(&xml[range.clone()]),
+        &xml[range.end..]
+    )
+}
+
+#[test]
+fn alpha_glow_variant_approximations_keep_crop_and_editable_glow() {
+    for (id, from, to, diagnostic) in [
+        ("763", ",false,", ",true,", "two-color interpolation"),
+        ("764", ",true,", ",false,", "solid falloff replaced"),
+    ] {
+        let xml = alpha_glow_edit_control(&alpha_glow_native_xml(), id, |control| {
+            control.replace(from, to)
+        });
+        let (native, _) = crate::format::inspect_project_with_omissions(&xml, None).unwrap();
+        let clip = native
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .next()
+            .unwrap();
+        assert_eq!((clip.crop.left, clip.crop.top), (25.0, 25.0));
+        assert_eq!(clip.effects.len(), 1);
+        let (wire, notes) = find_edges_import(&xml);
+        let effect = &wire["composition"]["layers"][0]["effects"][0]["effect"];
+        assert_eq!(effect["type"], "outerGlow", "{notes:?}");
+        assert_eq!(effect["size"], 30.0);
+        assert_eq!(
+            effect["color"],
+            json!([192.0 / 255.0, 192.0 / 255.0, 192.0 / 255.0, 150.0 / 255.0])
+        );
+        assert!(
+            notes.iter().any(|n| n.reason.contains(diagnostic)),
+            "{notes:?}"
+        );
+        let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
+        assert_eq!(effect_tracks(&document)[0].2.len(), 2);
+    }
+}
+
+#[test]
+fn alpha_glow_style_approximations_keep_siblings() {
+    for (field, value) in [
+        ("spread", json!(0.2)),
+        ("range", json!(0.8)),
+        ("blendMode", json!("screen")),
+        ("size", json!(101.0)),
+    ] {
+        let mut wire = document_with_effects(json!([
+            {"id":9,"effect":{"type":"outerGlow","size":42.0,"spread":0.0,"range":0.5,"blendMode":"normal"}},
+            {"id":2,"effect":{"type":"gaussianBlur","blurriness":20.0}}
+        ]));
+        wire["composition"]["layers"][0]["effects"][0]["effect"][field] = value;
+        let (project, notes) = export(wire);
+        let effects = exported_effects(&project);
+        assert_eq!(effects.len(), 2, "{notes:?}");
+        assert!(
+            matches!(effects[0].params, PrEffectParams::AlphaGlow { size, .. } if size == if field == "size" {100.0} else {42.0})
+        );
+        assert_eq!(effects[1], exported_blur(true, 20.0, false));
+        let diagnostic = if field == "size" {
+            "limited to the native maximum"
+        } else {
+            "dilation, falloff and blend differences"
+        };
+        assert!(
+            notes.iter().any(|n| n.reason.contains(diagnostic)),
+            "{notes:?}"
+        );
+    }
+}
+
+#[test]
+fn alpha_glow_edited_size_keys_export_or_flatten_fractional_endpoints() {
+    for endpoint in [70.0, 70.5] {
+        let mut wire = document_with_effects(json!([
+            {"id":9,"effect":{"type":"outerGlow","size":42.0,"color":[0.1,0.2,0.3,0.4],"spread":0.0,"range":0.5,"blendMode":"normal"}},
+            {"id":2,"effect":{"type":"gaussianBlur","blurriness":20.0}}
+        ]));
+        wire["composition"]["dynamics"] = json!({"entries":[{
+            "target":{"kind":"effectProperty","effectId":9,"paramName":"size"},
+            "animator":{"type":"keyframes","enabled":true,"keyframes":[
+                fx_key("alpha-size-a",0,12.0,json!({"type":"linear"})),
+                fx_key("alpha-size-b",1000,endpoint,json!({"type":"hold"}))
+            ]}
+        }]});
+        let (project, notes) = export(wire);
+        let effects = exported_effects(&project);
+        if endpoint.fract() == 0.0 {
+            assert_eq!(effects.len(), 2, "{notes:?}");
+            assert_eq!(
+                effects[0].animations[0].keys.scalar().unwrap(),
+                [
+                    key(0, 12.0, PrKeyframeEasing::Linear),
+                    key(TICKS, 70.0, PrKeyframeEasing::Hold)
+                ]
+            );
+        } else {
+            assert_eq!(effects.len(), 2);
+            assert!(matches!(
+                effects[0].params,
+                PrEffectParams::AlphaGlow { size: 42.0, .. }
+            ));
+            assert!(effects[0].animations.is_empty());
+            assert_eq!(effects[1], exported_blur(true, 20.0, false));
+            assert!(notes
+                .iter()
+                .any(|n| n.reason.contains("flattened to current static size 42")
+                    && n.reason.contains("whole size endpoints")));
+        }
+    }
+}
+
+#[test]
+fn alpha_glow_transformed_host_and_flattened_color_keep_glow() {
+    for animated_color in [false, true] {
+        let mut wire = document_with_effects(json!([
+            {"id":9,"effect":{"type":"outerGlow","size":42.0,"spread":0.0,"range":0.5,"blendMode":"normal"}},
+            {"id":2,"effect":{"type":"gaussianBlur","blurriness":20.0}}
+        ]));
+        if animated_color {
+            wire["composition"]["dynamics"] = json!({"entries":[{
+                "target":{"kind":"effectProperty","effectId":9,"paramName":"color"},
+                "animator":{"type":"keyframes","enabled":true,"keyframes":[
+                    {"id":"alpha-color-a","layerTime":0,"value":{"type":"color","value":[1.0,0.0,0.0,1.0]},"easing":{"type":"linear"}},
+                    {"id":"alpha-color-b","layerTime":1000,"value":{"type":"color","value":[0.0,1.0,0.0,1.0]},"easing":{"type":"linear"}}
+                ]}
+            }]});
+        } else {
+            wire["composition"]["layers"][0]["transform"]["scale"] = json!([150.0, 150.0]);
+        }
+        let (project, notes) = export(wire);
+        let effects = exported_effects(&project);
+        assert_eq!(effects.len(), 2, "{notes:?}");
+        assert!(matches!(
+            effects[0].params,
+            PrEffectParams::AlphaGlow { size: 42.0, .. }
+        ));
+        assert_eq!(effects[1], exported_blur(true, 20.0, false));
+        if animated_color {
+            assert!(
+                notes.iter().any(|n| n
+                    .reason
+                    .contains("color animation flattened to current static control")),
+                "{notes:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn alpha_glow_native_animated_brightness_and_modes_keep_first_value() {
+    for (id, keys, expected_alpha, reason) in [
+        (
+            "760",
+            "0,100,0,0,0,0,0,0;254016000000,200,0,0,0,0,0,0;",
+            100.0 / 255.0,
+            "Brightness animation flattened",
+        ),
+        (
+            "763",
+            "0,true,0,0,0,0,0,0;254016000000,false,0,0,0,0,0,0;",
+            150.0 / 255.0,
+            "Use End Color animation flattened",
+        ),
+    ] {
+        let xml = alpha_glow_edit_control(&alpha_glow_native_xml(), id, |control| {
+            control.replace("</VideoComponentParam>",&format!("<IsTimeVarying>true</IsTimeVarying><Keyframes>{keys}</Keyframes></VideoComponentParam>"))
+        });
+        let (wire, notes) = find_edges_import(&xml);
+        let effect = &wire["composition"]["layers"][0]["effects"][0]["effect"];
+        assert_eq!(effect["type"], "outerGlow", "{notes:?}");
+        assert_eq!(effect["color"][3], expected_alpha);
+        assert!(notes.iter().any(|n| n.reason.contains(reason)), "{notes:?}");
+        let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
+        assert_eq!(effect_tracks(&document).len(), 1);
+    }
+    let malformed = alpha_glow_edit_control(&alpha_glow_native_xml(), "763", |control| {
+        control.replace(",false,", ",invalid,")
+    });
+    let (native, notes) = crate::format::inspect_project_with_omissions(&malformed, None).unwrap();
+    let clip = native
+        .single_sequence()
+        .unwrap()
+        .video_occurrences()
+        .next()
+        .unwrap();
+    assert_eq!((clip.crop.left, clip.crop.top), (25.0, 25.0));
+    assert!(clip.effects.is_empty());
+    assert!(notes.iter().any(|n| n
+        .reason
+        .contains("invalid Alpha Glow Use End Color boolean")));
+}
+
+#[test]
+fn alpha_glow_effective_bypass_keeps_current_style_controls() {
+    for (record_enabled, style_enabled) in [(false, true), (true, false)] {
+        let wire = document_with_effects(json!([
+            {"id":9,"enabled":record_enabled,"effect":{"type":"outerGlow","enabled":style_enabled,"size":42.0,"color":[0.2,0.4,0.8,0.6],"spread":0.2,"range":0.8,"blendMode":"screen"}}
+        ]));
+        let (project, notes) = export(wire);
+        let effects = exported_effects(&project);
+        assert_eq!(effects.len(), 1, "{notes:?}");
+        assert!(!effects[0].enabled);
+        assert!(matches!(
+            effects[0].params,
+            PrEffectParams::AlphaGlow {
+                size: 42.0,
+                brightness: 153.0,
+                ..
+            }
+        ));
+    }
+}
+
+#[test]
+fn alpha_glow_held_clock_keeps_static_editable_glow() {
+    let (project, _) =
+        crate::format::inspect_project_with_omissions(&alpha_glow_native_xml(), None).unwrap();
+    let mut clip = project
+        .single_sequence()
+        .unwrap()
+        .video_occurrences()
+        .next()
+        .unwrap()
+        .clone();
+    clip.time_remap = Some(crate::schema::PrTimeRemap::frame_hold(
+        0,
+        clip.end_ticks - clip.start_ticks,
+    ));
+    let mut notes = Vec::new();
+    let (effects, tracks) = crate::convert::effects::import_effects(
+        &clip,
+        fx_schema::LayerId::new(1),
+        false, // Explicit Frame Hold retains static effect parameters.
+        crate::schema::MaskBoundary::Flat,
+        false, // Direct video occurrence, not a nested host.
+        false, // Video, not a still image.
+        project.media[&clip.media].video.as_ref().unwrap().kind,
+        [1920, 1080],
+        [1920, 1080],
+        [1920, 1080],
+        &mut crate::convert::effects::EffectIdAllocator::default(),
+        &mut notes,
+    );
+    assert_eq!(effects.len(), 1, "{notes:?}");
+    assert!(tracks.is_empty());
+    let EffectData::Identified {
+        effect: EffectPayload::Known(LayerEffect::OuterGlow(style)),
+        ..
+    } = effects[0].data()
+    else {
+        panic!("expected editable glow");
+    };
+    assert_eq!(style.size.value(), 30.0);
+    assert!(notes
+        .iter()
+        .any(|n| n.reason.contains("retimed, reversed or time-remapped")
+            && n.reason.contains("static value was kept")));
+}
+
+#[test]
+fn alpha_glow_unrepresentable_size_easing_keeps_validated_static_and_siblings() {
+    let keys = "0,30,5,0,0,0.16666666666666666,10,0.16666666666666666;254016000000,30,0,0,10,0.16666666666666666,0,0.16666666666666666;";
+    let edit_keys = |keys: &str| {
+        alpha_glow_edit_control(&alpha_glow_native_xml(), "759", |control| {
+            let start = control.find("<Keyframes>").unwrap() + "<Keyframes>".len();
+            let end = control.find("</Keyframes>").unwrap();
+            format!("{}{}{}", &control[..start], keys, &control[end..])
+        })
+    };
+    let (project, mut notes) =
+        crate::format::inspect_project_with_omissions(&edit_keys(keys), None).unwrap();
+    let mut sequence = project.single_sequence().unwrap().clone();
+    let clip = sequence.video_tracks[0].clip_mut(0);
+    assert_eq!((clip.crop.left, clip.crop.top), (25.0, 25.0));
+    assert_eq!(clip.effects.len(), 1, "{notes:?}");
+    assert!(matches!(
+        clip.effects[0].params,
+        PrEffectParams::AlphaGlow { size: 30.0, .. }
+    ));
+    assert!(clip.effects[0].animations.is_empty());
+    // Supplementary convertible sibling; original record759 and Crop were read above.
+    clip.effects.push(blur(false, 10.0, false));
+    let assets = crate::tesseract_output::asset_ids_in_order(&sequence, &project.media);
+    let wire =
+        crate::convert::premiere_to_tesseract(&sequence, &project.media, &assets, &mut notes)
+            .unwrap()
+            .to_json_value()
+            .unwrap();
+    let effects = &wire["composition"]["layers"][0]["effects"];
+    assert_eq!(effects.as_array().unwrap().len(), 2);
+    assert_eq!(effects[0]["effect"]["type"], "outerGlow");
+    assert_eq!(effects[0]["effect"]["size"], 30.0);
+    assert_eq!(effects[1]["effect"]["type"], "gaussianBlur");
+    assert_eq!(effects[1]["enabled"], false);
+    assert!(
+        notes
+            .iter()
+            .any(|note| note.reason.contains("Glow size animation flattened")
+                && note.reason.contains("equal values")),
+        "{notes:?}"
+    );
+    for malformed in [
+        keys.replacen(",30,", ",101,", 1),
+        keys.replacen("0.16666666666666666", "1.5", 1),
+    ] {
+        let (project, notes) =
+            crate::format::inspect_project_with_omissions(&edit_keys(&malformed), None).unwrap();
+        let clip = project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .next()
+            .unwrap();
+        assert!(clip.effects.is_empty(), "{notes:?}");
+        assert_eq!((clip.crop.left, clip.crop.top), (25.0, 25.0));
+    }
+}
+
+#[test]
+fn lens_distortion_import_normalizes_curvature_and_preserves_clip_clock() {
+    let lens = PrEffect {
+        mask: None,
+        enabled: true,
+        params: PrEffectParams::LensDistortion(-40.0),
+        animations: vec![PrEffectParamAnimation {
+            param: &crate::schema::LENS_CURVATURE,
+            keys: PrEffectParamKeys::Scalar(vec![
+                key(0, -40.0, PrKeyframeEasing::Linear),
+                key(510674274420, 40.0, PrKeyframeEasing::Linear),
+            ]),
+        }],
+    };
+    let mut sequence = video_sequence();
+    let clip = sequence.video_tracks[0].clip_mut(0);
+    clip.in_ticks = TICKS;
+    clip.out_ticks = 6 * TICKS;
+    clip.effects = vec![lens];
+    let wire = project_document(&sequence);
+    assert_eq!(
+        wire["composition"]["layers"][0]["effects"][0]["effect"],
+        json!({"type": "lensDistortion", "amount": 0.4, "centerX": 0.5, "centerY": 0.5})
+    );
+    let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
+    let tracks = effect_tracks(&document);
+    assert_eq!(tracks[0].1, "amount");
+    assert_eq!((tracks[0].2[0].1, tracks[0].2[0].2), (-1000, 0.4));
+    assert_eq!((tracks[0].2[1].1, tracks[0].2[1].2), (1010, -0.4));
+}
+
+#[test]
+fn lens_distortion_edited_export_writes_current_controls_and_keys() {
+    let mut wire = document_with_effects(json!([
+        {"id": 1, "effect": {"type": "gaussianBlur", "blurriness": 10.0}},
+        {"id": 9, "effect": {"type": "lensDistortion", "amount": -0.6, "centerX": 0.5, "centerY": 0.5}},
+        {"id": 2, "effect": {"type": "gaussianBlur", "blurriness": 20.0}},
+    ]));
+    wire["composition"]["dynamics"] = json!({"entries": [{
+        "target": {"kind": "effectProperty", "effectId": 9, "paramName": "amount"},
+        "animator": {"type": "keyframes", "enabled": true, "keyframes": [
+            fx_key("lens-a", 0, -0.6, json!({"type": "linear"})),
+            fx_key("lens-b", 1000, 0.2, json!({"type": "hold"}))
+        ]}
+    }]});
+    let (mut project, omissions) = export(wire);
+    assert_eq!(omissions.len(), 1, "{omissions:?}");
+    assert!(omissions[0]
+        .reason
+        .contains("deliberate slider normalization"));
+    let effects = exported_effects(&project);
+    assert_eq!(effects[1].params, PrEffectParams::LensDistortion(60.0));
+    let keys = effects[1].animations[0].keys.scalar().unwrap();
+    assert_eq!(keys[1].value, -20.0);
+    assert_eq!(keys[1].easing, PrKeyframeEasing::Hold);
+    for media in project.media.values_mut() {
+        media.name = "source.mp4".to_owned();
+        media.relative_path = Some("./media/source.mp4".to_owned());
+        media.relative_paths = vec!["./media/source.mp4".to_owned()];
+        media.absolute_paths = vec![(
+            crate::schema::records::MediaPathField::FilePath,
+            "/tmp/source.mp4".into(),
+        )];
+    }
+    let output = tempfile::tempdir().unwrap();
+    let path = output.path().join("project.prproj");
+    crate::format::PremiereProjectXml::new(&project)
+        .unwrap()
+        .write_new(&path)
+        .unwrap();
+    let xml = crate::format::read_xml(&path).unwrap();
+    assert!(xml.contains("PR.ADBE Lens Distortion"));
+    let native = roxmltree::Document::parse(&xml).unwrap();
+    let component = native
+        .descendants()
+        .find(|node| {
+            node.has_tag_name("VideoFilterComponent")
+                && node.children().any(|child| {
+                    child.has_tag_name("MatchName")
+                        && child.text() == Some("PR.ADBE Lens Distortion")
+                })
+        })
+        .unwrap();
+    assert!(!component
+        .children()
+        .any(|node| node.has_tag_name("PremiereFilterPrivateData")));
+    let controls: Vec<_> = component
+        .descendants()
+        .filter(|node| node.has_tag_name("Param"))
+        .map(|reference| {
+            native
+                .descendants()
+                .find(|node| node.attribute("ObjectID") == reference.attribute("ObjectRef"))
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(controls.len(), 7);
+    let text = |node: roxmltree::Node<'_, '_>, tag: &str| {
+        node.children()
+            .find(|child| child.has_tag_name(tag))
+            .unwrap()
+            .text()
+            .unwrap()
+            .to_owned()
+    };
+    for control in &controls {
+        assert_eq!(text(*control, "ParameterID"), "-1");
+    }
+    assert!(text(controls[0], "StartKeyframe").contains(",60.,"));
+    assert!(text(controls[5], "StartKeyframe").contains(",true,"));
+    assert_eq!(reread_effects(project), effects);
+}
+
+#[test]
+fn lens_distortion_static_plane_guard_keeps_blur_sibling() {
+    for transform in [
+        json!({}),
+        json!({"skew": 10.0}),
+        json!({"skewAxis": 10.0}),
+        json!({"rotationX": 20.0}),
+        json!({"rotationY": 20.0}),
+        json!({"orientation": [20.0, 0.0, 0.0]}),
+        json!({"orientation": [0.0, 20.0, 0.0]}),
+        json!({"orientation": [0.0, 0.0, 20.0]}),
+        json!({"position": [0.0, 0.0, 250.0]}),
+    ] {
+        let mut wire = document_with_effects(json!([
+            {"id": 9, "effect": {"type": "lensDistortion", "amount": 0.2, "centerX": 0.5, "centerY": 0.5}},
+            {"id": 2, "effect": {"type": "gaussianBlur", "blurriness": 20.0}},
+        ]));
+        for (field, value) in transform.as_object().unwrap() {
+            wire["composition"]["layers"][0]["transform"][field] = value.clone();
+        }
+        let (project, omissions) = export(wire);
+        let identity = transform.as_object().unwrap().is_empty();
+        let expected: Vec<_> = identity
+            .then_some(PrEffect {
+                mask: None,
+                enabled: true,
+                params: PrEffectParams::LensDistortion(-20.0),
+                animations: Vec::new(),
+            })
+            .into_iter()
+            .chain([exported_blur(true, 20.0, false)])
+            .collect();
+        assert_eq!(exported_effects(&project), expected, "{transform}");
+        let lens_reports: Vec<_> = omissions
+            .iter()
+            .filter(|item| item.reason.contains("lensDistortion effect 9"))
+            .collect();
+        assert_eq!(lens_reports.len(), 1, "{transform}: {omissions:?}");
+        assert_eq!(lens_reports[0].scope, OmissionScope::Feature);
+        assert_eq!(lens_reports[0].record, "layer 1 (\"Source\")");
+        if identity {
+            assert!(lens_reports[0].reason.contains("converts approximately"));
+        } else {
+            assert!(lens_reports[0]
+                .reason
+                .contains("requires an identity input plane"));
+            assert_eq!(lens_reports[0].kind, OmissionKind::Omitted);
+        }
+    }
+}
+
+#[test]
+fn lens_distortion_unsupported_edits_keep_siblings() {
+    for (enabled, center) in [(true, 0.3), (false, 0.5)] {
+        let (project, omissions) = export(document_with_effects(json!([
+            {"id": 9, "enabled": enabled, "effect": {"type": "lensDistortion", "amount": 0.2, "centerX": center, "centerY": 0.5}},
+            {"id": 2, "effect": {"type": "gaussianBlur", "blurriness": 20.0}},
+        ])));
+        assert_eq!(
+            exported_effects(&project),
+            [exported_blur(true, 20.0, false)]
+        );
+        assert_eq!(omissions.len(), 1);
+        assert!(omissions[0].reason.contains("was not exported"));
+    }
 }
 
 #[test]
@@ -1041,6 +2480,50 @@ fn animated_effect_parameters_are_omitted_instead_of_flattened() {
             reason: "unsupported animation target was not exported".to_owned(),
         }]
     );
+}
+
+#[test]
+fn ramp_approximation_still_rejects_unbound_animated_effect_parameters() {
+    let mut wire = document_with_effects(json!([
+        {"id": 1, "effect": {"type": "gaussianBlur", "blurriness": 25.0}},
+        {"id": 2, "effect": {"type": "gaussianBlur", "blurriness": 10.0}},
+    ]));
+    wire["composition"]["layers"][0]["playback"] = crate::test_support::remapped_playback(
+        json!({"start": 0, "duration": 1000}),
+        json!({"before": "inactive", "after": "inactive", "keyframes": [
+            {"id": "in", "time": 0, "value": 0, "easing": {"type": "linear"}},
+            {"id": "middle", "time": 500, "value": 200, "easing": {"type": "linear"}},
+            {"id": "out", "time": 1000, "value": 1000, "easing": {"type": "linear"}}
+        ]}),
+    );
+    let animated = |effect_id: u64, parameter: &str| {
+        json!({
+            "target": {"kind": "effectProperty", "effectId": effect_id, "paramName": parameter},
+            "animator": {"type": "keyframes", "enabled": true, "keyframes": [
+                fx_key(&format!("{effect_id}-a"), 0, 20.0, json!({"type": "linear"})),
+                fx_key(&format!("{effect_id}-b"), 1000, 40.0, json!({"type": "linear"}))
+            ]}
+        })
+    };
+    wire["composition"]["dynamics"] = json!({"entries": [
+        animated(1, "repeatEdgePixels"), animated(2, "blurriness")
+    ]});
+    let (project, omissions) = export(wire);
+    // The ramp cannot make an unbound parameter admissible. Supported
+    // Blurriness retains its authored static 10 rather than its first key 20.
+    assert_eq!(
+        exported_effects(&project),
+        [exported_blur(true, 10.0, false)]
+    );
+    assert!(omissions.iter().any(|item| item.reason == "effects: gaussianBlur effect 1 was not exported: animated repeatEdgePixels has no static Premiere value; only static effect parameters export"));
+    assert!(omissions
+        .iter()
+        .any(|item| item.reason.contains("effect blurriness animation")
+            && item.reason.contains("static values were kept")));
+    assert!(!omissions
+        .iter()
+        .any(|item| item.reason.contains("repeatEdgePixels")
+            && item.reason.contains("static values were kept")));
 }
 
 /// A document whose blur 1 (static 25) has Blurriness keys `keys`, on source
@@ -2378,6 +3861,7 @@ fn tint(
         });
     }
     PrEffect {
+        mask: None,
         enabled,
         params: PrEffectParams::Tint(PrTint {
             black: PrColour { rgb: black },
@@ -2424,7 +3908,7 @@ fn keyed_tint_imports_as_channel_and_amount_tracks_and_exports_back() {
         tint(true, (black, white, 0.0), (vec![], vec![colour_key(TICKS / 2, white, Linear), colour_key(2 * TICKS, blue, Linear), colour_key(7 * TICKS, orange, Hold)], vec![key(TICKS / 2, 0.0, Linear), key(2 * TICKS, 100.0, Hold), key(7 * TICKS, 50.0, bezier)])),
         blur(true, 10.0, false),
         tint(true, ([163, 247, 143], [240, 242, 22], 100.0), (vec![], vec![], vec![])),
-        PrEffect { enabled: true, params: PrEffectParams::BlackWhite, animations: Vec::new() },
+        PrEffect { mask: None, enabled: true, params: PrEffectParams::BlackWhite, animations: Vec::new() },
         tint(true, (black, orange, 50.0), (vec![], vec![], vec![])),
         tint(false, (black, white, 100.0), (vec![], vec![], vec![])),
     ];
@@ -2652,6 +4136,7 @@ fn ramp(
     animations: Vec<PrEffectParamAnimation>,
 ) -> PrEffect {
     PrEffect {
+        mask: None,
         enabled,
         params: PrEffectParams::Ramp(PrRamp {
             start,
@@ -3024,10 +4509,10 @@ fn ramps_premiere_cannot_represent_are_not_exported() {
     let ramps = [
         (without("endY"), vec![], json!({}), vec![], "endY has no value; only a gradientRamp with all twelve values exports".to_owned()),
         (without("shape"), vec![], json!({}), vec![], "shape has no value; only a gradientRamp with all twelve values exports".to_owned()),
-        (with(&[("shape", 1.0)]), vec![], json!({}), vec![], "shape 1 is not 0 (linear); a radial ramp is not converted, because Premiere measures its radius in clip pixels and the FX gradientRamp in frame UV (Oracle run E10 probe)".to_owned()),
-        (with(&[("endX", 0.7)]), vec![], json!({}), vec![], "Start of Ramp 0.5:0 to End of Ramp 0.7:1 is not aligned with the frame at every time; Premiere measures a ramp in clip pixels and the FX gradientRamp in frame UV, which agree only along the frame's axes (Oracle run E10 probe; supervisor decision D-24a)".to_owned()),
+        (with(&[("shape", 1.0)]), vec![], json!({}), vec![], "shape 1 is not 0 (linear); a radial ramp is not converted, because Premiere measures its radius in clip pixels and the FX gradientRamp in frame UV".to_owned()),
+        (with(&[("endX", 0.7)]), vec![], json!({}), vec![], "Start of Ramp 0.5:0 to End of Ramp 0.7:1 is not aligned with the frame at every time; Premiere measures a ramp in clip pixels and the FX gradientRamp in frame UV, which agree only along the frame's axes".to_owned()),
         (with(&[("endY", 0.0)]), vec![], json!({}), vec![], "Start of Ramp and End of Ramp are both 0.5:0; a ramp of zero length is not converted".to_owned()),
-        (full(), vec![track("endX", [0.5, 0.6])], json!({}), vec![], "Start of Ramp 0.5:0 to End of Ramp 0.5:1 is not aligned with the frame at every time; Premiere measures a ramp in clip pixels and the FX gradientRamp in frame UV, which agree only along the frame's axes (Oracle run E10 probe; supervisor decision D-24a)".to_owned()),
+        (full(), vec![track("endX", [0.5, 0.6])], json!({}), vec![], "Start of Ramp 0.5:0 to End of Ramp 0.5:1 is not aligned with the frame at every time; Premiere measures a ramp in clip pixels and the FX gradientRamp in frame UV, which agree only along the frame's axes".to_owned()),
         (full(), vec![track("endY", [1.0, 0.0])], json!({}), vec![], "Start of Ramp and End of Ramp meet: their y coordinates reach 0..0 and 0..1 over their keys, and a ramp of zero length is not converted".to_owned()),
         (full(), vec![track("endY", [1.0, 0.002])], json!({}), vec![], "Start of Ramp and End of Ramp come within 0.0020 of the frame of each other along y (their coordinates reach 0..0 and 0.002..1 over their keys); a ramp shorter than 0.0032 of the frame is not converted, because the FX gradientRamp floors its squared length at 1e-5 and would stretch it over 0.0032 of the frame".to_owned()),
         (with(&[("startR", 1.2)]), vec![], json!({}), vec![], "Start Color [1.2, 0.0, 0.0] has a channel outside 0 to 1".to_owned()),
@@ -3083,6 +4568,7 @@ fn mosaic(
     animations: Vec<PrEffectParamAnimation>,
 ) -> PrEffect {
     PrEffect {
+        mask: None,
         enabled,
         params: PrEffectParams::Mosaic(PrMosaic {
             horizontal,
@@ -3356,9 +4842,9 @@ fn mosaics_premiere_cannot_represent_are_not_exported() {
         )
     };
     let whole = |what: &str, value: &str| {
-        format!("{what} {value} is not a whole number of blocks; Premiere counts whole blocks and no rounding is applied (supervisor decision D-18a-2)")
+        format!("{what} {value} is not a whole number of blocks; Premiere counts whole blocks and no rounding is applied")
     };
-    let hold_rule = "; only Hold keys convert, because the FX mosaic renders fractional block counts between keys and Premiere's stepping there is unmeasured (supervisor decision D-18a-2)";
+    let hold_rule = "; only Hold keys convert, because the FX mosaic renders fractional block counts between keys and Premiere's stepping there is unmeasured";
     // (fields, tracks, the reason)
     #[rustfmt::skip]
     let mosaics = [
@@ -3391,6 +4877,780 @@ fn mosaics_premiere_cannot_represent_are_not_exported() {
             reason: format!("effects: mosaic effect 2 was not exported: {reason}"),
         };
         assert!(omissions.contains(&omission), "{fields}: {omissions:?}");
+    }
+}
+
+/// A Replicate of a static `count`, or of the Count `keys` that start at it.
+fn replicate(enabled: bool, count: u8, keys: Vec<PrScalarKeyframe>) -> PrEffect {
+    let animations = if keys.is_empty() {
+        Vec::new()
+    } else {
+        vec![PrEffectParamAnimation {
+            param: &REPLICATE_COUNT,
+            keys: PrEffectParamKeys::Scalar(keys),
+        }]
+    };
+    PrEffect {
+        mask: None,
+        enabled,
+        params: PrEffectParams::Replicate(PrReplicate { count }),
+        animations,
+    }
+}
+
+/// The FX tiles of a Replicate Count, `(size, centre)`: 100/Count percent,
+/// the first tile centred at 1/(2·Count) of the frame.
+fn tiles(count: u8) -> (f64, f64) {
+    match count {
+        2 => (50.0, 0.25),
+        3 => (100.0 / 3.0, 1.0 / 6.0),
+        4 => (25.0, 0.125),
+        5 => (20.0, 0.1),
+        16 => (6.25, 0.03125),
+        other => panic!("no tiles listed for Count {other}"),
+    }
+}
+
+/// The `motionTile` fields of whole copies over the whole frame: tiles of
+/// `size` percent whose first is centred at `center` on both axes, without
+/// mirrored edges or phase.
+fn motion_tile_fields((size, center): (f64, f64)) -> Value {
+    json!({"type": "motionTile", "tileCenterX": center, "tileCenterY": center,
+        "tileWidth": size, "tileHeight": size, "outputWidth": 100.0, "outputHeight": 100.0,
+        "mirrorEdges": false, "phase": 0.0})
+}
+
+/// An FX `motionTile` effect of [`motion_tile_fields`].
+fn fx_motion_tile(id: u64, enabled: bool, tiles: (f64, f64)) -> Value {
+    json!({"id": id, "enabled": enabled, "effect": motion_tile_fields(tiles)})
+}
+
+/// The approximation that export reports for the `motionTile` effect `id`.
+fn replicate_export_approximation(id: u64) -> Omission {
+    Omission {
+        scope: OmissionScope::Feature,
+        kind: OmissionKind::Approximated,
+        record: "layer 1 (\"Source\")".to_owned(),
+        reason: format!(
+            "effects: motionTile effect {id} converts approximately: {}",
+            PrReplicate::TILING_APPROXIMATION
+        ),
+    }
+}
+
+#[test]
+fn keyed_replicate_imports_as_four_synchronized_tile_tracks_and_exports_back() {
+    use PrKeyframeEasing::{Hold, Linear};
+    // Source In 0.5 s: Hold Count keys 2, 4 and 3 at source 1, 1.5 and 2.5 s
+    // sit above a Gaussian Blur, a static Count 3 and a bypassed Count 16.
+    let keys = vec![
+        key(TICKS, 2.0, Linear),
+        key(3 * TICKS / 2, 4.0, Hold),
+        key(5 * TICKS / 2, 3.0, Hold),
+    ];
+    let native = vec![
+        replicate(true, 2, keys),
+        blur(true, 10.0, false),
+        replicate(true, 3, vec![]),
+        replicate(false, 16, vec![]),
+    ];
+    let mut sequence = video_sequence();
+    let clip = sequence.video_tracks[0].clip_mut(0);
+    (clip.in_ticks, clip.out_ticks) = (TICKS / 2, 7 * TICKS / 2);
+    clip.effects = native.clone();
+    let media = crate::tests::support::video_media();
+    let ids = crate::tesseract_output::asset_ids_in_order(&sequence, &media);
+    let mut omissions = Vec::new();
+    let wire = crate::convert::premiere_to_tesseract(&sequence, &media, &ids, &mut omissions)
+        .unwrap()
+        .to_json_value()
+        .unwrap();
+    assert_eq!(
+        wire["composition"]["layers"][0]["effects"],
+        json!([
+            fx_motion_tile(1, true, tiles(2)),
+            {"id": 2, "enabled": true, "effect": {"type": "gaussianBlur", "blurriness": 10.0}},
+            fx_motion_tile(3, true, tiles(3)),
+            fx_motion_tile(4, false, tiles(16)),
+        ])
+    );
+    // Each Replicate, bypassed or not, is reported once.
+    let imported = |state: &str, position: u32| Omission {
+        scope: OmissionScope::Feature,
+        kind: OmissionKind::Approximated,
+        record: "source".to_owned(),
+        reason: format!(
+            "{state}Replicate effect at stack position {position} converts approximately: {}",
+            PrReplicate::TILING_APPROXIMATION
+        ),
+    };
+    assert_eq!(
+        omissions,
+        [imported("", 1), imported("", 3), imported("bypassed ", 4)]
+    );
+    // One Count keys the four tile fields at layer 500, 1000 and 2000 ms, with
+    // the Hold into the second and third keys.
+    let document = EditableFxCompositionDocument::from_json_value(wire.clone()).unwrap();
+    let (linear, hold) = (PropertyKeyframeEasing::Linear, PropertyKeyframeEasing::Hold);
+    let track = |name: &str, values: [f64; 3]| {
+        let keys: Vec<ImportedKey> = [(500, linear), (1000, hold), (2000, hold)]
+            .into_iter()
+            .zip(values)
+            .enumerate()
+            .map(|(index, ((millis, easing), value))| {
+                (
+                    format!("premiere-effect-1-{name}-1-{index}"),
+                    millis,
+                    value,
+                    easing,
+                )
+            })
+            .collect();
+        (1, name.to_owned(), keys)
+    };
+    let counts = [tiles(2), tiles(4), tiles(3)];
+    let (sizes, centres) = (
+        counts.map(|(size, _)| size),
+        counts.map(|(_, center)| center),
+    );
+    let mut tracks = effect_tracks(&document);
+    tracks.sort_by(|a, b| a.1.cmp(&b.1));
+    assert_eq!(
+        tracks,
+        [
+            track("tileCenterX", centres),
+            track("tileCenterY", centres),
+            track("tileHeight", sizes),
+            track("tileWidth", sizes),
+        ]
+    );
+    let (project, omissions) = export(wire);
+    let exported: Vec<_> = native.into_iter().map(current_blur_export).collect();
+    assert_eq!(exported_effects(&project), exported);
+    let reasons: Vec<_> = omissions.iter().map(|omission| &omission.reason).collect();
+    let expected = [1, 3, 4].map(replicate_export_approximation);
+    assert_eq!(
+        reasons,
+        expected
+            .iter()
+            .map(|omission| &omission.reason)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        omissions
+            .iter()
+            .all(|omission| omission.kind == OmissionKind::Approximated),
+        "{omissions:?}"
+    );
+}
+
+#[test]
+fn replicates_convert_only_on_a_clip_whose_frame_is_the_canvas() {
+    use crate::schema::PrPropertyAnimation::UniformScale;
+    let mut small = crate::tests::support::video_media();
+    let stream = small
+        .get_mut(&crate::schema::MediaId("source".into()))
+        .unwrap()
+        .video
+        .as_mut()
+        .unwrap();
+    (stream.width, stream.height) = (1280, 720);
+    let scale_keys = vec![
+        key(0, 100.0, PrKeyframeEasing::Linear),
+        key(TICKS, 50.0, PrKeyframeEasing::Linear),
+    ];
+    let gaussian = |id: u64| json!({"id": id, "enabled": true, "effect": {"type": "gaussianBlur", "blurriness": 10.0}});
+    // (Motion keys, static Motion edits, the source, why the Replicate is
+    // omitted): the FX grid tiles the layer's transformed content.
+    type MotionEdit<'a> = &'a dyn Fn(&mut crate::schema::PrStaticTransform);
+    #[rustfmt::skip]
+    let clips: [(Vec<_>, MotionEdit<'_>, _, &str); 3] = [
+        (vec![UniformScale(scale_keys)], &|_| {}, None, "Motion is animated"),
+        (Vec::new(), &|transform| transform.rotation = 30.0, None, "static Motion moves the clip frame off the canvas"),
+        (Vec::new(), &|_| {}, Some(small), "the source frame differs from the canvas"),
+    ];
+    let mut stage_group = masked_directional_blur_sequence(true, true);
+    let clip = stage_group.video_tracks[0].clip_mut(0);
+    (clip.transform.scale, clip.transform.rotation) = ([100.0; 2], 0.0);
+    let staged = (stage_group, crate::tests::support::video_media());
+    let mut cases: Vec<_> = clips
+        .into_iter()
+        .map(|(animations, edit, media, reason)| {
+            let mut sequence = video_sequence();
+            let clip = sequence.video_tracks[0].clip_mut(0);
+            clip.animations = animations;
+            edit(&mut clip.transform);
+            let media = media.unwrap_or_else(crate::tests::support::video_media);
+            (
+                (sequence, media),
+                format!("{reason}; {}", super::REPLICATE_FRAME_RULE),
+            )
+        })
+        .collect();
+    cases.push((staged, super::STAGED_REPLICATE_REASON.to_owned()));
+    for ((mut sequence, media), reason) in cases {
+        let clip = sequence.video_tracks[0].clip_mut(0);
+        clip.effects = vec![replicate(true, 2, vec![]), blur(true, 10.0, false)];
+        let ids = crate::tesseract_output::asset_ids_in_order(&sequence, &media);
+        let mut omissions = Vec::new();
+        let wire = crate::convert::premiere_to_tesseract(&sequence, &media, &ids, &mut omissions)
+            .unwrap()
+            .to_json_value()
+            .unwrap();
+        // The clip and its Gaussian Blur convert, on a stage group's video.
+        let top = &wire["composition"]["layers"][0];
+        let video = if top["type"] == "Group" {
+            &top["layers"][0]
+        } else {
+            top
+        };
+        assert_eq!(video["effects"], json!([gaussian(1)]), "{reason}");
+        assert_eq!(
+            omissions,
+            [Omission {
+                scope: OmissionScope::Feature,
+                kind: OmissionKind::Omitted,
+                record: "source".to_owned(),
+                reason: format!("Replicate effect at stack position 1 was not imported: {reason}"),
+            }]
+        );
+    }
+}
+
+/// Export input: a Gaussian Blur under a `motionTile` (id 2) with the
+/// `fields` given, and the `tracks` of its parameters, on a layer with the
+/// `transform` fields given ([`document_with_mosaic`]).
+fn document_with_motion_tile(fields: Value, tracks: &[(&str, Value)], transform: Value) -> Value {
+    document_with_mosaic(fields, tracks, transform, &[])
+}
+
+/// Tracks of the four `motionTile` tile fields keyed together at layer 0, 500
+/// and 1500 ms (source 0, 0.5 and 1.5 s) to the tiles of `counts`, Hold into
+/// the second and third keys.
+fn tile_count_tracks(counts: [u8; 3]) -> Vec<(&'static str, Value)> {
+    let track = |name: &'static str, field: fn((f64, f64)) -> f64| {
+        let keys: Vec<_> = [0, 500, 1500]
+            .into_iter()
+            .zip(counts)
+            .enumerate()
+            .map(|(index, (millis, count))| {
+                let easing = if index == 0 { "linear" } else { "hold" };
+                fx_key(
+                    &format!("{name}-{index}"),
+                    millis,
+                    field(tiles(count)),
+                    json!({"type": easing}),
+                )
+            })
+            .collect();
+        (name, json!(keys))
+    };
+    vec![
+        track("tileWidth", |(size, _)| size),
+        track("tileHeight", |(size, _)| size),
+        track("tileCenterX", |(_, center)| center),
+        track("tileCenterY", |(_, center)| center),
+    ]
+}
+
+#[test]
+fn edited_replicates_export_whole_counts_and_hold_count_keys() {
+    use PrKeyframeEasing::{Hold, Linear};
+    // A Count edited to 5 exports as Count 5.
+    let (project, omissions) = export(document_with_motion_tile(
+        motion_tile_fields(tiles(5)),
+        &[],
+        json!({}),
+    ));
+    assert_eq!(
+        exported_effects(&project),
+        [exported_blur(true, 10.0, false), replicate(true, 5, vec![])]
+    );
+    assert_eq!(omissions, [replicate_export_approximation(2)]);
+    // Tile keys of Counts 2, 4 and 3 export as one Count's keys on the
+    // source clock (source In 1 s); the first key is the static Count.
+    let mut wire = document_with_motion_tile(
+        motion_tile_fields(tiles(16)),
+        &tile_count_tracks([2, 4, 3]),
+        json!({}),
+    );
+    wire["composition"]["layers"][0]["sourceRange"]["start"] = json!(1000);
+    wire["composition"]["layers"][0]["playback"]["mapping"]["output"]["start"] = json!(1000);
+    let (project, omissions) = export(wire);
+    assert_eq!(
+        exported_effects(&project),
+        [
+            exported_blur(true, 10.0, false),
+            replicate(
+                true,
+                2,
+                vec![
+                    key(TICKS, 2.0, Linear),
+                    key(3 * TICKS / 2, 4.0, Hold),
+                    key(5 * TICKS / 2, 3.0, Hold),
+                ]
+            ),
+        ]
+    );
+    assert_eq!(omissions, [replicate_export_approximation(2)]);
+}
+
+#[test]
+fn replicates_premiere_cannot_represent_are_not_exported() {
+    let with = |edits: &[(&str, Value)]| {
+        let mut fields = motion_tile_fields(tiles(2));
+        for (name, value) in edits {
+            fields[*name] = value.clone();
+        }
+        fields
+    };
+    let grid_rule = super::REPLICATE_GRID_RULE;
+    let no_grid = |[width, height, x, y]: [&str; 4]| {
+        format!("tileWidth {width}, tileHeight {height}, tileCenterX {x} and tileCenterY {y} draw no Replicate grid: {grid_rule}")
+    };
+    let tracks = tile_count_tracks([2, 4, 3]);
+    let edit_track = |name: &str, edit: &dyn Fn(&mut Value)| {
+        let mut tracks = tracks.clone();
+        let (_, keys) = tracks.iter_mut().find(|(track, _)| *track == name).unwrap();
+        edit(keys);
+        tracks
+    };
+    let hold_rule = "; only Hold keys convert, because Premiere's Count between interpolated keys is unmeasured and the FX motionTile would interpolate the tile size and centre, reciprocals of the Count, linearly";
+    let all_keyed = "its tileWidth, tileHeight, tileCenterX and tileCenterY";
+    // (fields, tracks, layer transform, the reason)
+    type TileEdit = (Value, Vec<(&'static str, Value)>, Value, String);
+    #[rustfmt::skip]
+    let tiles_edits: [TileEdit; 16] = [
+        // The FX default centre: half a tile off at an even Count, and at an
+        // odd one the same grid, though not import's form.
+        (with(&[("tileCenterX", json!(0.5)), ("tileCenterY", json!(0.5))]), vec![], json!({}), no_grid(["50", "50", "0.5", "0.5"])),
+        (motion_tile_fields((100.0 / 3.0, 0.5)), vec![], json!({}), no_grid(["33.333333333333336", "33.333333333333336", "0.5", "0.5"])),
+        (with(&[("tileHeight", json!(25.0))]), vec![], json!({}), no_grid(["50", "25", "0.25", "0.25"])),
+        (motion_tile_fields((33.33, 1.0 / 6.0)), vec![], json!({}), no_grid(["33.33", "33.33", "0.16666666666666666", "0.16666666666666666"])),
+        // Count 1, outside Premiere's 2 to 16.
+        (motion_tile_fields((100.0, 0.5)), vec![], json!({}), no_grid(["100", "100", "0.5", "0.5"])),
+        (with(&[("outputWidth", json!(50.0))]), vec![], json!({}), "outputWidth 50 and outputHeight 100 are not 100; a Replicate's copies fill the whole frame".to_owned()),
+        (with(&[("mirrorEdges", json!(true))]), vec![], json!({}), "mirrorEdges is on; a Replicate does not mirror its copies".to_owned()),
+        (with(&[("phase", json!(90.0))]), vec![], json!({}), "phase 90 is not 0; a Replicate does not offset its copies".to_owned()),
+        (with(&[]), vec![("phase", json!([fx_key("p-0", 0, 0.0, json!({"type": "linear"})), fx_key("p-1", 500, 90.0, json!({"type": "linear"}))]))], json!({}), "animated phase has no static Premiere value; only static effect parameters export".to_owned()),
+        // Premiere keys one Count: every tile field, at the same times, with
+        // the same easing, at one Count's grid, and held.
+        (with(&[]), tracks[..3].to_vec(), json!({}), format!("{all_keyed} must all be keyed, but tileCenterY is not; Premiere keys them as one Count")),
+        (with(&[]), edit_track("tileCenterX", &|keys| keys[1]["layerTime"] = json!(600)), json!({}), format!("{all_keyed} keys differ in time or easing, but Premiere keys them as one Count")),
+        (with(&[]), edit_track("tileHeight", &|keys| keys[2]["easing"] = json!({"type": "linear"})), json!({}), format!("{all_keyed} keys differ in time or easing, but Premiere keys them as one Count")),
+        (with(&[]), edit_track("tileWidth", &|keys| keys[1]["value"]["value"] = json!(40.0)), json!({}), format!("its tile keys at 500 ms (tileWidth 40, tileHeight 25, tileCenterX 0.125 and tileCenterY 0.125) draw no Replicate grid: {grid_rule}")),
+        (with(&[]), tile_count_tracks([2, 4, 3]).into_iter().map(|(name, mut keys)| { keys[1]["easing"] = json!({"type": "linear"}); (name, keys) }).collect(), json!({}), format!("Count keys are Linear between source times 0.000 s and 0.500 s{hold_rule}")),
+        // A host whose frame is not the canvas at identity Motion.
+        (with(&[]), vec![], json!({"scale": [50.0, 50.0]}), format!("static Motion moves the clip frame off the canvas; {}", super::REPLICATE_FRAME_RULE)),
+        (with(&[]), vec![], json!({"rotation": 30.0}), format!("static Motion moves the clip frame off the canvas; {}", super::REPLICATE_FRAME_RULE)),
+    ];
+    for (fields, tracks, transform, reason) in tiles_edits {
+        let (project, omissions) = export(document_with_motion_tile(
+            fields.clone(),
+            &tracks,
+            transform,
+        ));
+        assert_eq!(
+            exported_effects(&project),
+            [exported_blur(true, 10.0, false)],
+            "{fields}"
+        );
+        let omission = Omission {
+            scope: OmissionScope::Feature,
+            kind: OmissionKind::Omitted,
+            record: "layer 1 (\"Source\")".to_owned(),
+            reason: format!("effects: motionTile effect 2 was not exported: {reason}"),
+        };
+        assert!(omissions.contains(&omission), "{fields}: {omissions:?}");
+        // An omitted motionTile reports no approximation.
+        assert!(
+            omissions
+                .iter()
+                .all(|omission| omission.kind == OmissionKind::Omitted),
+            "{fields}: {omissions:?}"
+        );
+    }
+}
+
+/// A Posterize with a whole `level` and the keys of its keyed Level (a keyed
+/// static Level is its first key's).
+fn posterize(enabled: bool, level: u8, animations: Vec<PrEffectParamAnimation>) -> PrEffect {
+    PrEffect {
+        mask: None,
+        enabled,
+        params: PrEffectParams::Posterize(PrPosterize { level }),
+        animations,
+    }
+}
+
+#[test]
+fn noise_amount_keys_bypass_and_current_edits_export_as_legacy() {
+    let native = PrEffect {
+        mask: None,
+        enabled: false,
+        params: PrEffectParams::Noise { amount: 5.0 },
+        animations: vec![PrEffectParamAnimation {
+            param: &crate::schema::NOISE_AMOUNT,
+            keys: PrEffectParamKeys::Scalar(vec![
+                key(0, 5.0, PrKeyframeEasing::Linear),
+                key(TICKS, 25.0, PrKeyframeEasing::Hold),
+            ]),
+        }],
+    };
+    let wire = imported(vec![native.clone()]);
+    let document = EditableFxCompositionDocument::from_json_value(wire.clone()).unwrap();
+    let tracks = effect_tracks(&document);
+    assert_eq!(tracks[0].1, "intensity");
+    assert_eq!(tracks[0].2[0].2, 2.0);
+    assert_eq!(tracks[0].2[1].2, 10.0);
+    let (project, warnings) = export(wire);
+    assert_eq!(exported_effects(&project), [native]);
+    assert!(warnings
+        .iter()
+        .any(|warning| warning.reason.contains("different random kernels")));
+    let expected = exported_effects(&project);
+    assert_eq!(reread_effects(project), expected);
+
+    let mut wire = document_with_effects(json!([
+        {"id": 1, "enabled": false, "effect": {"type": "grain", "amount": 12.0, "size": 1.0, "softness": 0.0, "aspectRatio": 1.0, "seed": 0.0}}
+    ]));
+    let (project, _) = export(wire.clone());
+    assert_eq!(
+        exported_effects(&project)[0].params,
+        PrEffectParams::Noise { amount: 30.0 }
+    );
+    assert!(!exported_effects(&project)[0].enabled);
+    let expected = exported_effects(&project);
+    assert_eq!(reread_effects(project), expected);
+    for (field, value) in [
+        ("size", 2.0),
+        ("softness", 1.0),
+        ("aspectRatio", 2.0),
+        ("seed", 1.0),
+        ("amount", 41.0),
+    ] {
+        let mut edited = wire.clone();
+        edited["composition"]["layers"][0]["effects"][0]["effect"][field] = json!(value);
+        let (project, warnings) = export(edited);
+        assert_eq!(
+            exported_effects(&project).is_empty(),
+            field == "amount",
+            "{field}"
+        );
+        assert!(!warnings.is_empty());
+    }
+    wire["composition"]["layers"][0]["effects"][0]["effect"]["amount"] = json!(0.0);
+    assert_eq!(
+        exported_effects(&export(wire).0)[0].params,
+        PrEffectParams::Noise { amount: 0.0 }
+    );
+}
+
+#[test]
+fn noise_modern_strength_keys_and_seed_import_then_export_current_legacy() {
+    let native = PrEffect {
+        mask: None,
+        enabled: false,
+        params: PrEffectParams::ModernNoise {
+            amount: 10.0,
+            seed: 17.0,
+        },
+        animations: vec![PrEffectParamAnimation {
+            param: &crate::schema::MODERN_NOISE.params[4],
+            keys: PrEffectParamKeys::Scalar(vec![
+                key(0, 10.0, PrKeyframeEasing::Linear),
+                key(TICKS, 30.0, PrKeyframeEasing::Hold),
+            ]),
+        }],
+    };
+    let wire = imported(vec![native]);
+    assert_eq!(
+        wire["composition"]["layers"][0]["effects"][0]["effect"]["seed"],
+        json!(17.0)
+    );
+    let document = EditableFxCompositionDocument::from_json_value(wire.clone()).unwrap();
+    let tracks = effect_tracks(&document);
+    assert_eq!(tracks[0].1, "intensity");
+    assert_eq!(tracks[0].2[0].2, 4.0);
+    assert_eq!(tracks[0].2[1].2, 12.0);
+    let (project, warnings) = export(wire);
+    let effects = exported_effects(&project);
+    assert_eq!(effects.len(), 1);
+    assert_eq!(effects[0].params, PrEffectParams::Noise { amount: 10.0 });
+    assert!(!effects[0].enabled);
+    assert_eq!(effects[0].animations[0].param, &crate::schema::NOISE_AMOUNT);
+    assert_eq!(
+        effects[0].animations[0].keys.scalar().unwrap()[1].value,
+        30.0
+    );
+    assert!(warnings
+        .iter()
+        .any(|warning| warning.reason.contains("seed edits are lost")));
+    assert_eq!(reread_effects(project), effects);
+}
+
+#[test]
+fn noise_authorable_intensity_keys_export_and_conflicting_aliases_omit() {
+    let mut wire = document_with_effects(json!([
+        {"id": 1, "effect": {"type": "grain", "amount": 12.0, "size": 1.0, "softness": 0.0, "aspectRatio": 1.0, "seed": 0.0}}
+    ]));
+    let intensity = json!({
+        "target": {"kind": "effectProperty", "effectId": 1, "paramName": "intensity"},
+        "animator": {"type": "keyframes", "enabled": true, "keyframes": [
+            {"id": "noise-a", "layerTime": 0, "value": {"type": "float", "value": 2.0}, "easing": {"type": "linear"}},
+            {"id": "noise-b", "layerTime": 1000, "value": {"type": "float", "value": 10.0}, "easing": {"type": "hold"}}
+        ]}
+    });
+    wire["composition"]["dynamics"] = json!({"entries": [intensity.clone()]});
+    let (project, _) = export(wire.clone());
+    let expected = vec![PrEffect {
+        mask: None,
+        enabled: true,
+        params: PrEffectParams::Noise { amount: 5.0 },
+        animations: vec![PrEffectParamAnimation {
+            param: &crate::schema::NOISE_AMOUNT,
+            keys: PrEffectParamKeys::Scalar(vec![
+                key(0, 5.0, PrKeyframeEasing::Linear),
+                key(TICKS, 25.0, PrKeyframeEasing::Hold),
+            ]),
+        }],
+    }];
+    assert_eq!(exported_effects(&project), expected);
+    assert_eq!(reread_effects(project), expected);
+
+    let mut amount = intensity.clone();
+    amount["target"]["paramName"] = json!("amount");
+    amount["animator"]["keyframes"][0]["id"] = json!("noise-amount-a");
+    amount["animator"]["keyframes"][1]["id"] = json!("noise-amount-b");
+    wire["composition"]["dynamics"]["entries"] = json!([amount.clone()]);
+    let (project, _) = export(wire.clone());
+    assert_eq!(exported_effects(&project), expected);
+    assert_eq!(reread_effects(project), expected);
+
+    for entries in [json!([intensity, amount]), json!([amount, intensity])] {
+        wire["composition"]["dynamics"]["entries"] = entries;
+        let (project, warnings) = export(wire.clone());
+        assert!(exported_effects(&project).is_empty());
+        assert!(warnings.iter().any(|warning| warning
+            .reason
+            .contains("multiple amount/intensity animation tracks")));
+    }
+}
+
+/// The FX `posterize` of a Posterize: the same Level, written out.
+fn fx_posterize(id: u64, enabled: bool, levels: f64) -> Value {
+    json!({"id": id, "enabled": enabled, "effect": {"type": "posterize", "levels": levels}})
+}
+
+/// Clip D's Level keys of the `feature_posterize_strict` fixture: 3 at
+/// source 1 s, `second` at 1.5 s and 5 at 2.5 s, Hold into the second and
+/// third keys.
+fn posterize_hold_keys(second: f64) -> Vec<PrEffectParamAnimation> {
+    use PrKeyframeEasing::{Hold, Linear};
+    vec![PrEffectParamAnimation {
+        param: &POSTERIZE_LEVEL,
+        keys: PrEffectParamKeys::Scalar(vec![
+            key(TICKS, 3.0, Linear),
+            key(3 * TICKS / 2, second, Hold),
+            key(5 * TICKS / 2, 5.0, Hold),
+        ]),
+    }]
+}
+
+/// The report of `record`'s Posterize named `effect`, which every converted
+/// Posterize makes in both directions.
+fn posterize_approximation(record: &str, effect: &str) -> Omission {
+    Omission {
+        scope: OmissionScope::Feature,
+        kind: OmissionKind::Approximated,
+        record: record.to_owned(),
+        reason: format!(
+            "{effect} converts approximately: {}",
+            PrPosterize::QUANTIZER_APPROXIMATION
+        ),
+    }
+}
+
+#[test]
+fn keyed_posterize_imports_as_a_hold_level_track_and_exports_back_approximately() {
+    // Source In 0.5 s, as the fixture's clip D: its Hold keys sit above a
+    // Gaussian Blur, a static Level 16 and a bypassed default 7.
+    let native = vec![
+        posterize(true, 3, posterize_hold_keys(8.0)),
+        blur(true, 10.0, false),
+        posterize(true, 16, vec![]),
+        posterize(false, 7, vec![]),
+    ];
+    let mut sequence = video_sequence();
+    let clip = sequence.video_tracks[0].clip_mut(0);
+    (clip.in_ticks, clip.out_ticks) = (TICKS / 2, 7 * TICKS / 2);
+    clip.effects = native.clone();
+    let media = crate::tests::support::video_media();
+    let ids = crate::tesseract_output::asset_ids_in_order(&sequence, &media);
+    let mut omissions = Vec::new();
+    let wire = crate::convert::premiere_to_tesseract(&sequence, &media, &ids, &mut omissions)
+        .unwrap()
+        .to_json_value()
+        .unwrap();
+    // Every Level is written out, bypass and order kept, and each Posterize
+    // reports its quantizer once.
+    assert_eq!(
+        wire["composition"]["layers"][0]["effects"],
+        json!([
+            fx_posterize(1, true, 3.0),
+            {"id": 2, "enabled": true, "effect": {"type": "gaussianBlur", "blurriness": 10.0}},
+            fx_posterize(3, true, 16.0),
+            fx_posterize(4, false, 7.0),
+        ])
+    );
+    assert_eq!(
+        omissions,
+        [
+            posterize_approximation("source", "Posterize effect at stack position 1"),
+            posterize_approximation("source", "Posterize effect at stack position 3"),
+            posterize_approximation("source", "bypassed Posterize effect at stack position 4"),
+        ]
+    );
+    let document = EditableFxCompositionDocument::from_json_value(wire.clone()).unwrap();
+    // Layer times count from the source In: source 1.0, 1.5 and 2.5 s are
+    // layer 500, 1000 and 2000 ms; the Hold into the second and third keys
+    // carries over.
+    let (linear, hold) = (PropertyKeyframeEasing::Linear, PropertyKeyframeEasing::Hold);
+    assert_eq!(
+        effect_tracks(&document),
+        [(
+            1,
+            "levels".to_owned(),
+            vec![
+                ("premiere-effect-1-levels-1-0".to_owned(), 500, 3.0, linear),
+                ("premiere-effect-1-levels-1-1".to_owned(), 1000, 8.0, hold),
+                ("premiere-effect-1-levels-1-2".to_owned(), 2000, 5.0, hold),
+            ]
+        )]
+    );
+    // Export writes the same Levels, keys, bypass and order back and reports
+    // each Posterize again.
+    let layer = &wire["composition"]["layers"][0];
+    let record = format!("layer {} ({})", layer["id"], layer["name"]);
+    let (project, omissions) = export(wire);
+    let exported: Vec<_> = native.into_iter().map(current_blur_export).collect();
+    assert_eq!(exported_effects(&project), exported);
+    assert_eq!(
+        omissions,
+        [1, 3, 4]
+            .map(|id| posterize_approximation(&record, &format!("effects: posterize effect {id}")))
+    );
+}
+
+/// Export input: a Gaussian Blur under a `posterize` (id 2) with the `fields`
+/// given and the `tracks` of its parameters, from source In 1 s: layer 0, 500
+/// and 1500 ms are source 1, 1.5 and 2.5 s.
+fn document_with_posterize(fields: Value, tracks: &[(&str, Value)]) -> Value {
+    let mut effect = json!({"type": "posterize"});
+    for (name, value) in fields.as_object().unwrap() {
+        effect[name] = value.clone();
+    }
+    let mut wire = document_with_effects(json!([
+        {"id": 1, "effect": {"type": "gaussianBlur", "blurriness": 10.0}},
+        {"id": 2, "enabled": true, "effect": effect},
+    ]));
+    wire["composition"]["layers"][0]["sourceRange"]["start"] = json!(1000);
+    wire["composition"]["layers"][0]["playback"]["mapping"]["output"]["start"] = json!(1000);
+    let entries: Vec<_> = tracks
+        .iter()
+        .map(|(param, keys)| {
+            json!({
+                "target": {"kind": "effectProperty", "effectId": 2, "paramName": param},
+                "animator": {"type": "keyframes", "enabled": true, "keyframes": keys},
+            })
+        })
+        .collect();
+    wire["composition"]["dynamics"] = json!({"entries": entries});
+    wire
+}
+
+#[test]
+fn edited_posterizes_export_their_whole_levels_and_hold_keys_approximately() {
+    let linear = || json!({"type": "linear"});
+    let hold = || json!({"type": "hold"});
+    // A Level edited to 5, and the same with Hold keys, whose first key
+    // becomes the static value.
+    let keys = json!([
+        fx_key("l-a", 0, 3.0, linear()),
+        fx_key("l-b", 500, 8.0, hold()),
+        fx_key("l-c", 1500, 5.0, hold()),
+    ]);
+    for (tracks, expected) in [
+        (vec![], posterize(true, 5, vec![])),
+        (
+            vec![("levels", keys)],
+            posterize(true, 3, posterize_hold_keys(8.0)),
+        ),
+    ] {
+        let (project, omissions) = export(document_with_posterize(json!({"levels": 5.0}), &tracks));
+        assert_eq!(
+            exported_effects(&project),
+            [exported_blur(true, 10.0, false), expected]
+        );
+        assert_eq!(
+            omissions,
+            [posterize_approximation(
+                "layer 1 (\"Source\")",
+                "effects: posterize effect 2"
+            )]
+        );
+    }
+}
+
+#[test]
+fn posterizes_premiere_cannot_represent_are_not_exported() {
+    let linear = || json!({"type": "linear"});
+    let hold = || json!({"type": "hold"});
+    let bezier = || json!({"type": "cubicBezier", "x1": 0.25, "y1": 0.1, "x2": 0.75, "y2": 0.9});
+    let track = |values: [f64; 3], easing: Value| {
+        (
+            "levels",
+            json!([
+                fx_key("l-a", 0, values[0], linear()),
+                fx_key("l-b", 500, values[1], easing.clone()),
+                fx_key("l-c", 1500, values[2], easing)
+            ]),
+        )
+    };
+    let levels = |value: f64| json!({"levels": value});
+    let whole = " is not a whole number; Premiere's rendering of a fractional Level is unmeasured and no rounding is applied";
+    let hold_rule = "; only Hold keys convert, because the FX posterize floors the levels between keys and Premiere's stepping there is unmeasured";
+    // (fields, tracks, the reason)
+    #[rustfmt::skip]
+    let posterizes = [
+        (json!({}), vec![], "levels has no value; only a posterize with its levels exports".to_owned()),
+        (levels(6.5), vec![], format!("Level 6.5{whole}")),
+        (levels(1.0), vec![], "Level 1 is outside Premiere's 2 to 255 range".to_owned()),
+        (levels(256.0), vec![], "Level 256 is outside Premiere's 2 to 255 range".to_owned()),
+        (levels(5.0), vec![track([3.0, 8.0, 5.0], linear())], format!("Level keys are Linear between source times 1.000 s and 1.500 s{hold_rule}")),
+        (levels(5.0), vec![track([3.0, 8.0, 5.0], bezier())], format!("Level keys are Bézier between source times 1.000 s and 1.500 s{hold_rule}")),
+        (levels(5.0), vec![track([3.0, 8.5, 5.0], hold())], format!("Level key value 8.5{whole}")),
+        (levels(5.0), vec![track([3.0, 300.0, 5.0], hold())], "Level key value 300 is outside Premiere's 2 to 255 range".to_owned()),
+    ];
+    for (fields, tracks, reason) in posterizes {
+        let (project, omissions) = export(document_with_posterize(fields.clone(), &tracks));
+        // Only the Posterize is omitted, never rounded or clamped; the blur
+        // before it exports.
+        assert_eq!(
+            exported_effects(&project),
+            [exported_blur(true, 10.0, false)],
+            "{fields}"
+        );
+        assert_eq!(
+            omissions,
+            [Omission {
+                scope: OmissionScope::Feature,
+                kind: OmissionKind::Omitted,
+                record: "layer 1 (\"Source\")".to_owned(),
+                reason: format!("effects: posterize effect 2 was not exported: {reason}"),
+            }],
+            "{fields}"
+        );
     }
 }
 
@@ -3467,7 +5727,7 @@ fn written_chain(mut project: PrProjectFile) -> Vec<String> {
 #[test]
 fn flat_crop_or_linear_wipe_exports_its_effects_after_it() {
     // FX applies a video's mask before its blur, and Premiere applies the chain
-    // in descending `Index` (Oracle run C6, F24): the mask at the highest
+    // in descending `Index`: the mask at the highest
     // Index first, then the blur, then Motion.
     for (mask_name, mask) in [("AE.ADBE AECrop", 1), ("AE.ADBE Linear Wipe", 4)] {
         let mut wire = document_with_effects(json!([
@@ -3535,28 +5795,37 @@ fn legacy_effects_without_ids_export_as_enabled_effects() {
     let (project, omissions) = export(document_with_effects(json!([
         {"type": "gaussianBlur", "blurriness": 10.0},
         {"type": "posterize", "levels": 7.0},
+        {"type": "vignette", "amount": 0.5},
     ])));
     assert_eq!(
         exported_effects(&project),
-        [exported_blur(true, 10.0, false)]
+        [exported_blur(true, 10.0, false), posterize(true, 7, vec![])]
     );
+    // Reports name an effect without an id by its stack position.
     assert_eq!(
         omissions,
-        [Omission {
-            scope: OmissionScope::Feature,
-            kind: OmissionKind::Omitted,
-            record: "layer 1 (\"Source\")".to_owned(),
-            reason: "effects: posterize effect at stack position 2 was not exported: it has no Premiere effect mapping"
-                .to_owned(),
-        }]
+        [
+            posterize_approximation(
+                "layer 1 (\"Source\")",
+                "effects: posterize effect at stack position 2"
+            ),
+            Omission {
+                scope: OmissionScope::Feature,
+                kind: OmissionKind::Omitted,
+                record: "layer 1 (\"Source\")".to_owned(),
+                reason: "effects: vignette effect at stack position 3 was not exported: it has no Premiere effect mapping"
+                    .to_owned(),
+            }
+        ]
     );
 }
 
 /// A Levels with its master (RGB) values in native order.
 fn levels(rgb: [f64; 5], animations: Vec<PrEffectParamAnimation>) -> PrEffect {
     PrEffect {
+        mask: None,
         enabled: true,
-        params: PrEffectParams::Levels(PrLevels { rgb }),
+        params: PrEffectParams::Levels(PrLevels::Master { rgb }),
         animations,
     }
 }
@@ -3929,6 +6198,13 @@ fn transform_alpha_key_requires_a_static_canvas_sized_still_matte() {
         ("effect on matte", |clip| {
             clip.effects = vec![blur(true, 10.0, false)]
         }),
+        ("source effect on matte", |clip| {
+            clip.source_effects = Some(PrSourceEffects {
+                master: "MasterClip:matte".to_owned(),
+                effects: vec![blur(true, 10.0, false)],
+                active_transforms: 0,
+            })
+        }),
     ] {
         let (mut project, _) = PrProjectFile::load(&source).unwrap();
         let sequence = &mut project.sequences[0];
@@ -4066,4 +6342,2147 @@ fn transform_alpha_key_preserves_fills_that_share_a_matte() {
             .any(|omission| omission.scope == OmissionScope::Occurrence),
         "{omissions:#?}"
     );
+}
+
+#[test]
+fn sharpen_native_import_keeps_amount_defaults_keys_and_rejects_scaled_host() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/feature_sharpen_strict.prproj");
+    let xml = crate::format::read_xml(&path).unwrap();
+    let (project, _) = crate::format::inspect_project_with_omissions(
+        &xml,
+        Some("72a26059-6f85-4033-827d-63692bb9859b"),
+    )
+    .unwrap();
+    let native = &project.sequences[0].video_tracks[0];
+    let mut sequence = video_sequence();
+    let clip = sequence.video_tracks[0].clip_mut(0);
+    clip.in_ticks = TICKS / 2;
+    clip.out_ticks = 7 * TICKS / 2;
+    clip.effects = vec![
+        native.clip(3).effects[0].clone(),
+        blur(true, 10.0, false),
+        native.clip(0).effects[0].clone(),
+        native.clip(4).effects[0].clone(),
+    ];
+    clip.effects[2].enabled = false;
+    let media = crate::tests::support::video_media();
+    let ids = crate::tesseract_output::asset_ids_in_order(&sequence, &media);
+    let mut omissions = Vec::new();
+    let wire = crate::convert::premiere_to_tesseract(&sequence, &media, &ids, &mut omissions)
+        .unwrap()
+        .to_json_value()
+        .unwrap();
+    assert_eq!(omissions.len(), 3);
+    assert!(omissions
+        .iter()
+        .all(|note| note.kind == OmissionKind::Approximated
+            && note.reason.contains("different sharpening kernels")));
+    let effects = &wire["composition"]["layers"][0]["effects"];
+    assert_eq!(
+        effects[0]["effect"],
+        json!({"type": "sharpen", "amount": 20.0})
+    );
+    assert_eq!(effects[1]["effect"]["type"], "gaussianBlur");
+    assert_eq!(
+        effects[2],
+        json!({"id": 3, "enabled": false, "effect": {"type": "sharpen", "amount": 0.0}})
+    );
+    assert_eq!(effects[3]["effect"]["amount"], 4000.0);
+    let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
+    let tracks = effect_tracks(&document);
+    assert_eq!(tracks[0].1, "amount");
+    assert_eq!(
+        tracks[0]
+            .2
+            .iter()
+            .map(|(_, time, value, easing)| (*time, *value, *easing))
+            .collect::<Vec<_>>(),
+        vec![
+            (500, 20.0, PropertyKeyframeEasing::Linear),
+            (1000, 80.0, PropertyKeyframeEasing::Linear),
+            (2000, 50.0, PropertyKeyframeEasing::Hold),
+        ]
+    );
+    sequence.video_tracks[0].clip_mut(0).transform = native.clip(5).transform;
+    let wire = project_document(&sequence);
+    assert_eq!(
+        wire["composition"]["layers"][0]["effects"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        wire["composition"]["layers"][0]["effects"][0]["effect"]["type"],
+        "gaussianBlur"
+    );
+}
+
+#[test]
+fn sharpen_edited_export_keeps_default_amount_order_bypass_and_rejects_fractions() {
+    for (amount, expected) in [
+        (None, 40),
+        (Some(0.0), 0),
+        (Some(137.0), 137),
+        (Some(4000.0), 4000),
+    ] {
+        let mut sharpen = json!({"type": "sharpen"});
+        if let Some(amount) = amount {
+            sharpen["amount"] = json!(amount);
+        }
+        let (project, omissions) = export(document_with_effects(json!([
+            {"id": 1, "effect": {"type": "gaussianBlur", "blurriness": 10.0}},
+            {"id": 2, "enabled": false, "effect": sharpen},
+        ])));
+        let effects = exported_effects(&project);
+        assert_eq!(effects[0], exported_blur(true, 10.0, false));
+        assert_eq!(
+            effects[1].params,
+            PrEffectParams::Sharpen(crate::schema::PrSharpen { amount: expected })
+        );
+        assert!(!effects[1].enabled);
+        assert!(
+            omissions
+                .iter()
+                .any(|note| note.kind == OmissionKind::Approximated
+                    && note.reason.contains("different sharpening kernels")),
+            "{omissions:?}"
+        );
+        assert_eq!(reread_effects(project), effects);
+    }
+    for amount in [-1.0, 40.5, 4001.0] {
+        let (project, omissions) = export(document_with_effects(json!([
+            {"type": "sharpen", "amount": amount},
+            {"type": "gaussianBlur", "blurriness": 10.0},
+        ])));
+        assert_eq!(
+            exported_effects(&project),
+            [exported_blur(true, 10.0, false)]
+        );
+        assert!(
+            omissions
+                .iter()
+                .any(|note| note.reason.contains("was not exported")),
+            "{omissions:?}"
+        );
+    }
+}
+
+#[test]
+fn sharpen_edited_keys_use_source_in_and_invalid_key_or_host_keeps_sibling() {
+    let make = |second: f64| {
+        let mut wire = document_with_effects(json!([
+            {"id": 1, "effect": {"type": "gaussianBlur", "blurriness": 10.0}},
+            {"id": 2, "effect": {"type": "sharpen", "amount": 137.0}},
+        ]));
+        wire["composition"]["layers"][0]["sourceRange"]["start"] = json!(1000);
+        wire["composition"]["layers"][0]["playback"]["mapping"]["output"]["start"] = json!(1000);
+        wire["composition"]["dynamics"] = json!({"entries": [{
+            "target": {"kind": "effectProperty", "effectId": 2, "paramName": "amount"},
+            "animator": {"type": "keyframes", "enabled": true, "keyframes": [
+                fx_key("s1", 0, 21.0, json!({"type": "linear"})),
+                fx_key("s2", 500, second, json!({"type": "linear"})),
+                fx_key("s3", 1500, 51.0, json!({"type": "hold"})),
+            ]}
+        }]});
+        wire
+    };
+    let (project, _) = export(make(81.0));
+    let effects = exported_effects(&project);
+    assert_eq!(
+        effects[1].params,
+        PrEffectParams::Sharpen(crate::schema::PrSharpen { amount: 21 })
+    );
+    assert_eq!(
+        effects[1].animations[0].keys.scalar().unwrap(),
+        &[
+            key(TICKS, 21.0, PrKeyframeEasing::Linear),
+            key(3 * TICKS / 2, 81.0, PrKeyframeEasing::Linear),
+            key(5 * TICKS / 2, 51.0, PrKeyframeEasing::Hold),
+        ]
+    );
+    assert_eq!(reread_effects(project), effects);
+    let mut scaled = make(81.0);
+    scaled["composition"]["layers"][0]["transform"]["scale"] = json!([50, 50]);
+    for wire in [make(81.5), make(4001.0), scaled] {
+        let (project, omissions) = export(wire);
+        assert_eq!(
+            exported_effects(&project),
+            [exported_blur(true, 10.0, false)]
+        );
+        assert!(
+            omissions
+                .iter()
+                .any(|note| note.reason.contains("was not exported")),
+            "{omissions:?}"
+        );
+    }
+}
+
+#[test]
+fn sharpen_host_export_omits_skew_and_depth_but_keeps_safe_sibling() {
+    for fields in [
+        json!({"skew": 20.0}),
+        json!({"position": [0.0, 0.0, 250.0]}),
+    ] {
+        let mut wire = document_with_effects(json!([
+            {"id": 1, "effect": {"type": "sharpen", "amount": 40.0}},
+            {"id": 2, "effect": {"type": "gaussianBlur", "blurriness": 10.0}},
+        ]));
+        let transform = &mut wire["composition"]["layers"][0]["transform"];
+        for (name, value) in fields.as_object().unwrap() {
+            transform[name] = value.clone();
+        }
+        let (project, omissions) = export(wire);
+        assert_eq!(
+            exported_effects(&project),
+            [exported_blur(true, 10.0, false)]
+        );
+        assert!(
+            omissions
+                .iter()
+                .any(|note| note.scope == OmissionScope::Feature
+                    && note.record == "layer 1 (\"Source\")"
+                    && note.reason.contains("sharpen effect 1 was not exported")
+                    && note.reason.contains("identity")),
+            "{omissions:?}"
+        );
+    }
+}
+
+#[test]
+fn sharpen_host_cubic_amount_keys_are_explicitly_rejected() {
+    let mut wire = document_with_effects(json!([
+        {"id": 1, "effect": {"type": "sharpen", "amount": 40.0}},
+        {"id": 2, "effect": {"type": "gaussianBlur", "blurriness": 10.0}},
+    ]));
+    wire["composition"]["dynamics"] = json!({"entries": [{
+        "target": {"kind": "effectProperty", "effectId": 1, "paramName": "amount"},
+        "animator": {"type": "keyframes", "enabled": true, "keyframes": [
+            fx_key("s1", 0, 20.0, json!({"type": "linear"})),
+            fx_key("s2", 500, 80.0, json!({"type": "cubicBezier", "x1": 0.25, "y1": 0.1, "x2": 0.75, "y2": 0.9})),
+        ]}
+    }]});
+    let (project, omissions) = export(wire);
+    assert_eq!(
+        exported_effects(&project),
+        [exported_blur(true, 10.0, false)]
+    );
+    assert!(
+        omissions.iter().any(|note| note
+            .reason
+            .contains("Sharpen Amount keys must be Linear or Hold; Bezier fidelity is unverified")),
+        "{omissions:?}"
+    );
+}
+
+// A master clip's own chain converts on each placement's picture before the
+// placement's own effects. These typed placements are supplementary controls;
+// the pinned native case and its XML controls are the public tests.
+
+/// The master clip of the source-effect controls.
+const SOURCE_MASTER: &str = "MasterClip:master-1";
+
+/// `effects` as the source effects that the reader carries for a placement of
+/// [`SOURCE_MASTER`].
+fn source_stack(effects: Vec<PrEffect>) -> Option<PrSourceEffects> {
+    Some(PrSourceEffects {
+        master: SOURCE_MASTER.to_owned(),
+        effects,
+        active_transforms: 0,
+    })
+}
+
+fn omitted(record: &str, reason: impl Into<String>) -> Omission {
+    Omission {
+        scope: OmissionScope::Feature,
+        kind: OmissionKind::Omitted,
+        record: record.to_owned(),
+        reason: reason.into(),
+    }
+}
+
+fn gaussian(id: u64, enabled: bool, blurriness: f64) -> Value {
+    json!({"id": id, "enabled": enabled, "effect": {"type": "gaussianBlur", "blurriness": blurriness}})
+}
+
+#[test]
+fn source_posterizes_report_each_quantizer_approximation() {
+    let record = "VideoClipTrackItem:posterize-placement";
+    let mut sequence = video_sequence();
+    let clip = sequence.video_tracks[0].clip_mut(0);
+    clip.id = Some(record.to_owned());
+    clip.source_effects = source_stack(vec![
+        posterize(true, 3, vec![]),
+        posterize(false, 7, vec![]),
+    ]);
+    let (wire, omissions) = imported_with_omissions(&sequence, &video_media());
+    assert_eq!(
+        wire["composition"]["layers"][0]["effects"],
+        json!([fx_posterize(1, true, 3.0), fx_posterize(2, false, 7.0)])
+    );
+    assert_eq!(
+        omissions,
+        [
+            posterize_approximation(
+                record,
+                &format!("Posterize effect at source stack position 1 of {SOURCE_MASTER}")
+            ),
+            posterize_approximation(
+                record,
+                &format!("bypassed Posterize effect at source stack position 2 of {SOURCE_MASTER}")
+            ),
+            omitted(SOURCE_MASTER, super::LINKED_SOURCE_EDITING_REASON),
+        ]
+    );
+}
+
+#[test]
+fn source_effect_keys_move_to_each_placements_clock() {
+    use PrKeyframeEasing::Linear;
+    // Two placements of one master clip, from source 1 s and 2 s, whose
+    // source stack is a blur keyed at source 0, 3 and 6 s.
+    let source = source_stack(vec![keyed(
+        blur(true, 0.0, false),
+        vec![
+            key(0, 10.0, Linear),
+            key(3 * TICKS, 40.0, Linear),
+            key(6 * TICKS, 20.0, Linear),
+        ],
+    )]);
+    let mut first = clip_of("source", TICKS..4 * TICKS, TICKS);
+    first.source_effects = source.clone();
+    let mut second = clip_of("source", 5 * TICKS..8 * TICKS, 2 * TICKS);
+    second.source_effects = source;
+    let sequence = sequence_of("Main", vec![PrVideoTrack::media([first, second])]);
+    let (wire, _) = imported_with_omissions(&sequence, &video_media());
+    // The source keys move to each placement's clock from its source In,
+    // the keys outside its trim kept.
+    let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
+    let tracks: Vec<_> = effect_tracks(&document)
+        .into_iter()
+        .map(|(id, param, keys)| {
+            let keys: Vec<_> = keys
+                .into_iter()
+                .map(|(_, millis, value, _)| (millis, value))
+                .collect();
+            (id, param, keys)
+        })
+        .collect();
+    assert_eq!(
+        tracks,
+        [
+            (
+                1,
+                "blurriness".to_owned(),
+                vec![(-1000, 10.0), (2000, 40.0), (5000, 20.0)]
+            ),
+            (
+                2,
+                "blurriness".to_owned(),
+                vec![(-2000, 10.0), (1000, 40.0), (4000, 20.0)]
+            ),
+        ]
+    );
+}
+
+#[test]
+fn source_effects_stage_the_mask_of_their_placement_after_them() {
+    // A Linear Wipe or Opacity mask that converts on one video layer moves to
+    // a stage group with the source effects, so that they apply first. The
+    // group carries no effect, so none applies twice.
+    type Edit = fn(&mut crate::schema::PrVideoOccurrence);
+    let cases: [(&str, Edit); 2] = [
+        ("Linear Wipe", |clip| {
+            clip.linear_wipe = Some(crate::schema::PrLinearWipe {
+                initial_completion: 50.0,
+                completion: vec![key(0, 50.0, PrKeyframeEasing::Linear)],
+                angle_degrees: 90,
+                feather: 0.0,
+            })
+        }),
+        ("Opacity mask", |clip| {
+            clip.opacity_mask = Some(crate::schema::PrMask {
+                raster: None,
+                feather: 0.0,
+                ..opacity_mask()
+            })
+        }),
+    ];
+    for (case, edit) in cases {
+        let mut sequence = video_sequence();
+        let clip = sequence.video_tracks[0].clip_mut(0);
+        edit(clip);
+        clip.source_effects = source_stack(vec![blur(true, 10.0, false)]);
+        let (staged, omissions) = imported_with_omissions(&sequence, &video_media());
+        let group = &staged["composition"]["layers"][0];
+        assert_eq!(
+            (&group["type"], group["masks"].as_array().map(Vec::len)),
+            (&json!("Group"), Some(1)),
+            "{case}"
+        );
+        assert!(group.get("effects").is_none(), "{case}: {group}");
+        let video = &group["layers"][0];
+        assert_eq!(video["effects"], json!([gaussian(1, true, 10.0)]), "{case}");
+        assert!(video.get("masks").is_none(), "{case}");
+        assert_eq!(
+            omissions,
+            [omitted(SOURCE_MASTER, super::LINKED_SOURCE_EDITING_REASON)],
+            "{case}"
+        );
+    }
+}
+
+#[test]
+fn a_placement_whose_own_effect_follows_its_mask_converts_without_source_effects() {
+    // Source effects before a Crop and the clip's own blur after it are on
+    // both sides of the Crop, which one FX mask cannot order, as for the
+    // clip's own effects (`MASK_EFFECT_ORDER_REASON`). The clip converts as
+    // it does without them: its Crop and blur on one video layer.
+    let mut sequence = video_sequence();
+    let clip = sequence.video_tracks[0].clip_mut(0);
+    clip.crop = left_crop();
+    clip.effects = vec![blur(true, 10.0, false)];
+    clip.source_effects = source_stack(vec![blur(true, 40.0, false)]);
+    let (wire, omissions) = imported_with_omissions(&sequence, &video_media());
+    let video = &wire["composition"]["layers"][0];
+    assert_eq!(video["type"], "Video");
+    assert_eq!(video["masks"].as_array().map(Vec::len), Some(1));
+    assert_eq!(video["effects"], json!([gaussian(1, true, 10.0)]));
+    assert_eq!(
+        omissions,
+        [
+            omitted(
+                "source",
+                "source effects of MasterClip:master-1 were not imported: they apply before the Crop, Linear Wipe or Track Matte Key, and effects of the clip's own chain after it; one FX mask keeps the effects of only one side in order"
+            ),
+            omitted(SOURCE_MASTER, crate::schema::SOURCE_CHAIN_NOT_CONVERTED),
+        ]
+    );
+}
+
+#[test]
+fn retimed_source_effect_keys_keep_source_times_values_and_easing() {
+    use PrKeyframeEasing::{CubicBezier, Hold, Linear};
+    let curve = CubicBezier {
+        x1: 0.25,
+        y1: 0.1,
+        x2: 0.75,
+        y2: 0.9,
+    };
+    for (rate, staged) in [
+        (2.0_f64, false),
+        (-2.0, false),
+        (0.5, false),
+        (-0.5, false),
+        (2.0, true),
+        (-2.0, true),
+    ] {
+        let mut sequence = video_sequence();
+        let clip = sequence.video_tracks[0].clip_mut(0);
+        clip.start_ticks = TICKS;
+        clip.end_ticks = 4 * TICKS;
+        clip.in_ticks = TICKS;
+        clip.out_ticks = TICKS + (3.0 * rate.abs() * TICKS as f64) as i64;
+        clip.playback_rate = rate;
+        if staged {
+            clip.crop = left_crop();
+        }
+        clip.source_effects = source_stack(vec![keyed(
+            blur(true, 0.0, false),
+            vec![
+                key(0, 10.0, Hold),
+                key(3 * TICKS, 40.0, curve),
+                key(6 * TICKS, 20.0, Linear),
+            ],
+        )]);
+        let (wire, omissions) = imported_with_omissions(&sequence, &video_media());
+        let (native, export_reports) = export(wire.clone());
+        let native_effects = exported_effects(&native);
+        assert_eq!(
+            native_effects.len(),
+            1,
+            "{rate}/{staged}: {export_reports:?}"
+        );
+        let PrEffectParamKeys::Scalar(keys) = &native_effects[0].animations[0].keys else {
+            panic!("expected scalar blur keys");
+        };
+        assert_eq!(
+            keys.iter()
+                .map(|k| (k.source_ticks, k.easing))
+                .collect::<Vec<_>>(),
+            [(0, Hold), (3 * TICKS, curve), (6 * TICKS, Linear)]
+        );
+        let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
+        let tracks = effect_tracks(&document);
+        assert_eq!(tracks.len(), 1, "{rate}: {omissions:?}");
+        let actual: Vec<_> = tracks[0]
+            .2
+            .iter()
+            .map(|(_, time, value, easing)| (*time, *value, *easing))
+            .collect();
+        assert_eq!(
+            actual,
+            [
+                (0, 10.0, PropertyKeyframeEasing::Hold),
+                (3000, 40.0, super::keyframes::fx_easing(curve)),
+                (6000, 20.0, PropertyKeyframeEasing::Linear),
+            ]
+        );
+        assert!(
+            omissions
+                .iter()
+                .any(|o| o.kind == OmissionKind::Approximated
+                    && o.reason.contains(super::RETIMED_EFFECT_CLOCK_APPROXIMATION)),
+            "{omissions:?}"
+        );
+        assert!(
+            !omissions
+                .iter()
+                .any(|o| o.reason.contains("animation at source stack")
+                    && o.kind == OmissionKind::Omitted),
+            "{omissions:?}"
+        );
+    }
+}
+
+#[test]
+fn source_effects_keep_the_frame_rules_of_the_picture_they_draw_on() {
+    let reason = |name: &str, why: String| {
+        omitted(
+            "source",
+            format!("{name} effect at source stack position 1 of {SOURCE_MASTER} was not imported: {why}"),
+        )
+    };
+    let linked = omitted(SOURCE_MASTER, super::LINKED_SOURCE_EDITING_REASON);
+    let identity = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
+    let vertical = ([0.5, 0.0], [0.5, 1.0]);
+
+    // 1280 x 720 media: a Ramp needs the clip frame to be the canvas, and a
+    // Corner Pin normalizes to the clip's own frame, as for the clip's own.
+    let mut small = video_media();
+    let stream = small
+        .get_mut(&crate::schema::MediaId("source".into()))
+        .unwrap()
+        .video
+        .as_mut()
+        .unwrap();
+    (stream.width, stream.height) = (1280, 720);
+    let mut sequence = video_sequence();
+    sequence.video_tracks[0].clip_mut(0).source_effects = source_stack(vec![
+        ramp(
+            true,
+            vertical,
+            ([0, 0, 0], [255, 255, 255]),
+            0.0,
+            Vec::new(),
+        ),
+        corner_pin(true, identity, Vec::new()),
+    ]);
+    let (wire, omissions) = imported_with_omissions(&sequence, &small);
+    assert_eq!(
+        wire["composition"]["layers"][0]["effects"][0]["effect"]["type"],
+        "cornerPin"
+    );
+    assert_eq!(
+        omissions,
+        [
+            reason(
+                "Ramp",
+                format!(
+                    "the source frame differs from the canvas; {}",
+                    super::FRAME_RULE
+                )
+            ),
+            linked.clone(),
+        ]
+    );
+
+    // Scale 50 and Rotation 30: a Directional Blur maps through the clip's
+    // Motion, as the clip's own does.
+    let mut sequence = video_sequence();
+    let clip = sequence.video_tracks[0].clip_mut(0);
+    (clip.transform.scale, clip.transform.rotation) = ([50.0; 2], 30.0);
+    clip.source_effects = source_stack(vec![directional_blur(true, 0.0, 30.0)]);
+    let (wire, omissions) = imported_with_omissions(&sequence, &video_media());
+    assert_eq!(
+        wire["composition"]["layers"][0]["effects"],
+        json!([{"id": 1, "enabled": true, "effect": {"type": "directionalBlur", "direction": 30.0, "blurLength": 15.0}}])
+    );
+    assert_eq!(omissions, std::slice::from_ref(&linked));
+
+    // Under the stage group of a Crop, a Directional Blur and a Mosaic are
+    // omitted as the clip's own are there; the blur after them converts.
+    let mut sequence = video_sequence();
+    let clip = sequence.video_tracks[0].clip_mut(0);
+    clip.crop = left_crop();
+    clip.source_effects = source_stack(vec![
+        directional_blur(true, 0.0, 30.0),
+        mosaic(true, (16, 9), Vec::new()),
+        blur(true, 10.0, false),
+    ]);
+    let (wire, omissions) = imported_with_omissions(&sequence, &video_media());
+    let group = &wire["composition"]["layers"][0];
+    assert_eq!(group["type"], "Group");
+    assert_eq!(
+        group["layers"][0]["effects"],
+        json!([gaussian(1, true, 10.0)])
+    );
+    let staged = |position: u32, name: &str, why: &str| {
+        omitted(
+            "source",
+            format!("{name} effect at source stack position {position} of {SOURCE_MASTER} was not imported: {why}"),
+        )
+    };
+    assert_eq!(
+        omissions,
+        [
+            staged(1, "Directional Blur", super::STAGED_DIRECTIONAL_BLUR_REASON),
+            staged(2, "Mosaic (Legacy)", super::STAGED_MOSAIC_REASON),
+            linked,
+        ]
+    );
+}
+
+#[test]
+fn a_source_transform_is_reported_and_the_placements_own_transform_stages_its_video() {
+    // The two Transform counts stay apart: the clip's own one Transform
+    // stages its video, and the master clip's is reported.
+    let mut sequence = video_sequence();
+    let clip = sequence.video_tracks[0].clip_mut(0);
+    clip.effects = vec![transform_effect(
+        crate::schema::PrTransform {
+            position: [0.75, 0.5],
+            ..DEFAULT_PR_TRANSFORM
+        },
+        Vec::new(),
+    )];
+    clip.active_transforms = 1;
+    clip.source_effects = Some(PrSourceEffects {
+        active_transforms: 1,
+        ..source_stack(vec![
+            transform_effect(DEFAULT_PR_TRANSFORM, Vec::new()),
+            blur(true, 10.0, false),
+        ])
+        .unwrap()
+    });
+    let (wire, omissions) = imported_with_omissions(&sequence, &video_media());
+    let group = &wire["composition"]["layers"][0];
+    assert_eq!(group["type"], "Group");
+    let video = &group["layers"][0];
+    assert_eq!(video["effects"], json!([gaussian(1, true, 10.0)]));
+    assert_eq!(video["transform"]["position"][0], json!(1440.0));
+    assert_eq!(
+        omissions,
+        [
+            omitted(
+                "source",
+                format!(
+                    "Transform effect at source stack position 1 of {SOURCE_MASTER} was not imported: {}",
+                    super::SOURCE_TRANSFORM_REASON
+                )
+            ),
+            omitted(SOURCE_MASTER, super::LINKED_SOURCE_EDITING_REASON),
+        ]
+    );
+}
+
+#[test]
+fn a_source_stack_that_converts_nothing_is_reported_as_not_converted() {
+    // Every source effect is omitted: a Transform never converts, and a Ramp
+    // needs its picture at identity Motion on a canvas frame, which this
+    // moved clip is not. The chain is reported as not converted and no
+    // copy's linked editing is claimed. On a Crop the stack still stages the
+    // clip's mask, as the order of its effects needs; its picture then
+    // carries none of them, under a group that the Crop alone would not need.
+    let source = source_stack(vec![
+        transform_effect(DEFAULT_PR_TRANSFORM, Vec::new()),
+        ramp(
+            true,
+            ([0.5, 0.0], [0.5, 1.0]),
+            ([0, 0, 0], [255, 255, 255]),
+            0.0,
+            Vec::new(),
+        ),
+    ]);
+    for masked in [false, true] {
+        let mut sequence = video_sequence();
+        let clip = sequence.video_tracks[0].clip_mut(0);
+        clip.transform.scale = [50.0; 2];
+        clip.source_effects = source.clone();
+        if masked {
+            clip.crop = left_crop();
+        }
+        let (wire, omissions) = imported_with_omissions(&sequence, &video_media());
+        let root = &wire["composition"]["layers"][0];
+        let picture = if masked {
+            assert_eq!(
+                (&root["type"], root["masks"].as_array().map(Vec::len)),
+                (&json!("Group"), Some(1))
+            );
+            &root["layers"][0]
+        } else {
+            assert_eq!(root["type"], "Video");
+            root
+        };
+        assert!(picture.get("effects").is_none(), "{picture}");
+        let reasons: Vec<_> = omissions
+            .iter()
+            .map(|omission| (omission.record.as_str(), omission.reason.as_str()))
+            .collect();
+        let ramp = if masked {
+            super::STAGED_RAMP_REASON.to_owned()
+        } else {
+            format!(
+                "static Motion moves the clip frame off the canvas; {}",
+                super::FRAME_RULE
+            )
+        };
+        assert_eq!(reasons.len(), 3, "{reasons:?}");
+        assert_eq!(
+            reasons[0],
+            (
+                "source",
+                format!(
+                    "Transform effect at source stack position 1 of {SOURCE_MASTER} was not imported: {}",
+                    super::SOURCE_TRANSFORM_REASON
+                )
+                .as_str()
+            )
+        );
+        assert!(
+            reasons[1].0 == "source"
+                && reasons[1].1.starts_with(&format!(
+                    "Ramp effect at source stack position 2 of {SOURCE_MASTER} was not imported: "
+                ))
+                && reasons[1].1.ends_with(&ramp),
+            "{masked}: {reasons:?}"
+        );
+        assert_eq!(
+            reasons[2],
+            (SOURCE_MASTER, crate::schema::SOURCE_CHAIN_NOT_CONVERTED)
+        );
+    }
+}
+
+#[test]
+fn a_curved_corner_path_is_never_drawn_as_its_chords() {
+    // Only a master clip's Corner Pin reaches import with a curved path, and
+    // `corner_path::straighten` turns it into straight keys first. A curved
+    // path on the clip's own Corner Pin, which the reader rejects and only a
+    // typed control can carry, is omitted rather than drawn along its chords.
+    let mut curved = point_key(TICKS, [0.2, 0.1], PrKeyframeEasing::Linear);
+    curved.spatial_in_tangent = Some([0.0, -0.1]);
+    let mut sequence = video_sequence();
+    sequence.video_tracks[0].clip_mut(0).effects = vec![corner_pin(
+        true,
+        [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
+        vec![corner_keys(
+            0,
+            vec![point_key(0, [0.0, 0.0], PrKeyframeEasing::Linear), curved],
+        )],
+    )];
+    let (wire, omissions) = imported_with_omissions(&sequence, &video_media());
+    assert!(
+        wire["composition"]["layers"][0].get("effects").is_none(),
+        "{wire}"
+    );
+    assert_eq!(
+        omissions,
+        [omitted(
+            "source",
+            "Corner Pin effect at stack position 1 was not imported: keyframed Upper Left moves on a curved spatial path that was not straightened"
+        )]
+    );
+}
+
+#[test]
+fn source_replicate_stays_omitted_without_losing_safe_source_or_clip_effects() {
+    let mut sequence = video_sequence();
+    let clip = sequence.video_tracks[0].clip_mut(0);
+    clip.source_effects = source_stack(vec![replicate(true, 2, vec![]), blur(true, 10.0, false)]);
+    clip.effects = vec![blur(true, 25.0, false)];
+    let (wire, omissions) = imported_with_omissions(&sequence, &video_media());
+    assert_eq!(
+        wire["composition"]["layers"][0]["effects"],
+        json!([gaussian(1, true, 10.0), gaussian(2, true, 25.0)])
+    );
+    assert_eq!(
+        omissions,
+        [
+            omitted(
+                "source",
+                "Replicate effect at source stack position 1 of MasterClip:master-1 was not imported: Replicate among a master clip's source effects is not converted; its processing order is unverified"
+            ),
+            omitted(SOURCE_MASTER, super::LINKED_SOURCE_EDITING_REASON),
+        ]
+    );
+}
+
+#[test]
+fn shift_channels_exports_only_static_own_or_constant_routes() {
+    let effect = json!({"id": 1, "effect": {"type": "shiftChannels", "takeRedFrom": "fullOn", "takeGreenFrom": "green", "takeBlueFrom": "fullOff"}});
+    let safe = json!({"id": 2, "effect": {"type": "gaussianBlur", "blurriness": 10.0}});
+    for (field, value, reason) in [
+        ("route", json!("blue"), "cross-channel routing"),
+        ("enabled", json!(false), "disabled Levels"),
+        ("keys", json!(null), "only static effect parameters export"),
+    ] {
+        let mut wire = document_with_effects(json!([effect.clone(), safe.clone()]));
+        match field {
+            "route" => {
+                wire["composition"]["layers"][0]["effects"][0]["effect"]["takeRedFrom"] = value
+            }
+            "enabled" => wire["composition"]["layers"][0]["effects"][0]["enabled"] = value,
+            _ => {
+                wire["composition"]["dynamics"] = json!({"entries": [{
+                    "target": {"kind": "effectProperty", "effectId": 1, "paramName": "takeRedFrom"},
+                    "animator": {"type": "keyframes", "enabled": true, "keyframes": [
+                        fx_key("a", 0, 0.0, json!({"type": "linear"})),
+                        fx_key("b", 500, 1.0, json!({"type": "linear"})),
+                    ]}
+                }]})
+            }
+        }
+        let (project, omissions) = export(wire);
+        assert_eq!(
+            exported_effects(&project),
+            [exported_blur(true, 10.0, false)]
+        );
+        assert!(
+            omissions
+                .iter()
+                .any(|omission| omission.reason.contains(reason)),
+            "{omissions:?}"
+        );
+    }
+}
+
+// Verbatim component 560 and parameters 903–922 from the human-authored
+// human-inputs-20261004.prproj, saved in Premiere Pro 2026, SHA-256
+// e74d088116570ddb7178b127129036755be2f8e553dea80f98aa59b601585b76.
+// Source: effects sequence, UID b3aecac7-c452-48ba-a5e1-737807cb32ee.
+// Only those records were extracted offline; the original was not modified.
+// The host is one-clip.xml's synthetic five-second 1080p30 placement and
+// ten-second media metadata, not the original footage or placement. This tests
+// native effect records and edited export structure, not original-host timing,
+// independent Adobe readback, RGB or alpha fidelity. The derived XML hash below
+// pins the unchanged extracted records and synthetic host together.
+#[test]
+fn human_levels_master_import_and_edited_export_preserve_keys() {
+    use sha2::{Digest, Sha256};
+    let xml = include_str!("../../../tests/fixtures/human_levels_master.xml");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(xml.as_bytes())),
+        "cddbe927f29896c15001ea1506382c3fd57c9b902e2adfcbeb27dee1a6fa8ade"
+    );
+    let (native, omissions) = crate::format::inspect_project_with_omissions(xml, None).unwrap();
+    let sequence = native.single_sequence().unwrap();
+    let effects = &sequence.video_tracks[0].clip(0).effects;
+    assert_eq!(effects.len(), 2, "{omissions:?}");
+    assert_eq!(
+        effects[0].params,
+        PrEffectParams::Levels(PrLevels::Master {
+            rgb: [30.0, 255.0, 0.0, 255.0, 100.0]
+        })
+    );
+    let keys = effects[0].animations[0].keys.scalar().unwrap();
+    assert_eq!(
+        keys,
+        [
+            key(0, 30.0, PrKeyframeEasing::Linear),
+            key(561_741_701_862, 60.0, PrKeyframeEasing::Linear),
+        ]
+    );
+    assert!(omissions.is_empty(), "{omissions:?}");
+    // Preserve the independent scalar-master contract. The complete channel
+    // graph, including copied master keys, is asserted by the channel test.
+    let mut scalar_sequence = sequence.clone();
+    scalar_sequence.video_tracks[0]
+        .clip_mut(0)
+        .effects
+        .truncate(1);
+    let (mut wire, omissions) = imported_with_omissions(&scalar_sequence, &native.media);
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let effect = &mut wire["composition"]["layers"][0]["effects"][0]["effect"];
+    assert_eq!(
+        effect,
+        &json!({"type":"levels", "inputBlack":30.0,
+        "inputWhite":255.0,"gamma":1.0,"outputBlack":0.0,"outputWhite":255.0})
+    );
+    *effect = json!({"type":"levels", "inputBlack":40.0,
+        "inputWhite":230.0,"gamma":1.25,"outputBlack":5.0,"outputWhite":245.0});
+    let entries = wire["composition"]["dynamics"]["entries"]
+        .as_array_mut()
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["target"]["paramName"], "inputBlack");
+    let keys = entries[0]["animator"]["keyframes"].as_array_mut().unwrap();
+    assert_eq!(keys.len(), 2);
+    for (key, (time, original, edited)) in
+        keys.iter_mut().zip([(0, 30.0, 40.0), (2211, 60.0, 75.0)])
+    {
+        assert_eq!(key["layerTime"], time);
+        assert_eq!(key["value"]["value"], original);
+        assert_eq!(key["easing"]["type"], "linear");
+        key["value"]["value"] = json!(edited);
+    }
+    let (written, omissions) = export(wire);
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let reread = reread_effects(written);
+    assert_eq!(reread.len(), 1);
+    let PrEffectParams::Levels(levels) = &reread[0].params else {
+        panic!("expected Levels")
+    };
+    assert_eq!(
+        levels.start_values(),
+        [
+            40.0, 230.0, 5.0, 245.0, 125.0, 0.0, 255.0, 0.0, 255.0, 100.0, 0.0, 255.0, 0.0, 255.0,
+            100.0, 0.0, 255.0, 0.0, 255.0, 100.0,
+        ]
+    );
+    assert_eq!(
+        reread[0].animations[0].keys.scalar().unwrap(),
+        [
+            key(0, 40.0, PrKeyframeEasing::Linear),
+            key(2211 * TICKS_PER_MILLISECOND, 75.0, PrKeyframeEasing::Linear),
+        ]
+    );
+}
+
+#[test]
+fn source_sharpen_stays_omitted_without_losing_safe_source_or_clip_effects() {
+    let mut sequence = video_sequence();
+    let clip = sequence.video_tracks[0].clip_mut(0);
+    clip.source_effects = source_stack(vec![
+        PrEffect {
+            mask: None,
+            enabled: true,
+            params: PrEffectParams::Sharpen(crate::schema::PrSharpen { amount: 40 }),
+            animations: vec![],
+        },
+        blur(true, 10.0, false),
+    ]);
+    clip.effects = vec![blur(true, 25.0, false)];
+    let (wire, omissions) = imported_with_omissions(&sequence, &video_media());
+    assert_eq!(
+        wire["composition"]["layers"][0]["effects"],
+        json!([gaussian(1, true, 10.0), gaussian(2, true, 25.0)])
+    );
+    assert_eq!(
+        omissions,
+        [
+            omitted(
+                "source",
+                "Sharpen effect at source stack position 1 of MasterClip:master-1 was not imported: Sharpen among a master clip's source effects is not converted; its processing order is unverified"
+            ),
+            omitted(SOURCE_MASTER, super::LINKED_SOURCE_EDITING_REASON),
+        ]
+    );
+}
+
+/// Unchanged Adobe-native controls in the existing supported CPU clip harness.
+/// This does not import the human project's sequence clock or source media.
+fn find_edges_native_xml(fragment: &str) -> String {
+    include_str!("../../../tests/fixtures/one-clip.xml")
+        .replace(
+            "<VideoComponentChain ObjectID=\"4\"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>",
+            "<VideoComponentChain ObjectID=\"4\"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain><Components><Component Index=\"0\" ObjectRef=\"537\"/></Components></ComponentChain></VideoComponentChain>",
+        )
+        .replace(
+            "</PremiereData>",
+            &fragment.replace("<PremiereData Version=\"3\">", ""),
+        )
+}
+
+fn find_edges_import(xml: &str) -> (Value, Vec<Omission>) {
+    let (native, mut omissions) = crate::format::inspect_project_with_omissions(xml, None).unwrap();
+    let sequence = native.single_sequence().unwrap();
+    let assets = crate::tesseract_output::asset_ids_in_order(sequence, &native.media);
+    let wire =
+        crate::convert::premiere_to_tesseract(sequence, &native.media, &assets, &mut omissions)
+            .unwrap()
+            .to_json_value()
+            .unwrap();
+    (wire, omissions)
+}
+
+#[test]
+fn find_edges_native_controls_import_editably_with_explicit_losses() {
+    let fragment = include_str!("../../../tests/fixtures/find-edges-26.5.xml");
+    let (wire, omissions) = find_edges_import(&find_edges_native_xml(fragment));
+    assert_eq!(
+        wire["composition"]["layers"][0]["effects"],
+        json!([{"id": 1, "enabled": true, "effect": {"type": "findEdges", "invert": 0.0}}])
+    );
+    assert_eq!(
+        wire["composition"]["layers"][0]["source"]["assetId"],
+        "premiere-video-1"
+    );
+    assert!(wire["composition"]["dynamics"]["entries"]
+        .as_array()
+        .is_none_or(Vec::is_empty));
+    assert!(
+        omissions.iter().any(|note| {
+            note.record == "VideoClipTrackItem:3"
+                && note.reason.contains("Find Edges")
+                && note.reason.contains("Blend With Original")
+                && note.reason.contains("keys")
+        }),
+        "{omissions:?}"
+    );
+    assert!(
+        omissions.iter().any(|note| {
+            note.kind == OmissionKind::Approximated && note.reason.contains("grayscale Sobel")
+        }),
+        "{omissions:?}"
+    );
+
+    // Same native layout, opposite checkbox; not a second native witness.
+    let fragment = fragment.replace(",true,0,0,0,0,0,0", ",false,0,0,0,0,0,0");
+    let (wire, _) = find_edges_import(&find_edges_native_xml(&fragment));
+    assert_eq!(
+        wire["composition"]["layers"][0]["effects"][0]["effect"]["invert"],
+        1.0
+    );
+}
+
+#[test]
+fn find_edges_edited_export_writes_current_polarity_and_native_layout() {
+    let (original, _) = find_edges_import(&find_edges_native_xml(include_str!(
+        "../../../tests/fixtures/find-edges-26.5.xml"
+    )));
+    for (invert, enabled, expected) in [
+        (Some(0.0), true, "true"),
+        (Some(0.5), true, "true"),
+        (Some(0.75), true, "false"),
+        (Some(1.0), false, "false"),
+        (None, true, "false"),
+    ] {
+        let mut wire = original.clone();
+        let effect = &mut wire["composition"]["layers"][0]["effects"][0];
+        effect["enabled"] = json!(enabled);
+        if let Some(invert) = invert {
+            effect["effect"]["invert"] = json!(invert);
+        } else {
+            effect["effect"].as_object_mut().unwrap().remove("invert");
+        }
+        let (mut project, omissions) = export(wire);
+        assert_eq!(exported_effects(&project).len(), 1, "{omissions:?}");
+        assert!(
+            omissions
+                .iter()
+                .any(|note| note.kind == OmissionKind::Approximated
+                    && note.reason.contains("grayscale Sobel")),
+            "{omissions:?}"
+        );
+        for media in project.media.values_mut() {
+            media.name = "source.mp4".to_owned();
+            media.relative_path = Some("./media/source.mp4".to_owned());
+            media.relative_paths = vec!["./media/source.mp4".to_owned()];
+            media.absolute_paths = vec![(
+                crate::schema::records::MediaPathField::FilePath,
+                "/tmp/source.mp4".into(),
+            )];
+        }
+        let output = tempfile::tempdir().unwrap();
+        let path = output.path().join("project.prproj");
+        crate::format::PremiereProjectXml::new(&project)
+            .unwrap()
+            .write_new(&path)
+            .unwrap();
+        let xml = crate::format::read_xml(&path).unwrap();
+        // Independent XML assertions, not this converter's native reader.
+        let tree = roxmltree::Document::parse(&xml).unwrap();
+        fn text<'a>(node: roxmltree::Node<'a, '_>, tag: &str) -> Option<&'a str> {
+            node.children()
+                .find(|child| child.has_tag_name(tag))
+                .and_then(|child| child.text())
+        }
+        let native = tree
+            .descendants()
+            .find(|node| {
+                node.has_tag_name("VideoFilterComponent")
+                    && text(*node, "MatchName") == Some("AE.ADBE Find Edges")
+            })
+            .unwrap();
+        assert_eq!(native.attribute("Version"), Some("9"));
+        assert_eq!(
+            native.attribute("ClassID"),
+            Some("d10da199-beea-4dd1-b941-ed3a78766d50")
+        );
+        assert_eq!(text(native, "VideoFilterType"), Some("2"));
+        let body = native
+            .children()
+            .find(|node| node.has_tag_name("Component"))
+            .unwrap();
+        assert_eq!(body.attribute("Version"), Some("7"));
+        assert_eq!(text(body, "Bypass"), (!enabled).then_some("true"));
+        assert_eq!(text(body, "Intrinsic"), None);
+        let params: Vec<_> = body
+            .descendants()
+            .filter(|node| node.has_tag_name("Param"))
+            .collect();
+        assert_eq!(params.len(), 2);
+        for (index, (class, name, value)) in [
+            ("cc12343e-f113-4d3b-ae05-b287db77d461", None, expected),
+            (
+                "fe47129e-6c94-4fc0-95d5-c056a517aaf3",
+                Some("Blend With Original"),
+                "0.",
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(
+                params[index].attribute("Index"),
+                Some(index.to_string().as_str())
+            );
+            let object = params[index].attribute("ObjectRef").unwrap();
+            let param = tree
+                .descendants()
+                .find(|node| node.attribute("ObjectID") == Some(object))
+                .unwrap();
+            assert!(param.has_tag_name("VideoComponentParam"));
+            assert_eq!(param.attribute("ClassID"), Some(class));
+            assert_eq!(param.attribute("Version"), Some("10"));
+            assert_eq!(text(param, "Name"), name);
+            assert_eq!(
+                text(param, "ParameterID"),
+                Some((index + 1).to_string().as_str())
+            );
+            assert_eq!(
+                text(param, "StartKeyframe"),
+                Some(format!("-91445760000000000,{value},0,0,0,0,0,0").as_str())
+            );
+            for tag in [
+                "Keyframes",
+                "CurrentValue",
+                "IsTimeVarying",
+                "ParameterControlType",
+            ] {
+                assert_eq!(text(param, tag), None, "{tag}");
+            }
+            assert_eq!(text(param, "LowerBound"), (index == 1).then_some("0"));
+            assert_eq!(text(param, "UpperBound"), (index == 1).then_some("1"));
+        }
+    }
+}
+
+#[test]
+fn find_edges_unsupported_controls_keep_the_clip() {
+    let fragment = include_str!("../../../tests/fixtures/find-edges-26.5.xml");
+    for (fragment, reason) in [
+        (fragment.replace("<ParameterID>1</ParameterID>", "<ParameterID>1</ParameterID><IsTimeVarying>true</IsTimeVarying><Keyframes>0,1,4,0,0,0,0,0;</Keyframes>"), "keyframed Invert"),
+        (fragment.replace("-91445760000000000,0.25", "-91445760000000000,1.25").replace("<Keyframes>0,0.25,0,0,0,0.16666666666666666,0.24870647761579487,0.16666666666666666;510674274420,0.75,0,0,0.24870647761579487,0.16666666666666666,0,0.16666666666666666;</Keyframes>", "").replace("<IsTimeVarying>true</IsTimeVarying>", "").replace("<CurrentValue>1</CurrentValue>", ""), "not a number from 0 to 1"),
+        (fragment.replace("cc12343e-f113-4d3b-ae05-b287db77d461", "fe47129e-6c94-4fc0-95d5-c056a517aaf3"), "unsupported Find Edges Invert parameter layout"),
+    ] {
+        let (wire, omissions) = find_edges_import(&find_edges_native_xml(&fragment));
+        // The retained video, then the importer's bottom black canvas.
+        let layers = wire["composition"]["layers"].as_array().unwrap();
+        assert_eq!(layers.len(), 2, "{layers:?}");
+        assert_eq!(layers[0]["source"]["assetId"], "premiere-video-1");
+        assert!(wire["composition"]["layers"][0]["effects"].as_array().is_none_or(Vec::is_empty));
+        assert!(omissions.iter().any(|note| note.reason.contains("Find Edges") && note.reason.contains(reason)), "{omissions:?}");
+    }
+    let mut wire = document_with_effects(
+        json!([{"id": 1, "enabled": true, "effect": {"type": "findEdges", "invert": 0.0}}]),
+    );
+    let mut animated = wire.clone();
+    animated["composition"]["dynamics"] = json!({"entries": [{
+        "target": {"kind": "effectProperty", "effectId": 1, "paramName": "invert"},
+        "animator": {"type": "keyframes", "enabled": true, "keyframes": [
+            {"id": "invert-0", "layerTime": 0, "value": {"type": "float", "value": 0.0}, "easing": {"type": "hold"}},
+            {"id": "invert-1", "layerTime": 500, "value": {"type": "float", "value": 1.0}, "easing": {"type": "hold"}}
+        ]}
+    }]});
+    let (project, omissions) = export(animated);
+    assert!(exported_effects(&project).is_empty());
+    assert!(
+        omissions
+            .iter()
+            .any(|note| note.reason.contains("animated invert")),
+        "{omissions:?}"
+    );
+
+    let xml = find_edges_native_xml(fragment).replace(
+        "<FrameRect>0,0,1920,1080</FrameRect></VideoStream>",
+        "<FrameRect>0,0,1280,720</FrameRect></VideoStream>",
+    );
+    let (imported, omissions) = find_edges_import(&xml);
+    // A frame-mismatched effect must not drop its video beside the canvas.
+    let layers = imported["composition"]["layers"].as_array().unwrap();
+    assert_eq!(layers.len(), 2, "{layers:?}");
+    assert_eq!(layers[0]["source"]["assetId"], "premiere-video-1");
+    assert!(imported["composition"]["layers"][0]["effects"]
+        .as_array()
+        .is_none_or(Vec::is_empty));
+    assert!(
+        omissions
+            .iter()
+            .any(|note| note.reason.contains("Find Edges") && note.reason.contains("frame")),
+        "{omissions:?}"
+    );
+
+    wire["composition"]["layers"][0]["transform"]["scale"] = json!([200.0, 200.0]);
+    let (project, omissions) = export(wire);
+    assert!(exported_effects(&project).is_empty());
+    assert!(
+        omissions
+            .iter()
+            .any(|note| note.reason.contains("Find Edges") && note.reason.contains("frame")),
+        "{omissions:?}"
+    );
+}
+
+// Native human-inputs-20261004.prproj SHA-256
+// e74d088116570ddb7178b127129036755be2f8e553dea80f98aa59b601585b76,
+// effects sequence b3aecac7-c452-48ba-a5e1-737807cb32ee: component 557,
+// parameters 772–901 copied verbatim offline into one-clip.xml's synthetic host.
+// No claim of original placement fidelity or scalar authority over Lumetri blobs.
+#[test]
+fn human_lumetri_saved_contrast_replacement_imports_and_exports_edits() {
+    use sha2::{Digest, Sha256};
+    let xml = include_str!("../../../tests/fixtures/human_lumetri_contrast.xml");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(xml.as_bytes())),
+        "4af7a4075c31e3735461074a18aeb436ff03ec7bfc85c9edd37be08907dac05c"
+    );
+    let (native, omissions) = crate::format::inspect_project_with_omissions(xml, None).unwrap();
+    let sequence = native.single_sequence().unwrap();
+    let effects = &sequence.video_tracks[0].clip(0).effects;
+    assert_eq!(effects.len(), 6, "{omissions:?}");
+    assert_eq!(
+        effects[1].params,
+        PrEffectParams::BrightnessContrast(PrBrightnessContrast {
+            brightness: 0.0,
+            contrast: 25.0
+        })
+    );
+    assert!(effects[0].animations.is_empty());
+    assert_eq!(omissions.len(), 1, "{omissions:?}");
+    assert_eq!(omissions[0].record, "VideoFilterComponent:557");
+    assert_eq!(omissions[0].kind, OmissionKind::Approximated);
+    assert!(omissions[0].reason.contains("saved Exposure"));
+    assert!(omissions[0].reason.contains("Exposure"));
+    assert!(omissions[0].reason.contains("LUT"));
+    assert!(omissions[0]
+        .reason
+        .contains("not an equivalent Lumetri transfer"));
+    let (mut wire, _) = imported_with_omissions(sequence, &native.media);
+    assert_eq!(
+        wire["composition"]["layers"][0]["effects"][0]["effect"]["exposure"],
+        1.0
+    );
+    assert_eq!(
+        wire["composition"]["layers"][0]["effects"][2]["effect"]["saturation"],
+        30.0
+    );
+    let keys = wire["composition"]["dynamics"]["entries"][0]["animator"]["keyframes"]
+        .as_array()
+        .unwrap();
+    assert_eq!(keys.len(), 2);
+    assert_eq!(keys[0]["value"]["value"], 30.0);
+    assert_eq!(keys[1]["value"]["value"], -40.0);
+    assert_eq!(keys[0]["layerTime"], 0);
+    assert_eq!(keys[1]["layerTime"], 2513);
+    let effect = &mut wire["composition"]["layers"][0]["effects"][1]["effect"];
+    assert_eq!(effect["type"], "brightnessContrast");
+    assert_eq!(effect["contrast"], 25.0);
+    effect["contrast"] = json!(40.0);
+    effect["brightness"] = json!(15.0);
+    let (written, _) = export(wire.clone());
+    assert_eq!(
+        written_chain(export(wire).0),
+        ["AE.ADBE Brightness & Contrast 2"]
+    );
+    let effects = reread_effects(written);
+    assert_eq!(effects.len(), 1);
+    assert_eq!(
+        effects[0].params,
+        PrEffectParams::BrightnessContrast(PrBrightnessContrast {
+            brightness: 15.0,
+            contrast: 40.0
+        })
+    );
+}
+
+#[test]
+fn human_lumetri_replacement_rejects_ambiguous_or_unsupported_selected_controls() {
+    let xml = include_str!("../../../tests/fixtures/human_lumetri_contrast.xml");
+    let start = xml.find("<VideoComponentParam ObjectID=\"792\"").unwrap();
+    let end = start + xml[start..].find("</VideoComponentParam>").unwrap();
+    for (from, to, reason) in [
+        (
+            "25.,0,0,0,0,0,0",
+            "125.,0,0,0,0,0,0",
+            "outside replacement range",
+        ),
+        (
+            "<ParameterID>12</ParameterID>",
+            "<ParameterID>13</ParameterID>",
+            "duplicate Lumetri ParameterID",
+        ),
+        (
+            "<Name>Contrast</Name>",
+            "<Name>Different</Name>",
+            "unexpected Lumetri Contrast name",
+        ),
+        (
+            "<StartKeyframe>",
+            "<Keyframes>0,25,0,0,0,0,0,0;</Keyframes><StartKeyframe>",
+            "requires static",
+        ),
+    ] {
+        assert!(xml[start..end].contains(from));
+        let mut modified = format!(
+            "{}{}{}",
+            &xml[..start],
+            xml[start..end].replace(from, to),
+            &xml[end..]
+        );
+        if to.starts_with("125.") {
+            modified = modified.replace(
+                "<CurrentValue>25</CurrentValue>",
+                "<CurrentValue>125</CurrentValue>",
+            );
+        }
+        let (project, omissions) =
+            crate::format::inspect_project_with_omissions(&modified, None).unwrap();
+        let effects = &project.single_sequence().unwrap().video_tracks[0]
+            .clip(0)
+            .effects;
+        if reason == "duplicate Lumetri ParameterID" {
+            assert!(effects.is_empty());
+        } else {
+            assert_eq!(effects.len(), 5, "{omissions:?}");
+            assert_eq!(effects[0].params, PrEffectParams::LumetriExposure(1.0));
+            assert_eq!(effects[1].params, PrEffectParams::LumetriSaturation(130.0));
+            assert_eq!(effects[1].animations[0].keys.scalar().unwrap().len(), 2);
+            assert!(omissions
+                .iter()
+                .any(|omission| omission.record == "VideoFilterComponent:557"
+                    && omission.reason.contains("Contrast replacement omitted")));
+        }
+        assert!(
+            omissions
+                .iter()
+                .any(|omission| omission.reason.contains(reason)),
+            "{omissions:?}"
+        );
+    }
+}
+
+#[test]
+fn human_lumetri_basic_bypass_preserves_independent_vignette_enable() {
+    let xml = include_str!("../../../tests/fixtures/human_lumetri_contrast.xml");
+    let start = xml.find("<VideoComponentParam ObjectID=\"775\"").unwrap();
+    let end = start + xml[start..].find("</VideoComponentParam>").unwrap();
+    let control = xml[start..end]
+        .replace("-91445760000000000,true,", "-91445760000000000,false,")
+        .replace(
+            "<CurrentValue>true</CurrentValue>",
+            "<CurrentValue>false</CurrentValue>",
+        );
+    assert_ne!(control, xml[start..end]);
+    let xml = format!("{}{}{}", &xml[..start], control, &xml[end..]);
+    let (native, omissions) = crate::format::inspect_project_with_omissions(&xml, None).unwrap();
+    let effects = &native.single_sequence().unwrap().video_tracks[0]
+        .clip(0)
+        .effects;
+    assert_eq!(effects.len(), 6, "{omissions:?}");
+    assert!(effects[..5].iter().all(|effect| !effect.enabled));
+    assert!(effects[5].enabled);
+}
+
+#[test]
+fn human_lumetri_wrong_basic_enable_name_preserves_vignette() {
+    let xml = include_str!("../../../tests/fixtures/human_lumetri_contrast.xml");
+    let start = xml.find("<VideoComponentParam ObjectID=\"775\"").unwrap();
+    let end = start + xml[start..].find("</VideoComponentParam>").unwrap();
+    let control = xml[start..end].replace("<Name> </Name>", "<Name>Different</Name>");
+    assert_ne!(control, xml[start..end]);
+    let modified = format!("{}{}{}", &xml[..start], control, &xml[end..]);
+    let (project, omissions) =
+        crate::format::inspect_project_with_omissions(&modified, None).unwrap();
+    let effects = &project.single_sequence().unwrap().video_tracks[0]
+        .clip(0)
+        .effects;
+    assert_eq!(effects.len(), 1);
+    assert_eq!(
+        effects[0].params,
+        PrEffectParams::LumetriVignette([0.0, 50.0, 50.0])
+    );
+    assert!(
+        omissions.iter().any(|omission| omission
+            .reason
+            .contains("unexpected Lumetri Basic Correction enable name")),
+        "{omissions:?}"
+    );
+}
+
+// Verbatim Offset records from vhs_slideshow.prproj, SHA-256
+// 2ff4967e295dccde90fda159aab8b10ddb3800c8d8e92ea50e0a8e1a56ed207a:
+// components889 (static) and927 (keyed), each in one-clip.xml's synthetic host.
+// Original clocks/bytes preserved; this is not original placement or pixel proof.
+#[test]
+fn native_offset_imports_fully_wet_motion_tile_and_straightened_center_keys() {
+    use sha2::{Digest, Sha256};
+    for (xml, hash, key_count) in [
+        (
+            include_str!("../../../tests/fixtures/native_offset_static.xml"),
+            "ed67c0546a2416650f6e12959e6447c47319382818095c50b5de32336c90a5b4",
+            0,
+        ),
+        (
+            include_str!("../../../tests/fixtures/native_offset_keyed.xml"),
+            "329db922f88276a4a6350ffbe733895cbcfbfc76a6956f1da3431add8399c84a",
+            4,
+        ),
+    ] {
+        assert_eq!(format!("{:x}", Sha256::digest(xml.as_bytes())), hash);
+        let (native, omissions) = crate::format::inspect_project_with_omissions(xml, None).unwrap();
+        let sequence = native.single_sequence().unwrap();
+        let effects = &sequence.video_tracks[0].clip(0).effects;
+        assert_eq!(effects.len(), 1, "{omissions:?}");
+        assert_eq!(omissions.len(), 1, "{omissions:?}");
+        assert_eq!(omissions[0].kind, OmissionKind::Approximated);
+        assert!(omissions[0].reason.contains("Blend With Original"));
+        assert!(omissions[0].reason.contains("fully wet"));
+        let center = if key_count == 0 {
+            [0.5093749761581421, 0.5]
+        } else {
+            [0.5, 0.5]
+        };
+        assert_eq!(effects[0].params, PrEffectParams::Offset(center));
+        if key_count != 0 {
+            let keys = effects[0].animations[0].keys.point().unwrap();
+            assert_eq!(keys.len(), key_count);
+            assert_eq!(keys[0].source_ticks, 914617723219200);
+            assert_eq!(keys[1].value, [0.5, 0.42345675826072693]);
+            assert!(keys
+                .iter()
+                .all(|key| key.spatial_in_tangent.is_none() && key.spatial_out_tangent.is_none()));
+        }
+        let (wire, losses) = imported_with_omissions(sequence, &native.media);
+        assert!(losses.is_empty(), "{losses:?}");
+        let effect = &wire["composition"]["layers"][0]["effects"][0]["effect"];
+        assert_eq!(effect["type"], "motionTile");
+        assert_eq!(effect["tileCenterX"], center[0]);
+        assert_eq!(effect["tileWidth"], 100.0);
+        assert_eq!(effect["outputHeight"], 100.0);
+        assert_eq!(effect["mirrorEdges"], false);
+    }
+}
+
+#[test]
+fn native_offset_rejects_ambiguous_center_but_preserves_bypass() {
+    let source = include_str!("../../../tests/fixtures/native_offset_static.xml");
+    for (from, to, reason) in [
+        (
+            "<Name>Shift Center To</Name>",
+            "<Name>Different</Name>",
+            "unexpected Offset center name",
+        ),
+        (
+            "<ParameterID>2</ParameterID>",
+            "<ParameterID>1</ParameterID>",
+            "duplicate Offset ParameterID",
+        ),
+    ] {
+        let (native, omissions) =
+            crate::format::inspect_project_with_omissions(&source.replace(from, to), None).unwrap();
+        assert!(native.single_sequence().unwrap().video_tracks[0]
+            .clip(0)
+            .effects
+            .is_empty());
+        assert!(
+            omissions
+                .iter()
+                .any(|omission| omission.reason.contains(reason)),
+            "{omissions:?}"
+        );
+    }
+    let (native, omissions) = crate::format::inspect_project_with_omissions(
+        &source.replace("<Bypass>false</Bypass>", "<Bypass>true</Bypass>"),
+        None,
+    )
+    .unwrap();
+    let effects = &native.single_sequence().unwrap().video_tracks[0]
+        .clip(0)
+        .effects;
+    assert_eq!(effects.len(), 1, "{omissions:?}");
+    assert!(!effects[0].enabled);
+}
+
+#[test]
+fn sharpen_still_import_omits_unverified_host_and_keeps_keyed_sibling() {
+    let (sequence, media) = still_over_video(|still| {
+        still.effects = vec![
+            PrEffect {
+                mask: None,
+                enabled: true,
+                params: PrEffectParams::Sharpen(crate::schema::PrSharpen { amount: 40 }),
+                animations: vec![PrEffectParamAnimation {
+                    param: &crate::schema::SHARPEN_AMOUNT,
+                    keys: PrEffectParamKeys::Scalar(vec![key(
+                        STILL_IN_TICKS,
+                        40.0,
+                        PrKeyframeEasing::Hold,
+                    )]),
+                }],
+            },
+            keyed_brightness(
+                15.0,
+                vec![key(STILL_IN_TICKS, 12.0, PrKeyframeEasing::Hold)],
+            ),
+        ];
+    });
+    let (wire, omissions) = imported_with_omissions(&sequence, &media);
+    let image = &wire["composition"]["layers"][0];
+    assert_eq!(image["type"], "Image");
+    assert_eq!(
+        image["effects"],
+        json!([
+            {"id": 1, "enabled": true, "effect": {"type": "brightnessContrast", "brightness": 12.0, "contrast": 15.0}},
+        ])
+    );
+    let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
+    let tracks = effect_tracks(&document);
+    assert_eq!(tracks.len(), 1);
+    assert_eq!(tracks[0].1, "brightness");
+    assert_eq!((tracks[0].2[0].1, tracks[0].2[0].2), (0, 12.0));
+    assert!(
+        omissions
+            .iter()
+            .any(|note| note.scope == OmissionScope::Feature
+                && note.kind == OmissionKind::Omitted
+                && note.record == "photo"
+                && note
+                    .reason
+                    .contains("Sharpen effect at stack position 1 was not imported")
+                && note.reason.contains("still")),
+        "{omissions:?}"
+    );
+}
+
+#[test]
+fn replicate_still_import_omits_unverified_host_and_keeps_keyed_sibling() {
+    let (sequence, media) = still_over_video(|still| {
+        still.effects = vec![
+            PrEffect {
+                mask: None,
+                enabled: true,
+                params: PrEffectParams::Replicate(crate::schema::PrReplicate { count: 2 }),
+                animations: vec![PrEffectParamAnimation {
+                    param: &crate::schema::REPLICATE_COUNT,
+                    keys: PrEffectParamKeys::Scalar(vec![key(
+                        STILL_IN_TICKS,
+                        2.0,
+                        PrKeyframeEasing::Hold,
+                    )]),
+                }],
+            },
+            keyed_brightness(
+                15.0,
+                vec![key(STILL_IN_TICKS, 12.0, PrKeyframeEasing::Hold)],
+            ),
+        ];
+    });
+    let (wire, omissions) = imported_with_omissions(&sequence, &media);
+    let image = &wire["composition"]["layers"][0];
+    assert_eq!(image["type"], "Image");
+    assert_eq!(
+        image["effects"],
+        json!([
+            {"id": 1, "enabled": true, "effect": {"type": "brightnessContrast", "brightness": 12.0, "contrast": 15.0}},
+        ])
+    );
+    let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
+    let tracks = effect_tracks(&document);
+    assert_eq!(tracks.len(), 1);
+    assert_eq!(tracks[0].1, "brightness");
+    assert_eq!((tracks[0].2[0].1, tracks[0].2[0].2), (0, 12.0));
+    assert!(
+        omissions
+            .iter()
+            .any(|note| note.scope == OmissionScope::Feature
+                && note.kind == OmissionKind::Omitted
+                && note.record == "photo"
+                && note
+                    .reason
+                    .contains("Replicate effect at stack position 1 was not imported")
+                && note.reason.contains("still")),
+        "{omissions:?}"
+    );
+}
+
+#[test]
+fn human_lumetri_vignette_imports_independent_editable_radial_controls() {
+    let source = include_str!("../../../tests/fixtures/human_lumetri_contrast.xml");
+    for (amount, expected) in [("0.", 0.0), ("-2.5", 0.5), ("2.5", -0.5)] {
+        // Supplementary scalar edits of the pinned native records. The actual
+        // independently saved vignette is neutral; do not relabel edits native.
+        let start = source
+            .find("<VideoComponentParam ObjectID=\"882\"")
+            .unwrap();
+        let end = start + source[start..].find("</VideoComponentParam>").unwrap();
+        let xml = format!(
+            "{}{}{}",
+            &source[..start],
+            source[start..end].replace(
+                "-91445760000000000,0.,",
+                &format!("-91445760000000000,{amount},")
+            ),
+            &source[end..]
+        );
+        let (native, omissions) =
+            crate::format::inspect_project_with_omissions(&xml, None).unwrap();
+        assert_eq!(omissions.len(), 1, "{omissions:?}");
+        assert!(omissions[0].reason.contains("Roundness"));
+        let (wire, losses) =
+            imported_with_omissions(native.single_sequence().unwrap(), &native.media);
+        assert!(losses.is_empty(), "{losses:?}");
+        let effect = &wire["composition"]["layers"][0]["effects"][5]["effect"];
+        assert_eq!(effect["type"], "vignette");
+        assert_eq!(effect["amount"], expected);
+        assert_eq!(effect["radius"], 0.5);
+        assert_eq!(effect["feather"], 0.5);
+    }
+}
+
+#[test]
+fn human_lumetri_vignette_enable_and_bad_control_do_not_change_basic_correction() {
+    let source = include_str!("../../../tests/fixtures/human_lumetri_contrast.xml");
+    for (record, from, to, keep_vignette) in [
+        (
+            "881",
+            "-91445760000000000,true,",
+            "-91445760000000000,false,",
+            true,
+        ),
+        ("882", "<Name>Amount</Name>", "<Name>Wrong</Name>", false),
+    ] {
+        let start = source
+            .find(&format!("<VideoComponentParam ObjectID=\"{record}\""))
+            .unwrap();
+        let end = start + source[start..].find("</VideoComponentParam>").unwrap();
+        let xml = format!(
+            "{}{}{}",
+            &source[..start],
+            source[start..end].replace(from, to),
+            &source[end..]
+        );
+        let (native, omissions) =
+            crate::format::inspect_project_with_omissions(&xml, None).unwrap();
+        let effects = &native.single_sequence().unwrap().video_tracks[0]
+            .clip(0)
+            .effects;
+        assert_eq!(
+            effects.len(),
+            if keep_vignette { 6 } else { 5 },
+            "{omissions:?}"
+        );
+        assert!(effects[..5].iter().all(|effect| effect.enabled));
+        if keep_vignette {
+            assert!(!effects[5].enabled);
+        } else {
+            assert!(omissions
+                .iter()
+                .any(|omission| omission.reason.contains("Vignette replacement omitted")));
+        }
+    }
+}
+
+#[test]
+fn human_lumetri_keyed_vignette_enable_names_control_and_retains_basic_correction() {
+    let source = include_str!("../../../tests/fixtures/human_lumetri_contrast.xml");
+    let start = source
+        .find("<VideoComponentParam ObjectID=\"881\"")
+        .unwrap();
+    let end = start + source[start..].find("</VideoComponentParam>").unwrap();
+    for animation in [
+        "<IsTimeVarying>true</IsTimeVarying>",
+        "<Keyframes>0,true,0,0,0,0,0,0</Keyframes>",
+    ] {
+        let xml = format!("{}{animation}{}", &source[..end], &source[end..]);
+        let (native, omissions) =
+            crate::format::inspect_project_with_omissions(&xml, None).unwrap();
+        let effects = &native.single_sequence().unwrap().video_tracks[0]
+            .clip(0)
+            .effects;
+        assert_eq!(effects.len(), 5, "{omissions:?}");
+        assert!(effects.iter().all(|effect| effect.enabled));
+        assert_eq!(effects[0].params, PrEffectParams::LumetriExposure(1.0));
+        assert_eq!(
+            effects[1].params,
+            PrEffectParams::BrightnessContrast(PrBrightnessContrast {
+                brightness: 0.0,
+                contrast: 25.0
+            })
+        );
+        assert_eq!(effects[2].params, PrEffectParams::LumetriSaturation(130.0));
+        assert_eq!(effects[2].animations[0].keys.scalar().unwrap().len(), 2);
+        let omission = omissions
+            .iter()
+            .find(|omission| omission.reason.contains("Vignette replacement omitted"))
+            .unwrap();
+        assert!(
+            omission.reason.contains("requires static Vignette enable"),
+            "{omission:?}"
+        );
+        assert!(
+            !omission.reason.contains("Basic Correction"),
+            "{omission:?}"
+        );
+        assert!(!omission.reason.contains("Contrast"), "{omission:?}");
+    }
+}
+
+#[test]
+fn human_lumetri_white_balance_keeps_saved_controls_editable() {
+    let source = include_str!("../../../tests/fixtures/human_lumetri_contrast.xml");
+    for edited in [false, true] {
+        let mut xml = source.to_owned();
+        if edited {
+            // Supplementary mutations, not independently authored nonzero proof.
+            for (id, value) in [("786", "120"), ("787", "75")] {
+                let start = xml
+                    .find(&format!("<VideoComponentParam ObjectID=\"{id}\""))
+                    .unwrap();
+                let end = start + xml[start..].find("</VideoComponentParam>").unwrap();
+                let replacement = xml[start..end].replace(
+                    "-91445760000000000,0.,",
+                    &format!("-91445760000000000,{value},"),
+                );
+                xml.replace_range(start..end, &replacement);
+            }
+        }
+        let (native, omissions) =
+            crate::format::inspect_project_with_omissions(&xml, None).unwrap();
+        let (wire, losses) =
+            imported_with_omissions(native.single_sequence().unwrap(), &native.media);
+        assert!(losses.is_empty(), "{losses:?}");
+        assert!(omissions
+            .iter()
+            .any(|note| note.reason.contains("Tint sign reversed")));
+        let effects = &wire["composition"]["layers"][0]["effects"];
+        assert_eq!(
+            effects[3]["effect"],
+            json!({"type":"temperatureTint", "temperature":if edited {40.0} else {0.0}, "tint":0.0})
+        );
+        assert_eq!(
+            effects[4]["effect"],
+            json!({"type":"temperatureTint", "temperature":0.0, "tint":if edited {-25.0} else {0.0}})
+        );
+    }
+}
+
+#[test]
+fn human_lumetri_white_balance_affine_keys_and_invalid_control_preserve_siblings() {
+    let source = include_str!("../../../tests/fixtures/human_lumetri_contrast.xml");
+    let mut keyed = source.to_owned();
+    for id in ["786", "787"] {
+        let start = keyed
+            .find(&format!("<VideoComponentParam ObjectID=\"{id}\""))
+            .unwrap();
+        let end = start + keyed[start..].find("</VideoComponentParam>").unwrap();
+        let replacement = keyed[start..end].replace("-91445760000000000,0.,", "-91445760000000000,-300.,")
+            + "<IsTimeVarying>true</IsTimeVarying><Keyframes>0,-300.,0,0,0,0,0,0;127008000000,300.,0,0,0,0,0,0;</Keyframes>";
+        keyed.replace_range(start..end, &replacement);
+    }
+    let (native, omissions) = crate::format::inspect_project_with_omissions(&keyed, None).unwrap();
+    assert_eq!(omissions.len(), 1, "{omissions:?}");
+    let (wire, losses) = imported_with_omissions(native.single_sequence().unwrap(), &native.media);
+    assert!(losses.is_empty(), "{losses:?}");
+    for (name, expected) in [("temperature", -100.0), ("tint", 100.0)] {
+        let entry = wire["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["target"]["paramName"] == name)
+            .unwrap();
+        let keys = entry["animator"]["keyframes"].as_array().unwrap();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0]["value"]["value"], expected);
+        assert_eq!(keys[1]["value"]["value"], -expected);
+        assert_eq!(keys[1]["layerTime"], 500);
+    }
+    let broken = source.replace("<Name>Temperature</Name>", "<Name>Unknown</Name>");
+    let (native, omissions) = crate::format::inspect_project_with_omissions(&broken, None).unwrap();
+    let effects = &native.single_sequence().unwrap().video_tracks[0]
+        .clip(0)
+        .effects;
+    assert_eq!(effects.len(), 5);
+    assert_eq!(effects[3].params, PrEffectParams::LumetriTint(0.0));
+    assert!(omissions
+        .iter()
+        .any(|note| note.reason.contains("Temperature replacement omitted")));
+}
+
+#[test]
+fn warp_fisheye_current_native_lens_fit_and_unsafe_center_keep_siblings() {
+    for center in [0.5, 0.4] {
+        let wire = document_with_effects(json!([
+            {"id":1,"effect":{"type":"gaussianBlur","blurriness":10}},
+            {"id":9,"effect":{"type":"fisheye","amount":20,"centerX":center,"centerY":0.5}},
+            {"id":2,"effect":{"type":"gaussianBlur","blurriness":20}}
+        ]));
+        let (project, omissions) = export(wire);
+        let effects = exported_effects(&project);
+        assert_eq!(effects.len(), if center == 0.5 { 3 } else { 2 });
+        if center == 0.5 {
+            let PrEffectParams::LensDistortion(curvature) = effects[1].params else {
+                panic!("retained native Lens")
+            };
+            assert!(curvature > 0. && curvature <= 100.);
+            assert!(effects[1].animations.is_empty());
+            assert!(omissions.iter().any(|o| o.reason.contains("quarter-frame")));
+        } else {
+            assert!(omissions
+                .iter()
+                .any(|o| o.reason.contains("center (0.5,0.5)")));
+        }
+    }
+}
+
+/// Supplementary boundary mutations; the CLI test owns native Alpha provenance.
+#[test]
+fn premiere_alpha_video_occurrence_keeps_clock_visibility_and_transfer() {
+    use fx_schema::{LayerPlayback, Time, TimeRangeProperty};
+    let mut sequence = video_sequence();
+    let clip = sequence.video_tracks[0].clip_mut(0);
+    clip.start_ticks = TICKS / 2;
+    clip.end_ticks = 3 * TICKS / 2;
+    clip.in_ticks = TICKS;
+    clip.out_ticks = 3 * TICKS;
+    clip.playback_rate = 2.0;
+    let baseline = project_document(&sequence);
+    let original = baseline["composition"]["layers"][0].clone();
+    let effect = PrEffect {
+        mask: None,
+        enabled: true,
+        params: PrEffectParams::Invert(PrInvert {
+            channel: 15,
+            blend: 0.0,
+        }),
+        animations: vec![],
+    };
+    sequence.video_tracks[0].clip_mut(0).effects = vec![effect];
+    let wire = project_document(&sequence);
+    let document = EditableFxCompositionDocument::from_json_value(wire.clone()).unwrap();
+    let LayerData::Group(graph) = document.composition().layers()[0].data() else {
+        panic!("missing Alpha graph: {wire}")
+    };
+    let range = TimeRangeProperty::new(
+        Time::from_millis(500),
+        fx_schema::Duration::from_millis(1000),
+    );
+    assert_eq!(
+        graph.playback,
+        LayerPlayback::linear(range, range, range, 0).unwrap()
+    );
+    for (ms, active) in [
+        (0, false),
+        (499, false),
+        (500, true),
+        (1000, true),
+        (1499, true),
+        (1500, false),
+        (2000, false),
+    ] {
+        assert_eq!(
+            ms >= range.start.as_millis() && ms < range.end().as_millis(),
+            active
+        );
+    }
+    let picture = &wire["composition"]["layers"][0]["layers"][0]["layers"][0];
+    for field in ["id", "source", "sourceRange", "playback", "transform"] {
+        assert_eq!(picture[field], original[field], "{field}");
+    }
+    assert!(!picture["source"].is_null());
+    let sample = &wire["composition"]["layers"][0]["layers"][1];
+    assert_eq!(sample["source"], original["source"]);
+    assert_eq!(sample["playback"], original["playback"]);
+    assert_ne!(sample["id"], original["id"]);
+    for boundary in ["disabled", "bypass", "blend"] {
+        let mut seq = sequence.clone();
+        let clip = seq.video_tracks[0].clip_mut(0);
+        match boundary {
+            "disabled" => clip.enabled = false,
+            "bypass" => clip.effects[0].enabled = false,
+            _ => clip.blend_mode = crate::schema::PrBlendMode::Multiply,
+        };
+        let wire = project_document(&seq);
+        assert_eq!(
+            wire["composition"]["layers"][0]["type"], "Video",
+            "{boundary}: {wire}"
+        );
+        assert_eq!(
+            wire["composition"]["layers"][0]["source"],
+            original["source"]
+        );
+        let (native, _) = export(wire);
+        let clip = native.sequences[0].video_occurrences().next().unwrap();
+        if boundary == "disabled" {
+            assert!(!clip.enabled);
+        }
+        if boundary == "blend" {
+            assert_eq!(clip.blend_mode, crate::schema::PrBlendMode::Multiply);
+        }
+    }
+}
+
+#[test]
+fn premiere_alpha_disabled_picture_keeps_live_source_audio() {
+    use crate::{
+        format::MediaId,
+        schema::{AudioChannels, PrAudioOccurrence, PrAudioStream},
+        tests::support::project_document_with_media,
+    };
+    let mut sequence = video_sequence();
+    let mut media = video_media();
+    media.get_mut(&MediaId("source".into())).unwrap().audio = Some(PrAudioStream {
+        prepared_clock: None,
+        intrinsic_ticks: 10 * TICKS,
+        channels: AudioChannels::Stereo,
+        sample_rate: 48000,
+    });
+    sequence.audio.push(PrAudioOccurrence {
+        source_channel: None,
+        id: None,
+        media: MediaId("source".into()),
+        start_ticks: TICKS / 2,
+        end_ticks: 3 * TICKS / 2,
+        in_ticks: TICKS,
+        out_ticks: 2 * TICKS,
+        playback_rate: 1.0,
+        preserve_audio_pitch: false,
+        volume: fx_schema::LinearGain::new(0.5).unwrap(),
+        volume_keys: None,
+        fade_in: None,
+        fade_out: None,
+    });
+    sequence.video_tracks[0].clip_mut(0).enabled = false;
+    let baseline = project_document_with_media(&sequence, &media);
+    sequence.video_tracks[0].clip_mut(0).effects = vec![PrEffect {
+        mask: None,
+        enabled: true,
+        params: PrEffectParams::Invert(PrInvert {
+            channel: 15,
+            blend: 0.0,
+        }),
+        animations: vec![],
+    }];
+    let current = project_document_with_media(&sequence, &media);
+    assert_eq!(
+        current, baseline,
+        "disabled picture must introduce no helpers, backing, audio changes or clock shifts"
+    );
+    let sound = current["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["type"] == "Audio")
+        .unwrap();
+    assert_eq!(sound["volume"], 0.5);
+    assert_eq!(sound["sourceRange"], json!({"start":1000,"duration":1000}));
+}
+
+#[test]
+fn premiere_alpha_effect_mask_retains_picture_without_replacement() {
+    let mut sequence = video_sequence();
+    let baseline = project_document(&sequence);
+    let picture: fx_schema::Layer =
+        serde_json::from_value(baseline["composition"]["layers"][0].clone()).unwrap();
+    sequence.video_tracks[0].clip_mut(0).effects = vec![PrEffect {
+        mask: Some(opacity_mask()),
+        enabled: true,
+        params: PrEffectParams::Invert(PrInvert {
+            blend: 0.0,
+            channel: 15,
+        }),
+        animations: Vec::new(),
+    }];
+    let mut next = 100;
+    let mut omissions = Vec::new();
+    let canvas = [sequence.width, sequence.height];
+    let retained = crate::convert::invert_alpha::lower(
+        sequence.video_tracks[0].clip(0),
+        canvas,
+        canvas,
+        picture.clone(),
+        &mut next,
+        &mut omissions,
+    )
+    .unwrap();
+    assert_eq!(retained, picture);
+    assert_eq!(next, 100, "no backing or helper identities allocated");
+    assert!(omissions
+        .iter()
+        .any(|note| note.reason.contains("without masks")));
+}
+
+#[test]
+fn human_levels_channel_row_is_retained_for_editable_lowering() {
+    let xml = include_str!("../../../tests/fixtures/human_levels_master.xml");
+    let (native, omissions) = crate::format::inspect_project_with_omissions(xml, None).unwrap();
+    assert!(
+        !omissions
+            .iter()
+            .any(|o| o.reason.contains("Levels (R) row") && o.reason.contains("was omitted")),
+        "{omissions:?}"
+    );
+    assert_eq!(
+        native.single_sequence().unwrap().video_tracks[0]
+            .clip(0)
+            .effects
+            .len(),
+        2
+    );
+    let (wire, notes) = imported_with_omissions(native.single_sequence().unwrap(), &native.media);
+    assert!(
+        notes.iter().any(|n| n.reason.contains("RGB Levels uses")),
+        "{notes:?}"
+    );
+    let root = &wire["composition"]["layers"][0];
+    assert_eq!(root["name"], "Premiere channel Levels");
+    let branches = root["layers"][0]["layers"][1]["layers"].as_array().unwrap();
+    for (index, (white, gamma)) in [(200.0, 0.02), (255.0, 1.0), (255.0, 1.0)]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(branches[index]["blendMode"], "screen");
+        assert_eq!(branches[index]["effects"][0]["effect"]["inputBlack"], 30.0);
+        assert_eq!(branches[index]["effects"][1]["effect"]["inputWhite"], white);
+        assert_eq!(branches[index]["effects"][1]["effect"]["gamma"], gamma);
+    }
+    let entries = wire["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    assert_eq!(entries.len(), 3);
+    for entry in entries {
+        assert_eq!(entry["target"]["paramName"], "inputBlack");
+        assert_eq!(entry["animator"]["keyframes"][1]["layerTime"], 2211);
+    }
+}
+
+/// Supplementary placement/audio/bypass mutations of the pinned saved controls.
+#[test]
+fn channel_levels_video_keeps_source_clocks_audio_and_unsupported_siblings() {
+    use crate::{
+        schema::{AudioChannels, PrAudioOccurrence, PrAudioStream},
+        tests::support::project_document_with_media,
+    };
+    let (native, _) = crate::format::inspect_project_with_omissions(
+        include_str!("../../../tests/fixtures/human_levels_master.xml"),
+        None,
+    )
+    .unwrap();
+    let rows = native.single_sequence().unwrap().video_tracks[0]
+        .clip(0)
+        .effects
+        .clone();
+    let mut sequence = video_sequence();
+    let mut media = video_media();
+    let media_id = sequence.video_tracks[0].clip(0).media.clone();
+    media.get_mut(&media_id).unwrap().audio = Some(PrAudioStream {
+        prepared_clock: None,
+        intrinsic_ticks: 10 * TICKS,
+        channels: AudioChannels::Stereo,
+        sample_rate: 48000,
+    });
+    sequence.audio.push(PrAudioOccurrence {
+        playback_rate: 1.0,
+        preserve_audio_pitch: false,
+        source_channel: None,
+        id: None,
+        media: media_id,
+        start_ticks: TICKS / 2,
+        end_ticks: 3 * TICKS / 2,
+        in_ticks: TICKS,
+        out_ticks: 2 * TICKS,
+        volume: fx_schema::LinearGain::new(0.5).unwrap(),
+        volume_keys: None,
+        fade_in: None,
+        fade_out: None,
+    });
+    let clip = sequence.video_tracks[0].clip_mut(0);
+    clip.start_ticks = TICKS / 2;
+    clip.end_ticks = 3 * TICKS / 2;
+    clip.in_ticks = TICKS;
+    clip.out_ticks = 3 * TICKS;
+    clip.playback_rate = 2.0;
+    clip.effects = vec![rows[0].clone()];
+    clip.effects[0].animations.clear();
+    let baseline = project_document_with_media(&sequence, &media);
+    sequence.video_tracks[0]
+        .clip_mut(0)
+        .effects
+        .push(rows[1].clone());
+    let result = project_document_with_media(&sequence, &media);
+    let root = &result["composition"]["layers"][0];
+    let leaf = &root["layers"][0]["layers"][1]["layers"][0];
+    let old = &baseline["composition"]["layers"][0];
+    for field in [
+        "id",
+        "source",
+        "sourceRange",
+        "playback",
+        "transform",
+        "timeRemap",
+    ] {
+        assert_eq!(leaf[field], old[field], "{field}");
+    }
+    let range = fx_schema::TimeRangeProperty::new(
+        fx_schema::Time::from_millis(500),
+        fx_schema::Duration::from_millis(1000),
+    );
+    let identity = fx_schema::LayerPlayback::linear(range, range, range, 0).unwrap();
+    assert_eq!(root["playback"], serde_json::to_value(identity).unwrap());
+    let sound = |doc: &Value| {
+        let mut value = doc["composition"]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["type"] == "Audio")
+            .unwrap()
+            .clone();
+        value.as_object_mut().unwrap().remove("id");
+        value
+    };
+    assert_eq!(sound(&result), sound(&baseline));
+    for unsupported in ["hidden", "blend", "sibling"] {
+        let mut current = sequence.clone();
+        let clip = current.video_tracks[0].clip_mut(0);
+        match unsupported {
+            "hidden" => clip.enabled = false,
+            "blend" => clip.blend_mode = crate::schema::PrBlendMode::Multiply,
+            _ => clip.effects.insert(0, blur(true, 10.0, false)),
+        };
+        let mut expected = current.clone();
+        expected.video_tracks[0]
+            .clip_mut(0)
+            .effects
+            .retain(|e| !matches!(e.params, PrEffectParams::Levels(PrLevels::Corrections(_))));
+        assert_eq!(
+            project_document_with_media(&current, &media),
+            project_document_with_media(&expected, &media),
+            "{unsupported}"
+        );
+    }
+    for effect in &mut sequence.video_tracks[0].clip_mut(0).effects {
+        effect.enabled = false;
+    }
+    let disabled = project_document_with_media(&sequence, &media);
+    let branches = disabled["composition"]["layers"][0]["layers"][0]["layers"][1]["layers"]
+        .as_array()
+        .unwrap();
+    for branch in &branches[..3] {
+        assert_eq!(branch["effects"][0]["enabled"], false);
+        assert_eq!(branch["effects"][1]["enabled"], false);
+        assert_eq!(branch["effects"][2]["enabled"], true);
+    }
 }

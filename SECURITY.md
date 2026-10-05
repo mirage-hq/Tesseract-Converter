@@ -30,8 +30,10 @@ defense in depth, not a process-wide memory, CPU, or decompression sandbox.
 Gzip-bearing jobs and other compressed inputs must run with deployment-enforced
 process isolation and resource limits appropriate to that deployment.
 
-FX script evaluation uses an embedded JavaScript VM. Its loop, stack and recursion
-limits are not a wall-clock, heap, filesystem, network, or authority sandbox.
+FX script evaluation uses an embedded JavaScript VM. It enforces only stack and
+recursion limits; it has no loop-iteration limit, deadline or cancellation, so a
+nonterminating script blocks the converter. These limits are not a wall-clock,
+heap, filesystem, network, or authority sandbox.
 Untrusted gzip or JavaScript jobs must run in a separate, unprivileged process or
 stronger isolation boundary with externally enforced CPU, memory, wall-clock,
 process-count, filesystem, and network policy. Give the worker only the specific

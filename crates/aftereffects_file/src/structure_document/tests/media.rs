@@ -162,6 +162,73 @@ fn source_content(converted: &StructuralConversion) -> &GroupLayer {
 }
 
 #[test]
+fn solid_source_keeps_its_native_parent_span_before_the_layer_start() {
+    // Clock edits are supplementary to the pinned native source regression.
+    // Denominators are 30; reverse/stretch cases keep ascending native bounds.
+    for (start, input, output, stretch, begin_ms, duration_ms) in [
+        (27_i32, -27_i32, 301_i32, 1_i32, 0_u64, 10_933_u64),
+        (27, 0, 60, 1, 900, 2_000),
+        (27, -27, 60, 2, 0, 4_900),
+        (120, -27, 60, -1, 2_000, 2_900),
+    ] {
+        let mut project = read_project(include_bytes!(
+            "../../../tests/fixtures/render/solid_color_1080.aep"
+        ))
+        .expect("independently Adobe-authored Solid source");
+        let layer = &mut composition_mut(&mut project, 1).layers[0];
+        assert_eq!(layer.record.id(), 15);
+        for (offset, numerator) in [(12, start), (20, input), (28, output)] {
+            patch(layer, offset, &numerator.to_be_bytes());
+            patch(layer, offset + 4, &30_u32.to_be_bytes());
+        }
+        patch(layer, 8, &stretch.to_be_bytes());
+        patch(layer, 108, &1_u32.to_be_bytes());
+        let source_id = layer.record.source_id();
+        let source = project
+            .items
+            .iter()
+            .find(|item| item.id == source_id)
+            .unwrap();
+        assert!(is_solid_source(source));
+        let color = source.solid.as_ref().unwrap().as_ref().unwrap().color;
+
+        let converted = to_structural_fx_document(&project, Some(1)).unwrap();
+        let content = source_content(&converted);
+        assert_eq!(content.playback.input_range().start.as_millis(), begin_ms);
+        assert_eq!(
+            content.playback.input_range().duration.as_millis(),
+            duration_ms
+        );
+        assert!(
+            content.playback.time_remap().is_none(),
+            "a constant Solid raster has no sampled media clock"
+        );
+        assert!(!content.is_hidden);
+        let solid = content
+            .layers
+            .iter()
+            .find_map(|layer| match layer.data() {
+                FxLayer::Rect(rect) => Some(rect),
+                _ => None,
+            })
+            .expect("editable native Solid content");
+        assert!(solid.rect.fill_enabled);
+        assert_eq!(solid.rect.size, [1920.0, 1080.0]);
+        assert_eq!(
+            solid.rect.fill_color,
+            [
+                f64::from(color[0]),
+                f64::from(color[1]),
+                f64::from(color[2]),
+                1.0
+            ]
+        );
+        EditableFxCompositionDocument::from_json_slice(&converted.document.to_json_vec().unwrap())
+            .unwrap();
+    }
+}
+
+#[test]
 fn still_image_keeps_its_native_parent_span_before_the_layer_start() {
     let project = negative_source_prefix_project(crate::structure::MediaKind::StillImage);
     let converted =

@@ -149,6 +149,14 @@ impl FXComposition {
         Ok(())
     }
 
+    /// Equivalent to `unknown_fields().next().is_some()`, without materializing
+    /// JSON trees or cloning unknown values. Stops at the first unknown record.
+    pub fn has_unknown_fields(&self) -> bool {
+        self.0.has_unknown_fields(&[(0, "layers"), (0, "dynamics")])
+            || self.layers().iter().any(Layer::has_unknown_fields)
+            || self.dynamics().has_unknown_fields()
+    }
+
     pub fn unknown_fields(&self) -> impl Iterator<Item = (String, Value)> {
         let mut known =
             serde_json::to_value(self.0.data()).expect("checked composition data serializes");
@@ -216,4 +224,24 @@ pub enum ValidationError {
         layer_id: LayerId,
         layer_type: &'static str,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FXComposition;
+    use serde_json::json;
+
+    #[test]
+    fn unknown_presence_does_not_materialize_the_composition() {
+        for wire in [
+            json!({"id": "main", "name": "empty"}),
+            json!({"id": "main", "name": "empty", "future": {"data": [1,2,3]}}),
+        ] {
+            let composition: FXComposition = serde_json::from_value(wire).unwrap();
+            assert!(!composition.0.is_wire_materialized());
+            let present = composition.has_unknown_fields();
+            assert!(!composition.0.is_wire_materialized());
+            assert_eq!(present, composition.unknown_fields().next().is_some());
+        }
+    }
 }

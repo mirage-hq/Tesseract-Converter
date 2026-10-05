@@ -10,15 +10,55 @@ use super::*;
 
 pub(super) fn canvas(
     group: &GroupLayer,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     siblings: &[Layer],
     dimensions: fx_schema::Dimensions,
 ) -> Option<CertifiedCanvas> {
+    canvas_inner(group, dynamics, siblings, dimensions, false, false)
+}
+
+/// Opacity changes alpha after source rendering without changing its spatial
+/// sampling domain. Keep every other owner animation outside this certificate.
+pub(super) fn nested_canvas(
+    group: &GroupLayer,
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+    siblings: &[Layer],
+    dimensions: fx_schema::Dimensions,
+) -> Option<CertifiedCanvas> {
+    canvas_inner(group, dynamics, siblings, dimensions, true, false)
+}
+
+/// Retain only source pixels which can influence this identity consumer. Effects
+/// run on the expanded input, and the native matte remains in its authored stage.
+pub(super) fn input_canvas(
+    group: &GroupLayer,
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+    siblings: &[Layer],
+    dimensions: fx_schema::Dimensions,
+) -> Option<CertifiedCanvas> {
+    if group.effects.is_empty() && group.track_matte.is_none() {
+        return None;
+    }
+    let mut canvas = canvas_inner(group, dynamics, siblings, dimensions, true, true)?;
+    canvas.root_output = false;
+    canvas.intersect_content = true;
+    Some(canvas)
+}
+
+fn canvas_inner(
+    group: &GroupLayer,
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+    siblings: &[Layer],
+    dimensions: fx_schema::Dimensions,
+    allow_opacity: bool,
+    allow_input_support: bool,
+) -> Option<CertifiedCanvas> {
     if group.transform != super::super::identity_fx_transform()
         || group.motion_blur
-        || !group.effects.is_empty()
+        || (!allow_input_support && !group.effects.is_empty())
+        || (allow_input_support && effect_support::input_reach(&group.effects, dynamics).is_err())
         || !group.masks.is_empty()
-        || group.track_matte.is_some()
+        || (!allow_input_support && group.track_matte.is_some())
         || !group.fills.is_empty()
         || [
             group.padding_top.value(),
@@ -32,11 +72,11 @@ pub(super) fn canvas(
         ]
         .into_iter()
         .any(|value| value != 0.0)
-        || dynamics.iter().any(|entry| {
-            entry
-                .target
-                .as_property()
-                .is_some_and(|target| target.layer_id() == group.id)
+        || dynamics.for_layer(group.id).any(|entry| {
+            entry.target.as_property().is_some_and(|target| {
+                target.layer_id() == group.id
+                    && !(allow_opacity && target.property_type() == fx_schema::PropType::Opacity)
+            })
         })
     {
         return None;
@@ -61,6 +101,8 @@ pub(super) fn canvas(
         },
         root_output: true,
         consumer_3d: false,
+        source_mask: false,
+        intersect_content: false,
     })
 }
 
@@ -78,14 +120,8 @@ pub(super) fn references(layer: &Layer, target: LayerId) -> Option<bool> {
             EffectData::Identified { effect, .. } | EffectData::Legacy(effect) => effect,
         };
         match payload {
-            EffectPayload::Known(LayerEffect::CustomShader { texture_inputs, .. }) => {
-                if texture_inputs
-                    .iter()
-                    .any(|input| input.source() == Some(target))
-                {
-                    return Some(true);
-                }
-            }
+            // CustomShader and its texture inputs are dropped in native output;
+            // they must not create source demands absent from unshaded content.
             EffectPayload::Known(_) => {}
             _ => return None,
         }
@@ -109,13 +145,19 @@ pub(super) fn pointwise_adjustment(record: &EffectRecord) -> bool {
     // interpolates procedural noise, not neighboring image samples. Root
     // Adjustment dimensions stay unchanged, including Vignette's radial frame.
     // Existing color/kernel approximations are not made fidelity claims here.
+    // A diagnosed, unexported shader has no native pixels to sample outside
+    // the source canvas; it is not a pointwise implementation of that shader.
     matches!(
         payload,
         EffectPayload::Known(
             LayerEffect::Exposure { .. }
                 | LayerEffect::HueSaturation { .. }
+                | LayerEffect::TintTritone { .. }
                 | LayerEffect::Grain { .. }
                 | LayerEffect::Vignette { .. }
         )
-    )
+    ) || matches!(
+        payload,
+        EffectPayload::Known(LayerEffect::CustomShader { .. })
+    ) && super::super::effects::unmapped_warning(record).is_some()
 }

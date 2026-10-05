@@ -39,6 +39,25 @@ pub(crate) const PROJECT_SETTINGS: XmlRecordDefinition = XmlRecordDefinition::ne
     "50c16708-a1a1-4d2f-98d5-4e283ae28353",
     "21",
 );
+// Empty settings and compile-record identities match the Premiere 26.5.1
+// save in feature_track_matte_key_26_5_strict.prproj.
+pub(crate) const VIDEO_SETTINGS: XmlRecordDefinition = XmlRecordDefinition::new(
+    "VideoSettings",
+    "58474264-30c4-43a2-bba5-dc0812df8a3a",
+    "10",
+);
+pub(crate) const AUDIO_SETTINGS: XmlRecordDefinition =
+    XmlRecordDefinition::new("AudioSettings", "6baf5521-b132-4634-840e-13cec5bc86a4", "8");
+pub(crate) const VIDEO_COMPILE_SETTINGS: XmlRecordDefinition = XmlRecordDefinition::new(
+    "VideoCompileSettings",
+    "db372db5-7de2-4d3c-98ae-f42659d77b22",
+    "9",
+);
+pub(crate) const AUDIO_COMPILE_SETTINGS: XmlRecordDefinition = XmlRecordDefinition::new(
+    "AudioCompileSettings",
+    "34b10007-ab6d-49a7-bac5-7b60d919e387",
+    "6",
+);
 pub(crate) const SCRATCH_DISK_SETTINGS: XmlRecordDefinition = XmlRecordDefinition::new(
     "ScratchDiskSettings",
     "4c6ed82b-a81c-4df1-8bd0-750504c4b560",
@@ -156,6 +175,9 @@ pub(crate) const VIDEO_COMPONENT_PARAM: XmlRecordDefinition = XmlRecordDefinitio
 );
 pub(crate) const TIME_REMAPPING: XmlRecordDefinition =
     XmlRecordDefinition::new("TimeRemapping", "ace5148e-9c9b-40ed-9f82-64cb67308464", "2");
+// The Time Remapping Speed parameter. The reader also admits version 9, which
+// Premiere 26.5.1 saves without five flags of this version
+// (`reader/time_remap.rs`).
 pub(crate) const TIME_COMPONENT_PARAM: XmlRecordDefinition = XmlRecordDefinition::new(
     "TimeComponentParam",
     "278ae1f9-ab7b-4dff-a53c-21029a399a9d",
@@ -201,6 +223,20 @@ pub(crate) const VIDEO_COMPONENT_CHAIN: XmlRecordDefinition = XmlRecordDefinitio
     "VideoComponentChain",
     "0970e08a-f58f-4108-b29a-1a717b8e12e2",
     "3",
+);
+/// A graphic chain's `ComponentGroupMap`: one pin per SubGroup member, as
+/// Premiere 26.5.1 saved it and Adobe's 24.3 Social
+/// Media Template holds it.
+pub(crate) const COMPONENT_PIN_VECTOR_SERIALIZER: XmlRecordDefinition = XmlRecordDefinition::new(
+    "ComponentPinVectorSerializer",
+    "5bc3f976-ce97-4e9a-9acc-2e0a1181718a",
+    "1",
+);
+/// One SubGroup member: its component `ID` and its group's.
+pub(crate) const COMPONENT_PIN_SERIALIZER: XmlRecordDefinition = XmlRecordDefinition::new(
+    "ComponentPinSerializer",
+    "651c4444-ffd7-45b7-8371-b917e6f5eb53",
+    "1",
 );
 pub(crate) const AUDIO_CLIP_TRACK: XmlRecordDefinition = XmlRecordDefinition::new(
     "AudioClipTrack",
@@ -273,6 +309,12 @@ pub(crate) const AUDIO_CLIP_TRACK_ITEM: XmlRecordDefinition = XmlRecordDefinitio
     "064ec682-9ba6-11d5-af2d-9ca32c7d6164",
     "11",
 );
+// The version Premiere 26.5.1 writes; projects up to version 43 write 3.
+pub(crate) const AUDIO_TRANSITION_TRACK_ITEM: XmlRecordDefinition = XmlRecordDefinition::new(
+    "AudioTransitionTrackItem",
+    "23f687b6-9c5a-42f4-bea1-e7b3e28e7082",
+    "4",
+);
 pub(crate) const LINK: XmlRecordDefinition =
     XmlRecordDefinition::new("Link", "149d4ea5-a7d4-4b34-9bb7-16d783904bf2", "1");
 pub(crate) const AUDIO_STREAM: XmlRecordDefinition =
@@ -335,8 +377,23 @@ pub(crate) const CLIPS_VERSION: &str = "1";
 pub(crate) const CLIP_VERSION: &str = "18";
 pub(crate) const CODEC_TYPE: &str = "1635148593";
 /// `VideoStream.CodecType` that Premiere 26.5.1 saves for HEVC media: the
-/// big-endian `HEVC` code (`oracle/M2/hdr/facts.md`, three Main 10 masters).
+/// big-endian `HEVC` code (three Main 10 masters).
 pub(crate) const HEVC_CODEC_TYPE: &str = "1212503619";
+/// `VideoStream.CodecType` codes that Premiere saves for Apple ProRes masters:
+/// the big-endian sample-entry types. `apco`, `apcs`, `apcn` and `ap4h` are
+/// corpus values (Co-Editor proxies, Komodo and Podcast Opener masters);
+/// `apch` and `ap4x` follow the same rule by inference.
+pub(crate) const PRORES_PROXY_CODEC_TYPE: &str = "1634755439";
+pub(crate) const PRORES_LT_CODEC_TYPE: &str = "1634755443";
+pub(crate) const PRORES_CODEC_TYPE: &str = "1634755438";
+pub(crate) const PRORES_HQ_CODEC_TYPE: &str = "1634755432";
+pub(crate) const PRORES_4444_CODEC_TYPE: &str = "1634743400";
+pub(crate) const PRORES_4444_XQ_CODEC_TYPE: &str = "1634743416";
+/// `VideoStream.AlphaType` of a video master whose picture carries straight
+/// alpha, as Premiere saves ProRes 4444 masters (Podcast Opener).
+pub(crate) const VIDEO_STRAIGHT_ALPHA_TYPE: &str = "1";
+/// `VideoStream.AlphaType` of an opaque video master.
+pub(crate) const VIDEO_NO_ALPHA_TYPE: &str = "3";
 pub(crate) const COLOR_MANAGEMENT_SETTINGS: &str =
     r#"{"autoToneMapEnabled":true,"enableLogColorManagement":2,"lutInterpolationMethod":1}"#;
 pub(crate) const PROJECT_COLOR_MANAGEMENT_SETTINGS: &str =
@@ -353,7 +410,46 @@ pub(crate) struct PixelAspectRatio {
     denominator: u64,
 }
 
+impl Default for PixelAspectRatio {
+    fn default() -> Self {
+        Self::SQUARE
+    }
+}
+
 impl PixelAspectRatio {
+    pub(crate) const SQUARE: Self = Self {
+        numerator: 1,
+        denominator: 1,
+    };
+
+    pub(crate) fn new(numerator: u64, denominator: u64) -> crate::error::Result<Self> {
+        crate::error::ensure!(
+            numerator > 0 && denominator > 0,
+            "pixel aspect ratio must be positive"
+        );
+        Ok(Self {
+            numerator,
+            denominator,
+        })
+    }
+
+    pub(crate) fn terms(self) -> (u64, u64) {
+        (self.numerator, self.denominator)
+    }
+
+    pub(crate) fn native(self) -> String {
+        format!("{},{}", self.numerator, self.denominator)
+    }
+
+    pub(crate) fn scale(self) -> f64 {
+        self.numerator as f64 / self.denominator as f64
+    }
+
+    pub(crate) fn agrees(self, other: Self) -> bool {
+        u128::from(self.numerator) * u128::from(other.denominator)
+            == u128::from(other.numerator) * u128::from(self.denominator)
+    }
+
     /// The `PixelAspectRatio` `value` of the record `identity`.
     pub(crate) fn parse(value: &str, identity: &str) -> crate::error::Result<Self> {
         let invalid = || {
@@ -409,6 +505,7 @@ pub(crate) const BYPASS_NAME: &str = "Bypass";
 pub(crate) const LEVEL_NAME: &str = "Level";
 pub(crate) const MUTE_NAME: &str = "Mute";
 pub(crate) const CHANNEL_VOLUME_MATCH_NAME: &str = "Internal Channel Volume Stereo";
+pub(crate) const FILL_RIGHT_MATCH_NAME: &str = "Internal Audio Fill Right";
 /// Channel Volume parameter names after `Bypass`; projects up to Premiere 13
 /// end both with a space.
 pub(crate) const CHANNEL_VOLUME_NAMES: [&str; 2] = ["Left", "Right"];

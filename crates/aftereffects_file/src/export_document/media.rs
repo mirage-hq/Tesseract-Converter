@@ -8,7 +8,7 @@ use fx_schema::{
     AssetId, AudioLayer, Dimensions, FrameBlendingMode, ImageLayer, ImageSource, Layer, LayerData,
     LayerId, MediaFit, MediaSourceKind, Position, RectBounds, TimeRangeProperty, TimeRemapProperty,
     Transform, VideoLayer,
-    layer::{FrameBlendingData, LegacyMediaData, MediaFitData},
+    layer::{BlendMode, FrameBlendingData, LegacyMediaData, MediaFitData, TrackMatteType},
 };
 
 use crate::writer::{
@@ -41,12 +41,18 @@ pub(crate) struct ResolvedMediaSource {
     pub(crate) format: NativeSourceFormat,
     pub(crate) dimensions: [u16; 2],
     pub(crate) duration_millis: u64,
+    /// Lower integer bound of the same interpreted source duration, not a tolerance.
+    pub(crate) duration_millis_floor: u64,
+    /// Exact QuickTime duration in 24576 Hz source ticks, when representable.
+    pub(crate) duration_native_ticks: Option<u64>,
     /// Exact native integer-plus-16-bit-fraction source rate. E2 must preserve
     /// this from bounded QuickTime metadata rather than rounding to an integer.
     pub(crate) frame_rate: NativeFrameRate,
     pub(crate) audio_sample_rate: f64,
     /// Original RIFF/WAVE sample and byte counts; absent for all other media.
     pub(crate) wave_metadata: Option<NativeWaveMetadata>,
+    /// Independently established native movie source duration, without ms rounding.
+    pub(crate) native_duration: Option<crate::media::MediaDuration>,
 }
 
 /// Returns the archive asset requested by a supported current media layer.
@@ -188,11 +194,15 @@ fn lower_image(
     selected_transform: &Transform,
 ) -> Result<FootageSpec, &'static str> {
     let ImageSource::Asset(image_source) = &layer.source;
+    // Still visibility, blend, motion blur and matte belong to the shared
+    // NativeLayerOptions envelope, including during bounds lowering. Video
+    // and legacy media retain their separate source-admission guards.
     check_visual_options(
-        layer.is_hidden,
-        layer.motion_blur,
-        layer.blend_mode == Default::default(),
-        layer.track_matte.is_none(),
+        false,
+        false,
+        true,
+        // NativeLayerOptions already writes this image's editable matte link.
+        true,
         layer.placement.is_none(),
         layer.captions_enabled.is_none(),
         layer.corner_radius,
@@ -202,12 +212,12 @@ fn lower_image(
     }
     // Image source timeRemap is retained legacy metadata that current FX image
     // evaluation ignores. Keep ignoring it rather than changing still semantics.
-    if source.format != NativeSourceFormat::OpenExr
+    if !source.format.is_still()
         || source.duration_millis != 0
         || !source.frame_rate.is_zero()
         || source.audio_sample_rate != 0.0
     {
-        return Err("resolved image does not have the pinned OpenEXR still interpretation");
+        return Err("resolved image does not have a pinned native still interpretation");
     }
     let geometry = source_geometry(
         source.dimensions,
@@ -231,6 +241,36 @@ fn lower_image(
     )
 }
 
+fn matches_source_intrinsic(authored: u64, source: &ResolvedMediaSource) -> bool {
+    authored > 0
+        && source.duration_millis_floor <= source.duration_millis
+        && source.duration_millis - source.duration_millis_floor <= 1
+        && (source.duration_millis_floor..=source.duration_millis).contains(&authored)
+}
+
+// Stale intrinsic metadata cannot affect this finite selection: every reachable
+// source sample is inside both domains, with no source-owned effects/remap.
+fn finite_video_selection_has_closed_source_domain(
+    layer: &VideoLayer,
+    source: &ResolvedMediaSource,
+) -> bool {
+    matches!(
+        layer.playback.mapping(),
+        fx_schema::LayerPlaybackMapping::Linear { .. }
+    ) && layer.source.time_remap.is_none()
+        && layer.effects.is_empty()
+        && layer.source_range.duration.as_millis() > 0
+        && layer.source_range.end().as_millis() <= layer.source_intrinsic_duration.as_millis()
+        && layer.source_range.end().as_millis() <= source.duration_millis_floor
+        && media_clock::plan_layer(
+            &layer.playback,
+            layer.source_range,
+            None,
+            source.duration_millis_floor,
+        )
+        .is_ok()
+}
+
 fn lower_video(
     layer: &VideoLayer,
     source: &ResolvedMediaSource,
@@ -238,9 +278,22 @@ fn lower_video(
 ) -> Result<FootageSpec, &'static str> {
     check_visual_options(
         layer.is_hidden,
-        layer.motion_blur,
-        layer.blend_mode == Default::default(),
-        layer.track_matte.is_none(),
+        // The shared NativeLayerOptions envelope authors Video motion blur,
+        // including when this lowering is used to establish source bounds.
+        false,
+        matches!(
+            layer.blend_mode,
+            BlendMode::Normal | BlendMode::Multiply | BlendMode::Overlay | BlendMode::Screen
+        ),
+        // The shared NativeLayerOptions envelope writes the editable provider
+        // link and matte mode. These additional Video profiles have pinned
+        // independent native controls; source clocks remain guarded below.
+        layer.track_matte.as_ref().is_none_or(|matte| {
+            matches!(
+                matte.mode,
+                TrackMatteType::Alpha | TrackMatteType::Luma | TrackMatteType::LumaInverted
+            )
+        }),
         layer.placement.is_none(),
         layer.captions_enabled.is_none() && layer.caption_presentation.is_none(),
         layer.corner_radius,
@@ -255,19 +308,36 @@ fn lower_video(
     if layer.source.input_transform.is_some() {
         return Err("Video Input Transform is a color LUT and has no native effect mapping");
     }
-    if source.format != NativeSourceFormat::QuickTime
-        || source.duration_millis == 0
+    if !matches!(
+        source.format,
+        NativeSourceFormat::QuickTime | NativeSourceFormat::QuickTimeProRes4444
+    ) || source.duration_millis == 0
         || source.frame_rate.is_zero()
     {
         return Err("resolved video does not have the bounded QuickTime interpretation");
     }
-    if layer.source_intrinsic_duration.as_millis() != source.duration_millis {
+    if !matches_source_intrinsic(layer.source_intrinsic_duration.as_millis(), source)
+        && !finite_video_selection_has_closed_source_domain(layer, source)
+    {
         return Err("FX video intrinsic duration differs from interpreted archive duration");
     }
-    let audio_enabled = layer.volume.is_some();
-    if audio_enabled && source.audio_sample_rate <= 0.0 {
-        return Err("FX video enables audio but the QuickTime source has no supported audio track");
+    // Keep established ceil-ms occurrence admission. Only newly recognized
+    // floor aliases need the additional exact physical sampling proof.
+    if layer.source_intrinsic_duration.as_millis() != source.duration_millis
+        && let Some(ticks) = source.duration_native_ticks
+    {
+        media_clock::require_exact_video_source_domain(
+            layer.source_range,
+            Some(&layer.playback),
+            None,
+            layer.source.time_remap,
+            ticks,
+        )
+        .map_err(clock_error)?;
     }
+    let audio_enabled = layer.volume.is_some() && source.audio_sample_rate > 0.0;
+    // Gain cannot create audio on an intrinsically silent source. Keep its
+    // picture at every authored gain and leave the native audio switch off.
     let geometry = source_geometry(
         source.dimensions,
         layer.source.frame_rect.map(|frame| frame.get()),
@@ -312,13 +382,20 @@ fn lower_audio(
     let wave = source.format == NativeSourceFormat::Wave
         && source.dimensions == [0, 0]
         && source.frame_rate.is_zero();
-    let quicktime = source.format == NativeSourceFormat::QuickTime
-        && !source.dimensions.contains(&0)
+    let quicktime = matches!(
+        source.format,
+        NativeSourceFormat::QuickTime | NativeSourceFormat::QuickTimeProRes4444
+    ) && !source.dimensions.contains(&0)
         && !source.frame_rate.is_zero();
     if (!wave && !quicktime) || source.duration_millis == 0 || source.audio_sample_rate <= 0.0 {
         return Err("resolved source has no supported native audio interpretation");
     }
-    if layer.source_intrinsic_duration.as_millis() != source.duration_millis {
+    let authored_duration = layer.source_intrinsic_duration.as_millis();
+    if authored_duration != source.duration_millis
+        && !(wave
+            && authored_duration.checked_add(1) == Some(source.duration_millis)
+            && layer.source_range.end().as_millis() <= authored_duration)
+    {
         return Err("FX audio intrinsic duration differs from interpreted archive duration");
     }
     let transform = Transform {
@@ -382,12 +459,12 @@ fn lower_legacy(
             {
                 return Err("legacy image frame blending has no moving source semantics");
             }
-            if source.format != NativeSourceFormat::OpenExr
+            if !source.format.is_still()
                 || source.duration_millis != 0
                 || !source.frame_rate.is_zero()
                 || source.audio_sample_rate != 0.0
             {
-                return Err("legacy image source is not a pinned OpenEXR still");
+                return Err("legacy image source is not a pinned native still");
             }
             if layer.source_range.is_some() || layer.source_intrinsic_duration.is_some() {
                 return Err("legacy image carries unexplained moving-source clocks");
@@ -409,8 +486,10 @@ fn lower_legacy(
             )
         }
         MediaSourceKind::Video => {
-            if source.format != NativeSourceFormat::QuickTime
-                || source.duration_millis == 0
+            if !matches!(
+                source.format,
+                NativeSourceFormat::QuickTime | NativeSourceFormat::QuickTimeProRes4444
+            ) || source.duration_millis == 0
                 || source.frame_rate.is_zero()
             {
                 return Err("legacy video source is not bounded QuickTime");
@@ -421,10 +500,22 @@ fn lower_legacy(
             let intrinsic = layer
                 .source_intrinsic_duration
                 .ok_or("legacy video has no explicit intrinsic duration")?;
-            if intrinsic.as_millis() != source.duration_millis {
+            if !matches_source_intrinsic(intrinsic.as_millis(), source) {
                 return Err("legacy video intrinsic duration differs from archive duration");
             }
             check_start_time(layer.start_time, source_range)?;
+            if intrinsic.as_millis() != source.duration_millis
+                && let Some(ticks) = source.duration_native_ticks
+            {
+                media_clock::require_exact_video_source_domain(
+                    source_range,
+                    None,
+                    layer.playback.as_ref(),
+                    layer.source.time_remap,
+                    ticks,
+                )
+                .map_err(clock_error)?;
+            }
             let audio_enabled = layer.volume.is_some();
             if audio_enabled && source.audio_sample_rate <= 0.0 {
                 return Err("legacy video enables audio without a supported audio track");
@@ -657,9 +748,11 @@ fn media_spec(
             format: source.format,
             dimensions: source.dimensions,
             duration_millis: source.duration_millis,
+            duration_native_ticks: source.duration_native_ticks,
             frame_rate: source.frame_rate,
             audio_sample_rate: source.audio_sample_rate,
             wave_metadata: source.wave_metadata,
+            native_duration: source.native_duration,
         },
         source_geometry,
         transform: SolidLayerSpec {
@@ -741,11 +834,8 @@ pub(super) fn gain_to_db(gain: f64) -> Result<f64, &'static str> {
 }
 
 /// Converts writer validation into a stable contextual diagnostic boundary.
-pub(crate) fn validate_native(
-    spec: &FootageSpec,
-    duration: crate::timing::Duration24,
-) -> Result<(), AepWriteError> {
-    crate::writer::footage::validate(spec, duration)
+pub(crate) fn validate_native(spec: &FootageSpec) -> Result<(), AepWriteError> {
+    crate::writer::footage::validate(spec)
 }
 
 #[cfg(test)]
@@ -755,6 +845,129 @@ mod audio_captions;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stale_video_intrinsic_only_admits_a_closed_finite_selection() {
+        let layer: Layer = serde_json::from_value(serde_json::json!({
+            "type":"Video", "id":10, "name":"finite selection", "source":{"assetId":"clip","fit":"contain"},
+            "playback":{"type":"windowed","inputRange":{"start":2600,"duration":9000},"inputOffsetMs":0,
+                    "mapping":{"type":"linear","input":{"start":2600,"duration":9000},"output":{"start":0,"duration":9000}}},
+            "sourceRange":{"start":0,"duration":9000}, "sourceIntrinsicDuration":10125,
+            "transform":{"position":[0,0],"anchorPoint":[0,0],"scale":[100,100],"rotation":0,"opacity":100}
+        })).unwrap();
+        let LayerData::Video(mut video) = layer.data().clone() else {
+            panic!("video required")
+        };
+        let source = ResolvedMediaSource {
+            asset_id: video.source.asset_id.clone(),
+            path: RelativeMediaPath::new("media/clip.mp4").unwrap(),
+            format: NativeSourceFormat::QuickTime,
+            dimensions: [3840, 2160],
+            duration_millis: 10042,
+            duration_millis_floor: 10041,
+            duration_native_ticks: None,
+            frame_rate: NativeFrameRate::integer(24),
+            native_duration: None,
+            audio_sample_rate: 0.0,
+            wave_metadata: None,
+        };
+        assert!(lower_video(&video, &source, &video.transform).is_ok());
+        video.source_intrinsic_duration = fx_schema::Duration::from_millis(8000);
+        assert!(lower_video(&video, &source, &video.transform).is_err());
+        video.source_intrinsic_duration = fx_schema::Duration::from_millis(10125);
+        let mut short = source.clone();
+        short.duration_millis = 8000;
+        short.duration_millis_floor = 8000;
+        assert!(lower_video(&video, &short, &video.transform).is_err());
+        video.source.time_remap = Some(1.0);
+        assert!(lower_video(&video, &source, &video.transform).is_err());
+    }
+
+    #[test]
+    fn video_motion_blur_reaches_the_existing_native_options() {
+        let layer: Layer = serde_json::from_value(serde_json::json!({
+            "type":"Video", "id":10, "name":"motion-blurred portal",
+            "source":{"assetId":"clip","fit":"cover"},
+            "playback":{"type":"windowed","inputRange":{"start":0,"duration":1000},"inputOffsetMs":0,
+                "mapping":{"type":"linear","input":{"start":0,"duration":1000},"output":{"start":0,"duration":1000}}},
+            "sourceRange":{"start":0,"duration":1000}, "sourceIntrinsicDuration":1000,
+            "motionBlur":true, "trackMatte":{"mode":"alpha","layer":11},
+            "transform":{"position":[0,0],"anchorPoint":[0,0],"scale":[100,100],"rotation":0,"opacity":100}
+        })).unwrap();
+        let LayerData::Video(mut video) = layer.data().clone() else {
+            panic!("video required")
+        };
+        let source = ResolvedMediaSource {
+            asset_id: video.source.asset_id.clone(),
+            path: RelativeMediaPath::new("media/clip.mp4").unwrap(),
+            format: NativeSourceFormat::QuickTime,
+            dimensions: [320, 180],
+            duration_millis: 1000,
+            duration_millis_floor: 1000,
+            duration_native_ticks: None,
+            frame_rate: NativeFrameRate::integer(30),
+            native_duration: None,
+            audio_sample_rate: 0.0,
+            wave_metadata: None,
+        };
+        assert!(lower_video(&video, &source, &video.transform).is_ok());
+        let options = super::super::native_layer_options(&layer).unwrap();
+        assert!(options.motion_blur);
+        let matte = options.matte.unwrap();
+        assert_eq!(matte.layer, 11.into());
+        assert_eq!(matte.mode, 1);
+
+        video.is_hidden = true;
+        assert!(lower_video(&video, &source, &video.transform).is_err());
+    }
+
+    #[test]
+    fn p004_silent_screen_video_retains_its_closed_source_selection() {
+        let layer: Layer = serde_json::from_value(serde_json::json!({
+            "type":"Video", "id":66, "name":"public flare selection",
+            "source":{"assetId":"public-flare", "fit":"stretch"},
+            "playback":{"type":"windowed", "inputRange":{"start":1667,"duration":300},"inputOffsetMs":0,
+                "mapping":{"type":"linear","input":{"start":1667,"duration":300},"output":{"start":0,"duration":366}}},
+            "sourceRange":{"start":0,"duration":366}, "sourceIntrinsicDuration":366,
+            "blendMode":"screen", "motionBlur":true, "frameBlending":true, "volume":0.0,
+            "transform":{"position":[0,0],"anchorPoint":[0,0],"scale":[100,100],"rotation":0,"opacity":100}
+        })).unwrap();
+        let LayerData::Video(mut video) = layer.data().clone() else {
+            panic!("video required")
+        };
+        let source = ResolvedMediaSource {
+            asset_id: video.source.asset_id.clone(),
+            path: RelativeMediaPath::new("media/public-flare.mp4").unwrap(),
+            format: NativeSourceFormat::QuickTime,
+            dimensions: [1080, 1920],
+            duration_millis: 375,
+            duration_millis_floor: 375,
+            duration_native_ticks: None,
+            frame_rate: NativeFrameRate::integer(120),
+            native_duration: None,
+            audio_sample_rate: 0.0,
+            wave_metadata: None,
+        };
+        let footage = lower_video(&video, &source, &video.transform).unwrap();
+        assert!(!footage.audio_enabled);
+        assert_eq!(footage.frame_blending, NativeFrameBlending::FrameMix);
+        let options = super::super::native_layer_options(&layer).unwrap();
+        assert_eq!(options.blend_mode, 6);
+        assert!(options.motion_blur);
+        video.source_intrinsic_duration = fx_schema::Duration::from_millis(300);
+        assert!(lower_video(&video, &source, &video.transform).is_err());
+        video.source_intrinsic_duration = fx_schema::Duration::from_millis(366);
+        let mut short = source.clone();
+        short.duration_millis_floor = 300;
+        short.duration_millis = 300;
+        assert!(lower_video(&video, &short, &video.transform).is_err());
+        video.source.time_remap = Some(0.0);
+        assert!(lower_video(&video, &source, &video.transform).is_err());
+        video.source.time_remap = None;
+        // Normal motion blur is already supported on main; keep an unsupported blend guard.
+        video.blend_mode = BlendMode::Difference;
+        assert!(lower_video(&video, &source, &video.transform).is_err());
+    }
 
     #[test]
     fn contain_frame_becomes_exact_editable_source_trs() {

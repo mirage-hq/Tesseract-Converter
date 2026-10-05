@@ -1,5 +1,4 @@
-//! Shape Path and Appearance payloads from calibration runs 1 and 2 (our own
-//! values in the survey layout; `oracle/7/work/saved*/*.edits.json`):
+//! Shape Path and Appearance payloads from native calibration controls:
 //! Premiere 26.5.1 saved `C1`, `C2` and `K1` byte-identically, and AME
 //! rendered them and the payload-swapped copies `C4`-`C6`. Round trips and
 //! fail-closed slots.
@@ -31,7 +30,7 @@ const NO_FILL_SWITCH: &str = "tAEAAAAAAABEMyIRDAAAAAAABgAIAAQABgAAAFAAAAAAAEoAOA
 const CORPUS_LAYOUT: &str = "xAIAAAAAAABEMyIRDAAAAAAABgAIAAQABgAAAFAAAAAAAEoAOAAEAAAACAA0AAwAEAAAABQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGAAAAAAAHAAgACQAAAAAACgAAAAsADAAAAAAADUASgAAAEAAAABQAAAAAAAAQlwAAAAAAHBCcAAAAAEAAAAAAHpDAAD6QxgBAACkAQAAAAAAAAEBAAAAAAoACAAEAAUABgAKAAAAAGD/AAAACgAIAAQABQAGAAoAAAAA/0AAAAAKAAgABAAFAAYACgAAACgoKAAUABwABAAIAAwAEAAAAAAAFAAYABQAAAAAAHDDAACgQQAAcEMAAKBBCAAAAFQAAAACAAAAFAAAADwAAAAAAAoADAAEAAAACAAKAAAAFAAAAAAAAD8AAAoACAAEAAUABgAKAAAA/6AAAAAACgAMAAAABAAIAAoAAAAAAIA/AAAAPwIAAAAUAAAAJAAAAAAACgAIAAAAAAAEAAoAAAAAAAA/AAAKAAwAAAAEAAgACgAAAAAAgD8AAAA/FAAMAAAAAAAAAAAAAAAAAAQACAAUAAAACAAAADwAAAACAAAAFAAAACQAAAAAAAoACAAAAAAABAAKAAAAAAAAPwAACgAMAAAABAAIAAoAAAAAAIA/AAAAPwIAAAAUAAAAJAAAAAAACgAIAAAAAAAEAAoAAAAAAAA/AAAKAAwAAAAEAAgACgAAAAAAgD8AAAA/FAAMAAAAAAAAAAAAAAAAAAQACAAUAAAACAAAAFQAAAACAAAAFAAAADwAAAAAAAoADAAEAAAACAAKAAAAFAAAAAAAAD8AAAoACAAEAAUABgAKAAAAWlpaAAAACgAMAAAABAAIAAoAAAAAAIA/AAAAPwIAAAAUAAAAJAAAAAAACgAIAAAAAAAEAAoAAAAAAAA/AAAKAAwAAAAEAAgACgAAAAAAgD8AAAA/";
 
 /// The Appearance payloads that Premiere 26.5.1 saved for the gradient
-/// fixture `premiere_isolated_gradient_fills_26_5` (Oracle run 23), which
+/// fixture `premiere_isolated_gradient_fills_26_5`, which
 /// AME build 85 rendered: A a solid control whose payload only slot 0 holds,
 /// B linear, C radial, and D linear with an opacity ramp and a stroke.
 const GRADIENT_A: &str =
@@ -109,6 +108,7 @@ fn calibration_appearances_decode_to_what_ame_drew() {
         assert_eq!(
             decode_appearance(&bytes(payload)).unwrap(),
             PrAppearance {
+                mask_source: None,
                 fill: fill.map(PrFill::Solid),
                 stroke,
                 shadow
@@ -122,6 +122,7 @@ fn the_writer_stores_the_calibrated_slots_and_reads_back() {
     // The base payload that V1 rendered: the same slots, and every value
     // that the reader requires.
     let fill = PrAppearance {
+        mask_source: None,
         fill: Some(PrFill::Solid(BLUE)),
         stroke: None,
         shadow: None,
@@ -136,6 +137,7 @@ fn the_writer_stores_the_calibrated_slots_and_reads_back() {
     assert_eq!(decode_appearance(&written).unwrap(), fill);
     // Without a fill, slot 1 = 0 switches the base color off, as P1 drew it.
     let styled = PrAppearance {
+        mask_source: None,
         fill: None,
         stroke: Some(PrShapeStroke {
             color: GREEN,
@@ -158,6 +160,7 @@ fn the_writer_stores_the_calibrated_slots_and_reads_back() {
 #[test]
 fn appearance_slots_decode_only_at_values_that_rendered_like_the_base() {
     let base = appearance_fields(&PrAppearance {
+        mask_source: None,
         fill: Some(PrFill::Solid(BLUE)),
         stroke: None,
         shadow: None,
@@ -224,10 +227,6 @@ fn appearance_slots_decode_only_at_values_that_rendered_like_the_base() {
             vec![(28, Some(Field::Table(&[(1, Field::F32(1.0))])))],
             unrendered,
         ),
-        (
-            vec![(12, Some(Field::U8(1)))],
-            "a shape that Appearance slot 12 hides is unsupported",
-        ),
         (stroke(1).to_vec(), "shape strokes inside the outline"),
         (stroke(2).to_vec(), "shape strokes outside the outline"),
         (
@@ -254,10 +253,199 @@ fn appearance_slots_decode_only_at_values_that_rendered_like_the_base() {
         let error = decode_appearance(&with(&changes)).unwrap_err().to_string();
         assert!(error.contains(reason), "{changes:?}: {error}");
     }
+    // A legacy JSON Appearance reads only with its style and version.
     let mut legacy = 4_u64.to_le_bytes().to_vec();
     legacy.extend("{}".encode_utf16().flat_map(u16::to_le_bytes));
     let error = decode_appearance(&legacy).unwrap_err().to_string();
-    assert!(error.contains("legacy UTF-16 JSON Appearance"), "{error}");
+    assert!(
+        error.contains("legacy JSON Appearance: missing field `mStyle`"),
+        "{error}"
+    );
+}
+
+#[test]
+fn legacy_json_appearance_rejects_a_positional_style() {
+    use crate::tests::support::legacy_appearance;
+    let json = r#"{"mVersion":1,"mStyle":[8421504,true,0,false,1,0,0,0,0,0,false]}"#;
+    let error = decode_appearance(&legacy_appearance(json))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("legacy JSON Appearance: invalid type: sequence"),
+        "{error}"
+    );
+}
+
+#[test]
+fn legacy_json_appearance_v1_reads_a_gray_fill_and_the_fill_switch() {
+    use crate::tests::support::{legacy_appearance, legacy_json};
+    let solid = |gray: u8| PrAppearance {
+        mask_source: None,
+        fill: Some(PrFill::Solid(PrRgb([gray; 3]))),
+        stroke: None,
+        shadow: None,
+    };
+    // A disabled stroke or shadow draws nothing, whatever it stores.
+    let other_inactive_values = [
+        ("mFillColor", Some("0")),
+        ("mStrokeColor", Some("0")),
+        ("mStrokeWidth", Some("0")),
+        ("mShadowAngle", Some("-90.25")),
+        ("mShadowBlur", Some("1000")),
+        ("mShadowColor", Some("16777215")),
+        ("mShadowOffset", Some("0")),
+        ("mShadowOpacity", Some("100")),
+    ];
+    let cases = [
+        (legacy_json(&[]), solid(128)),
+        (legacy_json(&[("mFillColor", Some("16777215"))]), solid(255)),
+        (legacy_json(&other_inactive_values), solid(0)),
+        // A fill switched off draws nothing, in a color that would not convert.
+        (
+            legacy_json(&[
+                ("mFillVisible", Some("false")),
+                ("mFillColor", Some("1193046")),
+            ]),
+            PrAppearance {
+                mask_source: None,
+                fill: None,
+                stroke: None,
+                shadow: None,
+            },
+        ),
+        // JSON spacing and field order carry no meaning.
+        (
+            r#"{ "mStyle": { "mShadowVisible": false, "mShadowOpacity": 0, "mShadowOffset": 0,
+                "mShadowColor": 0, "mShadowBlur": 0, "mShadowAngle": 0, "mStrokeWidth": 1,
+                "mStrokeVisible": false, "mStrokeColor": 0, "mFillVisible": true,
+                "mFillColor": 16777215 }, "mVersion": 1 }"#
+                .to_owned(),
+            solid(255),
+        ),
+    ];
+    let decoded: Vec<_> = cases
+        .iter()
+        .map(|(json, _)| {
+            decode_appearance(&legacy_appearance(json)).map_err(|error| error.to_string())
+        })
+        .collect();
+    let expected: Vec<_> = cases
+        .iter()
+        .map(|(_, appearance)| Ok(appearance.clone()))
+        .collect();
+    assert_eq!(decoded, expected);
+}
+
+#[test]
+fn legacy_json_appearance_fails_closed_outside_its_v1_form() {
+    use crate::tests::support::{legacy_appearance, legacy_json};
+    let payload = |changes: &[(&str, Option<&str>)]| legacy_appearance(&legacy_json(changes));
+    let gray = payload(&[]);
+    let text = gray.len() - 8;
+    let patched = |at: usize, bytes: &[u8]| {
+        let mut patched = gray.clone();
+        patched[at..at + bytes.len()].copy_from_slice(bytes);
+        patched
+    };
+    let count = |bytes: usize| u32::try_from(bytes).unwrap().to_le_bytes();
+    let mut odd = gray.clone();
+    odd.push(b' ');
+    odd[..4].copy_from_slice(&count(text + 1));
+    let cases: Vec<(Vec<u8>, String)> = vec![
+        (
+            patched(0, &count(text + 2)),
+            format!(
+                "its byte count {} does not match the {text} bytes after it",
+                text + 2
+            ),
+        ),
+        (
+            patched(4, &1_u32.to_le_bytes()),
+            "the word after its byte count is 1, not 0".into(),
+        ),
+        (odd, format!("an odd byte count {} is not UTF-16", text + 1)),
+        // A lone high surrogate in place of the closing brace.
+        (
+            patched(gray.len() - 2, &0xd800_u16.to_le_bytes()),
+            "invalid UTF-16: unpaired surrogate found: d800".into(),
+        ),
+        (
+            legacy_appearance(&format!("{}{{}}", legacy_json(&[]))),
+            "trailing characters".into(),
+        ),
+        // A field of unknown meaning, such as a mask, is never dropped.
+        (
+            payload(&[("mMaskSource", Some("1"))]),
+            "unknown field `mMaskSource`".into(),
+        ),
+        (
+            legacy_appearance(&legacy_json(&[]).replacen('{', r#"{"mName":"Box","#, 1)),
+            "unknown field `mName`".into(),
+        ),
+        (
+            legacy_appearance(
+                &legacy_json(&[]).replace(r#""mVersion":1"#, r#""mVersion":1,"mVersion":1"#),
+            ),
+            "duplicate field `mVersion`".into(),
+        ),
+        (
+            legacy_appearance(&legacy_json(&[]).replace(
+                r#""mFillVisible":true"#,
+                r#""mFillVisible":true,"mFillVisible":true"#,
+            )),
+            "duplicate field `mFillVisible`".into(),
+        ),
+        // A switch is never read as on or off by default.
+        (
+            payload(&[("mFillVisible", None)]),
+            "missing field `mFillVisible`".into(),
+        ),
+        (
+            payload(&[("mShadowVisible", Some("null"))]),
+            "invalid type: null, expected a boolean".into(),
+        ),
+        (
+            legacy_appearance(&legacy_json(&[]).replace(r#""mVersion":1"#, r#""mVersion":2"#)),
+            "version 2 is unsupported".into(),
+        ),
+        (
+            payload(&[("mFillColor", Some("33554431"))]),
+            "mFillColor 0x1ffffff is outside the 24-bit color form".into(),
+        ),
+        (
+            payload(&[("mStrokeColor", Some("4294967295"))]),
+            "mStrokeColor 0xffffffff is outside the 24-bit color form".into(),
+        ),
+        // Only gray reads alike in either channel order.
+        (
+            payload(&[("mFillColor", Some("24831"))]),
+            "mFillColor 0x0060ff is not gray".into(),
+        ),
+        (
+            payload(&[("mStrokeVisible", Some("true"))]),
+            "an enabled stroke is unsupported".into(),
+        ),
+        (
+            payload(&[("mShadowVisible", Some("true"))]),
+            "an enabled shadow is unsupported".into(),
+        ),
+    ];
+    let unmet: Vec<String> = cases
+        .iter()
+        .filter_map(|(payload, reason)| {
+            let outcome = decode_appearance(payload).map_err(|error| error.to_string());
+            match &outcome {
+                Err(error)
+                    if error.starts_with("unsupported conversion: legacy JSON Appearance: ")
+                        && error.contains(reason.as_str()) =>
+                {
+                    None
+                }
+                _ => Some(format!("{reason}: {outcome:?}")),
+            }
+        })
+        .collect();
+    assert!(unmet.is_empty(), "{unmet:#?}");
 }
 
 #[test]
@@ -319,6 +507,7 @@ fn premiere_gradient_appearances_decode_to_what_ame_drew() {
         }))
     };
     let only = |fill| PrAppearance {
+        mask_source: None,
         fill,
         stroke: None,
         shadow: None,
@@ -354,6 +543,7 @@ fn premiere_gradient_appearances_decode_to_what_ame_drew() {
         (
             GRADIENT_D,
             PrAppearance {
+                mask_source: None,
                 fill: gradient(
                     PrGradientKind::Linear,
                     ramp,
@@ -524,5 +714,40 @@ fn gradient_appearances_decode_only_in_the_form_the_fixture_rendered() {
     ] {
         let error = decode_appearance(&payload).unwrap_err().to_string();
         assert!(error.contains(&reason), "{reason}: {error}");
+    }
+}
+
+#[test]
+fn appearance_mask_flags_round_trip_and_invert_alone_draws_the_shape() {
+    use crate::schema::text::PrMaskSource;
+    let solid = |mask_source| PrAppearance {
+        fill: Some(PrFill::Solid(BLUE)),
+        stroke: Some(PrShapeStroke {
+            color: GREEN,
+            width: 12.0,
+        }),
+        shadow: None,
+        mask_source,
+    };
+    for mask_source in [
+        None,
+        Some(PrMaskSource { inverted: false }),
+        Some(PrMaskSource { inverted: true }),
+    ] {
+        let appearance = solid(mask_source);
+        let payload = encode_appearance(&appearance).unwrap();
+        assert_eq!(
+            decode_appearance(&payload).unwrap(),
+            appearance,
+            "{mask_source:?}"
+        );
+    }
+    // Slot 13 without slot 12 drew like the base (calibration, s3).
+    let plain = solid(None);
+    for value in [1, 2] {
+        let mut fields = appearance_fields(&plain).unwrap();
+        fields.push((13, Field::U8(value)));
+        let decoded = decode_appearance(&encode_fields(&fields).unwrap()).unwrap();
+        assert_eq!(decoded, plain, "{value}");
     }
 }

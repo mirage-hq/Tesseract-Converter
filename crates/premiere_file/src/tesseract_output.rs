@@ -10,7 +10,7 @@ use crate::{
     media::{admitted_container, unsupported_media_reason, MediaContainer, MediaFacts},
     media_metadata::ColourDescription,
     omit,
-    schema::{after_effects::LINKED_AUDIO_REASON, PrMediaKind},
+    schema::PrMediaKind,
     Omission, OmissionScope,
 };
 use aftereffects_file::LinkedMedia;
@@ -27,6 +27,10 @@ use std::{
     sync::Arc,
 };
 use tesseract_file::TesseractFileBuilder;
+
+mod audio_channels;
+mod delayed_audio;
+mod object_masks;
 
 // A cache lives for one verification pass only. Later passes re-read bytes,
 // while repeated occurrences and aliases share a digest within the same pass.
@@ -149,6 +153,43 @@ fn resolve_media(
     Ok((media, hash, resolved_candidates))
 }
 
+/// Resolve the ordinary, identity-checked original before recovering an absent
+/// native PAR override. No prepared replacement or coded dimensions supply PAR.
+pub(crate) fn source_pixel_aspect(
+    root: &Path,
+    media: &PrMedia,
+    kind: PrMediaKind,
+) -> Result<(crate::schema::records::PixelAspectRatio, &'static str)> {
+    let (path, expected_hash, _) = resolve_media(root, media, &mut HashMap::new())?;
+    let aspect = match kind {
+        PrMediaKind::Still { .. } => {
+            let facts = crate::image_media::inspect_image_media(File::open(&path)?)?;
+            ensure!(facts.format == crate::image_media::ImageFormat::Png,
+                "missing native PAR override: source image pixel aspect is unavailable for this format");
+            crate::image_media::inspect_png_pixel_aspect(File::open(&path)?)?
+        }
+        PrMediaKind::Video { .. } => {
+            let file = File::open(&path)?;
+            let facts = crate::media::inspect_video_media(
+                BufReader::new(file),
+                BufReader::new(File::open(&path)?),
+                std::fs::metadata(&path)?.len(),
+            )?;
+            (facts.pixel_aspect, "validated movie metadata")
+        }
+        _ => {
+            return Err(unsupported(
+                "missing native PAR override has no physical source pixel-aspect metadata",
+            ))
+        }
+    };
+    ensure!(
+        hash(&path)? == expected_hash,
+        "source changed during missing-PAR metadata inspection"
+    );
+    Ok(aspect)
+}
+
 pub(crate) fn asset_ids_in_order(
     sequence: &PrSequence,
     media: &BTreeMap<MediaId, PrMedia>,
@@ -189,10 +230,15 @@ pub(crate) struct PendingTesseractFile {
     /// local sources are checked with the other media.
     linked_media: LinkedMedia,
     builder: Option<TesseractFileBuilder>,
+    // Keep extracted channel files alive until the archive builder is dropped.
+    _channel_files: Option<tempfile::TempDir>,
+    _raw_audio_files: Option<tempfile::TempDir>,
+    _mask_files: tempfile::TempDir,
 }
 
 #[derive(Debug)]
 struct ResolvedMedia {
+    numbered_frames: Vec<NumberedFrame>,
     path: PathBuf,
     hash: String,
     native_path: PathBuf,
@@ -203,8 +249,22 @@ struct ResolvedMedia {
     asset: Option<(AssetId, MediaContainer)>,
 }
 
+/// Every saved frame is inspected and pinned, including frames outside a trim.
+#[derive(Debug)]
+struct NumberedFrame {
+    path: PathBuf,
+    hash: String,
+    candidates: Vec<PathBuf>,
+    container: MediaContainer,
+}
+
 /// The resolved source file of one media record, shared by all of its placements.
 struct InspectedMedia {
+    delayed_audio: Option<Box<crate::audio_media::DelayedAudioClock>>,
+    /// Unsupported embedded sound must not remove an independently admitted picture.
+    audio_omission: Option<String>,
+    picture_clock: Option<Box<Result<crate::media::PictureClock>>>,
+    numbered_frames: Vec<NumberedFrame>,
     path: PathBuf,
     hash: String,
     native_path: PathBuf,
@@ -225,6 +285,11 @@ struct InspectedMedia {
 enum MediaNote {
     Feature(&'static str),
     Approximation(&'static str),
+    PresentationOrigin {
+        origin: crate::media::PresentationOrigin,
+        timescale: u32,
+        declared_tail: bool,
+    },
 }
 
 enum MediaInspection {
@@ -239,6 +304,9 @@ enum MediaInspection {
         candidate_paths: Vec<PathBuf>,
     },
     Omitted(String),
+    /// A missing direct video or unsupported codec may drop its placements,
+    /// unlike a failed identity, source-clock or container validation.
+    UnavailableVideo(String),
 }
 
 /// Prove source intervals after clipping every containing unit nest. Hidden
@@ -307,17 +375,72 @@ fn selected_video_use(sequence: &PrSequence, id: &MediaId) -> Option<crate::medi
     })
 }
 
-/// Resolve and inspect one media record `id`. Unsupported video file formats
-/// stop conversion; missing files and unsupported still/audio content can omit placements.
+/// Apply a sound-only inspection loss at every placement, including nested
+/// copies, before channel extraction. Picture identity and clocks stay intact.
+fn omit_unreadable_sounds(
+    sequence: &mut PrSequence,
+    inspected: &BTreeMap<MediaId, MediaInspection>,
+    omissions: &mut Vec<Omission>,
+) {
+    sequence.audio.retain(|clip| {
+        if let Some(MediaInspection::Ready(media)) = inspected.get(&clip.media) {
+            if let Some(reason) = &media.audio_omission {
+                omit(omissions, OmissionScope::Occurrence, clip.record(), reason);
+                return false;
+            }
+        }
+        true
+    });
+    for track in &mut sequence.video_tracks {
+        for nest in &mut track.nests {
+            omit_unreadable_sounds(&mut nest.sequence, inspected, omissions);
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum MediaUse<'a> {
+    Loaded(&'a PrSequence),
+    Native(&'a crate::media::VideoUse),
+    Whole,
+}
+
+impl MediaUse<'_> {
+    fn uses_audio(self, id: &MediaId) -> bool {
+        match self {
+            Self::Loaded(sequence) => sequence.uses_audio_media(id),
+            Self::Native(usage) => usage.uses_audio,
+            Self::Whole => true,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VideoAdmission {
+    Strict,
+    OmitUnsupported,
+}
+
+struct MediaSelection<'a> {
+    usage: MediaUse<'a>,
+    admission: VideoAdmission,
+}
+
+/// Resolve and inspect one media record `id`. Import may omit a missing direct
+/// video or unsupported codec; all other video admission failures stay fatal.
 fn inspect_media(
     root: &Path,
     id: &MediaId,
     media: &PrMedia,
-    sequence: Option<&PrSequence>,
+    selection: MediaSelection<'_>,
     digests: &mut HashMap<PathBuf, String>,
-    linked: &mut LinkedCompositions<'_, '_>,
+    linked: &mut LinkedCompositions<'_>,
     media_map: Option<&ValidatedMediaMap>,
 ) -> Result<MediaInspection> {
+    let MediaSelection {
+        usage: selection,
+        admission,
+    } = selection;
     match media.video.as_ref().map(|video| video.kind) {
         Some(PrMediaKind::ColorMatte(_) | PrMediaKind::Adjustment) => {
             return Ok(MediaInspection::Synthetic);
@@ -342,11 +465,27 @@ fn inspect_media(
                 Err(reason) => MediaInspection::Omitted(reason),
             });
         }
-        Some(PrMediaKind::Video { .. } | PrMediaKind::Still { .. }) | None => {}
+        Some(
+            PrMediaKind::Video { .. }
+            | PrMediaKind::Still { .. }
+            | PrMediaKind::NumberedStills { .. },
+        )
+        | None => {}
     }
     let (native_path, native_hash, candidate_paths) = match resolve_media(root, media, digests) {
         Ok(resolved) => resolved,
         Err(error @ BuildError::MissingMedia(_)) => {
+            let is_video = media
+                .video
+                .as_ref()
+                .is_some_and(|video| matches!(video.kind, PrMediaKind::Video { .. }));
+            if is_video {
+                return if admission == VideoAdmission::OmitUnsupported {
+                    Ok(MediaInspection::UnavailableVideo(error.to_string()))
+                } else {
+                    Err(error)
+                };
+            }
             return Ok(MediaInspection::Omitted(error.to_string()));
         }
         Err(error) => return Err(error),
@@ -357,6 +496,29 @@ fn inspect_media(
         .flatten()
         .unwrap_or(&native_path)
         .to_owned();
+    if let Some(native) = media.video.as_ref() {
+        if let PrMediaKind::NumberedStills { alpha } = native.kind {
+            if path != native_path {
+                return Ok(MediaInspection::Omitted("numbered-image replacement must preserve the complete saved frame set; single-file replacement is unsupported".into()));
+            }
+            let frames =
+                match inspect_numbered_frames(&path, &candidate_paths, native, alpha, digests) {
+                    Ok(frames) => frames,
+                    Err(error) => {
+                        return unsupported_media_reason(error).map(MediaInspection::Omitted)
+                    }
+                };
+            let container = frames[0].container;
+            return Ok(MediaInspection::Ready(InspectedMedia {
+                delayed_audio: None,
+                audio_omission: None,
+                picture_clock: None,
+                numbered_frames: frames,
+                path, hash: native_hash.clone(), native_path, native_hash, candidate_paths,
+                container, note: Some(MediaNote::Approximation("numbered images retain original bytes and saved numeric order as editable sequence-sampled image holds; other output rates, start phases and sub-frame timing are approximate or unproved; independent Premiere fidelity is unverified")), colour: None, codec: None,
+            }));
+        }
+    }
     let hash = media_hash(&path, digests)?;
     let extension = path.extension().and_then(|x| x.to_str());
     let is_video = media
@@ -387,7 +549,22 @@ fn inspect_media(
             Ok(MediaInspection::Omitted(error.to_string()))
         };
     }
-    let usage = sequence.and_then(|sequence| selected_video_use(sequence, id));
+    let interpreted = media.video.as_ref().is_some_and(|video| {
+        !matches!(
+            video.interpretation,
+            crate::schema::SourceInterpretation::Original
+        )
+    });
+    let loaded_use = match selection {
+        MediaUse::Loaded(sequence) => selected_video_use(sequence, id),
+        _ => None,
+    };
+    let usage = match selection {
+        MediaUse::Native(usage) => Some(usage),
+        _ => loaded_use.as_ref(),
+    }
+    .filter(|_| !interpreted);
+    let mut picture_clock = None;
     // A media keeps one note: the first one below that applies.
     let mut note = None;
     let mut colour = None;
@@ -401,9 +578,14 @@ fn inspect_media(
             BufReader::new(input),
             File::open(&path)?,
             size,
-            usage.as_ref(),
+            usage,
         ) {
             Ok(facts) => facts,
+            Err(error @ BuildError::UnsupportedVideoCodec(_))
+                if is_video && admission == VideoAdmission::OmitUnsupported =>
+            {
+                return Ok(MediaInspection::UnavailableVideo(error.to_string()));
+            }
             Err(error) if is_video => return Err(error),
             Err(error) => return unsupported_media_reason(error).map(MediaInspection::Omitted),
         };
@@ -423,13 +605,41 @@ fn inspect_media(
         // retains the existing safe-omission behavior.
         picture = crate::audio_media::PictureClock::of(&facts);
         let selected_only = match &facts {
-            MediaFacts::Video(video) => video.validate_source_for_use(native, usage.as_ref()),
-            MediaFacts::Still(_) => facts.validate_source(native).map(|()| false),
+            MediaFacts::Video(video) if interpreted => {
+                picture_clock = Some(Box::new(
+                    crate::media::InterpretedPictureClock::bind(native, video)
+                        .map(crate::media::PictureClock::Interpreted),
+                ));
+                Ok(false)
+            }
+            MediaFacts::Video(video) => {
+                let selected_only = video.validate_source_for_use(native, usage)?;
+                if let Some(origin) = video.timing.presentation_origin() {
+                    picture_clock = Some(Box::new(Ok(
+                        crate::media::PictureClock::PresentationOrigin(origin),
+                    )));
+                    note = Some(MediaNote::PresentationOrigin {
+                        origin,
+                        timescale: video.timing.timescale,
+                        declared_tail: video.timing.declared_media_end.is_some(),
+                    });
+                }
+                Ok(selected_only)
+            }
+            MediaFacts::Still(_) | MediaFacts::UnsupportedVideo(_) => {
+                facts.validate_source(native).map(|()| false)
+            }
         }?;
         if selected_only {
-            note.get_or_insert(MediaNote::Approximation(
-                "original sample timestamps and first affine MP4 edit retained for proved selected unit source intervals; whole-source endpoint and later edit playback are unsupported",
-            ));
+            let declared_tail = matches!(
+                &facts,
+                MediaFacts::Video(video) if video.timing.declared_media_end.is_some()
+            );
+            note.get_or_insert(MediaNote::Approximation(if declared_tail {
+                "declared media-header tail has no samples; original sample timestamps, bytes and first affine MP4 edit retained for proved selected picture-only unit intervals; the uncertain final sample and whole-source playback remain unsupported; native intermediate frame selection is unverified"
+            } else {
+                "original sample timestamps and first affine MP4 edit retained for proved selected unit source intervals; whole-source endpoint and later edit playback are unsupported"
+            }));
         }
         if let (MediaFacts::Still(image), PrMediaKind::Still { alpha }) = (&facts, native.kind) {
             if let Some(reason) = image.declaration_mismatch(extension, alpha) {
@@ -441,29 +651,43 @@ fn inspect_media(
         }
         if let MediaFacts::Video(video) = &facts {
             colour = video.colour;
-            if video.timing.legacy_signed_ctts {
+            if matches!(
+                video.codec,
+                crate::schema::VideoCodec::ProRes {
+                    profile: crate::schema::video_codec::ProResProfile::P4444,
+                    ..
+                }
+            ) {
                 note.get_or_insert(MediaNote::Approximation(
-                    "legacy CTTSv0 signed offsets retained exactly as the shared parser/player evaluates them after physical PTS/count/origin checks; admission beyond established exact CFR requires selected unit interior intervals; native intermediate frame selection remains unverified",
+                    "ProRes 4444 picture and alpha packets retained unchanged for native FFmpeg playback; WebCodecs playback is unavailable and native RGB/alpha fidelity is unverified",
                 ));
             }
-            codec = Some(
-                match video.codec {
-                    crate::schema::VideoCodec::H264 => "h264",
-                    crate::schema::VideoCodec::HevcMain => "hevc",
-                }
-                .to_owned(),
-            );
+            if video.timing.legacy_signed_ctts {
+                note.get_or_insert(MediaNote::Approximation(
+                    "legacy CTTSv0 signed offsets retained exactly as the shared parser/player evaluates them after physical PTS/count/origin checks; whole-source admission requires the validated full-duration edit; other edits require selected unit interior intervals; native intermediate frame selection remains unverified",
+                ));
+            }
+            // Import admitted the codec (`media::inspect_media`), so the
+            // family name exists; native-only playback is diagnosed above.
+            codec = video.codec.tesseract_name().map(str::to_owned);
             if matches!(
                 video.timing.clock,
                 crate::media::SampleClock::Irregular { .. }
             ) {
-                if usage.is_none() {
+                // A complete physical clock needs no selected-use proof. The
+                // editable playback maps parent time to source time; the decoder
+                // then selects the nearest-earlier retained PTS, including for
+                // reverse and remapped requests. Do not replace that lookup with
+                // the native average period or require omitted siblings to prove
+                // clocks that only partial-source admission depends on.
+                let whole_source = !video.timing.partial_timeline && !selected_only && !interpreted;
+                if usage.is_none() && !whole_source {
                     return Ok(MediaInspection::Omitted(
-                        "irregular source requires unit forward playback without Time Remapping, proved through every containing nest".into(),
+                        "irregular source without a validated whole-source clock requires unit forward playback without Time Remapping, proved through every containing nest".into(),
                     ));
                 }
                 note.get_or_insert(MediaNote::Approximation(
-                    "irregular source presentation timestamps retained with original bytes and unit playback after native sample-count and rounded endpoint checks; intermediate native frame-clock interpretation remains unverified",
+                    "irregular source presentation timestamps retained with original bytes after exact native sample-count and bounded endpoint checks; editable retimes map source times onto nearest-earlier sample starts under millisecond rounding; native intermediate frame selection remains unverified",
                 ));
             } else if matches!(
                 video.timing.clock,
@@ -478,48 +702,84 @@ fn inspect_media(
     }
     // Pictures import muted. An embedded stream that this timeline never
     // places as sound must not determine whether its picture can import.
-    if let Some(native) = media
-        .audio
-        .as_ref()
-        .filter(|_| sequence.is_none_or(|sequence| sequence.uses_audio_media(id)))
-    {
-        let input = File::open(&path)?;
-        let size = input.metadata()?.len();
-        let extension = path
-            .extension()
-            .and_then(|value| value.to_str())
-            .unwrap_or_default();
-        let facts = match inspect_audio_media(BufReader::new(input), size, extension) {
-            Ok(Some(facts)) => facts,
-            Ok(None) => {
-                return Ok(MediaInspection::Omitted(
-                    "native audio stream is missing from the file".into(),
-                ));
+    let mut audio_omission = None;
+    let mut delayed_audio = None;
+    'sound: {
+        if let Some(native) = media.audio.as_ref().filter(|_| selection.uses_audio(id)) {
+            let input = File::open(&path)?;
+            let size = input.metadata()?.len();
+            let extension = path
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default();
+            let inspected_audio = (|| {
+                if matches!(
+                    container,
+                    MediaContainer::Mp4 | MediaContainer::Mov | MediaContainer::M4a
+                ) {
+                    delayed_audio = crate::audio_media::inspect_delayed_audio(
+                        BufReader::new(File::open(&path)?),
+                        size,
+                        native,
+                    )?
+                    .map(Box::new);
+                    if delayed_audio.is_some() {
+                        return Ok(Some(native.clone()));
+                    }
+                }
+                inspect_audio_media(BufReader::new(input), size, extension)
+            })();
+            let facts = match inspected_audio {
+                Ok(Some(facts)) => facts,
+                Ok(None) => {
+                    return Ok(MediaInspection::Omitted(
+                        "native audio stream is missing from the file".into(),
+                    ));
+                }
+                Err(error) => {
+                    let reason = unsupported_media_reason(error)?;
+                    if !is_video {
+                        return Ok(MediaInspection::Omitted(reason));
+                    }
+                    audio_omission = Some(format!("embedded sound not imported: {reason}"));
+                    break 'sound;
+                }
+            };
+            if delayed_audio.is_some() {
+                break 'sound;
             }
-            Err(error) => return unsupported_media_reason(error).map(MediaInspection::Omitted),
-        };
-        // An audio-only native record of a movie still has the picture
-        // Premiere measures; a file without a supported picture has none.
-        let picture = picture.or_else(|| {
-            let video = crate::media::inspect_video_media(
-                File::open(&path).ok()?,
-                File::open(&path).ok()?,
-                size,
-            )
-            .ok()?;
-            crate::audio_media::PictureClock::of(&MediaFacts::Video(video))
-        });
-        match crate::audio_media::validate_source(&facts, native, picture) {
-            Ok(crate::audio_media::AudioDurationMatch::Exact) => {}
-            Ok(crate::audio_media::AudioDurationMatch::PaddedToPicture) => {
-                note.get_or_insert(MediaNote::Approximation(
+            // An audio-only native record of a movie still has the picture
+            // Premiere measures; a file without a supported picture has none.
+            let picture = picture.or_else(|| {
+                let video = crate::media::inspect_video_media(
+                    File::open(&path).ok()?,
+                    File::open(&path).ok()?,
+                    size,
+                )
+                .ok()?;
+                crate::audio_media::PictureClock::of(&MediaFacts::Video(video))
+            });
+            match crate::audio_media::validate_source(&facts, native, picture) {
+                Ok(crate::audio_media::AudioDurationMatch::Exact) => {}
+                Ok(crate::audio_media::AudioDurationMatch::RoundedUpToSample) => {
+                    note.get_or_insert(MediaNote::Approximation(
+                    "native fractional audio duration and measured whole-sample duration share the same sample ceiling; source clocks and selected ranges are unchanged",
+                ));
+                }
+                Ok(crate::audio_media::AudioDurationMatch::PaddedToPicture) => {
+                    note.get_or_insert(MediaNote::Approximation(
                     "embedded AAC ends up to one frame before the picture; Premiere's picture-length audio duration was admitted and the tail plays as silence",
                 ));
+                }
+                Err(error) => return Ok(MediaInspection::Omitted(error.to_string())),
             }
-            Err(error) => return Ok(MediaInspection::Omitted(error.to_string())),
         }
     }
     Ok(MediaInspection::Ready(InspectedMedia {
+        audio_omission,
+        delayed_audio,
+        picture_clock,
+        numbered_frames: Vec::new(),
         path,
         hash,
         native_path,
@@ -532,19 +792,80 @@ fn inspect_media(
     }))
 }
 
+/// Compare complete live aliases, not just their identical first PNGs.
+fn inspect_numbered_frames(
+    path: &Path,
+    candidates: &[PathBuf],
+    native: &crate::schema::PrVideoStream,
+    alpha: bool,
+    digests: &mut HashMap<PathBuf, String>,
+) -> Result<Vec<NumberedFrame>> {
+    let paths = crate::numbered_images::paths(path, native)?;
+    let aliases = candidates
+        .iter()
+        .map(|candidate| crate::numbered_images::paths(candidate, native))
+        .collect::<Result<Vec<_>>>()?;
+    paths
+        .into_iter()
+        .enumerate()
+        .map(|(index, path)| {
+            let hash = media_hash(&path, digests)?;
+            tesseract_file::validate_asset_source_name(&path)?;
+            let image = crate::image_media::inspect_image_media(File::open(&path)?)?;
+            ensure!(
+                (image.width, image.height) == (native.width, native.height),
+                "numbered-image frame {} dimensions differ from native dimensions",
+                path.display()
+            );
+            if let Some(reason) =
+                image.declaration_mismatch(path.extension().and_then(|value| value.to_str()), alpha)
+            {
+                return Err(unsupported(format!(
+                    "numbered-image frame {}: {reason}",
+                    path.display()
+                )));
+            }
+            ensure!(
+                !image.icc_profile,
+                "numbered-image frame {} embeds an unverified ICC colour profile",
+                path.display()
+            );
+            let candidates = aliases
+                .iter()
+                .map(|paths| paths[index].clone())
+                .collect::<Vec<_>>();
+            for candidate in &candidates {
+                ensure!(
+                    media_hash(candidate, digests)? == hash,
+                    "numbered-image aliases identify different frame bytes: {}",
+                    candidate.display()
+                );
+            }
+            Ok(NumberedFrame {
+                path,
+                hash,
+                candidates,
+                container: MediaContainer::Image(image.format),
+            })
+        })
+        .collect()
+}
+
 fn preflight_failure(error: &BuildError) -> (MediaStatus, Option<String>) {
     let status = match error {
         BuildError::MissingMedia(_) => MediaStatus::Missing,
         BuildError::Io(_) | BuildError::IoAt { .. } => MediaStatus::Unreadable,
         BuildError::Mp4(_) | BuildError::Audio(_) => MediaStatus::InvalidMedia,
-        BuildError::Unsupported(_) => MediaStatus::RequiresTranscode,
+        BuildError::Unsupported(_) | BuildError::UnsupportedVideoCodec(_) => {
+            MediaStatus::RequiresTranscode
+        }
         _ => MediaStatus::Unassessed,
     };
     (status, Some(error.to_string()))
 }
 
-/// Inspect one loaded Premiere sequence without creating output files.
-pub(crate) fn inspect_premiere_sequence(
+/// Inspect one loaded Premiere sequence under the import omission policy.
+fn inspect_import_sequence(
     source: &Path,
     parsed: &PrSequence,
     project_media: &BTreeMap<MediaId, PrMedia>,
@@ -555,7 +876,9 @@ pub(crate) fn inspect_premiere_sequence(
         parsed.id.clone().unwrap_or_default(),
         project_media,
         parsed.media_in_order(),
-        Some(parsed),
+        // Conversion packages exactly what this loaded sequence places.
+        |_| MediaUse::Loaded(parsed),
+        VideoAdmission::OmitUnsupported,
         media_map,
     )
 }
@@ -565,18 +888,27 @@ pub(crate) fn inspect_native_premiere_media(
     target: &str,
     media_map: Option<&ValidatedMediaMap>,
 ) -> Result<MediaPreflight> {
-    // The model supplies clocks only when the native inventory proves that
-    // every physical placement survives. Failed loads retain strict inspection.
+    // A media takes the model's clocks only when the native inventory proves
+    // that each of its uses survives there. Failed loads retain strict inspection.
     let parsed = crate::format::PrProjectFile::load_import(source, Some(target))
         .ok()
         .map(|(project, _)| project);
     let sequence = parsed
         .as_ref()
         .and_then(|project| project.single_sequence());
-    inspect_native_media(source, target, sequence, media_map)
+    inspect_native_media(
+        source,
+        target,
+        sequence,
+        VideoAdmission::Strict,
+        media_map,
+        None,
+    )
 }
 
-/// Native inventory with proved complete selected picture/sound placement context.
+/// Native inventory; a media is inspected for its selected use in `parsed`
+/// only when every native picture and sound use of it survives there.
+#[cfg(all(test, feature = "ffmpeg-library"))]
 pub(crate) fn inspect_native_premiere_media_for_sequence(
     source: &Path,
     parsed: &PrSequence,
@@ -586,7 +918,47 @@ pub(crate) fn inspect_native_premiere_media_for_sequence(
         source,
         parsed.id.as_deref().unwrap_or_default(),
         Some(parsed),
+        VideoAdmission::Strict,
         media_map,
+        None,
+    )
+}
+
+/// Validate native uses before import, allowing only unavailable direct videos
+/// to be omitted. Unresolved selected-use clocks retain whole-source admission.
+pub(crate) fn inspect_native_premiere_media_for_import(
+    source: &Path,
+    parsed: &PrSequence,
+    media_map: Option<&ValidatedMediaMap>,
+    relink: Option<&crate::ValidatedMediaRelink>,
+) -> Result<MediaPreflight> {
+    inspect_native_media(
+        source,
+        parsed.id.as_deref().unwrap_or_default(),
+        Some(parsed),
+        VideoAdmission::OmitUnsupported,
+        media_map,
+        relink,
+    )
+}
+
+pub(crate) fn inspect_native_premiere_media_with_relink(
+    source: &Path,
+    target: &str,
+    relink: &crate::ValidatedMediaRelink,
+) -> Result<MediaPreflight> {
+    let (project, _) = crate::format::PrProjectFile::load_import_with_media_relink(
+        source,
+        Some(target),
+        Some(relink),
+    )?;
+    inspect_native_media(
+        source,
+        target,
+        project.single_sequence(),
+        VideoAdmission::Strict,
+        None,
+        Some(relink),
     )
 }
 
@@ -594,28 +966,69 @@ fn inspect_native_media(
     source: &Path,
     target: &str,
     sequence: Option<&PrSequence>,
+    admission: VideoAdmission,
     media_map: Option<&ValidatedMediaMap>,
+    relink: Option<&crate::ValidatedMediaRelink>,
 ) -> Result<MediaPreflight> {
-    let native = crate::format::PrProjectFile::native_media_scope(source, target)?;
-    let sequence = sequence.filter(|sequence| native.covers(sequence));
+    let native = if relink.is_some() {
+        crate::format::PrProjectFile::native_media_scope_with_media_relink(source, target, relink)?
+    } else {
+        crate::format::PrProjectFile::native_media_scope(source, target)?
+    };
+    let direct: BTreeMap<_, _> = native
+        .media
+        .keys()
+        .filter_map(|id| native.direct_video_use(target, id).map(|usage| (id, usage)))
+        .collect();
     let mut report = inspect_media_references(
         source,
         target.to_owned(),
         &native.media,
         native.media.keys().collect(),
-        sequence,
+        |id| {
+            sequence
+                .filter(|sequence| native.covers(sequence, id))
+                .map(MediaUse::Loaded)
+                .or_else(|| direct.get(id).map(MediaUse::Native))
+                .unwrap_or(MediaUse::Whole)
+        },
+        admission,
         media_map,
     )?;
     report.unassessed.extend(native.unassessed);
     Ok(report)
 }
 
-pub(crate) fn require_video_admission(preflight: &MediaPreflight) -> Result<()> {
-    if let Some(blocked) = preflight
-        .media
-        .iter()
-        .find(|media| media.kind == MediaKind::Video && media.status != MediaStatus::Supported)
-    {
+#[cfg(all(test, feature = "ffmpeg-library"))]
+pub(crate) fn require_video_admission(preflight: &MediaPreflight, source: &Path) -> Result<()> {
+    require_video_admission_for(preflight, source, VideoAdmission::Strict)
+}
+
+pub(crate) fn require_import_video_admission(
+    preflight: &MediaPreflight,
+    source: &Path,
+) -> Result<()> {
+    // Import inspection propagates every direct-video error before this gate.
+    // Its omitted native sources are safe to drop; linked footage stays strict.
+    require_video_admission_for(preflight, source, VideoAdmission::OmitUnsupported)
+}
+
+fn require_video_admission_for(
+    preflight: &MediaPreflight,
+    source: &Path,
+    admission: VideoAdmission,
+) -> Result<()> {
+    if let Some(blocked) = preflight.media.iter().find(|media| {
+        // Linked AEP inventory retains its native owner. Only genuinely absent
+        // linked footage takes AE's existing contextual omission policy. Import
+        // has already rejected unsafe direct-video errors before this gate.
+        let missing_linked = media.owner != source && media.status == MediaStatus::Missing;
+        let omitted_native = admission == VideoAdmission::OmitUnsupported && media.owner == source;
+        media.kind == MediaKind::Video
+            && media.status != MediaStatus::Supported
+            && !missing_linked
+            && !omitted_native
+    }) {
         return Err(unsupported(format!(
             "video media {} ({:?}) failed admission: {}",
             blocked.id,
@@ -626,12 +1039,16 @@ pub(crate) fn require_video_admission(preflight: &MediaPreflight) -> Result<()> 
     Ok(())
 }
 
-fn inspect_media_references(
+/// Inspect the media records `ids`. `selected` returns the loaded sequence
+/// whose placements are the whole use of one media record; without it, the
+/// record is inspected as a whole source whose embedded sound may play.
+fn inspect_media_references<'a>(
     source: &Path,
     target: String,
     project_media: &BTreeMap<MediaId, PrMedia>,
     ids: Vec<&MediaId>,
-    sequence: Option<&PrSequence>,
+    selected: impl Fn(&MediaId) -> MediaUse<'a>,
+    admission: VideoAdmission,
     media_map: Option<&ValidatedMediaMap>,
 ) -> Result<MediaPreflight> {
     let root = source
@@ -639,7 +1056,7 @@ fn inspect_media_references(
         .ok_or_else(|| unsupported("project parent missing"))?;
     let owner = source.to_owned();
     let mut digests = HashMap::new();
-    let mut linked = LinkedCompositions::new(None, media_map);
+    let mut linked = LinkedCompositions::new(media_map);
     let mut report = MediaPreflight {
         format: "premiere".to_owned(),
         target: target.clone(),
@@ -649,11 +1066,14 @@ fn inspect_media_references(
 
     for id in ids {
         let media = &project_media[id];
+        let sequence = selected(id);
         if media.is_generator()
-            || media
-                .video
-                .as_ref()
-                .is_some_and(|video| matches!(video.kind, PrMediaKind::Still { .. }))
+            || media.video.as_ref().is_some_and(|video| {
+                matches!(
+                    video.kind,
+                    PrMediaKind::Still { .. } | PrMediaKind::NumberedStills { .. }
+                )
+            })
         {
             continue;
         }
@@ -662,7 +1082,10 @@ fn inspect_media_references(
                 root,
                 id,
                 media,
-                sequence,
+                MediaSelection {
+                    usage: sequence,
+                    admission,
+                },
                 &mut digests,
                 &mut linked,
                 media_map,
@@ -724,7 +1147,10 @@ fn inspect_media_references(
             root,
             id,
             media,
-            sequence,
+            MediaSelection {
+                usage: sequence,
+                admission,
+            },
             &mut digests,
             &mut linked,
             media_map,
@@ -733,17 +1159,44 @@ fn inspect_media_references(
         let (mut status, mut reason) = match inspected {
             Ok(MediaInspection::Ready(inspected)) => {
                 codec = inspected.codec;
-                (MediaStatus::Supported, None)
+                (MediaStatus::Supported, inspected.audio_omission)
             }
-            Ok(MediaInspection::Omitted(reason)) => (MediaStatus::RequiresTranscode, Some(reason)),
+            Ok(MediaInspection::Omitted(reason))
+                if kind == MediaKind::Video && admission == VideoAdmission::OmitUnsupported =>
+            {
+                return Err(unsupported(format!(
+                    "video media {id} ({:?}) failed admission: {reason}",
+                    media.name
+                )));
+            }
+            Ok(MediaInspection::Omitted(reason) | MediaInspection::UnavailableVideo(reason)) => {
+                (MediaStatus::RequiresTranscode, Some(reason))
+            }
             Ok(_) => (
                 MediaStatus::Unassessed,
                 Some("native media was not inspected as a file".to_owned()),
             ),
+            Err(error)
+                if kind == MediaKind::Video && admission == VideoAdmission::OmitUnsupported =>
+            {
+                return Err(BuildError::Context {
+                    context: format!("video media {id} ({:?}) failed admission", media.name),
+                    source: Box::new(error),
+                });
+            }
             Err(error) => preflight_failure(&error),
         };
-        if let Err(error) = &resolved {
-            (status, reason) = preflight_failure(error);
+        if let Err(error) = resolved {
+            if admission == VideoAdmission::OmitUnsupported
+                && kind == MediaKind::Video
+                && !matches!(error, BuildError::MissingMedia(_))
+            {
+                return Err(BuildError::Context {
+                    context: format!("video media {id} ({:?}) failed admission", media.name),
+                    source: Box::new(error),
+                });
+            }
+            (status, reason) = preflight_failure(&error);
         }
         let is_swf = selected
             .as_deref()
@@ -772,6 +1225,15 @@ fn inspect_media_references(
                 }
                 Ok(None) => Some(MediaRemediation::Unknown),
                 Err(error) => {
+                    if admission == VideoAdmission::OmitUnsupported && kind == MediaKind::Video {
+                        return Err(BuildError::Context {
+                            context: format!(
+                                "video media {id} ({:?}) failed admission",
+                                media.name
+                            ),
+                            source: Box::new(error.into()),
+                        });
+                    }
                     status = if matches!(
                         error.kind(),
                         std::io::ErrorKind::InvalidData | std::io::ErrorKind::UnexpectedEof
@@ -828,12 +1290,11 @@ pub(crate) fn convert_premiere_sequence(
     project_media: Arc<BTreeMap<MediaId, PrMedia>>,
     omissions: &mut Vec<Omission>,
 ) -> Result<Option<PendingTesseractFile>> {
-    convert_premiere_sequence_with_links(
+    convert_premiere_sequence_with_progress(
         source,
         parsed,
         project_media,
         omissions,
-        None,
         fx_conv::Progress::default(),
     )
 }
@@ -852,53 +1313,39 @@ pub(crate) fn convert_premiere_sequence_with_media_map(
         parsed,
         project_media,
         omissions,
-        None,
         Some(media_map),
         progress,
     )
 }
 
-/// [`convert_premiere_sequence`], with the pictures of its linked
-/// compositions imported by `resolver` instead of the built-in import. The
-/// resolver's assets are packaged as it returns them: their lifetime and
-/// bytes are its caller's to keep until the archive is written.
-pub(crate) fn convert_premiere_sequence_with_links<'a>(
+/// Convert a sequence with command-scoped progress observations.
+pub(crate) fn convert_premiere_sequence_with_progress(
     source: &Path,
     parsed: PrSequence,
     project_media: Arc<BTreeMap<MediaId, PrMedia>>,
     omissions: &mut Vec<Omission>,
-    resolver: Option<&'a mut crate::LinkedCompositionResolver<'a>>,
     progress: fx_conv::Progress<'_>,
 ) -> Result<Option<PendingTesseractFile>> {
-    convert_premiere_sequence_with_options(
-        source,
-        parsed,
-        project_media,
-        omissions,
-        resolver,
-        None,
-        progress,
-    )
+    convert_premiere_sequence_with_options(source, parsed, project_media, omissions, None, progress)
 }
 
-fn convert_premiere_sequence_with_options<'a>(
+fn convert_premiere_sequence_with_options(
     source: &Path,
     mut parsed: PrSequence,
-    project_media: Arc<BTreeMap<MediaId, PrMedia>>,
+    mut project_media: Arc<BTreeMap<MediaId, PrMedia>>,
     omissions: &mut Vec<Omission>,
-    resolver: Option<&'a mut crate::LinkedCompositionResolver<'a>>,
-    media_map: Option<&'a ValidatedMediaMap>,
+    media_map: Option<&ValidatedMediaMap>,
     progress: fx_conv::Progress<'_>,
 ) -> Result<Option<PendingTesseractFile>> {
     let root = source
         .parent()
         .ok_or_else(|| unsupported("project parent missing"))?;
-    let preflight = inspect_premiere_sequence(source, &parsed, &project_media, media_map)?;
-    require_video_admission(&preflight)?;
+    let preflight = inspect_import_sequence(source, &parsed, &project_media, media_map)?;
+    require_import_video_admission(&preflight, source)?;
     let mut digests = HashMap::new();
-    let mut linked = LinkedCompositions::new(resolver, media_map);
+    let mut linked = LinkedCompositions::new(media_map);
     // One omitted media source applies to every placement of that source.
-    let inspected: BTreeMap<MediaId, MediaInspection> = parsed
+    let mut inspected: BTreeMap<MediaId, MediaInspection> = parsed
         .media_in_order()
         .into_iter()
         .map(|id| {
@@ -908,7 +1355,10 @@ fn convert_premiere_sequence_with_options<'a>(
                     root,
                     id,
                     &project_media[id],
-                    Some(&parsed),
+                    MediaSelection {
+                        usage: MediaUse::Loaded(&parsed),
+                        admission: VideoAdmission::OmitUnsupported,
+                    },
                     &mut digests,
                     &mut linked,
                     media_map,
@@ -916,6 +1366,18 @@ fn convert_premiere_sequence_with_options<'a>(
             ))
         })
         .collect::<Result<_>>()?;
+    omit_unreadable_sounds(&mut parsed, &inspected, omissions);
+    let raw_audio_files =
+        delayed_audio::prepare(&mut parsed, &mut project_media, &mut inspected, omissions)?;
+    let channel_files =
+        audio_channels::prepare(&mut parsed, &mut project_media, &mut inspected, omissions)?;
+    let mask_files = object_masks::prepare(
+        source,
+        &mut parsed,
+        &mut project_media,
+        &mut inspected,
+        omissions,
+    )?;
     for track in &mut parsed.video_tracks {
         track.items.retain(|item| {
             // Graphics use synthetic generator media; there is no file to inspect.
@@ -930,7 +1392,7 @@ fn convert_premiere_sequence_with_options<'a>(
                     true
                 }
                 MediaInspection::Synthetic | MediaInspection::Linked { .. } => true,
-                MediaInspection::Omitted(reason) => {
+                MediaInspection::Omitted(reason) | MediaInspection::UnavailableVideo(reason) => {
                     omit(
                         omissions,
                         OmissionScope::Occurrence,
@@ -944,10 +1406,10 @@ fn convert_premiere_sequence_with_options<'a>(
     }
     parsed.audio.retain(|clip| {
         let reason = match &inspected[&clip.media] {
-            MediaInspection::Ready(_) | MediaInspection::Synthetic => return true,
-            // The reader omits these; a sound must never double a muted picture.
-            MediaInspection::Linked { .. } => LINKED_AUDIO_REASON,
-            MediaInspection::Omitted(reason) => reason,
+            MediaInspection::Ready(_)
+            | MediaInspection::Synthetic
+            | MediaInspection::Linked { .. } => return true,
+            MediaInspection::Omitted(reason) | MediaInspection::UnavailableVideo(reason) => reason,
         };
         omit(omissions, OmissionScope::Occurrence, clip.record(), reason);
         false
@@ -958,7 +1420,9 @@ fn convert_premiere_sequence_with_options<'a>(
             MediaInspection::Ready(_)
             | MediaInspection::Synthetic
             | MediaInspection::Linked { .. } => None,
-            MediaInspection::Omitted(reason) => Some(reason.clone()),
+            MediaInspection::Omitted(reason) | MediaInspection::UnavailableVideo(reason) => {
+                Some(reason.clone())
+            }
         },
         omissions,
     );
@@ -983,18 +1447,41 @@ fn convert_premiere_sequence_with_options<'a>(
     // occurrence is neither packaged nor rechecked.
     let placed: BTreeSet<MediaId> = parsed.media_in_order().into_iter().cloned().collect();
     let mut media = BTreeMap::new();
+    let mut picture_clocks = crate::media::PictureClocks::new();
     for (id, inspected) in inspected {
         let resolved = match inspected {
             MediaInspection::Ready(inspected) => {
+                if let Some(clock) = inspected.picture_clock {
+                    picture_clocks.insert(id.clone(), *clock);
+                }
                 let Some(asset_id) = asset_ids.get(&id) else {
                     continue;
                 };
-                if let Some(MediaNote::Approximation(note)) = inspected.note {
-                    approximate(
-                        omissions,
-                        format!("{id} ({:?})", project_media[&id].name),
-                        note,
-                    );
+                match inspected.note {
+                    Some(MediaNote::Approximation(note)) => {
+                        approximate(
+                            omissions,
+                            format!("{id} ({:?})", project_media[&id].name),
+                            note,
+                        );
+                    }
+                    Some(MediaNote::PresentationOrigin {
+                        origin,
+                        timescale,
+                        declared_tail,
+                    }) => {
+                        let tail = if declared_tail {
+                            "declared media-header tail has no samples; "
+                        } else {
+                            ""
+                        };
+                        approximate(
+                            omissions,
+                            format!("{id} ({:?})", project_media[&id].name),
+                            format!("{tail}displayed video zero origin is translated by {}/{timescale} seconds into the decoder source clock, rounded forward to {} ms in editable source trim/playback; original bytes, sample identities and timestamps are retained; selected picture-only unit intervals stay inside proved coverage; final-sample/whole-source playback and native intermediate frame parity remain unverified", origin.units, origin.offset_millis),
+                        );
+                    }
+                    _ => {}
                 }
                 if let Some(colour) = inspected.colour {
                     // The media record's identity keeps two same-named files apart
@@ -1006,6 +1493,7 @@ fn convert_premiere_sequence_with_options<'a>(
                     );
                 }
                 ResolvedMedia {
+                    numbered_frames: inspected.numbered_frames,
                     path: inspected.path,
                     hash: inspected.hash,
                     native_path: inspected.native_path,
@@ -1019,6 +1507,7 @@ fn convert_premiere_sequence_with_options<'a>(
                 hash,
                 candidate_paths,
             } if placed.contains(&id) => ResolvedMedia {
+                numbered_frames: Vec::new(),
                 native_path: path.clone(),
                 native_hash: hash.clone(),
                 path,
@@ -1028,7 +1517,8 @@ fn convert_premiere_sequence_with_options<'a>(
             },
             MediaInspection::Linked { .. }
             | MediaInspection::Synthetic
-            | MediaInspection::Omitted(_) => continue,
+            | MediaInspection::Omitted(_)
+            | MediaInspection::UnavailableVideo(_) => continue,
         };
         media.insert(id, resolved);
     }
@@ -1036,6 +1526,7 @@ fn convert_premiere_sequence_with_options<'a>(
         &parsed,
         &project_media,
         &asset_ids,
+        &picture_clocks,
         &mut linked,
         omissions,
         progress,
@@ -1052,7 +1543,18 @@ fn convert_premiere_sequence_with_options<'a>(
         };
         // The container decides the asset kind, as export admission does, so
         // a sound-only MP4 or MOV source is packaged as the Video asset it is.
-        builder = builder.add_asset(asset_id.as_str(), &resolved.path, container.asset_kind())?;
+        if resolved.numbered_frames.is_empty() {
+            builder =
+                builder.add_asset(asset_id.as_str(), &resolved.path, container.asset_kind())?;
+        } else {
+            for (index, frame) in resolved.numbered_frames.iter().enumerate() {
+                builder = builder.add_asset(
+                    crate::numbered_images::frame_asset(asset_id, index).as_str(),
+                    &frame.path,
+                    frame.container.asset_kind(),
+                )?;
+            }
+        }
     }
     let (builder, linked_media) = linked.package(builder)?;
     builder.validate()?;
@@ -1062,6 +1564,9 @@ fn convert_premiere_sequence_with_options<'a>(
         media,
         linked_media,
         builder: Some(builder),
+        _channel_files: channel_files,
+        _raw_audio_files: raw_audio_files,
+        _mask_files: mask_files,
     };
     // Check mode stops here, so media must still match the bytes we inspected.
     output.verify_media()?;
@@ -1082,6 +1587,15 @@ impl PendingTesseractFile {
                 path == resolved.native_path && digest == resolved.native_hash,
                 "native media identity changed during the Tesseract build"
             );
+            for frame in &resolved.numbered_frames {
+                for candidate in &frame.candidates {
+                    ensure!(
+                        media_hash(candidate, &mut digests)? == frame.hash,
+                        "numbered-image frame changed during the Tesseract build: {}",
+                        candidate.display()
+                    );
+                }
+            }
             for candidate in &resolved.candidate_paths {
                 ensure!(
                     media_hash(candidate, &mut digests)? == resolved.native_hash,
@@ -1111,6 +1625,17 @@ impl PendingTesseractFile {
             };
             // The archive writer hashes the bytes as it copies them. Compare
             // that digest with the inspected source, without rereading the payload.
+            if !resolved.numbered_frames.is_empty() {
+                for (index, frame) in resolved.numbered_frames.iter().enumerate() {
+                    let asset = written
+                        .asset(crate::numbered_images::frame_asset(asset_id, index).as_str())?;
+                    ensure!(
+                        asset.descriptor().sha256 == frame.hash,
+                        "packaged numbered-image frame bytes changed"
+                    );
+                }
+                continue;
+            }
             let asset = written.asset(asset_id.as_str())?;
             ensure!(
                 asset.descriptor().sha256 == resolved.hash,
@@ -1126,6 +1651,221 @@ impl PendingTesseractFile {
 mod tests {
     use super::*;
     use crate::tests::support::{video_media, video_sequence};
+    use std::fs;
+
+    #[cfg(feature = "ffmpeg-library")]
+    fn ready_delayed_source(
+        root: &Path,
+    ) -> (
+        Arc<BTreeMap<MediaId, PrMedia>>,
+        BTreeMap<MediaId, MediaInspection>,
+    ) {
+        use crate::schema::{AudioChannels, PrAudioStream, TICKS};
+        let bytes = crate::tests::support::delayed_aac_bytes();
+        fs::write(root.join("sound.m4a"), bytes).unwrap();
+        let mut media = video_media();
+        let id = MediaId("source".into());
+        let source = media.get_mut(&id).unwrap();
+        source.video = None;
+        source.relative_path = Some("sound.m4a".into());
+        source.relative_paths = vec!["sound.m4a".into()];
+        source.audio = Some(PrAudioStream {
+            prepared_clock: None,
+            intrinsic_ticks: TICKS / 5,
+            channels: AudioChannels::Stereo,
+            sample_rate: 48_000,
+        });
+        let inspected = inspect_media(
+            root,
+            &id,
+            source,
+            MediaSelection {
+                usage: MediaUse::Whole,
+                admission: VideoAdmission::Strict,
+            },
+            &mut HashMap::new(),
+            &mut LinkedCompositions::new(None),
+            None,
+        )
+        .unwrap();
+        assert!(
+            matches!(&inspected, MediaInspection::Ready(facts) if facts.delayed_audio.is_some())
+        );
+        (Arc::new(media), BTreeMap::from([(id, inspected)]))
+    }
+
+    #[cfg(feature = "ffmpeg-library")]
+    #[test]
+    fn unused_ready_delayed_audio_does_not_prepare_or_block_picture_import() {
+        use crate::schema::TICKS;
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        let (mut media, mut inspected) = ready_delayed_source(&root);
+        // Exercise the preparation boundary after the last sound use has gone.
+        // A missing decoder input must be irrelevant to the retained picture.
+        let id = MediaId("source".into());
+        let MediaInspection::Ready(facts) = inspected.get_mut(&id).unwrap() else {
+            panic!("ready source")
+        };
+        facts.path = root.join("unavailable-audio.m4a");
+        let picture = include_bytes!("../tests/fixtures/video-30fps.mp4");
+        fs::write(root.join("picture.mp4"), picture).unwrap();
+        let source = Arc::make_mut(&mut media).get_mut(&id).unwrap();
+        source.video = video_media().remove(&id).unwrap().video;
+        source.video.as_mut().unwrap().intrinsic_ticks = TICKS;
+        source.relative_path = Some("picture.mp4".into());
+        source.relative_paths = vec!["picture.mp4".into()];
+        let mut sequence = video_sequence();
+        sequence.video_tracks[0].clip_mut(0).end_ticks = TICKS / 5;
+        sequence.video_tracks[0].clip_mut(0).out_ticks = TICKS / 5;
+        sequence.timeline_end_ticks = TICKS / 5;
+        let original_media = Arc::clone(&media);
+        let mut omissions = Vec::new();
+        assert!(
+            delayed_audio::prepare(&mut sequence, &mut media, &mut inspected, &mut omissions)
+                .unwrap()
+                .is_none()
+        );
+        assert!(Arc::ptr_eq(&media, &original_media));
+        assert_eq!(media.len(), 1);
+        assert_eq!(inspected.len(), 1);
+        assert!(omissions.is_empty());
+        let pending =
+            convert_premiere_sequence(&root.join("input.prproj"), sequence, media, &mut omissions)
+                .unwrap()
+                .unwrap();
+        let path = root.join("picture.tsrct");
+        pending.write_to_staging(&path).unwrap();
+        let archive = tesseract_file::TesseractFile::open(path).unwrap();
+        assert_eq!(archive.metadata().assets.len(), 1);
+        let doc = archive.project_json().unwrap();
+        let layers = doc["composition"]["layers"].as_array().unwrap();
+        assert!(!layers.iter().any(|layer| layer["type"] == "Audio"));
+        let video = layers
+            .iter()
+            .find(|layer| layer["type"] == "Video")
+            .unwrap();
+        assert_eq!(
+            archive
+                .asset(video["source"]["assetId"].as_str().unwrap())
+                .unwrap()
+                .read_verified_bytes(picture.len() as u64)
+                .unwrap(),
+            picture
+        );
+        assert!(!omissions.iter().any(|o| o.reason.contains("prepared once")));
+    }
+
+    #[test]
+    #[cfg(feature = "ffmpeg-library")]
+    fn nested_delayed_audio_requires_decode_and_shares_one_preparation() {
+        use crate::schema::{PrAudioOccurrence, TICKS};
+        use crate::tests::support::nest_of;
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        let (mut media, mut inspected) = ready_delayed_source(&root);
+        let id = MediaId("source".into());
+        let mut child = video_sequence();
+        child.video_tracks.clear();
+        child.audio = (0..2)
+            .map(|index| PrAudioOccurrence {
+                id: None,
+                media: id.clone(),
+                source_channel: None,
+                preserve_audio_pitch: false,
+                playback_rate: 1.0,
+                start_ticks: index * TICKS / 5,
+                end_ticks: (index + 1) * TICKS / 5,
+                in_ticks: 0,
+                out_ticks: TICKS / 5,
+                volume: fx_schema::LinearGain::UNITY,
+                volume_keys: None,
+                fade_in: None,
+                fade_out: None,
+            })
+            .collect();
+        let mut sequence = video_sequence();
+        sequence.video_tracks[0].items.clear();
+        sequence.video_tracks[0]
+            .nests
+            .push(nest_of(child, 0..2 * TICKS / 5, 0));
+        // Demand is only two nests deep; neither containing sequence has audio.
+        let mut outer = video_sequence();
+        outer.video_tracks[0].items.clear();
+        outer.video_tracks[0]
+            .nests
+            .push(nest_of(sequence, 0..2 * TICKS / 5, 0));
+        let MediaInspection::Ready(facts) = inspected.get_mut(&id).unwrap() else {
+            panic!("ready source")
+        };
+        let valid_path = facts.path.clone();
+        facts.path = root.join("unavailable-audio.m4a");
+        let mut omissions = Vec::new();
+        assert!(
+            delayed_audio::prepare(&mut outer, &mut media, &mut inspected, &mut omissions).is_err()
+        );
+        assert_eq!(media.len(), 1);
+        let MediaInspection::Ready(facts) = inspected.get_mut(&id).unwrap() else {
+            panic!("ready source")
+        };
+        facts.path = valid_path;
+        let prepared =
+            delayed_audio::prepare(&mut outer, &mut media, &mut inspected, &mut omissions)
+                .unwrap()
+                .unwrap();
+        assert_eq!(fs::read_dir(prepared.path()).unwrap().count(), 1);
+        assert_eq!(media.len(), 2);
+        assert_eq!(inspected.len(), 2);
+        let sounds = &outer.video_tracks[0].nests[0].sequence.video_tracks[0].nests[0]
+            .sequence
+            .audio;
+        assert_eq!(sounds.len(), 2);
+        assert_eq!(sounds[0].media, sounds[1].media);
+        assert_ne!(sounds[0].media, id);
+        assert!(media[&sounds[0].media]
+            .audio
+            .as_ref()
+            .unwrap()
+            .prepared_clock
+            .is_some());
+        assert_eq!(
+            omissions
+                .iter()
+                .filter(|o| o.reason.contains("prepared once"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn video_removed_after_resolution_keeps_its_typed_missing_media_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let source = root.join("source.mp4");
+        fs::write(&source, b"original source bytes").unwrap();
+        let media = video_media();
+        let (id, native) = media.first_key_value().unwrap();
+        let id = id.clone();
+        let mut native = native.clone();
+        native.relative_path = Some("source.mp4".into());
+        native.relative_paths = vec!["source.mp4".into()];
+        let mut digests = HashMap::new();
+        resolve_media(&root, &native, &mut digests).unwrap();
+        fs::remove_file(&source).unwrap();
+        let inspected = inspect_media(
+            &root,
+            &id,
+            &native,
+            MediaSelection {
+                usage: MediaUse::Whole,
+                admission: VideoAdmission::Strict,
+            },
+            &mut digests,
+            &mut LinkedCompositions::new(None),
+            None,
+        );
+        assert!(matches!(inspected, Err(BuildError::MissingMedia(_))));
+    }
 
     #[test]
     fn shared_placements_have_one_dense_asset_id_in_first_appearance_order() {

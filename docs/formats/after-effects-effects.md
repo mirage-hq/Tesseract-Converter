@@ -139,7 +139,7 @@ audio proof, or blanket render-fidelity pass exists.
 |---|---|---|---|
 | Horizontal Blocks | `-0001` ↔ `horizontalBlocks` | Positive tile count; default `10`; animatable. | I-S `native_mosaic_*`; E-S `mosaic_*`; AR; RGB-I/E. |
 | Vertical Blocks | `-0002` ↔ `verticalBlocks` | Positive tile count; default `10`; animatable. | Same. |
-| Sharp Colors | `-0003` ↔ `sharpColors` | Static boolean; default `false`; animated checkbox omitted. | Static I-S/E-S/AR. Samples do not isolate the mosaic interior. |
+| Sharp Colors | `-0003` ↔ static `sharpColors`; bounded root-canvas export normalization | Import retains the boolean (default `false`). Export changes false to on only for proved contained static raw identity-affine Rect/Path geometry beneath an ungated TwoD root canvas Adjustment. TwoD owner geometry is inert; ThreeD owners, including z=0, are excluded because depth sorting can change the backdrop. Other domains retain the checkbox with an unsupported-domain diagnostic: native averaging is not faithful to FX centers. Animated checkbox omitted. | Static I-S/E-S/AR; `mosaic_root_canvas_normalizes_native_backed_controls_without_changing_keys_or_bypass` checks edited-FX eligible controls; `mosaic_unproven_leaf_retains_checkbox_counts_clocks_and_scales` and domain exclusions check preservation. Independent eligible AE export RGB/alpha and animated-domain mapping remain unproved. |
 
 ### Shift Channels — FX `shiftChannels` ↔ `ADBE Shift Channels`
 
@@ -310,8 +310,11 @@ base values retained; the `intended animatable` wording below is historical.
 
 ### Vignette — FX `vignette` ↔ `CS Vignette` (CC Vignette)
 
-The table's `compatible keyframes` describe historical structural expectations
-and **import** keys. Current FX → AEP export diagnoses animated CC Vignette,
+**Current AEP → FX import omits CC Vignette as unsupported**, with a named
+warning and no substitute FX radial falloff. The kernels are not equivalent;
+owner, masks and other effects remain. The table's `compatible keyframes`
+describe historical structural expectations, not current import support.
+Current FX → AEP export diagnoses animated CC Vignette,
 omits the keys and retains the authored static base: Adobe continuous rendering
 froze keyed controls. No current animated-export/readback/RGB pass is claimed.
 See the [current ledger](../after-effects-support.md) for the direction boundary.
@@ -405,17 +408,20 @@ See the [current ledger](../after-effects-support.md) for the direction boundary
 | Native Blending Mode | Import: `-0026` consumed, only ordinal 2 accepted; export: fresh default | Other modes cannot be expressed by scalar FX blend. | U for nondefault modes. |
 | Overflow and remaining controls | Import: omitted; export: fresh defaults | Shader noise is not Adobe noise. | RGB measured, explicitly not a fidelity pass. |
 
-## Unmapped families
+## Families outside the historical panel
 
-These rows are intentionally separate from the 29-type inventory. Recognition as
-an FX variant or similarity of a product name is not a native mapping.
+These rows are intentionally separate from the historical control inventory.
+TemperatureTint's later export-only approximation is documented explicitly;
+recognition as an FX variant or similarity of a product name alone is not a
+native mapping for the remaining unmapped families.
 
 | Family | Import | Export | Handling / evidence |
 |---|---|---|---|
-| FX `TemperatureTint`, `LensDistortion`, `ChromaticAberration`, `Fisheye` | An AE effect with another match name is diagnosed, not guessed | Omitted; owner and siblings retained | No verified match/control mapping. Optics Compensation is **not** claimed as Lens Distortion/Fisheye. U. |
+| FX `TemperatureTint` | Per-channel Exposure records are not reconstructed as TemperatureTint; existing master-only import diagnostics remain | Export-only editable approximation: two ordered native `ADBE Exposure2` Individual Channels instances project Temperature into R/B offsets ±0.0012×temperature and Tint into R/B offsets −0.0006×tint and G offset 0.0012×tint, with neutral Master controls. Independent supported scalar keys and bypass are retained. | Generated control/key structure tests, not independently measured white-balance or RGB/alpha equivalence. Native colour space, premultiplication and intermediate clipping may differ. See the [current TemperatureTint ledger](../after-effects-support.md#temperaturetint-edited-export-approximation). Not included in the historical 30-type panel. |
+| FX `LensDistortion`, `ChromaticAberration`, `Fisheye` | An AE effect with another match name is diagnosed, not guessed | Omitted; owner and siblings retained | No verified match/control mapping. Optics Compensation is **not** claimed as Lens Distortion/Fisheye. U. |
 | `PersonMatte`, `DepthMatte` | No native effect equivalent | Omitted | ML-generated matte source cannot be represented as an editable native effect. U. |
 | `LookTransform`, `PrimaryGrade`, `ColorCurves` | No arbitrary native grade/curve replay | Omitted | Reader-specific color operations. U. |
-| `CustomShader` | No WGSL import, except the bounded Keylight 906 profile below | Omitted; no baking or generated script | Dynamic parameter catalog has no verified native equivalent. U. |
+| `CustomShader` | No WGSL import, except the bounded Keylight 906 profile below | Entire rendering owner omitted, including its fill and any other effects; shader-free children/siblings retained. Diagnostic: `owner omitted: CustomShader-rendered layer`. No baking or generated script. | Dynamic parameter catalog has no verified native equivalent. U. |
 | AE `Keylight 906` | Bounded static profile → one converter-owned `customShader` with editable Screen Colour, Screen Gain, Screen Balance and Clip White; sparse controls use recorded plugin defaults; other configurations are omitted with a reason | Omitted as `CustomShader` | SDR approximation of documented behaviour; see the [Keylight ledger entry](../after-effects-support.md#keylight-906-bounded-profile--import-only-customshader-approximation). U for export and Adobe fidelity. |
 | Unknown `Unsupported` payload | Preserved only by tolerant FX reader, not converted | Omitted with contextual diagnostic | Owner and supported siblings remain. U. |
 | FX Layer Styles: `OuterGlow`, `Stroke`, `GradientOverlay`, `InnerShadow`, `InnerGlow`, `Satin`, `BevelEmboss` | Not covered by this historical Effect Parade panel | Not covered by this historical Effect Parade panel | Current native Layer Style mappings and limitations are tracked in the [direction ledger](../after-effects-support.md) and [per-style evidence](../after-effects-evidence/layer-styles.md). `DropShadow` is shared with the effect model, so its direction-specific distinction is documented above. |

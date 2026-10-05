@@ -1,0 +1,188 @@
+{
+  "passed": true,
+  "scope": "Native generated duration acceptance, unchanged-input reopen and explicit FX duration-edit response only; not render/Asset/RGB/alpha/audio fidelity",
+  "converter_build": {
+    "version": 1,
+    "workspace": "<redacted local path>",
+    "commit": "b9494e54f27f853fb94d79e23d80a5fffbbe2f43",
+    "operation": "build-converter",
+    "profile": "dev",
+    "binary": "<redacted local path>",
+    "sha256": "7b3b291ab6c1315466f4e348530ec682124cb5e5cb9d1aecd7021cddd6460ed6"
+  },
+  "native_job": "05e03704f4d447c29cd9e8cad6210eb8",
+  "native_artifact_sha256": "3317190bc8ce946d736770bb7cf23bb2bf8724a3e7c6106299dffb12349c9af2",
+  "script_sha256": "a7773f836789fc719d198bb766d347ce65ae25e176ef969b393f5f3214b23fce",
+  "fx_input_sha256": {
+    "zero": "80947ba2fb988d6f0ef421c3f6e614ac2a30fe70e0b08c5cd1f6f3bc31b82354",
+    "before": "5250491c105d68cf7b2ce60e6cb0cb317288b843cd68f715a290a0d1a0b9e65c",
+    "after": "93d0cb4ba6d1646853b0d477b8f48bfa06f41459e7c531346a0cbccf5b7f6851",
+    "replacement": "9e34ac9f3872a513730cede55387be3226cfc5716c4ca5ac800d91e01cf5421d"
+  },
+  "aep_sha256": {
+    "zero": "053c08d12fc9a7be29ba895922338da0cd2bfbc23b8b0836048e59b3bb32ec35",
+    "before": "cdd07491e3c6c09d8d22c1bf36f56c1894c7ca31640c7dfb792be57fa2941d33",
+    "after": "5c5faae3e52a8bd6141af48cb186d951e1598830d418d057f7e722f67a27670d",
+    "replacement": "3bd9d19e962125af5cffdfe60e2694eb0f870791be1300c608e968b16feed12c"
+  },
+  "native_result": {
+    "outputs": [
+      {
+        "asset": "zero",
+        "opened": {
+          "duration": 0,
+          "fps": 30,
+          "frames": 0,
+          "id": 1,
+          "inPoint": 0,
+          "layer": "Editable duration control",
+          "layers": 1,
+          "name": "Root duration zero",
+          "outPoint": 0,
+          "solidColor": [
+            1,
+            0,
+            0
+          ],
+          "solidSource": true,
+          "start": 0
+        },
+        "reopened": {
+          "duration": 0,
+          "fps": 30,
+          "frames": 0,
+          "id": 1,
+          "inPoint": 0,
+          "layer": "Editable duration control",
+          "layers": 1,
+          "name": "Root duration zero",
+          "outPoint": 0,
+          "solidColor": [
+            1,
+            0,
+            0
+          ],
+          "solidSource": true,
+          "start": 0
+        }
+      },
+      {
+        "asset": "before",
+        "opened": {
+          "duration": 12.1666666666667,
+          "fps": 30,
+          "frames": 365,
+          "id": 1,
+          "inPoint": 0,
+          "layer": "Editable duration control",
+          "layers": 1,
+          "name": "Root duration before",
+          "outPoint": 12.1666666666667,
+          "solidColor": [
+            1,
+            0,
+            0
+          ],
+          "solidSource": true,
+          "start": 0
+        },
+        "reopened": {
+          "duration": 12.1666666666667,
+          "fps": 30,
+          "frames": 365,
+          "id": 1,
+          "inPoint": 0,
+          "layer": "Editable duration control",
+          "layers": 1,
+          "name": "Root duration before",
+          "outPoint": 12.1666666666667,
+          "solidColor": [
+            1,
+            0,
+            0
+          ],
+          "solidSource": true,
+          "start": 0
+        }
+      },
+      {
+        "asset": "after",
+        "opened": {
+          "duration": 12.2,
+          "fps": 30,
+          "frames": 366,
+          "id": 1,
+          "inPoint": 0,
+          "layer": "Editable duration control",
+          "layers": 1,
+          "name": "Root duration after",
+          "outPoint": 12.1999918619792,
+          "solidColor": [
+            1,
+            0,
+            0
+          ],
+          "solidSource": true,
+          "start": 0
+        },
+        "reopened": {
+          "duration": 12.2,
+          "fps": 30,
+          "frames": 366,
+          "id": 1,
+          "inPoint": 0,
+          "layer": "Editable duration control",
+          "layers": 1,
+          "name": "Root duration after",
+          "outPoint": 12.1999918619792,
+          "solidColor": [
+            1,
+            0,
+            0
+          ],
+          "solidSource": true,
+          "start": 0
+        }
+      },
+      {
+        "asset": "replacement",
+        "opened": {
+          "duration": 7.5,
+          "fps": 30,
+          "frames": 225,
+          "id": 1,
+          "inPoint": 0,
+          "layer": "Editable duration control",
+          "layers": 1,
+          "name": "Root duration replacement",
+          "outPoint": 7.5,
+          "solidColor": [
+            1,
+            0,
+            0
+          ],
+          "solidSource": true,
+          "start": 0
+        },
+        "reopened": {
+          "duration": 7.5,
+          "fps": 30,
+          "frames": 225,
+          "id": 1,
+          "inPoint": 0,
+          "layer": "Editable duration control",
+          "layers": 1,
+          "name": "Root duration replacement",
+          "outPoint": 7.5,
+          "solidColor": [
+            1,
+            0,
+            0
+          ],
+          "solidSource": true,
+          "start": 0
+        }
+      }
+    ]
+  }
+}

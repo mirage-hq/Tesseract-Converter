@@ -6,10 +6,11 @@
 //! export rebuilds the synthetic source range from the layer's active range.
 
 use super::{
+    effects::{export_effects, omit_unexported_effects, EffectHost},
     nested::LayerExport,
     tesseract_to_premiere::{
-        export_motion_keys, export_transform, layer_animations, unexported_layer_fields,
-        unsupported_image_masks, ClipLayer, MotionHost,
+        crop_and_opacity_mask, export_motion_keys, export_transform, layer_animations,
+        unexported_layer_fields, CanonicalMask, ClipLayer, MotionHost,
     },
 };
 use crate::{
@@ -17,15 +18,17 @@ use crate::{
     error::{ensure, unsupported, Result},
     export_loss::{omit_field, ExportField, OmissionSink},
     format::{PrMedia, PrVideoOccurrence},
+    image_media::ValidatedImage,
     media::MediaFacts,
     omit,
     schema::{MediaId, PrBlendMode, PrMediaKind, STILL_INTRINSIC_TICKS},
     OmissionScope,
 };
 use fx_schema::{
-    animator::AnimationGraph, AssetId, BlendMode, ImageLayer, ImageSource, LayerId, MediaFit,
-    Position, PositiveRect, RectBounds, TimeRangeProperty, Transform,
+    animator::AnimationGraph, AssetId, BlendMode, ImageAssetSource, ImageLayer, ImageSource,
+    LayerId, MediaFit, Position, PositiveRect, RectBounds, TimeRangeProperty, Transform,
 };
+use std::collections::BTreeMap;
 
 /// Build an editable image layer for one still placement: the still at its
 /// pixel size, moved by `transform`, the clip's Motion and Opacity mapped as a
@@ -68,19 +71,17 @@ pub(super) fn image_layer(
 /// Why the still `image` is no track matte source, if it is not. A matte
 /// still exports only at its defaults: default Motion, Opacity 100, a
 /// contain fit of the canvas-sized frame, and no blend mode, input
-/// transform, time remap, effects, corner radius or keys. A written still
-/// carries its Opacity, Motion and their keys ([`export_image_layer`]), but
-/// a Track Matte Key over a moved, faded or keyed still is unmeasured, and a
-/// matte's coverage must export whole, or the written key gates its clip by
-/// a different picture. `canvas` is the sequence size.
+/// transform, time remap, effects, corner radius, keys, masks or track matte.
+/// A written still carries its Opacity, Motion, their keys, its effects and a
+/// Crop or an Opacity mask ([`export_image_layer`]), but a Track Matte Key over
+/// a moved, faded, keyed, effected, cropped or masked still is unmeasured, and
+/// a matte's coverage must export whole, or the written key gates its clip by a
+/// different picture. `canvas` is the sequence size.
 pub(super) fn unsupported_matte_still(
     image: &ImageLayer,
     canvas: (u32, u32),
     dynamics: &AnimationGraph,
 ) -> Option<String> {
-    if let Some(reason) = unsupported_image_masks(image) {
-        return Some(reason.to_owned());
-    }
     let t = &image.transform;
     let ImageSource::Asset(source) = &image.source;
     let (width, height) = (f64::from(canvas.0), f64::from(canvas.1));
@@ -115,6 +116,10 @@ pub(super) fn unsupported_matte_still(
             layer_animations(dynamics, image.id).next().is_some(),
             "keys",
         ),
+        (
+            !image.masks.is_empty() || image.track_matte.is_some(),
+            "masks or track matte",
+        ),
     ]
     .into_iter()
     .find_map(|(changed, detail)| changed.then_some(detail))?;
@@ -123,34 +128,23 @@ pub(super) fn unsupported_matte_still(
     ))
 }
 
-/// Map one editable image layer to a still occurrence on Premiere's synthetic
-/// still clock, which starts at the generator in-point of the sequence rate
-/// ([`FrameRate::generator_in_ticks`](crate::format::FrameRate::generator_in_ticks)).
-///
-/// The one written form is the still at its pixel size, placed by Motion and
-/// Opacity with their keys from the layer's transform, through the video
-/// clip's Motion export; Scale to Frame Size is never written. A clip has no
-/// frame of its own, so an image whose `sourceRect` is not the packaged image
-/// at the origin, or whose fit is Cover, Stretch or Custom, is omitted. Like
-/// a video layer, a hidden layer exports disabled, and each property that a
-/// clip cannot carry is reported. The dimensions and alpha come from the
-/// inspected packaged image, because the document records no alpha fact.
-pub(super) fn export_image_layer(
-    image: &ImageLayer,
-    parent: Option<LayerId>,
-    context: &mut LayerExport<'_, '_>,
-    omissions: &mut dyn OmissionSink,
-    record: &str,
-) -> Result<Option<(PrVideoOccurrence, PrMedia)>> {
-    let (width, height, frame_rate) = (context.width, context.height, context.frame_rate);
-    let ImageSource::Asset(source) = &image.source;
+/// The inspected facts of the still that `source` shows, or why export omits
+/// the still whole ([`export_image_layer`]): a clip has no frame of its own,
+/// so a still whose `sourceRect` is not the packaged image at the origin, or
+/// whose fit is Cover, Stretch or Custom, is omitted. An empty asset ID and
+/// missing or conflicting media facts reject the export. A nest's collapse
+/// check takes the same decision before export writes the nest.
+pub(super) fn still_facts<'f>(
+    source: &ImageAssetSource,
+    media_facts: &'f BTreeMap<String, MediaFacts>,
+) -> Result<std::result::Result<&'f ValidatedImage, String>> {
     let asset_id = source.asset_id.as_str();
     if asset_id.is_empty() {
         return Err(unsupported("source.assetId must be nonempty"));
     }
-    let facts = match context.media_facts.get(asset_id) {
+    let facts = match media_facts.get(asset_id) {
         Some(MediaFacts::Still(facts)) => facts,
-        Some(MediaFacts::Video(_)) => {
+        Some(MediaFacts::Video(_) | MediaFacts::UnsupportedVideo(_)) => {
             return Err(unsupported(format!(
                 "asset {asset_id:?} is used with conflicting media kinds across layers"
             )))
@@ -162,29 +156,71 @@ pub(super) fn export_image_layer(
         }
     };
     let image_rect = RectBounds::from_size(facts.width.into(), facts.height.into());
-    let geometry = if source
-        .frame_rect
-        .is_some_and(|rect| rect.get() != image_rect)
-    {
-        Some(format!(
-            "its sourceRect is not the {}x{} image at the origin",
-            facts.width, facts.height
-        ))
-    } else if !matches!(source.fit, MediaFit::Contain | MediaFit::None) {
-        Some("its media fit is not Contain".to_owned())
-    } else {
-        None
+    Ok(
+        if source
+            .frame_rect
+            .is_some_and(|rect| rect.get() != image_rect)
+        {
+            Err(format!(
+                "its sourceRect is not the {}x{} image at the origin",
+                facts.width, facts.height
+            ))
+        } else if !matches!(source.fit, MediaFit::Contain | MediaFit::None) {
+            Err("its media fit is not Contain".to_owned())
+        } else {
+            Ok(facts)
+        },
+    )
+}
+
+/// Map one editable image layer to a still occurrence on Premiere's synthetic
+/// still clock, which starts at the generator in-point of the sequence rate
+/// ([`FrameRate::generator_in_ticks`](crate::format::FrameRate::generator_in_ticks)).
+///
+/// The one written form is the still at its pixel size, placed by Motion and
+/// Opacity with their keys from the layer's transform, through the video
+/// clip's Motion export; Scale to Frame Size is never written. `mask` is what
+/// the image's mask exports as
+/// ([`image_mask`](super::tesseract_to_premiere::image_mask)), `None`
+/// without one, written as a video clip's is: a Crop as the clip's Crop
+/// effect, which crops the still's own frame before Motion moves it, as a
+/// still's Motion Crop does on import, and an Opacity mask on the clip's
+/// Opacity, in unit fractions of the still's frame. The image's effects export
+/// as a flat video clip's, in its frame and with their keys on the still's
+/// clock, after the Crop, which FX also applies first; Premiere applies an
+/// Opacity mask after every effect and FX the image's mask before them, so a
+/// still with an Opacity mask writes none of its effects, which are reported.
+/// A clip has no frame of its own, so an image whose `sourceRect` is not the
+/// packaged image at the origin, or whose fit is Cover, Stretch or Custom, is
+/// omitted ([`still_facts`]). Like a video layer, a hidden layer exports
+/// disabled, and each property that a clip cannot carry is reported. The
+/// dimensions and alpha come from the inspected packaged image, because the
+/// document records no alpha fact.
+pub(super) fn export_image_layer(
+    image: &ImageLayer,
+    parent: Option<LayerId>,
+    mask: Option<&CanonicalMask>,
+    context: &mut LayerExport<'_, '_>,
+    omissions: &mut dyn OmissionSink,
+    record: &str,
+) -> Result<Option<(PrVideoOccurrence, PrMedia)>> {
+    let (width, height, frame_rate) = (context.width, context.height, context.frame_rate);
+    let ImageSource::Asset(source) = &image.source;
+    let asset_id = source.asset_id.as_str();
+    let facts = match still_facts(source, context.media_facts)? {
+        Ok(facts) => facts,
+        Err(reason) => {
+            omit(
+                omissions,
+                OmissionScope::Occurrence,
+                record,
+                format!("still was not exported: {reason}"),
+            );
+            return Ok(None);
+        }
     };
-    if let Some(reason) = geometry {
-        omit(
-            omissions,
-            OmissionScope::Occurrence,
-            record,
-            format!("still was not exported: {reason}"),
-        );
-        return Ok(None);
-    }
-    for (changed, field) in unexported_layer_fields(ClipLayer::Image(image), parent, false) {
+    for (changed, field) in unexported_layer_fields(ClipLayer::Image(image), parent, mask.is_some())
+    {
         if changed {
             omit_field(
                 omissions,
@@ -221,7 +257,7 @@ pub(super) fn export_image_layer(
         .checked_add_duration(image.active_range.duration)
         .ok_or_else(|| unsupported("activeRange end exceeds Premiere's tick range"))?;
     let start_ticks = context.frame_ticks(image.active_range.start, "activeRange.start")?;
-    let end_ticks = context.frame_ticks(active_end, "activeRange.end")?;
+    let end_ticks = context.picture_end_ticks(active_end, None)?;
     ensure!(
         end_ticks > start_ticks,
         "activeRange {}..{} ms collapses to zero duration on the {frame_rate} sequence grid",
@@ -235,6 +271,7 @@ pub(super) fn export_image_layer(
         .ok_or_else(|| {
             unsupported("still placement exceeds Premiere's twelve-hour still duration")
         })?;
+    let (crop, opacity_mask) = crop_and_opacity_mask(mask, record, omissions);
     let motion = MotionHost::image(image);
     let mut transform = export_transform(
         motion,
@@ -258,6 +295,36 @@ pub(super) fn export_image_layer(
         record,
         omissions,
     );
+    let effects = if opacity_mask.is_some() {
+        omit_unexported_effects(
+            &image.effects,
+            "FX applies it after the still's mask and Premiere before an Opacity mask, and a still exports no stage group",
+            record,
+            omissions,
+        );
+        Vec::new()
+    } else {
+        export_effects(
+            &image.effects,
+            context.dynamics,
+            EffectHost {
+                layer: image.id,
+                still: true,
+                staged: false,
+                nested: context.in_moved_nest,
+                in_nest: context.depth > 0,
+                transform: &image.transform,
+                source_in: in_ticks,
+                video_keys: None,
+                static_parameters_reason: None,
+                frame: [facts.width, facts.height],
+                canvas: [width, height],
+            },
+            context.written,
+            record,
+            omissions,
+        )
+    };
     if let Some(warning) = PrBlendMode::export_approximation(image.blend_mode) {
         approximate(omissions, record, warning);
     }
@@ -266,7 +333,11 @@ pub(super) fn export_image_layer(
             opacity: image.transform.opacity.value(),
             blend_mode: PrBlendMode::from_fx_mode(image.blend_mode),
             transform,
+            crop,
+            opacity_mask,
             animations,
+            // After the Crop, as FX applies the image's mask before them.
+            effects,
             enabled: !image.is_hidden,
             ..PrVideoOccurrence::unedited(
                 MediaId(asset_id.to_owned()),
@@ -280,6 +351,8 @@ pub(super) fn export_image_layer(
             relative_paths: Vec::new(),
             absolute_paths: Vec::new(),
             video: Some(crate::schema::PrVideoStream {
+                pixel_aspect: Default::default(),
+                interpretation: Default::default(),
                 orientation: crate::schema::VideoOrientation::Identity,
                 intrinsic_ticks: STILL_INTRINSIC_TICKS,
                 frame_rate: frame_rate.into(),

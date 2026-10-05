@@ -47,6 +47,8 @@ pub(crate) struct MediaAssetRequest {
     pub(crate) authored_path: String,
     /// AE's hint for `authored_path` after the project moved, when it has one.
     pub(crate) relative_location: Option<RelativeLocation>,
+    /// Malformed counts prevent proving absence at every native alias location.
+    pub(crate) relative_hint_malformed: bool,
     pub(crate) kind: MediaAssetKind,
     pub(crate) photoshop_source: Option<PhotoshopSource>,
     pub(crate) dimensions: [u32; 2],
@@ -138,6 +140,7 @@ pub(crate) fn asset_request_for_source(
         source_item_id: source.id,
         authored_path: descriptor.authored_path.clone(),
         relative_location: descriptor.relative_location,
+        relative_hint_malformed: descriptor.relative_hint_malformed,
         kind,
         photoshop_source: descriptor.photoshop_source,
         dimensions: [u32::from(descriptor.width), u32::from(descriptor.height)],
@@ -472,6 +475,7 @@ fn convert_image_sequence(
             source_item_id: source.id,
             authored_path,
             relative_location,
+            relative_hint_malformed: descriptor.relative_hint_malformed,
             kind: MediaAssetKind::SequenceImage,
             photoshop_source: None,
             dimensions: [u32::from(descriptor.width), u32::from(descriptor.height)],
@@ -757,6 +761,7 @@ pub(super) fn convert_resolved(
         source_item_id: source.id,
         authored_path: descriptor.authored_path.clone(),
         relative_location: descriptor.relative_location,
+        relative_hint_malformed: descriptor.relative_hint_malformed,
         kind: asset_kind,
         photoshop_source: descriptor.photoshop_source,
         dimensions: [u32::from(descriptor.width), u32::from(descriptor.height)],

@@ -357,6 +357,9 @@ struct AudioOutput {
     layout: ChannelLayout,
     next_pts: i64,
     decoded_samples: i64,
+    /// MP3 decoder priming accepted only by the AE audio-only source route.
+    input_start_samples: i64,
+    strict_timing: bool,
     /// Declared stream length in samples. FFmpeg 7 decoders keep trailing AAC
     /// padding past the container duration; output stops at this length.
     sample_limit: Option<i64>,
@@ -439,16 +442,30 @@ impl AudioOutput {
             let position = i64::try_from(position).map_err(|_| {
                 Error::Unsupported("audio timestamp exceeds supported range".to_owned())
             })?;
-            let tolerance = (rate / 1000).max(1);
-            if (position - self.decoded_samples).abs() > tolerance {
+            let tolerance = i128::from(if self.strict_timing {
+                0
+            } else {
+                (rate / 1000).max(1)
+            });
+            // Extreme hostile clocks must not overflow the validation itself.
+            let offset = i128::from(position)
+                - i128::from(self.input_start_samples)
+                - i128::from(self.decoded_samples);
+            if offset.abs() > tolerance {
                 return Err(Error::Unsupported(format!(
-                    "audio is offset or discontinuous by {} samples",
-                    position - self.decoded_samples
+                    "audio is offset or discontinuous by {offset} samples",
                 )));
             }
         }
-        self.decoded_samples += i64::try_from(self.decoded.samples())
+        if self.strict_timing && self.decoded.timestamp().or(self.decoded.pts()).is_none() {
+            return Err(Error::Unsupported("raw audio frame has no timestamp".into()));
+        }
+        let count = i64::try_from(self.decoded.samples())
             .map_err(|_| Error::Unsupported("audio frame is too large".to_owned()))?;
+        self.decoded_samples = self
+            .decoded_samples
+            .checked_add(count)
+            .ok_or_else(|| Error::Unsupported("audio sample count overflow".to_owned()))?;
         Ok(())
     }
 
@@ -561,20 +578,16 @@ fn transcode_video(
         .streams()
         .find(|stream| stream.parameters().medium() == media::Type::Audio)
         .map(|stream| stream.index());
-    let data_indices: Vec<_> = input
-        .streams()
-        .filter(|stream| stream.parameters().medium() == media::Type::Data)
-        .map(|stream| stream.index())
-        .collect();
-    let data_index = match (job.source.timecode.as_ref(), data_indices.as_slice()) {
-        (Some(_), [index]) => Some(*index),
-        (None, []) => None,
-        _ => {
-            return Err(Error::Unsupported(
-                "input data streams no longer match the probed MOV timecode".to_owned(),
-            ))
-        }
-    };
+    let data = probe_data_streams(&input, input.format().name())?;
+    if data.timecode != job.source.timecode
+        || data.timecode_stream_index != job.source.timecode_stream_index
+        || data.camera_metadata != job.source.camera_metadata
+    {
+        return Err(Error::Unsupported(
+            "input data streams changed after probing".into(),
+        ));
+    }
+    let data_index = data.timecode_stream_index;
     let muxer = if job.output.extension().and_then(|value| value.to_str()) == Some("mov") {
         "mov"
     } else {
@@ -585,7 +598,12 @@ fn transcode_video(
     let video_input = input
         .stream(video_index)
         .ok_or_else(|| Error::Unsupported("video stream disappeared".to_owned()))?;
-    let mut video = make_video_output(mode, &video_input, &mut output)?;
+    let mut video = make_video_output(
+        mode,
+        &video_input,
+        &mut output,
+        job.destination == crate::model::Destination::AfterEffects,
+    )?;
     let exact_length = header_stream_lengths(&input);
     let mut audio = if let Some(index) = audio_index {
         let stream = input
@@ -605,8 +623,34 @@ fn transcode_video(
         .transpose()?;
     let mut options = Dictionary::new();
     options.set("movflags", "+faststart");
+    if matches!(mode, VideoMode::Copy) {
+        let Rational(num, den) = video_input.time_base();
+        let timescale = crate::backend::remux_video_timescale(&Ratio { num, den })
+            .ok_or_else(|| Error::Unsupported("invalid remux video time base".into()))?;
+        options.set("video_track_timescale", &timescale.to_string());
+    }
+    if data_index.is_none() && !job.source.camera_metadata.is_empty() {
+        options.set("write_tmcd", "0");
+    }
     options.set("avoid_negative_ts", "disabled");
-    options.set("use_editlist", "1");
+    if job.destination == crate::model::Destination::AfterEffects {
+        options.set("use_editlist", "0");
+        if let Some(video) = &job.source.video {
+            options.set("movie_timescale", &video.frame_rate.num.to_string());
+        }
+    } else {
+        options.set("use_editlist", "1");
+        let clock = output
+            .stream(video.index())
+            .ok_or_else(|| Error::Unsupported("output video stream disappeared".into()))?
+            .time_base();
+        let timescale = crate::backend::movie_timescale(
+            &Ratio { num: clock.0, den: clock.1 },
+            job.source.audio.as_ref().map(|audio| audio.sample_rate),
+        )
+        .ok_or_else(|| Error::Unsupported("movie clock exceeds supported timescale".into()))?;
+        options.set("movie_timescale", &timescale.to_string());
+    }
     check_cancel(cancelled)?;
     output
         .write_header_with(options)
@@ -635,15 +679,14 @@ fn transcode_video(
         callback,
         cancelled,
     };
-    for (stream, packet) in input.packets() {
-        check_cancel(cancelled)?;
-        if stream.index() == video_index {
+    while let Some((stream, packet)) = read_packet(&mut input, cancelled)? {
+        if stream == video_index {
             video.write(packet, &mut output, &mut progress)?;
-        } else if Some(stream.index()) == audio_index {
+        } else if Some(stream) == audio_index {
             if let Some(audio) = &mut audio {
                 audio.write(packet, &mut output, cancelled)?;
             }
-        } else if Some(stream.index()) == data_index {
+        } else if Some(stream) == data_index {
             if let Some(data) = &data {
                 data.write(packet, &mut output, cancelled)?;
             }
@@ -678,19 +721,87 @@ fn make_data_output(
     })
 }
 
+fn video_encoder_options(mode: VideoMode) -> Dictionary<'static> {
+    let mut options = Dictionary::new();
+    match mode {
+        VideoMode::H264 => {
+            // Media Foundation uses the generic numeric profile option, without the
+            // "high" alias supported by VideoToolbox's private option table.
+            options.set("profile", &ffi::FF_PROFILE_H264_HIGH.to_string());
+            // Prefer hardware, but let VideoToolbox use its own software encoder on
+            // hosts without an available hardware encoder (including Intel CI VMs).
+            #[cfg(target_os = "macos")]
+            options.set("allow_sw", "1");
+        }
+        VideoMode::Prores => {
+            options.set("profile", "4");
+            // Preserve 8-bit alpha codes rather than introducing 10/16-bit rescaling drift.
+            options.set("alpha_bits", "8");
+        }
+        VideoMode::Copy => {}
+    }
+    options
+}
+
+/// Encoder parameters do not carry the demuxer's display matrix automatically.
+/// Copy the complete transform, including translation, without rotating pixels.
+fn copy_display_matrix(
+    input: &format::stream::Stream<'_>,
+    output: &mut format::stream::StreamMut<'_>,
+) -> Result<()> {
+    for side_data in input.side_data() {
+        if side_data.kind() != ffmpeg::codec::packet::side_data::Type::DisplayMatrix {
+            continue;
+        }
+        let data = side_data.data();
+        let mut parameters = output.parameters();
+        // SAFETY: parameters belong to the exclusively borrowed output stream.
+        // FFmpeg owns the side-data allocation; the successful allocation has
+        // exactly data.len() writable bytes, disjoint from the input stream.
+        unsafe {
+            let raw = &mut *parameters.as_mut_ptr();
+            ffi::av_packet_side_data_remove(
+                raw.coded_side_data,
+                &mut raw.nb_coded_side_data,
+                ffi::AVPacketSideDataType::AV_PKT_DATA_DISPLAYMATRIX,
+            );
+            let destination = ffi::av_packet_side_data_new(
+                &mut raw.coded_side_data,
+                &mut raw.nb_coded_side_data,
+                ffi::AVPacketSideDataType::AV_PKT_DATA_DISPLAYMATRIX,
+                data.len(),
+                0,
+            );
+            if destination.is_null() {
+                return Err(Error::Ffmpeg {
+                    context: "allocate output display matrix",
+                    source: ffmpeg::Error::from(-libc::ENOMEM),
+                });
+            }
+            std::ptr::copy_nonoverlapping(data.as_ptr(), (*destination).data, data.len());
+        }
+    }
+    Ok(())
+}
+
 fn make_video_output(
     mode: VideoMode,
     input: &format::stream::Stream<'_>,
     output: &mut format::context::Output,
+    preserve_sample_entry: bool,
 ) -> Result<VideoOutput> {
     if matches!(mode, VideoMode::Copy) {
         let mut stream = output
             .add_stream(encoder::find(codec::Id::None))
             .map_err(ffmpeg_error("add copied video stream"))?;
         stream.set_parameters(input.parameters());
-        // Container-specific tags must be chosen by the destination muxer.
-        unsafe {
-            (*stream.parameters().as_mut_ptr()).codec_tag = 0;
+        // The bounded AE MOV destination retains the source sample entry:
+        // clearing ProRes 4444's ap4h selects apch despite unchanged packets.
+        // General container conversion still lets its muxer choose a tag.
+        if !preserve_sample_entry {
+            unsafe {
+                (*stream.parameters().as_mut_ptr()).codec_tag = 0;
+            }
         }
         if input.parameters().id() == codec::Id::HEVC {
             unsafe {
@@ -698,6 +809,7 @@ fn make_video_output(
             }
         }
         stream.set_time_base(input.time_base());
+        copy_display_matrix(input, &mut stream)?;
         return Ok(VideoOutput::Copy {
             index: stream.index(),
             input_time_base: input.time_base(),
@@ -713,15 +825,14 @@ fn make_video_output(
             "video has no positive frame rate".to_owned(),
         ));
     }
-    let (name, pixel, profile) = match mode {
+    let (name, pixel) = match mode {
         VideoMode::H264 => (
             H264_ENCODER.ok_or_else(|| {
                 Error::Unsupported("this platform has no supported native H.264 encoder".to_owned())
             })?,
             ffmpeg::format::Pixel::YUV420P,
-            "high",
         ),
-        VideoMode::Prores => ("prores_ks", ffmpeg::format::Pixel::YUVA444P10LE, "4"),
+        VideoMode::Prores => ("prores_ks", ffmpeg::format::Pixel::YUVA444P10LE),
         VideoMode::Copy => unreachable!("copy returned above"),
     };
     let found = encoder::find_by_name(name).ok_or_else(|| {
@@ -763,16 +874,11 @@ fn make_video_output(
     if global_header {
         context.set_flags(codec::Flags::GLOBAL_HEADER);
     }
-    let mut options = Dictionary::new();
-    options.set("profile", profile);
-    if matches!(mode, VideoMode::Prores) {
-        // Preserve 8-bit alpha codes rather than introducing 10/16-bit rescaling drift.
-        options.set("alpha_bits", "8");
-    }
     let encoder = context
-        .open_with(options)
+        .open_with(video_encoder_options(mode))
         .map_err(ffmpeg_error("open video encoder"))?;
     stream.set_parameters(&encoder);
+    copy_display_matrix(input, &mut stream)?;
     stream.set_time_base(Rational(rate.1, rate.0));
     let mut scaler = software::scaling::Context::get(
         decoder.format(),
@@ -959,6 +1065,8 @@ fn make_audio_output(
         layout,
         next_pts: 0,
         decoded_samples: 0,
+        input_start_samples: 0,
+        strict_timing: false,
         sample_limit: exact_length
             .then(|| declared_samples(input, sample_rate))
             .flatten(),
@@ -1003,6 +1111,12 @@ fn transcode_audio_only(
         .stream(index)
         .ok_or_else(|| Error::Unsupported("audio stream disappeared".to_owned()))?;
     let mut audio = make_audio_output(&stream, &mut output, true, header_stream_lengths(&input))?;
+    audio.input_start_samples = job
+        .source
+        .audio
+        .as_ref()
+        .and_then(crate::model::ae_mp3_priming_samples)
+        .unwrap_or(0);
     check_cancel(cancelled)?;
     output
         .write_header()
@@ -1016,9 +1130,8 @@ fn transcode_audio_only(
         callback,
         cancelled,
     };
-    for (stream, packet) in input.packets() {
-        check_cancel(cancelled)?;
-        if stream.index() == index {
+    while let Some((stream, packet)) = read_packet(&mut input, cancelled)? {
+        if stream == index {
             if let Some(pts) = packet.pts() {
                 progress.report(
                     pts as f64 * f64::from(audio.input_time_base.0)
@@ -1035,9 +1148,375 @@ fn transcode_audio_only(
         .map_err(ffmpeg_error("write WAV trailer"))
 }
 
+pub(super) fn prepare_raw_movie_audio(
+    path: &Path,
+    destination: &Path,
+    expected: crate::RawMovieAudio,
+) -> std::result::Result<(), crate::TranscodeError> {
+    public_result((|| {
+        init()?;
+        validate_input(path)?;
+        let mut options = Dictionary::new();
+        options.set("protocol_whitelist", "file,pipe");
+        options.set("format_whitelist", "mov");
+        options.set("ignore_editlist", "1");
+        let mut input = format::input_with_dictionary(path, options)
+            .map_err(ffmpeg_error("open raw movie audio"))?;
+        let mut streams = input
+            .streams()
+            .filter(|stream| stream.parameters().medium() == media::Type::Audio);
+        let stream = streams
+            .next()
+            .ok_or_else(|| Error::Unsupported("movie audio is missing".into()))?;
+        if streams.next().is_some() || stream.parameters().id() != codec::Id::AAC {
+            return Err(Error::Unsupported(
+                "raw movie preparation requires one AAC stream".into(),
+            ));
+        }
+        let index = stream.index();
+        let mut output = format::output_as(destination, "wav")
+            .map_err(ffmpeg_error("create raw PCM output"))?;
+        let mut audio = make_audio_output(&stream, &mut output, true, false)?;
+        if audio.sample_rate != expected.sample_rate
+            || audio.decoder.channels() != expected.channels
+            || (audio.layout != ChannelLayout::MONO && audio.layout != ChannelLayout::STEREO)
+            || audio.input_time_base != Rational(1, expected.sample_rate as i32)
+            || declared_samples(&stream, expected.sample_rate) != Some(expected.samples as i64)
+        {
+            return Err(Error::Unsupported(
+                "raw audio layout/rate/length differs from inspected source".into(),
+            ));
+        }
+        audio.sample_limit = Some(expected.samples as i64);
+        audio.strict_timing = true;
+        let cancelled = AtomicBool::new(false);
+        output
+            .write_header()
+            .map_err(ffmpeg_error("write raw PCM header"))?;
+        audio.output_time_base = output
+            .stream(audio.index)
+            .ok_or_else(|| Error::Unsupported("raw PCM stream disappeared".into()))?
+            .time_base();
+        for (stream, packet) in input.packets() {
+            if stream.index() == index {
+                audio.write(packet, &mut output, &cancelled)?;
+            }
+        }
+        audio.finish(&mut output, &cancelled)?;
+        // AAC's last packet may contain padding beyond mdhd. Only that bounded
+        // decoder tail is removed, never any presentation gap/trim.
+        if audio.next_pts != expected.samples as i64
+            || audio.decoded_samples < expected.samples as i64
+            || audio.decoded_samples - expected.samples as i64 >= 1024
+        {
+            return Err(Error::Unsupported(
+                "decoded raw AAC length differs from inspected source".into(),
+            ));
+        }
+        output
+            .write_trailer()
+            .map_err(ffmpeg_error("write raw PCM trailer"))
+    })())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remux_preserves_native_coarse_clock_on_fresh_probe() {
+        init().unwrap();
+        let clock = crate::tests::native_coarse_clock();
+        let time_base = Rational(clock.native_time_base.num, clock.native_time_base.den);
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("coarse.mov");
+        let target = directory.path().join("prepared.mp4");
+        let codec = encoder::find_by_name("libx264").unwrap();
+        let mut output = format::output_as(&source, "mov").unwrap();
+        let mut stream = output.add_stream(codec).unwrap();
+        let mut context = codec::Context::new_with_codec(codec).encoder().video().unwrap();
+        context.set_width(64);
+        context.set_height(48);
+        context.set_format(format::Pixel::YUV420P);
+        context.set_time_base(time_base);
+        context.set_frame_rate(Some(Rational(30, 1)));
+        context.set_max_b_frames(0);
+        context.set_gop(30);
+        context.set_flags(codec::Flags::GLOBAL_HEADER);
+        let mut encoder = context.open().unwrap();
+        stream.set_parameters(&encoder);
+        stream.set_time_base(time_base);
+        let mut options = Dictionary::new();
+        options.set("video_track_timescale", &time_base.1.to_string());
+        output.write_header_with(options).unwrap();
+        assert_eq!(output.stream(0).unwrap().time_base(), time_base);
+        let cancelled = AtomicBool::new(false);
+        let drain = |encoder: &mut encoder::video::Encoder, output: &mut format::context::Output| {
+            let mut packet = Packet::empty();
+            while encoder.receive_packet(&mut packet).is_ok() {
+                let index = clock.window_pts.iter().position(|pts| Some(*pts) == packet.pts()).unwrap();
+                let duration = clock.window_pts.get(index + 1)
+                    .map_or(clock.window_final_duration, |next| next - clock.window_pts[index]);
+                packet.set_duration(duration);
+                write_packet(&mut packet, 0, time_base, time_base, output, &cancelled).unwrap();
+            }
+        };
+        for (index, pts) in clock.window_pts.iter().enumerate() {
+            let mut frame = frame::Video::new(format::Pixel::YUV420P, 64, 48);
+            frame.set_pts(Some(*pts));
+            for plane in 0..3 {
+                frame.data_mut(plane).fill(if plane == 0 { 16 + index as u8 * 7 } else { 128 });
+            }
+            encoder.send_frame(&frame).unwrap();
+            drain(&mut encoder, &mut output);
+        }
+        encoder.send_eof().unwrap();
+        drain(&mut encoder, &mut output);
+        output.write_trailer().unwrap();
+        drop(output);
+        let result = crate::run(
+            crate::TranscodeRequest {
+                input: &source,
+                output: &target,
+                backend: crate::Backend::Library,
+                cancelled: &cancelled,
+            },
+            &mut |_| {},
+        ).unwrap();
+        assert_eq!(result.operation, crate::Operation::Remux);
+        let fresh = probe(&target, &cancelled, false).unwrap().video.unwrap();
+        let original = result.source.video.unwrap();
+        assert_eq!(fresh.time_base, original.time_base);
+        assert_eq!(fresh.frame_rate, original.frame_rate);
+        assert_eq!(fresh.frames, 30);
+        assert!(fresh.constant_frame_rate);
+        assert_eq!(fresh.start_seconds, original.start_seconds);
+        assert_eq!(fresh.display_matrix, original.display_matrix);
+        assert_eq!(fresh.color, original.color);
+        let packets = |path: &Path| {
+            let mut input = open_local_input(path).unwrap();
+            input.packets().map(|(_, packet)| {
+                (packet.pts(), packet.dts(), packet.duration(), packet.data().unwrap().to_vec())
+            }).collect::<Vec<_>>()
+        };
+        let source_packets = packets(&source);
+        assert_eq!(source_packets.iter().map(|packet| packet.0.unwrap()).collect::<Vec<_>>(), clock.window_pts);
+        assert_eq!(packets(&target), source_packets);
+    }
+
+    #[test]
+    fn h264_profile_is_accepted_by_generic_codec_options() {
+        init().unwrap();
+        let options = video_encoder_options(VideoMode::H264);
+        let profile = std::ffi::CString::new(options.get("profile").unwrap()).unwrap();
+        let mut context = codec::Context::new();
+        // h264_mf uses AVCodecContext's generic option, not VideoToolbox's named constants.
+        // Both pointers stay valid for this synchronous option parse; no encoder is opened.
+        let status = unsafe {
+            ffi::av_opt_set(
+                context.as_mut_ptr().cast(),
+                c"profile".as_ptr(),
+                profile.as_ptr(),
+                0,
+            )
+        };
+        assert_eq!(
+            status, 0,
+            "H.264 profile must parse without codec-private aliases"
+        );
+        assert_eq!(
+            unsafe { (*context.as_ptr()).profile },
+            ffi::FF_PROFILE_H264_HIGH
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn h264_videotoolbox_allows_software_without_requiring_it() {
+        let options = video_encoder_options(VideoMode::H264);
+        assert_eq!(options.get("allow_sw"), Some("1"));
+        assert_eq!(options.get("require_sw"), None);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn h264_does_not_pass_videotoolbox_options_to_other_encoders() {
+        let options = video_encoder_options(VideoMode::H264);
+        assert_eq!(options.get("allow_sw"), None);
+        assert_eq!(options.get("require_sw"), None);
+    }
+
+    #[test]
+    fn prores_options_preserve_alpha_without_h264_fallback_options() {
+        let options = video_encoder_options(VideoMode::Prores);
+        assert_eq!(options.get("profile"), Some("4"));
+        assert_eq!(options.get("alpha_bits"), Some("8"));
+        assert_eq!(options.get("allow_sw"), None);
+        assert_eq!(options.get("require_sw"), None);
+    }
+
+    #[test]
+    fn ae_destination_remux_retains_high_precision_prores_alpha_packets() {
+        init().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("alpha.mov");
+        let target = directory.path().join("prepared.mov");
+        let codec = encoder::find_by_name("prores_ks").unwrap();
+        let mut output = format::output_as(&source, "mov").unwrap();
+        let mut stream = output.add_stream(codec).unwrap();
+        let mut context = codec::Context::new_with_codec(codec)
+            .encoder()
+            .video()
+            .unwrap();
+        context.set_width(16);
+        context.set_height(16);
+        context.set_format(format::Pixel::YUVA444P10LE);
+        context.set_time_base(Rational(1, 24));
+        context.set_frame_rate(Some(Rational(24, 1)));
+        context.set_flags(codec::Flags::GLOBAL_HEADER);
+        let mut options = Dictionary::new();
+        options.set("profile", "4");
+        options.set("alpha_bits", "16");
+        let mut encoder = context.open_with(options).unwrap();
+        stream.set_parameters(&encoder);
+        stream.set_time_base(Rational(1, 24));
+        let mut options = Dictionary::new();
+        options.set("use_editlist", "1");
+        options.set("movie_timescale", "24");
+        output.write_header_with(options).unwrap();
+        let output_time_base = output.stream(0).unwrap().time_base();
+        let cancelled = AtomicBool::new(false);
+        for index in 0..2 {
+            let mut frame = frame::Video::new(format::Pixel::YUVA444P10LE, 16, 16);
+            frame.set_pts(Some(index));
+            for plane in 0..4 {
+                for (offset, bytes) in frame.data_mut(plane).chunks_exact_mut(2).enumerate() {
+                    let value = if plane == 3 {
+                        ((offset % 256) * 4) as u16
+                    } else {
+                        512
+                    };
+                    bytes.copy_from_slice(&value.to_le_bytes());
+                }
+            }
+            encoder.send_frame(&frame).unwrap();
+            let mut packet = Packet::empty();
+            while encoder.receive_packet(&mut packet).is_ok() {
+                packet.set_duration(1);
+                write_packet(
+                    &mut packet,
+                    0,
+                    Rational(1, 24),
+                    output_time_base,
+                    &mut output,
+                    &cancelled,
+                )
+                .unwrap();
+            }
+        }
+        encoder.send_eof().unwrap();
+        let mut packet = Packet::empty();
+        while encoder.receive_packet(&mut packet).is_ok() {
+            packet.set_duration(1);
+            write_packet(
+                &mut packet,
+                0,
+                Rational(1, 24),
+                output_time_base,
+                &mut output,
+                &cancelled,
+            )
+            .unwrap();
+        }
+        output.write_trailer().unwrap();
+        drop(output);
+        let result = crate::run_for_after_effects(
+            crate::TranscodeRequest {
+                input: &source,
+                output: &target,
+                backend: crate::Backend::Library,
+                cancelled: &cancelled,
+            },
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!(result.operation, crate::Operation::Remux);
+        let video = result.source.video.unwrap();
+        assert!(video.alpha);
+        assert!(
+            !video.has_eight_bit_alpha(),
+            "precision must not enter the eight-bit encoder path"
+        );
+        let prepared = result.media.video.unwrap();
+        assert!(prepared.alpha && !prepared.has_eight_bit_alpha());
+        let video_tag = |path: &Path| {
+            let input = open_local_input(path).unwrap();
+            let stream = input
+                .streams()
+                .find(|stream| stream.parameters().medium() == media::Type::Video)
+                .unwrap();
+            // SAFETY: copy scalar metadata while the stream parameters live.
+            unsafe { (*stream.parameters().as_ptr()).codec_tag }
+        };
+        assert_eq!(video_tag(&source), u32::from_le_bytes(*b"ap4h"));
+        assert_eq!(
+            video_tag(&target),
+            video_tag(&source),
+            "remux must preserve the supported ProRes 4444 sample entry"
+        );
+        let packets = |path: &Path| {
+            let mut input = open_local_input(path).unwrap();
+            input
+                .packets()
+                .filter(|(stream, _)| stream.parameters().medium() == media::Type::Video)
+                .map(|(_, packet)| packet.data().unwrap().to_vec())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            packets(&source),
+            packets(&target),
+            "coded alpha and RGB bytes are unchanged"
+        );
+        assert_eq!(fx_conv::sha256_file(&source).unwrap(), result.input_sha256);
+    }
+    #[test]
+    fn native_camera_metadata_keeps_later_tmcd_index_and_rejects_unknown_data() {
+        init().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let mut input = format::output_as(&directory.path().join("source.mov"), "mov").unwrap();
+        for tag in [*b"rtmd", *b"mebx", *b"mebx", *b"tmcd"] {
+            let mut stream = input.add_stream(encoder::find(codec::Id::None)).unwrap();
+            // SAFETY: parameters are owned by the live stream and exclusively mutated here.
+            unsafe {
+                let parameters = (*stream.as_mut_ptr()).codecpar;
+                (*parameters).codec_type = ffi::AVMediaType::AVMEDIA_TYPE_DATA;
+                (*parameters).codec_tag = u32::from_le_bytes(tag);
+            }
+            let mut metadata = Dictionary::new();
+            if tag != *b"mebx" {
+                metadata.set("timecode", "01:02:03:04");
+            }
+            stream.set_metadata(metadata);
+        }
+        let data = probe_data_streams(&input, "mov,mp4,m4a,3gp,3g2,mj2").unwrap();
+        assert_eq!(data.timecode_stream_index, Some(3));
+        assert_eq!(data.timecode.as_deref(), Some("01:02:03:04"));
+        assert_eq!(
+            data.camera_metadata
+                .iter()
+                .map(|track| track.stream_index)
+                .collect::<Vec<_>>(),
+            [0, 1, 2]
+        );
+        assert!(data.camera_metadata[0].has_timecode_label);
+        assert!(probe_data_streams(&input, "matroska").is_err());
+        let mut stream = input.stream_mut(1).unwrap();
+        // SAFETY: same exclusively borrowed, live stream parameters as above.
+        unsafe {
+            (*(*stream.as_mut_ptr()).codecpar).codec_tag = u32::from_le_bytes(*b"zzzz");
+        }
+        assert!(probe_data_streams(&input, "mov").is_err());
+    }
 
     #[test]
     fn copied_timecode_retains_the_frame_rate_required_by_mov_muxing() {
