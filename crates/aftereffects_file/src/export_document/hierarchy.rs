@@ -1488,11 +1488,16 @@ fn layer_bounds(
             }
             if shape.shape.ellipse.is_some()
                 && shape.shape.poly_star.is_none()
-                && shape.shape.path.commands.is_empty()
+                && shape
+                    .shape
+                    .path
+                    .commands
+                    .iter()
+                    .all(|command| matches!(command, ShapePathCommand::Close))
             {
-                // The all-time analyzer already derives the checked centered
-                // ellipse hull and its modifier/transform reach. An empty index
-                // retains this branch's static-only contract.
+                // Match native Ellipse lowering: a close-only placeholder has
+                // no contour. Reuse the checked centered ellipse hull and its
+                // modifier/transform reach, with no animation in this branch.
                 return animated_bounds::layer_bounds(
                     layer,
                     &crate::export_document::AnimationIndex::new(&[]),
@@ -1808,15 +1813,23 @@ mod tests {
             ([82.0, 54.0], [-30.0, -35.0], [52.0, 19.0]),
             ([126.0, 70.0], [-52.0, -43.0], [74.0, 27.0]),
         ] {
-            let bounds = static_bounds(static_ellipse_value(size)).unwrap().unwrap();
-            assert_eq!(bounds.min, min);
-            assert_eq!(bounds.max, max);
+            for commands in [
+                serde_json::json!([]),
+                serde_json::json!([{"type": "close"}]),
+            ] {
+                let mut shape = static_ellipse_value(size);
+                shape["shape"]["path"]["commands"] = commands;
+                let bounds = static_bounds(shape).unwrap().unwrap();
+                assert_eq!(bounds.min, min);
+                assert_eq!(bounds.max, max);
+            }
         }
     }
 
     #[test]
     fn static_ellipse_bounds_keep_masks_ambiguous_geometry_and_overflow_guarded() {
-        let base = static_ellipse_value([82.0, 54.0]);
+        let mut base = static_ellipse_value([82.0, 54.0]);
+        base["shape"]["path"]["commands"] = serde_json::json!([{"type": "close"}]);
         let mut masked = base.clone();
         masked["masks"] = serde_json::json!([{"id": 9001, "mode": "add", "layer": 211}]);
         assert_eq!(
@@ -1838,12 +1851,97 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("ellipse");
-        // A lone PolyStar now has independently bounded geometry.
+        // PolyStar still requires an empty Path, not the Ellipse placeholder.
+        assert!(static_bounds(ambiguous.clone()).is_err());
+        ambiguous["shape"]["path"]["commands"] = serde_json::json!([]);
         assert!(static_bounds(ambiguous).is_ok());
         let mut overflow = base;
         overflow["shape"]["ellipse"]["size"] = serde_json::json!([f64::MAX, 54.0]);
         overflow["shape"]["ellipse"]["position"] = serde_json::json!([f64::MAX, -8.0]);
         assert!(static_bounds(overflow).is_err());
+    }
+
+    #[test]
+    fn static_close_only_ellipse_group_retains_edited_geometry_and_sibling() {
+        use crate::structure::{ItemKind, read_project};
+        use crate::structure_document::to_structural_fx_document;
+        use fx_schema::EditableFxCompositionDocument;
+        use serde_json::{Value, json};
+
+        fn find_shape(value: &mut Value) -> Option<&mut Value> {
+            if value["type"] == "Shape" {
+                return Some(value);
+            }
+            value["layers"]
+                .as_array_mut()?
+                .iter_mut()
+                .find_map(find_shape)
+        }
+
+        fn find_ellipse(layers: &[Layer]) -> Option<&fx_schema::ShapeLayer> {
+            layers.iter().find_map(|layer| match layer.data() {
+                LayerData::Shape(shape) if shape.name == "Close-only ellipse" => Some(shape),
+                LayerData::Group(group) => find_ellipse(&group.layers),
+                _ => None,
+            })
+        }
+
+        let source = read_project(include_bytes!(
+            "../../tests/fixtures/static_ellipse_enclosure/native.aep"
+        ))
+        .unwrap();
+        let imported = to_structural_fx_document(&source, Some(1)).unwrap();
+        // The close-only placeholder is an explicit editable FX input. The
+        // native fixture supplies the independent Ellipse capability control.
+        for size in [[82.0, 54.0], [126.0, 70.0]] {
+            let mut value = imported.document.to_json_value().unwrap();
+            let group = &mut value["composition"]["layers"][0];
+            group["name"] = json!("Close-only ellipse owner");
+            group["transform"]["opacity"] = json!(50.0);
+            let shape = find_shape(group).expect("native editable Ellipse");
+            assert_eq!(shape["shape"]["ellipse"]["size"], json!([82.0, 54.0]));
+            assert_eq!(shape["shape"]["ellipse"]["position"], json!([11.0, -8.0]));
+            shape["name"] = json!("Close-only ellipse");
+            shape["shape"]["ellipse"]["size"] = json!(size);
+            shape["shape"]["path"]["commands"] = json!([{"type": "close"}]);
+            let mut sibling = shape.clone();
+            sibling["id"] = json!(100);
+            sibling["parent"] = Value::Null;
+            sibling["name"] = json!("Independent ellipse");
+            sibling["shape"]["ellipse"]["size"] = json!([12.0, 12.0]);
+            sibling["shape"]["ellipse"]["position"] = json!([250.0, 190.0]);
+            sibling["shape"]["path"]["commands"] = json!([]);
+            value["composition"]["layers"]
+                .as_array_mut()
+                .unwrap()
+                .push(sibling);
+            let document = EditableFxCompositionDocument::from_json_value(value).unwrap();
+            let output = super::super::to_aep(&document).unwrap();
+            let generated = read_project(&output.bytes).unwrap();
+            let ItemKind::Composition(root) = &generated.item(1).unwrap().kind else {
+                panic!("native root composition")
+            };
+            assert_eq!(root.layers.len(), 2, "{:?}", output.diagnostics);
+            assert_eq!(root.layers[0].name.as_ref(), "Close-only ellipse owner");
+            assert_eq!(root.layers[1].name.as_ref(), "Independent ellipse");
+            let reimported = to_structural_fx_document(&generated, Some(1)).unwrap();
+            let actual = find_ellipse(reimported.document.composition().layers())
+                .expect("editable Ellipse retained inside its Group");
+            assert_eq!(actual.shape.ellipse.as_ref().unwrap().size, size);
+            assert_eq!(
+                actual.shape.ellipse.as_ref().unwrap().position,
+                [11.0, -8.0]
+            );
+            assert_eq!(actual.shape.fills.len(), 1);
+            assert!(
+                output
+                    .diagnostics
+                    .iter()
+                    .all(|diagnostic| !diagnostic.message.contains("subtree omitted")),
+                "{:?}",
+                output.diagnostics
+            );
+        }
     }
 
     #[test]

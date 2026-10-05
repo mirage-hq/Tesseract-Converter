@@ -24,7 +24,12 @@ rewrite the project, transcode or bypass media validation. Bindings are checked
 again before publication. Defaults and unbound records are unchanged. The manifest
 and typed APIs are documented in the [Premiere crate](../../crates/premiere_file/README.md).
 Caller authority does not itself prove Adobe provenance or visual fidelity.
-`--media-relink` is Premiere-import-only and cannot combine with `--media-map`.
+`--media-relink` is Premiere-import-only. It can combine with `--media-map`:
+original relocation runs first, and prepared replacements bind to the resolved
+original's canonical path and hash, not the saved Windows alias or a basename.
+Both manifests must identify the unchanged project and selected sequence; all
+original/prepared hashes, candidate conflicts and publication checks still apply.
+Prepared bytes must never be passed off as relocated originals.
 
 ## Explicit media preparation
 

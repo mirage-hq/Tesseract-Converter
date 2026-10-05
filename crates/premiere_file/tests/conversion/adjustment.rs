@@ -23,6 +23,66 @@ use serde_json::Value;
 use std::path::Path;
 use tesseract_file::TesseractFile;
 
+/// Native-derived picture/Invert records with changed optional generator metadata.
+/// This variant is structural evidence, not an independently rendered native source.
+#[test]
+fn adjustment_generator_metadata_keeps_editable_effects_and_underlying_picture() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("adjustment-metadata");
+    let omissions = premiere_to_tesseract(
+        fixtures.join("adjustment-generator-metadata.xml"),
+        &output,
+        Some("b5dcf675-953c-4fa3-b318-3924d9e4f9c7"),
+        false,
+    )
+    .unwrap();
+    assert!(
+        !omissions
+            .iter()
+            .any(|omission| omission.scope == OmissionScope::Occurrence),
+        "{omissions:?}"
+    );
+    let file = TesseractFile::open(first_project(&output)).unwrap();
+    let document = file.project_json().unwrap();
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    assert_eq!(
+        layers
+            .iter()
+            .map(|layer| layer["type"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["Adjustment", "Image", "Rect"]
+    );
+    let adjustment = &layers[0];
+    assert_eq!(
+        *crate::test_support::layer_range(adjustment),
+        json!({"start": 0, "duration": 1500})
+    );
+    assert_eq!(adjustment["blendMode"], "normal");
+    assert_eq!(adjustment["transform"]["opacity"], 100.0);
+    assert!(adjustment["masks"].is_null());
+    let effects = adjustment["effects"].as_array().unwrap();
+    assert_eq!(effects.len(), 1);
+    assert_eq!(effects[0]["enabled"], true);
+    assert_eq!(
+        effects[0]["effect"],
+        json!({"type": "levels", "inputBlack": 0.0, "inputWhite": 255.0, "gamma": 1.0, "outputBlack": 255.0, "outputWhite": 0.0})
+    );
+    let picture = &layers[1];
+    assert_eq!(
+        *crate::test_support::layer_range(picture),
+        json!({"start": 0, "duration": 5000})
+    );
+    assert_eq!(picture["transform"]["scale"], json!([100.0, 100.0]));
+    assert_eq!(picture["transform"]["position"], json!([960.0, 540.0]));
+    assert_eq!(file.metadata().assets.len(), 1);
+    assert!(file
+        .metadata()
+        .assets
+        .values()
+        .any(|asset| asset.path.ends_with("a3_base_grid.png")));
+}
+
 #[test]
 fn native_adjustment_motion_imports_and_exports_edited_coverage() {
     use sha2::{Digest, Sha256};

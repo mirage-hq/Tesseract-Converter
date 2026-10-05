@@ -520,6 +520,17 @@ remaining frame-210 mismatch do not isolate foreground occlusion. Full-scene
 RGB still fails the strict gate. General overflow, transparent-edge and
 independent alpha-output fidelity remain unverified.
 
+### Unselected Track Matte Key
+
+A static Matte None keeps supported unkeyed picture content, nest children and
+animation, with a feature diagnostic. It selects and conceals no other track;
+its unused Composite Using and Reverse controls do not discard the placement.
+It also does not count as another active effect beside a mapped effect or key.
+Unreadable or animated Matte selectors and invalid selected coverage retain their
+existing diagnostics and dependent-content omission. Public saved-record tests
+establish editable structure only; native RGB/alpha fidelity is unmeasured.
+Export is unchanged.
+
 ### Nested matte Motion
 
 A supported nested matte source keeps static Motion and convertible Motion/Opacity

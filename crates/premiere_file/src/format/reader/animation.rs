@@ -804,11 +804,6 @@ pub(super) fn read_video_animations(
         "{}: sequence-level video components are unsupported",
         chain.identity
     );
-    ensure!(
-        components.len() <= 5,
-        "{}: only Motion, Opacity, Crop, one Linear Wipe and one Track Matte Key component are supported",
-        chain.identity
-    );
     let mut motion_reference = None;
     let mut crop = None;
     let mut linear_wipe = None;
@@ -855,12 +850,13 @@ pub(super) fn read_video_animations(
                 linear_wipe = Some(read_linear_wipe(graph, component, &chain.identity)?);
             }
             Some(name) if name == TRACK_MATTE_KEY.match_name => {
-                ensure!(
-                    track_matte.is_none(),
-                    "{}: duplicate Track Matte Key component",
-                    chain.identity
-                );
-                track_matte = Some(read_track_matte(graph, component, &chain.identity)?);
+                if let Some(key) = read_track_matte(graph, component, &chain.identity)? {
+                    ensure!(
+                        track_matte.replace(key).is_none(),
+                        "{}: duplicate Track Matte Key component",
+                        chain.identity
+                    );
+                }
             }
             Some("AE.ADBE Opacity") => {}
             _ => {

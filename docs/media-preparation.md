@@ -141,9 +141,13 @@ not advertised as lossless RGB encodings. Premiere import admits ProRes 4444
 coded alpha precision. WebCodecs playback is unavailable and native RGB/alpha
 fidelity remains unverified. QuickTime Animation (`rle ` / QTRLE) still needs
 explicit whole-source preparation and a source-bound `--media-map`; no import
-silently encodes media. `--media-map` and `--media-relink` cannot currently be
-combined, so projects requiring both relocation and preparation remain blocked
-on that composition. Standalone audio is prepared as PCM WAVE
+silently encodes media. Premiere imports can combine `--media-relink` with
+`--media-map`: authenticate the original UID/authored path and relocated file
+first, then apply the separately hashed prepared replacement. The map's original
+is the real canonical local source, not the saved alias or a guessed basename.
+Both sidecars retain project/target binding, original/prepared hashes, path
+containment and pre-publication freshness checks. Prepared files are never
+relocation identities. Standalone audio is prepared as PCM WAVE
 without silently reducing sample rate, channel layout or sample precision.
 AIFF/WAVE's implicit mono/stereo order is normalized when their demuxer omits a
 layout label; unknown multichannel layouts are not inferred.

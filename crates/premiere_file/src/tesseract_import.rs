@@ -56,6 +56,7 @@ impl TesseractImport {
         Self::convert_with_options(input, output, selection, None, None, progress)
     }
 
+    #[cfg(test)]
     pub(crate) fn convert_with_media_relink(
         input: &Path,
         output: &Path,
@@ -63,7 +64,18 @@ impl TesseractImport {
         relink: &crate::ValidatedMediaRelink,
         progress: Progress<'_>,
     ) -> Result<Self> {
-        Self::convert_with_options(input, output, selection, None, Some(relink), progress)
+        Self::convert_with_media_relink_and_map(input, output, selection, relink, None, progress)
+    }
+
+    pub(crate) fn convert_with_media_relink_and_map(
+        input: &Path,
+        output: &Path,
+        selection: Option<&str>,
+        relink: &crate::ValidatedMediaRelink,
+        media_map: Option<&ValidatedMediaMap>,
+        progress: Progress<'_>,
+    ) -> Result<Self> {
+        Self::convert_with_options(input, output, selection, media_map, Some(relink), progress)
     }
 
     fn convert_with_options(

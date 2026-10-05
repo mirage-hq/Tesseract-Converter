@@ -150,6 +150,73 @@ fn alpha_media_qtrle_explicit_preparation_imports_without_changing_source_identi
 }
 
 #[test]
+fn alpha_media_composition_rechecks_original_prepared_and_project_before_publication() {
+    for changed in ["source.mov", "prepared.mov", "alpha.prproj"] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let input = project(root, ANIMATION);
+        let authored = r"E:\collected\source.mov";
+        let xml = crate::tests::support::prproj_xml(&input).replace(
+            "<RelativePath>source.mov</RelativePath>",
+            &format!("<FilePath>{authored}</FilePath>"),
+        );
+        crate::test_support::write_prproj(&input, &xml);
+        fs::write(root.join("prepared.mov"), PRORES).unwrap();
+        let source = MediaMapSource {
+            format: "premiere".into(),
+            sha256: sha256_file(&input).unwrap(),
+            target: "sequence-1".into(),
+        };
+        let original = root.join("source.mov").canonicalize().unwrap();
+        let hash = sha256_file(&original).unwrap();
+        let relink = crate::ValidatedMediaRelink::new(crate::MediaRelink {
+            version: 1,
+            source: source.clone(),
+            bindings: vec![crate::MediaRelinkBinding {
+                media_uid: "media-1".into(),
+                authored_path: authored.into(),
+                local_path: original.clone(),
+                sha256: hash.clone(),
+            }],
+        })
+        .unwrap();
+        let map_path = root.join("map.json");
+        fs::write(
+            &map_path,
+            serde_json::to_vec(&MediaMap {
+                version: 1,
+                source,
+                replacements: vec![MediaReplacement {
+                    original,
+                    original_sha256: hash,
+                    replacement: "prepared.mov".into(),
+                    replacement_sha256: sha256_file(&root.join("prepared.mov")).unwrap(),
+                }],
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let map = ValidatedMediaMap::load(&map_path).unwrap();
+        let output = root.join("converted");
+        let pending = crate::tesseract_import::TesseractImport::convert_with_media_relink_and_map(
+            &input,
+            &output,
+            Some("sequence-1"),
+            &relink,
+            Some(&map),
+            fx_conv::Progress::default(),
+        )
+        .unwrap();
+        fs::write(root.join(changed), b"changed after conversion").unwrap();
+        assert!(
+            pending.write_with_media_map(&map).is_err(),
+            "accepted changed {changed}"
+        );
+        assert!(!output.exists(), "published changed {changed}");
+    }
+}
+
+#[test]
 fn alpha_media_prores4444_keeps_container_and_clock_guards() {
     let inspect = |bytes: &[u8]| {
         crate::media::inspect_video_media(

@@ -9,6 +9,8 @@
 
 mod amplify;
 mod nested_mono;
+#[cfg(test)]
+mod recovery_tests;
 
 use super::{
     animation, integer, nested::NestSound, require_zero_subclip_time_offset, required,
@@ -388,10 +390,9 @@ fn clip_filter(
             omissions,
         ));
     }
-    if [AudioChannels::Mono, AudioChannels::Stereo]
-        .iter()
-        .any(|channels| channels.volume_match_name() == match_name)
-    {
+    // Intrinsic Volume is identified by its Mute/Bypass and Level controls in
+    // clip_volume, not its display name, which varies across Premiere saves.
+    if match_name != records::CHANNEL_VOLUME_MATCH_NAME {
         return Some(ClipFilter::Volume(
             clip_volume(graph, record, omissions)
                 .inspect_err(|error| {

@@ -167,13 +167,18 @@ pub(super) fn import_premiere(request: &ConversionRequest<'_>) -> anyhow::Result
     };
     if let Some(path) = request.media_relink {
         let relink = premiere_file::ValidatedMediaRelink::load(path)?;
+        let map = request
+            .media_map
+            .map(fx_conv::ValidatedMediaMap::load)
+            .transpose()?;
         return Premiere
-            .import_with_media_relink_with_progress(
+            .import_with_media_relink_and_map_with_progress(
                 request.input,
                 request.output,
                 &options,
                 request.mode,
                 &relink,
+                map.as_ref(),
                 request.progress,
             )
             .map(ConversionReport::into_common)

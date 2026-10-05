@@ -557,12 +557,6 @@ fn track_matte_keys_outside_the_supported_form_omit_the_occurrence() {
             with_matte_track(&source, &[(20, track_matte_key_xml(20, 0, 0, false))]),
             "VideoFilterComponent:20: Matte \"0\" names no video track",
         ),
-        // Premiere 26.5.1 saves a fresh key's Matte None as 4294967295 (G6).
-        (
-            "Matte None",
-            with_matte_track(&source, &[(20, track_matte_key_xml(20, 4294967295, 0, false))]),
-            "VideoFilterComponent:20: Matte None selects no matte track; a key without a matte is not converted",
-        ),
         (
             "Matte names no track",
             with_matte_track(&source, &[(20, track_matte_key_xml(20, 9, 0, false))]),
@@ -1084,25 +1078,16 @@ fn premiere_26_5_track_matte_keys_read_as_saved() {
         "{:?}",
         clip.effects[0].params
     );
-    // E and the unselected Matte fail closed by name; a second clip keeps the
-    // sequence convertible. E's key consumes the matte clip; a key without a
-    // matte names no track, so track 1's clip is ordinary content.
-    for (case, records, id, reason, kept) in [
-        (
+    // E fails closed by name; a second clip keeps the sequence convertible.
+    // The unselected Matte instead retains unkeyed content (the next test).
+    {
+        let (case, records, id, reason, kept) = (
             "E: Matte Luma, Reverse",
             PREMIERE_26_5_KEY_E,
             238,
             "VideoFilterComponent:238: Reverse with Matte Luma is not converted",
             vec!["VideoClipTrackItem:9"],
-        ),
-        (
-            "Matte None",
-            PREMIERE_26_5_KEY_NONE,
-            233,
-            "VideoFilterComponent:233: Matte None selects no matte track",
-            vec!["VideoClipTrackItem:9", "VideoClipTrackItem:93"],
-        ),
-    ] {
+        );
         let xml = fixture(with_matte_track(
             &with_second_clip(SOURCE),
             &[(id, records.to_owned())],
@@ -1127,6 +1112,160 @@ fn premiere_26_5_track_matte_keys_read_as_saved() {
             "{case}: {omissions:?}"
         );
     }
+}
+
+#[test]
+fn track_matte_none_keeps_unkeyed_picture_and_animated_nest_children() {
+    // G6's independently saved None value names no track. Reverse and
+    // Composite Using cannot select coverage when there is no matte.
+    for records in [
+        PREMIERE_26_5_KEY_NONE.to_owned(),
+        PREMIERE_26_5_KEY_NONE.replace(
+            "-91445760000000000,true,0,0,0,0,0,0",
+            "-91445760000000000,unknown,0,0,0,0,0,0",
+        ),
+    ] {
+        let xml = with_matte_track(SOURCE, &[(233, records), (400, blur(400))]);
+        let (project, omissions) =
+            inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+        let sequence = &project.sequences[0];
+        let picture = sequence.video_tracks[0].clip(0);
+        assert_eq!(picture.id.as_deref(), Some("VideoClipTrackItem:3"));
+        assert_eq!(picture.timeline_ticks(), 0..5 * TICKS);
+        assert_eq!((picture.in_ticks, picture.out_ticks), (0, 5 * TICKS));
+        assert!(picture.track_matte.is_none());
+        assert_eq!(picture.effects.len(), 1);
+        assert!(matches!(&picture.effects[0].params,
+            crate::schema::PrEffectParams::GaussianBlur(blur) if blur.blurriness == 25.0));
+        assert_eq!(
+            sequence.video_tracks[1].clip(0).id.as_deref(),
+            Some("VideoClipTrackItem:93")
+        );
+        assert!(
+            omissions
+                .iter()
+                .any(|note| note.scope == OmissionScope::Feature
+                    && note.record == "VideoFilterComponent:233"
+                    && note.reason.contains("Matte None")),
+            "{omissions:?}"
+        );
+        assert!(
+            omissions
+                .iter()
+                .all(|note| note.scope != OmissionScope::Occurrence),
+            "{omissions:?}"
+        );
+    }
+
+    // An inert key cannot erase or duplicate the independent active key,
+    // regardless of stack order, and does not count as an extra colour effect.
+    for keys in [
+        vec![
+            (20, track_matte_key(20)),
+            (30, track_matte_key_xml(30, 4294967295, 0, false)),
+        ],
+        vec![
+            (30, track_matte_key_xml(30, 4294967295, 0, false)),
+            (20, track_matte_key(20)),
+        ],
+    ] {
+        let xml = with_matte_track(SOURCE, &keys);
+        let (project, omissions) =
+            inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+        assert_eq!(
+            project.sequences[0].video_tracks[0].clip(0).track_matte,
+            Some(PrTrackMatte {
+                track_index: 1,
+                channel: PrMatteChannel::Alpha,
+            })
+        );
+        assert!(
+            omissions
+                .iter()
+                .all(|note| note.scope != OmissionScope::Occurrence),
+            "{omissions:?}"
+        );
+    }
+
+    // Parameter identity and selected coverage, not the number of inactive
+    // controls, decide admission. No fixed component-count limit is needed.
+    let mut keys: Vec<_> = [20, 30, 40, 50, 60, 70]
+        .into_iter()
+        .map(|id| (id, track_matte_key_xml(id, 4294967295, 0, false)))
+        .collect();
+    keys.push((80, track_matte_key(80)));
+    let xml = with_matte_track(SOURCE, &keys);
+    let (project, omissions) = inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+    let picture = project.sequences[0].video_tracks[0].clip(0);
+    assert_eq!(picture.timeline_ticks(), 0..5 * TICKS);
+    assert_eq!(
+        picture.track_matte,
+        Some(PrTrackMatte {
+            track_index: 1,
+            channel: PrMatteChannel::Alpha
+        })
+    );
+    assert!(
+        omissions
+            .iter()
+            .all(|note| note.scope != OmissionScope::Occurrence),
+        "{omissions:?}"
+    );
+
+    let motion = super::nested::keyed_motion(300);
+    let xml = keyed_nest_xml(Some(&motion)).replace(
+        &track_matte_key_xml(130, 2, 1, false),
+        &track_matte_key_xml(130, 4294967295, 1, true),
+    );
+    let (project, mut omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+    let outer = &project.sequences[0];
+    let nest = outer
+        .nest_occurrences()
+        .next()
+        .expect("unkeyed animated nest");
+    assert_eq!(nest.id.as_deref(), Some("VideoClipTrackItem:110"));
+    assert!(nest.track_matte.is_none());
+    assert!(!nest.animations.is_empty());
+    assert_eq!(nest.sequence.video_occurrences().count(), 1);
+    assert_eq!(outer.video_tracks[1].items.len(), 2);
+    let ids = crate::tesseract_output::asset_ids_in_order(outer, &project.media);
+    let document =
+        crate::convert::premiere_to_tesseract(outer, &project.media, &ids, &mut omissions)
+            .unwrap()
+            .to_json_value()
+            .unwrap();
+    let picture = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["name"] == nest.sequence.name)
+        .unwrap();
+    assert_eq!(picture["type"], "Group");
+    assert!(picture["trackMatte"].is_null());
+    let frame_guide = picture["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|child| child["id"] == picture["masks"][0]["layer"])
+        .unwrap();
+    assert_eq!(
+        frame_guide["rect"]["size"],
+        serde_json::json!([1920.0, 1080.0])
+    );
+    assert!(picture["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|child| child["type"] == "Video"));
+    assert!(document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .is_some_and(|tracks| !tracks.is_empty()));
+    assert!(
+        omissions
+            .iter()
+            .all(|note| note.scope != OmissionScope::Occurrence),
+        "{omissions:?}"
+    );
 }
 
 #[test]

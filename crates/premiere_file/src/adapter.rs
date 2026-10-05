@@ -180,12 +180,35 @@ impl Premiere {
         relink: &crate::ValidatedMediaRelink,
         progress: Progress<'_>,
     ) -> Result<ConversionReport<Omission>, ConversionError> {
+        self.import_with_media_relink_and_map_with_progress(
+            input, output, options, mode, relink, None, progress,
+        )
+    }
+
+    /// Authenticate original-source relocations before applying prepared-media
+    /// substitutions. Both manifests retain their independent identity and
+    /// publication checks; the selected replacement still passes admission.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "original relocation and prepared substitution remain independently validated inputs"
+    )]
+    pub fn import_with_media_relink_and_map_with_progress(
+        &self,
+        input: &Path,
+        output: &Path,
+        options: &PremiereImportOptions,
+        mode: ConversionMode,
+        relink: &crate::ValidatedMediaRelink,
+        media_map: Option<&ValidatedMediaMap>,
+        progress: Progress<'_>,
+    ) -> Result<ConversionReport<Omission>, ConversionError> {
         validate_paths(input, output)?;
-        let mut import = TesseractImport::convert_with_media_relink(
+        let mut import = TesseractImport::convert_with_media_relink_and_map(
             input,
             output,
             options.sequence.as_deref(),
             relink,
+            media_map,
             progress,
         )?;
         let report = ConversionReport {
@@ -193,7 +216,12 @@ impl Premiere {
             artifacts: import.artifacts(),
         };
         if !mode.is_check() {
-            import.write()?;
+            progress.stage("write and publish Tesseract project");
+            if let Some(media_map) = media_map {
+                import.write_with_media_map(media_map)?;
+            } else {
+                import.write()?;
+            }
         }
         Ok(report)
     }

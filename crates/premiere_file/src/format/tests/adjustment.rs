@@ -5,8 +5,9 @@ use super::{
 use crate::{
     format::{inspect_project_with_omissions, FrameRate, PrProjectFile},
     schema::{
-        adjustment::retains_edit, EditKind, OccurrenceEdit, PrAnimatedProperty, PrEffectParams,
-        PrGaussianBlur, PrMediaKind, PrVideoOccurrence, TICKS,
+        adjustment::retains_edit, color_matte::GENERATOR_IMPLEMENTATION_ID, EditKind,
+        OccurrenceEdit, PrAnimatedProperty, PrEffectParams, PrGaussianBlur, PrMediaKind,
+        PrVideoOccurrence, TICKS,
     },
     tests::support::project_document_with_media,
     Omission, OmissionKind, OmissionScope,
@@ -345,15 +346,75 @@ fn adjustment_opacity_converts_and_other_edits_omit_the_occurrence() {
 }
 
 #[test]
-fn adjustment_flags_and_media_that_disagree_with_the_corpus_form_fail_closed() {
-    const GRAPHIC: &str = "1196574294";
+fn adjustment_optional_generator_metadata_keeps_picture_effects_and_opacity_keys() {
+    let keys = format!(
+        "{IN_TICKS},25.,0,0,0,0,0,0;{},75.,0,0,0,0,0,0;",
+        IN_TICKS + TICKS
+    );
+    for media in [
+        BLACK_VIDEO_MEDIA.replace("1112293707", "1129270354"),
+        BLACK_VIDEO_MEDIA.replace("1112293707", "unknown-host-tag"),
+        BLACK_VIDEO_MEDIA.replace("1112293707", "1196574294"),
+        BLACK_VIDEO_MEDIA
+            .replace("<FilePath>1112293707</FilePath>", "")
+            .replace("<ActualMediaFilePath>1112293707</ActualMediaFilePath>", ""),
+        BLACK_VIDEO_MEDIA
+            .replace("<Infinite>true</Infinite>", "")
+            .replace("<IsStill>true</IsStill>", ""),
+        BLACK_VIDEO_MEDIA
+            .replace("<Infinite>true</Infinite>", "<Infinite>false</Infinite>")
+            .replace("<IsStill>true</IsStill>", "<IsStill>false</IsStill>"),
+    ] {
+        let xml = adjustment_xml(
+            "<DefaultMotion>true</DefaultMotion>",
+            &[(50, opacity("25.", &keys)), (60, blur(60))],
+            CLIP_FLAG,
+            MASTER_FLAG,
+            &media,
+        );
+        let (project, clips, kinds, omissions) = read(&xml);
+        assert!(omissions.is_empty(), "{omissions:?}");
+        assert_eq!(clips.len(), 2);
+        assert_eq!(kinds[1], PrMediaKind::Adjustment);
+        let document =
+            project_document_with_media(project.single_sequence().unwrap(), &project.media);
+        let layers = document["composition"]["layers"].as_array().unwrap();
+        assert_eq!(
+            layers
+                .iter()
+                .map(|layer| layer["type"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["Adjustment", "Video", "Rect"]
+        );
+        assert_eq!(layers[0]["effects"][0]["effect"]["type"], "gaussianBlur");
+        assert_eq!(layers[0]["effects"][0]["effect"]["blurriness"], 25.0);
+        assert_eq!(layers[0]["transform"]["opacity"], 25.0);
+        assert_eq!(layers[0]["blendMode"], "normal");
+        assert!(layers[0]["masks"].is_null());
+        let entries = document["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["target"]["layerId"], layers[0]["id"]);
+        assert_eq!(entries[0]["target"]["propertyType"], "opacity");
+        let keys = entries[0]["animator"]["keyframes"].as_array().unwrap();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0]["layerTime"], 0);
+        assert_eq!(keys[0]["value"]["value"], 25.0);
+        assert_eq!(keys[1]["layerTime"], 1000);
+        assert_eq!(keys[1]["value"]["value"], 75.0);
+    }
+}
+
+#[test]
+fn adjustment_flags_and_required_media_identity_fail_closed() {
     let file_media = r#"<Media ObjectUID="adjustment-media"><VideoStream ObjectRef="45"/><RelativePath>media/black.mp4</RelativePath></Media>
 <VideoStream ObjectID="45"><Duration>10973491200000000</Duration><FrameRate>8467200000</FrameRate><FrameRect>0,0,1920,1080</FrameRect></VideoStream>"#;
     for (case, xml, reason) in [
         (
             "flag on file media",
             adjustment_xml(DEFAULT_FLAGS, &[], CLIP_FLAG, MASTER_FLAG, file_media),
-            "Media:adjustment-media: an AdjustmentLayer clip must play Black Video generator media",
+            "Media:adjustment-media: an AdjustmentLayer clip requires generator media without file-backed or audio content",
         ),
         (
             "flag on the video clip's own media",
@@ -369,15 +430,15 @@ fn adjustment_flags_and_media_that_disagree_with_the_corpus_form_fail_closed() {
             "VideoMediaSource:44: media placed both by an AdjustmentLayer clip and by another clip",
         ),
         (
-            "flag on another generator",
+            "unknown generator identity",
             adjustment_xml(
                 DEFAULT_FLAGS,
                 &[],
                 CLIP_FLAG,
                 MASTER_FLAG,
-                &BLACK_VIDEO_MEDIA.replace("1112293707", GRAPHIC),
+                &BLACK_VIDEO_MEDIA.replace(GENERATOR_IMPLEMENTATION_ID, "unknown-generator"),
             ),
-            "Media:adjustment-media: an AdjustmentLayer clip must play Black Video generator media",
+            "Media:adjustment-media: an AdjustmentLayer clip requires generator media without file-backed or audio content",
         ),
         (
             "clip flag without the master flag",
@@ -469,15 +530,18 @@ fn adjustment_flags_and_media_that_disagree_with_the_corpus_form_fail_closed() {
             "VideoStream:45: non-square source pixels",
         ),
         (
-            "video stream",
+            "file path on generator",
             adjustment_xml(
                 DEFAULT_FLAGS,
                 &[],
                 CLIP_FLAG,
                 MASTER_FLAG,
-                &BLACK_VIDEO_MEDIA.replace("<IsStill>true</IsStill>", ""),
+                &BLACK_VIDEO_MEDIA.replace(
+                    "<Infinite>true</Infinite>",
+                    "<RelativePath>media/black.mp4</RelativePath>",
+                ),
             ),
-            "VideoStream:45: adjustment layer media must be an IsStill stream",
+            "Media:adjustment-media: an AdjustmentLayer clip requires generator media without file-backed or audio content",
         ),
     ] {
         let (_, clips, _, omissions) = read(&xml);
@@ -622,11 +686,23 @@ fn an_adjustment_imports_the_20_parameter_film_impact_ramp_as_editable_blurrines
 }
 
 #[test]
-fn adjustment_stream_accepts_only_the_measured_missing_rate_override() {
+fn adjustment_stream_keeps_valid_rates_without_optional_override_metadata() {
     let explicit = "<FrameRate>8467200000</FrameRate>";
     let overridden = "<IsFrameRateOverridden>true</IsFrameRateOverridden><OveriddenFrameRate>8467200000</OveriddenFrameRate>";
     for (rate, expected) in [
         (overridden.to_owned(), FrameRate::Fps30),
+        (
+            "<OveriddenFrameRate>10160640000</OveriddenFrameRate>".to_owned(),
+            FrameRate::Fps25,
+        ),
+        (
+            "<IsFrameRateOverridden>false</IsFrameRateOverridden><OveriddenFrameRate>8475667200</OveriddenFrameRate>".to_owned(),
+            FrameRate::Fps30000Over1001,
+        ),
+        (
+            "<IsFrameRateOverridden>unused</IsFrameRateOverridden><OveriddenFrameRate>8467200000</OveriddenFrameRate>".to_owned(),
+            FrameRate::Fps30,
+        ),
         (
             format!("<FrameRate>8475667200</FrameRate>{overridden}"),
             FrameRate::Fps30000Over1001,
@@ -654,12 +730,8 @@ fn adjustment_stream_accepts_only_the_measured_missing_rate_override() {
     }
     for rate in [
         "",
-        "<OveriddenFrameRate>8467200000</OveriddenFrameRate>",
         "<IsFrameRateOverridden>true</IsFrameRateOverridden>",
-        "<IsFrameRateOverridden>false</IsFrameRateOverridden><OveriddenFrameRate>8467200000</OveriddenFrameRate>",
-        "<IsFrameRateOverridden>yes</IsFrameRateOverridden><OveriddenFrameRate>8467200000</OveriddenFrameRate>",
         "<IsFrameRateOverridden>true</IsFrameRateOverridden><OveriddenFrameRate>8467200000.0</OveriddenFrameRate>",
-        "<IsFrameRateOverridden>true</IsFrameRateOverridden><OveriddenFrameRate>10160640000</OveriddenFrameRate>",
         "<IsFrameRateOverridden>true</IsFrameRateOverridden><OveriddenFrameRate>-1</OveriddenFrameRate>",
     ] {
         let (_, clips, _, omissions) = read(&adjustment_xml(DEFAULT_FLAGS, &[], CLIP_FLAG, MASTER_FLAG, &BLACK_VIDEO_MEDIA.replace(explicit, rate)));

@@ -48,7 +48,7 @@ struct ConversionOptions {
     #[arg(long, value_name = "JSON")]
     media_map: Option<PathBuf>,
     /// Explicit source/sequence/Media-UID-bound Premiere file relocation.
-    #[arg(long, value_name = "JSON", conflicts_with = "media_map")]
+    #[arg(long, value_name = "JSON")]
     media_relink: Option<PathBuf>,
     /// Frame rate of the export: a Premiere sequence at 23.976, 24, 25, 29.97,
     /// 30, 50, 59.94 or 60 fps (default 30), or an After Effects composition at
@@ -412,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn media_relink_is_explicit_premiere_only_and_distinct_from_prepared_media() {
+    fn media_relink_is_premiere_import_only_and_composes_with_prepared_media() {
         for input in ["missing.tsrct", "missing.aep"] {
             let to = if input.ends_with("aep") {
                 "tesseract"
@@ -449,7 +449,27 @@ mod tests {
             "--media-map",
             "prepared.json"
         ])
-        .is_err());
+        .is_ok());
+        for (input, to) in [("missing.aep", "tesseract"), ("missing.tsrct", "premiere")] {
+            let cli = Cli::try_parse_from([
+                "tsrct-conv",
+                "convert",
+                input,
+                "--to",
+                to,
+                "--output",
+                "converted",
+                "--media-relink",
+                "bindings.json",
+                "--media-map",
+                "prepared.json",
+            ])
+            .unwrap();
+            assert!(run(cli)
+                .unwrap_err()
+                .to_string()
+                .contains("is only supported"));
+        }
     }
 
     #[test]

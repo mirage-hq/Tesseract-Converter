@@ -665,14 +665,16 @@ pub(super) fn read_tracks(
             };
             // Whatever becomes of the placement, an active key consumes its
             // matte track over the placement's range.
-            claims.extend(claimed_matte_tracks(graph, &item, &parent).into_iter().map(
-                |matte_track| MatteClaim {
-                    keyed: item.identity.clone(),
-                    track: parsed_tracks.len(),
-                    range: link.start_ticks..link.end_ticks,
-                    matte_track,
-                },
-            ));
+            claims.extend(
+                claimed_matte_tracks(graph, &item, &parent, omissions)
+                    .into_iter()
+                    .map(|matte_track| MatteClaim {
+                        keyed: item.identity.clone(),
+                        track: parsed_tracks.len(),
+                        range: link.start_ticks..link.end_ticks,
+                        matte_track,
+                    }),
+            );
             // A nest or graphic has no source media, so its transition link keeps
             // no occurrence.
             if let Some(guid) = nested {
@@ -881,6 +883,7 @@ fn claimed_matte_tracks(
     graph: &Graph<'_>,
     item: &Located<VideoClipTrackItem>,
     parent: &super::nested::Parent<'_>,
+    omissions: &mut Vec<Omission>,
 ) -> Vec<usize> {
     let Some(components) = item
         .value
@@ -897,7 +900,7 @@ fn claimed_matte_tracks(
     let Ok(components) = chain_components(&chain) else {
         return Vec::new();
     };
-    effects::claimed_matte_track_ids(graph, components, &chain.identity)
+    effects::claimed_matte_track_ids(graph, components, &chain.identity, omissions)
         .into_iter()
         .filter_map(|id| parent.matte_track_index(id, &item.identity).ok())
         .collect()

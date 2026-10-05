@@ -128,10 +128,13 @@ pub(super) fn split_chain<'g, 'c>(
             && record.element().child(COMPONENT).is_some_and(|component| {
                 component.child("Intrinsic").and_then(Element::text) != Some("true")
             });
-        if is_standard {
+        let native = NativeEffect::inspect(record);
+        let unselected_matte = native.is_active_track_matte_key()
+            && static_matte(graph, record).as_deref() == Some(TRACK_MATTE_NONE);
+        if is_standard && !unselected_matte {
             standard.push(record);
         }
-        if !is_standard || NativeEffect::inspect(record).is_active_mask() {
+        if !is_standard || native.is_active_mask() {
             motion_and_masks.push(reference);
         }
     }
@@ -1622,6 +1625,7 @@ pub(super) fn claimed_matte_track_ids(
     graph: &Graph<'_>,
     components: &[Reference],
     chain: &str,
+    omissions: &mut Vec<Omission>,
 ) -> Vec<usize> {
     components
         .iter()
@@ -1632,6 +1636,15 @@ pub(super) fn claimed_matte_track_ids(
                 return None;
             }
             let matte = static_matte(graph, record)?;
+            if matte == TRACK_MATTE_NONE {
+                omit(
+                    omissions,
+                    OmissionScope::Feature,
+                    &native.identity,
+                    "Matte None selects no matte track; inactive Track Matte Key omitted without consuming another track",
+                );
+                return None;
+            }
             matte_track_id(&native, &matte).ok().flatten()
         })
         .collect()
@@ -1672,21 +1685,21 @@ fn static_matte(graph: &Graph<'_>, record: Record<'_>) -> Option<String> {
 
 /// Read an active Track Matte Key ([`track_matte_values`]). Reverse with
 /// Matte Alpha is one minus the matte's alpha (fixture G3a); Reverse with
-/// Matte Luma fails closed ([`PrMatteChannel`]).
+/// Matte Luma fails closed ([`PrMatteChannel`]). A statically unselected matte
+/// keeps the unkeyed placement; Composite Using and Reverse cannot affect it.
 pub(super) fn read_track_matte(
     graph: &Graph<'_>,
     reference: &Reference,
     from: &str,
-) -> Result<TrackMatteKey> {
+) -> Result<Option<TrackMatteKey>> {
     let record = graph.locate(reference, from)?;
+    if static_matte(graph, record).as_deref() == Some(TRACK_MATTE_NONE) {
+        return Ok(None);
+    }
     let (native, values) = track_matte_values(graph, record)?;
-    let matte_track_id =
-        matte_track_id(&native, values.get(&TRACK_MATTE_KEY_MATTE)?)?.ok_or_else(|| {
-            unsupported(format!(
-                "{}: Matte None selects no matte track; a key without a matte is not converted",
-                native.identity
-            ))
-        })?;
+    let Some(matte_track_id) = matte_track_id(&native, values.get(&TRACK_MATTE_KEY_MATTE)?)? else {
+        return Ok(None);
+    };
     let reverse = match values.get(&TRACK_MATTE_KEY_REVERSE)? {
         "false" => false,
         "true" => true,
@@ -1714,10 +1727,10 @@ pub(super) fn read_track_matte(
             )))
         }
     };
-    Ok(TrackMatteKey {
+    Ok(Some(TrackMatteKey {
         matte_track_id,
         channel,
-    })
+    }))
 }
 
 /// One effect's parameter values: the static value of each parameter without

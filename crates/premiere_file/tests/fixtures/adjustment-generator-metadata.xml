@@ -1,0 +1,373 @@
+<?xml version='1.0' encoding='utf-8'?>
+<PremiereData Version="3">
+  <MasterClip ObjectUID="bb792050-a1b7-4893-81e4-efbcb4231e2e" ClassID="fb11c33a-b0a9-4465-aa94-b6d5db2628cf" Version="12">
+    <LoggingInfo ObjectRef="40" />
+    <Clips Version="1">
+      <Clip Index="0" ObjectRef="41" />
+    </Clips>
+    <AudioClipChannelGroups ObjectRef="42" />
+    <Name>a3_base_grid.png</Name>
+    <MasterClipChangeVersion>1</MasterClipChangeVersion>
+  </MasterClip>
+  <MasterClip ObjectUID="c890f2b2-e649-4bb0-b4c6-b0c7edefaa95" ClassID="fb11c33a-b0a9-4465-aa94-b6d5db2628cf" Version="12">
+    <LoggingInfo ObjectRef="48" />
+    <Clips Version="1">
+      <Clip Index="0" ObjectRef="49" />
+    </Clips>
+    <AudioClipChannelGroups ObjectRef="50" />
+    <Name>Adjustment Layer</Name>
+    <IsAdjustmentLayer>true</IsAdjustmentLayer>
+    <MasterClipChangeVersion>18</MasterClipChangeVersion>
+  </MasterClip>
+  <ClipLoggingInfo ObjectID="40" ClassID="77ab7fdd-dcdf-465d-9906-7a330ca1e738" Version="10">
+    <CaptureMode>2</CaptureMode>
+    <ClipName>a3_base_grid.png</ClipName>
+    <MediaFrameRate>8475667200</MediaFrameRate>
+    <TimecodeFormat>103</TimecodeFormat>
+  </ClipLoggingInfo>
+  <VideoClip ObjectID="41" ClassID="9308dbef-2440-4acb-9ab2-953b9a4e82ec" Version="11">
+    <Clip Version="18">
+      <Node Version="1">
+        <Properties Version="1">
+          <asl.clip.label.color>8851829</asl.clip.label.color>
+          <BE.Prefs.StillImages.DefaultIsDropFrame>true</BE.Prefs.StillImages.DefaultIsDropFrame>
+          <asl.clip.label.name>BE.Prefs.LabelColors.3</asl.clip.label.name>
+        </Properties>
+      </Node>
+      <MarkerOwner Version="1">
+        <Markers ObjectRef="51" />
+      </MarkerOwner>
+      <Source ObjectRef="52" />
+      <ClipID>d3fe9d2d-78c1-410b-a356-1fd30cc72237</ClipID>
+      <InUse>false</InUse>
+      <InPoint>0</InPoint>
+      <OutPoint>1262874412800</OutPoint>
+    </Clip>
+  </VideoClip>
+  <ClipChannelGroupVectorSerializer ObjectID="42" ClassID="a3127a8c-95d4-456e-a7f5-171b3f922426" Version="1">
+	</ClipChannelGroupVectorSerializer>
+  <ClipLoggingInfo ObjectID="48" ClassID="77ab7fdd-dcdf-465d-9906-7a330ca1e738" Version="10">
+    <CaptureMode>2</CaptureMode>
+    <ClipName>Adjustment Layer</ClipName>
+    <MediaFrameRate>8475667200</MediaFrameRate>
+    <TimecodeFormat>103</TimecodeFormat>
+  </ClipLoggingInfo>
+  <VideoClip ObjectID="49" ClassID="9308dbef-2440-4acb-9ab2-953b9a4e82ec" Version="11">
+    <Clip Version="18">
+      <Node Version="1">
+        <Properties Version="1">
+          <asl.clip.label.color>8851829</asl.clip.label.color>
+          <BE.Prefs.SyntheticMedia.DefaultIsDropFrame>false</BE.Prefs.SyntheticMedia.DefaultIsDropFrame>
+          <asl.clip.label.name>BE.Prefs.LabelColors.3</asl.clip.label.name>
+        </Properties>
+      </Node>
+      <Source ObjectRef="58" />
+      <ClipID>5d089463-2aff-4ffb-a259-06129a7cecce</ClipID>
+      <InUse>false</InUse>
+      <InPoint>0</InPoint>
+      <OutPoint>381024000000</OutPoint>
+    </Clip>
+  </VideoClip>
+  <ClipChannelGroupVectorSerializer ObjectID="50" ClassID="a3127a8c-95d4-456e-a7f5-171b3f922426" Version="1">
+	</ClipChannelGroupVectorSerializer>
+  <Markers ObjectID="51" ClassID="bee50706-b524-416c-9f03-b596ce5f6866" Version="4">
+    <ByGUID>byGUID</ByGUID>
+    <LastMetadataState>00000000-0000-0000-0000-000000000000</LastMetadataState>
+    <LastContentState>4cbef5e2-8e93-6114-ea0c-4aa300000024</LastContentState>
+  </Markers>
+  <VideoMediaSource ObjectID="52" ClassID="e64ddf74-8fac-4682-8aa8-0e0ca2248949" Version="2">
+    <MediaSource Version="4">
+      <Content Version="10">
+			</Content>
+      <Media ObjectURef="01faa887-eaa4-472a-b3d9-f6265cb2e712" />
+    </MediaSource>
+    <OriginalDuration>10973491200000000</OriginalDuration>
+  </VideoMediaSource>
+  <VideoMediaSource ObjectID="58" ClassID="e64ddf74-8fac-4682-8aa8-0e0ca2248949" Version="2">
+    <MediaSource Version="4">
+      <Content Version="10">
+			</Content>
+      <Media ObjectURef="4db1508a-4289-4f9d-9bb5-185e67bf655a" />
+    </MediaSource>
+    <OriginalDuration>10973491200000000</OriginalDuration>
+  </VideoMediaSource>
+  <Media ObjectUID="01faa887-eaa4-472a-b3d9-f6265cb2e712" ClassID="7a5c103e-f3ac-4391-b6b4-7cc3d2f9a7ff" Version="30">
+    <VideoStream ObjectRef="61" />
+    <ModificationState Encoding="base64" BinaryHash="8f71c2c4-ba53-2f44-b228-216900000054">NABjAGIAZQBmADUAZQAyAC0AOABlADkAMwAtADYAMQAxADQALQBlAGEAMABjAC0ANABhAGEAMwAwADAAMAAwADAAMAAyADQA
+		</ModificationState>
+    <RelativePath>./a3_base_grid.png</RelativePath>
+    <ImplementationID>1fa18bfa-255c-44b1-ad73-56bcd99fceaf</ImplementationID>
+    <FileKey>ded78b01-79b7-4951-8a44-f92b37e01023</FileKey>
+    <Infinite>true</Infinite>
+    <ContentAndMetadataState>4cbef5e2-8e93-6114-ea0c-4aa300000024</ContentAndMetadataState>
+    <RelativePath>./a3_base_grid.png</RelativePath>
+    <CCFileModTime>1790678584000000</CCFileModTime>
+    <ActualMediaFilePath>/fixture-source/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/a3_base_grid.png</ActualMediaFilePath>
+    <FilePath>/fixture-source/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/a3_base_grid.png</FilePath>
+    <Title>a3_base_grid.png</Title>
+  </Media>
+  <Sequence ObjectUID="b5dcf675-953c-4fa3-b318-3924d9e4f9c7" ClassID="6a15d903-8739-11d5-af2d-9b7855ad8974" Version="12">
+    <TrackGroups Version="1">
+      <TrackGroup Version="1" Index="0">
+        <First>228cda18-3625-4d2d-951e-348879e4ed93</First>
+        <Second ObjectRef="62" />
+      </TrackGroup>
+    </TrackGroups>
+    <Name>Adjustment residue 26.5</Name>
+    <PreviewFormatIdentifier>fc3cd4d9-d839-8259-9276-05c5000000ea</PreviewFormatIdentifier>
+  </Sequence>
+  <Media ObjectUID="4db1508a-4289-4f9d-9bb5-185e67bf655a" ClassID="7a5c103e-f3ac-4391-b6b4-7cc3d2f9a7ff" Version="30">
+    <VideoStream ObjectRef="65" />
+    <ModificationState Encoding="base64" BinaryHash="6435e6b0-a9a2-7ce2-75ba-239a0000001c">Ytxu9M6On2lewoS+AAAAQA==
+		</ModificationState>
+    <ImplementationID>42008e7a-de6f-4270-96de-7e287abb9b4b</ImplementationID>
+    <Infinite>true</Infinite>
+    <ConformedAudioRate>9223372036854775807</ConformedAudioRate>
+    <ContentAndMetadataState>00000000-0000-0000-0000-000000000000</ContentAndMetadataState>
+    <ActualMediaFilePath>1129270354</ActualMediaFilePath>
+    <FilePath>1129270354</FilePath>
+    <Title>Adjustment Layer</Title>
+    <OptionalGeneratorMetadata>unused host metadata</OptionalGeneratorMetadata>
+  </Media>
+  <VideoStream ObjectID="61" ClassID="a36e4719-3ec6-4a0c-ab11-8b4aab377aa5" Version="23">
+    <Duration>10973491200000000</Duration>
+    <CodecType>1886283552</CodecType>
+    <IsStill>true</IsStill>
+    <OriginalColorSpace>{"baseColorProfile":{"colorProfileName":"BT.709 RGB Full"},"baseProfileType":1}</OriginalColorSpace>
+    <FieldTypeIsUncertain>true</FieldTypeIsUncertain>
+    <FrameRate>8475667200</FrameRate>
+    <FrameRect>0,0,1920,1080</FrameRect>
+  </VideoStream>
+  <VideoTrackGroup ObjectID="62" ClassID="9e9abf7a-0918-49c2-91ae-991b5dde77bb" Version="13">
+    <TrackGroup Version="1">
+      <Tracks Version="1">
+        <Track Index="0" ObjectURef="7f6ab0ed-626e-45b7-98ea-a53cd2ef63d9" />
+        <Track Index="1" ObjectURef="8614249b-5755-4152-809e-b94105b1e86d" />
+      </Tracks>
+      <NextTrackID>4</NextTrackID>
+      <FrameRate>8467200000</FrameRate>
+    </TrackGroup>
+    <ColorManagementSettings>{"autoToneMapEnabled":true,"enableLogColorManagement":2,"lutInterpolationMethod":1}</ColorManagementSettings>
+    <AutoInputGamutCompressionEnabled>true</AutoInputGamutCompressionEnabled>
+    <ImmersiveVideoVRConfiguration>{"ambisonicsHRIR":"","ambisonicsMonitoringType":0,"capturedHorizontalView":360,"capturedVerticalView":180,"fieldOfHorizontalView":108,"fieldOfVerticalView":108,"projectionType":0,"stereoscopicEye":0,"stereoscopicType":0,"version":3}</ImmersiveVideoVRConfiguration>
+    <IsGraphicsWhiteSameAsProject>false</IsGraphicsWhiteSameAsProject>
+    <IsColorAwareEffectsEnabledSameAsProject>false</IsColorAwareEffectsEnabledSameAsProject>
+    <FrameRect>0,0,1920,1080</FrameRect>
+    <OutputColorSpace>{"baseColorProfile":{"colorProfileName":"BT.709,8-bit,Display-Referred"},"baseProfileType":1}</OutputColorSpace>
+    <ComponentOwner Version="1">
+      <Components ObjectRef="66" />
+    </ComponentOwner>
+  </VideoTrackGroup>
+  <VideoStream ObjectID="65" ClassID="a36e4719-3ec6-4a0c-ab11-8b4aab377aa5" Version="23">
+    <Duration>10973491200000000</Duration>
+    <OverriddenFieldType>-1</OverriddenFieldType>
+    <CodecType>1431194446</CodecType>
+    <IsStill>true</IsStill>
+    <IsContinuousTime>true</IsContinuousTime>
+    <IsFrameRateOverridden>true</IsFrameRateOverridden>
+    <OveriddenFrameRate>8467200000</OveriddenFrameRate>
+    <OriginalColorSpace>{"baseColorProfile":{"colorProfileName":"BT.709 RGB Full"},"baseProfileType":1}</OriginalColorSpace>
+    <FieldTypeIsUncertain>true</FieldTypeIsUncertain>
+    <FrameRect>0,0,1920,1080</FrameRect>
+  </VideoStream>
+  <VideoClipTrack ObjectUID="7f6ab0ed-626e-45b7-98ea-a53cd2ef63d9" ClassID="f68dcd81-8805-11d5-af2d-9bfa89d4ddd4" Version="1">
+    <ClipTrack Version="2">
+      <Track Version="4">
+        <Node Version="1">
+          <Properties Version="1">
+            <TL.SQTrackExpanded>0</TL.SQTrackExpanded>
+            <TL.SQTrackExpandedHeight>41</TL.SQTrackExpandedHeight>
+            <TL.SQTrackShy>0</TL.SQTrackShy>
+            <MZ.TrackTargeted>1</MZ.TrackTargeted>
+          </Properties>
+        </Node>
+        <ID>1</ID>
+        <MediaType>228cda18-3625-4d2d-951e-348879e4ed93</MediaType>
+        <Index>0</Index>
+      </Track>
+      <ClipItems Version="3">
+        <TrackItems Version="1">
+          <TrackItem Index="0" ObjectRef="68" />
+        </TrackItems>
+        <MediaType>228cda18-3625-4d2d-951e-348879e4ed93</MediaType>
+        <Index>0</Index>
+      </ClipItems>
+      <TransitionItems Version="3">
+        <MediaType>228cda18-3625-4d2d-951e-348879e4ed93</MediaType>
+        <Index>0</Index>
+      </TransitionItems>
+    </ClipTrack>
+  </VideoClipTrack>
+  <VideoClipTrack ObjectUID="8614249b-5755-4152-809e-b94105b1e86d" ClassID="f68dcd81-8805-11d5-af2d-9bfa89d4ddd4" Version="1">
+    <ClipTrack Version="2">
+      <Track Version="4">
+        <Node Version="1">
+          <Properties Version="1">
+            <TL.SQTrackExpanded>0</TL.SQTrackExpanded>
+            <TL.SQTrackExpandedHeight>41</TL.SQTrackExpandedHeight>
+            <TL.SQTrackShy>0</TL.SQTrackShy>
+            <MZ.TrackTargeted>0</MZ.TrackTargeted>
+          </Properties>
+        </Node>
+        <ID>2</ID>
+        <MediaType>228cda18-3625-4d2d-951e-348879e4ed93</MediaType>
+        <Index>1</Index>
+      </Track>
+      <ClipItems Version="3">
+        <TrackItems Version="1">
+          <TrackItem Index="0" ObjectRef="70" />
+        </TrackItems>
+        <MediaType>228cda18-3625-4d2d-951e-348879e4ed93</MediaType>
+        <Index>1</Index>
+      </ClipItems>
+      <TransitionItems Version="3">
+        <MediaType>228cda18-3625-4d2d-951e-348879e4ed93</MediaType>
+        <Index>1</Index>
+      </TransitionItems>
+    </ClipTrack>
+  </VideoClipTrack>
+  <VideoComponentChain ObjectID="66" ClassID="0970e08a-f58f-4108-b29a-1a717b8e12e2" Version="3">
+    <ComponentChain Version="3">
+		</ComponentChain>
+  </VideoComponentChain>
+  <VideoClipTrackItem ObjectID="68" ClassID="368b0406-29e3-4923-9fcd-094fbf9a1089" Version="8">
+    <ClipTrackItem Version="8">
+      <ComponentOwner Version="1">
+        <Components ObjectRef="86" />
+      </ComponentOwner>
+      <TrackItem Version="4">
+        <Node Version="1">
+          <ID>1000004</ID>
+        </Node>
+        <End>1270080000000</End>
+      </TrackItem>
+      <SubClip ObjectRef="87" />
+    </ClipTrackItem>
+    <ToneMapSettings>{"peak":-1,"version":3}</ToneMapSettings>
+    <FrameRect>0,0,1920,1080</FrameRect>
+    <PixelAspectRatio>1,1</PixelAspectRatio>
+  </VideoClipTrackItem>
+  <VideoClipTrackItem ObjectID="70" ClassID="368b0406-29e3-4923-9fcd-094fbf9a1089" Version="8">
+    <ClipTrackItem Version="8">
+      <ComponentOwner Version="1">
+        <Components ObjectRef="90" />
+      </ComponentOwner>
+      <TrackItem Version="4">
+        <Node Version="1">
+          <ID>1000006</ID>
+        </Node>
+        <End>381024000000</End>
+      </TrackItem>
+      <SubClip ObjectRef="91" />
+    </ClipTrackItem>
+    <ToneMapSettings>{"peak":-1,"version":3}</ToneMapSettings>
+    <FrameRect>0,0,1920,1080</FrameRect>
+    <PixelAspectRatio>1,1</PixelAspectRatio>
+  </VideoClipTrackItem>
+  <VideoComponentChain ObjectID="86" ClassID="0970e08a-f58f-4108-b29a-1a717b8e12e2" Version="3">
+    <DefaultMotion>true</DefaultMotion>
+    <DefaultOpacity>true</DefaultOpacity>
+    <DefaultMotionComponentID>1</DefaultMotionComponentID>
+    <DefaultOpacityComponentID>2</DefaultOpacityComponentID>
+    <ComponentChain Version="3">
+      <Node Version="1">
+        <Properties Version="1">
+          <MZ.ComponentChain.ActiveComponentID>2</MZ.ComponentChain.ActiveComponentID>
+          <MZ.ComponentChain.ActiveComponentParamIndex>4294967295</MZ.ComponentChain.ActiveComponentParamIndex>
+        </Properties>
+      </Node>
+    </ComponentChain>
+  </VideoComponentChain>
+  <SubClip ObjectID="87" ClassID="e0c58dc9-dbdd-4166-aef7-5db7e3f22e84" Version="6">
+    <Clip ObjectRef="114" />
+    <MasterClip ObjectURef="bb792050-a1b7-4893-81e4-efbcb4231e2e" />
+    <Name>a3_base_grid.png</Name>
+    <OrigChGrp>0</OrigChGrp>
+  </SubClip>
+  <VideoComponentChain ObjectID="90" ClassID="0970e08a-f58f-4108-b29a-1a717b8e12e2" Version="3">
+    <DefaultMotion>true</DefaultMotion>
+    <DefaultOpacity>true</DefaultOpacity>
+    <DefaultMotionComponentID>1</DefaultMotionComponentID>
+    <DefaultOpacityComponentID>2</DefaultOpacityComponentID>
+    <ComponentChain Version="3">
+      <Node Version="1">
+        <Properties Version="1">
+          <MZ.ComponentChain.ActiveComponentID>2</MZ.ComponentChain.ActiveComponentID>
+          <MZ.ComponentChain.ActiveComponentParamIndex>4294967295</MZ.ComponentChain.ActiveComponentParamIndex>
+        </Properties>
+      </Node>
+      <Components Version="1">
+        <Component Index="0" ObjectRef="116" />
+      </Components>
+    </ComponentChain>
+  </VideoComponentChain>
+  <SubClip ObjectID="91" ClassID="e0c58dc9-dbdd-4166-aef7-5db7e3f22e84" Version="6">
+    <Clip ObjectRef="117" />
+    <MasterClip ObjectURef="c890f2b2-e649-4bb0-b4c6-b0c7edefaa95" />
+    <Name>Adjustment Layer</Name>
+    <OrigChGrp>0</OrigChGrp>
+  </SubClip>
+  <VideoClip ObjectID="114" ClassID="9308dbef-2440-4acb-9ab2-953b9a4e82ec" Version="11">
+    <Clip Version="18">
+      <Node Version="1">
+        <Properties Version="1">
+          <asl.clip.label.color>8851829</asl.clip.label.color>
+          <BE.Prefs.StillImages.DefaultIsDropFrame>true</BE.Prefs.StillImages.DefaultIsDropFrame>
+          <asl.clip.label.name>BE.Prefs.LabelColors.3</asl.clip.label.name>
+        </Properties>
+      </Node>
+      <MarkerOwner Version="1">
+        <Markers ObjectRef="51" />
+      </MarkerOwner>
+      <Source ObjectRef="52" />
+      <ClipID>b40b4b9e-e6b5-411b-974b-785397f11594</ClipID>
+      <InPoint>914449132800000</InPoint>
+      <OutPoint>915719212800000</OutPoint>
+    </Clip>
+  </VideoClip>
+  <VideoFilterComponent ObjectID="116" ClassID="d10da199-beea-4dd1-b941-ed3a78766d50" Version="9">
+    <Component Version="7">
+      <Params Version="1">
+        <Param Index="0" ObjectRef="139" />
+        <Param Index="1" ObjectRef="140" />
+      </Params>
+      <ID>3</ID>
+      <DisplayName>Invert</DisplayName>
+    </Component>
+    <PremiereFilterPrivateData Encoding="base64" BinaryHash="08668877-8cea-2512-01d0-ae5d0000241c">/////2ZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCwvdjQ9CQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLGZhbHNlLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLGZhbHNlLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLHRydWUsMCwwLDAsMCwwLDAJCQpmYWxzZQlmYWxzZQktOTE0NDU3NjAwMDAwMDAwMDAsL3Y0PQkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCwvdjQ9CQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLDAsMCwwLDAsMCwwLDAJCQpmYWxzZQlmYWxzZQktOTE0NDU3NjAwMDAwMDAwMDAsMCwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCwxMDAuLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLGZhbHNlLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLGZhbHNlLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLDUwLiwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCxmYWxzZSwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCwxODM3NDg5NzU4OTEyNTQzMTI5NiwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCwwLiwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCwwLiwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCwxMDAuLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLGZhbHNlLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLGZhbHNlLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLDAuLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLDAuLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLDAuLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLDAuLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLDAuLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLDAuLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLDAuLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLGZhbHNlLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLGZhbHNlLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLGZhbHNlLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLGZhbHNlLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLGZhbHNlLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLHRydWUsMCwwLDAsMCwwLDAJCQpmYWxzZQlmYWxzZQktOTE0NDU3NjAwMDAwMDAwMDAsQUFBPQkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCxBQUE9CQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLDAsMCwwLDAsMCwwLDAJCQpmYWxzZQlmYWxzZQktOTE0NDU3NjAwMDAwMDAwMDAsMCwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCxOSkhFelI0aEt2Q2E4S1RoR1hhQmN3PT0JCQpmYWxzZQlmYWxzZQktOTE0NDU3NjAwMDAwMDAwMDAsMjgsMCwwLDAsMCwwLDAJCQpmYWxzZQlmYWxzZQktOTE0NDU3NjAwMDAwMDAwMDAsMTAwLiwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCxmYWxzZSwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCwwLiwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCwwLiwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCwwLiwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCwxMDAuLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLEFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE9CQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLDAuLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLGZhbHNlLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLGZhbHNlLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLGZhbHNlLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLHRydWUsMCwwLDAsMCwwLDAJCQpmYWxzZQlmYWxzZQktOTE0NDU3NjAwMDAwMDAwMDAsZmFsc2UsMCwwLDAsMCwwLDAJCQpmYWxzZQlmYWxzZQktOTE0NDU3NjAwMDAwMDAwMDAsdHJ1ZSwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCwxMDAuLDAsMCwwLDAsMCwwCQkKZmFsc2UJZmFsc2UJLTkxNDQ1NzYwMDAwMDAwMDAwLEFBQUFBQUlBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE4RDhBQUFBQUFBRHdQd0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUNBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFQQS9BQUFBQUFBQThEOEFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFnQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFEd1B3QUFBQUFBQVBBL0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFJQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBOEQ4QUFBQUFBQUR3UHdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPT0JCQpmYWxzZQlmYWxzZQktOTE0NDU3NjAwMDAwMDAwMDAsZmFsc2UsMCwwLDAsMCwwLDAJCQpmYWxzZQlmYWxzZQktOTE0NDU3NjAwMDAwMDAwMDAsZmFsc2UsMCwwLDAsMCwwLDAJCQpmYWxzZQlmYWxzZQktOTE0NDU3NjAwMDAwMDAwMDAsdHJ1ZSwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCwxODM3NDY4NjQ3OTY3MTYyMzkzNiwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCxBd0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBOEQ4QUFBQUFBQUR3UHdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPT0JCQpmYWxzZQlmYWxzZQktOTE0NDU3NjAwMDAwMDAwMDAsdHJ1ZSwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCwxODM3NDY4NjQ3OTY3MTYyMzkzNiwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCxBd0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBOEQ4QUFBQUFBQUR3UHdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPT0JCQpmYWxzZQlmYWxzZQktOTE0NDU3NjAwMDAwMDAwMDAsdHJ1ZSwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCwxODM3NDY4NjQ3OTY3MTYyMzkzNiwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCxBd0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBOEQ4QUFBQUFBQUR3UHdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPT0JCQpmYWxzZQlmYWxzZQktOTE0NDU3NjAwMDAwMDAwMDAsdHJ1ZSwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCwxODM3NDY4NjQ3OTY3MTYyMzkzNiwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCxBZ0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBOEQ4QUFBQUFBQUR3UHdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBPT0JCQpmYWxzZQlmYWxzZQktOTE0NDU3NjAwMDAwMDAwMDAsdHJ1ZSwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCwxODM3NDY4NjQ3OTY3MTYyMzkzNiwwLDAsMCwwLDAsMAkJCmZhbHNlCWZhbHNlCS05MTQ0NTc2MDAwMDAwMDAwMCxBZ0FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBOEQ4QUFBQUFBQUR3UHdBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQQ==
+		</PremiereFilterPrivateData>
+    <VideoFilterType>2</VideoFilterType>
+    <MatchName>AE.ADBE Invert</MatchName>
+  </VideoFilterComponent>
+  <VideoClip ObjectID="117" ClassID="9308dbef-2440-4acb-9ab2-953b9a4e82ec" Version="11">
+    <Clip Version="18">
+      <Node Version="1">
+        <Properties Version="1">
+          <asl.clip.label.color>8851829</asl.clip.label.color>
+          <BE.Prefs.SyntheticMedia.DefaultIsDropFrame>false</BE.Prefs.SyntheticMedia.DefaultIsDropFrame>
+          <asl.clip.label.name>BE.Prefs.LabelColors.3</asl.clip.label.name>
+        </Properties>
+      </Node>
+      <Source ObjectRef="58" />
+      <ClipID>42510ca1-fe5f-4e4b-9161-9f173a445427</ClipID>
+      <InPoint>914457600000000</InPoint>
+      <OutPoint>914838624000000</OutPoint>
+    </Clip>
+    <AdjustmentLayer>true</AdjustmentLayer>
+  </VideoClip>
+  <VideoComponentParam ObjectID="139" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+    <Name>Channel</Name>
+    <DiscontinuousInterpolate>true</DiscontinuousInterpolate>
+    <ParameterID>1</ParameterID>
+    <StartKeyframe>-91445760000000000,0,0,0,0,0,0,0</StartKeyframe>
+    <LowerBound>0</LowerBound>
+    <UpperBound>15</UpperBound>
+  </VideoComponentParam>
+  <VideoComponentParam ObjectID="140" ClassID="fe47129e-6c94-4fc0-95d5-c056a517aaf3" Version="10">
+    <Name>Blend With Original</Name>
+    <ParameterID>2</ParameterID>
+    <StartKeyframe>-91445760000000000,0.,0,0,0,0,0,0</StartKeyframe>
+    <LowerBound>0</LowerBound>
+    <UpperBound>100</UpperBound>
+  </VideoComponentParam>
+</PremiereData>

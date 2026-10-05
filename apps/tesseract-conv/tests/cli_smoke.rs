@@ -14,6 +14,236 @@ const MEDIA: &[u8] = include_bytes!("../../../crates/premiere_file/tests/fixture
 const EDITABLE: &str =
     include_str!("../../../crates/premiere_file/tests/fixtures/editable-video.json");
 
+fn premiere_relocated_alpha_fixture(
+    root: &Path,
+) -> (premiere_file::MediaRelink, fx_conv::MediaMap, String) {
+    use fx_conv::{sha256_file, MediaMapSource, MediaReplacement};
+    let authored = r"\\?\E:\collected\source.mov";
+    let xml = XML
+        .replace("1270080000000", "254016000000")
+        .replace("2540160000000", "254016000000")
+        .replace("1920,1080", "16,16")
+        .replace(
+            "<RelativePath>media/source.mp4</RelativePath>",
+            &format!("<FilePath>{authored}</FilePath>"),
+        );
+    write_prproj(&root.join("source.prproj"), &xml);
+    fs::write(
+        root.join("original.mov"),
+        include_bytes!("../../../crates/premiere_file/tests/fixtures/alpha-media/animation.mov"),
+    )
+    .unwrap();
+    fs::write(
+        root.join("prepared.mov"),
+        include_bytes!("../../../crates/premiere_file/tests/fixtures/alpha-media/prores4444.mov"),
+    )
+    .unwrap();
+    let source = MediaMapSource {
+        format: "premiere".into(),
+        sha256: sha256_file(&root.join("source.prproj")).unwrap(),
+        target: "sequence-1".into(),
+    };
+    let original = root.join("original.mov").canonicalize().unwrap();
+    let original_hash = sha256_file(&original).unwrap();
+    let relink = premiere_file::MediaRelink {
+        version: 1,
+        source: source.clone(),
+        bindings: vec![premiere_file::MediaRelinkBinding {
+            media_uid: "media-1".into(),
+            authored_path: authored.into(),
+            local_path: original.clone(),
+            sha256: original_hash.clone(),
+        }],
+    };
+    let map = fx_conv::MediaMap {
+        version: 1,
+        source,
+        replacements: vec![MediaReplacement {
+            original,
+            original_sha256: original_hash,
+            replacement: "prepared.mov".into(),
+            replacement_sha256: sha256_file(&root.join("prepared.mov")).unwrap(),
+        }],
+    };
+    (relink, map, xml)
+}
+
+#[test]
+fn premiere_media_composition_publishes_prepared_alpha_after_authenticated_relocation() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (relink, map, _) = premiere_relocated_alpha_fixture(root);
+    fs::write(
+        root.join("relink.json"),
+        serde_json::to_vec(&relink).unwrap(),
+    )
+    .unwrap();
+    fs::write(root.join("map.json"), serde_json::to_vec(&map).unwrap()).unwrap();
+    for check in [true, false] {
+        let mut args = vec![
+            "convert",
+            "source.prproj",
+            "--to",
+            "tesseract",
+            "--sequence",
+            "sequence-1",
+            "--output",
+            "converted",
+            "--media-relink",
+            "relink.json",
+            "--media-map",
+            "map.json",
+            "--json",
+        ];
+        if check {
+            args.push("--check");
+        }
+        let result = run(root, &args);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert!(report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|note| {
+                note["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("native FFmpeg playback"))
+            }));
+        assert_eq!(
+            report["artifactStatus"],
+            if check { "planned" } else { "published" }
+        );
+        assert_eq!(root.join("converted").exists(), !check);
+    }
+    let archive =
+        tesseract_file::TesseractFile::open(root.join("converted/project.tsrct")).unwrap();
+    let document = archive.project_json().unwrap();
+    let pictures: Vec<_> = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|layer| layer["type"] == "Video")
+        .collect();
+    assert_eq!(pictures.len(), 1);
+    assert_eq!(
+        pictures[0]["sourceRange"],
+        json!({"start": 0, "duration": 1000})
+    );
+    assert_eq!(pictures[0]["source"]["assetId"], "premiere-video-1");
+    let prepared = fs::read(root.join("prepared.mov")).unwrap();
+    assert_eq!(
+        archive
+            .asset("premiere-video-1")
+            .unwrap()
+            .read_verified_bytes(prepared.len() as u64)
+            .unwrap(),
+        prepared
+    );
+    assert_eq!(
+        fx_conv::sha256_file(&root.join("source.prproj")).unwrap(),
+        map.source.sha256
+    );
+    assert_eq!(
+        fx_conv::sha256_file(&root.join("original.mov")).unwrap(),
+        relink.bindings[0].sha256
+    );
+    assert_eq!(
+        fx_conv::sha256_file(&root.join("prepared.mov")).unwrap(),
+        map.replacements[0].replacement_sha256
+    );
+}
+
+#[test]
+fn premiere_media_composition_rejects_identity_errors_and_native_candidate_conflicts() {
+    for case in [
+        "uid",
+        "authored",
+        "relink-project",
+        "relink-target",
+        "disguised-original",
+        "map-project",
+        "map-target",
+        "map-original-hash",
+        "map-prepared-hash",
+        "other-original-path",
+        "native-conflict",
+        "map-escape",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let (mut relink, mut map, xml) = premiere_relocated_alpha_fixture(root);
+        match case {
+            "uid" => relink.bindings[0].media_uid = "absent-media".into(),
+            "authored" => relink.bindings[0].authored_path = r"E:\other\source.mov".into(),
+            "relink-project" => relink.source.sha256 = "0".repeat(64),
+            "relink-target" => relink.source.target = "other".into(),
+            "disguised-original" => {
+                relink.bindings[0].sha256 = map.replacements[0].replacement_sha256.clone()
+            }
+            "map-project" => map.source.sha256 = "0".repeat(64),
+            "map-target" => map.source.target = "other".into(),
+            "map-original-hash" => map.replacements[0].original_sha256 = "0".repeat(64),
+            "map-prepared-hash" => map.replacements[0].replacement_sha256 = "0".repeat(64),
+            "other-original-path" => {
+                fs::create_dir(root.join("other")).unwrap();
+                fs::copy(root.join("original.mov"), root.join("other/original.mov")).unwrap();
+                map.replacements[0].original =
+                    root.join("other/original.mov").canonicalize().unwrap();
+            }
+            "native-conflict" => {
+                fs::write(root.join("conflict.mov"), b"different original candidate").unwrap();
+                let edited = xml.replace(
+                    "<FilePath>",
+                    "<RelativePath>conflict.mov</RelativePath><FilePath>",
+                );
+                write_prproj(&root.join("source.prproj"), &edited);
+                let hash = fx_conv::sha256_file(&root.join("source.prproj")).unwrap();
+                relink.source.sha256 = hash.clone();
+                map.source.sha256 = hash;
+            }
+            "map-escape" => map.replacements[0].replacement = "../prepared.mov".into(),
+            _ => unreachable!(),
+        }
+        fs::write(
+            root.join("relink.json"),
+            serde_json::to_vec(&relink).unwrap(),
+        )
+        .unwrap();
+        fs::write(root.join("map.json"), serde_json::to_vec(&map).unwrap()).unwrap();
+        let result = run(
+            root,
+            &[
+                "convert",
+                "source.prproj",
+                "--to",
+                "tesseract",
+                "--sequence",
+                "sequence-1",
+                "--output",
+                "converted",
+                "--media-relink",
+                "relink.json",
+                "--media-map",
+                "map.json",
+            ],
+        );
+        assert!(!result.status.success(), "accepted {case}");
+        assert!(!root.join("converted").exists(), "published {case}");
+        if case == "native-conflict" {
+            assert!(
+                String::from_utf8_lossy(&result.stderr).contains("different bytes"),
+                "{:?}",
+                result
+            );
+        }
+    }
+}
+
 #[test]
 fn media_map_import_packages_replacement_bytes_without_modifying_sources() {
     use aftereffects_file::{aep, rifx::Chunk, AfterEffects};
