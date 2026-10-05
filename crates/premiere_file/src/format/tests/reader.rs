@@ -2092,7 +2092,6 @@ fn source_duration_and_role_specific_color_profiles_are_not_rewritten_silently()
     for (name, xml, expected) in [
         ("source-duration", SOURCE.replace("<OriginalDuration>2540160000000</OriginalDuration>", "<OriginalDuration>5080320000000</OriginalDuration>"), "source OriginalDuration"),
         ("source-profile", SOURCE.replace("<VideoStream ObjectID=\"8\">", r#"<VideoStream ObjectID="8"><OriginalColorSpace>{"baseColorProfile":{"colorProfileName":"BT.709,8-bit,Display-Referred"},"baseProfileType":1}</OriginalColorSpace>"#), "OriginalColorSpace profile"),
-        ("sequence-profile", SOURCE.replace("<VideoTrackGroup ObjectID=\"1\">", r#"<VideoTrackGroup ObjectID="1"><OutputColorSpace>{"baseColorProfile":{"colorProfileData":"AQAAAP////8=","colorProfileName":"BT.709,32f,Display-Referred"},"baseProfileType":1}</OutputColorSpace>"#), "OutputColorSpace profile"),
         ("profile-payload", SOURCE.replace("<VideoStream ObjectID=\"8\">", r#"<VideoStream ObjectID="8"><OriginalColorSpace>{"baseColorProfile":{"colorProfileData":"different","colorProfileName":"BT.709,32f,Display-Referred"},"baseProfileType":1}</OriginalColorSpace>"#), "OriginalColorSpace profile"),
     ] {
         let error = inspect_project(&xml, None).unwrap_err();
@@ -2143,21 +2142,16 @@ fn premiere_26_5_short_rgb_full_source_profile_reads_as_sdr() {
 }
 
 #[test]
-fn short_color_profiles_with_one_changed_value_still_reject() {
+fn color_profiles_reject_unknown_working_spaces_roles_and_fields() {
     const UNKNOWN_FIELD: &str = "unknown field `unexpected`";
     const SEQUENCE: &str = "unsupported OutputColorSpace profile for its native role";
     for (profile, expected) in [
         (
-            r#"{"baseColorProfile":{"colorProfileName":"BT.709,10-bit,Display-Referred"},"baseProfileType":1}"#,
+            r#"{"baseColorProfile":{"colorProfileName":"BT.2020,10-bit,Display-Referred"},"baseProfileType":1}"#,
             SEQUENCE,
         ),
         (
             r#"{"baseColorProfile":{"colorProfileName":"BT.709,8-bit,Display-Referred"},"baseProfileType":2}"#,
-            SEQUENCE,
-        ),
-        // Saved by Premiere 25.2 and 25.5 (corpus travel_days, practice_files_transcription_magic).
-        (
-            r#"{"baseColorProfile":{"colorProfileData":"AQAAAGQAAAA=","colorProfileName":"BT.709,8-bit,Display-Referred"},"baseProfileType":1}"#,
             SEQUENCE,
         ),
         (
@@ -2244,19 +2238,20 @@ fn native_bt709_10bit_source_profiles_keep_their_video_occurrence() {
 }
 
 #[test]
-fn native_bt709_10bit_source_profiles_reject_wrong_data_and_sequence_role() {
+fn native_bt709_10bit_profiles_keep_sdr_sequence_content_and_check_source_data() {
     let records = roxmltree::Document::parse(BT709_10BIT_STREAMS).unwrap();
     for profile in records
         .descendants()
         .filter(|node| node.has_tag_name("OriginalColorSpace"))
     {
         let profile = profile.text().unwrap();
-        let error = inspect_project(&with_output_color_space(profile), None).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("unsupported OutputColorSpace profile"),
-            "{error}"
+        assert_eq!(
+            format!(
+                "{:?}",
+                inspect_project(&with_output_color_space(profile), None).unwrap()
+            ),
+            format!("{:?}", inspect_project(SOURCE, None).unwrap()),
+            "{profile}"
         );
         let value: serde_json::Value = serde_json::from_str(profile).unwrap();
         for (field, replacement) in [
@@ -2915,14 +2910,18 @@ fn windows_saved_media_paths_resolve_only_through_package_local_hints() {
             paths(r"\Footages\Lines_02.mov", ALIAS, ALIAS),
             Err("empty or absolute RelativePath"),
         ),
-        // Drive-relative, device (corpus adobe-edit-videos), UNC and mixed aliases.
+        // Drive-relative and UNC aliases still lack a supported local identity.
         (
             paths(HINT, r"C:Footages\Lines_02.mov", ALIAS),
             Err("ActualMediaFilePath must be a nonempty absolute path"),
         ),
         (
             paths(HINT, &format!(r"\\?\{ALIAS}"), ALIAS),
-            Err("ActualMediaFilePath must be a nonempty absolute path"),
+            Ok(("./Footages/video_Elem/Lines/Lines_02.mov", 0, "Lines_02.mov")),
+        ),
+        (
+            paths(HINT, &format!(r"\\?\{ALIAS}"), &format!(r"\\?\{ALIAS}")),
+            Ok(("./Footages/video_Elem/Lines/Lines_02.mov", 0, "Lines_02.mov")),
         ),
         (
             paths(HINT, r"\\server\share\Lines_02.mov", r"\\server\share\Lines_02.mov"),

@@ -334,6 +334,13 @@ pixel aspect and colour declarations. Supported HDR bytes pass through with
 colour diagnostics; contradictory declarations and unsupported codec forms do
 not become valid merely because the filename ends in `.mp4` or `.mov`.
 
+H.264 decoder-configuration reserved bits do not gate supported pictures.
+Admission uses the encoded NAL length, parameter-set counts and extension values;
+required record version, framing, parameter-set content and bounds remain checked.
+No encoded media or configuration bytes are rewritten. Public native-derived
+regressions assert editable clips, source trims, siblings and exact packaged bytes;
+this is not a new native render-fidelity claim.
+
 A media-header duration longer than the exact sample-table extent can import
 only for proved picture-only unit-forward source intervals. The excess must be
 smaller than the final decoded sample duration; every packet DTS must match the
@@ -407,7 +414,14 @@ Admitted mono/stereo audio can be packaged from WAV, MP3 and supported AAC
 sources. Original channel selectors have bounded full-source mono extraction.
 Export writes supported current gains, keys, trims and fades. Unsupported audio
 layout or processing is diagnosed while supported picture and sound siblings
-remain; failed reads and integrity checks still stop publication.
+remain. After independent video admission, a missing embedded stream or an
+unsupported native audio layout, sample rate or duration match omits only that
+source's sound occurrences, including nested copies; its muted picture, source
+windows and original bytes remain editable. Audio validation is not relaxed.
+Malformed native records, failed reads and integrity checks still stop
+publication. Native-derived metadata-mutation and nested model tests establish
+structural retention, not independent Adobe render or audible fidelity. Export
+is unchanged.
 
 ### Outbound source duration
 
@@ -445,6 +459,22 @@ Export resolves a packaged font face from the archive's registry. An empty style
 means the family already contains the PostScript name. Other unresolvable
 family/style pairs omit the affected text. Conversion does not guarantee font
 availability in Premiere or identical text metrics on another machine.
+
+### Graphic export failure isolation
+
+Within an admitted graphic group, an unsupported object or missing font omits
+that object rather than independent supported text and shapes. Failed mask
+sources still omit their dependent composites; they never reveal their consumers.
+Group placement, clocks, visibility and transform admission remain unchanged.
+An unsupported optional Source Text/alignment key unit retains the independently
+valid base document and supported Motion keys, with a diagnostic; no partial
+Source Text track is written. A mask whose Source Text keys fail is omitted with
+its consumers instead of using altered static coverage.
+
+Focused native-derived and direct export regressions establish editable structure,
+ordering, placement and retained key accounting. Missing-font/key mutations are
+structural controls, not independently Adobe-authored failures. Adobe reopening,
+RGB/alpha fidelity and native font delivery for this recovery remain unverified.
 
 ### Saved AE capsule graphics
 
@@ -552,6 +582,16 @@ without established group bounds and unsupported masked or retimed forms are
 omitted with context. The separate Transform path has its own coverage rules.
 Export retains the supported current group-to-nest picture boundary; it does not
 establish support for every imported native effect.
+
+Optional unsupported effect details do not discard a supported masked nest.
+Its Track Matte Key or static Crop, values, children and mapped effect controls
+and keys remain editable, with diagnostics only for the omitted details.
+Mapped effects use the existing picture stage below the outer coverage owner;
+Crop stays above that stage so spatial effects cannot reopen the cropped region.
+Native effect/mask order and edge sampling can differ and are diagnosed.
+Omitted Posterize Time leaves continuous sampling rather than its stepped cadence;
+this is not temporal fidelity. Coverage-critical unsupported effects retain their
+existing restrictions; no mask is removed and no hidden matte source is exposed.
 
 ## Timeline gaps and transitions
 
@@ -683,16 +723,27 @@ malformed run data remains unsupported. Existing paragraph box dimensions and
 alignment retain their ordinary checks; other earlier document revisions do not
 become supported.
 
-The complete legacy UTF-16 JSON inactive-decoration layout retains ordinary
-editable text when background, mask and underline switches are off, additional
-strokes are empty and stroke geometry is default. Gray positive-width strokes
-map to editable text strokes; when fill is enabled it must be above the stroke.
-Colored legacy strokes, stroke-above-fill, partial layouts, null or malformed
-values, active decorations and unknown fields remain unsupported.
-`empty_default_run_*`, `legacy_gray_stroke_*` and `passive_decorations_*` exercise
-reduced public wire data. This is structural evidence, not independent Adobe
-render fidelity, alpha proof or UI inspection. Export is unchanged and writes
-its existing supported native profile, not hidden original payloads.
+Legacy UTF-16 JSON retains actual text, font, size, paint, box dimensions,
+leading, justification and All Caps in the existing editable representation.
+Optional inactive decoration fields need not form a complete profile; unused
+values and version metadata are not admission requirements. Unmapped character,
+paragraph and unknown controls get field-specific diagnostics instead of
+omitting the whole text. Active or malformed mask controls remain unsupported
+so recovery cannot expose concealed content. Required framing and consumed
+style bounds remain checked; legacy Source Text keys and mixed actual character
+spans are not added by this repair. Shared admitted-text validation still rejects
+outline-only text (stroke without fill); this decoder repair does not remove
+that separate validation guard or claim recovery of those outlined labels.
+
+Gray fill/stroke colors retain their values. An unverified legacy color order
+uses the white editable text default with a diagnostic; stroke-above-fill uses
+the existing fill-above-stroke order. Invalid stroke width omits only the stroke,
+and leading below the target's 0.8 em minimum uses automatic leading. Font bytes
+remain unpackaged. `legacy_*` tests assert reduced public wire data and editable
+FX text alongside independent video content. This is structural evidence, not
+independent Adobe render fidelity, alpha proof or UI inspection. Export is
+unchanged and writes its existing supported native profile, not hidden original
+payloads.
 
 ## Missing saved PAR overrides (import)
 

@@ -2213,11 +2213,65 @@ fn nested_crop_keeps_its_guide_and_rejects_unsafe_combinations() {
     let matte = super::animation::animation_fixture::track_matte_key_xml(400, 1, 0, false);
     for (components, reason) in [
         (vec![(300, feathered)], "feathered Crop"),
-        (vec![(300, crop.clone()), (400, matte)], "Crop with a Track Matte Key"),
-        (vec![(300, crop), (400, r#"<VideoFilterComponent ObjectID="400"><Component><DisplayName>Unknown</DisplayName><Bypass>false</Bypass><Intrinsic>false</Intrinsic></Component><MatchName>Vendor.Unknown</MatchName></VideoFilterComponent>"#.into())], "effects on a nested sequence"),
+        (
+            vec![(300, crop.clone()), (400, matte)],
+            "Crop with a Track Matte Key",
+        ),
     ] {
         let reason_found = rejection(&xml(&components));
         assert!(reason_found.contains(reason), "{reason_found}");
+    }
+    let unknown = r#"<VideoFilterComponent ObjectID="500"><Component><DisplayName>Unknown</DisplayName><Bypass>false</Bypass><Intrinsic>false</Intrinsic></Component><MatchName>Own.Unsupported.Detail</MatchName></VideoFilterComponent>"#;
+    for effects in [
+        vec![(500, unknown.to_owned())],
+        vec![(400, super::effects::blur(400)), (500, unknown.to_owned())],
+    ] {
+        let mut components = vec![(300, crop.clone())];
+        components.extend(effects);
+        let (project, omissions) =
+            inspect_project_with_omissions(&xml(&components), Some("outer")).unwrap();
+        let outer = project.single_sequence().unwrap();
+        let nest = outer.nest_occurrences().next().unwrap();
+        assert_eq!(nest.crop.top, 15.0);
+        assert_eq!(nest.sequence.video_occurrences().count(), 1);
+        assert!(
+            omissions
+                .iter()
+                .all(|note| note.scope != crate::OmissionScope::Occurrence),
+            "{omissions:?}"
+        );
+        assert!(
+            omissions
+                .iter()
+                .any(|note| note.reason.contains("Own.Unsupported.Detail")),
+            "{omissions:?}"
+        );
+        let document = project_document_with_media(outer, &project.media);
+        let group = &document["composition"]["layers"][0];
+        let picture = if nest.effects.is_empty() {
+            group
+        } else {
+            &group["layers"][0]
+        };
+        let guide = group["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["id"] == group["masks"][0]["layer"])
+            .unwrap();
+        assert_eq!(guide["rect"]["position"], serde_json::json!([0.0, 162.0]));
+        assert_eq!(guide["rect"]["size"], serde_json::json!([1920.0, 918.0]));
+        assert!(picture["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|layer| layer["type"] == "Video"));
+        if !nest.effects.is_empty() {
+            assert_eq!(guide["parent"], group["id"]);
+            assert!(picture["masks"].as_array().is_none_or(Vec::is_empty));
+            assert_eq!(picture["effects"][0]["effect"]["type"], "gaussianBlur");
+            assert_eq!(picture["effects"][0]["effect"]["blurriness"], 25.0);
+        }
     }
 }
 

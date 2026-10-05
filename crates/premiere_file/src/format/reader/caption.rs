@@ -470,20 +470,36 @@ fn read_cue(
         "{} not converted",
         unconverted.join(", ")
     );
-    // An unverified background is omitted alone: the text still converts.
-    let background_reason = match decoded.omitted.first() {
-        Some(OmittedTextFeature::UnknownRootData(_) | OmittedTextFeature::AlternateDocumentMarkers | OmittedTextFeature::DefaultRunStyle) => return Err(unsupported("unidentified caption Source Text root data")),
-        Some(OmittedTextFeature::Background) => Some(
-            "its payload stores no opacity or corner radius, and what Premiere draws then is unverified"
-                .to_owned(),
-        ),
-        Some(OmittedTextFeature::MissingRunMarker) => {
-            return Err(unsupported("caption text requires an explicit run marker"));
+    // Run metadata is not a background and does not invalidate supported cues.
+    // Report it separately so it cannot hide an independent background warning.
+    let background_reason = {
+        for feature in &decoded.omitted {
+            if matches!(feature, OmittedTextFeature::RunStyleMetadata { .. }) {
+                approximate(omissions, &identity, feature.to_string());
+            }
         }
-        None => decoded
-            .document
-            .background
-            .and_then(|background| background.unverified_reason(&decoded.document)),
+        match decoded
+            .omitted
+            .iter()
+            .find(|feature| !matches!(feature, OmittedTextFeature::RunStyleMetadata { .. }))
+        {
+            Some(OmittedTextFeature::UnknownRootData(_) | OmittedTextFeature::AlternateDocumentMarkers | OmittedTextFeature::DefaultRunStyle) => return Err(unsupported("unidentified caption Source Text root data")),
+            Some(OmittedTextFeature::Background) => Some(
+                "its payload stores no opacity or corner radius, and what Premiere draws then is unverified"
+                    .to_owned(),
+            ),
+            Some(OmittedTextFeature::MissingRunMarker) => {
+                return Err(unsupported("caption text requires an explicit run marker"));
+            }
+            // Caption decoding does not admit legacy graphic Source Text.
+            Some(OmittedTextFeature::LegacyControl(_)) => {
+                return Err(unsupported("legacy graphic text controls do not apply to captions"));
+            }
+            Some(OmittedTextFeature::RunStyleMetadata { .. }) | None => decoded
+                .document
+                .background
+                .and_then(|background| background.unverified_reason(&decoded.document)),
+        }
     };
     if let Some(reason) = background_reason {
         omit(

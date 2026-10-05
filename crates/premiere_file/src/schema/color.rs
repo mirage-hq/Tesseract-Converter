@@ -110,25 +110,17 @@ impl ColorSpace {
         }
     }
 
-    /// Premiere writes the 8-bit sequence profile with its data and peak luminance,
-    /// or without both when Premiere 26.5.1 upgrades or re-saves a project.
+    /// Saved payload, peak metadata and working precision do not change a named
+    /// BT.709 SDR working space. HDR working spaces still require another mapping.
     pub(crate) fn is_sequence_sdr(&self) -> bool {
-        self == &Self::sequence_sdr()
-            || self.base_profile_type == 1
-                && matches!(
-                    (
-                        self.base_color_profile.color_profile_name.as_str(),
-                        self.base_color_profile.color_profile_data.as_deref(),
-                        self.color_space_metadata
-                            .as_ref()
-                            .map(|metadata| metadata.peak_luminance),
-                    ),
-                    (
-                        "BT.709,8-bit,Display-Referred",
-                        Some("AQAAAGQAAAA="),
-                        Some(100)
-                    ) | ("BT.709,8-bit,Display-Referred", None, None)
-                )
+        self.base_profile_type == 1
+            && matches!(
+                self.base_color_profile.color_profile_name.as_str(),
+                "BT.709 RGB Full"
+                    | "BT.709,8-bit,Display-Referred"
+                    | "BT.709,10-bit,Display-Referred"
+                    | "BT.709,32f,Display-Referred"
+            )
     }
 
     /// Premiere tags 8-bit SDR sources with the 8-bit profile name and the same profile data.

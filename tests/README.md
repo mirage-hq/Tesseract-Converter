@@ -295,8 +295,8 @@ checks saved records; `convert::effects::tests::sharpen_native_import_keeps_amou
 checks editable mapping. The `sharpen_edited_export_*` and
 `sharpen_edited_keys_*` tests cover current FX export and record readback.
 The fixture is structural-only evidence: no published reference or converter
-fidelity pass. It is distributed via `conversion-export-files.json`, not enrolled
-in `manifest.json`, which admits only strict video-reference cases.
+fidelity pass. It is distributed as part of the tracked converter source, not
+enrolled in `manifest.json`, which admits only strict video-reference cases.
 Retained high-gain calibration failed; native non-default Motion order, alpha
 and independently Adobe-read/rendered generated export remain unproved. See the
 [Sharpen boundary](../crates/premiere_file/README.md#effect-stacks).

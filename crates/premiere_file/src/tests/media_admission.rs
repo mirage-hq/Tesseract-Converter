@@ -156,7 +156,7 @@ fn unconsumed_audio_keeps_valid_picture_including_nested_placements() {
 
 #[cfg(feature = "ffmpeg-library")]
 #[test]
-fn selected_audio_still_checks_rate_duration_and_presence_including_nests() {
+fn selected_unsupported_audio_keeps_picture_and_healthy_sound_including_nests() {
     for (bytes, sample_rate, duration, reason) in [
         (
             EMBEDDED,
@@ -178,27 +178,88 @@ fn selected_audio_still_checks_rate_duration_and_presence_including_nests() {
                 .unwrap();
             audio.sample_rate = sample_rate;
             audio.intrinsic_ticks = duration;
-            let sequence = if in_nest { nested(sequence) } else { sequence };
+            // Independent healthy sound survives even when the bad stream is
+            // in a nest and shares its original bytes with a picture.
+            fs::write(directory.path().join("healthy.mp4"), EMBEDDED).unwrap();
+            let (_, _, healthy_media) = fixture(EMBEDDED);
+            let mut healthy = healthy_media[&MediaId("source".into())].clone();
+            healthy.relative_path = Some("healthy.mp4".into());
+            healthy.relative_paths = vec!["healthy.mp4".into()];
+            media.insert(MediaId("healthy".into()), healthy);
+            let mut sequence = if in_nest { nested(sequence) } else { sequence };
+            let mut healthy_sound = sound();
+            healthy_sound.id = Some("healthy-sound".into());
+            healthy_sound.media = MediaId("healthy".into());
+            sequence.audio.push(healthy_sound);
             let mut omissions = Vec::new();
-            // Invalid media must fail before archive staging, including
-            // selected audio streams.
-            let error = match convert_premiere_sequence(
-                &directory
-                    .path()
-                    .canonicalize()
-                    .unwrap()
-                    .join("project.prproj"),
-                sequence,
-                Arc::new(media),
-                &mut omissions,
-            ) {
-                Err(error) => error.to_string(),
-                Ok(_) => panic!("selected unsupported audio passed admission"),
-            };
+            let pending = convert(directory.path(), sequence, media, &mut omissions)
+                .expect("unsupported sound must not discard independently admitted picture");
+            assert_eq!(omissions.len(), 1, "{omissions:?}");
             assert!(
-                error.contains("failed admission") && error.contains(reason),
-                "{error}"
+                omissions[0].scope == crate::OmissionScope::Occurrence
+                    && omissions[0].record == "sound"
+                    && omissions[0].reason.contains("embedded sound not imported")
+                    && omissions[0].reason.contains(reason),
+                "{omissions:?}"
             );
+            let path = directory.path().join("converted.tsrct");
+            pending.write_to_staging(&path).unwrap();
+            let file = TesseractFile::open(path).unwrap();
+            let document = file.project_json().unwrap();
+            let layers = document["composition"]["layers"].as_array().unwrap();
+            let healthy_sound = layers
+                .iter()
+                .find(|layer| layer["type"] == "Audio")
+                .unwrap();
+            assert_eq!(
+                healthy_sound["sourceRange"],
+                serde_json::json!({"start":0,"duration":200})
+            );
+            assert_eq!(healthy_sound["volume"], 1.0);
+            assert_eq!(
+                layers
+                    .iter()
+                    .filter(|layer| layer["type"] == "Audio")
+                    .count(),
+                1
+            );
+            let pictures = if in_nest {
+                let layers = layers
+                    .iter()
+                    .find(|layer| layer["type"] == "Group")
+                    .unwrap()["layers"]
+                    .as_array()
+                    .unwrap();
+                assert!(!layers.iter().any(|layer| layer["type"] == "Audio"));
+                layers
+            } else {
+                layers
+            };
+            let picture = pictures
+                .iter()
+                .find(|layer| layer["type"] == "Video")
+                .unwrap();
+            let window = serde_json::json!({"start":33,"duration":167});
+            assert_eq!(picture["sourceRange"], window);
+            assert_eq!(picture["playback"]["inputRange"], window);
+            let picture_id = picture["source"]["assetId"].as_str().unwrap();
+            let healthy_id = healthy_sound["source"]["assetId"].as_str().unwrap();
+            assert_ne!(picture_id, healthy_id);
+            assert_eq!(
+                file.metadata().assets[picture_id].kind,
+                tesseract_file::AssetKind::Video
+            );
+            assert_eq!(picture["volume"], 0.0);
+            assert_eq!(file.metadata().assets.len(), 2);
+            for (id, expected) in [(picture_id, bytes), (healthy_id, EMBEDDED)] {
+                assert_eq!(
+                    file.asset(id)
+                        .unwrap()
+                        .read_verified_bytes(1 << 20)
+                        .unwrap(),
+                    expected
+                );
+            }
         }
     }
 }

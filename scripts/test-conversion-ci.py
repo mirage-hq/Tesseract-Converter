@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute the standalone CI inventory policy against an isolated fake checkout."""
+"""Exercise standalone CI publication policy and public source boundaries."""
 
 import contextlib
 import json
@@ -8,6 +8,7 @@ import runpy
 import sys
 import tempfile
 import textwrap
+import tomllib
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -22,18 +23,16 @@ class ConversionCiPolicyTests(unittest.TestCase):
         policy = textwrap.dedent(workflow.split(marker, 1)[1].split("          PY\n", 1)[0])
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
-            (root / "scripts").mkdir()
-            (root / "scripts/conversion-export-files.json").write_text(json.dumps(["Cargo.toml"]))
             names = ["tsrct-conv", "aftereffects_file", "premiere_file", "fx_conv",
                      "fx_keyframe_bake", "tesseract_file", "fx_schema", "media_transcode"]
             packages = [{"name": name, "publish": [],
                          "manifest_path": str(root / name / "Cargo.toml")} for name in names]
             metadata = root / "metadata.json"
 
-            def execute():
+            def execute(tracked=b'100644 source-hash 0\tCargo.toml\0'):
                 metadata.write_text(json.dumps({"packages": packages}))
                 with contextlib.chdir(root), patch.object(sys, "argv", ["-", str(metadata)]), \
-                        patch("subprocess.check_output", return_value=b"Cargo.toml\0"):
+                        patch('subprocess.check_output', return_value=tracked):
                     exec(compile(policy, "standalone-ci-policy", "exec"), {})
 
             execute()
@@ -45,6 +44,11 @@ class ConversionCiPolicyTests(unittest.TestCase):
                              "manifest_path": str(root / "unreviewed/Cargo.toml")})
             with self.assertRaisesRegex(AssertionError, "publication is not disabled"):
                 execute()
+            packages.pop()
+            for relative in ('README.md', 'tests/unreferenced.bin'):
+                with self.subTest(symlink=relative), self.assertRaisesRegex(
+                        AssertionError, 'symlink in public source'):
+                    execute(f'120000 source-hash 0\t{relative}\0'.encode())
 
 
 class WorkflowIntegrityTests(unittest.TestCase):
@@ -108,13 +112,10 @@ class SourceInputBoundaryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = (Path(temporary) / 'public').resolve()
             (root / 'src').mkdir(parents=True)
-            (root / 'scripts').mkdir()
             (root.parent / 'private.rs').write_text('private input')
             (root / 'Cargo.toml').write_text(
                 '[package]\nname = "demo"\nversion = "0.1.0"\n' + extra_manifest)
             (root / 'src/lib.rs').write_text(rust)
-            (root / 'scripts/conversion-export-files.json').write_text(
-                json.dumps(['Cargo.toml', 'src/lib.rs']))
             metadata = {'resolve': {}, 'packages': [
                 {'name': 'demo', 'source': None, 'manifest_path': str(root / 'Cargo.toml')}]}
             audit = runpy.run_path(str(SOURCE_ROOT / 'scripts/audit-dependency-boundary.py'))['audit']
@@ -130,9 +131,6 @@ class SourceInputBoundaryTests(unittest.TestCase):
                                                  '[dependencies]\nnested = { path = "../nested" }\n')
             (nested / 'Cargo.toml').write_text('[package]\nname = "nested"\nversion = "0.1.0"\n'
                                                '[dependencies]\noptional = { path = "../optional" }\n')
-            inventory = root / 'scripts/conversion-export-files.json'
-            inventory.write_text(json.dumps(json.loads(inventory.read_text()) +
-                                            ['optional/Cargo.toml', 'nested/Cargo.toml']))
             audit()  # A valid nested chain with a cycle terminates.
             (nested / 'Cargo.toml').write_text('[package]\nname = "nested"\nversion = "0.1.0"\n'
                                                '[dependencies]\nprivate = { path = "../../private" }\n')
@@ -147,11 +145,8 @@ class SourceInputBoundaryTests(unittest.TestCase):
                                                'build = "../../private.rs"\n')
             with self.assertRaisesRegex(ValueError, 'source input'):
                 audit()
-            inventory.write_text(json.dumps(['Cargo.toml', 'src/lib.rs', 'optional/Cargo.toml']))
-            with self.assertRaisesRegex(ValueError, 'unlisted dependency manifest'):
-                audit()
 
-    def test_inventoried_and_source_symlinks_are_rejected(self):
+    def test_source_and_manifest_symlinks_are_rejected(self):
         with self.fixture() as (root, audit):
             (root / 'other.rs').write_text('safe')
             (root / 'src/lib.rs').unlink()
@@ -188,9 +183,6 @@ class SourceInputBoundaryTests(unittest.TestCase):
             manifest = optional / 'Cargo.toml'
             manifest.write_text('[package]\nname = "optional"\nversion = "0.1.0"\nreadme.workspace = true\n'
                                 '[dependencies]\nlocal = { workspace = true }\n')
-            inventory = root / 'scripts/conversion-export-files.json'
-            inventory.write_text(json.dumps(json.loads(inventory.read_text()) +
-                                            ['nested/Cargo.toml', 'nested/optional/Cargo.toml']))
             with self.assertRaisesRegex(ValueError, 'source input'):
                 audit()
             (nested / 'Cargo.toml').write_text((nested / 'Cargo.toml').read_text().replace(
@@ -207,8 +199,6 @@ class SourceInputBoundaryTests(unittest.TestCase):
             manifest = optional / 'Cargo.toml'
             manifest.write_text('[package]\nname = "optional"\nversion = "0.1.0"\nworkspace = "../.."\n'
                                 '[dependencies]\nprivate = { workspace = true }\n')
-            inventory = root / 'scripts/conversion-export-files.json'
-            inventory.write_text(json.dumps(json.loads(inventory.read_text()) + ['optional/Cargo.toml']))
             with self.assertRaisesRegex(ValueError, 'escaping or missing workspace'):
                 audit()
             manifest.write_text(manifest.read_text().replace('workspace = "../.."', 'workspace = ".."'))
@@ -217,6 +207,14 @@ class SourceInputBoundaryTests(unittest.TestCase):
             public = root / 'Cargo.toml'
             public.write_text(public.read_text() + '\n[workspace.dependencies]\nprivate = "1"\n')
             audit()
+
+    def test_checked_in_workspace_source_inputs_are_auditable(self):
+        audit_inputs = runpy.run_path(
+            str(SOURCE_ROOT / 'scripts/audit-dependency-boundary.py'))['audit_inputs']
+        workspace = tomllib.loads((SOURCE_ROOT / 'Cargo.toml').read_text())['workspace']
+        manifests = {SOURCE_ROOT / 'Cargo.toml'}
+        manifests.update(SOURCE_ROOT / member / 'Cargo.toml' for member in workspace['members'])
+        audit_inputs(SOURCE_ROOT, manifests)
 
     def test_public_literal_inputs_are_accepted(self):
         with self.fixture(rust='include_str!("../Cargo.toml");') as (_, audit):
@@ -247,11 +245,15 @@ class SourceInputBoundaryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'computed Rust include'):
                 audit()
 
-    def test_unlisted_build_script_and_symlink_are_rejected(self):
-        with self.fixture() as (root, audit):
-            (root / 'build.rs').write_text('fn main() {}')
-            with self.assertRaisesRegex(ValueError, 'source input'):
+    def test_new_public_files_and_build_scripts_are_accepted(self):
+        with self.fixture(rust='include_bytes!("../new.bin");') as (root, audit):
+            with self.assertRaisesRegex(ValueError, 'missing source input'):
                 audit()
+            (root / 'new.bin').write_bytes(b'public fixture')
+            (root / 'build.rs').write_text('fn main() {}')
+            audit()
+
+    def test_external_input_symlink_is_rejected(self):
         with self.fixture(rust='include_str!("../secret");') as (root, audit):
             (root / 'secret').symlink_to(root.parent / 'private.rs')
             with self.assertRaisesRegex(ValueError, 'symlink'):

@@ -151,6 +151,74 @@ fn media_relink_native_still_keeps_editable_image_and_exact_alpha_bytes() {
     assert_eq!(crate::hash::hash(&project).unwrap(), original_hash);
 }
 
+#[cfg(all(unix, feature = "ffmpeg-library"))]
+#[test]
+fn windows_device_paths_retain_packaged_editable_image_without_relink() {
+    for actual in [r"E:\old\portrait.png", r"\\?\E:\old\portrait.png"] {
+        let (directory, project, _, xml) = fixture();
+        let xml = xml
+            .replace(
+                "<ActualMediaFilePath>E:\\old\\portrait.png</ActualMediaFilePath>",
+                &format!("<ActualMediaFilePath>{actual}</ActualMediaFilePath>"),
+            )
+            .replace(
+                &format!("<FilePath>{AUTHORED}</FilePath>"),
+                &format!(r"<RelativePath>.\media\portrait.png</RelativePath><FilePath>{AUTHORED}</FilePath>"),
+            );
+        write_prproj(&project, &xml);
+        fs::create_dir(directory.path().join("media")).unwrap();
+        fs::write(directory.path().join("media/portrait.png"), PNG).unwrap();
+        let hash = crate::hash::hash(&project).unwrap();
+        for mode in [ConversionMode::Check, ConversionMode::Write] {
+            let output = directory
+                .path()
+                .join(if mode.is_check() { "check" } else { "write" });
+            let report = <Premiere as fx_conv::ImportToTesseract>::import_to_tesseract(
+                &Premiere,
+                &project,
+                &output,
+                &options(),
+                mode,
+            )
+            .unwrap();
+            assert!(
+                !report
+                    .diagnostics
+                    .iter()
+                    .any(|note| note.reason.contains(UID)),
+                "{:?}",
+                report.diagnostics
+            );
+            assert_eq!(output.exists(), !mode.is_check());
+        }
+        let file = TesseractFile::open(directory.path().join("write/project.tsrct")).unwrap();
+        let asset = file
+            .metadata()
+            .assets
+            .keys()
+            .find(|id| {
+                file.asset(id)
+                    .unwrap()
+                    .read_verified_bytes(1024 * 1024)
+                    .unwrap()
+                    == PNG
+            })
+            .expect("the original transparent image must be retained");
+        fn has_image(value: &serde_json::Value, id: &str) -> bool {
+            match value {
+                serde_json::Value::Object(object) => {
+                    (value["type"] == "Image" && value["source"]["assetId"] == id)
+                        || object.values().any(|child| has_image(child, id))
+                }
+                serde_json::Value::Array(array) => array.iter().any(|child| has_image(child, id)),
+                _ => false,
+            }
+        }
+        assert!(has_image(&file.project_json().unwrap(), asset));
+        assert_eq!(crate::hash::hash(&project).unwrap(), hash);
+    }
+}
+
 #[test]
 fn media_relink_rejects_wrong_source_target_uid_path_and_duplicates_before_output() {
     let (directory, project, local, _) = fixture();

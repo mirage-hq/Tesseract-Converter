@@ -221,16 +221,32 @@ fn unsupported_native_sound_keeps_adobe_derived_picture() {
         .find(|node| node.has_tag_name("AudioStream") && node.attribute("ObjectID") == Some("111"))
         .unwrap();
     let stream_xml = &xml[stream.range()];
-    for (from, to, reason) in [
+    // Valid native metadata mismatches reach media admission, unlike the
+    // unsupported native layouts/rates rejected by the reader itself.
+    for (from, to, scope, reason) in [
         (
             "[{\"channellabel\":100},{\"channellabel\":101}]",
             "[{\"channellabel\":2}]",
+            crate::OmissionScope::Feature,
             "only ordinary mono/stereo",
         ),
         (
             "<FrameRate>5292000</FrameRate>",
             "<FrameRate>11</FrameRate>",
+            crate::OmissionScope::Feature,
             "unsupported sample rate",
+        ),
+        (
+            "<FrameRate>5292000</FrameRate>",
+            "<FrameRate>5760000</FrameRate>",
+            crate::OmissionScope::Occurrence,
+            "embedded sound not imported: unsupported conversion: native AudioStream layout or sample rate differs",
+        ),
+        (
+            "<Duration>1270080000000</Duration>",
+            "<Duration>1524096000000</Duration>",
+            crate::OmissionScope::Occurrence,
+            "native AudioStream Duration",
         ),
     ] {
         let directory = tempfile::tempdir().unwrap();
@@ -246,6 +262,20 @@ fn unsupported_native_sound_keeps_adobe_derived_picture() {
             &xml.replace(stream_xml, &stream_xml.replace(from, to)),
         );
         let output = directory.path().join("picture");
+        let checked = crate::premiere_to_tesseract(
+            &project,
+            &output,
+            Some("80acdd81-0a96-4677-b17f-b2ffe2dff738"),
+            true,
+        )
+        .unwrap();
+        assert!(!output.exists());
+        assert!(
+            checked
+                .iter()
+                .any(|item| item.scope == scope && item.reason.contains(reason)),
+            "{checked:?}"
+        );
         let omissions = crate::premiere_to_tesseract(
             &project,
             &output,
@@ -256,8 +286,7 @@ fn unsupported_native_sound_keeps_adobe_derived_picture() {
         assert!(
             omissions
                 .iter()
-                .any(|item| item.scope == crate::OmissionScope::Feature
-                    && item.reason.contains(reason)),
+                .any(|item| item.scope == scope && item.reason.contains(reason)),
             "{omissions:?}"
         );
         let file = TesseractFile::open(output.join("project.tsrct")).unwrap();
@@ -273,12 +302,18 @@ fn unsupported_native_sound_keeps_adobe_derived_picture() {
         let whole = json!({"start": 0, "duration": 5000});
         assert_eq!((*crate::test_support::layer_range(pictures[0])), whole);
         assert_eq!(pictures[0]["sourceRange"], whole);
+        assert_eq!(pictures[0]["playback"]["inputRange"], whole);
+        assert_eq!(pictures[0]["source"]["assetId"], "premiere-video-1");
         assert_eq!(file.metadata().assets.len(), 1);
         assert!(
             omissions
                 .iter()
                 .any(|item| item.scope == crate::OmissionScope::Occurrence
-                    && item.reason.contains("source has no audio stream")),
+                    && item.reason.contains(if scope == crate::OmissionScope::Feature {
+                        "source has no audio stream"
+                    } else {
+                        "embedded sound not imported"
+                    })),
             "{omissions:?}"
         );
         let mut bytes = Vec::new();
@@ -763,6 +798,23 @@ const WINDOWS_ALIASES: &str = r"<FilePath>C:\Users\editor\package\media\source.m
 #[cfg(feature = "ffmpeg-library")]
 #[test]
 fn windows_saved_media_converts_only_from_its_verified_package_copy() {
+    assert_windows_package_candidates(WINDOWS_ALIASES);
+}
+
+#[cfg(unix)]
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn windows_device_paths_keep_package_identity_and_conflict_guards() {
+    for aliases in [
+        r"<FilePath>\\?\C:\Users\editor\package\media\source.mp4</FilePath><ActualMediaFilePath>C:\Users\editor\package\media\source.mp4</ActualMediaFilePath>",
+        r"<FilePath>\\?\C:\Users\editor\package\media\source.mp4</FilePath><ActualMediaFilePath>\\?\C:\Users\editor\package\media\source.mp4</ActualMediaFilePath>",
+    ] {
+        assert_windows_package_candidates(aliases);
+    }
+}
+
+#[cfg(all(unix, feature = "ffmpeg-library"))]
+fn assert_windows_package_candidates(aliases: &str) {
     const PACKAGED: &str = r"<RelativePath>.\media\source.mp4</RelativePath>";
     const EXTERNAL: &str = r"<RelativePath>..\external\source.mp4</RelativePath>";
     let bytes = h264_bytes();
@@ -792,7 +844,7 @@ fn windows_saved_media_converts_only_from_its_verified_package_copy() {
         ),
     ] {
         let (directory, project, packaged, external) =
-            native_media_fixture(&format!("{hints}{WINDOWS_ALIASES}"));
+            native_media_fixture(&format!("{hints}{aliases}"));
         for (path, contents) in [(&packaged, packaged_bytes), (&external, external_bytes)] {
             if let Some(contents) = contents {
                 fs::write(path, contents).unwrap();

@@ -24,14 +24,16 @@ fn key_fields<'a>(wire: &'a str, expected: usize, context: &str) -> Result<Vec<&
     Ok(fields)
 }
 
-/// The value field of a static `StartKeyframe` of `expected` fields.
-pub(super) fn start_field<'a>(wire: &'a str, expected: usize, context: &str) -> Result<&'a str> {
-    let fields = key_fields(wire, expected, context)?;
+/// The initial value; unused static curve fields do not affect it.
+pub(super) fn start_field<'a>(wire: &'a str, _expected: usize, context: &str) -> Result<&'a str> {
+    let mut fields = wire.split(',');
     ensure!(
-        fields[0] == records::STATIC_KEYFRAME_TIME,
+        fields.next() == Some(records::STATIC_KEYFRAME_TIME),
         "{context}: unexpected initial keyframe time"
     );
-    Ok(fields[1])
+    fields
+        .next()
+        .ok_or_else(|| unsupported(format!("{context}: missing initial keyframe value")))
 }
 
 pub(super) fn scalar_start(wire: &str, context: &str) -> Result<f64> {
@@ -53,10 +55,7 @@ fn uniform_scale_start(
 ) -> Result<bool> {
     let value = bool_start(initial, context)?;
     if wire.is_empty() {
-        ensure!(
-            is_time_varying != Some("true"),
-            "{context}: animated Uniform Scale is unsupported"
-        );
+        // An enabled stopwatch without keys still has only its initial value.
         return Ok(value);
     }
     ensure!(
@@ -77,13 +76,9 @@ fn uniform_scale_start(
 }
 
 fn default_param(spec: &crate::schema::MotionParamSpec, wire: &str, context: &str) -> Result<()> {
-    let fields = key_fields(wire, if spec.is_point() { 14 } else { 8 }, context)?;
+    let value = start_field(wire, if spec.is_point() { 14 } else { 8 }, context)?;
     ensure!(
-        fields[0] == records::STATIC_KEYFRAME_TIME,
-        "{context}: unexpected initial keyframe time"
-    );
-    ensure!(
-        spec.accepts_default(fields[1]),
+        spec.accepts_default(value),
         "{context}: nondefault or unknown Motion parameter {:?}",
         spec.name
     );
@@ -961,43 +956,8 @@ pub(super) fn read_video_animations(
             "{}: unsupported Motion parameter Bypass",
             input.identity
         );
-        // Legacy fields on ids 1-7 vary (Scale UpperUIBound is 100 or absent).
-        // Its inert Crop tail has control type 2 with full scalar or percentage
-        // bounds; modern controls keep their existing strict metadata checks.
-        if premiere_26_5 || spec.crop_edge().is_some() {
-            let (control, bounds) = if premiere_26_5 {
-                (
-                    spec.control,
-                    spec.bounds
-                        .map_or((None, None, None), |(lower, upper, upper_ui)| {
-                            (Some(lower), Some(upper), upper_ui)
-                        }),
-                )
-            } else {
-                (
-                    Some("2"),
-                    (
-                        Some("-3.4028234663852886e+38"),
-                        Some("3.4028234663852886e+38"),
-                        None,
-                    ),
-                )
-            };
-            let saved_bounds = (
-                input.value.lower_bound.as_deref(),
-                input.value.upper_bound.as_deref(),
-                input.value.upper_ui_bound.as_deref(),
-            );
-            ensure!(
-                input.value.class_id.as_deref() == Some(spec.record.class_id)
-                    && input.value.parameter_control_type.as_deref() == control
-                    && (saved_bounds == bounds
-                        || (!premiere_26_5 && saved_bounds == (Some("0"), Some("100"), None)))
-                    && input.value.lower_ui_bound.is_none(),
-                "{}: unexpected Motion parameter layout",
-                input.identity
-            );
-        }
+        // Control classes and UI ranges are not consumed by the mapping.
+        // Parameter identity, value type and actual keys are checked below.
         let initial = input.value.start_keyframe.as_str();
         let wire = input.value.keyframes.as_deref().unwrap_or("");
         let is_time_varying = input.value.is_time_varying.as_deref();
@@ -1269,32 +1229,9 @@ pub(super) fn read_video_compositing(
                     input.identity
                 ))
             })?;
-        // Altrion's original legacy controls save the full numeric type bounds,
-        // not the UI range. Admit only those exact pairs; value checks below
-        // still constrain alpha and the existing blend-code mapping is unchanged.
-        let bounds = (
-            input.value.lower_bound.as_deref(),
-            input.value.upper_bound.as_deref(),
-        );
-        let typed_bounds = body.bypass.as_deref() == Some("false")
-            && match id {
-                1 => {
-                    bounds
-                        == (
-                            Some("-3.4028234663852886e+38"),
-                            Some("3.4028234663852886e+38"),
-                        )
-                }
-                2 | 3 => bounds == (Some("-2147483648"), Some("2147483647")),
-                _ => false,
-            };
         ensure!(
-            super::required(input.value.name.as_deref(), &input.identity, "Name")? == spec.name
-                && input.value.class_id.as_deref() == Some(spec.class_id)
-                && input.value.parameter_control_type.as_deref() == spec.control
-                && (typed_bounds
-                    || bounds.0 == Some(spec.lower_bound) && spec.accepts_upper_bound(bounds.1)),
-            "{}: unexpected Opacity parameter layout",
+            super::required(input.value.name.as_deref(), &input.identity, "Name")? == spec.name,
+            "{}: unexpected Opacity parameter name",
             input.identity
         );
         ensure!(

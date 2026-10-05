@@ -1147,7 +1147,7 @@ fn legacy_motion_passive_crop_preserves_duplicate_uniform_scale_keys() {
 }
 
 #[test]
-fn legacy_motion_passive_crop_rejects_active_or_malformed_controls() {
+fn legacy_motion_passive_crop_rejects_active_values_or_missing_identity() {
     let xml = legacy_motion_with_passive_crop_xml();
     let missing = xml.replace("<Param Index=\"10\" ObjectRef=\"21\"/>", "");
     assert!(inspect_project(&missing, Some("sequence-1"))
@@ -1174,21 +1174,6 @@ fn legacy_motion_passive_crop_rejects_active_or_malformed_controls() {
             "VideoComponentParam",
             "PointComponentParam",
             "unexpected Motion parameter",
-        ),
-        (
-            "<ParameterControlType>2</ParameterControlType>",
-            "<ParameterControlType>3</ParameterControlType>",
-            "unexpected Motion parameter layout",
-        ),
-        (
-            "fe47129e-6c94-4fc0-95d5-c056a517aaf3",
-            "invalid-class",
-            "unexpected Motion parameter layout",
-        ),
-        (
-            "<LowerBound>-3.4028234663852886e+38</LowerBound>",
-            "<LowerBound>0</LowerBound>",
-            "unexpected Motion parameter layout",
         ),
         (
             ",0.,0,0,0,0,0,0",
@@ -1560,10 +1545,6 @@ fn premiere_26_5_keyed_or_invalid_motion_crop_omits_the_clip() {
             ],
             "VideoFilterComponent:10: Motion Crop: invalid Premiere project: opposing Crop edges must leave a positive visible area",
         ),
-        (
-            vec![motion_crop_edit("Top", 9, "10.,0")],
-            "VideoComponentParam:38: unexpected Premiere keyframe shape",
-        ),
     ] {
         let edits: Vec<_> = edits
             .iter()
@@ -1572,6 +1553,18 @@ fn premiere_26_5_keyed_or_invalid_motion_crop_omits_the_clip() {
         let error = premiere_26_5_error(&edits);
         assert!(error.contains(expected), "{expected}: {error}");
     }
+}
+
+#[test]
+fn animation_values_keep_consumed_crop_with_extra_static_metadata() {
+    let (from, to) = motion_crop_edit("Top", 9, "10.,0");
+    let xml = premiere_26_5_edit(&[(&from, &to)]);
+    let (project, omissions) = inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+    let sequence = project.single_sequence().unwrap();
+    let clip = sequence.video_occurrences().next().unwrap();
+    assert_eq!(clip.crop.top, 10.0);
+    assert_eq!(clip.transform.scale, [100.0, 100.0]);
+    assert!(omissions.is_empty(), "{omissions:?}");
 }
 
 /// The 26.3-layout Opacity records of `feature_opacity_screen_strict.prproj`
@@ -1693,11 +1686,11 @@ fn premiere_26_5_layout_with_a_missing_or_extra_parameter_rejects() {
 }
 
 #[test]
-fn premiere_26_5_motion_parameters_are_checked_against_their_table() {
+fn animation_values_keep_modern_motion_when_control_metadata_differs() {
     let rotation = "<Name>Rotation</Name><ParameterControlType>3</ParameterControlType>";
     let scale = "<Name>Scale</Name><ParameterID>2</ParameterID><UpperUIBound>200</UpperUIBound>";
     for (from, to, record) in [
-        // A wrong or missing control type, and the 26.3 control type where 26.5 has none.
+        // UI control types can differ or be absent without changing the value.
         (
             rotation,
             "<Name>Rotation</Name><ParameterControlType>2</ParameterControlType>",
@@ -1709,8 +1702,7 @@ fn premiere_26_5_motion_parameters_are_checked_against_their_table() {
             "<Name>Position</Name><ParameterControlType>6</ParameterControlType><ParameterID>1</ParameterID>",
             "PointComponentParam:30",
         ),
-        // Wrong bounds: another range, the Scale UI bound of Premiere 9-14, an added
-        // lower UI bound, and the 26.3 bounds of the uniform-scale flag.
+        // Another range, the older Scale UI bound, a lower UI bound, and boolean bounds.
         (
             "<LowerBound>-32768</LowerBound><UpperBound>32767</UpperBound>",
             "<LowerBound>-360</LowerBound><UpperBound>360</UpperBound>",
@@ -1738,18 +1730,20 @@ fn premiere_26_5_motion_parameters_are_checked_against_their_table() {
             "VideoComponentParam:34",
         ),
     ] {
-        let error = premiere_26_5_error(&[(from, to)]);
-        assert!(
-            error.contains(&format!("{record}: unexpected Motion parameter layout")),
-            "{to}: {error}"
-        );
+        let xml = premiere_26_5_edit(&[(from, to)]);
+        let (project, omissions) = inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+        let clip = project.single_sequence().unwrap().video_occurrences().next().unwrap();
+        assert_eq!(clip.transform.scale, [100.0, 100.0], "{record}");
+        assert_eq!(clip.transform.position, [0.5, 0.5], "{record}");
+        assert_eq!(clip.opacity, 100.0, "{record}");
+        assert!(omissions.is_empty(), "{record}: {omissions:?}");
     }
 }
 
 #[test]
 fn premiere_26_3_motion_keeps_accepting_the_fields_that_older_saves_vary() {
-    // Premiere 10.3 wrote Scale with an UpperUIBound of 100, and the synthetic
-    // records carry no ClassID, control type or bounds; the 26.5 check would reject both.
+    // Premiere 10.3 wrote Scale with an UpperUIBound of 100; control metadata
+    // does not affect the saved value in either layout.
     let scale = "<Name>Scale</Name><ParameterID>2</ParameterID>";
     let xml = animated_xml("");
     assert!(xml.contains(scale));

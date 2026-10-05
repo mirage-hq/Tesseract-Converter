@@ -11,7 +11,7 @@ comparison, and import from export. Do not treat a round trip as Adobe proof.
 ## Review checklist
 
 - [ ] Added a regression for a bug fix, without weakening existing coverage.
-- [ ] Kept the standalone workspace and export inventory consistent.
+- [ ] Kept the standalone workspace self-contained and its tracked files distributable.
 - [ ] Listed any dependency, parser-limit, public API or format change.
 - [ ] Identified adapted code and retained its license/copyright notices.
 - [ ] Recorded redistribution permission and metadata review for new fixtures.

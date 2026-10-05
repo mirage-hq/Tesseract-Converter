@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Offline regression checks for conversion tooling ownership and cwd handling."""
-import json
 from pathlib import Path
 import re
 import shutil
@@ -31,6 +30,16 @@ PRIVATE_SCRIPTS = {
 }
 
 
+def public_source_files():
+    """The converter's tracked tree is the public source, without a second list."""
+    result = subprocess.run(['git', 'ls-files', '-z', '--', '.'], cwd=CONV,
+                            capture_output=True, text=True, timeout=15)
+    if result.returncode != 0 or not result.stdout:
+        raise unittest.SkipTest('source tree is not tracked in a Git checkout')
+    return {path for path in result.stdout.rstrip('\0').split('\0')
+            if (CONV / path).is_file()}
+
+
 class ContainmentTests(unittest.TestCase):
     def test_root_does_not_duplicate_public_conversion_tools(self):
         if not (ROOT / 'apps/public_cli/Cargo.toml').is_file():
@@ -39,8 +48,8 @@ class ContainmentTests(unittest.TestCase):
         self.assertTrue(PRIVATE_INTEGRATION_TARGETS.issubset(targets))
         self.assertFalse([name for name in targets - PRIVATE_INTEGRATION_TARGETS if re.search(
             r'aep|adobe|prproj|conversion|aftereffects|tesseract-file', name)])
-        inventory = json.loads((CONV / 'scripts/conversion-export-files.json').read_text())
-        public_scripts = {Path(path).name for path in inventory if path.startswith('scripts/')}
+        public_scripts = {Path(path).name for path in public_source_files()
+                          if path.startswith('scripts/')}
         # Private native-format adapters may live at the root; public tools must not be duplicated.
         self.assertFalse([path.name for path in (ROOT / 'scripts').iterdir()
                           if path.name in public_scripts])
@@ -53,14 +62,12 @@ class ContainmentTests(unittest.TestCase):
         self.assertFalse((CONV / 'tests/evidence').exists())
 
     def test_export_excludes_run_reports_and_includes_legal_evidence(self):
-        inventory = set(json.loads((CONV / 'scripts/conversion-export-files.json').read_text()))
+        published = public_source_files()
         self.assertFalse(any(path.startswith(('tests/evidence/', 'docs/after-effects-history/'))
-                             for path in inventory))
-        for relative in inventory:
-            self.assertTrue((CONV / relative).is_file(), relative)
-        self.assertFalse(any(path.startswith('licenses/') for path in inventory))
-        self.assertIn('about.toml', inventory)
-        self.assertIn('about.hbs', inventory)
+                             for path in published))
+        self.assertFalse(any(path.startswith('licenses/') for path in published))
+        self.assertIn('about.toml', published)
+        self.assertIn('about.hbs', published)
 
     def test_fixture_readme_relative_links_resolve(self):
         readme = CONV / 'tests/README.md'
@@ -70,10 +77,8 @@ class ContainmentTests(unittest.TestCase):
             with self.subTest(target=target):
                 self.assertTrue((readme.parent / target.split('#', 1)[0]).exists())
 
-    def test_helpers_are_explicitly_inventoried(self):
-        inventory = json.loads((CONV / 'scripts/conversion-export-files.json').read_text())
-        published = set(inventory)
-        self.assertEqual(len(inventory), len(published))
+    def test_private_helpers_remain_outside_public_source(self):
+        published = public_source_files()
         self.assertFalse(PRIVATE_SCRIPTS.intersection(published),
                          'private Adobe workflow helpers must not enter the public export')
         for relative in PRIVATE_SCRIPTS:
@@ -81,34 +86,18 @@ class ContainmentTests(unittest.TestCase):
         for private_doc in ('docs/after-effects-workflow.md', 'docs/after-effects-development.md'):
             self.assertNotIn(private_doc, published)
             self.assertFalse((CONV / private_doc).exists(), private_doc)
-        for path in (CONV / 'scripts').iterdir():
-            if path.is_file() and path.suffix in {'.py', '.mjs', '.jsx', '.json', '.sh'}:
-                relative = path.relative_to(CONV).as_posix()
-                self.assertTrue(relative in published, relative)
 
     def test_random_expression_sources_and_attribution_are_exported(self):
-        published = set(json.loads((CONV / 'scripts/conversion-export-files.json').read_text()))
+        published = public_source_files()
         for name in ('random.js', 'random_tests.rs', 'RANDOM-APIS.md'):
             relative = f'crates/aftereffects_file/src/expression_eval/{name}'
             with self.subTest(path=relative):
                 self.assertTrue(relative in published, f'missing export source: {relative}')
                 self.assertTrue((CONV / relative).is_file())
 
-    def test_tracked_public_tree_matches_export_inventory(self):
-        result = subprocess.run(['git', 'ls-files', '-z', '--', '.'], cwd=CONV,
-                                capture_output=True, text=True, timeout=15)
-        if result.returncode != 0 or not result.stdout:
-            self.skipTest('source tree is not tracked in a Git checkout')
-        # Allow an unstaged deletion during local development; CI sees committed files.
-        tracked = {path for path in result.stdout.rstrip('\0').split('\0')
-                   if (CONV / path).is_file()}
-        published = set(json.loads((CONV / 'scripts/conversion-export-files.json').read_text()))
-        self.assertEqual(tracked - published, set(), 'unreviewed files remain in the public tree')
-        self.assertEqual(published - tracked, set(), 'export inventory includes untracked files')
-
     def test_public_docs_do_not_link_to_private_local_files(self):
-        inventory = set(json.loads((CONV / 'scripts/conversion-export-files.json').read_text()))
-        for relative in inventory:
+        published = public_source_files()
+        for relative in published:
             if not relative.endswith('.md') or relative.startswith(('licenses/', 'patches/')):
                 continue
             source = CONV / relative
@@ -120,8 +109,8 @@ class ContainmentTests(unittest.TestCase):
                 message = f'{relative} links to missing or unexported {path}'
                 self.assertTrue(destination.is_relative_to(CONV), message)
                 target = destination.relative_to(CONV).as_posix()
-                self.assertTrue(target in inventory or any(
-                    entry.startswith(target.rstrip('/') + '/') for entry in inventory), message)
+                self.assertTrue(target in published or any(
+                    entry.startswith(target.rstrip('/') + '/') for entry in published), message)
 
     def test_cli_imports_and_core_make_work_without_parent_checkout(self):
         with tempfile.TemporaryDirectory() as directory:

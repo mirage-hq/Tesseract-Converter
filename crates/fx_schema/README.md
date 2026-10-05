@@ -47,9 +47,9 @@ archive reader. New `.tsrct` archives use these canonical fields and reopen
 without a migration pass. Revision numbers inventory schema changes; they are
 not a reader-version gate.
 
-The converter export uses the explicit inventory in
-`scripts/conversion-export-files.json`; directory membership alone never grants
-permission to include a file.
+The entire tracked converter workspace is synchronized to the public repository.
+Keep only distributable sources and fixtures in this directory; no separate
+per-file export list is required.
 
 The repository paths identify source ownership only. Published schema filenames,
 URLs, and bucket paths remain unchanged for compatibility.

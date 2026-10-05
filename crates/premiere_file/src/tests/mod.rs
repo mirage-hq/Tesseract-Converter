@@ -1,6 +1,7 @@
 #[cfg(feature = "ffmpeg-library")]
 mod alpha_media;
 mod audio_media;
+mod color_profile;
 mod errors;
 mod linked_compositions;
 mod media;

@@ -3820,7 +3820,7 @@ fn legacy_static_text_admission_keeps_layout_scale_animation_and_fixed_guards() 
 
 #[test]
 fn legacy_json_source_text_reads_as_editable_text_and_an_unsupported_form_omits_only_its_graphic() {
-    use crate::tests::support::{legacy_run, legacy_source_text, legacy_source_text_payload};
+    use crate::tests::support::{legacy_source_text, legacy_source_text_payload};
     // The native Text component, alone in its chain, with our own legacy
     // Source Text in place of its Premiere 26 one.
     let legacy_xml = |text: &serde_json::Value| {
@@ -3839,17 +3839,17 @@ fn legacy_json_source_text_reads_as_editable_text_and_an_unsupported_form_omits_
     assert!(text.source_text_keys.is_empty() && text.animations.is_empty());
     // The component's transform reads as beside a Premiere 26 document.
     assert_eq!(text.transform, graphic(&text_only_xml()).text().transform);
-    // An unsupported legacy form, and the same legacy document as a Source
+    // An unconverted legacy mask, and the same legacy document as a Source
     // Text key, omit only their graphic; the video stays.
-    let mut stroked = legacy_source_text();
-    stroked["mTextParam"]["mStyleSheet"]["mStrokeVisible"] = legacy_run(serde_json::json!(true));
+    let mut masked = legacy_source_text();
+    masked["mTextParam"]["mIsMask"] = serde_json::json!(true);
     let legacy_key = STANDARD.encode(legacy_source_text_payload(
         &legacy_source_text().to_string(),
     ));
     for (xml, reason) in [
         (
-            legacy_xml(&stroked),
-            "unsupported conversion: ArbVideoComponentParam:41: legacy UTF-16 JSON Source Text: only a gray stroke converts, since the channel order is unknown",
+            legacy_xml(&masked),
+            "unsupported conversion: ArbVideoComponentParam:41: legacy UTF-16 JSON Source Text: active mask is unsupported",
         ),
         (
             with_source_text_keys(None, &format!("{IN},{legacy_key};")),
@@ -3878,6 +3878,92 @@ fn legacy_json_source_text_reads_as_editable_text_and_an_unsupported_form_omits_
             .collect();
         assert_eq!(omitted, [(OmissionScope::Occurrence, "20", reason)]);
     }
+}
+
+#[test]
+fn legacy_layout_and_unmapped_styles_keep_editable_text_paint_and_video_sibling() {
+    use crate::tests::support::{legacy_run, legacy_source_text, legacy_source_text_payload};
+    use serde_json::json;
+
+    // Supplementary authored payload in the public native-record scaffold,
+    // not an independent Adobe-native legacy layout/fidelity case.
+    let mut text = legacy_source_text();
+    text["mTextParam"]["mWidth"] = json!(56);
+    text["mTextParam"]["mHeight"] = json!(10);
+    text["mTextParam"]["mLeading"] = json!(7.5);
+    text["mTextParam"]["mBackFillVisible"] = json!(false);
+    let style = &mut text["mTextParam"]["mStyleSheet"];
+    style["mStrokeVisible"] = legacy_run(json!(true));
+    style["mStrokeColor"] = legacy_run(json!(0xff_ffff));
+    style["mStrokeWidth"] = legacy_run(json!(3));
+    style["mFillOverStroke"] = legacy_run(json!(true));
+    style["mFauxBold"] = legacy_run(json!(true));
+    style["mUnderline"] = legacy_run(json!(true));
+    let xml = graphic_xml(&STANDARD.encode(legacy_source_text_payload(&text.to_string())))
+        .replace(TWO_COMPONENTS, r#"<Component Index="0" ObjectRef="40"/>"#);
+    let (project, mut omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+    for field in ["mFauxBold", "mUnderline"] {
+        assert!(
+            omissions
+                .iter()
+                .any(|omission| omission.reason.contains(field)),
+            "{field}"
+        );
+    }
+    assert!(omissions
+        .iter()
+        .all(|omission| omission.scope == OmissionScope::Feature));
+    let sequence = project.single_sequence().unwrap();
+    let document = crate::convert::premiere_to_tesseract(
+        sequence,
+        &project.media,
+        &crate::tesseract_output::asset_ids_in_order(sequence, &project.media),
+        &mut omissions,
+    )
+    .unwrap();
+    let mut value = document.to_json_value().unwrap();
+    let layers = value["composition"]["layers"].as_array_mut().unwrap();
+    let video = layers
+        .iter()
+        .find(|layer| layer["type"] == "Video")
+        .unwrap()
+        .clone();
+    let layer = layers
+        .iter_mut()
+        .find(|layer| layer["type"] == "Text")
+        .unwrap();
+    assert_eq!(
+        layer["sourceText"]["text"],
+        "Night\nMarket \u{2713} \u{1f525}"
+    );
+    assert_eq!(layer["sourceText"]["fontFamily"], "Inter-SemiBold");
+    assert_eq!(layer["sourceText"]["fontSize"], 64.5);
+    assert_eq!(layer["sourceText"]["boxSize"], json!([56.0, 10.0]));
+    assert_eq!(
+        layer["sourceText"]["strokeColor"],
+        json!([1.0, 1.0, 1.0, 1.0])
+    );
+    assert_eq!(layer["sourceText"]["strokeWidth"], 6.0);
+    let leading = layer["sourceText"]["leading"].as_f64().unwrap();
+    assert_eq!(leading, f64::from(1.2_f32 * 64.5_f32) + 7.5);
+    assert_eq!(
+        layer["activeRange"],
+        json!({"start": 1000, "duration": 2000})
+    );
+    layer["sourceText"]["text"] = json!("Editable recovered title");
+    assert_eq!(
+        layers
+            .iter()
+            .find(|layer| layer["type"] == "Video")
+            .unwrap(),
+        &video
+    );
+    let edited = fx_schema::EditableFxCompositionDocument::from_json_value(value).unwrap();
+    assert!(!edited
+        .to_json_value()
+        .unwrap()
+        .to_string()
+        .contains("JsScript"));
 }
 
 #[test]

@@ -2833,13 +2833,11 @@ fn has_windows_drive(path: &str) -> bool {
     matches!(path.as_bytes(), [drive, b':', ..] if drive.is_ascii_alphabetic())
 }
 
-/// Whether `path` is a Windows drive-absolute path (`C:\…`) that this host
-/// does not treat as absolute, so it names a file on the machine that saved the
-/// project. Drive-relative (`C:name`), UNC and device paths are not this form.
+/// Whether a plain or extended Windows drive-absolute path names the saving
+/// machine rather than a local candidate. Project-relative candidates retain
+/// the ordinary identity, conflict and package-containment checks.
 fn is_foreign_windows_path(path: &str) -> bool {
-    has_windows_drive(path)
-        && path.as_bytes().get(2) == Some(&b'\\')
-        && !Path::new(path).is_absolute()
+    crate::media_relink::windows_absolute_path(path) && !Path::new(path).is_absolute()
 }
 
 fn media_relative_paths(

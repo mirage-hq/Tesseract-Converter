@@ -7,8 +7,8 @@
 //! diagnosed separately when it cannot be kept. Other earlier revisions remain
 //! unsupported. UTF-16 JSON reads in a bounded profile ([`legacy`]).
 //! Slot meanings come from Premiere 26
-//! projects and from renders of generated payloads in Premiere 26. Any other
-//! present slot fails closed, so unmodeled styling cannot disappear silently.
+//! projects and from renders of generated payloads in Premiere 26. Unmapped
+//! run-style metadata is diagnosed without discarding known text and styling.
 //!
 //! Adobe publishes no schema for these tables, so the `flatbuffers` crate
 //! cannot generate a verifier, and its untyped `Table` access is `unsafe`.
@@ -88,6 +88,8 @@ mod style {
     pub(super) const STROKE_WIDTH: usize = 6;
     pub(super) const TRACKING: usize = 8;
     pub(super) const CAPS: usize = 12;
+    /// The encoder writes these tables empty; native saves may store unmapped
+    /// run-style metadata here without replacing the known style fields.
     pub(super) const FIXED_EMPTY_TABLES: [usize; 2] = [21, 23];
     /// Unnamed slot that every Premiere 26 run writes as 2.
     pub(super) const FIXED_VALUE: (usize, u32) = (24, 2);
@@ -106,19 +108,29 @@ const DEFAULT_FILL: PrRgb = PrRgb([COLOR_COMPONENT_DEFAULT; 3]);
 
 /// Decoded text features that are omitted or whose semantics are unverified.
 /// A Type-tool background is calibrated for caption cues only.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OmittedTextFeature {
     Background,
     MissingRunMarker,
     UnknownRootData(usize),
+    RunStyleMetadata { slot: usize, subslot: Option<usize> },
     AlternateDocumentMarkers,
     DefaultRunStyle,
+    LegacyControl(String),
 }
 
 impl std::fmt::Display for OmittedTextFeature {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Background => f.write_str("text background"),
+            Self::LegacyControl(reason) => f.write_str(reason),
+            Self::RunStyleMetadata { slot, subslot } => {
+                write!(f, "Source Text run style[{slot}]")?;
+                if let Some(subslot) = subslot {
+                    write!(f, " table[{subslot}]")?;
+                }
+                f.write_str(" metadata not retained; actual text and supported run styling are preserved")
+            },
             Self::DefaultRunStyle => f.write_str("Source Text document[8] insertion/default style not retained; current text and its actual run styles are preserved, inserted text uses the editable document style"),
             Self::MissingRunMarker => f.write_str("absent Source Text run marker (style slot 24; semantics unverified)"),
             Self::AlternateDocumentMarkers => f.write_str("alternate Source Text document markers retained as ordinary editable text; export uses standard graphic markers"),
@@ -175,8 +187,9 @@ impl DecodedGraphicText {
 /// render calibrated a Type-tool text's box.
 ///
 /// # Errors
-/// Rejects legacy encodings, malformed buffers, mixed run styles, and unknown
-/// document/style slots. Additional graphic root data is diagnosed, not replayed.
+/// Rejects legacy encodings, malformed required data, mixed run styles, and
+/// unknown document slots. Unmapped run-style and graphic root data is diagnosed,
+/// not replayed.
 /// `PrText::validate` checks the value ranges. A document that stores neither runs
 /// nor fonts is an empty text
 /// (`RunlessDocument::EmptyText`).
@@ -591,7 +604,7 @@ fn run_style<'a>(
     omitted: &mut Vec<OmittedTextFeature>,
 ) -> Result<RunStyle<'a>> {
     use style::*;
-    let mut allowed = vec![
+    let known = [
         FONT_INDEX,
         SIZE,
         FILL_COLOR,
@@ -602,14 +615,27 @@ fn run_style<'a>(
         TRACKING,
         CAPS,
         FIXED_VALUE.0,
+        FIXED_EMPTY_TABLES[0],
+        FIXED_EMPTY_TABLES[1],
     ];
-    allowed.extend(FIXED_EMPTY_TABLES);
-    table.allow_only(&allowed, "text style")?;
+    let mut metadata: Vec<_> = table
+        .present()?
+        .into_iter()
+        .filter(|slot| !known.contains(slot))
+        .map(|slot| OmittedTextFeature::RunStyleMetadata {
+            slot,
+            subslot: None,
+        })
+        .collect();
     match table.u32(FIXED_VALUE.0)? {
-        Some(value) => ensure!(
-            value == FIXED_VALUE.1,
-            "unsupported {layout} run marker {value}"
-        ),
+        Some(value) => {
+            if value != FIXED_VALUE.1 {
+                metadata.push(OmittedTextFeature::RunStyleMetadata {
+                    slot: FIXED_VALUE.0,
+                    subslot: None,
+                });
+            }
+        }
         None if layout == document::GRAPHIC_LAYOUT => {
             // Native OUTLINE keys omit this field. Preserve known styling,
             // without treating the absent marker as the supported value 2.
@@ -624,8 +650,30 @@ fn run_style<'a>(
         }
     }
     for slot in FIXED_EMPTY_TABLES {
-        if let Some(empty) = table.table(slot)? {
-            empty.allow_only(&[], "text style table")?;
+        // Do not interpret or replay these uncalibrated values. Even malformed
+        // optional metadata cannot invalidate the independently read style.
+        match table.table(slot) {
+            Ok(Some(extension)) => {
+                metadata.extend(extension.present()?.into_iter().map(|subslot| {
+                    OmittedTextFeature::RunStyleMetadata {
+                        slot,
+                        subslot: Some(subslot),
+                    }
+                }))
+            }
+            Ok(None) => {}
+            Err(crate::error::BuildError::Unsupported(_)) => {
+                metadata.push(OmittedTextFeature::RunStyleMetadata {
+                    slot,
+                    subslot: None,
+                });
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    for feature in metadata {
+        if !omitted.contains(&feature) {
+            omitted.push(feature);
         }
     }
     let font_index = usize::try_from(table.u32(FONT_INDEX)?.unwrap_or(0))

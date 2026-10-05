@@ -94,6 +94,55 @@ fn track_mut<'a>(document: &'a mut Value, layer: &Value, property: &str) -> &'a 
         .unwrap_or_else(|| panic!("{property} track"))
 }
 
+#[test]
+fn modern_run_style_metadata_publishes_meaningful_editable_native_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("converted");
+    let omissions = premiere_to_tesseract(
+        fixture("feature_text_point_style_metadata_derived.prproj"),
+        &output,
+        Some(SEQUENCE),
+        false,
+    )
+    .unwrap();
+    assert!(
+        !omissions
+            .iter()
+            .any(|omission| omission.scope == premiere_file::OmissionScope::Occurrence),
+        "{omissions:?}"
+    );
+    assert!(
+        omissions.iter().any(|omission| {
+            omission.kind == premiere_file::OmissionKind::Approximated
+                && omission.reason.contains("run style[21]")
+                && omission.reason.contains("metadata")
+        }),
+        "{omissions:?}"
+    );
+    let archive = TesseractFile::open(first_project(&output)).unwrap();
+    let document = archive.project_json().unwrap();
+    tesseract_file::TesseractFileBuilder::from_project_json(
+        &serde_json::to_vec(&document).unwrap(),
+    )
+    .unwrap()
+    .validate()
+    .unwrap();
+    let text = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Text")
+        .expect("the native text must survive, not only its canvas");
+    assert_eq!(text["sourceText"]["text"], "py");
+    assert_eq!(text["sourceText"]["fontFamily"], "Arial-BoldMT");
+    assert_eq!(text["sourceText"]["fontSize"], 160.0);
+    assert_eq!(text["sourceText"]["fillColor"], json!([1.0, 1.0, 1.0, 1.0]));
+    assert_eq!(text["sourceText"]["applyFill"], true);
+    assert_eq!(text["sourceText"]["applyStroke"], false);
+    assert_eq!(text["activeRange"], json!({"start": 0, "duration": 2000}));
+    assert_eq!(text["transform"]["position"], json!([480.0, 540.0]));
+}
+
 #[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_measured_graphic_bezier_keys_import_on_the_generator_clock() {

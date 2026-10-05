@@ -732,9 +732,12 @@ fn inspect_media(
             let facts = match inspected_audio {
                 Ok(Some(facts)) => facts,
                 Ok(None) => {
-                    return Ok(MediaInspection::Omitted(
-                        "native audio stream is missing from the file".into(),
-                    ));
+                    let reason = "native audio stream is missing from the file";
+                    if !is_video {
+                        return Ok(MediaInspection::Omitted(reason.into()));
+                    }
+                    audio_omission = Some(format!("embedded sound not imported: {reason}"));
+                    break 'sound;
                 }
                 Err(error) => {
                     let reason = unsupported_media_reason(error)?;
@@ -771,7 +774,13 @@ fn inspect_media(
                     "embedded AAC ends up to one frame before the picture; Premiere's picture-length audio duration was admitted and the tail plays as silence",
                 ));
                 }
-                Err(error) => return Ok(MediaInspection::Omitted(error.to_string())),
+                Err(error) => {
+                    let reason = unsupported_media_reason(error)?;
+                    if !is_video {
+                        return Ok(MediaInspection::Omitted(reason));
+                    }
+                    audio_omission = Some(format!("embedded sound not imported: {reason}"));
+                }
             }
         }
     }

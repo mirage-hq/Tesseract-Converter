@@ -216,18 +216,37 @@ fn outline_export_rejects_selected_or_multi_property_animators_and_non_hold_widt
         .find(|entry| entry["target"]["itemId"] == animator_id)
         .unwrap();
     entry["animator"]["keyframes"][1]["value"]["value"] = json!(-11.0);
-    for (document, reason) in [
-        (other_property, "all-character width-only"),
-        (animated_other_property, "only stroke width may be animated"),
-        (selected, "all-character width-only"),
-        (non_hold, "stroke width keys must hold"),
+    for (document, reason, keeps_base) in [
+        (other_property, "all-character width-only", false),
+        (
+            animated_other_property,
+            "only stroke width may be animated",
+            false,
+        ),
+        (selected, "all-character width-only", false),
+        (non_hold, "stroke width keys must hold", true),
         (
             negative,
             "total stroke width must be finite and nonnegative",
+            true,
         ),
     ] {
         let mut omissions = Vec::new();
-        assert!(export_outline(document, &mut omissions).is_err());
+        let exported = export_outline(document, &mut omissions);
+        if keeps_base {
+            let project = exported.unwrap();
+            let text = project
+                .single_sequence()
+                .unwrap()
+                .video_items()
+                .find_map(PrVideoItem::graphic)
+                .unwrap()
+                .text();
+            assert_eq!(text.document.text, "OUTLINE");
+            assert!(text.source_text_keys.is_empty());
+        } else {
+            assert!(exported.is_err());
+        }
         assert!(
             omissions
                 .iter()

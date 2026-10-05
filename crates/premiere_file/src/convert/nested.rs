@@ -728,7 +728,10 @@ pub(super) fn track_nests(
         let mut transform = identity_transform();
         transform.opacity = motion.opacity;
         let mut masks = Vec::new();
-        let effects_before_wipe = nest.linear_wipe.is_some() && nest.effects_above_mask != 0;
+        // Crop remains above the retained effect stage. Otherwise a spatial
+        // effect could spread pixels back into the concealed crop region.
+        let effects_before_coverage = (nest.linear_wipe.is_some() && nest.effects_above_mask != 0)
+            || (!nest.effects.is_empty() && !nest.crop.is_default());
         let mut outer_guide = None;
         if moved || stage.is_some() || !nest.crop.is_default() || nest.linear_wipe.is_some() {
             transform = motion;
@@ -764,7 +767,7 @@ pub(super) fn track_nests(
             let guide = Layer::from_data(&LayerData::Rect(guide_layer(
                 guide_id,
                 "Nested sequence frame".to_owned(),
-                Some(if effects_before_wipe {
+                Some(if effects_before_coverage {
                     group_id
                 } else {
                     content_parent
@@ -773,7 +776,7 @@ pub(super) fn track_nests(
                 guide_transform,
                 rect,
             )))?;
-            if effects_before_wipe {
+            if effects_before_coverage {
                 outer_guide = Some(guide);
             } else {
                 layers.push(guide);
@@ -806,7 +809,7 @@ pub(super) fn track_nests(
             }
             let inner = GroupLayer {
                 parent: Some(group_id),
-                masks: if effects_before_wipe {
+                masks: if effects_before_coverage {
                     Vec::new()
                 } else {
                     std::mem::take(&mut masks)

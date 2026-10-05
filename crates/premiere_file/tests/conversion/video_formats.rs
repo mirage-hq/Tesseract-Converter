@@ -16,6 +16,8 @@
 //! changed, and its `CodecType` and `OriginalColorSpace` set to the text that
 //! Premiere 26.5.1 saved for 10-bit HLG `hvc1` sources.
 
+mod avcc;
+
 use super::support::*;
 use fx_conv::{
     sha256_file, ConversionMode, MediaMap, MediaMapSource, MediaReplacement, MediaStatus,

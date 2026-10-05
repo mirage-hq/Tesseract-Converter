@@ -1818,6 +1818,14 @@ pub(super) fn export_graphic_group(
     }
     graphic.opacity_mask = opacity_mask;
     context.written.append(&mut written);
+    if let Some(motion) = &graphic.vector_motion {
+        context
+            .written
+            .record_animations(group.id, &motion.animations);
+    }
+    context
+        .written
+        .record_animations(group.id, &graphic.animations);
     Some(graphic)
 }
 
@@ -1937,6 +1945,11 @@ fn arrange(
                             written.record_mask(layer.masks[0].id, mask);
                         }
                     }
+                }
+                if let (GraphicPart::Object { layer, .. }, PrGraphicObject::Text(text)) =
+                    (part, &object)
+                {
+                    written.record_animations(layer.id(), &text.animations);
                 }
                 objects.push(object);
                 object_keys.push(written);
@@ -2402,7 +2415,9 @@ struct ExportedObjects {
 /// paint order: one layer of a list, or the layers of `group` with the
 /// group's Vector Motion; `parent` is the parent they have, the list's or
 /// `group`. Each text keeps its supported authored keys on the graphic's
-/// generator clock; keys on a shape omit the graphic. One object reports
+/// generator clock; an unsupported object is omitted without its independent
+/// siblings. Optional Source Text keys retain the valid base document and
+/// independent Motion keys on failure. One object reports
 /// under its own layer and several under their group; a gradient shape
 /// reports its approximations ([`PrShape::gradient_approximations`]) under
 /// its own layer.
@@ -2434,7 +2449,6 @@ fn export_objects(
     let mut kept = Vec::new();
     let mut unexported = BTreeMap::new();
     let mut matte_reports = BTreeMap::new();
-    let with_subgroups = group.is_some_and(|group| !holds_only_objects(group));
     for &object in objects {
         let object_record = object.record();
         let source = mask_sources.contains(&object.id());
@@ -2455,13 +2469,9 @@ fn export_objects(
         );
         let missing_font = native.is_none();
         let keyed = several && context.property_tracks.contains_key(&object.id());
-        if missing_font && !with_subgroups {
+        if missing_font && group.is_none() {
             held.forward(omissions);
-            return if several {
-                failed(omissions, format!("{object_record} cannot export"))
-            } else {
-                None
-            };
+            return None;
         }
         let native = native
             .unwrap_or_else(|| Err(unsupported("its font is not packaged")))
@@ -2491,10 +2501,7 @@ fn export_objects(
             }
             Err(error) => {
                 held.forward(omissions);
-                if with_subgroups
-                    && !keyed
-                    && (missing_font || matches!(object, ObjectLayer::Shape(_)))
-                {
+                if group.is_some() {
                     unexported.insert(object.id(), Unexported::Unconverted(error.to_string()));
                 } else {
                     return failed(
@@ -2527,28 +2534,22 @@ fn export_objects(
                 ensure!(tracks.is_empty(), "keyed graphic shapes are unsupported");
                 continue;
             };
-            let animator = stroke_width_animator(layer)?;
-            let width_track = animator
-                .map(|animator| stroke_width_track(animator, context.dynamics))
-                .transpose()?
-                .flatten();
-            let mut source_text: BTreeMap<_, _> = SOURCE_TEXT_PROPERTIES
-                .iter()
-                .filter_map(|&(field, property, _)| {
-                    tracks.remove(&property).map(|track| (field, track))
-                })
-                .collect();
-            if let Some(track) = width_track {
-                source_text.insert(SourceTextField::StrokeWidth, track);
-            }
-            if !source_text.is_empty() {
-                let base = stroke_width_source(layer, context.dynamics)?;
-                text.source_text_keys =
-                    source_text_keys(&source_text, &base, &text.document.font, graphic.in_ticks)?;
-                if let Some(anchor) = tracks.remove(&PropType::AnchorPointY) {
-                    restore_point_alignment(text, anchor, graphic.in_ticks)?;
+            if let Err(error) =
+                prepare_source_text(text, layer, &mut tracks, context.dynamics, graphic.in_ticks)
+            {
+                omit(
+                    omissions,
+                    OmissionScope::Feature,
+                    object.record(),
+                    format!(
+                        "Source Text animation was not exported; keeping base Source Text: {error}"
+                    ),
+                );
+                if mask_sources.contains(&object.id()) {
+                    // Static fallback changes animated coverage; do not expose
+                    // consumers of this mask with the altered source.
+                    unexported.insert(object.id(), Unexported::Unrendered(error.to_string()));
                 }
-                text.document = text.source_text_keys[0].document.clone();
             }
             // A static horizontal axis plus keyed vertical scale maps to
             // native Uniform=false. Uniform keys still drive both axes.
@@ -2644,10 +2645,12 @@ fn export_objects(
             }
             // The caller places the graphic, which writes these keys.
             for (object, native) in kept.iter().zip(&graphic.objects) {
-                if let PrGraphicObject::Text(text) = native {
-                    context
-                        .written
-                        .record_animations(object.id(), &text.animations);
+                if group.is_none() {
+                    if let PrGraphicObject::Text(text) = native {
+                        context
+                            .written
+                            .record_animations(object.id(), &text.animations);
+                    }
                 }
             }
             if let Some(group) = group {
@@ -2655,14 +2658,6 @@ fn export_objects(
                     let group_record = format!("layer {} ({:?})", group.id, group.name);
                     approximate(omissions, group_record, warning);
                 }
-                if let Some(motion) = &graphic.vector_motion {
-                    context
-                        .written
-                        .record_animations(group.id, &motion.animations);
-                }
-                context
-                    .written
-                    .record_animations(group.id, &graphic.animations);
             }
             graphic.objects = in_paint_order(graphic.objects);
             Some(ExportedObjects {
@@ -3107,13 +3102,54 @@ fn object_keys(
     animations
 }
 
+/// Prepare a complete optional Source Text/alignment unit before replacing
+/// the independently valid native base. Rejected tracks never reach Motion
+/// export, and no partially reconstructed document is committed.
+fn prepare_source_text(
+    text: &mut PrText,
+    layer: &TextLayer,
+    tracks: &mut BTreeMap<PropType, &PropertyKeyframeTrack>,
+    dynamics: &AnimationGraph,
+    in_ticks: i64,
+) -> Result<()> {
+    let mut source_text: BTreeMap<_, _> = SOURCE_TEXT_PROPERTIES
+        .iter()
+        .filter_map(|&(field, property, _)| tracks.remove(&property).map(|track| (field, track)))
+        .collect();
+    let width_track = stroke_width_animator(layer)?
+        .map(|animator| stroke_width_track(animator, dynamics))
+        .transpose()?
+        .flatten();
+    if let Some(track) = width_track {
+        source_text.insert(SourceTextField::StrokeWidth, track);
+    }
+    if source_text.is_empty() {
+        return Ok(());
+    }
+    let anchor = tracks.remove(&PropType::AnchorPointY);
+    let base = stroke_width_source(layer, dynamics)?;
+    // This is only the prospective native text object, not an FX layer
+    // clone/retry: the already validated base remains untouched on failure.
+    let mut prepared = PrText {
+        source_text_keys: source_text_keys(&source_text, &base, &text.document.font, in_ticks)?,
+        ..text.clone()
+    };
+    if let Some(anchor) = anchor {
+        restore_point_alignment(&mut prepared, anchor, in_ticks)?;
+    }
+    prepared.document = prepared.source_text_keys[0].document.clone();
+    prepared.validate()?;
+    *text = prepared;
+    Ok(())
+}
+
 /// Native Source Text keys of a text layer's Source Text tracks: one
 /// complete document at every key time of every track, each field read from
 /// its track by Hold, on the generator clock that starts at `in_ticks`. The
 /// first key's document is the text shown before it. Premiere holds Source
 /// Text between keys, so a key with another easing after the first, a value
 /// of another kind, or a document the encoding cannot hold is an error,
-/// which omits the graphic: static text would show the wrong content.
+/// which the exporter diagnoses while retaining the independent base text.
 fn source_text_keys(
     tracks: &BTreeMap<SourceTextField, &PropertyKeyframeTrack>,
     source_text: &TextDocument,

@@ -8245,7 +8245,7 @@ requires the proven zero-default sparse profile; no arbitrary declaration defaul
 is silently replaced with zero.
 
 The previously committed byte-preserving licensed owner fragment and its README
-are removed from the current source tree and public export inventory. This deletion
+are removed from the current public source tree. This deletion
 does not erase already-published Git history. Both licensed-source native Logo14 tests were removed;
 recorded results are historical evidence only (no longer executable).
 They verified the above SHA-256 and composition1371/layer2237.

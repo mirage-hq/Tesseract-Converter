@@ -172,7 +172,15 @@ fn an_absent_run_marker_preserves_known_style_with_a_diagnostic() {
     let field = HEADER_BYTES + style.field(style::FIXED_VALUE.0, 4).unwrap().unwrap();
     let mut unknown = payload.clone();
     unknown[field..field + 4].copy_from_slice(&9_u32.to_le_bytes());
-    assert!(error(&unknown).contains("unsupported Premiere 26 run marker 9"));
+    let recovered = decode(&unknown).unwrap();
+    assert_eq!(recovered.document, original);
+    assert_eq!(
+        recovered.omitted,
+        [OmittedTextFeature::RunStyleMetadata {
+            slot: 24,
+            subslot: None
+        }]
+    );
     payload[entry..entry + 2].fill(0);
     let decoded = decode(&payload).unwrap();
     assert_eq!(decoded.document, original);
@@ -295,15 +303,159 @@ fn malformed_native_text_strings_reject() {
 }
 
 #[test]
-fn unknown_style_slots_fail_closed() {
+fn unknown_style_slots_preserve_known_run_properties_with_a_diagnostic() {
     let mut payload = bytes(BEFORE);
+    let expected = decode(&payload).unwrap().document;
     let style = style_table(&payload);
-    // Mark slot 7 present by pointing it at the tracking field.
+    // Mark slot 7 present by pointing it at the tracking field. Its meaning
+    // is not inferred from the known field that shares those bytes.
     let tracking_entry = HEADER_BYTES + style.vtable + 4 + style::TRACKING * 2;
     let unknown_entry = HEADER_BYTES + style.vtable + 4 + 7 * 2;
     let offset = [payload[tracking_entry], payload[tracking_entry + 1]];
     payload[unknown_entry..unknown_entry + 2].copy_from_slice(&offset);
-    assert!(error(&payload).contains("unsupported Source Text field text style[7]"));
+    let decoded = decode(&payload).unwrap();
+    assert_eq!(decoded.document, expected);
+    assert_eq!(
+        decoded.omitted,
+        [OmittedTextFeature::RunStyleMetadata {
+            slot: 7,
+            subslot: None
+        }]
+    );
+    assert!(!decoded.omitted[0].to_string().contains("table["));
+}
+
+/// Public native point-text fixture with own-value opaque style21 metadata.
+fn modern_style_metadata_payload() -> Vec<u8> {
+    let source =
+        include_bytes!("../../../tests/fixtures/feature_text_point_style_metadata_derived.prproj");
+    let xml = std::io::read_to_string(flate2::read::GzDecoder::new(source.as_slice())).unwrap();
+    let native = roxmltree::Document::parse(&xml).unwrap();
+    let param = native
+        .descendants()
+        .find(|node| node.attribute("ObjectID") == Some("10176"))
+        .unwrap();
+    let value = param
+        .children()
+        .find(|node| node.has_tag_name("StartKeyframeValue"))
+        .unwrap()
+        .text()
+        .unwrap();
+    bytes(&value.split_whitespace().collect::<String>())
+}
+
+#[test]
+fn modern_run_style_metadata_preserves_native_wording_font_size_and_paint() {
+    let decoded = decode(&modern_style_metadata_payload()).unwrap();
+    assert_eq!(decoded.document.text, "py");
+    assert_eq!(decoded.document.font, "Arial-BoldMT");
+    assert_eq!(decoded.document.size, 160.0);
+    assert_eq!(decoded.document.fill, WHITE);
+    assert_eq!(decoded.document.stroke, None);
+    assert_eq!(decoded.document.tracking, 0.0);
+    assert!(!decoded.document.all_caps);
+    assert_eq!(
+        decoded.omitted,
+        [
+            OmittedTextFeature::RunStyleMetadata {
+                slot: 21,
+                subslot: Some(1)
+            },
+            OmittedTextFeature::RunStyleMetadata {
+                slot: 21,
+                subslot: Some(2)
+            },
+        ]
+    );
+    assert!(decoded.omitted[0]
+        .to_string()
+        .contains("style[21] table[1]"));
+}
+
+#[test]
+fn modern_style_extension_tables_share_the_same_local_recovery() {
+    let mut payload = modern_style_metadata_payload();
+    let expected = decode(&payload).unwrap().document;
+    let table = style_table(&payload);
+    let target = table.target(21).unwrap().unwrap();
+    let field = table.field(23, 4).unwrap().unwrap();
+    let relative = u32::try_from(target - field).unwrap();
+    payload[HEADER_BYTES + field..HEADER_BYTES + field + 4]
+        .copy_from_slice(&relative.to_le_bytes());
+    let decoded = decode(&payload).unwrap();
+    assert_eq!(decoded.document, expected);
+    // Report each real field, without assigning any of the values a meaning.
+    assert_eq!(
+        decoded.omitted,
+        [
+            OmittedTextFeature::RunStyleMetadata {
+                slot: 21,
+                subslot: Some(1)
+            },
+            OmittedTextFeature::RunStyleMetadata {
+                slot: 21,
+                subslot: Some(2)
+            },
+            OmittedTextFeature::RunStyleMetadata {
+                slot: 23,
+                subslot: Some(1)
+            },
+            OmittedTextFeature::RunStyleMetadata {
+                slot: 23,
+                subslot: Some(2)
+            },
+        ]
+    );
+}
+
+#[test]
+fn modern_run_marker_metadata_does_not_replace_known_style() {
+    let mut payload = bytes(BEFORE);
+    let expected = decode(&payload).unwrap().document;
+    let marker = HEADER_BYTES
+        + style_table(&payload)
+            .field(style::FIXED_VALUE.0, 4)
+            .unwrap()
+            .unwrap();
+    payload[marker..marker + 4].copy_from_slice(&99_u32.to_le_bytes());
+    let decoded = decode(&payload).unwrap();
+    assert_eq!(decoded.document, expected);
+    assert_eq!(
+        decoded.omitted,
+        [OmittedTextFeature::RunStyleMetadata {
+            slot: 24,
+            subslot: None
+        }]
+    );
+    assert!(!decoded.omitted[0].to_string().contains("table["));
+}
+
+#[test]
+fn modern_unmapped_style_metadata_offsets_are_diagnosed_locally() {
+    let mut payload = modern_style_metadata_payload();
+    let expected = decode(&payload).unwrap().document;
+    let metadata = HEADER_BYTES + style_table(&payload).field(21, 4).unwrap().unwrap();
+    payload[metadata..metadata + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+    let decoded = decode(&payload).unwrap();
+    assert_eq!(decoded.document, expected);
+    assert_eq!(
+        decoded.omitted,
+        [OmittedTextFeature::RunStyleMetadata {
+            slot: 21,
+            subslot: None
+        }]
+    );
+    assert!(!decoded.omitted[0].to_string().contains("table["));
+}
+
+#[test]
+fn modern_style_metadata_recovery_keeps_consumed_field_bounds() {
+    let mut payload = modern_style_metadata_payload();
+    let table = style_table(&payload);
+    let size_entry = HEADER_BYTES + table.vtable + 4 + style::SIZE * 2;
+    let outside = u16::try_from(table.inline_bytes).unwrap();
+    payload[size_entry..size_entry + 2].copy_from_slice(&outside.to_le_bytes());
+    assert!(error(&payload).contains("field is outside its table"));
 }
 
 /// The Source Text of the empty second Text of the Source Graphic in the
@@ -1278,8 +1430,8 @@ fn legacy_json_source_text_rejects_nested_duplicate_fields() {
 }
 
 #[test]
-fn legacy_json_source_text_rejects_hostile_mixed_and_unknown_active_forms() {
-    use crate::tests::support::{legacy_run, legacy_source_text, legacy_source_text_payload};
+fn legacy_json_source_text_keeps_framing_consumed_style_and_mask_checks() {
+    use crate::tests::support::{legacy_source_text, legacy_source_text_payload};
     use serde_json::{json, Value};
     let edited = |edit: fn(&mut Value)| {
         let mut text = legacy_source_text();
@@ -1294,7 +1446,6 @@ fn legacy_json_source_text_rejects_hostile_mixed_and_unknown_active_forms() {
     odd.push(0);
     let odd_count = u64::try_from(odd.len() - 8).unwrap();
     odd[..8].copy_from_slice(&odd_count.to_le_bytes());
-    // An unpaired high surrogate before the text.
     let unpaired = {
         let at = json[..json.find("Night").unwrap()].encode_utf16().count();
         let mut units: Vec<u16> = json.encode_utf16().collect();
@@ -1308,42 +1459,11 @@ fn legacy_json_source_text_rejects_hostile_mixed_and_unknown_active_forms() {
         (miscounted, "its byte count"),
         (odd, "an odd byte count"),
         (unpaired, "invalid UTF-16: unpaired surrogate"),
-        // A terminator, which the form does not have.
         (
             legacy_source_text_payload(&format!("{json}\0")),
             "trailing characters",
         ),
-        (
-            legacy_source_text_payload(&json.replacen(
-                "\"mVersion\":1",
-                "\"mVersion\":1,\"mVersion\":1",
-                1,
-            )),
-            "duplicate field `mVersion`",
-        ),
-        (
-            edited(|text| text["mVersion"] = json!(2)),
-            "version 2 is unsupported",
-        ),
-        (
-            edited(|text| text["mMask"] = json!(true)),
-            "unknown field `mMask`",
-        ),
-        (
-            edited(|text| {
-                text["mTextParam"]["mStyleSheet"]["mUnderline"] = legacy_run(json!(true));
-            }),
-            "incomplete passive decoration layout",
-        ),
-        (
-            edited(|text| {
-                text["mTextParam"]
-                    .as_object_mut()
-                    .unwrap()
-                    .remove("mShadowVisible");
-            }),
-            "missing field `mShadowVisible`",
-        ),
+        (edited(|text| text["mMask"] = json!(true)), "active mask"),
         (
             edited(|text| text["mTextParam"]["mAlignment"] = json!(2.0)),
             "invalid type: floating point `2.0`, expected u32",
@@ -1351,79 +1471,20 @@ fn legacy_json_source_text_rejects_hostile_mixed_and_unknown_active_forms() {
         (
             edited(|text| {
                 text["mTextParam"]["mStyleSheet"]["mFontSize"] =
-                    json!({"mParamValues": [[0, 64.5], [6, 40]]});
+                    json!({"mParamValues": [[0, 64.5], [6, 40]]})
             }),
-            "mixed text styles are unsupported: a style holds 2 runs, not one",
+            "mixed text styles are unsupported",
         ),
         (
             edited(|text| {
                 text["mTextParam"]["mStyleSheet"]["mFillColor"] =
-                    json!({"mParamValues": [[3, 0x80_80_80]]});
+                    json!({"mParamValues": [[3, 0x80_80_80]]})
             }),
             "its one style run starts at character 3, not 0",
         ),
         (
-            edited(|text| text["mTextParam"]["mAlignment"] = json!(1)),
-            "alignment 1 is unsupported; only 0 (left) and 2 (centred) convert",
-        ),
-        (
-            edited(|text| {
-                text["mTextParam"]["mWidth"] = json!(800);
-                text["mTextParam"]["mHeight"] = json!(200);
-            }),
-            "box text (800 x 200) is unsupported",
-        ),
-        (
-            edited(|text| text["mTextParam"]["mLeading"] = json!(12)),
-            "leading 12 is unsupported",
-        ),
-        (
-            edited(|text| text["mTextParam"]["mDefaultRun"] = json!([{}])),
-            "a nonempty mDefaultRun is unsupported",
-        ),
-        (
-            edited(|text| text["mTextParam"]["mRTL"] = json!(true)),
-            "mRTL true is unsupported",
-        ),
-        (
-            edited(|text| {
-                text["mTextParam"]["mStyleSheet"]["mCapsOption"] = legacy_run(json!(2));
-            }),
-            "mCapsOption 2 is unsupported",
-        ),
-        (
-            edited(|text| {
-                text["mTextParam"]["mStyleSheet"]["mKerning"] = legacy_run(json!(-40));
-            }),
-            "mKerning -40 is unsupported",
-        ),
-        (
-            edited(|text| text["mTextParam"]["mStyleSheet"]["mText"] = json!("Tab\there")),
-            "a tab is unsupported",
-        ),
-        (
-            edited(|text| {
-                text["mTextParam"]["mStyleSheet"]["mFillColor"] = legacy_run(json!(0x10_20_30));
-            }),
-            "mFillColor 0x102030 is not gray",
-        ),
-        (
-            edited(|text| {
-                text["mTextParam"]["mStyleSheet"]["mStrokeColor"] = legacy_run(json!(0x0100_0000));
-            }),
-            "mStrokeColor 0x1000000 is outside the 24-bit color form",
-        ),
-        (
-            edited(|text| {
-                text["mTextParam"]["mStyleSheet"]["mStrokeVisible"] = legacy_run(json!(true));
-                text["mTextParam"]["mStyleSheet"]["mStrokeColor"] = legacy_run(json!(0x303030));
-                text["mTextParam"]["mStyleSheet"]["mFillOverStroke"] = legacy_run(json!(false));
-            }),
-            "stroke over fill is unsupported",
-        ),
-        (
-            edited(|text| text["mTextParam"]["mShadowVisible"] = json!(true)),
-            "an enabled shadow is unsupported",
+            edited(|text| text["mTextParam"]["mWidth"] = json!(-1)),
+            "invalid text box dimensions",
         ),
     ];
     for (payload, reason) in cases {

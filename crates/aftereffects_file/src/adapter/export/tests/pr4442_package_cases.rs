@@ -571,10 +571,7 @@ fn primed_mp3_audio_is_prepared_as_staged_pcm_wave() {
     let path = root.path().join("source.mp3");
     fs::write(
         &path,
-        include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../media_transcode/tests/fixtures/ae_primed_mono.mp3"
-        )),
+        include_bytes!("../../../../../media_transcode/tests/fixtures/ae_primed_mono.mp3"),
     )
     .unwrap();
     let archive_path = archive_with_assets(

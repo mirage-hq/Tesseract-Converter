@@ -363,10 +363,6 @@ pub(super) fn read_nest(
             (vec![effect], 0, true, split.has_active_nest_geometry2())
         } else {
             ensure!(
-                placement.crop.is_default() && placement.track_matte.is_none(),
-                "{identity}: effects on a nested sequence occurrence with masks are not converted"
-            );
-            ensure!(
                 !split.has_active_nest_corner_pin(),
                 "{identity}: active Corner Pin on a nested sequence occurrence is not converted: the picture Group has no fixed native canvas bounds; occurrence omitted to preserve coverage"
             );
@@ -388,6 +384,18 @@ pub(super) fn read_nest(
                 placement.linear_wipe.is_some(),
                 &mut occurrence_effect_omissions,
             );
+            // The existing picture stage carries supported effects and keys;
+            // the outer owner retains its independent mask/matte coverage.
+            // Unsupported optional effects have their own field-local reports.
+            if !effects.is_empty()
+                && (!placement.crop.is_default() || placement.track_matte.is_some())
+            {
+                crate::approximate(
+                    &mut occurrence_effect_omissions,
+                    identity,
+                    "nested effects retain editable controls before outer coverage; native effect/mask order and edge sampling may differ",
+                );
+            }
             (effects, above_mask, false, false)
         }
     } else {

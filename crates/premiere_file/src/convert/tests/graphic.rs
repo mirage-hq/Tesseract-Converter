@@ -1088,7 +1088,7 @@ fn multi_text_authored_keys_record_each_written_owner_after_group_success() {
         canvas["activeRange"]["duration"] = json!(2000);
         let mut candidate = group.clone();
         if !retained {
-            // The first owner's tracks must not count if another child fails.
+            // A missing-font sibling must not discard the first owner or its keys.
             candidate["layers"][1]["sourceText"]["fontStyle"] = json!("Unpackaged");
         }
         wire["composition"]["layers"] = json!([candidate, canvas]);
@@ -1104,16 +1104,141 @@ fn multi_text_authored_keys_record_each_written_owner_after_group_success() {
             &mut omissions,
         )
         .unwrap();
-        assert_eq!(exported.project.is_some(), retained);
+        assert!(exported.project.is_some(), "{omissions:?}");
         for entry in &entries {
             let target = serde_json::from_value(entry["target"].clone()).unwrap();
             assert_eq!(
                 exported.written.contains(&target),
-                retained,
+                retained || entry["target"]["layerId"] == 9,
                 "{omissions:?}"
             );
         }
     }
+}
+
+#[test]
+fn native_derived_missing_font_child_keeps_graphic_placement_and_editable_keys() {
+    // Pinned Premiere 26.5.1 G-probe derivative, item 58 at 2–4 s.
+    // The missing-font edit is structural evidence, not a new Adobe save.
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/feature_multi_text_transform_keys_26_5_derived.prproj");
+    let (source, _) = PrProjectFile::load(&path).unwrap();
+    let sequence = source.single_sequence().unwrap();
+    assert_eq!(
+        sequence.id.as_deref(),
+        Some("c8acf9c1-34b2-4086-9f55-d528950a7059")
+    );
+    let wire = premiere_to_tesseract(
+        sequence,
+        &source.media,
+        &crate::tesseract_output::asset_ids_in_order(sequence, &source.media),
+        &mut Vec::new(),
+    )
+    .unwrap()
+    .to_json_value()
+    .unwrap();
+    let group = wire["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Group" && layer["playback"]["inputRange"]["start"] == 2000)
+        .unwrap();
+    assert_eq!(group["layers"][0]["sourceText"]["text"], "py");
+    assert_eq!(group["layers"][1]["sourceText"]["text"], "ok");
+    let owner = group["layers"][0]["id"].as_u64().unwrap();
+    let mut edited = wire.clone();
+    let group = edited["composition"]["layers"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|layer| layer["type"] == "Group" && layer["playback"]["inputRange"]["start"] == 2000)
+        .unwrap();
+    group["layers"][1]["sourceText"]["fontStyle"] = json!("Unpackaged");
+    // Keep this native graphic and the independent imported canvas, not video.
+    edited["composition"]["layers"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|layer| layer["type"] != "Video");
+    let document = EditableFxCompositionDocument::from_json_value(edited).unwrap();
+    let mut omissions = Vec::new();
+    let exported = crate::convert::lower_document(
+        &document,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        FrameRate::Fps30,
+        &mut omissions,
+    )
+    .unwrap();
+    let project = exported.project.unwrap();
+    let graphic = project
+        .single_sequence()
+        .unwrap()
+        .video_items()
+        .filter_map(PrVideoItem::graphic)
+        .find(|graphic| graphic.start_ticks == 2 * TICKS)
+        .unwrap_or_else(|| panic!("native-derived group retained: {omissions:?}"));
+    assert_eq!(graphic.end_ticks, 4 * TICKS);
+    assert_eq!(graphic.objects.len(), 1);
+    let text = graphic.text();
+    assert_eq!(text.document.text, "py");
+    assert_eq!(text.document.font, "Arial-BoldMT");
+    assert_eq!(text.document.size, 160.0);
+    assert_eq!(
+        text.animations
+            .iter()
+            .find(|keys| matches!(keys, PrPropertyAnimation::Opacity(_)))
+            .unwrap(),
+        &PrPropertyAnimation::Opacity(vec![
+            scalar(EXPORT_IN + TICKS / 2, 100.0, PrKeyframeEasing::Linear),
+            scalar(EXPORT_IN + 3 * TICKS / 2, 40.0, PrKeyframeEasing::Linear),
+        ])
+    );
+    assert!(graphic
+        .vector_motion
+        .as_ref()
+        .is_some_and(|motion| !motion.animations.is_empty()));
+    assert!(exported.written.contains(&PropertyTarget::layer(
+        LayerId::new(owner),
+        PropType::Opacity
+    )));
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("retained.prproj");
+    PremiereProjectXml::new(&project)
+        .unwrap()
+        .write_new(&path)
+        .unwrap();
+    let (reopened, _) = PrProjectFile::load(&path).unwrap();
+    let written = reopened
+        .single_sequence()
+        .unwrap()
+        .video_items()
+        .filter_map(PrVideoItem::graphic)
+        .find(|graphic| graphic.start_ticks == 2 * TICKS)
+        .unwrap();
+    assert_eq!(written.objects.len(), 1);
+    assert_eq!(written.text().document, text.document);
+    assert_eq!(written.text().transform, text.transform);
+    assert_eq!(written.text().animations.len(), text.animations.len());
+    for animation in &text.animations {
+        assert!(written.text().animations.contains(animation));
+    }
+    let mut motion = graphic.vector_motion.clone().unwrap();
+    let mut read_motion = written.vector_motion.clone().unwrap();
+    let keys = std::mem::take(&mut motion.animations);
+    let read_keys = std::mem::take(&mut read_motion.animations);
+    assert_eq!(read_motion, motion);
+    assert_eq!(read_keys.len(), keys.len());
+    for animation in keys {
+        assert!(read_keys.contains(&animation));
+    }
+    assert!(
+        omissions
+            .iter()
+            .any(|report| report.reason.contains("Unpackaged")
+                && report.reason.contains("not packaged")),
+        "{omissions:?}"
+    );
 }
 
 /// Export a document whose group 8 (1 s long) holds only text layer 9, with
@@ -3461,10 +3586,6 @@ fn graphic_shapes_premiere_cannot_hold_are_omitted_on_export() {
             child(&[("activeRange", json!({"start": 0, "duration": 500}))]),
             "its shape layer must span the group",
         ),
-        (
-            child(&[("shape", rounded(10)["shape"].clone())]),
-            "layer 11 (\"Box\"): unsupported conversion: rounded shape path corners are unsupported",
-        ),
     ] {
         assert_graphic_omitted(
             vec![group],
@@ -3472,6 +3593,35 @@ fn graphic_shapes_premiere_cannot_hold_are_omitted_on_export() {
             &format!("graphic group was not exported: {reason}"),
         );
     }
+    let mut group = child(&[("shape", rounded(10)["shape"].clone())]);
+    let mut sibling = sibling_text();
+    sibling["parent"] = json!(8);
+    group["layers"].as_array_mut().unwrap().push(sibling);
+    let (project, omissions) = export_over_canvas(vec![group], Vec::new());
+    let project = project.unwrap();
+    let graphics = project
+        .single_sequence()
+        .unwrap()
+        .video_items()
+        .filter_map(PrVideoItem::graphic)
+        .collect::<Vec<_>>();
+    assert_eq!(graphics.len(), 1, "{omissions:?}");
+    assert_eq!(part_names(&graphics[0].objects), "Title Sibling");
+    let documents: Vec<_> = graphics[0]
+        .objects
+        .iter()
+        .filter_map(|object| match object {
+            PrGraphicObject::Text(text) => Some(text.document.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(documents, ["Keys", "Stays"]);
+    assert!(
+        omissions.iter().any(|report| report
+            .reason
+            .contains("rounded shape path corners are unsupported")),
+        "{omissions:?}"
+    );
     let (project, omissions) = export_over_canvas(
         vec![child(&[]), sibling_text()],
         vec![entry_on(
@@ -3488,12 +3638,12 @@ fn graphic_shapes_premiere_cannot_hold_are_omitted_on_export() {
             .video_items()
             .filter_map(PrVideoItem::graphic)
             .count(),
-        1
+        2
     );
     assert!(
         omissions.iter().any(|omission| omission.record == "layer 8 (\"Graphic\")"
             && omission.reason
-                == "graphic group was not exported: layer 11 (\"Box\"): unsupported conversion: keyed graphic shapes are unsupported"),
+                == "layer 11 (\"Box\") was not exported: unsupported conversion: keyed graphic shapes are unsupported"),
         "{omissions:?}"
     );
 }
@@ -4308,7 +4458,16 @@ fn point_text_source_keys_hold_leading_and_alignment_together_and_export_their_m
         FrameRate::Fps30,
         &mut losses,
     );
-    assert!(rejected.is_err());
+    let retained = rejected.unwrap();
+    let text = retained
+        .single_sequence()
+        .unwrap()
+        .video_items()
+        .find_map(PrVideoItem::graphic)
+        .unwrap()
+        .text();
+    assert!(text.source_text_keys.is_empty());
+    assert!(!text.document.text.is_empty());
     assert!(
         losses.iter().any(|loss| loss
             .reason
@@ -4855,7 +5014,7 @@ fn a_static_shadow_exports_on_every_source_text_key() {
 }
 
 #[test]
-fn source_text_tracks_premiere_cannot_hold_omit_the_graphic() {
+fn source_text_tracks_premiere_cannot_hold_keep_base_text_and_motion() {
     // The FX document itself refuses a string or boolean key with continuous
     // easing, so only numeric and color tracks can arrive with one.
     let text = valued_entry(
@@ -4887,6 +5046,11 @@ fn source_text_tracks_premiere_cannot_hold_omit_the_graphic() {
             "transform": {"anchorPoint": [0, 0], "position": [960, 540], "scale": [100, 100], "rotation": 0, "opacity": 100},
             "sourceText": {"text": "Keys", "fontFamily": "Inter-Bold", "fontStyle": "", "fontSize": 80, "fillColor": [1, 1, 1, 1]},
         });
+        let mut entries = entries;
+        entries.push(entry(
+            "rotation",
+            &[(0, 0.0, "linear"), (500, 45.0, "linear")],
+        ));
         wire["composition"]["dynamics"] = json!({ "entries": entries });
         let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
         let mut omissions = Vec::new();
@@ -4898,18 +5062,79 @@ fn source_text_tracks_premiere_cannot_hold_omit_the_graphic() {
             FrameRate::Fps30,
             &mut omissions,
         );
-        // The text was the only layer, so its omission ends the export.
-        assert!(result.is_err(), "{reason}");
-        let expected = format!("text layer was not exported: unsupported conversion: {reason}");
+        let project = result.unwrap_or_else(|error| panic!("{error}: {omissions:?}"));
+        let graphic = project
+            .single_sequence()
+            .unwrap()
+            .video_items()
+            .find_map(PrVideoItem::graphic)
+            .unwrap();
+        let text = graphic.text();
+        assert_eq!(text.document.text, "Keys");
+        assert_eq!(text.document.size, 80.0);
+        assert_eq!(text.document.font, "Inter-Bold");
+        assert!(text.source_text_keys.is_empty());
+        assert_eq!(
+            text.animations,
+            [PrPropertyAnimation::Rotation(vec![
+                scalar(EXPORT_IN, 0.0, PrKeyframeEasing::Linear),
+                scalar(EXPORT_IN + TICKS / 2, 45.0, PrKeyframeEasing::Linear),
+            ])]
+        );
+        let expected = format!("Source Text animation was not exported; keeping base Source Text: unsupported conversion: {reason}");
         assert!(
             omissions
                 .iter()
-                .any(|omission| omission.scope == OmissionScope::Occurrence
+                .any(|omission| omission.scope == OmissionScope::Feature
                     && omission.record == "layer 9 (\"Title\")"
                     && omission.reason == expected),
             "{reason}: {omissions:?}"
         );
     }
+}
+
+#[test]
+fn optional_stroke_width_keys_keep_base_text_and_independent_motion() {
+    let mut text = root_title();
+    text["sourceText"]["applyStroke"] = json!(true);
+    text["sourceText"]["strokeColor"] = json!([0.0, 0.0, 0.0, 1.0]);
+    text["sourceText"]["strokeWidth"] = json!(2.0);
+    text["animators"] = json!([{"id": 90002, "strokeWidth": 0.0}]);
+    let mut width = entry("strokeWidth", &[(0, 0.0, "hold"), (500, -3.0, "hold")]);
+    width["target"] =
+        json!({"kind": "fxItemProperty", "itemId": 90002, "propertyName": "strokeWidth"});
+    let (project, omissions) = export_over_canvas(
+        vec![text],
+        vec![
+            width,
+            entry("opacity", &[(0, 100.0, "linear"), (500, 40.0, "linear")]),
+        ],
+    );
+    let project = project.unwrap_or_else(|error| panic!("{error}: {omissions:?}"));
+    let text = project
+        .single_sequence()
+        .unwrap()
+        .video_items()
+        .find_map(PrVideoItem::graphic)
+        .unwrap()
+        .text();
+    assert_eq!(text.document.text, "Keys");
+    // The existing mapping writes half the FX stroke width on either side.
+    assert_eq!(text.document.stroke.unwrap().width, 1.0);
+    assert!(text.source_text_keys.is_empty());
+    assert_eq!(
+        text.animations,
+        [PrPropertyAnimation::Opacity(vec![
+            scalar(EXPORT_IN, 100.0, PrKeyframeEasing::Linear),
+            scalar(EXPORT_IN + TICKS / 2, 40.0, PrKeyframeEasing::Linear),
+        ])]
+    );
+    assert!(
+        omissions.iter().any(|report| report
+            .reason
+            .contains("total stroke width must be finite and nonnegative")),
+        "{omissions:?}"
+    );
 }
 
 /// A clip Motion like a Source Graphic placement's, with unequal axes.
@@ -5633,6 +5858,17 @@ fn a_missing_font_mask_takes_its_composite_but_keeps_outside_siblings() {
         text.mask_source = INVERTED;
     }
     let square = |name| square_object(name, [960.0, 540.0], 200.0, [0, 96, 255], None);
+    let mut flat = imported_graphic_group(vec![square("Outside"), text.clone(), square("T")]);
+    flat["layers"][1]["sourceText"]["fontFamily"] = json!("Unpackaged");
+    flat["layers"][1]["sourceText"]["fontStyle"] = json!("Regular");
+    let (graphics, omissions) = exported_and_read(vec![flat, sibling_text()]);
+    assert_eq!(exported_names(&graphics), ["Outside"], "{omissions:?}");
+    assert!(
+        omissions.iter().any(|report| report
+            .reason
+            .contains("the objects that it masks are not exported either")),
+        "{omissions:?}"
+    );
     let mut root = imported_graphic_group(vec![
         subgroup("G", vec![text, square("T")]),
         square("Outside"),

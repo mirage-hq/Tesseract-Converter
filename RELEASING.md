@@ -26,8 +26,8 @@ publishing.
 
 The newly included reference-rendering integration helpers are
 pending a separate publication review. **Do not sync them to a public repository
-or publicly release a revision containing them before that review is complete.** The staging
-inventory, MIT license and ZIP checks are not publication approval. Checked-in
+or publicly release a revision containing them before that review is complete.** The
+MIT license and ZIP checks are not publication approval. Checked-in
 fixtures and references need no Asset API retrieval, and this hold does not
 introduce a separate tooling directory; see the [scope notice](README.md#conversion-test-tooling).
 The procedure below is available for authorized non-public testing, or after

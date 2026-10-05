@@ -547,10 +547,8 @@ mod imp {
 
         #[test]
         fn inspection_reports_non_square_pixels_and_native_display_matrix() {
-            let non_square = include_bytes!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../premiere_file/tests/fixtures/video-nonsquare.mp4"
-            ));
+            let non_square =
+                include_bytes!("../../premiere_file/tests/fixtures/video-nonsquare.mp4");
             let result = super::inspect(
                 std::io::Cursor::new(non_square),
                 non_square.len() as u64,

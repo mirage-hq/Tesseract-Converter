@@ -646,10 +646,8 @@ fn inspect_h264(
     let configuration = AvcDecoderConfigurationRecord::try_from(extradata)
         .map_err(|e| unsupported(format!("invalid H.264 decoder configuration: {e:?}")))?;
     ensure!(
-        extradata[4] & 0xfc == 0xfc
-            && extradata[5] & 0xe0 == 0xe0
-            && configuration.length_size_minus_one() != 2,
-        "invalid H.264 decoder configuration reserved fields or NAL length size"
+        configuration.length_size_minus_one() != 2,
+        "unsupported H.264 NAL length size"
     );
     let mut cursor = 5usize;
     let count = usize::from(extradata[cursor] & 0x1f);
@@ -758,11 +756,8 @@ fn inspect_h264(
         ensure!(
             matches!(extradata[1], 100 | 110 | 122 | 144)
                 && extension.len() == 4
-                && extension[0] & 0xfc == 0xfc
                 && extension[0] & 3 == 1
-                && extension[1] & 0xf8 == 0xf8
                 && extension[1] & 7 == bit_depth - 8
-                && extension[2] & 0xf8 == 0xf8
                 && extension[2] & 7 == bit_depth - 8
                 && extension[3] == 0,
             "invalid or unsupported H.264 decoder configuration extension"

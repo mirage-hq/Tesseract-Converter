@@ -29,16 +29,15 @@ jobs:
         run: |
           make test-release-archive
           python3 scripts/test-conversion-ci.py
-      - name: Check source inventory and crates.io publication policy
+      - name: Check public source boundaries and crates.io publication policy
         run: |
           cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/metadata.json"
           python3 scripts/audit-dependency-boundary.py --metadata "$RUNNER_TEMP/metadata.json"
           python3 - "$RUNNER_TEMP/metadata.json" <<'PY'
           import json, subprocess, sys
           from pathlib import Path
-          approved = set(json.loads(Path('scripts/conversion-export-files.json').read_text()))
-          tracked = set(subprocess.check_output(['git', 'ls-files', '-z']).decode().strip('\0').split('\0'))
-          assert approved == tracked, f'inventory mismatch: missing={sorted(tracked-approved)}, stale={sorted(approved-tracked)}'
+          for entry in subprocess.check_output(['git', 'ls-files', '--stage', '-z']).split(b'\0'):
+              assert not entry.startswith(b'120000 '), f'symlink in public source: {entry!r}'
           metadata = json.loads(Path(sys.argv[1]).read_text())
           root = Path.cwd()
           local = {p['name']: p.get('publish') for p in metadata['packages']

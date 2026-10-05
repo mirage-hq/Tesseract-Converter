@@ -370,10 +370,8 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
-    const NATIVE_MEDIA: &[u8] = include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../premiere_file/tests/fixtures/feature_rate_24_blue.mp4"
-    ));
+    const NATIVE_MEDIA: &[u8] =
+        include_bytes!("../../../../../../premiere_file/tests/fixtures/feature_rate_24_blue.mp4");
 
     #[test]
     fn mp4_public_p030_profile_retains_complete_final_frame() {
@@ -535,10 +533,8 @@ mod tests {
 
     #[test]
     fn mp4_b_frames_and_nonzero_native_edit_origin_use_the_displayed_clock() {
-        let bytes = include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../premiere_file/tests/fixtures/video-30fps-10s.mp4"
-        ));
+        let bytes =
+            include_bytes!("../../../../../../premiere_file/tests/fixtures/video-30fps-10s.mp4");
         let raw = inspect::inspect(Cursor::new(bytes), bytes.len() as u64, true).unwrap();
         assert_ne!(raw.packets[0].pts, Some(0));
         assert!(presentation(&raw).is_err());

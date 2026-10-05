@@ -42,8 +42,8 @@ approval. Mocked/offline test success is not evidence that an integration ran.
 
 **Public distribution remains on hold for the newly moved integration tooling.**
 Do not sync these helpers to a public repository or publicly release a revision
-containing them until the separate publication review is complete. MIT licensing,
-the export inventory and green tests do not clear that review. Checked-in
+containing them until the separate publication review is complete. MIT licensing
+and green tests do not clear that review. Checked-in
 fixtures and references need no Asset API retrieval.
 See the [publication notice](README.md#conversion-test-tooling).
 
@@ -77,8 +77,10 @@ and record source provenance and hashes. Existing native fixtures also require
 this audit before the repository becomes public.
 
 Update the [format support documentation](docs/formats/README.md) when supported
-features, losses or limitations change. Keep
-`scripts/conversion-export-files.json` in sync with added or removed files. See
+features, losses or limitations change. The entire tracked converter workspace
+is synchronized to the public repository, including additions and deletions;
+keep only distributable sources and fixtures here. No per-file export list is
+required. See
 [RELEASING.md](RELEASING.md) for automatic and manual binary releases. The
 workspace packages are not published to crates.io.
 

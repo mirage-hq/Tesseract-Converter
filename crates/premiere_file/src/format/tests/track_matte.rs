@@ -298,6 +298,163 @@ fn keyed_nest_xml(motion: Option<&str>) -> String {
 }
 
 #[test]
+fn a_nested_track_matte_keeps_its_base_without_optional_posterize_time() {
+    let effect = r#"<VideoFilterComponent ObjectID="300"><Component><Params><Param Index="0" ObjectRef="301"/></Params><ID>3</ID><DisplayName>Posterize Time</DisplayName><Bypass>false</Bypass><Intrinsic>false</Intrinsic></Component><MatchName>AE.ADBE Posterize Time</MatchName></VideoFilterComponent><VideoComponentParam ObjectID="301"><Name>Frame Rate</Name><ParameterControlType>2</ParameterControlType><StartKeyframe>0,8.,0,0,0,0,0,0</StartKeyframe></VideoComponentParam>"#;
+    for components in [
+        r#"<Component Index="0" ObjectRef="130"/><Component Index="1" ObjectRef="300"/>"#,
+        r#"<Component Index="0" ObjectRef="300"/><Component Index="1" ObjectRef="130"/>"#,
+    ] {
+        let xml =
+            keyed_nest_xml(None).replace(r#"<Component Index="0" ObjectRef="130"/>"#, components);
+        let xml = with_records(&xml, effect);
+        let (project, omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+        assert!(
+            omissions
+                .iter()
+                .all(|item| item.scope != OmissionScope::Occurrence),
+            "{omissions:?}"
+        );
+        assert!(
+            omissions
+                .iter()
+                .any(|item| item.scope == OmissionScope::Feature
+                    && item.reason.contains("Posterize Time")),
+            "{omissions:?}"
+        );
+        let outer = &project.sequences[0];
+        let nest = outer.nest_occurrences().next().unwrap();
+        assert_eq!(nest.id.as_deref(), Some("VideoClipTrackItem:110"));
+        assert_eq!(nest.timeline_ticks(), 0..2 * TICKS);
+        assert_eq!(
+            nest.track_matte,
+            Some(PrTrackMatte {
+                track_index: 1,
+                channel: PrMatteChannel::Luma
+            })
+        );
+        assert!(nest.effects.is_empty());
+        assert_eq!(nest.sequence.video_occurrences().count(), 1);
+        assert_eq!(
+            outer.video_tracks[1].clip(0).id.as_deref(),
+            Some("VideoClipTrackItem:120")
+        );
+    }
+}
+
+#[test]
+fn a_masked_nest_keeps_mapped_effect_keys_children_and_concealed_provider() {
+    let blur = blur(400).replace(
+        "<IsTimeVarying>false</IsTimeVarying><ParameterControlType>8</ParameterControlType><StartKeyframe>-91445760000000000,25.,0,0,0,0,0,0</StartKeyframe>",
+        &format!("<IsTimeVarying>true</IsTimeVarying><ParameterControlType>8</ParameterControlType><StartKeyframe>-91445760000000000,25.,0,0,0,0,0,0</StartKeyframe><Keyframes>0,25.,0,0,0,0,0,0;{TICKS},50.,0,0,0,0,0,0;</Keyframes>"),
+    );
+    let unknown = r#"<VideoFilterComponent ObjectID="500"><Component><DisplayName>Unknown</DisplayName><Bypass>false</Bypass><Intrinsic>false</Intrinsic></Component><MatchName>Own.Unsupported.Detail</MatchName></VideoFilterComponent>"#;
+    for components in [
+        r#"<Component Index="0" ObjectRef="130"/><Component Index="1" ObjectRef="400"/><Component Index="2" ObjectRef="500"/>"#,
+        r#"<Component Index="0" ObjectRef="500"/><Component Index="1" ObjectRef="400"/><Component Index="2" ObjectRef="130"/>"#,
+    ] {
+        let xml =
+            keyed_nest_xml(None).replace(r#"<Component Index="0" ObjectRef="130"/>"#, components);
+        let xml = with_records(&xml, &format!("{blur}{unknown}"));
+        let (project, mut omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+        let outer = &project.sequences[0];
+        let nest = outer
+            .nest_occurrences()
+            .next()
+            .unwrap_or_else(|| panic!("masked base retained: {omissions:?}"));
+        assert_eq!(nest.id.as_deref(), Some("VideoClipTrackItem:110"));
+        assert_eq!(nest.timeline_ticks(), 0..2 * TICKS);
+        assert_eq!(
+            nest.track_matte,
+            Some(PrTrackMatte {
+                track_index: 1,
+                channel: PrMatteChannel::Luma
+            })
+        );
+        assert_eq!(nest.sequence.video_occurrences().count(), 1);
+        assert_eq!(nest.effects.len(), 1);
+        assert_eq!(nest.effects[0].animations.len(), 1);
+        assert_eq!(
+            outer.video_tracks[1].items.len(),
+            2,
+            "provider and independent sibling"
+        );
+        assert!(
+            omissions
+                .iter()
+                .all(|note| note.scope != OmissionScope::Occurrence),
+            "{omissions:?}"
+        );
+        assert!(
+            omissions
+                .iter()
+                .any(|note| note.record == "VideoFilterComponent:500"
+                    && note.reason.contains("Own.Unsupported.Detail")),
+            "{omissions:?}"
+        );
+        assert!(
+            omissions
+                .iter()
+                .any(|note| note.record == "VideoClipTrackItem:110"
+                    && note.reason.contains("before outer coverage")),
+            "{omissions:?}"
+        );
+        let ids = crate::tesseract_output::asset_ids_in_order(outer, &project.media);
+        let document =
+            crate::convert::premiere_to_tesseract(outer, &project.media, &ids, &mut omissions)
+                .unwrap()
+                .to_json_value()
+                .unwrap();
+        let roots = document["composition"]["layers"].as_array().unwrap();
+        let consumer = roots
+            .iter()
+            .find(|layer| !layer["trackMatte"].is_null())
+            .unwrap();
+        assert_eq!(consumer["trackMatte"]["mode"], "luma");
+        let provider = roots
+            .iter()
+            .find(|layer| layer["id"] == consumer["trackMatte"]["layer"])
+            .unwrap();
+        assert_eq!(provider["type"], "Video");
+        assert_eq!(
+            provider["playback"]["inputRange"],
+            serde_json::json!({"start": 0, "duration": 2000})
+        );
+        assert_eq!(
+            roots
+                .iter()
+                .filter(|layer| layer["type"] == "Video")
+                .count(),
+            2
+        );
+        let stage = &consumer["layers"][0];
+        assert_eq!(stage["effects"][0]["effect"]["type"], "gaussianBlur");
+        assert_eq!(stage["effects"][0]["effect"]["blurriness"], 25.0);
+        assert!(stage["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|layer| layer["type"] == "Video"));
+        let guide = stage["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["id"] == stage["masks"][0]["layer"])
+            .unwrap();
+        assert_eq!(guide["rect"]["size"], serde_json::json!([1920.0, 1080.0]));
+        let entry = document["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["target"]["effectId"] == stage["effects"][0]["id"])
+            .unwrap();
+        assert_eq!(entry["target"]["paramName"], "blurriness");
+        assert_eq!(entry["animator"]["keyframes"][0]["layerTime"], 0);
+        assert_eq!(entry["animator"]["keyframes"][1]["layerTime"], 1000);
+        assert_eq!(entry["animator"]["keyframes"][1]["value"]["value"], 50.0);
+    }
+}
+
+#[test]
 fn a_nested_placement_keeps_its_track_matte_key() {
     let xml = keyed_nest_xml(None);
     let (project, omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
