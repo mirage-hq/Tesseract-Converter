@@ -330,12 +330,25 @@ fn native_scalar_keys(wire: &str, context: &str) -> Result<Vec<NativeScalarKeyfr
     Ok(native)
 }
 
-/// Read the exact static standalone Crop layout observed in pinned Adobe projects.
+/// A Crop's static rectangle or its exact single-edge animated equivalent.
+struct ReadCropComponent {
+    crop: PrStaticCrop,
+    cardinal_reveal: Option<PrLinearWipe>,
+}
+
+/// Read the bounded standalone Crop layouts observed in pinned Adobe projects.
+///
+/// One animated edge with every other edge and Edge Feather at zero is exactly
+/// a cardinal rectangular reveal: Left and Top anchor at the opposite frame
+/// edge, while Right and Bottom anchor at the source origin. Reusing the
+/// existing cardinal-guide transport preserves that geometry, effect boundary
+/// and source key clock. Mixed edges or feather would not be a Linear Wipe and
+/// stay unsupported.
 fn read_crop_component(
     graph: &Graph<'_>,
     reference: &Reference,
     from: &str,
-) -> Result<PrStaticCrop> {
+) -> Result<ReadCropComponent> {
     let crop = graph.follow::<VideoFilterComponent>(reference, from)?;
     let body = crop
         .value
@@ -367,6 +380,7 @@ fn read_crop_component(
         crop.identity
     );
     let mut values = [0.0; 5];
+    let mut animated_edge = None;
     let mut seen = BTreeSet::new();
     for param in &params.items {
         let record = graph.locate(param, &crop.identity)?;
@@ -401,51 +415,117 @@ fn read_crop_component(
             input.identity,
             spec.name
         );
-        ensure!(
-            input.value.is_time_varying.as_deref() == spec.is_time_varying
-                && input.value.keyframes.as_deref().is_none_or(str::is_empty),
-            "{}: animated or malformed Crop {} is unsupported",
-            input.identity,
-            spec.name
-        );
+        let keyframes = input.value.keyframes.as_deref().unwrap_or_default();
         if id == 5 {
+            ensure!(
+                input.value.is_time_varying.as_deref() == spec.is_time_varying
+                    && keyframes.is_empty(),
+                "{}: animated or malformed Crop Zoom is unsupported",
+                input.identity
+            );
             let zoom = bool_start(&input.value.start_keyframe, &input.identity)?;
             ensure!(!zoom, "{}: Crop Zoom is unsupported", input.identity);
             continue;
         }
-        // Static StartKeyframe is authored state. Native Crop records can retain
-        // a stale CurrentValue (Left=99 while the rendered StartKeyframe is 0).
+        // StartKeyframe is authored state. Native Crop records can retain a
+        // stale CurrentValue (Left=99 while the rendered StartKeyframe is 0).
         let value = scalar_start(&input.value.start_keyframe, &input.identity)?;
         let slot = if id == 6 { 4 } else { id - 1 };
         values[slot] = value;
+        if keyframes.is_empty() {
+            ensure!(
+                input.value.is_time_varying.as_deref() == spec.is_time_varying,
+                "{}: animated or malformed Crop {} is unsupported",
+                input.identity,
+                spec.name
+            );
+            continue;
+        }
+        ensure!(
+            id <= 4,
+            "{}: animated Crop {} is unsupported",
+            input.identity,
+            spec.name
+        );
+        ensure!(
+            input.value.is_time_varying.as_deref() != Some("false"),
+            "{}: Crop {} keys conflict with disabled IsTimeVarying",
+            input.identity,
+            spec.name
+        );
+        let keys = scalar_keys(keyframes, &input.identity)?;
+        ensure!(
+            (0.0..=100.0).contains(&value)
+                && keys.iter().all(|key| (0.0..=100.0).contains(&key.value)),
+            "{}: Crop {} animation must stay within 0..=100",
+            input.identity,
+            spec.name
+        );
+        ensure!(
+            animated_edge.replace((id, value, keys)).is_none(),
+            "{}: multiple animated Crop edges are unsupported",
+            crop.identity
+        );
     }
     ensure!(
         seen.len() == layout.len(),
         "{}: missing Crop parameters",
         crop.identity
     );
-    let crop = PrStaticCrop {
+    let static_crop = PrStaticCrop {
         left: values[0],
         top: values[1],
         right: values[2],
         bottom: values[3],
         edge_feather: values[4],
     };
-    crop.validate()?;
-    Ok(crop)
+    let Some((edge, initial_completion, completion)) = animated_edge else {
+        static_crop.validate()?;
+        return Ok(ReadCropComponent {
+            crop: static_crop,
+            cardinal_reveal: None,
+        });
+    };
+    ensure!(
+        values[..4]
+            .iter()
+            .enumerate()
+            .all(|(index, value)| index == edge - 1 || *value == 0.0)
+            && static_crop.edge_feather == 0.0,
+        "{}: animated Crop requires one edge with every other edge and Edge Feather at zero",
+        crop.identity
+    );
+    // `linear_wipe_guide` anchors each cardinal guide at these matching Crop
+    // edges: Top 0, Left 90, Bottom 180 and Right 270 degrees.
+    let angle_degrees = match edge {
+        1 => 90,
+        2 => 0,
+        3 => 270,
+        4 => 180,
+        _ => return Err(unsupported("unexpected animated Crop edge")),
+    };
+    Ok(ReadCropComponent {
+        crop: PrStaticCrop::default(),
+        cardinal_reveal: Some(PrLinearWipe {
+            initial_completion,
+            completion,
+            angle_degrees,
+            feather: 0.0,
+        }),
+    })
 }
 
 pub(super) fn point_keys(wire: &str, context: &str) -> Result<Vec<PrPointKeyframe>> {
-    read_point_keys(wire, context, false)
+    read_point_keys(wire, context)
 }
 
-/// Offset's pinned source also saves mode5/flags2 resolved spatial handles.
-/// Only its explicitly straightened replacement admits that form.
+/// Offset uses the shared point reader before its diagnosed replacement drops
+/// every spatial handle.
 pub(super) fn offset_point_keys(wire: &str, context: &str) -> Result<Vec<PrPointKeyframe>> {
-    read_point_keys(wire, context, true)
+    read_point_keys(wire, context)
 }
 
-fn read_point_keys(wire: &str, context: &str, offset: bool) -> Result<Vec<PrPointKeyframe>> {
+fn read_point_keys(wire: &str, context: &str) -> Result<Vec<PrPointKeyframe>> {
     ensure!(
         wire.is_empty() || wire.ends_with(';'),
         "{context}: unterminated keyframe list"
@@ -512,12 +592,12 @@ fn read_point_keys(wire: &str, context: &str, offset: bool) -> Result<Vec<PrPoin
                 );
                 (None, None)
             }
-            // Flag 4 is Premiere's automatic spatial mode. Keep its resolved
-            // handles in the native model; FX track mapping retains them only
-            // on curved adjacent segments. Automatic recomputation is not
-            // represented by the FX schema.
-            (5, 0 | 4) => (Some(incoming), Some(outgoing)),
-            (5, 2) if offset => (Some(incoming), Some(outgoing)),
+            // Mode 5 saves resolved spatial handles with flags 0 or 4, and
+            // ordinary Motion also saves resolved handles with flag 2.
+            // Keep them in the native model; FX track mapping retains them only
+            // on curved adjacent segments. The native flag has no separate FX
+            // representation.
+            (5, 0 | 2 | 4) => (Some(incoming), Some(outgoing)),
             _ => {
                 return Err(unsupported(format!(
                     "{context}: unsupported spatial interpolation mode {spatial_mode} with flags {spatial_flags}"
@@ -787,12 +867,14 @@ pub(super) struct MotionAndMasks {
 }
 
 /// Read Motion, Crop, Linear Wipe and Track Matte Key; occurrence callers keep
-/// other standard effects separate.
+/// other standard effects separate. Unsupported auxiliary Motion filtering is
+/// reported through `omissions` without discarding the supported Motion.
 pub(super) fn read_video_animations(
     graph: &Graph<'_>,
     chain: &Located<VideoComponentChain>,
     components: &[&Reference],
     allow_motion: bool,
+    omissions: &mut Vec<Omission>,
 ) -> Result<MotionAndMasks> {
     ensure!(
         allow_motion || components.is_empty(),
@@ -834,7 +916,15 @@ pub(super) fn read_video_animations(
                     "{}: duplicate Crop component",
                     chain.identity
                 );
-                crop = Some(read_crop_component(graph, component, &chain.identity)?);
+                let read = read_crop_component(graph, component, &chain.identity)?;
+                if let Some(cardinal_reveal) = read.cardinal_reveal {
+                    ensure!(
+                        linear_wipe.replace(cardinal_reveal).is_none(),
+                        "{}: multiple Crop or Linear Wipe animations are unsupported",
+                        chain.identity
+                    );
+                }
+                crop = Some(read.crop);
             }
             Some("AE.ADBE Linear Wipe") => {
                 ensure!(
@@ -929,7 +1019,6 @@ pub(super) fn read_video_animations(
             record.identity()
         );
         let input = graph.decode::<VideoComponentParam>(record)?;
-        let name = super::required(input.value.name.as_deref(), &input.identity, "Name")?;
         let id = input.value.parameter_id.as_str();
         ensure!(
             ids.insert(id.to_owned()),
@@ -945,10 +1034,11 @@ pub(super) fn read_video_animations(
             .ok_or_else(|| {
                 unsupported(format!("{}: unknown Motion parameter {id}", input.identity))
             })?;
+        // ParameterID binds the control; display labels may be absent or localized.
+        let name = spec.name;
         ensure!(
-            (name == spec.name || (spec.id == 2 && name == "Scale Height"))
-                && record.tag() == spec.record.tag,
-            "{}: unexpected Motion parameter {name:?} or record type",
+            record.tag() == spec.record.tag,
+            "{}: unexpected Motion parameter record type for {name}",
             input.identity
         );
         ensure!(
@@ -1013,13 +1103,38 @@ pub(super) fn read_video_animations(
             }
             continue;
         }
+        if spec.id == 7 {
+            // Anti-flicker has no editable FX control. A neutral value with no
+            // keys changes no pixels even when Premiere saves its stopwatch as
+            // enabled. Report actual filtering locally; do not claim that a
+            // later caller necessarily retains the owning occurrence.
+            let cause = if wire.is_empty() {
+                default_param(spec, initial, &input.identity)
+                    .err()
+                    .map(super::effects::reason)
+            } else {
+                Some("keyed".to_owned())
+            };
+            if let Some(cause) = cause {
+                crate::omit(
+                    omissions,
+                    crate::OmissionScope::Feature,
+                    &input.identity,
+                    format!(
+                        "Anti-flicker Filter not converted ({cause}): FX has no anti-flicker filter"
+                    ),
+                );
+            }
+            continue;
+        }
         if let Some(edge) = spec.crop_edge() {
             // Motion Crop crops the clip's own frame by edge percentages
             // before Motion moves it, as a Crop effect does. Its keys are
             // unmeasured, and the static value alone would crop wrongly
-            // between them, so a keyed edge omits the clip.
+            // between them, so a keyed edge omits the clip. An enabled
+            // stopwatch without keys still has only its StartKeyframe value.
             ensure!(
-                wire.is_empty() && is_time_varying != Some("true"),
+                wire.is_empty(),
                 "{}: animated Motion {name} is unsupported",
                 input.identity
             );
@@ -1035,8 +1150,10 @@ pub(super) fn read_video_animations(
         if spec.id == 4 {
             uniform_scale = uniform_scale_start(initial, wire, is_time_varying, &input.identity)?;
         } else {
+            // Any future static-only auxiliary control must not discard its
+            // StartKeyframe merely because an empty stopwatch is enabled.
             ensure!(
-                wire.is_empty() && is_time_varying != Some("true"),
+                wire.is_empty(),
                 "{}: animated {name} is unsupported",
                 input.identity
             );
@@ -1054,24 +1171,10 @@ pub(super) fn read_video_animations(
             .any(|animation| animation.property() == property)
     };
     if uniform_scale {
-        // Uniform Scale drives both axes. The Big Sale native discriminator
-        // renders duplicate Linear Scale/Width keys exactly like Scale alone.
-        // Keep unequal width curves unsupported; both tracks have already passed
-        // their ordinary key parsing and supported-form checks above.
-        if let Some(width) = animations.iter().find_map(|animation| match animation {
-            PrPropertyAnimation::ScaleWidth(keys) => Some(keys),
-            _ => None,
-        }) {
-            ensure!(
-                animations.iter().any(|animation| matches!(
-                    animation,
-                    PrPropertyAnimation::UniformScale(keys) if keys == width
-                )),
-                "{}: animated Scale Width is unsupported under Uniform Scale",
-                motion.identity
-            );
-            animations.retain(|animation| !matches!(animation, PrPropertyAnimation::ScaleWidth(_)));
-        }
+        // Uniform Scale drives both axes from Height; saved Width keys are
+        // inactive, even when their values, clocks or easing differ. Both tracks
+        // have passed ordinary key parsing and supported-form checks above.
+        animations.retain(|animation| !matches!(animation, PrPropertyAnimation::ScaleWidth(_)));
         transform.scale[0] = transform.scale[1];
     } else {
         // Without Uniform Scale, Scale is the height; Scale Width keys beside
@@ -1273,9 +1376,10 @@ pub(super) fn read_video_compositing(
                 opacity_animation = Some(PrPropertyAnimation::Opacity(keys));
             }
         } else {
+            // Premiere can save a static blend value with an enabled stopwatch
+            // but no keys. Only present keys would require blend animation.
             ensure!(
-                input.value.keyframes.as_deref().is_none_or(str::is_empty)
-                    && is_time_varying != Some("true"),
+                input.value.keyframes.as_deref().is_none_or(str::is_empty),
                 "{}: animated blend mode unsupported",
                 input.identity
             );
@@ -1619,7 +1723,7 @@ mod tests {
                 );
             }
         }
-        for (mode, flags) in [(0, 1), (0, 3), (0, 4), (5, 2), (4, 2)] {
+        for (mode, flags) in [(0, 1), (0, 3), (0, 4), (5, 1), (5, 3), (4, 2)] {
             let wire = format!("0,0:0,0,0,0,0,0,0,{mode},{flags},0,0,0,0;");
             assert!(point_keys(&wire, "unknown form")
                 .unwrap_err()

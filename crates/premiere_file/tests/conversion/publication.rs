@@ -474,18 +474,14 @@ fn broken_occurrence_link_requires_selection_and_preserves_other_clips() {
 fn no_convertible_occurrences_fail_without_output() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    let xml = one_second().replace(
-        "<Clip><Source",
-        "<Clip><PlaybackSpeed>2</PlaybackSpeed><Source",
-    );
+    let xml = one_second().replace("<InPoint>0</InPoint>", "<InPoint>-1</InPoint>");
     fixture(root, &xml);
     let output = root.join("out");
     let error = premiere_to_tesseract(root.join("project.prproj"), &output, None, false)
         .unwrap_err()
         .to_string();
     assert!(
-        error.contains("no convertible video or audio occurrences")
-            && error.contains("source span does not match the constant playback rate"),
+        error.contains("no convertible video or audio occurrences") && error.contains("ranges"),
         "{error}"
     );
     assert!(!output.exists());

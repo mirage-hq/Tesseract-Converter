@@ -60,6 +60,7 @@ fn legacy_control() -> String {
     isolated_opacity(&source, "200")
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn full_range_bounds(xml: &str) -> String {
     xml.replace("<LowerBound>0</LowerBound><UpperBound>100</UpperBound>", "<LowerBound>-3.4028234663852886e+38</LowerBound><UpperBound>3.4028234663852886e+38</UpperBound>")
         .replace("<LowerBound>0</LowerBound><UpperBound>26</UpperBound>", "<LowerBound>-2147483648</LowerBound><UpperBound>2147483647</UpperBound>")

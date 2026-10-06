@@ -94,6 +94,8 @@ pub(super) fn stage(
     let effect = EffectRecord::from_data(&EffectData::Identified {
         id: EffectId::new(id),
         enabled: true,
+        compositing_options: None,
+        extensions: Default::default(),
         effect: EffectPayload::Known(LayerEffect::CornerPin {
             upper_left_x: ul[0],
             upper_left_y: ul[1],

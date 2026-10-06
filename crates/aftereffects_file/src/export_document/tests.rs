@@ -40,6 +40,7 @@ mod pr4442_vector_cases;
 mod radial_solid_origin;
 mod reservations;
 mod review_regressions;
+mod root_adjustment_mask_fallback;
 mod selector_index_aliases;
 mod shader_owner;
 mod signed_key_ease;
@@ -784,6 +785,11 @@ fn edited_solid_with_vector_paint_exports_shape_and_keeps_solid_sibling() {
             .any(|d| d.layer_id == Some(LayerId::new(100))
                 && d.message.contains("instead of flattening"))
     );
+    // Native vector RGB is opaque; paint alpha is stored separately as Fill Opacity.
+    let paint_opacity =
+        paint_opacity::numeric(&layers(&native)[0].content, "ADBE Vector Fill Opacity").unwrap();
+    assert!(!paint_opacity.animated);
+    assert_eq!(paint_opacity.values, [50.0]);
     let imported = to_structural_fx_document(&native, Some(1)).unwrap();
     fn native_rect(layers: &[fx_schema::Layer]) -> Option<&RectLayer> {
         layers.iter().find_map(|layer| match layer.data() {
@@ -794,7 +800,8 @@ fn edited_solid_with_vector_paint_exports_shape_and_keeps_solid_sibling() {
     }
     let vector = native_rect(imported.document.composition().layers()).unwrap();
     assert_eq!(vector.rect.size, [12.5, 20.0]);
-    assert_eq!(vector.rect.fill_color, [0.2, 0.3, 0.4, 0.5]);
+    assert_eq!(vector.rect.fill_color, [0.2, 0.3, 0.4, 1.0]);
+    assert_eq!(vector.transform.opacity.value(), 50.0);
 }
 
 #[test]

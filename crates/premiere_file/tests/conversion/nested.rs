@@ -348,7 +348,7 @@ fn a_nest_whose_master_clip_plays_media_is_omitted() {
 
 #[cfg(feature = "ffmpeg-library")]
 #[test]
-fn media_under_an_omitted_group_is_not_inspected() {
+fn recovered_group_properties_do_not_skip_media_inspection() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     premiere_to_tesseract(nested_fixture(root), root.join("first"), Some(OUTER), false).unwrap();
@@ -369,10 +369,9 @@ fn media_under_an_omitted_group_is_not_inspected() {
     let linear = || json!({"type": "linear"});
     let broken = root.join("broken.mp4");
     fs::write(&broken, b"not a video").unwrap();
-    // Each edit makes export omit the first group; its only child now plays an
-    // asset whose bytes are not a video. A group key that its placement would
-    // drop could show what the animation hides, so it omits the group too.
-    for (index, (tracks, reason)) in [
+    // Property recovery keeps this group's child a used asset. Malformed media
+    // must therefore reject atomically rather than bypass physical inspection.
+    for (index, (tracks, _reason)) in [
         (
             vec![track("anchorPointX", [0.0, 960.0], linear())],
             "unpaired Anchor Point keyframes were not exported",
@@ -396,6 +395,7 @@ fn media_under_an_omitted_group_is_not_inspected() {
         let mut document = imported.clone();
         let group = &mut document["composition"]["layers"][0];
         assert_eq!(group["type"], "Group");
+        let original_asset=group["layers"][0]["source"]["assetId"].as_str().unwrap().to_owned();
         group["layers"][0]["source"]["assetId"] = json!("broken-video");
         document["composition"]["dynamics"] = json!({ "entries": tracks });
         let mut builder =
@@ -414,15 +414,38 @@ fn media_under_an_omitted_group_is_not_inspected() {
             .write(&edited)
             .unwrap();
         let native = root.join(format!("native-{index}"));
-        let omissions = tesseract_to_premiere(&edited, &native, false).unwrap();
-        assert!(
-            omissions.iter().any(|item| item.reason
-                == format!("group was not exported as a nested sequence: {reason}")),
-            "{omissions:?}"
-        );
-        // The other group still exports as a nest beside the outer clip.
-        let xml = read_xml(&native.join("project.prproj"));
-        assert_eq!(xml.matches("<Sequence ObjectUID=").count(), 2, "{reason}");
+        for check in [true,false] {
+            let error=tesseract_to_premiere(&edited,&native,check).unwrap_err();
+            assert!(error.to_string().contains("broken-video") && error.to_string().contains("MP4 metadata box exceeds its parent"),"{error}");
+            assert!(!native.exists());
+        }
+        // The same recovery against real, already-pinned media retains children
+        // and independent siblings instead of using omission to skip inspection.
+        let mut builder=TesseractFileBuilder::from_project_json(&serde_json::to_vec(&document).unwrap()).unwrap();
+        for (id,asset) in &file.metadata().assets {
+            let name=Path::new(&asset.path).file_name().unwrap();
+            builder=builder.add_asset(id,root.join("media").join(name),AssetKind::Video).unwrap();
+        }
+        let original=&file.metadata().assets[&original_asset];
+        let valid_media=root.join("media").join(Path::new(&original.path).file_name().unwrap());
+        let valid=root.join(format!("valid-{index}.tsrct"));
+        builder.add_asset("broken-video",valid_media,AssetKind::Video).unwrap().write(&valid).unwrap();
+        let losses=tesseract_to_premiere(valid,&native,false).unwrap();
+        assert!(losses.iter().any(|loss|loss.scope==premiere_file::OmissionScope::Feature),"{losses:?}");
+        let reimported=root.join(format!("recovered-{index}"));
+        let (project,_) = PrProjectFile::load(native.join("project.prproj")).unwrap();
+        let outer=project.sequences().find(|sequence|Some(sequence.name())==document["composition"]["name"].as_str()).unwrap();
+        premiere_to_tesseract(native.join("project.prproj"),&reimported,outer.id(),false).unwrap();
+        let recovered=only_project(&reimported).project_json().unwrap();
+        let groups=|wire:&Value|->Vec<Value> {wire["composition"]["layers"].as_array().unwrap().iter().filter(|layer|layer["type"]=="Group").map(|group|json!({
+            "range":crate::test_support::layer_range(group),
+            "source":group["layers"][0]["sourceRange"],
+            "childRange":crate::test_support::layer_range(&group["layers"][0]),
+            "children":group["layers"].as_array().unwrap().iter().filter(|child|child["type"]=="Video").count()
+        })).collect()};
+        assert_eq!(groups(&recovered),groups(&document));
+        assert_eq!(recovered["composition"]["layers"].as_array().unwrap().iter().filter(|layer|layer["type"]=="Video").count(),1);
+
     }
 }
 
@@ -845,7 +868,7 @@ fn group_motion_blur_preserves_native_content_controls_order_and_disabled_state(
 
 #[cfg(feature = "ffmpeg-library")]
 #[test]
-fn group_motion_blur_does_not_relax_required_name_or_report_unretained_owners() {
+fn group_motion_blur_reports_repaired_labels_but_not_empty_owners() {
     use premiere_file::{ExportField, ExportLossKind, ExportLossSource, Premiere};
 
     let dir = tempfile::tempdir().unwrap();
@@ -861,8 +884,8 @@ fn group_motion_blur_does_not_relax_required_name_or_report_unretained_owners() 
             document["composition"]["layers"][0]["layers"] = json!([]);
             document["composition"]["layers"][0]["masks"] = json!([]);
         } else {
-            // Native sequence identity requires a nonempty name. An optional
-            // flag must not bypass this required structural-value guard.
+            // An invalid label is generated without losing the current child
+            // picture, while a genuinely empty owner remains unretained.
             document["composition"]["layers"][0]["name"] = json!("");
         }
         let archive = root.join(format!("invalid-group-{empty}.tsrct"));
@@ -877,28 +900,64 @@ fn group_motion_blur_does_not_relax_required_name_or_report_unretained_owners() 
             .iter()
             .filter(|loss| loss.kind == ExportLossKind::Field(ExportField::MotionBlur))
             .collect();
-        assert_eq!(blur_losses.len(), 1, "{report:?}");
+        let mut owners = blur_losses
+            .iter()
+            .map(|loss| match loss.source {
+                ExportLossSource::Layer(id) => id.value(),
+                _ => panic!("Group field loss must identify its layer"),
+            })
+            .collect::<Vec<_>>();
+        owners.sort_unstable();
         assert_eq!(
-            blur_losses[0].source,
-            ExportLossSource::Layer(fx_schema::LayerId::new(20))
-        );
-        let reason = if empty {
-            "group with no exportable video was not exported"
-        } else {
-            "the nested sequence name must have 1 to 255 characters"
-        };
-        assert!(
-            report.diagnostics.iter().any(|note| note.scope
-                == premiere_file::OmissionScope::Occurrence
-                && note.record.starts_with("layer 10 (")
-                && note.reason.contains(reason)),
+            owners,
+            if empty { vec![20] } else { vec![10, 20] },
             "{report:?}"
         );
+        if empty {
+            assert!(
+                report.diagnostics.iter().any(|note| note.scope
+                    == premiere_file::OmissionScope::Occurrence
+                    && note.record.starts_with("layer 10 (")
+                    && note
+                        .reason
+                        .contains("group with no exportable video was not exported")),
+                "{report:?}"
+            );
+        } else {
+            assert!(
+                report.losses.iter().any(|loss| loss.source
+                    == ExportLossSource::Layer(fx_schema::LayerId::new(10))
+                    && loss.kind == ExportLossKind::Field(ExportField::Metadata)),
+                "{report:?}"
+            );
+        }
         let staged = operation
             .stage_with_picture_replacements(root, &root.join(format!("native-{empty}")), &[])
             .unwrap();
         let xml = read_xml(&staged.directory().join("project.prproj"));
-        assert_eq!(xml.matches("<Sequence ObjectUID=").count(), 2);
+        assert_eq!(
+            xml.matches("<Sequence ObjectUID=").count(),
+            if empty { 2 } else { 3 }
+        );
+        if !empty {
+            let parsed = roxmltree::Document::parse(&xml).unwrap();
+            let generated = parsed
+                .descendants()
+                .filter(|node| node.has_tag_name("Sequence"))
+                .filter_map(|node| {
+                    node.children()
+                        .find(|child| child.has_tag_name("Name"))
+                        .and_then(|name| name.text())
+                })
+                .find(|name| *name != "Hidden" && *name != "Edited group")
+                .unwrap();
+            assert!(!generated.is_empty() && generated.chars().count() <= 255);
+            // Compare all editable native controls using the existing helper;
+            // only its expected display label is normalized for this assertion.
+            assert_edited_group_native_controls(
+                &xml.replace(&format!("<Name>{generated}</Name>"), "<Name>Edited</Name>"),
+            );
+        }
         assert!(xml.contains("<Name>Hidden</Name>"));
         assert!(xml.contains("<IsMuted>true</IsMuted>"));
     }

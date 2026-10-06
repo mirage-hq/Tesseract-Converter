@@ -182,6 +182,7 @@ const MIN_CORNER_RADIUS: f32 = 1e-6;
 /// circles then meet smoothly, where a stroke has no corner to join. Every
 /// corner is square below [`MIN_CORNER_RADIUS`], and for a size or
 /// roundness that is not finite in f32.
+#[cfg(test)]
 pub(super) fn rounded_rect_outline(position: [f64; 2], size: [f64; 2], radius: f64) -> ShapePath {
     let mut shape = solid_shape(0, 0, [0.0; 4]);
     shape.position = position;
@@ -383,7 +384,7 @@ fn approximate_unexported_gradient(shape: &mut ShapeLayer, rect: &RectShape) -> 
 ///
 /// A Motion/Opacity keyframe track on this layer makes it a keyed Shape,
 /// which the Shape rules omit. The context's media facts list every packaged
-/// asset, so a document asset ID spelled like a matte's `color-matte:rrggbb`
+/// asset, so a document asset ID spelled like a matte's `color-matte:wxh:rrggbb`
 /// ID rejects whatever the layer order.
 pub(super) fn export_rect_layer(
     rect: &RectLayer,
@@ -441,7 +442,7 @@ pub(super) fn export_rect_layer(
             return Ok(None);
         }
     };
-    let media = MediaId(format!("color-matte:{}", matte.hex()));
+    let media = MediaId(format!("color-matte:{width}x{height}:{}", matte.hex()));
     if context.media_facts.contains_key(media.as_str()) {
         return Err(unsupported(format!(
             "asset {media} names both a packaged asset and a Color Matte solid fill"

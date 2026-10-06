@@ -91,30 +91,41 @@ fn validate_project(
     }
     tracks::nested::validate_sequences(spec)?;
     project.validate()?;
-    fn check_stroke(sequence: &PrSequence) -> Result<()> {
+    fn check_occurrences(sequence: &PrSequence, project: &PrProjectFile) -> Result<()> {
         for track in &sequence.video_tracks {
-            if track
-                .items
-                .iter()
-                .filter_map(crate::PrVideoItem::media)
-                .any(|clip| clip.stroke.is_some())
-            {
-                return Err(invalid("measured Film Impact Stroke is import-only"));
+            for clip in track.items.iter().filter_map(crate::PrVideoItem::media) {
+                if clip.stroke.is_some() {
+                    return Err(invalid("measured Film Impact Stroke is import-only"));
+                }
+                let media = &project.media[&clip.media];
+                if media.is_generator() {
+                    let video = media
+                        .video
+                        .as_ref()
+                        .ok_or_else(|| invalid("generator requires video"))?;
+                    if (video.width, video.height) != (sequence.width, sequence.height) {
+                        return Err(invalid(format!(
+                            "generator {} dimensions must match owning sequence {:?} ({}x{})",
+                            clip.media, sequence.name, sequence.width, sequence.height
+                        )));
+                    }
+                }
             }
             for nest in &track.nests {
-                check_stroke(&nest.sequence)?;
+                check_occurrences(&nest.sequence, project)?;
             }
         }
         Ok(())
     }
-    check_stroke(spec)?;
+    check_occurrences(spec, project)?;
     let mut bound = BTreeMap::new();
     let mut relative_paths = BTreeSet::new();
     for id in spec.media_in_order() {
         let media = &project.media[id];
         if let Some(video) = &media.video {
             let generator = match video.kind {
-                PrMediaKind::NumberedStills { .. } => {
+                PrMediaKind::NumberedStills { .. }
+                | PrMediaKind::OpenExr { numbered: true, .. } => {
                     return Err(invalid(
                         "numbered stills must export as editable individual still placements",
                     ))
@@ -123,6 +134,9 @@ fn validate_project(
                 PrMediaKind::Adjustment => Some(BoundMedia::Adjustment { media }),
                 PrMediaKind::Video { .. }
                 | PrMediaKind::Still { .. }
+                | PrMediaKind::OpenExr {
+                    numbered: false, ..
+                }
                 | PrMediaKind::AfterEffectsComposition(_) => None,
             };
             if let Some(generator) = generator {
@@ -130,9 +144,6 @@ fn validate_project(
                     return Err(invalid(
                         "media name must be one safe path component of at most 255 bytes",
                     ));
-                }
-                if (video.width, video.height) != (spec.width, spec.height) {
-                    return Err(invalid("media dimensions must match sequence dimensions"));
                 }
                 bound.insert(id, generator);
                 continue;
@@ -171,7 +182,7 @@ fn validate_project(
             }
         } else if crate::media::admitted_container(media, Path::new(&media.name)).is_none() {
             return Err(invalid(if media.is_still() {
-                "writer supports PNG/JPEG still media only"
+                "writer supports PNG/JPEG/OpenEXR still media only"
             } else {
                 "writer supports MP4/MOV video and WAV/MP3/M4A audio"
             }));

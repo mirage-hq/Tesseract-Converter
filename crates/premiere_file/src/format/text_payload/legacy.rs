@@ -60,29 +60,47 @@ struct Paragraph {
 #[derive(Deserialize)]
 struct Style {
     #[serde(rename = "mCapsOption", deserialize_with = "one_run")]
-    caps_option: u32,
+    caps_option: Run<u32>,
     #[serde(rename = "mFillColor", deserialize_with = "one_run")]
-    fill_color: u32,
+    fill_color: Run<u32>,
     #[serde(rename = "mFillOverStroke", deserialize_with = "one_run")]
-    fill_over_stroke: bool,
+    fill_over_stroke: Run<bool>,
     #[serde(rename = "mFillVisible", deserialize_with = "one_run")]
-    fill_visible: bool,
+    fill_visible: Run<bool>,
     #[serde(rename = "mFontName", deserialize_with = "one_run")]
-    font: String,
+    font: Run<String>,
     #[serde(rename = "mFontSize", deserialize_with = "one_run")]
-    size: f32,
+    size: Run<f32>,
     #[serde(rename = "mStrokeColor", deserialize_with = "one_run")]
-    stroke_color: u32,
+    stroke_color: Run<u32>,
     #[serde(rename = "mStrokeVisible", deserialize_with = "one_run")]
-    stroke_visible: bool,
+    stroke_visible: Run<bool>,
     #[serde(rename = "mStrokeWidth", deserialize_with = "one_run")]
-    stroke_width: f32,
+    stroke_width: Run<f32>,
     #[serde(rename = "mText")]
     text: String,
     #[serde(rename = "mTracking", deserialize_with = "one_run")]
-    tracking: f32,
+    tracking: Run<f32>,
     #[serde(flatten)]
     controls: BTreeMap<String, Value>,
+}
+
+struct Run<T> {
+    value: T,
+    metadata: BTreeMap<String, Value>,
+}
+
+impl<T> Run<T> {
+    fn into_value(self, field: &str, omitted: &mut Vec<OmittedTextFeature>) -> T {
+        for metadata in self.metadata.keys() {
+            diagnose(
+                omitted,
+                &format!("{field}.{metadata}"),
+                "unmapped style-run metadata omitted; actual text and supported styling retained",
+            );
+        }
+        self.value
+    }
 }
 
 /// An absent mask field is distinct from a present null value.
@@ -118,7 +136,7 @@ where
 
 /// The editable uniform document requires one actual character style starting
 /// at zero. Unmapped character controls do not pass through this admission.
-fn one_run<'de, D, T>(deserializer: D) -> std::result::Result<T, D::Error>
+fn one_run<'de, D, T>(deserializer: D) -> std::result::Result<Run<T>, D::Error>
 where
     D: Deserializer<'de>,
     T: Deserialize<'de>,
@@ -128,10 +146,12 @@ where
     struct Runs<T> {
         #[serde(rename = "mParamValues")]
         values: Vec<(u64, T)>,
+        #[serde(flatten)]
+        metadata: BTreeMap<String, Value>,
     }
-    let Runs { values } = named_object(deserializer)?;
+    let Runs { values, metadata } = named_object(deserializer)?;
     match <[(u64, T); 1]>::try_from(values) {
-        Ok([(0, value)]) => Ok(value),
+        Ok([(0, value)]) => Ok(Run { value, metadata }),
         Ok([(start, _)]) => Err(D::Error::custom(format!(
             "its one style run starts at character {start}, not 0"
         ))),
@@ -172,7 +192,7 @@ pub(super) fn decode(payload: &[u8]) -> Result<DecodedGraphicText> {
         controls,
         ..
     } = paragraph;
-    diagnose_paragraph(&controls, &style, &mut omitted);
+    diagnose_paragraph(&controls, style.stroke_visible.value, &mut omitted);
     for (field, value) in &style.controls {
         let inactive = match field.as_str() {
             "mBaselineOption" | "mBaselineShift" | "mKerning" | "mTsumi" => {
@@ -191,6 +211,30 @@ pub(super) fn decode(payload: &[u8]) -> Result<DecodedGraphicText> {
             );
         }
     }
+    let Style {
+        caps_option,
+        fill_color,
+        fill_over_stroke,
+        fill_visible,
+        font,
+        size,
+        stroke_color,
+        stroke_visible,
+        stroke_width,
+        text,
+        tracking,
+        ..
+    } = style;
+    let caps_option = caps_option.into_value("mCapsOption", &mut omitted);
+    let fill_color = fill_color.into_value("mFillColor", &mut omitted);
+    let fill_over_stroke = fill_over_stroke.into_value("mFillOverStroke", &mut omitted);
+    let fill_visible = fill_visible.into_value("mFillVisible", &mut omitted);
+    let font = font.into_value("mFontName", &mut omitted);
+    let size = size.into_value("mFontSize", &mut omitted);
+    let stroke_color = stroke_color.into_value("mStrokeColor", &mut omitted);
+    let stroke_visible = stroke_visible.into_value("mStrokeVisible", &mut omitted);
+    let stroke_width = stroke_width.into_value("mStrokeWidth", &mut omitted);
+    let tracking = tracking.into_value("mTracking", &mut omitted);
     let justification = match alignment {
         0 => PrJustification::Left,
         1 => PrJustification::Right,
@@ -232,7 +276,7 @@ pub(super) fn decode(payload: &[u8]) -> Result<DecodedGraphicText> {
     ensure!(leading.is_finite(), "{LEGACY}: invalid text leading");
     // PrTextDocument::validate bounds the target's line spacing at 0.8 em.
     // Keep supported leading unchanged; recover only below that capability.
-    let leading = if f64::from(leading) >= -0.4 * f64::from(style.size) {
+    let leading = if f64::from(leading) >= -0.4 * f64::from(size) {
         leading
     } else {
         diagnose(
@@ -242,7 +286,7 @@ pub(super) fn decode(payload: &[u8]) -> Result<DecodedGraphicText> {
         );
         0.0
     };
-    let text = normalize_line_breaks(&style.text);
+    let text = normalize_line_breaks(&text);
     if text.contains('\t') {
         diagnose(
             &mut omitted,
@@ -250,12 +294,10 @@ pub(super) fn decode(payload: &[u8]) -> Result<DecodedGraphicText> {
             "text retained with editable default tab spacing; saved tab stops not mapped",
         );
     }
-    let fill = style
-        .fill_visible
-        .then(|| paint("mFillColor", style.fill_color, &mut omitted));
-    let stroke = if style.stroke_visible {
-        if style.stroke_width.is_finite() && style.stroke_width >= 0.0 {
-            if style.fill_visible && !style.fill_over_stroke {
+    let fill = fill_visible.then(|| paint("mFillColor", fill_color, &mut omitted));
+    let stroke = if stroke_visible {
+        if stroke_width.is_finite() && stroke_width >= 0.0 {
+            if fill_visible && !fill_over_stroke {
                 diagnose(
                     &mut omitted,
                     "mFillOverStroke",
@@ -263,8 +305,8 @@ pub(super) fn decode(payload: &[u8]) -> Result<DecodedGraphicText> {
                 );
             }
             Some(PrTextStroke {
-                color: paint("mStrokeColor", style.stroke_color, &mut omitted),
-                width: style.stroke_width,
+                color: paint("mStrokeColor", stroke_color, &mut omitted),
+                width: stroke_width,
             })
         } else {
             diagnose(
@@ -277,7 +319,7 @@ pub(super) fn decode(payload: &[u8]) -> Result<DecodedGraphicText> {
     } else {
         None
     };
-    let all_caps = match style.caps_option {
+    let all_caps = match caps_option {
         0 => false,
         2 => true,
         _ => {
@@ -291,13 +333,13 @@ pub(super) fn decode(payload: &[u8]) -> Result<DecodedGraphicText> {
     };
     let document = PrTextDocument {
         text,
-        font: style.font,
-        size: style.size,
+        font,
+        size,
         fill,
         stroke,
         shadow: None,
         all_caps,
-        tracking: style.tracking,
+        tracking,
         leading,
         justification,
         frame,
@@ -322,7 +364,7 @@ fn diagnose(omitted: &mut Vec<OmittedTextFeature>, field: &str, replacement: &st
 /// do not affect the picture; enabled/unidentified controls get local diagnostics.
 fn diagnose_paragraph(
     controls: &BTreeMap<String, Value>,
-    style: &Style,
+    stroke_visible: bool,
     omitted: &mut Vec<OmittedTextFeature>,
 ) {
     for (field, value) in controls {
@@ -331,8 +373,8 @@ fn diagnose_paragraph(
             | "mShadowVisible" | "mBackFillVisible" => value == &Value::Bool(false),
             "mDefaultRun" => value.as_array().is_some_and(Vec::is_empty),
             "mNumStrokes" => value == &Value::from(1),
-            "mLineCapType" | "mLineJoinType" => !style.stroke_visible || value == &Value::from(0),
-            "mMiterLimit" => !style.stroke_visible || value == &Value::from(2.5),
+            "mLineCapType" | "mLineJoinType" => !stroke_visible || value == &Value::from(0),
+            "mMiterLimit" => !stroke_visible || value == &Value::from(2.5),
             "mBackFillColor" | "mBackFillOpacity" | "mBackFillSize" | "mShadowAngle"
             | "mShadowBlur" | "mShadowColor" | "mShadowOffset" | "mShadowOpacity"
             | "mShadowSize" | "mTabWidth" => true,

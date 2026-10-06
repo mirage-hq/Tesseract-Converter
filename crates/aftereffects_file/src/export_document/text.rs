@@ -502,10 +502,16 @@ fn lower_document_timeline(
                     .skip(1)
                     .any(|key| key.easing() != PropertyKeyframeEasing::Hold)
                 {
-                    diagnostics.push(format!(
-                        "{property:?} uses continuous interpolation; native Source Text documents are Hold-only, so its keys were omitted and the current typed static base remains active"
-                    ));
-                    continue;
+                    if matches!(property, PropType::Tracking | PropType::FillColor) {
+                        diagnostics.push(format!(
+                            "{property:?} uses continuous interpolation; native Source Text documents are Hold-only, so its authored-time values were retained as editable Hold document keys and between-key interpolation is approximated"
+                        ));
+                    } else {
+                        diagnostics.push(format!(
+                            "{property:?} uses continuous interpolation; native Source Text documents are Hold-only, so its keys were omitted and the current typed static base remains active"
+                        ));
+                        continue;
+                    }
                 }
                 changed_font |= matches!(property, PropType::FontFamily | PropType::FontStyle);
                 tracks.push((property, track));
@@ -1396,6 +1402,84 @@ mod tests {
         assert!(!timeline.keyed);
         assert_eq!(timeline.keys[0].document.stroke_width, 11.0);
         assert!(!timeline.keys[0].document.apply_stroke);
+    }
+
+    #[test]
+    fn continuous_tracking_and_fill_color_keep_authored_values_as_hold_documents() {
+        let layer_id = LayerId::new(42);
+        let make_entry = |property, values: [(i64, PropertyValue); 2]| {
+            let keys = values
+                .into_iter()
+                .enumerate()
+                .map(|(index, (time, value))| {
+                    PropertyKeyframe::new(
+                        KeyframeId::new(format!("continuous-{property:?}-{index}")),
+                        TimeOffset::from_millis(time),
+                        value,
+                        PropertyKeyframeEasing::Linear,
+                    )
+                })
+                .collect();
+            AnimationGraphEntry {
+                target: PropertyTarget::layer(layer_id, property),
+                animator: PropertyAnimator::keyframes(PropertyKeyframeTrack::new(keys).unwrap()),
+                dependencies: Vec::new(),
+                random_seed_target: None,
+                layer_refs: Default::default(),
+            }
+        };
+        let entries = [
+            make_entry(
+                PropType::Tracking,
+                [
+                    (0, PropertyValue::Float(10.0)),
+                    (1_000, PropertyValue::Float(30.0)),
+                ],
+            ),
+            make_entry(
+                PropType::FillColor,
+                [
+                    (250, PropertyValue::Color([1.0, 0.0, 0.0, 1.0])),
+                    (750, PropertyValue::Color([0.0, 0.0, 1.0, 1.0])),
+                ],
+            ),
+        ];
+        let mut diagnostics = Vec::new();
+        let timeline = lower_document_timeline(
+            document_state(),
+            layer_id,
+            &crate::export_document::AnimationIndex::new(&entries),
+            &mut diagnostics,
+            None,
+        )
+        .unwrap();
+
+        assert!(timeline.keyed);
+        assert_eq!(
+            timeline
+                .keys
+                .iter()
+                .map(|key| key.time_millis)
+                .collect::<Vec<_>>(),
+            vec![0, 250, 750, 1_000]
+        );
+        assert_eq!(timeline.keys[0].document.tracking, 10.0);
+        assert_eq!(timeline.keys[3].document.tracking, 30.0);
+        assert_eq!(timeline.keys[1].document.fill_color, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(timeline.keys[2].document.fill_color, [0.0, 0.0, 1.0, 1.0]);
+        assert!(timeline.keys.iter().all(|key| {
+            key.document.text == "base"
+                && key.document.font_postscript == "Inter-Regular"
+                && key.document.font_size == 24.0
+        }));
+        assert_eq!(diagnostics.len(), 2);
+        for property in ["Tracking", "FillColor"] {
+            assert!(diagnostics.iter().any(|message| {
+                message.contains(property)
+                    && message.contains("editable Hold document keys")
+                    && message.contains("between-key interpolation is approximated")
+            }));
+        }
     }
 
     #[test]

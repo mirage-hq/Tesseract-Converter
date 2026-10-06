@@ -344,7 +344,66 @@ impl<'a> Graph<'a> {
     /// Parsing does not check them, so records that are never decoded cannot fail.
     fn validate_record(&self, record: Record<'_>) -> Result<()> {
         let audio_members = audio_member_list(record);
+        // Only the actual Clip in these native wrappers supplies the marker
+        // handler. A similarly named path in another subtree is not exempt.
+        let clip = match record.tag() {
+            tag if tag == records::VIDEO_CLIP.tag || tag == records::AUDIO_CLIP.tag => {
+                record.element.child("Clip")
+            }
+            tag if tag == crate::schema::caption::TRANSCRIPT_CLIP.tag => record
+                .element
+                .child("DataClip")
+                .and_then(|data| data.child("Clip")),
+            _ => None,
+        };
+        let markers = clip
+            .and_then(|clip| clip.child("MarkerOwner"))
+            .and_then(|owner| owner.child("Markers"));
         for node in record.element.node.descendants().filter(Node::is_element) {
+            // Match only the concrete input fields skipped by Sequence and
+            // MasterClip. MasterClip/Node itself is consumed: its rendered
+            // offset must still reach both nil and typed-value validation.
+            let skipped_metadata = node.ancestors().any(|ancestor| {
+                if ancestor.parent() == Some(record.element.node) {
+                    return match record.tag() {
+                        "Sequence" => matches!(
+                            ancestor.tag_name().name(),
+                            "Node" | "PersistentGroupContainer"
+                        ),
+                        "MasterClip" => ancestor.has_tag_name("LoggingInfo"),
+                        _ => false,
+                    };
+                }
+                // MonitorProperties skips these exact UI/provenance fields;
+                // playback uses placed Clip camera/channel/source bindings.
+                record.tag() == "MasterClip"
+                    && ancestor.parent_element().is_some_and(|properties| {
+                        properties.has_tag_name(PROPERTIES)
+                            && properties.parent_element().is_some_and(|node| {
+                                node.has_tag_name("Node")
+                                    && node.parent() == Some(record.element.node)
+                            })
+                    })
+                    && matches!(
+                        ancestor.tag_name().name(),
+                        "AMM.CurrentSolo"
+                            | "Source.Monitor.Multicam.Enabled"
+                            | "MZ.MergeClipUtils.ComponentMasterClipOriginalName"
+                            | "MZ.MergeClipUtils.AudioTrackNumberFromOriginalMergedClip"
+                            | "monitor.edit.time"
+                            | "monitor.looping"
+                            | "monitor.show.audio.waveform"
+                            | "monitor.take.audio"
+                            | "monitor.take.audio.linked"
+                            | "monitor.take.video"
+                            | "monitor.take.video.linked"
+                            | "monitor.zoom.in.time"
+                            | "monitor.zoom.out.time"
+                    )
+            });
+            if skipped_metadata {
+                continue;
+            }
             // quick-xml decodes an xsi:nil element as absent, which would
             // silently erase content that the input shapes must see.
             ensure_valid!(
@@ -353,6 +412,12 @@ impl<'a> Graph<'a> {
                     .any(|attribute| attribute.namespace().is_some() && attribute.name() == "nil"),
                 "xsi:nil is unsupported"
             );
+            // Marker links are descriptive, not source bindings. The existing
+            // marker handler diagnoses missing, contradictory or wrong targets
+            // on the retained owner; nil and typed Clip grammar stay strict.
+            if markers.is_some_and(|markers| markers.node == node) {
+                continue;
+            }
             // Resolve clip-item links in the occurrence loop so one broken link
             // does not discard the other occurrences on the same track.
             if ((record.tag() == records::VIDEO_CLIP_TRACK.tag

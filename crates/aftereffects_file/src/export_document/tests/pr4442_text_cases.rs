@@ -1110,6 +1110,52 @@ fn occurrences(haystack: &[u8], needle: &[u8]) -> usize {
 }
 
 #[test]
+fn native_box_hard_break_export_preserves_independent_paragraph_runs() {
+    let source =
+        include_bytes!("../../../tests/fixtures/pr4442_native/sources/text_document_box_v3.aep");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(source)),
+        "5b6bf16fb87930e38e975602c0848230173c50a179431d2a3eb34f09e0cffdce"
+    );
+    let original = generated_cos(source);
+    let native = read_project(source).unwrap();
+    let imported = to_structural_fx_document(&native, Some(1)).unwrap();
+    let output = to_aep(&imported.document).unwrap();
+    assert!(
+        output.omitted_layer_ids.is_empty(),
+        "{:?}",
+        output.diagnostics
+    );
+    let generated = generated_cos(&output.bytes);
+    assert_eq!(original.len(), 1);
+    assert_eq!(generated.len(), 1);
+    let original_document = cos_at(&original[0], &["1", "1"]).index(0).unwrap();
+    let generated_document = cos_at(&generated[0], &["1", "1"]).index(0).unwrap();
+    assert_eq!(
+        cos_at(original_document, &["0", "0"]).as_str(),
+        Some("Editable AEP\rPR 4442\r")
+    );
+    assert_eq!(
+        cos_at(generated_document, &["0", "0"]),
+        cos_at(original_document, &["0", "0"])
+    );
+    // Adobe stores one paragraph run per hard break, including each CR.
+    // Character styles remain a single whole-document run.
+    for (field, expected) in [("5", vec![13, 8]), ("6", vec![21])] {
+        let lengths = |document: &CosValue| {
+            cos_at(document, &["0", field, "0"])
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|run| run.get("1").unwrap().as_i64().unwrap())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(lengths(original_document), expected);
+        assert_eq!(lengths(generated_document), expected);
+    }
+}
+
+#[test]
 #[ignore = "Adobe-native proof backlog; see docs/after-effects-support.md"]
 fn pr4442_fresh_point_and_box_cos_text_preserves_whole_document_fields() {
     let document = explicit_document(

@@ -1,135 +1,61 @@
-//! The measured Film Impact default dissolve profile, not a general Ease mapping.
-use super::film_impact::{self, read_profile_with, ProfileParam};
+//! Typed controls of the measured default Dissolve, not a general Ease law.
+use super::film_impact::{
+    self, point, popup, read_profile_with, scalar, ui, version, ProfileParam, Rule,
+};
 use crate::{
     error::Result,
     format::{Graph, Record},
 };
 
-// Native Film Impact component 1610, all 27 profiles identical. Record identities
-// are deliberately absent: only semantic controls select this profile.
+// Native Film Impact component 1610: all 27 observed profiles have these controls.
 const PROFILE: [ProfileParam; 30] = [
     film_impact::ERROR_OCCURRED,
     film_impact::TRANSITION_TIMING_8120,
     film_impact::START,
     film_impact::END,
     film_impact::TRANSITION_TIMING_8121,
-    ProfileParam {
-        id: "19",
-        kind: "VideoComponentParam",
-        name: Some("Controls"),
-        control: Some("11"),
-        start: Some("-91445760000000000,false,0,0,0,0,0,0"),
-        lower: None,
-        upper: Some("false"),
-        discontinuous: None,
-    },
+    ui("19", Some("Controls"), "11"),
     film_impact::CONTROL_8040,
-    ProfileParam {
-        id: "22",
-        kind: "VideoComponentParam",
-        name: Some("Seed"),
-        control: None,
-        start: Some("-91445760000000000,0.,0,0,0,0,0,0"),
-        lower: Some("0"),
-        upper: Some("99999"),
-        discontinuous: None,
-    },
+    scalar(
+        "22",
+        Some("Seed"),
+        Rule::Number(0.0),
+        Some("0"),
+        Some("99999"),
+    ),
     film_impact::VISUAL_CURVE_EDITOR_8020,
     film_impact::CURVE_GRAPH,
-    ProfileParam {
-        id: "16",
-        kind: "VideoComponentParam",
-        name: Some("Ease In"),
-        control: None,
-        start: Some("-91445760000000000,34.,0,0,0,0,0,0"),
-        lower: Some("0"),
-        upper: Some("100"),
-        discontinuous: None,
-    },
-    ProfileParam {
-        id: "17",
-        kind: "VideoComponentParam",
-        name: Some("Ease Out"),
-        control: None,
-        start: Some("-91445760000000000,34.,0,0,0,0,0,0"),
-        lower: Some("0"),
-        upper: Some("100"),
-        discontinuous: None,
-    },
+    scalar(
+        "16",
+        Some("Ease In"),
+        Rule::Number(34.0),
+        Some("0"),
+        Some("100"),
+    ),
+    scalar(
+        "17",
+        Some("Ease Out"),
+        Rule::Number(34.0),
+        Some("0"),
+        Some("100"),
+    ),
     film_impact::VISUAL_CURVE_EDITOR_8021,
-    ProfileParam {
-        id: "5",
-        kind: "VideoComponentParam",
-        name: Some("Type"),
-        control: None,
-        start: Some("-91445760000000000,0,0,0,0,0,0,0"),
-        lower: Some("0"),
-        upper: Some("4"),
-        discontinuous: Some("true"),
-    },
-    ProfileParam {
-        id: "34",
-        kind: "VideoComponentParam",
-        name: Some("Type"),
-        control: None,
-        start: Some("-91445760000000000,0,0,0,0,0,0,0"),
-        lower: Some("0"),
-        upper: Some("3"),
-        discontinuous: Some("true"),
-    },
-    ProfileParam {
-        id: "31",
-        kind: "VideoComponentParam",
-        name: Some("Focus Amount"),
-        control: None,
-        start: Some("-91445760000000000,0.,0,0,0,0,0,0"),
-        lower: Some("0"),
-        upper: Some("100"),
-        discontinuous: None,
-    },
-    ProfileParam {
-        id: "32",
-        kind: "PointComponentParam",
-        name: Some("Focus Position"),
-        control: None,
-        start: Some("-91445760000000000,0.5:0.5,0,0,0,0,0,0,5,4,0,0,0,0"),
-        lower: None,
-        upper: None,
-        discontinuous: None,
-    },
-    ProfileParam {
-        id: "33",
-        kind: "VideoComponentParam",
-        name: Some("Invert Focus"),
-        control: None,
-        start: Some("-91445760000000000,false,0,0,0,0,0,0"),
-        lower: None,
-        upper: None,
-        discontinuous: None,
-    },
-    ProfileParam {
-        id: "20",
-        kind: "VideoComponentParam",
-        name: Some("Controls"),
-        control: Some("12"),
-        start: Some("-91445760000000000,false,0,0,0,0,0,0"),
-        lower: None,
-        upper: Some("false"),
-        discontinuous: None,
-    },
+    popup("5", "Type", 0.0, "4"),
+    popup("34", "Type", 0.0, "3"),
+    scalar(
+        "31",
+        Some("Focus Amount"),
+        Rule::Number(0.0),
+        Some("0"),
+        Some("100"),
+    ),
+    point("32", "Focus Position", [0.5, 0.5]),
+    scalar("33", Some("Invert Focus"), Rule::Boolean(false), None, None),
+    ui("20", Some("Controls"), "12"),
     film_impact::OVERLAY_MODE,
     film_impact::OVERLAY_INFO,
     film_impact::CONTROL_8141,
-    ProfileParam {
-        id: "24",
-        kind: "VideoComponentParam",
-        name: Some("_ Applied Version"),
-        control: None,
-        start: Some("-91445760000000000,260300.,0,0,0,0,0,0"),
-        lower: Some("0"),
-        upper: Some("999999"),
-        discontinuous: None,
-    },
+    version("24"),
     film_impact::CONTROL_8300,
     film_impact::CONTROL_8301,
     film_impact::SOURCE_B_LAYER,
@@ -139,6 +65,10 @@ const PROFILE: [ProfileParam; 30] = [
     film_impact::SEQUENCE_PIXEL_RATIO,
 ];
 
-pub(super) fn read_profile(graph: &Graph<'_>, record: Record<'_>) -> Result<()> {
-    read_profile_with(graph, record, "AE.AE_Impact_Dissolve", &PROFILE)
+pub(super) fn read_profile(
+    graph: &Graph<'_>,
+    record: Record<'_>,
+    omissions: &mut Vec<crate::Omission>,
+) -> Result<()> {
+    read_profile_with(graph, record, "AE.AE_Impact_Dissolve", &PROFILE, omissions).map(|_| ())
 }

@@ -138,6 +138,7 @@ pub(super) struct NestPlacement {
     opacity: f64,
     animations: Vec<PrPropertyAnimation>,
     effects: Vec<crate::schema::PrEffect>,
+    geometry2_masks: BTreeMap<usize, Vec<crate::schema::PrMask>>,
     effects_above_mask: usize,
     track_matte: Option<PrTrackMatte>,
     blend_mode: PrBlendMode,
@@ -256,6 +257,7 @@ impl<'a> Nesting<'a> {
             opacity_mask: None,
             track_matte: None,
             effects: Vec::new(),
+            geometry2_masks: Default::default(),
             effects_above_mask: 0,
             enabled: true,
             sequence,
@@ -293,7 +295,13 @@ pub(super) fn read_nest(
     nesting: &mut Nesting<'_>,
     omissions: &mut Vec<Omission>,
 ) -> Result<NestedVideo> {
-    let placement = read_placement(graph, &item, parent, false, omissions)?;
+    let placement = read_placement(
+        graph,
+        &item,
+        parent,
+        effects::EffectMaskHost::NestedGeometry2,
+        omissions,
+    )?;
     for (owner, chain) in placement
         .chain
         .iter()
@@ -305,12 +313,13 @@ pub(super) fn read_nest(
                 .map(|source| ("source", &source.chain)),
         )
     {
-        super::effects::split_chain(
+        let split = super::effects::split_chain(
             graph,
             super::animation::chain_components(chain)?,
             &chain.identity,
-        )?
-        .reject_unconverted_coverage(owner)?;
+        )?;
+        split.reject_unconverted_coverage(owner)?;
+        split.reject_hidden_stroke(graph, omissions)?;
     }
 
     if let Some(index) = placement
@@ -345,39 +354,34 @@ pub(super) fn read_nest(
     }
     let identity = &item.identity;
     let mut occurrence_effect_omissions = Vec::new();
-    let (occurrence_effects, effects_above_mask, transform_stage, geometry2) = if placement
-        .has_effects
-    {
+    let (occurrence_effects, effects_above_mask, transform_stage) = if placement.has_effects {
         let chain = placement.chain.as_ref().ok_or_else(|| {
             unsupported(format!(
                 "{identity}: nested effects have no component chain"
             ))
         })?;
         let split = effects::split_chain(graph, chain_components(chain)?, &chain.identity)?;
+        ensure!(
+            !split.has_active_nest_corner_pin(),
+            "{identity}: active Corner Pin on a nested sequence occurrence is not converted: the picture Group has no fixed native canvas bounds; occurrence omitted to preserve coverage"
+        );
+        let owner = effects::EffectOwner {
+            occurrence: identity,
+            source: None,
+            stroke_geometry: false,
+            clip_name: placement.sub.value.name.as_deref(),
+            track_index: parent.track_index,
+            timeline_ticks: placement.start..placement.end,
+            // The canvas is read later; no point-frame equality is assumed.
+            source_is_canvas: false,
+            adjustment: false,
+        };
         if split.has_active_nest_transform() {
-            // Keep the existing bounded Transform admission; ordinary effects
-            // do not establish a new Transform coordinate basis or stack order.
-            let effect = split
-                .read_nest_transform(graph)
+            let effects = split
+                .read_nest_transform(graph, &owner, &mut occurrence_effect_omissions)
                 .map_err(|error| unsupported(format!("{identity}: {}", effects::reason(error))))?;
-            (vec![effect], 0, true, split.has_active_nest_geometry2())
+            (effects, 0, true)
         } else {
-            ensure!(
-                !split.has_active_nest_corner_pin(),
-                "{identity}: active Corner Pin on a nested sequence occurrence is not converted: the picture Group has no fixed native canvas bounds; occurrence omitted to preserve coverage"
-            );
-            let owner = effects::EffectOwner {
-                occurrence: identity,
-                source: None,
-                stroke_geometry: false,
-                clip_name: placement.sub.value.name.as_deref(),
-                track_index: parent.track_index,
-                timeline_ticks: placement.start..placement.end,
-                // The canvas is read later. No point-frame mapping is admitted
-                // by claiming it matches the parent's canvas here.
-                source_is_canvas: false,
-                adjustment: false,
-            };
             let (effects, above_mask) = split.read_effects(
                 graph,
                 &owner,
@@ -396,10 +400,18 @@ pub(super) fn read_nest(
                     "nested effects retain editable controls before outer coverage; native effect/mask order and edge sampling may differ",
                 );
             }
-            (effects, above_mask, false, false)
+            let effects = effects
+                .into_iter()
+                .map(|effect| effects::NativeNestEffect {
+                    effect,
+                    geometry2: false,
+                    geometry2_masks: Vec::new(),
+                })
+                .collect();
+            (effects, above_mask, false)
         }
     } else {
-        (Vec::new(), 0, false, false)
+        (Vec::new(), 0, false)
     };
     ensure!(
         !placement.scale_to_frame,
@@ -476,32 +488,42 @@ pub(super) fn read_nest(
     let id = item.identity;
     let nest = &mut read.nest;
     if transform_stage {
-        let old_envelope = crate::schema::nested_transform_canvas_reason(
-            nest.sequence.dimensions(),
-            parent.dimensions,
-            &placement.transform,
-            placement.opacity,
-            !placement.animations.is_empty(),
-            &occurrence_effects[0],
-        );
-        if let Some(reason) = crate::schema::nested_transform_import_canvas_reason(
-            nest.sequence.dimensions(),
-            parent.dimensions,
-            &placement.transform,
-            placement.opacity,
-            &placement.animations,
-            &occurrence_effects[0],
-        ) {
-            return Err(unsupported(format!(
-                "{id}: {reason}; source {:?}, placement {:?}",
+        for native in occurrence_effects.iter().filter(|native| {
+            matches!(
+                native.effect.params,
+                crate::schema::PrEffectParams::Transform(_)
+            )
+        }) {
+            let effect = &native.effect;
+            let old_envelope = crate::schema::nested_transform_canvas_reason(
                 nest.sequence.dimensions(),
-                parent.dimensions
-            )));
+                parent.dimensions,
+                &placement.transform,
+                placement.opacity,
+                !placement.animations.is_empty(),
+                effect,
+            );
+            if native.geometry2_masks.is_empty() {
+                if let Some(reason) = crate::schema::nested_transform_import_canvas_reason(
+                    nest.sequence.dimensions(),
+                    parent.dimensions,
+                    &placement.transform,
+                    placement.opacity,
+                    &placement.animations,
+                    effect,
+                ) {
+                    return Err(unsupported(format!(
+                        "{id}: {reason}; source {:?}, placement {:?}",
+                        nest.sequence.dimensions(),
+                        parent.dimensions
+                    )));
+                }
+            }
+            ensure!(
+                old_envelope.is_none() || native.geometry2,
+                "{id}: differing-canvas keyed affine import requires native Geometry2; ordinary Transform point basis is unmeasured"
+            );
         }
-        ensure!(
-            old_envelope.is_none() || geometry2,
-            "{id}: differing-canvas keyed affine import requires native Geometry2; ordinary Transform point basis is unmeasured"
-        );
         ensure!(
             placement.playback_rate == 1.0
                 && placement.time_remap.is_none()
@@ -626,6 +648,12 @@ pub(super) fn read_nest(
     }
     // Only admitted occurrences may describe converted or omitted effects.
     omissions.extend(occurrence_effect_omissions);
+    let geometry2_masks = occurrence_effects
+        .iter()
+        .enumerate()
+        .filter(|(_, native)| !native.geometry2_masks.is_empty())
+        .map(|(index, native)| (index, native.geometry2_masks.clone()))
+        .collect();
     Ok(NestedVideo::Nest(Box::new(NestPlacement {
         id,
         timeline: placement.start..placement.end,
@@ -640,7 +668,11 @@ pub(super) fn read_nest(
         opacity_mask: nest.opacity_mask.clone(),
         opacity: nest.opacity,
         animations: std::mem::take(&mut nest.animations),
-        effects: occurrence_effects,
+        effects: occurrence_effects
+            .into_iter()
+            .map(|native| native.effect)
+            .collect(),
+        geometry2_masks,
         effects_above_mask,
         track_matte: placement.track_matte,
         blend_mode: placement.blend_mode,
@@ -836,6 +868,7 @@ pub(super) fn copy_placements(
                 opacity_mask: placement.opacity_mask,
                 track_matte: placement.track_matte,
                 effects: placement.effects,
+                geometry2_masks: placement.geometry2_masks,
                 effects_above_mask: placement.effects_above_mask,
                 enabled: placement.enabled,
                 sequence,
@@ -1481,6 +1514,7 @@ mod tests {
             opacity: 100.0,
             animations: Vec::new(),
             effects: Vec::new(),
+            geometry2_masks: Default::default(),
             effects_above_mask: 0,
             track_matte: None,
             blend_mode: PrBlendMode::Normal,

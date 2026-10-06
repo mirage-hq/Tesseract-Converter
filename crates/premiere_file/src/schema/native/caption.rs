@@ -9,16 +9,6 @@ use super::{
 };
 use serde::{de::IgnoredAny, Deserialize, Deserializer};
 
-/// One caption track in a data track group. Its `CaptionDataTemplateStyle`
-/// is a Source Text payload with the caption document markers, inferred to be
-/// the style for new captions; each cue's style is checked against it.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-pub(crate) struct CaptionDataClipTrack {
-    pub(crate) data_clip_track: Option<DataClipTrack>,
-    pub(crate) caption_data_template_style: Option<EncodedValue>,
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase", deny_unknown_fields)]
 pub(crate) struct DataClipTrack {

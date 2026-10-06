@@ -309,6 +309,7 @@ pub(in crate::format::writer) fn records(
                 intrinsic: Some("true".to_owned()),
             }),
             premiere_filter_private_data: None,
+            media_dependency_map: None,
             sub_components: None,
             match_name: Some(text::VECTOR_MOTION_MATCH_NAME.to_owned()),
             video_filter_type: Some("2".to_owned()),
@@ -439,6 +440,7 @@ fn group_records(
             intrinsic: None,
         }),
         premiere_filter_private_data: None,
+        media_dependency_map: None,
         sub_components: None,
         match_name: Some(text::SUBGROUP_MATCH_NAME.to_owned()),
         video_filter_type: Some("2".to_owned()),
@@ -594,6 +596,7 @@ fn object_component(
             }
             .into(),
         ),
+        media_dependency_map: None,
         sub_components: None,
         match_name: Some(match_name.to_owned()),
         video_filter_type: Some("2".to_owned()),

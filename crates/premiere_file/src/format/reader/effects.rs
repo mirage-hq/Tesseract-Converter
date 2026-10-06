@@ -92,6 +92,24 @@ const PARAM_CHILDREN: [&str; 13] = [
 /// applies to and are rejected.
 const UI_PROPERTIES: [&str; 2] = ["ECP.Filter.Expanded", "BE.VideoComponentChain.ChildPinID"];
 
+/// Keep the native affine kind until point-basis validation: Geometry2 and
+/// ordinary Transform both lower to `PrEffectParams::Transform`.
+#[derive(Debug)]
+pub(super) struct NativeNestEffect {
+    pub(super) effect: PrEffect,
+    pub(super) geometry2: bool,
+    pub(super) geometry2_masks: Vec<crate::schema::PrMask>,
+}
+
+/// Effect-mask transport is owner-specific: an affine nest is not a physical
+/// video input to the isolated pixel-effect mapping.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum EffectMaskHost {
+    None,
+    PhysicalVideo,
+    NestedGeometry2,
+}
+
 /// An occurrence chain divided once into intrinsic components and standard
 /// effects.
 pub(super) struct SplitChain<'g, 'c> {
@@ -178,7 +196,7 @@ impl SplitChain<'_, '_> {
     pub(super) fn reject_coverage_effects(
         &self,
         graph: &Graph<'_>,
-        effect_masks: bool,
+        mask_host: EffectMaskHost,
     ) -> Result<()> {
         for (position, &record) in (1..).zip(&self.standard) {
             let native = NativeEffect::inspect(record);
@@ -187,13 +205,27 @@ impl SplitChain<'_, '_> {
             {
                 continue;
             }
-            if effect_masks && carries_mask(graph, record)?.is_some() {
+            if mask_host == EffectMaskHost::NestedGeometry2
+                && native.match_name == Some(GEOMETRY2.match_name)
+                && carries_mask(graph, record)?.is_some()
+            {
+                ensure!(
+                    self.ordered,
+                    "masked Geometry2 requires an unambiguous stack order"
+                );
+                // The nested reader retains and validates every owned mask before
+                // any child is admitted; this is not pixel-effect admission.
+                continue;
+            }
+            if mask_host == EffectMaskHost::PhysicalVideo && carries_mask(graph, record)?.is_some()
+            {
                 ensure!(
                     self.ordered,
                     "masked effect requires an unambiguous stack order"
                 );
-                // Admit mask and effect together; the converter still checks the
-                // physical owner and the complete isolated-scope construction.
+                // Admit mask and effect together. Geometry2's owner-frame
+                // admission completes in `read_occurrence`, where the actual
+                // clip frame is known.
                 let read = standard_effect_reader(&native, false, true)
                     .ok_or_else(|| unsupported("masked effect has no editable mapping"))?;
                 let effect = read(graph, record, &native)?;
@@ -237,6 +269,59 @@ impl SplitChain<'_, '_> {
         Ok(())
     }
 
+    /// Unmapped Stroke hosts must not show a source the plugin conceals.
+    pub(super) fn reject_hidden_stroke(
+        &self,
+        graph: &Graph<'_>,
+        omissions: &mut Vec<Omission>,
+    ) -> Result<()> {
+        for &record in &self.standard {
+            let effect = NativeEffect::inspect(record);
+            if effect.bypass != Some("true")
+                && effect.match_name == Some("AE.Impact_Stroke_FX")
+                && super::stroke::hides_source(graph, record, omissions)?
+            {
+                return Err(unsupported("unmapped Stroke host may conceal its source; picture omitted without revealing pixels, independent siblings/audio retained"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Reject a physical occurrence when its masked Geometry2 cannot survive
+    /// the owner's reader or the clip's own mask boundary. In either case,
+    /// retaining the clip would expose picture that Premiere conceals.
+    pub(super) fn reject_unconverted_masked_geometry2(
+        &self,
+        graph: &Graph<'_>,
+        owner: &EffectOwner<'_>,
+        clip_mask: bool,
+    ) -> Result<()> {
+        for (position, &record) in (1..).zip(&self.standard) {
+            let native = NativeEffect::inspect(record);
+            if native.bypass == Some("true")
+                || native.match_name != Some(GEOMETRY2.match_name)
+                || carries_mask(graph, record)?.is_none()
+            {
+                continue;
+            }
+            let converted = if owner.source_is_canvas && owner.source.is_none() {
+                read_geometry2(graph, record, &native)
+            } else {
+                read_centred_geometry2(graph, record, &native)
+            };
+            let failure = match converted {
+                Err(error) => reason(error),
+                Ok(_) if clip_mask => "it is beside the clip's Crop, Linear Wipe or Track Matte Key, whose effect boundary cannot retain the masked Geometry2".to_owned(),
+                Ok(_) => continue,
+            };
+            return Err(unsupported(format!(
+                "{} at stack position {position}: masked Geometry2 does not convert on this clip ({failure}); the clip is not converted without it",
+                native.identify()
+            )));
+        }
+        Ok(())
+    }
+
     /// Legacy Luma remains unadmitted on nests and multicam placements: the
     /// ordinary effect host does not establish its native coverage mapping.
     pub(super) fn reject_unconverted_coverage(&self, owner: &str) -> Result<()> {
@@ -254,8 +339,9 @@ impl SplitChain<'_, '_> {
     /// Reject a master clip's chain whose active Transform or Geometry2 can
     /// hide the clip where import leaves it out: import converts no source
     /// Transform (`convert::effects::import_source_effects`) and a Geometry2
-    /// only as a centered positive zoom ([`read_centred_geometry2`]), so without one
-    /// the clip would show where it hides the clip. Its Opacity must be
+    /// only through the centered affine-scale mapping
+    /// ([`read_centred_geometry2`]), so without one the clip would show where
+    /// it hides the clip. Its Opacity must be
     /// readable and above 0 at every source time, its Bezier easing included
     /// ([`scalar_range`]), and its other values, read with its own record
     /// class's parameters (a Geometry2's saved Rotation marker included),
@@ -379,47 +465,6 @@ impl SplitChain<'_, '_> {
         Ok(())
     }
 
-    /// Check raw active records before best-effort parsing can discard an
-    /// unknown effect or its failed keys. An interpreted source has no proven
-    /// property clock for any of those losses.
-    pub(super) fn require_static_interpreted_effects(
-        &self,
-        graph: &Graph<'_>,
-        source: bool,
-        source_is_canvas: bool,
-    ) -> Result<()> {
-        for &record in &self.standard {
-            let native = NativeEffect::inspect(record);
-            if native.bypass == Some("true") {
-                continue;
-            }
-            // Intrinsic mask readers separately validate these records and
-            // the occurrence guard rejects unsupported coverage clocks.
-            if native.is_active_mask() {
-                continue;
-            }
-            ensure!(
-                self.ordered,
-                "{}: interpreted picture requires an ordered static effect chain",
-                native.identify()
-            );
-            let read = standard_effect_reader(&native, source, source_is_canvas)
-                .ok_or_else(|| unsupported(format!("{}: interpreted picture has an unknown active effect; static semantics are unverified", native.identify())))?;
-            let effect = read(graph, record, &native).map_err(|error| {
-                unsupported(format!(
-                    "{}: interpreted picture effect cannot be proved static: {error}",
-                    native.identify()
-                ))
-            })?;
-            ensure!(
-                effect.animations.is_empty(),
-                "{}: interpreted picture requires static occurrence and source effects",
-                native.identify()
-            );
-        }
-        Ok(())
-    }
-
     /// Active Transform records in the chain, whether or not `read_effects`
     /// converts them: a second one omits the first even when it does not
     /// convert itself (`PrVideoOccurrence::transform_stage`). A bypassed
@@ -469,16 +514,6 @@ impl SplitChain<'_, '_> {
         })
     }
 
-    /// The additional import-only keyed-translation envelope has Geometry2
-    /// evidence, not ordinary Transform evidence. Stack/mask admission remains
-    /// the responsibility of `read_nest_transform`.
-    pub(super) fn has_active_nest_geometry2(&self) -> bool {
-        self.standard.iter().any(|&record| {
-            let native = NativeEffect::inspect(record);
-            native.bypass != Some("true") && native.match_name == Some(GEOMETRY2.match_name)
-        })
-    }
-
     /// Dropping an active Corner Pin would expose a full-frame nest over
     /// underlying content; the picture Group has no established pin frame.
     pub(super) fn has_active_nest_corner_pin(&self) -> bool {
@@ -490,35 +525,78 @@ impl SplitChain<'_, '_> {
 
     /// Inspect the native stack before any lossy effect conversion. This is
     /// a separate inferred nest mapping; source-chain Geometry2 stays centered.
-    pub(super) fn read_nest_transform(&self, graph: &Graph<'_>) -> Result<PrEffect> {
-        let active: Vec<_> = self
-            .standard
-            .iter()
-            .copied()
-            .filter(|&record| NativeEffect::inspect(record).bypass != Some("true"))
-            .collect();
-        let is_transform = |record| {
-            let name = NativeEffect::inspect(record).match_name;
-            name == Some(TRANSFORM.match_name) || name == Some(GEOMETRY2.match_name)
-        };
+    pub(super) fn read_nest_transform(
+        &self,
+        graph: &Graph<'_>,
+        owner: &EffectOwner<'_>,
+        omissions: &mut Vec<Omission>,
+    ) -> Result<Vec<NativeNestEffect>> {
         ensure!(
-            active.iter().copied().any(is_transform),
-            "effects on a nested sequence occurrence are not converted"
+            self.ordered,
+            "nested affine component Index values disagree with their order"
         );
-        ensure!(
-            self.ordered && active.len() == 1 && is_transform(active[0]),
-            "nested Transform requires exactly one active unmasked Transform"
-        );
-        let effect = read_transform(graph, active[0], &NativeEffect::inspect(active[0]))?;
-        let PrEffectParams::Transform(transform) = &effect.params else {
-            return Err(unsupported("nested Transform has no affine parameters"));
-        };
-        ensure!(transform.motion_blur_shutter_angle().is_none() && !transform.bicubic_sampling
-            && effect.animations.iter().all(|animation|
-                animation.param.id != TRANSFORM_SHUTTER_ANGLE.id
-                && !(transform.uniform_scale && animation.param.id == TRANSFORM_SCALE_WIDTH.id)),
-            "nested Transform requires fully retained controls and keys without motion blur or bicubic sampling");
-        Ok(effect)
+        let mut effects = Vec::new();
+        // `standard` is already in native render order, not document order.
+        // Keep affine controls as separate stages; do not multiply matrices
+        // or move a colour effect across a spatial transform.
+        for &record in &self.standard {
+            let native = NativeEffect::inspect(record);
+            if native.bypass == Some("true") {
+                continue;
+            }
+            if native.match_name == Some(TRANSFORM.match_name)
+                || native.match_name == Some(GEOMETRY2.match_name)
+            {
+                let geometry2_masks = if native.match_name == Some(GEOMETRY2.match_name) {
+                    read_nested_geometry2_masks(graph, record, omissions)?
+                } else {
+                    ensure!(
+                        read_effect_mask(graph, record, omissions)?.is_none(),
+                        "nested Transform effect-owned mask has no staged coverage mapping"
+                    );
+                    Vec::new()
+                };
+                let effect = read_transform(graph, record, &native)?;
+                let PrEffectParams::Transform(transform) = &effect.params else {
+                    return Err(unsupported("nested Transform has no affine parameters"));
+                };
+                ensure!(transform.motion_blur_shutter_angle().is_none() && !transform.bicubic_sampling
+                    && effect.animations.iter().all(|animation|
+                        animation.param.id != TRANSFORM_SHUTTER_ANGLE.id
+                        && !(transform.uniform_scale && animation.param.id == TRANSFORM_SCALE_WIDTH.id)),
+                    "nested Transform requires fully retained controls and keys without motion blur or bicubic sampling");
+                if !geometry2_masks.is_empty() {
+                    ensure!(transform.uniform_scale && transform.scale_height == 100.0
+                        && transform.scale_width == 100.0 && transform.skew == 0.0
+                        && transform.skew_axis == 0.0 && transform.rotation == 0.0
+                        && transform.opacity == 100.0
+                        && effect.animations.iter().all(|animation| animation.param.id == TRANSFORM_POSITION.id),
+                        "masked nested Geometry2 requires retained translation-only controls; other affine mask domains are unestablished");
+                }
+                effects.push(NativeNestEffect {
+                    effect,
+                    geometry2: native.match_name == Some(GEOMETRY2.match_name),
+                    geometry2_masks,
+                });
+            } else {
+                let single = Self {
+                    motion_and_masks: Vec::new(),
+                    standard: vec![record],
+                    ordered: true,
+                };
+                let (mapped, _) = single.read_effects(graph, owner, false, omissions);
+                ensure!(
+                    mapped.iter().all(|effect| effect.mask.is_none()),
+                    "nested affine stack effect-owned mask has no staged coverage mapping"
+                );
+                effects.extend(mapped.into_iter().map(|effect| NativeNestEffect {
+                    effect,
+                    geometry2: false,
+                    geometry2_masks: Vec::new(),
+                }));
+            }
+        }
+        Ok(effects)
     }
 
     /// Only the measured sole standard Stroke can own occurrence geometry.
@@ -526,30 +604,39 @@ impl SplitChain<'_, '_> {
         &self,
         graph: &Graph<'_>,
         omissions: &mut Vec<Omission>,
-    ) -> Option<crate::schema::PrFilmImpactStroke> {
+    ) -> Result<Option<crate::schema::PrFilmImpactStroke>> {
         let records: Vec<_> = self
             .standard
             .iter()
             .filter(|record| {
                 NativeEffect::inspect(**record).match_name == Some("AE.Impact_Stroke_FX")
+                    && NativeEffect::inspect(**record).bypass != Some("true")
             })
             .collect();
-        let first = records.first()?;
+        let Some(first) = records.first() else {
+            return Ok(None);
+        };
+        let concealed = records.iter().try_fold(false, |hidden, record| {
+            super::stroke::hides_source(graph, **record, omissions).map(|value| hidden || value)
+        })?;
         let converted = if self.ordered && self.standard.len() == 1 && records.len() == 1 {
-            super::stroke::read(graph, **first)
+            super::stroke::read(graph, **first, omissions)
         } else {
             Err(unsupported("Stroke geometry requires one ordered standard effect without other effects or masks"))
         };
         match converted {
-            Ok(profile) => Some(profile),
+            Ok(profile) => Ok(Some(profile)),
             Err(reason) => {
+                if concealed {
+                    return Err(unsupported(format!("Stroke source may be concealed and its outline cannot be isolated on this host: {reason}; omit only this picture, not independent siblings/audio")));
+                }
                 omit(
                     omissions,
                     OmissionScope::Feature,
                     first.identity(),
                     reason.to_string(),
                 );
-                None
+                Ok(None)
             }
         }
     }
@@ -642,9 +729,21 @@ impl SplitChain<'_, '_> {
                 // crossing lower windows); the composed stage fills its missing
                 // Position/Rotation/Anchor control class, not a new zoom policy.
                 let zoom = if owner.source_is_canvas {
-                    read_geometry2(graph, record, &native)
+                    read_geometry2_with_notes(
+                        graph,
+                        record,
+                        &native,
+                        &mut approximations,
+                        &mut omitted_controls,
+                    )
                 } else {
-                    read_centred_geometry2(graph, record, &native)
+                    read_centred_geometry2_with_notes(
+                        graph,
+                        record,
+                        &native,
+                        &mut approximations,
+                        &mut omitted_controls,
+                    )
                 };
                 zoom.or_else(|error| {
                     // Composite staging cannot cross an intrinsic mask boundary.
@@ -656,6 +755,25 @@ impl SplitChain<'_, '_> {
                     }
                 })
                 .map(|effect| vec![effect])
+            } else if self.ordered && native.match_name == Some(GEOMETRY2.match_name) {
+                let zoom = if owner.source_is_canvas && owner.source.is_none() {
+                    read_geometry2_with_notes(
+                        graph,
+                        record,
+                        &native,
+                        &mut approximations,
+                        &mut omitted_controls,
+                    )
+                } else {
+                    read_centred_geometry2_with_notes(
+                        graph,
+                        record,
+                        &native,
+                        &mut approximations,
+                        &mut omitted_controls,
+                    )
+                };
+                zoom.map(|effect| vec![effect])
             } else if native.is_active_transform() && has_matte && !measured_pair {
                 Err(unsupported("Transform with Track Matte Key requires exactly those two active native effects; another active or unconverted effect is outside measured A4"))
             } else if self.ordered && native.match_name == Some(LEGACY_LUMA_KEY_MATCH_NAME) {
@@ -874,6 +992,39 @@ fn read_alpha_glow_preserving_controls(
         },
         animations: values.animations,
     })
+}
+
+/// Keep separate native mask outlines for the nested affine output scope. The
+/// physical-video single-mask reader and its scope algorithm stay unchanged.
+fn read_nested_geometry2_masks(
+    graph: &Graph<'_>,
+    record: Record<'_>,
+    omissions: &mut Vec<Omission>,
+) -> Result<Vec<crate::schema::PrMask>> {
+    let filter = graph.decode::<VideoFilterComponent>(record)?;
+    let mut masks = Vec::new();
+    if let Some(sub_components) = &filter.value.sub_components {
+        for reference in &sub_components.items {
+            let single = crate::schema::native::SubComponents {
+                version: sub_components.version.clone(),
+                items: vec![crate::schema::native::Reference {
+                    id: reference.id.clone(),
+                    uid: reference.uid.clone(),
+                    index: reference.index.clone(),
+                }],
+            };
+            if let Some(mask) =
+                super::mask::read_opacity_mask(graph, &filter.identity, &single, omissions)?
+            {
+                ensure!(
+                    mask.raster.is_none() && mask.path_keys.is_empty(),
+                    "nested Geometry2 requires a static vector effect-mask outline"
+                );
+                masks.push(mask);
+            }
+        }
+    }
+    Ok(masks)
 }
 
 fn read_effect_mask(
@@ -2085,9 +2236,11 @@ fn read_posterize_time(
 
 /// A Transform whose skew keys [`PrTransform::ensure_convertible`] accepts;
 /// the converter reports its approximated parameters
-/// ([`PrTransform::approximations`]). A bypassed Transform is omitted:
-/// Premiere renders the clip without it, and the stage group's video
-/// carries an active one only. The converter
+/// ([`PrTransform::approximations`]). Position keys retain the saved curved
+/// spatial path for a staged host; the layer-track mapper keeps its paired
+/// tangents, while non-staged Geometry2 mappings retain their narrower control
+/// checks. A bypassed Transform is omitted: Premiere renders the clip without
+/// it, and the stage group's video carries an active one only. The converter
 /// adds the host rules (a media clip whose source frame is the canvas,
 /// without a Crop or Linear Wipe).
 fn read_transform(
@@ -2104,7 +2257,7 @@ fn read_transform(
     } else {
         &TRANSFORM
     };
-    let values = param_values(graph, record, spec)?;
+    let values = param_values_with(graph, record, spec, true)?;
     let transform = transform_params(&values)?;
     transform
         .ensure_convertible(&values.animations)
@@ -2179,6 +2332,16 @@ fn read_centred_geometry2(
     record: Record<'_>,
     native: &NativeEffect<'_>,
 ) -> Result<PrEffect> {
+    read_centred_geometry2_with_notes(graph, record, native, &mut Vec::new(), &mut Vec::new())
+}
+
+fn read_centred_geometry2_with_notes(
+    graph: &Graph<'_>,
+    record: Record<'_>,
+    native: &NativeEffect<'_>,
+    approximations: &mut Vec<String>,
+    omitted_controls: &mut Vec<String>,
+) -> Result<PrEffect> {
     let effect = read_transform(graph, record, native)?;
     let PrEffectParams::Transform(transform) = effect.params else {
         return Err(unsupported("Geometry2 has no Transform parameters"));
@@ -2187,25 +2350,34 @@ fn read_centred_geometry2(
         transform.anchor_point == [0.5; 2] && transform.position == [0.5; 2],
         "an off-centre Geometry2 zoom on media that is rotated or not sequence-sized is not converted: the frame that Premiere normalizes its Anchor Point and Position to is unmeasured there"
     );
-    geometry2_zoom(effect, transform)
+    geometry2_zoom(effect, transform, approximations, omitted_controls)
 }
 
-/// The native Geometry2 positive uniform zoom, represented by an affine
-/// Corner Pin. As the Transform effect does, the zoom lands
-/// the Anchor Point on the Position, both normalized to the clip frame, so
-/// each frame corner `c` lands at `Position + Scale / 100 × (c − Anchor)`.
-/// Each corner is linear in Scale Height, so its keys keep the authored
-/// temporal easing exactly. Other Geometry2 forms remain unmeasured.
+/// The native Geometry2 affine scale, represented by an editable Corner Pin.
+/// As the Transform effect does, it lands the Anchor Point on the Position,
+/// both normalized to the clip frame, so each frame corner `c` lands at
+/// `Position + Scale / 100 × (c − Anchor)`. At most one rendered scale track
+/// converts, preserving its authored times and temporal easing exactly.
 fn read_geometry2(
     graph: &Graph<'_>,
     record: Record<'_>,
     native: &NativeEffect<'_>,
 ) -> Result<PrEffect> {
+    read_geometry2_with_notes(graph, record, native, &mut Vec::new(), &mut Vec::new())
+}
+
+fn read_geometry2_with_notes(
+    graph: &Graph<'_>,
+    record: Record<'_>,
+    native: &NativeEffect<'_>,
+    approximations: &mut Vec<String>,
+    omitted_controls: &mut Vec<String>,
+) -> Result<PrEffect> {
     let effect = read_transform(graph, record, native)?;
     let PrEffectParams::Transform(transform) = effect.params else {
         return Err(unsupported("Geometry2 has no Transform parameters"));
     };
-    geometry2_zoom(effect, transform)
+    geometry2_zoom(effect, transform, approximations, omitted_controls)
 }
 
 /// Keep the authored adjustment controls before composite-stage admission.
@@ -2239,28 +2411,77 @@ fn read_adjustment_geometry2(
     })
 }
 
-fn geometry2_zoom(effect: PrEffect, transform: PrTransform) -> Result<PrEffect> {
+fn geometry2_zoom(
+    effect: PrEffect,
+    transform: PrTransform,
+    approximations: &mut Vec<String>,
+    omitted_controls: &mut Vec<String>,
+) -> Result<PrEffect> {
     ensure!(
-        transform.uniform_scale
-            && transform.scale_height > 0.0
-            && transform.skew == 0.0
+        transform.skew == 0.0
             && transform.skew_axis == 0.0
             && transform.rotation == 0.0
             && transform.opacity == 100.0
-            && transform.composition_shutter_angle
-            && transform.shutter_angle == 0.0
             && !transform.bicubic_sampling
-            && effect.animations.iter().all(|animation| animation.param.id == TRANSFORM_SCALE_HEIGHT.id),
-        "Geometry2 converts only a positive uniform scale with static Anchor Point and Position, full Opacity, no Skew, Rotation or motion blur and bilinear Sampling"
+            && effect.animations.iter().all(|animation| matches!(
+                animation.param.id,
+                id if id == TRANSFORM_SCALE_HEIGHT.id
+                    || id == TRANSFORM_SCALE_WIDTH.id
+                    || id == TRANSFORM_SHUTTER_ANGLE.id
+            )),
+        "Geometry2 converts only scale with static Anchor Point and Position, full Opacity, no Skew or Rotation and bilinear Sampling"
     );
+
+    let height_animation = effect
+        .animations
+        .iter()
+        .find(|animation| animation.param.id == TRANSFORM_SCALE_HEIGHT.id);
+    let width_animation = effect
+        .animations
+        .iter()
+        .find(|animation| animation.param.id == TRANSFORM_SCALE_WIDTH.id);
+    let rendered_width_animation = width_animation.filter(|_| !transform.uniform_scale);
+    ensure!(
+        height_animation.is_none() || rendered_width_animation.is_none(),
+        "Geometry2 with independently keyed Scale Height and Scale Width is not converted"
+    );
+    if let Some(reason) = transform.unimported_scale_width_keys(&effect.animations) {
+        omitted_controls.push(reason.to_owned());
+    }
+
+    let shutter_animation = effect
+        .animations
+        .iter()
+        .find(|animation| animation.param.id == TRANSFORM_SHUTTER_ANGLE.id);
+    if let Some(animation) = shutter_animation {
+        let keys = animation
+            .keys
+            .scalar()
+            .ok_or_else(|| unsupported("Geometry2 Shutter Angle keys are not scalar"))?;
+        let values: Vec<_> = keys
+            .iter()
+            .map(|key| (key.value, key.easing.bezier()))
+            .collect();
+        let [least, greatest] = scalar_range(&values);
+        if greatest > 0.0 {
+            approximations.push(format!(
+                "keyed Geometry2 motion blur (saved Shutter Angle range {least} to {greatest}, including when Use Composition's Shutter Angle is enabled) was not imported; editable geometry retained (native shutter timing is unmeasured)"
+            ));
+        }
+    } else if transform.shutter_angle > 0.0 {
+        approximations.push(format!(
+            "Geometry2 motion blur (saved Shutter Angle {}, including when Use Composition's Shutter Angle is enabled) was not imported; editable geometry retained (native 360° evidence shows a forward one-frame smear)",
+            transform.shutter_angle
+        ));
+    }
+
     let ([anchor_x, anchor_y], [position_x, position_y]) =
         (transform.anchor_point, transform.position);
-    let corners = |scale: f64| {
-        let factor = scale / 100.0;
+    let corners = |[scale_x, scale_y]: [f64; 2]| {
         let corner = |x: f64, y: f64| {
             [
-                position_x + factor * (x - anchor_x),
-                position_y + factor * (y - anchor_y),
+                position_x + scale_x / 100.0 * (x - anchor_x),
+                position_y + scale_y / 100.0 * (y - anchor_y),
             ]
         };
         [
@@ -2270,16 +2491,27 @@ fn geometry2_zoom(effect: PrEffect, transform: PrTransform) -> Result<PrEffect> 
             corner(1.0, 1.0),
         ]
     };
+    let static_scale = transform.scale();
+    let scale_animation = height_animation
+        .map(|animation| (TRANSFORM_SCALE_HEIGHT.id, animation))
+        .or_else(|| {
+            rendered_width_animation.map(|animation| (TRANSFORM_SCALE_WIDTH.id, animation))
+        });
     let mut animations = Vec::new();
-    for animation in &effect.animations {
+    if let Some((animated_param, animation)) = scale_animation {
         let keys = animation
             .keys
             .scalar()
-            .ok_or_else(|| unsupported("Geometry2 Scale Height has no scalar keys"))?;
-        ensure!(
-            keys.iter().all(|key| key.value > 0.0),
-            "Geometry2 Scale Height keys must be positive"
-        );
+            .ok_or_else(|| unsupported("Geometry2 Scale keys are not scalar"))?;
+        let scale_at = |value| {
+            if animated_param == TRANSFORM_SCALE_WIDTH.id {
+                [value, static_scale[1]]
+            } else if transform.uniform_scale {
+                [value; 2]
+            } else {
+                [static_scale[0], value]
+            }
+        };
         for (index, param) in CORNER_PIN.params.iter().enumerate() {
             animations.push(PrEffectParamAnimation {
                 param,
@@ -2287,7 +2519,7 @@ fn geometry2_zoom(effect: PrEffect, transform: PrTransform) -> Result<PrEffect> 
                     keys.iter()
                         .map(|key| PrPointKeyframe {
                             source_ticks: key.source_ticks,
-                            value: corners(key.value)[index],
+                            value: corners(scale_at(key.value))[index],
                             easing: key.easing,
                             spatial_in_tangent: None,
                             spatial_out_tangent: None,
@@ -2297,10 +2529,13 @@ fn geometry2_zoom(effect: PrEffect, transform: PrTransform) -> Result<PrEffect> 
             });
         }
     }
+    // This affine lowering intentionally permits an axis to collapse or cross
+    // zero. Generic Corner Pin admission rejects those degenerate/mirrored
+    // quads, but Geometry2 renders them and the renderer safely discards the
+    // zero-area instant.
     let pin = PrCornerPin {
-        corners: corners(transform.scale_height),
+        corners: corners(static_scale),
     };
-    pin.ensure_convex(&animations).map_err(unsupported)?;
     Ok(PrEffect {
         mask: None,
         enabled: effect.enabled,
@@ -2511,11 +2746,10 @@ fn param_values_with_notes(
             .start_keyframes
             .insert(param_spec.id, param.value.start_keyframe.clone());
         ensure!(
-            param_record.tag() == param_spec.record.tag
-                && param_spec.accepts_name(param.value.name.as_deref()),
-            "{}: unexpected parameter {:?} or record type",
+            param_record.tag() == param_spec.record.tag,
+            "{}: unexpected parameter record type {}",
             param.identity,
-            param.value.name.as_deref().unwrap_or_default()
+            param_record.tag()
         );
         ensure!(
             ids.insert(param_spec.id),
@@ -2727,7 +2961,8 @@ fn param_value(
 
 fn param_value_with_notes(
     param: &VideoComponentParam,
-    element: Element<'_>,
+    // Keep the element in the shared parsing call shape; static values deliberately ignore it.
+    _element: Element<'_>,
     spec: &EffectParamSpec,
     identity: &str,
     keep_curves: bool,
@@ -2848,19 +3083,8 @@ fn param_value_with_notes(
         time == records::STATIC_KEYFRAME_TIME && fields.count() == if point { 12 } else { 6 },
         "unexpected {label} StartKeyframe shape"
     );
-    // A static parameter's cached UI value can be stale; reject a conflict
-    // instead of guessing which value Premiere renders.
-    if let Some(current) = element.child("CurrentValue").and_then(Element::text) {
-        let same = current == value
-            || matches!(
-                (current.parse::<f64>(), value.parse::<f64>()),
-                (Ok(current), Ok(value)) if current == value
-            );
-        ensure!(
-            same,
-            "{label} CurrentValue {current:?} conflicts with its static value {value:?}"
-        );
-    }
+    // Static StartKeyframe is authored state. Native Crop records prove that
+    // CurrentValue can retain unrelated UI readback and does not override it.
     Ok(ParamValue::Static(value.to_owned()))
 }
 

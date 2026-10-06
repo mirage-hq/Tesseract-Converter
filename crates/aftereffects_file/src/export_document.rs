@@ -461,13 +461,12 @@ fn to_aep_with_media_fps_and_audio_mode(
         mosaic_root_adjustments: root_layers
             .iter()
             .filter(|layer| {
-                document
-                    .background_color()
-                    .is_none_or(|color| color[3] == 0.0)
+                document.background_color().is_none()
                     && matches!(layer.data(), LayerData::Adjustment(_))
             })
             .map(Layer::id)
             .collect(),
+        mosaic_cross_layer_inputs: mosaic_domain::has_cross_layer_inputs(root_layers),
         resolved_media,
         fonts: documents.fonts,
         composition_options,
@@ -597,6 +596,7 @@ struct Lowerer<'a> {
     /// FX Group effects retain the document plane through native capture tiles.
     logical_dimensions: fx_schema::Dimensions,
     mosaic_root_adjustments: BTreeSet<LayerId>,
+    mosaic_cross_layer_inputs: bool,
     resolved_media: &'a BTreeMap<String, media::ResolvedMediaSource>,
     fonts: Option<&'a fonts::ArchiveFonts>,
     composition_options: CompositionOptions,
@@ -662,6 +662,7 @@ impl Lowerer<'_> {
             dimensions: self.dimensions,
             logical_dimensions: self.logical_dimensions,
             mosaic_root_adjustments: self.mosaic_root_adjustments.clone(),
+            mosaic_cross_layer_inputs: self.mosaic_cross_layer_inputs,
             resolved_media: self.resolved_media,
             fonts: self.fonts,
             composition_options: self.composition_options,
@@ -760,28 +761,31 @@ impl Lowerer<'_> {
         // Group effect coordinates belong to the generated precomposition,
         // whose finite dimensions are not available until hierarchy planning.
         if !matches!(layer.data(), LayerData::Group(_)) {
-            let mosaic_canvas = if !self.inside_precomposition
-                && parent.is_none()
-                && inherited.is_none()
-                && self.mosaic_root_adjustments.contains(&layer.id())
-                && self.dimensions == self.logical_dimensions
-            {
-                mosaic_domain::prove_root_canvas(
+            let mosaic_domain = mosaic_domain::scope(
+                self.inside_precomposition,
+                parent,
+                inherited.is_some(),
+                self.mosaic_root_adjustments.contains(&layer.id()),
+                self.dimensions == self.logical_dimensions,
+                self.mosaic_cross_layer_inputs,
+            )
+            .map(|scope| {
+                mosaic_domain::classify(
                     layer,
                     siblings,
                     dynamics,
                     self.logical_dimensions,
+                    self.rate,
                     self.resolved_media,
+                    &scope,
                 )
-            } else {
-                None
-            };
+            });
             let (effects, styles) = self.lower_effect_stack(
                 layer.id(),
                 layer.data().effects(),
                 dynamics,
                 effect_size,
-                mosaic_canvas.as_ref(),
+                mosaic_domain.as_ref(),
             );
             options.effects = effects;
             options.styles = styles;
@@ -911,17 +915,17 @@ impl Lowerer<'_> {
         records: &[fx_schema::EffectRecord],
         dynamics: &AnimationIndex<'_>,
         size: [f64; 2],
-        mosaic_canvas: Option<&mosaic_domain::RootCanvas>,
+        mosaic_domain: Option<&mosaic_domain::MosaicDomain>,
     ) -> (
         Vec<crate::writer::effects::NativeEffect>,
         Vec<crate::layer_styles::NativeLayerStyle>,
     ) {
-        let lowered = effects::lower_at_rate_with_mosaic_canvas(
+        let lowered = effects::lower_at_rate_with_mosaic_domain(
             records,
             dynamics,
             size,
             self.rate,
-            mosaic_canvas,
+            mosaic_domain,
         );
         if self.inside_precomposition && (!lowered.effects.is_empty() || !lowered.styles.is_empty())
         {
@@ -933,6 +937,95 @@ impl Lowerer<'_> {
             self.warn(Some(owner), warning);
         }
         (lowered.effects, lowered.styles)
+    }
+
+    fn omit_unlowerable_root_adjustment(
+        &mut self,
+        layer: &Layer,
+        parent: Option<LayerId>,
+        inherited: Option<(&Transform, LayerId)>,
+        siblings: &[Layer],
+        output_visible: bool,
+    ) -> bool {
+        let LayerData::Adjustment(adjustment) = layer.data() else {
+            return false;
+        };
+        if !output_visible
+            || self.inside_precomposition
+            || parent.is_some()
+            || inherited.is_some()
+            || adjustment.masks.is_empty()
+        {
+            return false;
+        }
+        let owner_facts = self
+            .source_variant_eligibility
+            .get(&layer.id())
+            .copied()
+            .unwrap_or_default();
+        if owner_facts.has_external_references()
+            || owner_facts.referenced_by_animation_dependency
+            || owner_facts.has_unresolved_animation_dependency
+        {
+            return false;
+        }
+        // Only source-only root Shape guides can leave with this failed unit.
+        // Native matte/parent/animation consumers still need their identity;
+        // hidden owners and other failed-owner rollback paths stay unchanged.
+        for id in adjustment.masks.iter().filter_map(|mask| mask.layer) {
+            let Some(guide) = siblings.iter().find(|guide| guide.id() == id) else {
+                return false;
+            };
+            let LayerData::Shape(shape) = guide.data() else {
+                return false;
+            };
+            let facts = self
+                .source_variant_eligibility
+                .get(&id)
+                .copied()
+                .unwrap_or_default();
+            if facts.nested_or_parented
+                || facts.owns_masks_or_matte
+                || facts.referenced_as_parent
+                || facts.referenced_as_matte
+                || facts.referenced_as_ai_edit_source
+                || facts.referenced_as_segment
+                || facts.referenced_by_animation_dependency
+                || facts.referenced_by_animation_layer_ref
+                || facts.has_unresolved_animation_dependency
+                || !shape.effects.is_empty()
+            {
+                return false;
+            }
+        }
+        let transform = identity_fx_transform();
+        let lowered = masks::lower(
+            &adjustment.masks,
+            None,
+            masks::MaskOwner {
+                coordinate_owner: Some(layer.id()),
+                parent: None,
+                transform: &transform,
+                source_size: [self.dimensions.width, self.dimensions.height],
+                clock: Some(layer.active_range()),
+            },
+            siblings,
+            self.dynamics,
+        );
+        if !lowered.has_omitted_gating_mask {
+            return false;
+        }
+        for diagnostic in lowered.diagnostics {
+            self.warn(Some(layer.id()), diagnostic);
+        }
+        // Source path-mask consumption does not depend on successful export.
+        // Reserve it before ordinary per-layer transactions so a later failed
+        // Text owner cannot roll back this Adjustment's source-only consumption.
+        self.consumed_guides
+            .extend(adjustment.masks.iter().filter_map(|mask| mask.layer));
+        self.omitted_layer_ids.insert(layer.id());
+        self.warn(Some(layer.id()), "owner omitted: root Adjustment has an unlowerable coverage mask; unsafe unmasked effects omitted; source-only guides remain consumed without a native copy of the unsupported mask geometry");
+        true
     }
 
     fn layer_source_size(&self, layer: &Layer) -> Result<[u32; 2], &'static str> {
@@ -1012,11 +1105,15 @@ impl Lowerer<'_> {
                 ),
             }
         }
+        let output_visible = ancestor_visible && !layer_is_hidden(layer);
+        if self.omit_unlowerable_root_adjustment(layer, parent, inherited, siblings, output_visible)
+        {
+            return;
+        }
         let start = self.layers.len();
         let diagnostics_before = self.diagnostics.len();
         let consumed_guides_before = self.consumed_guides.checkpoint();
         let occupied_ids_before = self.occupied_ids.checkpoint();
-        let output_visible = ancestor_visible && !layer_is_hidden(layer);
         let inline_group = match layer.data() {
             LayerData::Group(group) => self.inline_vector_group_eligible(group, depth),
             _ => false,
@@ -2704,11 +2801,22 @@ impl Lowerer<'_> {
         if result != Err("Text/font glyph bounds are not known from the FX text box") {
             return result;
         }
+        // Prune only Text whose bounds are still unknown. Verified Point Text
+        // must survive an unrelated unbounded Text sibling. The projection is
+        // analysis-only: restore original Source Text before ordinary lowering.
+        let font_projection = self
+            .fonts
+            .filter(|_| !hierarchy::has_skew(group))
+            .and_then(|fonts| fonts.bounds_geometry(group, self.dynamics).ok());
         let Some((retained, omitted_branches, omitted_descendants)) =
-            prune_independent_text_branches(group, &self.source_variant_eligibility)
+            prune_independent_text_branches(
+                font_projection.as_ref().unwrap_or(group),
+                &self.source_variant_eligibility,
+            )
         else {
             return result;
         };
+        let retained = restore_projected_text_content(group, &retained)?;
         self.diagnostics.truncate(diagnostic_count);
         self.occupied_ids.rollback(occupied_ids);
         self.consumed_guides.rollback(consumed_guides);
@@ -3743,9 +3851,39 @@ fn root_plain_text_bounds_projection(
     prune_independent_text_branches(group, references).map(|(geometry, _, _)| geometry)
 }
 
-// Omission callers use this copy only after a failed glyph-bounds proof, then
-// emit the same edited view. The certified-root caller uses it for bounds only
-// and emits the original content instead; neither path guesses glyph extents.
+// A font projection may replace Text with classifier Rects. Recover the native
+// source content by identity after pruning; never emit those bounds proxies.
+fn restore_projected_text_content(
+    original: &GroupLayer,
+    retained: &GroupLayer,
+) -> Result<GroupLayer, &'static str> {
+    let mut restored = original.clone();
+    restored.layers = retained
+        .layers
+        .iter()
+        .map(|layer| {
+            let source = original
+                .layers
+                .iter()
+                .find(|source| source.id() == layer.id())
+                .ok_or("Text bounds projection lost its source identity")?;
+            if let (LayerData::Group(source), LayerData::Group(retained)) =
+                (source.data(), layer.data())
+            {
+                let restored = restore_projected_text_content(source, retained)?;
+                Layer::from_data(&LayerData::Group(restored))
+                    .map_err(|_| "Text bounds recovery could not preserve editable children")
+            } else {
+                Ok(source.clone())
+            }
+        })
+        .collect::<Result<_, _>>()?;
+    Ok(restored)
+}
+
+// Omission callers use this copy only after a failed glyph-bounds proof and
+// restore original content before emission. The certified-root caller uses it
+// for bounds only; neither path guesses glyph extents.
 fn prune_independent_text_branches(
     group: &GroupLayer,
     references: &BTreeMap<LayerId, source_variants::SourceVariantEligibility>,

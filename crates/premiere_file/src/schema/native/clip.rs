@@ -154,24 +154,24 @@ pub(crate) struct MonitorProperties {
     #[serde(rename = "@Version", skip_serializing_if = "Option::is_none")]
     pub(crate) version: Option<String>,
     #[serde(rename = "AMM.CurrentSolo", skip_serializing)]
-    pub(crate) _current_solo: Option<EmptySolo>,
+    pub(crate) _current_solo: Option<IgnoredAny>,
     #[serde(rename = "BE.MasterClip.Rendered.OffsetToOriginal", skip_serializing)]
     pub(crate) _rendered_offset_to_original: Option<ZeroRenderedOffset>,
     // Source Monitor viewing mode; timeline cuts select their own camera.
     #[serde(rename = "Source.Monitor.Multicam.Enabled", skip_serializing)]
-    pub(crate) _multicam_enabled: Option<bool>,
+    pub(crate) _multicam_enabled: Option<IgnoredAny>,
     // Merged master provenance. Actual playback uses the placed Source,
     // SecondaryContent channel and OrigChGrp references, not these labels.
     #[serde(
         rename = "MZ.MergeClipUtils.ComponentMasterClipOriginalName",
         skip_serializing
     )]
-    pub(crate) _merged_original_name: Option<String>,
+    pub(crate) _merged_original_name: Option<IgnoredAny>,
     #[serde(
         rename = "MZ.MergeClipUtils.AudioTrackNumberFromOriginalMergedClip",
         skip_serializing
     )]
-    pub(crate) _merged_original_track: Option<usize>,
+    pub(crate) _merged_original_track: Option<IgnoredAny>,
     #[serde(rename = "monitor.edit.time", skip_serializing_if = "Option::is_none")]
     pub(crate) edit_time: Option<RetainedOrSkipped<String>>,
     #[serde(rename = "monitor.looping", skip_serializing_if = "Option::is_none")]
@@ -205,27 +205,6 @@ pub(crate) struct MonitorProperties {
         skip_serializing_if = "Option::is_none"
     )]
     pub(crate) zoom_out_time: Option<RetainedOrSkipped<String>>,
-}
-
-/// A master clip's `AMM.CurrentSolo` monitor state when it solos nothing: the
-/// empty list [`records::AMM_CURRENT_SOLO`], the only value that the master
-/// clips of the local corpus and of a real Premiere 26.3 project's music hold.
-/// It is not conversion data. Another value is unobserved and rejects the
-/// master clip, as an unknown key does.
-#[derive(Debug)]
-pub(crate) struct EmptySolo;
-
-impl<'de> Deserialize<'de> for EmptySolo {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = String::deserialize(deserializer)?;
-        if value == records::AMM_CURRENT_SOLO {
-            Ok(Self)
-        } else {
-            Err(serde::de::Error::custom(format!(
-                "unsupported AMM.CurrentSolo {value:?}: only an empty solo list is read"
-            )))
-        }
-    }
 }
 
 /// Literal zero, observed on sequence and legacy-title masters in the corpus.
@@ -577,20 +556,21 @@ mod tests {
             assert!(master.properties.is_some());
         }
 
-        // A solo list that is not empty, and other keys, such as the
-        // render-and-replace offset of the corpus adobe-pro-audio master clip
-        // `cf41ac53-6d62-417e-85f4-e97030c49738`, still reject.
-        for (from, to, reason) in [
-            ("[]", "[0]", r#"unsupported AMM.CurrentSolo "[0]""#),
-            (
-                "AMM.CurrentSolo>[]</AMM.CurrentSolo",
-                "BE.MasterClip.Rendered.OffsetToOriginal>-805188384000</BE.MasterClip.Rendered.OffsetToOriginal",
-                "unsupported BE.MasterClip.Rendered.OffsetToOriginal",
-            ),
-        ] {
-            let error = quick_xml::de::from_str::<MasterNode>(&music.replace(from, to)).unwrap_err();
-            assert!(error.to_string().contains(reason), "{error}");
+        for solo in ["[0]", "opaque", "<Private/>"] {
+            let master: MasterNode = quick_xml::de::from_str(&music.replace("[]", solo)).unwrap();
+            assert!(master.properties.is_some());
         }
+        // Render-and-replace offsets remain source-time semantics, not UI.
+        let error = quick_xml::de::from_str::<MasterNode>(&music.replace(
+            "AMM.CurrentSolo>[]</AMM.CurrentSolo",
+            "BE.MasterClip.Rendered.OffsetToOriginal>-805188384000</BE.MasterClip.Rendered.OffsetToOriginal",
+        )).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported BE.MasterClip.Rendered.OffsetToOriginal"),
+            "{error}"
+        );
     }
 }
 

@@ -7,11 +7,14 @@
 //! JPEG, `phone_title` and `cinemagraph` RGBA PNG). `AlphaType` `1` is written
 //! only when the file carries straight alpha: observed for RGBA PNG, inferred
 //! for grey+alpha and `tRNS` PNG. `IsOverridenImageOrientationType`, whose
-//! meaning is unknown, is not written.
+//! meaning is unknown, is not written. OpenEXR uses the codec and black-matte
+//! alpha declarations emitted by Premiere's bundled `oEXR` importer; Premiere
+//! reads pixel aspect and source interpretation from the retained EXR.
 
 use super::graph::MediaIds;
 use crate::schema::{
-    native::VideoStream, records, PrVideoStream, STILL_CODEC_TYPE, STILL_STRAIGHT_ALPHA_TYPE,
+    native::VideoStream, records, PrVideoStream, OPENEXR_ALPHA_TYPE, OPENEXR_CODEC_TYPE,
+    STILL_CODEC_TYPE, STILL_STRAIGHT_ALPHA_TYPE,
 };
 
 pub(super) fn video_stream(spec: &PrVideoStream, alpha: bool, ids: &MediaIds) -> VideoStream {
@@ -41,4 +44,24 @@ pub(super) fn video_stream(spec: &PrVideoStream, alpha: bool, ids: &MediaIds) ->
         original_field_type: None,
         original_image_orientation_type: None,
     }
+}
+
+pub(super) fn open_exr_video_stream(
+    spec: &PrVideoStream,
+    alpha: bool,
+    numbered: bool,
+    ids: &MediaIds,
+) -> VideoStream {
+    let mut stream = video_stream(spec, false, ids);
+    stream.is_numbered_stills = numbered.then(|| "true".to_owned());
+    stream.is_still = (!numbered).then(|| "true".to_owned());
+    stream.codec_type = Some(OPENEXR_CODEC_TYPE.to_owned());
+    stream.original_color_space = Some(
+        r#"{"baseColorProfile":{"colorProfileName":"BT.709 RGB Full"},"baseProfileType":1}"#
+            .to_owned(),
+    );
+    stream.is_par_overridden = None;
+    stream.overridden_par = None;
+    stream.alpha_type = alpha.then(|| OPENEXR_ALPHA_TYPE.to_owned());
+    stream
 }

@@ -449,6 +449,7 @@ fn pending_nested_recipe() -> (
         opacity_mask: None,
         track_matte: None,
         effects: vec![],
+        geometry2_masks: Default::default(),
         effects_above_mask: 0,
         enabled: true,
         sequence,

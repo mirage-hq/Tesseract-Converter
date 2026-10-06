@@ -6,13 +6,17 @@ use aftereffects_file::{AfterEffects, AfterEffectsExportOptions, AfterEffectsImp
 use fx_conv::{
     ConversionMode, ConversionReport, ExportFromTesseract, ImportTarget, ImportToTesseract,
 };
-use premiere_file::{FrameRate, Premiere, PremiereExportOptions, PremiereImportOptions};
+use premiere_file::{
+    FrameRate, Premiere, PremiereExportOptions, PremiereImportOptions,
+    PremiereImportOptionsWithConsent,
+};
 
 /// Conversion inputs shared by every registered format handler.
 pub(super) struct ConversionRequest<'a> {
     pub(super) input: &'a Path,
     pub(super) output: &'a Path,
     pub(super) sequence: Option<&'a str>,
+    pub(super) allow_film_impact_pop: bool,
     pub(super) composition: Option<u32>,
     pub(super) expression_samples: Option<&'a Path>,
     pub(super) available_fonts: Option<&'a Path>,
@@ -162,43 +166,32 @@ pub(super) fn export_after_effects(
 }
 
 pub(super) fn import_premiere(request: &ConversionRequest<'_>) -> anyhow::Result<ConversionReport> {
-    let options = PremiereImportOptions {
-        sequence: request.sequence.map(str::to_owned),
+    let options = PremiereImportOptionsWithConsent {
+        selection: PremiereImportOptions {
+            sequence: request.sequence.map(str::to_owned),
+        },
+        allow_film_impact_pop: request.allow_film_impact_pop,
     };
-    if let Some(path) = request.media_relink {
-        let relink = premiere_file::ValidatedMediaRelink::load(path)?;
-        let map = request
-            .media_map
-            .map(fx_conv::ValidatedMediaMap::load)
-            .transpose()?;
-        return Premiere
-            .import_with_media_relink_and_map_with_progress(
-                request.input,
-                request.output,
-                &options,
-                request.mode,
-                &relink,
-                map.as_ref(),
-                request.progress,
-            )
-            .map(ConversionReport::into_common)
-            .map_err(anyhow::Error::new);
-    }
-    if let Some(path) = request.media_map {
-        let map = fx_conv::ValidatedMediaMap::load(path)?;
-        return Premiere
-            .import_with_media_map_with_progress(
-                request.input,
-                request.output,
-                &options,
-                request.mode,
-                &map,
-                request.progress,
-            )
-            .map(ConversionReport::into_common)
-            .map_err(anyhow::Error::new);
-    }
-    run_import(&Premiere, request, &options)
+    let relink = request
+        .media_relink
+        .map(premiere_file::ValidatedMediaRelink::load)
+        .transpose()?;
+    let map = request
+        .media_map
+        .map(fx_conv::ValidatedMediaMap::load)
+        .transpose()?;
+    Premiere
+        .import_with_consent_with_progress(
+            request.input,
+            request.output,
+            &options,
+            request.mode,
+            map.as_ref(),
+            relink.as_ref(),
+            request.progress,
+        )
+        .map(ConversionReport::into_common)
+        .map_err(anyhow::Error::new)
 }
 
 pub(super) fn export_premiere(request: &ConversionRequest<'_>) -> anyhow::Result<ConversionReport> {
@@ -282,6 +275,7 @@ mod tests {
             input: Path::new("missing.tsrct"),
             output: Path::new("unused-output"),
             sequence: None,
+            allow_film_impact_pop: false,
             composition: None,
             expression_samples: None,
             available_fonts: None,

@@ -253,6 +253,9 @@ pub(crate) struct PrNestOccurrence {
     /// canvases require the static measured envelope. Edited native export
     /// remains without independent Adobe proof.
     pub(crate) effects: Vec<PrEffect>,
+    /// Converter-only output coverage for a native nested Geometry2 stage,
+    /// keyed by its index in `effects`. Never persisted as a new FX field.
+    pub(crate) geometry2_masks: BTreeMap<usize, Vec<PrMask>>,
     /// Retained effects before Linear Wipe, using the clip mask-boundary count.
     pub(crate) effects_above_mask: usize,
     /// Effective picture output, flattened from clip Enable and track output
@@ -341,6 +344,28 @@ impl PrNestOccurrence {
             self.linear_wipe.as_ref(),
             &self.effects,
         )?;
+        for (&index, masks) in &self.geometry2_masks {
+            ensure_valid!(
+                matches!(
+                    self.effects.get(index).map(|effect| &effect.params),
+                    Some(PrEffectParams::Transform(_))
+                ),
+                "nested Geometry2 mask has no affine owner"
+            );
+            ensure_valid!(
+                self.playback_rate == 1.0
+                    && self.time_remap.is_none()
+                    && self.sequence.frame_rate == frame_rate,
+                "nested Geometry2 mask requires matching unit-forward clocks"
+            );
+            for mask in masks {
+                mask.validate()?;
+                ensure_valid!(
+                    mask.raster.is_none() && mask.path_keys.is_empty(),
+                    "nested Geometry2 requires static vector mask outlines"
+                );
+            }
+        }
         if let Some(mask) = &self.opacity_mask {
             mask.validate()?;
             ensure_valid!(

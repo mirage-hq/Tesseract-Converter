@@ -118,6 +118,13 @@ pub(super) struct Key {
     pub ease: Vec<Option<[f64; 4]>>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NumericContinuity {
+    Continuous,
+    Discrete,
+    Unknown,
+}
+
 impl Model {
     pub fn new(
         items: &HashMap<u32, &ProjectItem>,
@@ -268,6 +275,7 @@ impl Model {
                         match_name: name.to_owned(),
                     },
                     numeric,
+                    NumericContinuity::Continuous,
                     leaf,
                 );
                 transform.insert(alias.to_owned(), slot);
@@ -366,6 +374,7 @@ impl Model {
                         match_name: name.to_owned(),
                     },
                     numeric,
+                    NumericContinuity::Continuous,
                     leaf,
                 );
             }
@@ -403,6 +412,12 @@ impl Model {
                 let leaf = unique_run(&explicit, &parameter.match_name)
                     .and_then(|run| properties::unique_list(run, *b"tdbs"))
                     .ok();
+                let canonical_parameter = canonical.and_then(|effect| {
+                    effect
+                        .parameters
+                        .iter()
+                        .find(|candidate| candidate.match_name == parameter.match_name)
+                });
                 let label = leaf
                     .and_then(display_name)
                     .or_else(|| {
@@ -418,15 +433,7 @@ impl Model {
                                 .ok()
                             })
                     })
-                    .or_else(|| {
-                        canonical.and_then(|effect| {
-                            effect
-                                .parameters
-                                .iter()
-                                .find(|p| p.match_name == parameter.match_name)
-                                .map(|p| p.label.as_str())
-                        })
-                    })
+                    .or_else(|| canonical_parameter.map(|parameter| parameter.label.as_str()))
                     .unwrap_or(&parameter.match_name)
                     .to_owned();
                 // Admit native numerical selectors only when the match-name slot and
@@ -453,7 +460,18 @@ impl Model {
                     index: effect_index,
                     match_name: parameter.match_name.clone(),
                 };
-                let slot = self.push_property(comp_id, layer, identity, parameter.numeric, leaf);
+                let continuity = effect_numeric_continuity(
+                    &parameter.declared_kind,
+                    canonical_parameter.map(|parameter| parameter.kind),
+                );
+                let slot = self.push_property(
+                    comp_id,
+                    layer,
+                    identity,
+                    parameter.numeric,
+                    continuity,
+                    leaf,
+                );
                 parameters.push(Parameter {
                     name: label,
                     match_name: parameter.match_name,
@@ -585,6 +603,7 @@ impl Model {
                         match_name: name.to_owned(),
                     },
                     numeric,
+                    NumericContinuity::Continuous,
                     leaf,
                 );
                 let alias = match name {
@@ -620,6 +639,7 @@ impl Model {
                 layer,
                 PropertyIdentity::Shape { path },
                 Ok(numeric),
+                NumericContinuity::Continuous,
                 Some(leaf),
             );
             return Some(ShapeNode {
@@ -682,6 +702,7 @@ impl Model {
         layer: &Layer,
         identity: PropertyIdentity,
         numeric: Result<NumericProperty, properties::PropertyError>,
+        continuity: NumericContinuity,
         leaf: Option<&[Chunk]>,
     ) -> usize {
         let slot = self.properties.len();
@@ -703,10 +724,7 @@ impl Model {
         match numeric {
             Err(error) => property.error = Some(error.to_string()),
             Ok(mut numeric) => {
-                // Only Effect controls (checkbox/popup) are discrete integers; Shape leaves
-                // such as Trim carry the integer flag yet keyed import interpolates them.
-                let discrete = matches!(property.identity, PropertyIdentity::Effect { .. });
-                property.error = validate_numeric(&numeric, layer, discrete).err();
+                property.error = validate_numeric(&numeric, layer, continuity).err();
                 let mut easings = Vec::new();
                 if property.error.is_none() && !numeric.keyframes.is_empty() {
                     let name = identity_name(&property.identity);
@@ -791,10 +809,28 @@ impl Model {
     }
 }
 
+/// Native plugin declaration semantics own interpolation; an unreadable or
+/// unknown declaration keeps the conservative integer/Hold fallback.
+fn effect_numeric_continuity(
+    declared_kind: &Result<Option<u32>, properties::PropertyError>,
+    canonical_kind: Option<u32>,
+) -> NumericContinuity {
+    let kind = match declared_kind {
+        Ok(Some(kind)) => Some(*kind),
+        Ok(None) => canonical_kind,
+        Err(_) => return NumericContinuity::Unknown,
+    };
+    match kind {
+        Some(1 | 2 | 3 | 5 | 6) => NumericContinuity::Continuous,
+        Some(4 | 7) => NumericContinuity::Discrete,
+        Some(_) | None => NumericContinuity::Unknown,
+    }
+}
+
 fn validate_numeric(
     numeric: &NumericProperty,
     layer: &Layer,
-    discrete: bool,
+    continuity: NumericContinuity,
 ) -> Result<(), String> {
     let start = layer.record.start_time().ok_or("invalid property clock")?;
     let stretch = layer.record.stretch().ok_or("invalid property clock")?;
@@ -814,11 +850,11 @@ fn validate_numeric(
     if !(1..=4).contains(&dim) || numeric.values.iter().any(|v| !v.is_finite()) {
         return Err("invalid numeric dimensions/value".into());
     }
+    let requires_hold = continuity == NumericContinuity::Discrete
+        || (continuity == NumericContinuity::Unknown
+            && numeric.value_kind == properties::NumericValueKind::Integer);
     for (index, key) in numeric.keyframes.iter().enumerate() {
-        if (discrete
-            && numeric.value_kind == properties::NumericValueKind::Integer
-            && index + 1 < numeric.keyframes.len()
-            && key.out_interpolation != 3)
+        if (requires_hold && index + 1 < numeric.keyframes.len() && key.out_interpolation != 3)
             || key.values.len() != dim
             || key.values.iter().any(|v| !v.is_finite())
             || !key.time_secs.is_finite()
@@ -967,5 +1003,79 @@ fn legal_range(name: &str) -> Option<[Option<f64>; 2]> {
         "Width" if name.contains("Stroke") => Some(nonnegative),
         "Feather" | "Size" | "Radius" => Some(nonnegative),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod continuity_tests {
+    use super::*;
+    use crate::properties::{NumericKeyframe, NumericValueKind};
+
+    fn integer_keys(out_interpolation: u8) -> NumericProperty {
+        let key = |time_secs, value, outgoing| NumericKeyframe {
+            time_secs,
+            values: vec![value],
+            in_interpolation: 1,
+            out_interpolation: outgoing,
+            in_speed: vec![0.],
+            in_influence: vec![16.],
+            out_speed: vec![0.],
+            out_influence: vec![16.],
+            spatial_in: vec![],
+            spatial_out: vec![],
+        };
+        NumericProperty {
+            values: vec![],
+            animated: true,
+            expression_enabled: true,
+            expression_present: true,
+            dimensions_separated: false,
+            keyframes: vec![key(0., 21., out_interpolation), key(1., 0., 1)],
+            value_kind: NumericValueKind::Integer,
+        }
+    }
+
+    #[test]
+    fn effect_declaration_kind_controls_integer_key_continuity() {
+        for kind in [1, 2, 3, 5, 6] {
+            assert_eq!(
+                effect_numeric_continuity(&Ok(Some(kind)), None),
+                NumericContinuity::Continuous
+            );
+        }
+        for kind in [4, 7] {
+            assert_eq!(
+                effect_numeric_continuity(&Ok(Some(kind)), None),
+                NumericContinuity::Discrete
+            );
+        }
+        assert_eq!(
+            effect_numeric_continuity(&Ok(None), None),
+            NumericContinuity::Unknown
+        );
+        assert_eq!(
+            effect_numeric_continuity(
+                &Err(properties::PropertyError::Layout("malformed declaration")),
+                Some(2)
+            ),
+            NumericContinuity::Unknown
+        );
+
+        let project = crate::structure::read_project(include_bytes!(
+            "../../tests/fixtures/effects/shape_owner_gaussian.aep"
+        ))
+        .unwrap();
+        let ItemKind::Composition(composition) = &project.item(1).unwrap().kind else {
+            panic!("fixture composition missing")
+        };
+        let layer = &composition.layers[0];
+        let linear = integer_keys(1);
+        assert!(validate_numeric(&linear, layer, NumericContinuity::Continuous).is_ok());
+        assert!(validate_numeric(&linear, layer, NumericContinuity::Discrete).is_err());
+        assert!(validate_numeric(&linear, layer, NumericContinuity::Unknown).is_err());
+
+        let hold = integer_keys(3);
+        assert!(validate_numeric(&hold, layer, NumericContinuity::Discrete).is_ok());
+        assert!(validate_numeric(&hold, layer, NumericContinuity::Unknown).is_ok());
     }
 }

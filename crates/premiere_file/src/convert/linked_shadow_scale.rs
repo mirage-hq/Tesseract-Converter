@@ -196,6 +196,8 @@ pub(super) fn apply(
                         id,
                         enabled,
                         effect: EffectPayload::Known(effect),
+                        compositing_options,
+                        extensions,
                     } = record.data()
                     else {
                         continue;
@@ -272,6 +274,8 @@ pub(super) fn apply(
                         id: *id,
                         enabled: *enabled,
                         effect: EffectPayload::Known(effect),
+                        compositing_options: compositing_options.clone(),
+                        extensions: extensions.clone(),
                     })
                     .map_err(|e| e.to_string())?;
                     self.tracks.extend(updates.expect("updates admitted above"));
@@ -516,6 +520,8 @@ mod tests {
         group.effects.push(
             EffectRecord::from_data(&EffectData::Identified {
                 id: EffectId::new(900000),
+                compositing_options: None,
+                extensions: Default::default(),
                 enabled: true,
                 effect: EffectPayload::Known(LayerEffect::GaussianBlur {
                     blurriness: NonNegativeProperty::new(23.).unwrap(),
@@ -602,6 +608,8 @@ mod tests {
             group.effects.push(
                 EffectRecord::from_data(&EffectData::Identified {
                     id: EffectId::new(id),
+                    compositing_options: None,
+                    extensions: Default::default(),
                     enabled: true,
                     effect: EffectPayload::Known(LayerEffect::SimpleChoker { choke: Some(value) }),
                 })
@@ -679,6 +687,8 @@ mod tests {
         group.effects.push(
             EffectRecord::from_data(&EffectData::Identified {
                 id: EffectId::new(900009),
+                compositing_options: None,
+                extensions: Default::default(),
                 enabled: true,
                 effect: EffectPayload::Known(LayerEffect::SimpleChoker { choke: None }),
             })

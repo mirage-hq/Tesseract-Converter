@@ -116,7 +116,8 @@ fn fractional_sequence_clock_keeps_known_matte_controls_but_not_failed_coverage(
                     .any(|note| note.record == "fractional-consumer"
                         && note
                             .reason
-                            .contains("the matte clip on track 1 was not converted")),
+                            .contains("native matte provider fractional-provider on track 1")
+                        && note.reason.contains("was not converted")),
                 "{omissions:?}"
             );
             assert!(

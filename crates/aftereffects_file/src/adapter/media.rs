@@ -134,6 +134,15 @@ impl<'a> MediaPreflight<'a> {
         Ok(())
     }
 
+    pub(super) fn require_with_collected_staging(
+        &mut self,
+        request: &MediaAssetRequest,
+        stage: &mut dyn FnMut(&Path) -> io::Result<()>,
+    ) -> Result<(), AepConversionError> {
+        self.stage_collected_media(request, stage)?;
+        self.require(request)
+    }
+
     pub(super) fn inspect(
         &mut self,
         request: &MediaAssetRequest,
@@ -257,6 +266,39 @@ impl<'a> MediaPreflight<'a> {
                 MediaResolution::Unavailable
             }
         }
+    }
+
+    pub(super) fn resolve_media_with_collected_staging(
+        &mut self,
+        request: &MediaAssetRequest,
+        stage: &mut dyn FnMut(&Path) -> io::Result<()>,
+    ) -> MediaResolution {
+        if self.failure.is_none()
+            && let Err(error) = self.stage_collected_media(request, stage)
+        {
+            self.failure = Some(error);
+        }
+        self.resolve_media(request)
+    }
+
+    fn stage_collected_media(
+        &self,
+        request: &MediaAssetRequest,
+        stage: &mut dyn FnMut(&Path) -> io::Result<()>,
+    ) -> Result<(), AepConversionError> {
+        if !self.resolved.contains_key(&request.logical_id)
+            && !self.missing.contains_key(&request.logical_id)
+            && let Some(Ok(relative)) = self.collected.candidate(request)
+        {
+            stage(&relative).map_err(|error| {
+                AepConversionError::io(
+                    "stage collected graphic media",
+                    &self.base.join(relative),
+                    error,
+                )
+            })?;
+        }
+        Ok(())
     }
 
     fn resolve(

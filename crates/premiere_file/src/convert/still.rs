@@ -16,13 +16,13 @@ use super::{
 use crate::{
     approximate,
     error::{ensure, unsupported, Result},
-    export_loss::{omit_field, ExportField, OmissionSink},
+    export_loss::{omit_field, with_context, ExportContext, ExportField, OmissionSink},
     format::{PrMedia, PrVideoOccurrence},
     image_media::ValidatedImage,
     media::MediaFacts,
     omit,
     schema::{MediaId, PrBlendMode, PrMediaKind, STILL_INTRINSIC_TICKS},
-    OmissionScope,
+    ExportLossDomain, ExportLossSource, OmissionScope,
 };
 use fx_schema::{
     animator::AnimationGraph, AssetId, BlendMode, ImageAssetSource, ImageLayer, ImageSource,
@@ -128,12 +128,13 @@ pub(super) fn unsupported_matte_still(
     ))
 }
 
-/// The inspected facts of the still that `source` shows, or why export omits
-/// the still whole ([`export_image_layer`]): a clip has no frame of its own,
-/// so a still whose `sourceRect` is not the packaged image at the origin, or
-/// whose fit is Cover, Stretch or Custom, is omitted. An empty asset ID and
-/// missing or conflicting media facts reject the export. A nest's collapse
-/// check takes the same decision before export writes the nest.
+/// The inspected facts of the still that `source` shows, or why export cannot
+/// write it. An empty asset ID and missing or conflicting media facts reject
+/// the export. A structurally valid EXR that Premiere's importer cannot expose
+/// returns a local picture loss for the editable After Effects fallback. Frame
+/// and fit differences do not discard an otherwise writable still; its writer
+/// retains the full image and reports the framing approximation. A nest's
+/// collapse check takes the same placement decision before writing the nest.
 pub(super) fn still_facts<'f>(
     source: &ImageAssetSource,
     media_facts: &'f BTreeMap<String, MediaFacts>,
@@ -144,6 +145,7 @@ pub(super) fn still_facts<'f>(
     }
     let facts = match media_facts.get(asset_id) {
         Some(MediaFacts::Still(facts)) => facts,
+        Some(MediaFacts::UnsupportedStill(facts)) => return Ok(Err(facts.reason.to_owned())),
         Some(MediaFacts::Video(_) | MediaFacts::UnsupportedVideo(_)) => {
             return Err(unsupported(format!(
                 "asset {asset_id:?} is used with conflicting media kinds across layers"
@@ -155,22 +157,7 @@ pub(super) fn still_facts<'f>(
             )))
         }
     };
-    let image_rect = RectBounds::from_size(facts.width.into(), facts.height.into());
-    Ok(
-        if source
-            .frame_rect
-            .is_some_and(|rect| rect.get() != image_rect)
-        {
-            Err(format!(
-                "its sourceRect is not the {}x{} image at the origin",
-                facts.width, facts.height
-            ))
-        } else if !matches!(source.fit, MediaFit::Contain | MediaFit::None) {
-            Err("its media fit is not Contain".to_owned())
-        } else {
-            Ok(facts)
-        },
-    )
+    Ok(Ok(facts))
 }
 
 /// Map one editable image layer to a still occurrence on Premiere's synthetic
@@ -190,12 +177,12 @@ pub(super) fn still_facts<'f>(
 /// clock, after the Crop, which FX also applies first; Premiere applies an
 /// Opacity mask after every effect and FX the image's mask before them, so a
 /// still with an Opacity mask writes none of its effects, which are reported.
-/// A clip has no frame of its own, so an image whose `sourceRect` is not the
-/// packaged image at the origin, or whose fit is Cover, Stretch or Custom, is
-/// omitted ([`still_facts`]). Like a video layer, a hidden layer exports
-/// disabled, and each property that a clip cannot carry is reported. The
-/// dimensions and alpha come from the inspected packaged image, because the
-/// document records no alpha fact.
+/// A clip has no frame of its own. When `sourceRect` is not the packaged image
+/// at the origin, or fit is Cover, Stretch or Custom, export retains the full
+/// packaged image with the existing Motion and reports that framing can differ.
+/// Like a video layer, a hidden layer exports disabled, and each property that
+/// a clip cannot carry is reported. The dimensions and alpha come from the
+/// inspected packaged image, because the document records no alpha fact.
 pub(super) fn export_image_layer(
     image: &ImageLayer,
     parent: Option<LayerId>,
@@ -210,15 +197,49 @@ pub(super) fn export_image_layer(
     let facts = match still_facts(source, context.media_facts)? {
         Ok(facts) => facts,
         Err(reason) => {
-            omit(
-                omissions,
-                OmissionScope::Occurrence,
-                record,
-                format!("still was not exported: {reason}"),
-            );
+            let reason = format!("still was not exported: {reason}");
+            if matches!(
+                context.media_facts.get(asset_id),
+                Some(MediaFacts::UnsupportedStill(_))
+            ) {
+                with_context(
+                    omissions,
+                    ExportContext {
+                        source: ExportLossSource::Layer(image.id),
+                        domain: ExportLossDomain::Picture,
+                    },
+                    |sink| omit(sink, OmissionScope::Occurrence, record, reason),
+                );
+            } else {
+                omit(omissions, OmissionScope::Occurrence, record, reason);
+            }
             return Ok(None);
         }
     };
+    let image_rect = RectBounds::from_size(facts.width.into(), facts.height.into());
+    if source
+        .frame_rect
+        .is_some_and(|rect| rect.get() != image_rect)
+    {
+        approximate(
+            omissions,
+            record,
+            format!(
+                "sourceRect was not the {}x{} image at the origin; the full packaged image was retained, so crop and placement can differ",
+                facts.width, facts.height
+            ),
+        );
+    }
+    if !matches!(source.fit, MediaFit::Contain | MediaFit::None) {
+        approximate(
+            omissions,
+            record,
+            format!(
+                "media fit {:?} was approximated by retaining the full packaged image and existing Motion; framing can differ",
+                source.fit
+            ),
+        );
+    }
     for (changed, field) in unexported_layer_fields(ClipLayer::Image(image), parent, mask.is_some())
     {
         if changed {
@@ -351,14 +372,24 @@ pub(super) fn export_image_layer(
             relative_paths: Vec::new(),
             absolute_paths: Vec::new(),
             video: Some(crate::schema::PrVideoStream {
-                pixel_aspect: Default::default(),
+                pixel_aspect: facts.pixel_aspect,
                 interpretation: Default::default(),
                 orientation: crate::schema::VideoOrientation::Identity,
                 intrinsic_ticks: STILL_INTRINSIC_TICKS,
                 frame_rate: frame_rate.into(),
                 width: facts.width,
                 height: facts.height,
-                kind: PrMediaKind::Still { alpha: facts.alpha },
+                kind: if facts.format == crate::image_media::ImageFormat::OpenExr {
+                    PrMediaKind::OpenExr {
+                        alpha: facts.alpha,
+                        numbered: false,
+                        channels: facts
+                            .open_exr_channels
+                            .unwrap_or(crate::schema::OpenExrChannels::Unspecified),
+                    }
+                } else {
+                    PrMediaKind::Still { alpha: facts.alpha }
+                },
             }),
             audio: None,
         },

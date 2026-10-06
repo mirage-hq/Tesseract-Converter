@@ -1,6 +1,5 @@
-//! Fail-closed reader for Premiere's intrinsic source-time curve.
+//! Recover usable source-time keys without discarding their picture owner.
 
-use super::required;
 use crate::{
     error::{ensure, unsupported, Result},
     format::Graph,
@@ -8,6 +7,7 @@ use crate::{
         native::{Reference, TimeComponentParam, TimeRemapping, VideoClip},
         records, PrKeyframeEasing, PrTimeRemap, PrTimeRemapKeyframe, TICKS,
     },
+    {approximate, Omission},
 };
 
 /// The measured explicit-source native frame hold.
@@ -136,129 +136,142 @@ pub(super) fn after_source_in(
     Ok(curve)
 }
 
+#[cfg(test)]
 pub(in crate::format) fn read_time_remapping(
     graph: &Graph<'_>,
     reference: &Reference,
     from: &str,
+    omissions: &mut Vec<Omission>,
 ) -> Result<PrTimeRemap> {
-    let mapping = graph.follow::<TimeRemapping>(reference, from)?;
-    ensure!(
-        mapping.value.class_id == records::TIME_REMAPPING.class_id
-            && mapping.value.version == records::TIME_REMAPPING.version,
-        "{}: unsupported TimeRemapping record",
-        mapping.identity
-    );
-    let param = graph.follow::<TimeComponentParam>(&mapping.value.keyframes, &mapping.identity)?;
-    // Premiere 26.5.1 saves Version 9, which omits the five flags below.
-    // Version 8 saves each of them.
-    let omits_flags = param.value.version == "9";
-    ensure!(
-        param.value.class_id == records::TIME_COMPONENT_PARAM.class_id
-            && (omits_flags || param.value.version == records::TIME_COMPONENT_PARAM.version)
-            && param.value.name == "Speed"
-            && param.value.parameter_id == "-1"
-            && param.value.lower_bound == "0",
-        "{}: unsupported TimeRemapping parameter",
-        param.identity
-    );
-    // A saved flag must hold the value that Version 8 saves, in either version.
-    for (field, value, saved) in [
-        ("IsTimeVarying", &param.value.is_time_varying, "true"),
-        ("IsLocked", &param.value.is_locked, "false"),
-        (
-            "DiscontinuousInterpolate",
-            &param.value.discontinuous_interpolate,
-            "false",
-        ),
-        (
-            "ParameterControlType",
-            &param.value.parameter_control_type,
-            "21",
-        ),
-        ("RangeLocked", &param.value.range_locked, "false"),
-    ] {
-        if value.is_none() && omits_flags {
-            continue;
-        }
-        let value = required(value.as_deref(), &param.identity, field)?;
-        ensure!(
-            value == saved,
-            "{}: unsupported TimeRemapping parameter {field} {value:?}",
-            param.identity
-        );
+    match read_optional_time_remapping(graph, reference, from, omissions)? {
+        TimeRemapDisposition::Supported(curve) => Ok(curve),
+        TimeRemapDisposition::Unsupported(error)
+        | TimeRemapDisposition::UnsupportedBinding(error) => Err(error),
     }
-    let start: Vec<_> = param.value.start_keyframe.split(',').collect();
-    ensure!(
-        start.len() == 8
-            && start[0] == records::STATIC_KEYFRAME_TIME
-            && source_ticks(start[1], &param.identity)? == 0
-            && start[2..]
-                .iter()
-                .all(|field| field.parse::<f64>().ok() == Some(0.0)),
-        "{}: unsupported TimeRemapping initial key",
-        param.identity
-    );
-    ensure!(
-        param.value.keyframes.ends_with(';'),
-        "{}: unterminated TimeRemapping keys",
-        param.identity
-    );
-    let mut native = Vec::new();
-    for item in param.value.keyframes.split_terminator(';') {
+}
+
+/// Consumed graph identity and required known-record decoding stay outer errors.
+/// Optional curve losses recover only after independent clock validation.
+pub(super) enum TimeRemapDisposition {
+    Supported(PrTimeRemap),
+    Unsupported(crate::error::BuildError),
+    /// Unknown optional layouts must not be decoded as the known curve. Only
+    /// the physical-media caller can recover their independently saved base.
+    UnsupportedBinding(crate::error::BuildError),
+}
+
+pub(super) fn read_optional_time_remapping(
+    graph: &Graph<'_>,
+    reference: &Reference,
+    from: &str,
+    omissions: &mut Vec<Omission>,
+) -> Result<TimeRemapDisposition> {
+    let mapping = graph.locate_as(reference, records::TIME_REMAPPING.tag, from)?;
+    if mapping.element().attribute("ClassID") != Some(records::TIME_REMAPPING.class_id) {
+        return Ok(TimeRemapDisposition::UnsupportedBinding(unsupported(
+            format!("{}: incompatible TimeRemapping binding", mapping.identity()),
+        )));
+    }
+    let mapping = graph.decode::<TimeRemapping>(mapping)?;
+    let param = graph.locate_as(
+        &mapping.value.keyframes,
+        records::TIME_COMPONENT_PARAM.tag,
+        &mapping.identity,
+    )?;
+    if param.element().attribute("ClassID") != Some(records::TIME_COMPONENT_PARAM.class_id) {
+        return Ok(TimeRemapDisposition::UnsupportedBinding(unsupported(
+            format!("{}: incompatible TimeRemapping binding", param.identity()),
+        )));
+    }
+    let param = graph.decode::<TimeComponentParam>(param)?;
+    if param.value.parameter_id != "-1" {
+        return Ok(TimeRemapDisposition::UnsupportedBinding(unsupported(
+            format!("{}: incompatible TimeRemapping binding", param.identity),
+        )));
+    }
+    Ok(match read_curve(&param, omissions) {
+        Ok(curve) => TimeRemapDisposition::Supported(curve),
+        Err(error) => TimeRemapDisposition::Unsupported(error),
+    })
+}
+
+fn read_curve(
+    param: &crate::format::Located<TimeComponentParam>,
+    omissions: &mut Vec<Omission>,
+) -> Result<PrTimeRemap> {
+    let mut native = Vec::<NativeKey>::new();
+    for item in param
+        .value
+        .keyframes
+        .split(';')
+        .filter(|item| !item.is_empty())
+    {
         let fields: Vec<_> = item.split(',').collect();
-        ensure!(
-            fields.len() == 8
-                && fields[3..]
-                    .iter()
-                    .all(|field| field.parse::<f64>().ok() == Some(0.0)),
-            "{}: unexpected TimeRemapping key shape",
-            param.identity
-        );
-        let key = NativeKey {
-            timeline_ticks: fields[0].parse().map_err(|_| {
-                unsupported(format!(
-                    "{}: invalid TimeRemapping key time",
-                    param.identity
-                ))
-            })?,
-            source_ticks: source_ticks(fields[1], &param.identity)?,
-            mode: fields[2].parse().map_err(|_| {
-                unsupported(format!("{}: invalid TimeRemapping mode", param.identity))
-            })?,
-        };
-        ensure!(
-            matches!(key.mode, 6..=8),
-            "{}: unsupported TimeRemapping mode {}",
-            param.identity,
-            key.mode
-        );
-        if let Some(previous) = native.last().copied() {
-            slope(previous, key, &param.identity)?;
+        let parsed = (|| -> Result<NativeKey> {
+            let time = fields
+                .first()
+                .ok_or_else(|| unsupported("missing key time"))?;
+            let source = fields
+                .get(1)
+                .ok_or_else(|| unsupported("missing source time"))?;
+            Ok(NativeKey {
+                timeline_ticks: time.parse().map_err(|_| unsupported("invalid key time"))?,
+                source_ticks: source_ticks(source, &param.identity)?,
+                mode: fields
+                    .get(2)
+                    .and_then(|mode| mode.parse().ok())
+                    .unwrap_or(6),
+            })
+        })();
+        match parsed {
+            Ok(key)
+                if native
+                    .last()
+                    .is_none_or(|previous| key.timeline_ticks > previous.timeline_ticks) =>
+            {
+                if fields.len() != 8 || !matches!(key.mode, 6..=8) {
+                    approximate(omissions, &param.identity,
+                        "TimeRemapping key metadata was not reproduced; usable source/timeline values were retained");
+                }
+                native.push(key);
+            }
+            Ok(_) => approximate(
+                omissions,
+                &param.identity,
+                "duplicate or out-of-order TimeRemapping key was skipped; other keys were retained",
+            ),
+            Err(error) => approximate(
+                omissions,
+                &param.identity,
+                format!(
+                    "unusable TimeRemapping key was skipped: {error}; other keys were retained"
+                ),
+            ),
         }
-        native.push(key);
     }
     ensure!(
-        native.len() >= 4 && native[0].mode == 6 && native.last().is_some_and(|key| key.mode == 6),
-        "{}: incomplete TimeRemapping boundary keys",
+        native.len() >= 2,
+        "{}: TimeRemapping has fewer than two usable keys",
         param.identity
     );
-    let mut ramp_count = 0;
     let mut keys = Vec::with_capacity(native.len());
     for (index, key) in native.iter().copied().enumerate() {
-        let easing = if index > 0 && native[index - 1].mode == 7 {
-            ensure!(
-                key.mode == 8,
-                "{}: ramp start is not followed by a ramp end",
-                param.identity
-            );
-            ramp_count += 1;
-            ramp_easing(&native, index - 1, &param.identity)?
+        let easing = if index > 0 && native[index - 1].mode == 7 && key.mode == 8 {
+            match ramp_easing(&native, index - 1, &param.identity) {
+                Ok(easing) => easing,
+                Err(error) => {
+                    approximate(omissions, &param.identity,
+                        format!("TimeRemapping easing approximated as linear: {error}; source/timeline keys were retained"));
+                    PrKeyframeEasing::Linear
+                }
+            }
         } else {
-            ensure!(
-                key.mode != 8,
-                "{}: ramp end has no ramp start",
-                param.identity
-            );
+            if key.mode != 6
+                && !(key.mode == 7 && native.get(index + 1).is_some_and(|next| next.mode == 8))
+            {
+                approximate(omissions, &param.identity,
+                    "unpaired or unknown TimeRemapping mode approximated as linear; source/timeline keys were retained");
+            }
             PrKeyframeEasing::Linear
         };
         keys.push(PrTimeRemapKeyframe {
@@ -267,10 +280,5 @@ pub(in crate::format) fn read_time_remapping(
             easing,
         });
     }
-    ensure!(
-        ramp_count > 0,
-        "{}: TimeRemapping has no variable-speed segment",
-        param.identity
-    );
     Ok(PrTimeRemap { keys })
 }

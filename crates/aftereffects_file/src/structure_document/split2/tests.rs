@@ -337,7 +337,9 @@ fn conversion_state(
     let expression_samples = Default::default();
     let mut resolver = |_: &super::super::MediaAssetRequest| MediaResolution::Unavailable;
     let mut converter = Converter {
+        text_overrides: Default::default(),
         expression_samples: &expression_samples,
+        expression_evaluations: Default::default(),
         items: project.items.iter().map(|i| (i.id, i)).collect(),
         camera_normalizations: Default::default(),
         diagnostics: vec![],

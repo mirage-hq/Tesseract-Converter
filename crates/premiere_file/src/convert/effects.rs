@@ -538,6 +538,8 @@ pub(super) fn import_graphic_ramps(
             id,
             enabled: effect.enabled,
             effect: EffectPayload::Known(gradient_ramp(ramp)),
+            compositing_options: None,
+            extensions: Default::default(),
         });
         match record {
             Ok(record) => effects.push(record),
@@ -984,6 +986,21 @@ pub(super) fn import_nest_effects(
     Vec<EffectRecord>,
     Vec<(PropertyTarget, PropertyKeyframeTrack)>,
 ) {
+    import_nest_effect_slice(nest, &nest.effects, layer_id, key_origin, ids, omissions)
+}
+
+/// The same nested-host mapping for one ordered stage of an affine stack.
+pub(super) fn import_nest_effect_slice(
+    nest: &crate::schema::PrNestOccurrence,
+    stage_effects: &[PrEffect],
+    layer_id: LayerId,
+    key_origin: i64,
+    ids: &mut EffectIdAllocator,
+    omissions: &mut Vec<Omission>,
+) -> (
+    Vec<EffectRecord>,
+    Vec<(PropertyTarget, PropertyKeyframeTrack)>,
+) {
     let host = ImportHost {
         similarity: Err(STAGED_DIRECTIONAL_BLUR_REASON.to_owned()),
         off_canvas: None,
@@ -996,9 +1013,9 @@ pub(super) fn import_nest_effects(
     // Validated unit reverse has a separate, increasing occurrence-effect
     // stage; only its picture descendants run on the decreasing source clock.
     let retimed_keys = nest.is_retimed() && nest.playback_rate != -1.0;
-    let mut effects = Vec::with_capacity(nest.effects.len());
+    let mut effects = Vec::with_capacity(stage_effects.len());
     let mut tracks = Vec::new();
-    for (position, effect) in (1..).zip(&nest.effects) {
+    for (position, effect) in (1..).zip(stage_effects) {
         let animations = if retimed_keys {
             &[][..]
         } else {
@@ -1342,6 +1359,8 @@ fn effect_record(
         id,
         enabled: effect.enabled,
         effect: EffectPayload::Known(layer_effect),
+        compositing_options: None,
+        extensions: Default::default(),
     })
     .map_err(|error| error.to_string())?;
     let mut tracks = Vec::new();
@@ -1431,9 +1450,10 @@ fn param_tracks(
             Ok(tracks)
         }
         // Along a straight spatial path both coordinates follow the point
-        // key's temporal easing. The reader keeps a curved one only for a
-        // source Corner Pin, which `corner_path::straighten` turns into
-        // straight keys first; a curved one here would lose its shape.
+        // key's temporal easing. Staged Transform Position uses its dedicated
+        // paired-track mapping and does not reach this generic effect binding.
+        // A curved point reaches here only for a source Corner Pin, which
+        // `corner_path::straighten` turns into straight keys first.
         (PrEffectParamKeys::Point(keys), Some(EffectParamBinding::Point { x, y })) => {
             if crate::schema::spatial::curved_segment(keys).is_some() {
                 return Err(format!(
@@ -1497,20 +1517,9 @@ fn param_tracks(
     }
 }
 
-/// Report each effect of an occurrence of `kind` whose layer imports none, a
-/// Color Matte's Rect layer; the layer itself still converts.
-pub(super) fn omit_effects(clip: &PrVideoOccurrence, kind: &str, omissions: &mut Vec<Omission>) {
-    omit_stroke(clip, kind, omissions);
-    omit_each_effect(
-        clip,
-        &format!("effects on a {kind} are not converted"),
-        omissions,
-    );
-}
-
 /// Report the Film Impact Stroke of an occurrence of `kind`, which only an
 /// opaque physical video carries.
-fn omit_stroke(clip: &PrVideoOccurrence, kind: &str, omissions: &mut Vec<Omission>) {
+pub(super) fn omit_stroke(clip: &PrVideoOccurrence, kind: &str, omissions: &mut Vec<Omission>) {
     if clip.stroke.is_some() {
         omit(
             omissions,
@@ -1976,6 +1985,7 @@ pub(super) fn finish_posterize_time_import(
                     id,
                     enabled,
                     effect,
+                    ..
                 } => (Some(*id), *enabled, effect),
                 EffectData::Legacy(effect) => (None, true, effect),
             };
@@ -2112,6 +2122,7 @@ pub(super) fn export_effects(
                 id,
                 enabled,
                 effect,
+                ..
             } => (Some(*id), *enabled, effect),
             EffectData::Legacy(effect) => (None, true, effect),
         };
@@ -2234,6 +2245,7 @@ fn omit_unexported_effect(
             id,
             enabled,
             effect,
+            ..
         } => (format!("effect {}", id.value()), *enabled, effect),
         EffectData::Legacy(effect) => {
             (format!("effect at stack position {position}"), true, effect)
@@ -3845,15 +3857,33 @@ fn export_param_keys(
         super::tesseract_to_premiere::export_scalar_keys(track, source_in, label, omissions, record)
             .map_err(|error| error.to_string())?
     };
+    let mut losses = Vec::new();
     let keys = keys
         .into_iter()
-        .map(|key| {
-            Ok(PrScalarKeyframe {
-                value: native_value(param, " key value", clip_value(key.value))?,
-                ..key
-            })
-        })
-        .collect::<Result<Vec<_>, String>>()?;
+        .filter_map(
+            |key| match native_value(param, " key value", clip_value(key.value)) {
+                Ok(value) => Some(PrScalarKeyframe { value, ..key }),
+                Err(reason) => {
+                    losses.push(reason);
+                    None
+                }
+            },
+        )
+        .collect::<Vec<_>>();
+    if keys.is_empty() {
+        return Err(losses
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| format!("{label} has no representable parameter keys")));
+    }
+    for reason in losses {
+        omit(
+            omissions,
+            OmissionScope::Feature,
+            record,
+            format!("{reason}; other valid parameter keys retained"),
+        );
+    }
     Ok(PrEffectParamAnimation {
         param,
         keys: PrEffectParamKeys::Scalar(keys),

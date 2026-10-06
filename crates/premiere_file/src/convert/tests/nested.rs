@@ -75,6 +75,8 @@ fn export_with_audio(
             format: crate::image_media::ImageFormat::Png,
             width: 1920,
             height: 1080,
+            pixel_aspect: Default::default(),
+            open_exr_channels: None,
             alpha: false,
             icc_profile: false,
         }),
@@ -644,7 +646,7 @@ fn nested_explicit_hold_trim_preserves_source_in_and_rebuilds_input_duration() {
 }
 
 #[test]
-fn nested_explicit_hold_with_keyed_effect_is_omitted_before_allocating_its_sibling() {
+fn nested_explicit_hold_recovers_effect_base_keeps_picture_and_sibling() {
     let (mut outer, media) = nested_sequence();
     let nest = &mut outer.video_tracks[1].nests[1];
     nest.id = Some("held-window".into());
@@ -669,12 +671,6 @@ fn nested_explicit_hold_with_keyed_effect_is_omitted_before_allocating_its_sibli
     sibling.out_ticks = held + TICKS;
     sibling.time_remap = Some(crate::schema::PrTimeRemap::frame_hold(held, TICKS));
     sibling.effects = vec![blur(12.0)];
-    let mut without_keyed_child = outer.clone();
-    without_keyed_child.video_tracks[1].nests[1]
-        .sequence
-        .video_tracks[0]
-        .items
-        .remove(0);
     let mut omissions = Vec::new();
     let document = premiere_to_tesseract(
         &outer,
@@ -685,22 +681,32 @@ fn nested_explicit_hold_with_keyed_effect_is_omitted_before_allocating_its_sibli
     .unwrap()
     .to_json_value()
     .unwrap();
-    assert_eq!(
-        omissions,
-        [Omission {
-            scope: OmissionScope::Occurrence,
-            kind: OmissionKind::Omitted,
-            record: format!(
-                "held-window, inner video track 0, keyed-held-child (0..{} ticks)",
-                4 * TICKS
-            ),
-            reason: "held inner clip not converted: Gaussian Blur effect at stack position 1 has an unsupported keyed effect clock under Frame Hold".to_owned(),
-        }]
+    assert!(
+        omissions
+            .iter()
+            .any(|loss| loss.scope == OmissionScope::Feature
+                && loss.reason.contains("authored base effect")),
+        "{omissions:?}"
     );
-    // No orphan track, allocated effect/layer identity or success diagnostic:
-    // the static held sibling and all outside content match removing only it.
-    assert_eq!(document, import(&without_keyed_child));
-    let sibling = &document["composition"]["layers"][1]["layers"][0];
+    let children = document["composition"]["layers"][1]["layers"]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        children
+            .iter()
+            .filter(|layer| layer["type"] == "Video")
+            .count(),
+        2
+    );
+    let retained = children
+        .iter()
+        .find(|layer| layer["effects"][0]["effect"]["blurriness"] == 10.0)
+        .unwrap();
+    assert!(retained["source"]["assetId"].is_string());
+    let sibling = children
+        .iter()
+        .find(|layer| layer["effects"][0]["effect"]["blurriness"] == 12.0)
+        .unwrap();
     assert_eq!(
         sibling["playback"]["inputRange"],
         json!({"start":4000,"duration":1000})
@@ -712,7 +718,7 @@ fn nested_explicit_hold_with_keyed_effect_is_omitted_before_allocating_its_sibli
 }
 
 #[test]
-fn variable_retimed_inner_clips_are_omitted_without_losing_their_sibling() {
+fn variable_retimed_inner_clips_keep_source_keys_and_sibling_through_trim() {
     let (ramp, omissions) = PrProjectFile::load_selected(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/feature_time_remap_variable_speed_strict.prproj"),
@@ -736,7 +742,6 @@ fn variable_retimed_inner_clips_are_omitted_without_losing_their_sibling() {
         clip.end_ticks = ramped_clip.end_ticks;
         clip.out_ticks = ramped_clip.out_ticks;
         clip.time_remap = ramped_clip.time_remap.clone();
-        let inner_end = clip.end_ticks;
         let mut omissions = Vec::new();
         let document = premiere_to_tesseract(
             &outer,
@@ -747,24 +752,40 @@ fn variable_retimed_inner_clips_are_omitted_without_losing_their_sibling() {
         .unwrap()
         .to_json_value()
         .unwrap();
-        assert_eq!(omissions.len(), 1, "{omissions:?}");
-        assert_eq!(omissions[0].scope, crate::OmissionScope::Occurrence);
-        assert_eq!(
-            omissions[0].record,
-            format!(
-                "outer-nest, inner video track 0, retimed-child (0..{} ticks)",
-                inner_end
-            )
+        assert!(
+            !omissions
+                .iter()
+                .any(|loss| loss.scope == OmissionScope::Occurrence),
+            "{omissions:?}"
         );
-        assert_eq!(omissions[0].reason, "retimed inner clip not converted: trimming a source-time remapping inside a nest is not implemented");
+        let children = document["composition"]["layers"][1]["layers"]
+            .as_array()
+            .unwrap();
         assert_eq!(
-            videos(&document["composition"]["layers"][1]["layers"]),
-            vec![(
-                json!({"start": 5000, "duration": 1000}),
-                json!({"start": 7000, "duration": 1000}),
-                "premiere-video-2".to_owned(),
-            )]
+            children
+                .iter()
+                .filter(|layer| layer["type"] == "Video")
+                .count(),
+            2
         );
+        let remapped = children
+            .iter()
+            .find(|layer| layer["playback"]["mapping"]["property"]["keyframes"].is_array())
+            .unwrap();
+        assert!(remapped["source"]["assetId"].is_string());
+        assert!(
+            remapped["playback"]["mapping"]["property"]["keyframes"]
+                .as_array()
+                .unwrap()
+                .len()
+                >= 3
+        );
+        assert!(videos(&document["composition"]["layers"][1]["layers"])
+            .iter()
+            .any(
+                |(_, range, id)| range == &json!({"start":7000,"duration":1000})
+                    && id == "premiere-video-2"
+            ));
     }
 }
 
@@ -1878,7 +1899,7 @@ fn group_child_effects_export_in_the_inner_sequence() {
 }
 
 #[test]
-fn groups_a_nest_cannot_represent_are_omitted_with_their_reason() {
+fn group_property_recovery_keeps_children_and_only_omits_inseparable_coverage() {
     let (outer, _) = nested_sequence();
     let base = import(&outer);
     let time_remap = json!({
@@ -1911,11 +1932,6 @@ fn groups_a_nest_cannot_represent_are_omitted_with_their_reason() {
             "playback",
             crate::test_support::remapped_playback(json!({"start": 1000, "duration": 3000}), time_remap),
             "group time remapping is not supported",
-        ),
-        (
-            "name",
-            json!(""),
-            "the nested sequence name must have 1 to 255 characters",
         ),
         (
             "masks",
@@ -1957,19 +1973,111 @@ fn groups_a_nest_cannot_represent_are_omitted_with_their_reason() {
         };
         owner[field] = value;
         let (project, omissions) = export(document);
-        assert!(
-            omissions.iter().any(|item| item.reason
-                == format!("group was not exported as a nested sequence: {reason}")),
-            "{field}: {omissions:?}"
-        );
+        let unsafe_coverage = matches!(field, "masks" | "trackMatte");
+        let sequence = project.single_sequence().unwrap();
+        assert_eq!(sequence.nest_occurrences().count(), if unsafe_coverage { 1 } else { 2 }, "{field}: {omissions:?}");
+        if unsafe_coverage {
+            assert!(omissions.iter().any(|item| item.reason == format!("group was not exported as a nested sequence: {reason}")), "{omissions:?}");
+        } else {
+            let nest = sequence.nest_occurrences().next().unwrap();
+            assert!(nest.sequence.video_items().count() > 0);
+            assert!(nest.sequence.video_occurrences().all(|clip| clip.out_ticks > clip.in_ticks && project.media.contains_key(&clip.media)));
+            assert!(omissions.iter().any(|loss| loss.scope == OmissionScope::Feature), "{field}: {omissions:?}");
+            if field == "playback" {
+                let keys = &nest.time_remap.as_ref().unwrap().keys;
+                assert_eq!(keys[0].source_ticks, 0);
+                assert_eq!(keys[1].source_ticks, TICKS * 3 / 2);
+                assert_eq!(nest.end_ticks - nest.start_ticks, 3 * TICKS);
+            }
+        }
+    }
+}
+
+#[test]
+fn unsupported_group_label_and_unknown_effect_retain_current_children_and_clocks() {
+    let (outer, _) = nested_sequence();
+    let base = import(&outer);
+    let (baseline, _) = export(base.clone());
+    let expected = baseline
+        .single_sequence()
+        .unwrap()
+        .nest_occurrences()
+        .next()
+        .unwrap();
+    for name in [String::new(), "é".repeat(256)] {
+        let mut wire = base.clone();
+        let group = &mut wire["composition"]["layers"][0];
+        group["name"] = json!(name);
+        group["motionBlur"] = json!(true);
+        group["effects"] = json!([{"id":9000,"effect":{"type":"futureEffect"}}]);
+        let (project, reports) = export(wire);
+        let sequence = project.single_sequence().unwrap();
+        assert_eq!(sequence.nest_occurrences().count(), 2, "{reports:?}");
+        let retained = sequence.nest_occurrences().next().unwrap();
+        assert!((1..=255).contains(&retained.sequence.name.chars().count()));
         assert_eq!(
-            project
-                .single_sequence()
-                .unwrap()
-                .nest_occurrences()
-                .count(),
-            1,
-            "{field}"
+            (
+                retained.start_ticks,
+                retained.end_ticks,
+                retained.in_ticks,
+                retained.out_ticks
+            ),
+            (
+                expected.start_ticks,
+                expected.end_ticks,
+                expected.in_ticks,
+                expected.out_ticks
+            )
+        );
+        let current: Vec<_> = retained
+            .sequence
+            .video_occurrences()
+            .map(|clip| {
+                (
+                    &clip.media,
+                    clip.timeline_ticks(),
+                    clip.in_ticks,
+                    clip.out_ticks,
+                    &clip.transform,
+                    clip.opacity,
+                    clip.enabled,
+                )
+            })
+            .collect();
+        let original: Vec<_> = expected
+            .sequence
+            .video_occurrences()
+            .map(|clip| {
+                (
+                    &clip.media,
+                    clip.timeline_ticks(),
+                    clip.in_ticks,
+                    clip.out_ticks,
+                    &clip.transform,
+                    clip.opacity,
+                    clip.enabled,
+                )
+            })
+            .collect();
+        assert_eq!(current, original);
+        assert!(retained.effects.is_empty());
+        assert!(
+            reports
+                .iter()
+                .any(|report| report.reason.contains("sequence label")),
+            "{reports:?}"
+        );
+        assert!(
+            reports
+                .iter()
+                .any(|report| report.reason.contains("futureEffect")),
+            "{reports:?}"
+        );
+        assert!(
+            reports
+                .iter()
+                .any(|report| report.reason.contains("group motion blur was not exported")),
+            "{reports:?}"
         );
     }
 }
@@ -2825,6 +2933,10 @@ fn group_motion_blur_is_not_reported_from_an_omitted_enclosing_nest() {
         json!({
             "type": "Group", "id": 20, "name": "Rejected enclosing group", "blendMode": "normal",
             "playback": linear_playback(outer_range.clone(), outer_range), "transform": moved,
+            // A valid simultaneous matte and mask has no admitted native
+            // intersection carrier, unlike a recoverable transparent tail.
+            "trackMatte": {"mode":"alpha","layer":2},
+            "masks": [{"id":901,"mode":"add","layer":2}],
             "layers": [{"type": "Group", "id": 10, "parent": 20, "name": "Unretained child",
                 "blendMode": "normal", "motionBlur": true, "transform": transform,
                 "playback": linear_playback(inner_range.clone(), inner_range), "layers": [video]}]
@@ -2841,7 +2953,7 @@ fn group_motion_blur_is_not_reported_from_an_omitted_enclosing_nest() {
             .any(|report| report.record.starts_with("layer 20 (")
                 && report
                     .reason
-                    .contains("group extends past its exported children's end")),
+                    .contains("a track matte with masks on one clip is not converted")),
         "{reports:?}"
     );
     assert!(
@@ -3094,7 +3206,7 @@ fn differing_canvas_transform_export_preserves_source_frame_and_current_edits() 
 }
 
 #[test]
-fn differing_canvas_transform_refuses_unmeasured_edits_without_losing_sibling() {
+fn differing_canvas_transform_retains_unmeasured_edits_as_diagnosed_ordinary_nests() {
     for (pointer, value, reason) in [
         ("/dimensions/height", json!(3840), "16:9"),
         (
@@ -3127,7 +3239,17 @@ fn differing_canvas_transform_refuses_unmeasured_edits_without_losing_sibling() 
         *document.pointer_mut(pointer).unwrap() = value;
         let (native, notes) = export(document);
         let outer = native.single_sequence().unwrap();
-        assert_eq!(outer.nest_occurrences().count(), 0, "{pointer}: {notes:?}");
+        assert_eq!(outer.nest_occurrences().count(), 1, "{pointer}: {notes:?}");
+        assert_eq!(
+            outer
+                .nest_occurrences()
+                .next()
+                .unwrap()
+                .sequence
+                .dimensions(),
+            [3840, 2160],
+            "retain the validated current source canvas: {pointer}"
+        );
         assert_eq!(outer.video_occurrences().count(), 1, "healthy sibling");
         assert!(
             notes.iter().any(|note| note.reason.contains(reason)),
@@ -3153,7 +3275,7 @@ fn differing_canvas_transform_refuses_unmeasured_edits_without_losing_sibling() 
         let (native, notes) = export(document);
         assert_eq!(
             native.single_sequence().unwrap().nest_occurrences().count(),
-            0
+            1
         );
         assert!(
             notes
@@ -3172,11 +3294,21 @@ fn differing_canvas_transform_refuses_unmeasured_edits_without_losing_sibling() 
             .iter_mut()
             .find(|layer| layer["id"] == guide_id)
             .unwrap();
-        guide["rect"]["size"] = size;
+        guide["rect"]["size"] = size.clone();
         let (native, notes) = export(document);
         assert_eq!(
             native.single_sequence().unwrap().nest_occurrences().count(),
-            0
+            0,
+            "fractional/empty source canvases cannot be substituted or unmasked: {notes:?}"
+        );
+        assert_eq!(
+            native
+                .single_sequence()
+                .unwrap()
+                .video_occurrences()
+                .count(),
+            1,
+            "retain the healthy independent sibling"
         );
         assert!(
             notes
@@ -3185,6 +3317,85 @@ fn differing_canvas_transform_refuses_unmeasured_edits_without_losing_sibling() 
             "{notes:?}"
         );
     }
+}
+
+#[test]
+fn nested_transform_unsupported_guide_alpha_retains_independent_sibling_without_unmasking() {
+    let mut wire = nested_transform_document();
+    let picture = &mut wire["composition"]["layers"][0]["layers"][0];
+    let guide_id = picture["masks"][0]["layer"].clone();
+    picture["layers"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|layer| layer["id"] == guide_id)
+        .unwrap()["transform"]["opacity"] = json!(50.0);
+    let (project, reports) = export(wire);
+    let sequence = project.single_sequence().unwrap();
+    assert_eq!(
+        sequence.nest_occurrences().count(),
+        0,
+        "do not erase unsupported alpha coverage"
+    );
+    let sibling = sequence.video_occurrences().next().unwrap();
+    assert_eq!(sequence.video_occurrences().count(), 1, "{reports:?}");
+    assert_eq!(sibling.timeline_ticks(), 0..10 * TICKS);
+    assert!(
+        reports.iter().any(|report| report
+            .reason
+            .contains("Crop cannot encode the guide's 50% opacity")),
+        "{reports:?}"
+    );
+}
+
+#[test]
+fn nested_transform_recognition_retains_changed_guide_coverage_without_native_stage() {
+    let mut wire = nested_transform_document();
+    let stage = &mut wire["composition"]["layers"][0];
+    stage["name"] = json!("Outer renamed");
+    stage["layers"][0]["name"] = json!("Picture renamed");
+    let (project, notes) = export(wire.clone());
+    let outer = project.single_sequence().unwrap();
+    let nest = outer.nest_occurrences().next().unwrap();
+    assert_eq!(nest.effects.len(), 1, "{notes:?}");
+    assert_eq!(
+        nest.sequence.nest_occurrences().count(),
+        0,
+        "one raster boundary"
+    );
+    let picture = &mut wire["composition"]["layers"][0]["layers"][0];
+    let guide_id = picture["masks"][0]["layer"].clone();
+    let guide = picture["layers"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|layer| layer["id"] == guide_id)
+        .unwrap();
+    let width = guide["rect"]["size"][0].as_f64().unwrap();
+    guide["rect"]["size"][0] = json!(width - 20.0);
+    let (project, notes) = export(wire);
+    let outer = project.single_sequence().unwrap();
+    assert_eq!(outer.nest_occurrences().count(), 1, "{notes:?}");
+    assert_eq!(outer.video_occurrences().count(), 1, "healthy sibling");
+    let retained = outer.nest_occurrences().next().unwrap();
+    assert!(
+        retained.effects.is_empty(),
+        "no reconstructed native Transform"
+    );
+    let picture = retained.sequence.nest_occurrences().next().unwrap();
+    assert_eq!(
+        picture.sequence.dimensions()[0],
+        (width - 20.0) as u32,
+        "the current smaller source canvas retains the mask boundary"
+    );
+    assert_eq!(picture.transform.rotation, 30.0);
+    assert!(picture.sequence.video_occurrences().next().is_some());
+    assert!(
+        notes.iter().any(|note| note
+            .reason
+            .contains("native nested Transform was not reconstructed")),
+        "{notes:?}"
+    );
 }
 
 #[test]
@@ -3550,6 +3761,191 @@ fn a_plain_group_longer_than_its_children_keeps_their_clock_and_transparent_tail
 }
 
 #[test]
+fn sequence_scoped_generators_keep_actual_canvas_and_equal_facts_share_media() {
+    use crate::tests::support::{transform_effect, DEFAULT_PR_TRANSFORM};
+
+    // Native-derived structure plus explicit editable generator additions, not
+    // an independently Adobe-authored generator case or native render proof.
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/feature_nested_sequence_strict.prproj");
+    let (native, reports) =
+        PrProjectFile::load_selected(&source, Some("dab91e14-ca76-47e7-93fc-99bf6bcc94be"))
+            .unwrap();
+    assert!(reports.is_empty(), "{reports:?}");
+    let mut sequence = native.single_sequence().unwrap().clone();
+    for nest in sequence
+        .video_tracks
+        .iter_mut()
+        .flat_map(|track| &mut track.nests)
+    {
+        [nest.sequence.width, nest.sequence.height] = [960, 540];
+        nest.effects = vec![transform_effect(
+            crate::schema::PrTransform {
+                uniform_scale: true,
+                ..DEFAULT_PR_TRANSFORM
+            },
+            Vec::new(),
+        )];
+    }
+    let mut import_reports = Vec::new();
+    let mut document = premiere_to_tesseract(
+        &sequence,
+        &native.media,
+        &asset_ids_in_order(&sequence, &native.media),
+        &mut import_reports,
+    )
+    .unwrap()
+    .to_json_value()
+    .unwrap();
+    let layers = document["composition"]["layers"].as_array_mut().unwrap();
+    let outer = layers
+        .iter_mut()
+        .find(|layer| layer["type"] == "Group")
+        .unwrap_or_else(|| panic!("{import_reports:?}"));
+    let picture = &mut outer["layers"][0];
+    let parent = picture["id"].clone();
+    let generators = |id: u64, parent: Value, size: [u32; 2]| {
+        [
+            json!({"type": "Adjustment", "id": id, "parent": parent,
+                "name": "Generator adjustment", "activeRange": {"start": 0, "duration": 1000},
+                "transform": {"anchorPoint": [0, 0], "position": [0, 0],
+                    "scale": [100, 100], "rotation": 0, "opacity": 100}}),
+            json!({"type": "Rect", "id": id + 1, "parent": parent,
+                "name": "Generator red", "activeRange": {"start": 0, "duration": 1000},
+                "transform": {"anchorPoint": [0, 0], "position": [0, 0],
+                    "scale": [100, 100], "rotation": 0, "opacity": 100},
+                "rect": {"size": size, "fillColor": [1, 0, 0, 1]}}),
+        ]
+    };
+    picture["layers"]
+        .as_array_mut()
+        .unwrap()
+        .splice(0..0, generators(100, parent, [960, 540]));
+    layers.splice(0..0, generators(200, Value::Null, [1920, 1080]));
+    layers.splice(0..0, generators(300, Value::Null, [1920, 1080]));
+    for layer in &mut layers[..4] {
+        layer.as_object_mut().unwrap().remove("parent");
+    }
+    let (mut exported, reports) = export(document);
+    assert!(reports.is_empty(), "{reports:?}");
+
+    fn check(sequence: &PrSequence, project: &PrProjectFile) -> (usize, usize) {
+        let mut counts = (0, 0);
+        for clip in sequence.video_occurrences() {
+            let media = project.media(clip).unwrap();
+            if media.is_generator() {
+                let video = media.video.as_ref().unwrap();
+                assert_eq!([video.width, video.height], sequence.dimensions());
+                assert_eq!(clip.timeline_ticks(), 0..TICKS);
+                let start = FrameRate::Fps30.generator_in_ticks();
+                assert_eq!(clip.source_ticks(), start..start + TICKS);
+                counts.0 += usize::from(media.is_adjustment());
+                counts.1 += usize::from(matches!(video.kind, PrMediaKind::ColorMatte(_)));
+            }
+        }
+        for nest in sequence.nest_occurrences() {
+            let inner = check(&nest.sequence, project);
+            counts.0 += inner.0;
+            counts.1 += inner.1;
+        }
+        counts
+    }
+    assert_eq!(
+        check(exported.single_sequence().unwrap(), &exported),
+        (3, 3)
+    );
+    let ids: Vec<_> = exported
+        .media
+        .iter()
+        .filter(|(_, media)| media.is_generator())
+        .map(|(id, _)| id.as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "adjustment-layer:1920x1080",
+            "adjustment-layer:960x540",
+            "color-matte:1920x1080:ff0000",
+            "color-matte:960x540:ff0000"
+        ]
+    );
+    for (id, media) in &mut exported.media {
+        if !media.is_generator() {
+            media.name = format!("{}.mp4", id.as_str());
+            media.relative_path = Some(format!("./media/{}.mp4", id.as_str()));
+            media.relative_paths = vec![media.relative_path.clone().unwrap()];
+            media.absolute_paths = vec![(
+                MediaPathField::FilePath,
+                format!("/media/{}.mp4", id.as_str()).into(),
+            )];
+        }
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("generators.prproj");
+    PremiereProjectXml::new(&exported)
+        .unwrap()
+        .write_new(&path)
+        .unwrap();
+    let (reloaded, reports) = PrProjectFile::load(&path).unwrap();
+    assert!(reports.is_empty(), "{reports:?}");
+    assert_eq!(
+        check(reloaded.single_sequence().unwrap(), &reloaded),
+        (3, 3)
+    );
+
+    for id in ["adjustment-layer:1920x1080", "color-matte:1920x1080:ff0000"] {
+        let mut forged =
+            PrProjectFile::from_sequences(exported.sequences.clone(), exported.media.clone());
+        let video = forged
+            .media
+            .get_mut(&MediaId(id.into()))
+            .unwrap()
+            .video
+            .as_mut()
+            .unwrap();
+        [video.width, video.height] = [960, 540];
+        let error = PremiereProjectXml::new(&forged).err().unwrap().to_string();
+        assert!(
+            error.contains(&sequence.name) && error.contains("dimensions"),
+            "{error}"
+        );
+    }
+
+    // A forged nested use of root-sized media still fails on its actual owner.
+    let mut forged =
+        PrProjectFile::from_sequences(exported.sequences.clone(), exported.media.clone());
+    let root_id = MediaId("adjustment-layer:1920x1080".into());
+    let nest = forged.sequences[0]
+        .video_tracks
+        .iter_mut()
+        .flat_map(|track| &mut track.nests)
+        .find(|nest| nest.sequence.width == 960)
+        .unwrap();
+    let owner = nest.sequence.name.clone();
+    let clip = nest
+        .sequence
+        .video_tracks
+        .iter_mut()
+        .flat_map(|track| &mut track.items)
+        .find_map(|item| match item {
+            PrVideoItem::Media(clip) if clip.media.as_str() == "adjustment-layer:960x540" => {
+                Some(clip)
+            }
+            _ => None,
+        })
+        .unwrap();
+    clip.media = root_id;
+    forged
+        .media
+        .remove(&MediaId("adjustment-layer:960x540".into()));
+    let error = PremiereProjectXml::new(&forged).err().unwrap().to_string();
+    assert!(
+        error.contains(&owner) && error.contains("dimensions"),
+        "{error}"
+    );
+}
+
+#[test]
 fn an_edited_nested_crop_survives_outer_reimport() {
     // Derive the smaller canvas from the pinned native nest fixture. The
     // guide edit and writer readback prove structure, not native rendering.
@@ -3702,7 +4098,7 @@ fn an_extended_plain_group_from_the_native_fixture_keeps_its_child() {
 }
 
 #[test]
-fn a_long_group_with_own_compositing_or_animation_is_still_omitted() {
+fn a_long_group_retains_supported_compositing_and_keys_without_pixel_generating_tails() {
     for control in [
         "effect",
         "opacity",
@@ -3774,23 +4170,46 @@ fn a_long_group_with_own_compositing_or_animation_is_still_omitted() {
             _ => unreachable!(),
         }
         let (project, omissions) = export(document);
+        let omitted = false;
+        let sequence = project.single_sequence().unwrap();
         assert_eq!(
-            project
-                .single_sequence()
-                .unwrap()
-                .nest_occurrences()
-                .count(),
-            1,
-            "{control}"
-        );
-        assert!(
-            omissions.iter().any(|omission| omission.record
-                == format!("layer {group_id} (\"Inner\")")
-                && omission
-                    .reason
-                    .contains("group extends past its exported children's end")),
+            sequence.nest_occurrences().count(),
+            if omitted { 1 } else { 2 },
             "{control}: {omissions:?}"
         );
+        assert_eq!(
+            omissions
+                .iter()
+                .any(|omission| omission.kind == crate::OmissionKind::Omitted
+                    && omission.record == format!("layer {group_id} (\"Inner\")")
+                    && omission
+                        .reason
+                        .contains("group extends past its exported children's end")),
+            omitted,
+            "{control}: {omissions:?}"
+        );
+        if !omitted {
+            let retained = sequence.nest_occurrences().next().unwrap();
+            assert_eq!(retained.timeline_ticks(), TICKS..4 * TICKS);
+            assert!(retained.sequence.video_occurrences().next().is_some());
+            if control == "matte" {
+                let key = retained.track_matte.as_ref().expect("retain coverage");
+                let matte = sequence.video_tracks[key.track_index]
+                    .items
+                    .iter()
+                    .filter_map(PrVideoItem::media)
+                    .next()
+                    .unwrap();
+                assert_eq!(matte.timeline_ticks(), retained.timeline_ticks());
+                assert_eq!(
+                    matte.source_ticks(),
+                    0..3 * TICKS,
+                    "trim only unused matte tail, retaining the source clock"
+                );
+                // Native Track Matte Key consumes an enabled source over the matched span.
+                assert!(matte.enabled && matte.track_matte.is_none());
+            }
+        }
     }
 }
 
@@ -4649,8 +5068,10 @@ fn only_a_collapsing_layer_that_export_would_place_omits_its_nest() {
     // 30 fps export snaps to one frame, over a copy of that video beside
     // it. Such a layer omits the group only when export would place it. One
     // that export omits by its own rule before snapping its range keeps the
-    // group and its video and keeps its own reason; a still's conflicting
-    // media still rejects the export, beside a layer that collapses too.
+    // group and its video and keeps its own reason. Recoverable still framing
+    // differences retain the still, so its collapsed range omits the nest. A
+    // still's conflicting media still rejects the export beside a layer that
+    // collapses too.
     let mut base = crate::test_support::editable_document();
     base["composition"]["layers"][0]["sourceIntrinsicDuration"] = json!(10000);
     let mut video = base["composition"]["layers"][0].clone();
@@ -4693,11 +5114,16 @@ fn only_a_collapsing_layer_that_export_would_place_omits_its_nest() {
         "type": "Adjustment", "id": 13, "parent": 10, "name": "Matted adjustment",
         "activeRange": short, "transform": transform, "trackMatte": alpha
     });
+    // Make the extra affine stage real, not a label on an identity nest.
+    let mut staged_picture =
+        short_video(15, "Staged video", 14, &json!({"start": 0, "duration": 16}));
+    staged_picture["transform"]["scale"] = json!([50.0, 50.0]);
+    staged_picture["source"]["fit"] = json!("stretch");
     let stage = json!({
         "type": "Group", "id": 14, "parent": 10, "name": "Premiere stage 1",
         "playback": linear_playback(short.clone(), json!({"start": 0, "duration": 16})),
         "transform": transform, "trackMatte": alpha,
-        "layers": [short_video(15, "Staged video", 14, &json!({"start": 0, "duration": 16}))]
+        "layers": [staged_picture]
     });
     let mut keyed = short_video(16, "Short keyed", 10, &short);
     keyed["trackMatte"] = alpha.clone();
@@ -4749,12 +5175,12 @@ fn only_a_collapsing_layer_that_export_would_place_omits_its_nest() {
         (
             "Cover still",
             vec![still(json!({"fit": "cover"}))],
-            kept(&[("layer 11 (\"Short still\")", "still was not exported: its media fit is not Contain")]),
+            collapsed("11 (\"Short still\")"),
         ),
         (
             "cropped still",
             vec![still(json!({"sourceRect": {"x": 0, "y": 0, "width": 960, "height": 1080}}))],
-            kept(&[("layer 11 (\"Short still\")", "still was not exported: its sourceRect is not the 1920x1080 image at the origin")]),
+            collapsed("11 (\"Short still\")"),
         ),
         (
             "matte source of an omitted adjustment",
@@ -4768,7 +5194,7 @@ fn only_a_collapsing_layer_that_export_would_place_omits_its_nest() {
             "matte source of an omitted stage",
             vec![stage, source.clone()],
             kept(&[
-                ("layer 14 (\"Premiere stage 1\")", "stage group was not exported as one clip: the track matte source is not beside the clip"),
+                ("layer 14 (\"Premiere stage 1\")", "stage group was not exported as one clip: the video's transform or opacity is not the identity"),
                 orphan,
             ]),
         ),
@@ -4880,6 +5306,8 @@ fn a_nested_still_crop_guide_stays_with_its_image_and_exports_as_its_crop() {
                     format: crate::image_media::ImageFormat::Png,
                     width: 1920,
                     height: 1080,
+                    pixel_aspect: Default::default(),
+                    open_exr_channels: None,
                     alpha: false,
                     icc_profile: false,
                 })
@@ -5004,6 +5432,8 @@ fn a_nested_still_opacity_mask_draws_its_guide_in_the_still_frame_beside_the_ima
                     format: crate::image_media::ImageFormat::Png,
                     width: 1920,
                     height: 1080,
+                    pixel_aspect: Default::default(),
+                    open_exr_channels: None,
                     alpha: false,
                     icc_profile: false,
                 })
@@ -5548,9 +5978,9 @@ fn nested_remap_signed_preroll_source_guide_and_bounds() {
     assert_eq!(guide["activeRange"], json!({"start":0,"duration":6000}));
     assert_eq!(videos(&group["layers"]).len(), 2);
     let (exported, reports) = export(document);
-    assert!(reports.iter().any(|report| report
-        .reason
-        .contains("group time remapping is not supported")));
+    assert!(reports
+        .iter()
+        .any(|report| report.reason.contains("retimed Group coverage")));
     assert!(
         exported
             .single_sequence()
@@ -5967,4 +6397,38 @@ fn nested_opacity_mask_invalid_export_scope_never_falls_back_unmasked() {
             "{reports:?}"
         );
     }
+}
+
+#[test]
+fn group_remap_recovery_uses_current_window_not_unused_source_key_tails() {
+    let (outer, _) = nested_sequence();
+    let mut wire = import(&outer);
+    wire["composition"]["layers"][0]["playback"] = json!({"type":"windowed", "inputRange":{"start":1000,"duration":3000}, "inputOffsetMs":0,
+    "mapping":{"type":"timeRemap", "property":{"before":"inactive", "after":"inactive", "keyframes":[
+        {"id":"recovery-1","time":0,"value":0,"easing":{"type":"linear"}},
+        {"id":"recovery-2","time":1000,"value":1000,"easing":{"type":"linear"}},
+        {"id":"recovery-3","time":4000,"value":2500,"easing":{"type":"cubicBezier","x1":0.3,"y1":0.1,"x2":0.7,"y2":0.9}},
+        {"id":"recovery-4","time":10000,"value":10000,"easing":{"type":"linear"}}
+    ]}}});
+    let (native, losses) = export(wire);
+    let nest = native
+        .single_sequence()
+        .unwrap()
+        .nest_occurrences()
+        .next()
+        .unwrap();
+    let keys = &nest.time_remap.as_ref().unwrap().keys;
+    assert_eq!(keys[0].source_ticks, TICKS);
+    assert_eq!(keys[1].source_ticks, 5 * TICKS / 2);
+    assert!(nest.sequence.video_items().count() > 0);
+    assert_eq!(
+        native.single_sequence().unwrap().nest_occurrences().count(),
+        2
+    );
+    assert!(
+        losses
+            .iter()
+            .any(|loss| loss.reason.contains("authored child selection")),
+        "{losses:?}"
+    );
 }

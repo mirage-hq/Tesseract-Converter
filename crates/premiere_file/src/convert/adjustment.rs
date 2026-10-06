@@ -246,6 +246,7 @@ fn coverage_transform(
                     id,
                     enabled,
                     effect,
+                    ..
                 } => (Some(*id), *enabled, effect),
                 EffectData::Legacy(effect) => (None, true, effect),
             };
@@ -348,7 +349,7 @@ pub(super) fn export_adjustment_layer(
             super::adjustment_geometry::ROOT_ADJUSTMENT_APPROXIMATION,
         );
     }
-    let media = MediaId("adjustment-layer".to_owned());
+    let media = MediaId(format!("adjustment-layer:{width}x{height}"));
     if context.media_facts.contains_key(media.as_str()) {
         return Err(unsupported(format!(
             "asset {media} names both a packaged asset and an adjustment layer"

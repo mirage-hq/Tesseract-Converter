@@ -1,5 +1,8 @@
 //! Stored effect records without identifier allocation or legacy conversion.
 
+use super::{
+    deserialize_persisted_compositing_options, EffectCompositingOptions, EffectInstanceExtensions,
+};
 use crate::{stored::Stored, EffectId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
@@ -19,7 +22,7 @@ macro_rules! stored_effect_instance {
         $($(#[$field_attrs:meta])* $visibility:vis $field:ident: $field_type:ty,)*
     } compatibility { $($compatibility:tt)* }) => {
         #[derive(Debug, Clone, PartialEq, Serialize)]
-        #[serde(untagged)]
+        #[serde(untagged, rename_all_fields = "camelCase")]
         pub enum EffectData {
             Identified {
                 $($(#[$field_attrs])* $field: $field_type,)*
@@ -28,6 +31,7 @@ macro_rules! stored_effect_instance {
         }
 
         #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
         struct Instance {
             $($(#[$field_attrs])* $field: $field_type,)*
         }
@@ -90,6 +94,8 @@ impl<'de> Deserialize<'de> for EffectData {
             Ok(Self::Identified {
                 id: instance.id,
                 enabled: instance.enabled,
+                compositing_options: instance.compositing_options,
+                extensions: instance.extensions,
                 effect: instance.effect,
             })
         } else {

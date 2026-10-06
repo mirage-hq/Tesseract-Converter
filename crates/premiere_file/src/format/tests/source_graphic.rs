@@ -37,6 +37,12 @@ fn edited(xml: &str, from: &str, to: &str) -> String {
     xml.replace(from, to)
 }
 
+/// `xml` with only the first occurrence of `from` replaced by `to`.
+fn edited_first(xml: &str, from: &str, to: &str) -> String {
+    assert!(xml.contains(from), "{from}");
+    xml.replacen(from, to, 1)
+}
+
 /// The graphics of `sequence` in `xml`, bottom track first, and the reports.
 fn graphics(xml: &str, sequence: &str) -> (Vec<PrGraphic>, Vec<Omission>) {
     let (project, omissions) = inspect_project_with_omissions(xml, Some(sequence)).unwrap();
@@ -163,6 +169,24 @@ fn unmeasured_source_graphic_forms_omit_only_their_placements() {
                 "<Name>Scale</Name>\n\t\t<IsTimeVarying>true</IsTimeVarying>\n\t\t<ParameterID>2</ParameterID>\n\t\t<UpperUIBound>200</UpperUIBound>\n\t\t<StartKeyframe>-91445760000000000,80.,0,0,0,0,0,0</StartKeyframe>\n\t\t<Keyframes>914457600000000,80.,0,0,0,0.16666666666666666,0,0.16666666666666666;914711616000000,90.,0,0,0,0.16666666666666666,0,0.16666666666666666;</Keyframes>",
             ),
             "VideoComponentChain:176: graphic clip Motion keys are not converted",
+        ),
+        // A Source Graphic has no crop guide, so exposing its cropped-away
+        // content would be a silent concealment failure.
+        (
+            edited_first(
+                &xml,
+                "<Name>Crop Left</Name>\n\t\t<ParameterID>8</ParameterID>\n\t\t<StartKeyframe>-91445760000000000,0.,0,0,0,0,0,0</StartKeyframe>",
+                "<Name>Crop Left</Name>\n\t\t<ParameterID>8</ParameterID>\n\t\t<StartKeyframe>-91445760000000000,20.25,0,0,0,0,0,0</StartKeyframe>",
+            ),
+            "VideoComponentChain:176: Motion Crop, Linear Wipe or Track Matte Key on a Source Graphic placement is not converted",
+        ),
+        (
+            edited_first(
+                &xml,
+                "<Name>Crop Left</Name>\n\t\t<ParameterID>8</ParameterID>\n\t\t<StartKeyframe>-91445760000000000,0.,0,0,0,0,0,0</StartKeyframe>",
+                "<Name>Crop Left</Name>\n\t\t<IsTimeVarying>true</IsTimeVarying>\n\t\t<ParameterID>8</ParameterID>\n\t\t<StartKeyframe>-91445760000000000,20.25,0,0,0,0,0,0</StartKeyframe>",
+            ),
+            "VideoComponentChain:176: Motion Crop, Linear Wipe or Track Matte Key on a Source Graphic placement is not converted",
         ),
         // A placement's own chain holds only its clip Motion and Opacity; the
         // master holds the objects.

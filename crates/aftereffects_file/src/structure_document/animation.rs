@@ -39,6 +39,7 @@ mod spatial_position;
 
 use std::collections::HashMap;
 
+use fx_keyframe_bake::value_curve::{ValueCurveError, ValueKey, fit_value_curve};
 use fx_schema::animator::{
     AnimationGraphEntry, KeyframeId, PropertyAnimator, PropertyKeyframe, PropertyKeyframeEasing,
     PropertyKeyframeTrack,
@@ -112,6 +113,22 @@ impl NumericAnimationClock {
 
     pub(super) fn reversed(self) -> bool {
         matches!(self, Self::ParentIdentity { stretch, .. } if stretch < 0.0)
+    }
+
+    fn source_seconds(self, output_secs: f64) -> Result<f64, String> {
+        let source = match self {
+            Self::SourceLocal { offset_secs } => output_secs + offset_secs,
+            Self::ParentIdentity { start, stretch } if stretch != 0.0 => {
+                (output_secs - start) / stretch
+            }
+            Self::ParentIdentity { .. } => {
+                return Err("zero-stretch numeric animation clock".into());
+            }
+        };
+        source
+            .is_finite()
+            .then_some(source)
+            .ok_or_else(|| "non-finite numeric animation clock".into())
     }
 }
 
@@ -228,6 +245,73 @@ impl NumericAnimationTarget {
                 Some([(components[0], scale[0]), (components[1], scale[1])])
             }
             _ => None,
+        }
+    }
+
+    fn has_equal_endpoint_excursion(&self, from: &NumericKeyframe, to: &NumericKeyframe) -> bool {
+        let excursion = |component, scale| equal_endpoint_excursion(from, to, component, scale);
+        match self.value {
+            NumericTargetValue::StrokeJoin => false,
+            NumericTargetValue::OpacityColor { scale, .. } => excursion(0, scale),
+            NumericTargetValue::Float { component, scale } => excursion(component, scale),
+            NumericTargetValue::Vector2 { components, scale } => {
+                excursion(components[0], scale[0]) || excursion(components[1], scale[1])
+            }
+            NumericTargetValue::Color { components, scale } => components
+                .into_iter()
+                .zip(scale)
+                .any(|(component, scale)| excursion(component, scale)),
+        }
+    }
+
+    fn validate_components(&self, values: &[f64]) -> Result<(), String> {
+        let required = match self.value {
+            NumericTargetValue::StrokeJoin | NumericTargetValue::OpacityColor { .. } => {
+                [Some(0), None, None, None]
+            }
+            NumericTargetValue::Float { component, .. } => [Some(component), None, None, None],
+            NumericTargetValue::Vector2 { components, .. } => {
+                [Some(components[0]), Some(components[1]), None, None]
+            }
+            NumericTargetValue::Color { components, .. } => components.map(Some),
+        };
+        required
+            .into_iter()
+            .flatten()
+            .find(|component| *component >= values.len())
+            .map_or(Ok(()), |component| {
+                Err(format!("lacks component {component}"))
+            })
+    }
+
+    fn interpolation_error(
+        &self,
+        from: &[f64],
+        to: &[f64],
+        actual: &[f64],
+        progress: f64,
+    ) -> Option<f64> {
+        let error = |component: usize, scale: f64| {
+            let (from, to, actual) = (
+                *from.get(component)?,
+                *to.get(component)?,
+                *actual.get(component)?,
+            );
+            Some(((from + (to - from) * progress - actual) * scale).abs())
+        };
+        match self.value {
+            NumericTargetValue::StrokeJoin => Some(0.0),
+            NumericTargetValue::OpacityColor { scale, .. } => error(0, scale),
+            NumericTargetValue::Float { component, scale } => error(component, scale),
+            NumericTargetValue::Vector2 { components, scale } => {
+                Some(error(components[0], scale[0])?.max(error(components[1], scale[1])?))
+            }
+            NumericTargetValue::Color { components, scale } => components
+                .into_iter()
+                .zip(scale)
+                .try_fold(0.0_f64, |maximum, (component, scale)| {
+                    error(component, scale).map(|error| maximum.max(error))
+                }),
         }
     }
 
@@ -882,6 +966,394 @@ pub(crate) fn editable_native_keys(
     Ok((prepared, easings))
 }
 
+/// Maximum absolute sampled error after mapping each component into its actual
+/// destination unit: percent, pixels, degrees, or normalized 0–1 color/alpha.
+/// This tolerance controls the density of the replacement Linear keys.
+const COUPLED_LINEAR_TOLERANCE: f64 = 0.01;
+
+// Imported FX tracks use Vec-backed keys and have no smaller fixed format limit.
+// AnimationBudget separately owns aggregate serialized-size admission.
+const FX_IMPORT_MAXIMUM_KEYS: usize = usize::MAX;
+
+fn mapped_millis(clock: NumericAnimationClock, source_secs: f64) -> Result<i64, String> {
+    let millis = clock.seconds(source_secs) * 1000.0;
+    if !millis.is_finite() || millis.abs() > ((1_u64 << 53) - 1) as f64 {
+        return Err("numeric animation time is not an exact finite millisecond".into());
+    }
+    Ok(TimeOffset::from_millis_f64(millis).as_millis())
+}
+
+fn temporal_value(values: &[f64], component: usize, label: &str) -> Result<f64, String> {
+    values
+        .get(component)
+        .or_else(|| values.first())
+        .copied()
+        .filter(|value| value.is_finite())
+        .ok_or_else(|| format!("missing or non-finite {label} for component {component}"))
+}
+
+fn cubic_coordinate(from: f64, control1: f64, control2: f64, to: f64, t: f64) -> f64 {
+    let inverse = 1.0 - t;
+    inverse * inverse * inverse * from
+        + 3.0 * inverse * inverse * t * control1
+        + 3.0 * inverse * t * t * control2
+        + t * t * t * to
+}
+
+fn cubic_parameter(progress: f64, control1: f64, control2: f64) -> f64 {
+    let mut low = 0.0;
+    let mut high = 1.0;
+    for _ in 0..52 {
+        let parameter = (low + high) * 0.5;
+        if cubic_coordinate(0.0, control1, control2, 1.0, parameter) < progress {
+            low = parameter;
+        } else {
+            high = parameter;
+        }
+    }
+    (low + high) * 0.5
+}
+
+fn evaluate_numeric_segment(
+    from: &NumericKeyframe,
+    to: &NumericKeyframe,
+    source_secs: f64,
+) -> Result<Vec<f64>, String> {
+    if from.values.len() != to.values.len()
+        || from
+            .values
+            .iter()
+            .chain(&to.values)
+            .any(|value| !value.is_finite())
+    {
+        return Err("numeric segment has inconsistent or non-finite values".into());
+    }
+    if !from.spatial_out.is_empty() || !to.spatial_in.is_empty() {
+        return Err("numeric segment has spatial handles".into());
+    }
+    if source_secs <= from.time_secs {
+        return Ok(from.values.clone());
+    }
+    if source_secs >= to.time_secs {
+        return Ok(to.values.clone());
+    }
+    let duration = to.time_secs - from.time_secs;
+    if !duration.is_finite() || duration <= 0.0 {
+        return Err("numeric segment has a non-positive duration".into());
+    }
+    if from.out_interpolation == 3 {
+        return Ok(from.values.clone());
+    }
+    if !matches!(from.out_interpolation, 1 | 2) || !matches!(to.in_interpolation, 1 | 2) {
+        return Err(format!(
+            "numeric segment has unsupported interpolation {}/{}",
+            from.out_interpolation, to.in_interpolation
+        ));
+    }
+    let progress = ((source_secs - from.time_secs) / duration).clamp(0.0, 1.0);
+    if from.out_interpolation == 1 && to.in_interpolation == 1 {
+        return Ok(from
+            .values
+            .iter()
+            .zip(&to.values)
+            .map(|(from, to)| from + (to - from) * progress)
+            .collect());
+    }
+    from.values
+        .iter()
+        .zip(&to.values)
+        .enumerate()
+        .map(|(component, (&from_value, &to_value))| {
+            let out_influence = (temporal_value(&from.out_influence, component, "out influence")?
+                / 100.0)
+                .clamp(0.0, 1.0);
+            let in_influence = (temporal_value(&to.in_influence, component, "in influence")?
+                / 100.0)
+                .clamp(0.0, 1.0);
+            let out_speed = temporal_value(&from.out_speed, component, "out speed")?;
+            let in_speed = temporal_value(&to.in_speed, component, "in speed")?;
+            let parameter = cubic_parameter(progress, out_influence, 1.0 - in_influence);
+            let control1 = if from.out_interpolation == 1 {
+                from_value + (to_value - from_value) * out_influence
+            } else {
+                from_value + out_speed * duration * out_influence
+            };
+            let control2 = if to.in_interpolation == 1 {
+                from_value + (to_value - from_value) * (1.0 - in_influence)
+            } else {
+                to_value - in_speed * duration * in_influence
+            };
+            let value = cubic_coordinate(from_value, control1, control2, to_value, parameter);
+            value.is_finite().then_some(value).ok_or_else(|| {
+                format!("numeric segment produced a non-finite component {component}")
+            })
+        })
+        .collect()
+}
+
+fn fitted_coupled_segment(
+    from: &NumericKeyframe,
+    to: &NumericKeyframe,
+    targets: &[NumericAnimationTarget],
+    clock: NumericAnimationClock,
+) -> Result<Vec<NumericKeyframe>, String> {
+    let from_ms = mapped_millis(clock, from.time_secs)?;
+    let to_ms = mapped_millis(clock, to.time_secs)?;
+    let (first_ms, last_ms) = if from_ms < to_ms {
+        (from_ms, to_ms)
+    } else {
+        (to_ms, from_ms)
+    };
+    let duration_ms = u64::try_from(last_ms - first_ms)
+        .map_err(|_| "numeric segment duration does not fit milliseconds".to_string())?;
+    if duration_ms == 0 {
+        return Err("numeric segment endpoints collide on the FX millisecond clock".into());
+    }
+    let evaluate = |offset_ms: u64| {
+        let output_ms = first_ms
+            .checked_add(i64::try_from(offset_ms).map_err(|_| "numeric time overflow".to_string())?)
+            .ok_or_else(|| "numeric time overflow".to_string())?;
+        if output_ms == from_ms {
+            return Ok(from.values.clone());
+        }
+        if output_ms == to_ms {
+            return Ok(to.values.clone());
+        }
+        let source_secs = clock.source_seconds(output_ms as f64 / 1000.0)?;
+        evaluate_numeric_segment(from, to, source_secs)
+    };
+    let mut fitted = fit_value_curve(
+        duration_ms,
+        COUPLED_LINEAR_TOLERANCE,
+        FX_IMPORT_MAXIMUM_KEYS,
+        evaluate,
+        |from, to, actual, progress| {
+            targets.iter().try_fold(0.0_f64, |maximum, target| {
+                target
+                    .interpolation_error(from, to, actual, progress)
+                    .map(|error| maximum.max(error))
+            })
+        },
+    )
+    .map_err(|error| match error {
+        ValueCurveError::Evaluation(error) => error,
+        ValueCurveError::KeyLimit => {
+            "fitted numeric curve exceeds the FX in-memory key index".into()
+        }
+    })?;
+    if fitted.last().is_none_or(|key| key.offset_ms != duration_ms) {
+        let value = if last_ms == to_ms {
+            to.values.clone()
+        } else {
+            from.values.clone()
+        };
+        fitted.push(ValueKey {
+            offset_ms: duration_ms,
+            value,
+            linear: true,
+        });
+    }
+
+    let mut keys = fitted
+        .into_iter()
+        .map(|key| {
+            let output_ms = first_ms
+                .checked_add(
+                    i64::try_from(key.offset_ms)
+                        .map_err(|_| "numeric time overflow".to_string())?,
+                )
+                .ok_or_else(|| "numeric time overflow".to_string())?;
+            let time_secs = if output_ms == from_ms {
+                from.time_secs
+            } else if output_ms == to_ms {
+                to.time_secs
+            } else {
+                clock.source_seconds(output_ms as f64 / 1000.0)?
+            };
+            let dimensions = key.value.len();
+            Ok(NumericKeyframe {
+                time_secs,
+                values: key.value,
+                in_interpolation: 1,
+                out_interpolation: 1,
+                in_speed: vec![0.0; dimensions],
+                in_influence: vec![0.0; dimensions],
+                out_speed: vec![0.0; dimensions],
+                out_influence: vec![0.0; dimensions],
+                spatial_in: Vec::new(),
+                spatial_out: Vec::new(),
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    keys.sort_by(|left, right| left.time_secs.total_cmp(&right.time_secs));
+    let first = keys
+        .first_mut()
+        .ok_or_else(|| "fitted numeric curve is empty".to_string())?;
+    first.in_interpolation = from.in_interpolation;
+    first.in_speed.clone_from(&from.in_speed);
+    first.in_influence.clone_from(&from.in_influence);
+    first.spatial_in.clone_from(&from.spatial_in);
+    let last = keys
+        .last_mut()
+        .ok_or_else(|| "fitted numeric curve is empty".to_string())?;
+    last.out_interpolation = to.out_interpolation;
+    last.out_speed.clone_from(&to.out_speed);
+    last.out_influence.clone_from(&to.out_influence);
+    last.spatial_out.clone_from(&to.spatial_out);
+    Ok(keys)
+}
+
+struct CoupledExcursionPreparation {
+    numeric: NumericProperty,
+    source_key_count: usize,
+    recovered_segments: Vec<usize>,
+    unfitted_segments: Vec<(usize, String)>,
+}
+
+impl CoupledExcursionPreparation {
+    fn recovered_segment_ranges(&self) -> String {
+        self.recovered_segments
+            .iter()
+            .map(|index| format!("{index}→{}", index + 1))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    fn annotate_key_indexed_diagnostic(&self, message: String) -> String {
+        if self.recovered_segments.is_empty() {
+            return message;
+        }
+        let labeled = message
+            .replace("before key ", "before prepared-track key ")
+            .replace("at key ", "at prepared-track key ")
+            .replace(": key ", ": prepared-track key ");
+        if labeled == message {
+            return message;
+        }
+        let ranges = self.recovered_segment_ranges();
+        let mut following_boundaries = self
+            .recovered_segments
+            .iter()
+            .filter_map(|index| {
+                let next_segment = index + 1;
+                let boundary = index + 2;
+                (boundary < self.source_key_count
+                    && !self.recovered_segments.contains(&next_segment))
+                .then_some(boundary)
+            })
+            .collect::<Vec<_>>();
+        following_boundaries.sort_unstable();
+        following_boundaries.dedup();
+        let boundary_note = match following_boundaries.as_slice() {
+            [] => String::new(),
+            [boundary] => {
+                format!("; original source key {boundary} is retained as the following boundary")
+            }
+            boundaries => format!(
+                "; original source keys {} are retained as following boundaries",
+                boundaries
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        };
+        format!(
+            "{labeled}; prepared-track key indices are used because original source keys {ranges} were sampled{boundary_note}"
+        )
+    }
+
+    fn success_warnings(&self, name: &str) -> Vec<String> {
+        let mut warnings = Vec::new();
+        if !self.recovered_segments.is_empty() {
+            let segments = self.recovered_segment_ranges();
+            warnings.push(format!("{name}: equal-endpoint Bezier source keys {segments} sampled on the receiving FX integer-millisecond clock and reduced to coupled editable Linear keys within {COUPLED_LINEAR_TOLERANCE} actual destination units; exact source boundary endpoints retained, native temporal handles and sibling easing in each sampled segment replaced, key density depends on the curve and tolerance, fractional-millisecond fidelity unverified"));
+        }
+        warnings.extend(self.unfitted_segments.iter().map(|(index, error)| {
+            format!("{name}: equal-endpoint Bezier source keys {index}→{} could not be sampled ({error}); native keys retained with supported siblings, but the equal-endpoint excursion lost to the existing Linear easing fallback", index + 1)
+        }));
+        warnings
+    }
+}
+
+fn validate_target_components(
+    name: &str,
+    numeric: &NumericProperty,
+    targets: &[NumericAnimationTarget],
+) -> Result<(), String> {
+    for (source_index, key) in numeric.keyframes.iter().enumerate() {
+        for target in targets {
+            target.validate_components(&key.values).map_err(|error| {
+                format!(
+                    "{name}: source key {source_index} {error}; {:?} animation omitted",
+                    target.target
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn prepare_equal_endpoint_excursions(
+    numeric: &NumericProperty,
+    targets: &[NumericAnimationTarget],
+    clock: NumericAnimationClock,
+) -> Result<Option<CoupledExcursionPreparation>, String> {
+    if numeric.value_kind != NumericValueKind::Continuous || numeric.keyframes.len() < 2 {
+        return Ok(None);
+    }
+    let excursion_segments = numeric
+        .keyframes
+        .windows(2)
+        .map(|pair| {
+            targets
+                .iter()
+                .any(|target| target.has_equal_endpoint_excursion(&pair[0], &pair[1]))
+        })
+        .collect::<Vec<_>>();
+    if !excursion_segments.iter().any(|excursion| *excursion) {
+        return Ok(None);
+    }
+
+    let mut prepared = numeric.clone();
+    prepared.keyframes = vec![numeric.keyframes[0].clone()];
+    let mut recovered_segments = Vec::new();
+    let mut unfitted_segments = Vec::new();
+    for (index, pair) in numeric.keyframes.windows(2).enumerate() {
+        if !excursion_segments[index] {
+            prepared.keyframes.push(pair[1].clone());
+            continue;
+        }
+        let mut fitted = match fitted_coupled_segment(&pair[0], &pair[1], targets, clock) {
+            Ok(fitted) => fitted,
+            Err(error) => {
+                prepared.keyframes.push(pair[1].clone());
+                unfitted_segments.push((index, error));
+                continue;
+            }
+        };
+        let incoming = prepared
+            .keyframes
+            .pop()
+            .ok_or_else(|| "coupled numeric preparation lost its boundary key".to_string())?;
+        let first = fitted
+            .first_mut()
+            .ok_or_else(|| "fitted numeric segment is empty".to_string())?;
+        first.in_interpolation = incoming.in_interpolation;
+        first.in_speed = incoming.in_speed;
+        first.in_influence = incoming.in_influence;
+        first.spatial_in = incoming.spatial_in;
+        prepared.keyframes.extend(fitted);
+        recovered_segments.push(index);
+    }
+    Ok(Some(CoupledExcursionPreparation {
+        numeric: prepared,
+        source_key_count: numeric.keyframes.len(),
+        recovered_segments,
+        unfitted_segments,
+    }))
+}
+
 /// Converts one decoded numeric property into reusable editable graph entries.
 pub(super) fn numeric_entries(
     name: &str,
@@ -901,8 +1373,11 @@ pub(super) fn numeric_entries(
     if numeric.keyframes.is_empty() || targets.is_empty() {
         return (Vec::new(), Vec::new());
     }
+    if let Err(error) = validate_target_components(name, numeric, targets) {
+        return (Vec::new(), vec![error]);
+    }
     let mut warnings = Vec::new();
-    let prepared;
+    let spatial_prepared;
     let numeric = if targets.iter().all(|target| {
         target.target.as_property().is_some_and(|property| {
             matches!(
@@ -913,9 +1388,9 @@ pub(super) fn numeric_entries(
     }) {
         match spatial_position::prepare(numeric, clock) {
             Ok(Some(value)) => {
-                prepared = value;
+                spatial_prepared = value;
                 warnings.push(format!("{name}: native spatial Position shared path-speed converted to adaptive editable Linear keys (0.25 source-unit quarter-point sampled tolerance on the receiving FX millisecond clock; adjacent milliseconds have no interior sample); original tangents and ease controls replaced, unsampled and fractional-millisecond fidelity unverified"));
-                &prepared
+                &spatial_prepared
             }
             Ok(None) => numeric,
             Err(error) => {
@@ -930,6 +1405,20 @@ pub(super) fn numeric_entries(
     } else {
         numeric
     };
+    let coupled_preparation = match prepare_equal_endpoint_excursions(numeric, targets, clock) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            return (
+                Vec::new(),
+                vec![format!(
+                    "{name}: {error}; coupled numeric animation omitted"
+                )],
+            );
+        }
+    };
+    let numeric = coupled_preparation
+        .as_ref()
+        .map_or(numeric, |prepared| &prepared.numeric);
     if numeric.expression_present {
         warnings.push(format!(
             "{name}: disabled AE expression retained in source; native keyframes imported"
@@ -937,9 +1426,13 @@ pub(super) fn numeric_entries(
     }
     let mut estimates = Vec::with_capacity(targets.len());
     let mut preflight_warnings = Vec::new();
+    let annotate_keyed_diagnostic = |message| match &coupled_preparation {
+        Some(prepared) => prepared.annotate_key_indexed_diagnostic(message),
+        None => message,
+    };
     for (target_index, target) in targets.iter().enumerate() {
         if let Err(message) = validate_vector_easing(name, numeric, target, clock) {
-            warnings.push(message);
+            warnings.push(annotate_keyed_diagnostic(message));
             return (Vec::new(), warnings);
         }
         match estimate_target(
@@ -952,7 +1445,7 @@ pub(super) fn numeric_entries(
         ) {
             Ok(estimate) => estimates.push(estimate),
             Err(message) => {
-                warnings.push(message);
+                warnings.push(annotate_keyed_diagnostic(message));
                 return (Vec::new(), warnings);
             }
         }
@@ -995,10 +1488,18 @@ pub(super) fn numeric_entries(
             Ok(entry) => entries.push(entry),
             Err(message) => {
                 budget.rollback(checkpoint);
-                warnings.push(message);
+                warnings.push(annotate_keyed_diagnostic(message));
                 return (Vec::new(), warnings);
             }
         }
+    }
+    if let Some(prepared) = &coupled_preparation {
+        preflight_warnings
+            .retain(|warning| !warning.contains("equal-endpoint Bezier excursion before key"));
+        for warning in &mut preflight_warnings {
+            *warning = prepared.annotate_key_indexed_diagnostic(std::mem::take(warning));
+        }
+        preflight_warnings.extend(prepared.success_warnings(name));
     }
     warnings.extend(preflight_warnings);
     (entries, warnings)
@@ -1499,21 +2000,6 @@ fn validate_target(
 ) -> Result<bool, String> {
     let discrete = matches!(target.value, NumericTargetValue::StrokeJoin);
     if !discrete {
-        if numeric.value_kind == NumericValueKind::Continuous {
-            let components = target
-                .vector_easing_components()
-                .map_or_else(|| vec![target.easing_component()], Vec::from);
-            for (component, multiplier) in components {
-                for (index, pair) in numeric.keyframes.windows(2).enumerate() {
-                    if equal_endpoint_excursion(&pair[0], &pair[1], component, multiplier) {
-                        return Err(format!(
-                            "{name}: equal-endpoint Bezier excursion before key {} on component {component} cannot be represented by normalized FX easing; coupled animation target set omitted and static values retained",
-                            index + 1
-                        ));
-                    }
-                }
-            }
-        }
         return Ok(false);
     }
     if numeric.keyframes.len() > 1 && clock.reversed() {
@@ -2005,8 +2491,30 @@ mod tests {
         }
     }
 
+    fn sampled_components(entry: &AnimationGraphEntry, time_ms: i64) -> Vec<f64> {
+        let keys = entry.animator.keyframe_track().unwrap().keyframes();
+        let upper = keys.partition_point(|key| key.layer_time().as_millis() <= time_ms);
+        let from = &keys[upper.saturating_sub(1)];
+        let values = |key: &fx_schema::animator::PropertyKeyframe| match key.value() {
+            PropertyValue::Float(value) => vec![*value],
+            PropertyValue::Vector2(value) => value.to_vec(),
+            value => panic!("unexpected sampled value {value:?}"),
+        };
+        let Some(to) = keys.get(upper) else {
+            return values(from);
+        };
+        assert_eq!(to.easing(), PropertyKeyframeEasing::Linear);
+        let duration = to.layer_time().as_millis() - from.layer_time().as_millis();
+        let progress = (time_ms - from.layer_time().as_millis()) as f64 / duration as f64;
+        values(from)
+            .into_iter()
+            .zip(values(to))
+            .map(|(from, to)| from + (to - from) * progress)
+            .collect()
+    }
+
     #[test]
-    fn review_equal_endpoint_bezier_excursion_is_contextually_omitted() {
+    fn equal_endpoint_bezier_excursion_becomes_editable_linear_motion() {
         let target = NumericAnimationTarget::float(
             PropertyTarget::layer(LayerId::new(17), PropType::Rotation),
             0,
@@ -2015,6 +2523,8 @@ mod tests {
         let mut numeric = rect_size_numeric(0.0);
         numeric.values = vec![10.0];
         numeric.keyframes = vec![numeric_key(0.0, 10.0), numeric_key(1.0, 10.0)];
+        numeric.keyframes[0].out_influence = vec![100.0 / 3.0];
+        numeric.keyframes[1].in_influence = vec![100.0 / 3.0];
         numeric.keyframes[0].out_speed = vec![120.0];
         numeric.keyframes[1].in_speed = vec![-120.0];
         for clock in [
@@ -2030,29 +2540,40 @@ mod tests {
                 std::slice::from_ref(&target),
                 clock,
             );
-            assert!(entries.is_empty());
-            assert!(
-                warnings
-                    .iter()
-                    .any(|warning| warning.contains("Review Rotation")
-                        && warning.contains("equal-endpoint Bezier excursion")
-                        && warning.contains("static values retained")),
-                "{warnings:?}"
-            );
+            assert_eq!(entries.len(), 1, "{clock:?}: {warnings:?}");
+            let keys = entries[0].animator.keyframe_track().unwrap().keyframes();
+            assert!(keys.len() > 2, "the native excursion needs an interior key");
+            assert!((sampled_components(&entries[0], 500)[0] - 40.0).abs() <= 0.01);
+            assert_eq!(sampled_components(&entries[0], 0), [10.0]);
+            assert_eq!(sampled_components(&entries[0], 1000), [10.0]);
+            assert!(warnings.iter().any(|warning| {
+                warning.contains("Review Rotation")
+                    && warning.contains("equal-endpoint Bezier")
+                    && warning.contains("editable Linear keys")
+            }));
+            assert!(warnings.iter().all(|warning| !warning.contains("omitted")));
+            AnimationGraph::from_entries(entries).unwrap();
         }
         let mut sibling = numeric.clone();
         sibling.keyframes[1].values = vec![20.0];
-        let (entries, _) = numeric_entries(
+        let (entries, warnings) = numeric_entries(
             "Review sibling",
             &sibling,
             std::slice::from_ref(&target),
             NumericAnimationClock::source_local(),
         );
+        assert_eq!(entries.len(), 1);
         assert_eq!(
-            entries.len(),
-            1,
-            "independent convertible sibling remains supported"
+            entries[0]
+                .animator
+                .keyframe_track()
+                .unwrap()
+                .keyframes()
+                .len(),
+            2,
+            "independent representable curves keep their native keys"
         );
+        assert!(warnings.is_empty(), "{warnings:?}");
         for interpolation in [1, 3] {
             let mut constant = numeric.clone();
             constant.keyframes[0].out_interpolation = interpolation;
@@ -2066,6 +2587,19 @@ mod tests {
             assert_eq!(entries.len(), 1);
             assert!(warnings.is_empty(), "{warnings:?}");
         }
+        let mut denied = AnimationBudget::with_limit(0);
+        let (entries, warnings) = super::numeric_entries(
+            "Review denied excursion",
+            &numeric,
+            std::slice::from_ref(&target),
+            NumericAnimationClock::source_local(),
+            &mut denied,
+        );
+        assert!(entries.is_empty());
+        assert!(warnings.iter().all(|warning| {
+            !warning.contains("sampled") && !warning.contains("editable Linear keys")
+        }));
+
         numeric.keyframes[0].out_speed = vec![0.0];
         numeric.keyframes[1].in_speed = vec![0.0];
         let (entries, warnings) = numeric_entries(
@@ -2076,6 +2610,453 @@ mod tests {
         );
         assert_eq!(entries.len(), 1);
         assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn one_millisecond_excursion_keeps_splice_boundary_and_neighbor_easing() {
+        let mut first = numeric_key(0.0, 10.0);
+        first.out_speed = vec![40_000.0];
+        first.out_influence = vec![75.0];
+        let mut shared = numeric_key(0.0005, 10.0);
+        shared.in_speed = vec![-10_000.0];
+        shared.in_influence = vec![10.0];
+        shared.out_speed = vec![70.0];
+        shared.out_influence = vec![75.0];
+        let mut last = numeric_key(0.5, 60.0);
+        last.in_speed = vec![10.0];
+        last.in_influence = vec![10.0];
+        let numeric = NumericProperty {
+            values: vec![10.0],
+            animated: true,
+            expression_present: false,
+            expression_enabled: false,
+            dimensions_separated: false,
+            value_kind: NumericValueKind::Continuous,
+            keyframes: vec![first, shared, last],
+        };
+        let mut native_neighbor = numeric.clone();
+        native_neighbor.keyframes[0].out_interpolation = 1;
+        native_neighbor.keyframes[1].in_interpolation = 1;
+        let target = NumericAnimationTarget::float(
+            PropertyTarget::layer(LayerId::new(18), PropType::Rotation),
+            0,
+            1.0,
+        );
+        for (clock, expected_times, neighbor_end_ms) in [
+            (
+                NumericAnimationClock::ParentIdentity {
+                    start: 1.0,
+                    stretch: 2.0,
+                },
+                vec![1000, 1001, 2000],
+                2000,
+            ),
+            (
+                NumericAnimationClock::ParentIdentity {
+                    start: 2.0,
+                    stretch: -2.0,
+                },
+                vec![1000, 1999, 2000],
+                1999,
+            ),
+        ] {
+            let (entries, warnings) = numeric_entries(
+                "Review splice",
+                &numeric,
+                std::slice::from_ref(&target),
+                clock,
+            );
+            let (native_entries, native_warnings) = numeric_entries(
+                "Review native neighbor",
+                &native_neighbor,
+                std::slice::from_ref(&target),
+                clock,
+            );
+            assert_eq!(entries.len(), 1, "{clock:?}: {warnings:?}");
+            assert_eq!(native_entries.len(), 1, "{clock:?}: {native_warnings:?}");
+            assert!(native_warnings.is_empty(), "{native_warnings:?}");
+            let keys = entries[0].animator.keyframe_track().unwrap().keyframes();
+            let native_keys = native_entries[0]
+                .animator
+                .keyframe_track()
+                .unwrap()
+                .keyframes();
+            let times = |keys: &[fx_schema::animator::PropertyKeyframe]| {
+                keys.iter()
+                    .map(|key| key.layer_time().as_millis())
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(times(keys), expected_times, "{clock:?}");
+            assert_eq!(times(keys), times(native_keys), "{clock:?}");
+            let neighbor_key = keys
+                .iter()
+                .find(|key| key.layer_time().as_millis() == neighbor_end_ms)
+                .unwrap();
+            let native_neighbor_key = native_keys
+                .iter()
+                .find(|key| key.layer_time().as_millis() == neighbor_end_ms)
+                .unwrap();
+            assert_eq!(
+                neighbor_key.easing(),
+                native_neighbor_key.easing(),
+                "the moving neighbor keeps its native easing for {clock:?}"
+            );
+            assert!(matches!(
+                neighbor_key.easing(),
+                PropertyKeyframeEasing::CubicBezier { .. }
+            ));
+            assert!(warnings.iter().any(|warning| {
+                warning.contains("source keys 0→1") && warning.contains("editable Linear keys")
+            }));
+        }
+    }
+
+    #[test]
+    fn asymmetric_parent_identity_excursion_matches_independent_polynomial_samples() {
+        let mut first = numeric_key(0.0, 10.0);
+        first.out_speed = vec![40.0];
+        first.out_influence = vec![75.0];
+        let mut last = numeric_key(0.5, 10.0);
+        last.in_speed = vec![-10.0];
+        last.in_influence = vec![10.0];
+        let numeric = NumericProperty {
+            values: vec![10.0],
+            animated: true,
+            expression_present: false,
+            expression_enabled: false,
+            dimensions_separated: false,
+            value_kind: NumericValueKind::Continuous,
+            keyframes: vec![first, last],
+        };
+        let target = NumericAnimationTarget::float(
+            PropertyTarget::layer(LayerId::new(22), PropType::Rotation),
+            0,
+            1.0,
+        );
+        // Independently solving B(0, 0.75, 0.9, 1; t) = progress, then
+        // evaluating B(10, 25, 10.5, 10; t), gives these constants. This does
+        // not call the production segment evaluator or clock inversion.
+        let cases: [(NumericAnimationClock, [(i64, f64); 2]); 2] = [
+            (
+                NumericAnimationClock::ParentIdentity {
+                    start: 1.0,
+                    stretch: 2.0,
+                },
+                [(1250, 14.269580975459584), (1500, 16.61254599596015)],
+            ),
+            (
+                NumericAnimationClock::ParentIdentity {
+                    start: 2.0,
+                    stretch: -2.0,
+                },
+                [(1250, 15.7318178504171), (1500, 16.61254599596015)],
+            ),
+        ];
+        for (clock, samples) in cases {
+            let (entries, warnings) = numeric_entries(
+                "Review asymmetric polynomial",
+                &numeric,
+                std::slice::from_ref(&target),
+                clock,
+            );
+            assert_eq!(entries.len(), 1, "{clock:?}: {warnings:?}");
+            for (output_ms, expected) in samples {
+                let actual = sampled_components(&entries[0], output_ms)[0];
+                let epsilon = 8.0 * f64::EPSILON * expected.abs().max(1.0);
+                assert!(
+                    (actual - expected).abs() <= super::COUPLED_LINEAR_TOLERANCE + epsilon,
+                    "{clock:?} at {output_ms}ms: expected {expected}, got {actual}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unfittable_excursion_keeps_native_siblings_and_reports_source_segment() {
+        let mut numeric = source_shaped_coupled_numeric(
+            0.0,
+            1.0,
+            [10.0, 20.0],
+            [30.0, 20.0],
+            [[40.0, 60.0], [5.0, -60.0]],
+        );
+        numeric.keyframes[1].in_interpolation = 99;
+        let id = LayerId::new(19);
+        let targets = [
+            NumericAnimationTarget::float(PropertyTarget::layer(id, PropType::ScaleX), 0, 1.0),
+            NumericAnimationTarget::float(PropertyTarget::layer(id, PropType::ScaleY), 1, 1.0),
+        ];
+        let (entries, warnings) = numeric_entries(
+            "Review local fallback",
+            &numeric,
+            &targets,
+            NumericAnimationClock::source_local(),
+        );
+        assert_eq!(entries.len(), 2, "{warnings:?}");
+        assert_eq!(sampled_components(&entries[0], 0), [10.0]);
+        assert_eq!(sampled_components(&entries[0], 1000), [30.0]);
+        assert_eq!(sampled_components(&entries[1], 0), [20.0]);
+        assert_eq!(sampled_components(&entries[1], 1000), [20.0]);
+        assert!(warnings.iter().any(|warning| {
+            warning.contains("source keys 0→1")
+                && warning.contains("native keys retained")
+                && warning.contains("excursion lost")
+        }));
+        assert!(warnings.iter().all(|warning| {
+            !warning.contains("coupled numeric animation omitted")
+                && !warning.contains("editable Linear keys")
+        }));
+    }
+
+    #[test]
+    fn out_of_range_influence_uses_clamped_excursion_recovery() {
+        let target = NumericAnimationTarget::float(
+            PropertyTarget::layer(LayerId::new(20), PropType::Rotation),
+            0,
+            1.0,
+        );
+        let mut numeric = rect_size_numeric(0.0);
+        numeric.values = vec![10.0];
+        numeric.keyframes = vec![numeric_key(0.0, 10.0), numeric_key(1.0, 10.0)];
+        numeric.keyframes[0].out_speed = vec![120.0];
+        numeric.keyframes[0].out_influence = vec![125.0];
+        numeric.keyframes[1].in_speed = vec![-120.0];
+        numeric.keyframes[1].in_influence = vec![-25.0];
+        let (entries, warnings) = numeric_entries(
+            "Review clamped influence",
+            &numeric,
+            &[target],
+            NumericAnimationClock::source_local(),
+        );
+        assert_eq!(entries.len(), 1, "{warnings:?}");
+        assert_ne!(sampled_components(&entries[0], 500), [10.0]);
+        assert!(warnings.iter().any(|warning| {
+            warning.contains("source keys 0→1") && warning.contains("editable Linear keys")
+        }));
+        assert!(warnings.iter().all(|warning| !warning.contains("omitted")));
+    }
+
+    #[test]
+    fn invalid_target_component_is_rejected_before_excursion_sampling() {
+        let valid = NumericAnimationTarget::float(
+            PropertyTarget::layer(LayerId::new(21), PropType::Rotation),
+            0,
+            1.0,
+        );
+        let invalid = NumericAnimationTarget::float(
+            PropertyTarget::layer(LayerId::new(21), PropType::ScaleX),
+            1,
+            1.0,
+        );
+        let mut numeric = rect_size_numeric(0.0);
+        numeric.values = vec![10.0];
+        numeric.keyframes = vec![numeric_key(0.0, 10.0), numeric_key(1.0, 10.0)];
+        numeric.keyframes[0].out_speed = vec![120.0];
+        numeric.keyframes[1].in_speed = vec![-120.0];
+        let (entries, warnings) = numeric_entries(
+            "Review invalid target",
+            &numeric,
+            &[valid, invalid],
+            NumericAnimationClock::source_local(),
+        );
+        assert!(entries.is_empty());
+        assert!(warnings.iter().any(|warning| {
+            warning.contains("source key 0") && warning.contains("lacks component 1")
+        }));
+        assert!(warnings.iter().all(|warning| {
+            !warning.contains("sampled") && !warning.contains("editable Linear keys")
+        }));
+    }
+
+    fn source_shaped_coupled_numeric(
+        start: f64,
+        duration: f64,
+        from: [f64; 2],
+        to: [f64; 2],
+        speeds: [[f64; 2]; 2],
+    ) -> NumericProperty {
+        let key = |time_secs: f64,
+                   first: bool,
+                   values: [f64; 2],
+                   in_speed: [f64; 2],
+                   out_speed: [f64; 2]| {
+            NumericKeyframe {
+                time_secs,
+                values: values.into(),
+                in_interpolation: if first { 1 } else { 2 },
+                out_interpolation: if first { 2 } else { 1 },
+                in_speed: in_speed.into(),
+                in_influence: [100.0 / 3.0; 2].into(),
+                out_speed: out_speed.into(),
+                out_influence: [100.0 / 3.0; 2].into(),
+                spatial_in: Vec::new(),
+                spatial_out: Vec::new(),
+            }
+        };
+        NumericProperty {
+            values: Vec::new(),
+            animated: true,
+            expression_present: false,
+            expression_enabled: false,
+            dimensions_separated: false,
+            value_kind: NumericValueKind::Continuous,
+            keyframes: vec![
+                key(start, true, from, [0.0; 2], speeds[0]),
+                key(start + duration, false, to, speeds[1], [0.0; 2]),
+            ],
+        }
+    }
+
+    #[test]
+    fn transform_matte_scale_keeps_moving_x_and_equal_endpoint_y_excursion() {
+        let numeric = source_shaped_coupled_numeric(
+            0.9342676009342676,
+            0.6006006006006006,
+            [1.0, 2.0],
+            [2.0, 2.0],
+            [[2.5, 1.0], [2.5, -1.0]],
+        );
+        let id = LayerId::new(619);
+        let targets = [
+            NumericAnimationTarget::float(PropertyTarget::layer(id, PropType::ScaleX), 0, 100.0),
+            NumericAnimationTarget::float(PropertyTarget::layer(id, PropType::ScaleY), 1, 100.0),
+        ];
+        let (entries, warnings) = numeric_entries(
+            "ADBE Scale matte copy",
+            &numeric,
+            &targets,
+            NumericAnimationClock::ParentIdentity {
+                start: 1.001001001001001,
+                stretch: 1.0,
+            },
+        );
+        assert_eq!(entries.len(), 2, "{warnings:?}");
+        assert_eq!(sampled_components(&entries[0], 1935), [100.0]);
+        assert_eq!(sampled_components(&entries[0], 2536), [200.0]);
+        assert_eq!(sampled_components(&entries[1], 1935), [200.0]);
+        assert_eq!(sampled_components(&entries[1], 2536), [200.0]);
+        let x = sampled_components(&entries[0], 2235)[0];
+        let y = sampled_components(&entries[1], 2235)[0];
+        let source_secs = NumericAnimationClock::ParentIdentity {
+            start: 1.001001001001001,
+            stretch: 1.0,
+        }
+        .source_seconds(2.235)
+        .unwrap();
+        let expected = super::evaluate_numeric_segment(
+            &numeric.keyframes[0],
+            &numeric.keyframes[1],
+            source_secs,
+        )
+        .unwrap();
+        assert!((x - expected[0] * 100.0).abs() <= 0.01);
+        assert!((y - expected[1] * 100.0).abs() <= 0.01);
+        assert!(y > 200.0, "equal endpoints hid Y={y}");
+        for entry in &entries {
+            let keys = entry.animator.keyframe_track().unwrap().keyframes();
+            assert_eq!(keys.first().unwrap().layer_time().as_millis(), 1935);
+            assert_eq!(keys.last().unwrap().layer_time().as_millis(), 2536);
+        }
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("editable Linear keys"))
+        );
+    }
+
+    #[test]
+    fn rectangle_size_and_derived_anchors_keep_one_coupled_excursion_curve() {
+        let numeric = source_shaped_coupled_numeric(
+            0.0,
+            1.2,
+            [480.0, 1080.0],
+            [1920.0, 1080.0],
+            [[1800.0, 120.0], [1800.0, -120.0]],
+        );
+        let (entries, warnings) = numeric_entries(
+            "ADBE Vector Rect Size matte copy",
+            &numeric,
+            &coupled_rect_size_targets(),
+            NumericAnimationClock::source_local_rebased(0.4),
+        );
+        assert_eq!(entries.len(), 3, "{warnings:?}");
+        let size = sampled_components(&entries[0], 200);
+        let anchor_x = sampled_components(&entries[1], 200)[0];
+        let anchor_y = sampled_components(&entries[2], 200)[0];
+        assert!(480.0 < size[0] && size[0] < 1920.0);
+        assert!(size[1] > 1080.0, "equal endpoints hid Y={}", size[1]);
+        assert!((anchor_x - size[0] * 0.5).abs() <= 0.01);
+        assert!((anchor_y - size[1] * 0.5).abs() <= 0.01);
+        let times = |entry: &AnimationGraphEntry| {
+            entry
+                .animator
+                .keyframe_track()
+                .unwrap()
+                .keyframes()
+                .iter()
+                .map(|key| key.layer_time().as_millis())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(times(&entries[0]), times(&entries[1]));
+        assert_eq!(times(&entries[0]), times(&entries[2]));
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("editable Linear keys"))
+        );
+        AnimationGraph::from_entries(entries).unwrap();
+    }
+
+    #[test]
+    fn prepared_rect_diagnostic_identifies_original_source_key_after_excursion() {
+        let key = |time_secs, values: [f64; 2], in_speed: [f64; 2], out_speed: [f64; 2]| {
+            NumericKeyframe {
+                time_secs,
+                values: values.into(),
+                in_interpolation: 2,
+                out_interpolation: 2,
+                in_speed: in_speed.into(),
+                in_influence: [33.0; 2].into(),
+                out_speed: out_speed.into(),
+                out_influence: [33.0; 2].into(),
+                spatial_in: Vec::new(),
+                spatial_out: Vec::new(),
+            }
+        };
+        let numeric = NumericProperty {
+            values: vec![100.0, 100.0],
+            animated: true,
+            expression_present: false,
+            expression_enabled: false,
+            dimensions_separated: false,
+            value_kind: NumericValueKind::Continuous,
+            keyframes: vec![
+                key(0.0, [100.0, 100.0], [0.0; 2], [100.0, 60.0]),
+                key(1.0, [200.0, 100.0], [100.0, -60.0], [25.0, 75.0]),
+                key(2.0, [300.0, 200.0], [25.0, 75.0], [0.0; 2]),
+            ],
+        };
+        let (entries, warnings) = numeric_entries(
+            "Review prepared Rect Size",
+            &numeric,
+            &coupled_rect_size_targets(),
+            NumericAnimationClock::source_local(),
+        );
+        assert!(entries.is_empty());
+        let warning = warnings
+            .iter()
+            .find(|warning| warning.contains("component-specific temporal eases"))
+            .unwrap();
+        assert!(warning.contains("before prepared-track key"), "{warning}");
+        assert!(
+            warning.contains("original source keys 0→1 were sampled"),
+            "{warning}"
+        );
+        assert!(
+            warning.contains("original source key 2 is retained as the following boundary"),
+            "{warning}"
+        );
+        assert!(!warning.contains("before source key"), "{warning}");
     }
 
     fn rect_size_numeric(second_component_speed: f64) -> NumericProperty {
@@ -2324,9 +3305,9 @@ mod tests {
         } else {
             vec![10.0, 220.0]
         };
-        // A nonzero temporal speed on the unchanged axis is an equal-endpoint
-        // excursion, which the importer omits by design. Keep that axis static
-        // so this case isolates the active axis' easing.
+        // A nonzero temporal speed on the unchanged axis is a genuine
+        // equal-endpoint excursion. The coupled recovery must retain it, while
+        // the static copy below still isolates the active axis' native easing.
         let inactive_axis = 1 - active_axis;
         let mut excursion = numeric.clone();
         for key in &mut numeric.keyframes {
@@ -2355,12 +3336,16 @@ mod tests {
                 std::slice::from_ref(&target),
                 clock,
             );
-            assert!(entries.is_empty());
+            assert_eq!(entries.len(), 1, "{warnings:?}");
+            let quarter = sampled_components(&entries[0], 250);
             assert!(
-                warnings.iter().any(
-                    |warning| warning.contains("equal-endpoint Bezier excursion")
-                        && warning.contains(&format!("component {inactive_axis}"))
-                ),
+                (quarter[inactive_axis] - numeric.keyframes[0].values[inactive_axis]).abs() > 7.0,
+                "the inactive endpoint axis must retain a meaningful native excursion"
+            );
+            assert!(
+                warnings
+                    .iter()
+                    .any(|warning| warning.contains("editable Linear keys")),
                 "{warnings:?}"
             );
             let (entries, warnings) = numeric_entries(

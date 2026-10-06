@@ -199,6 +199,8 @@ fn copy_vector(
             id,
             enabled,
             effect,
+            compositing_options,
+            extensions,
         } = record.data()
         {
             let new = EffectId::new(
@@ -211,6 +213,8 @@ fn copy_vector(
                 id: new,
                 enabled: *enabled,
                 effect: effect.clone(),
+                compositing_options: compositing_options.clone(),
+                extensions: extensions.clone(),
             })
             .map_err(|e| e.to_string())?;
         }

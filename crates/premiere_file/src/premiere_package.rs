@@ -6,7 +6,7 @@ use crate::{
     error::{unsupported, BuildError, Result},
     format::{FrameRate, PrProjectFile, PremiereProjectXml},
     hash::{hash, hash_reader},
-    image_media::{inspect_image_media, ImageFormat},
+    image_media::{inspect_export_image_media, ImageFormat},
     media::{admitted_container, unsupported_media_reason, MediaFacts},
     publication::publish_file,
     schema::records::MediaPathField,
@@ -172,18 +172,52 @@ fn inspect_media(
         let facts = (|| -> Result<_> {
             let asset = file.asset(asset_id)?;
             let facts = if matches!(layer.data(), fx_schema::LayerData::Image(_)) {
-                let image = inspect_image_media(asset.open()?)?;
-                // The package content type follows the name; PNG bytes under a
-                // .jpg name would reach Premiere with the wrong declaration.
+                if asset.descriptor().kind != tesseract_file::AssetKind::Image {
+                    return Err(unsupported("packaged still has conflicting asset kind"));
+                }
+                // A semantic-loss outcome must never conceal a damaged entry.
+                if hash_reader(asset.open()?)? != asset.descriptor().sha256 {
+                    return Err(unsupported("packaged media bytes failed their source hash"));
+                }
+                let facts =
+                    inspect_export_image_media(asset.open()?, asset.descriptor().byte_length)?;
                 let extension = Path::new(&asset.descriptor().path)
                     .extension()
                     .and_then(|value| value.to_str());
-                if extension.and_then(ImageFormat::from_extension) != Some(image.format) {
-                    return Err(unsupported(
-                        "packaged still file extension does not match its image data",
-                    ));
+                match &facts {
+                    MediaFacts::Still(image) => {
+                        if extension.and_then(ImageFormat::from_extension) != Some(image.format) {
+                            return Err(unsupported(
+                                "packaged still file extension does not match its image data",
+                            ));
+                        }
+                        if !image
+                            .format
+                            .matches_content_type(&asset.descriptor().content_type)
+                        {
+                            return Err(unsupported(
+                                "packaged still content type does not match its image data",
+                            ));
+                        }
+                    }
+                    MediaFacts::UnsupportedStill(_) => {
+                        if extension.and_then(ImageFormat::from_extension)
+                            != Some(ImageFormat::OpenExr)
+                            || !ImageFormat::OpenExr
+                                .matches_content_type(&asset.descriptor().content_type)
+                        {
+                            return Err(unsupported(
+                                "packaged EXR declaration does not match its image data",
+                            ));
+                        }
+                    }
+                    _ => {
+                        return Err(unsupported(
+                            "image inspection returned conflicting media kind",
+                        ))
+                    }
                 }
-                MediaFacts::Still(image)
+                facts
             } else {
                 // Name the container before reading bytes, as import does.
                 crate::video_format::validate_video_file_name(Path::new(&asset.descriptor().path))?;
@@ -359,11 +393,11 @@ fn bind_media(project: &mut PrProjectFile, file: &TesseractFile, output: &Path) 
         let media = &project.media[&id];
         let packaged = admitted_container(media, Path::new(original)).is_some_and(|container| {
             descriptor.kind == container.asset_kind()
-                && descriptor.content_type == container.content_type()
+                && container.matches_content_type(&descriptor.content_type)
         });
         if !packaged {
             return Err(unsupported(if media.is_still() {
-                "writer requires a packaged PNG or JPEG image asset with matching content type"
+                "writer requires a packaged PNG, JPEG, or OpenEXR image asset matching its native kind and content type"
             } else {
                 "writer requires packaged media with a matching kind, extension, and content type"
             }));

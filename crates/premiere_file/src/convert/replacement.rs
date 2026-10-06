@@ -45,18 +45,6 @@ pub(super) fn active_video_asset<'a>(
     active_asset_id(source)
 }
 
-/// Names the active Eye Contact output in a packaged-media mismatch: the
-/// layer's `sourceIntrinsicDuration` describes the original upload, while
-/// export checks the output that it packages.
-pub(super) fn active_output_context(source: &VideoSource) -> String {
-    let active = active_asset_id(source);
-    if *active == source.asset_id {
-        String::new()
-    } else {
-        format!(" of the active Eye Contact output {:?}", active.as_str())
-    }
-}
-
 #[cfg(test)]
 #[path = "tests/replacement.rs"]
 mod tests;

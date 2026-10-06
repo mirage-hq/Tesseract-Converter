@@ -1,7 +1,7 @@
 use super::super::{to_structural_fx_document, to_structural_fx_document_with_animation_limit};
 use super::*;
 use crate::{
-    rifx::Rifx,
+    rifx::{Chunk, Rifx},
     schema::layer_records::LayerRecord,
     structure::{ItemKind, read_project},
 };
@@ -10,7 +10,7 @@ use fx_schema::GroupLayer;
 const CONTROLS: &[u8] =
     include_bytes!("../../../tests/fixtures/effects/cosmic-posterize-time-controls.rifx");
 
-fn native_adjustment() -> Layer {
+fn adjustment_with_controls(controls: &[u8]) -> Layer {
     let project = read_project(include_bytes!(
         "../../../tests/fixtures/effects/shape_owner_gaussian.aep"
     ))
@@ -19,7 +19,7 @@ fn native_adjustment() -> Layer {
         panic!()
     };
     let mut layer = comp.layers[0].clone();
-    layer.content = Rifx::parse_with(CONTROLS, |_| false)
+    layer.content = Rifx::parse_with(controls, |_| false)
         .unwrap()
         .chunks()
         .to_vec();
@@ -35,6 +35,232 @@ fn native_adjustment() -> Layer {
     layer.record = LayerRecord::decode(&bytes).unwrap();
     layer.name = "Native Hold adjustment".into();
     layer
+}
+
+fn native_adjustment() -> Layer {
+    adjustment_with_controls(CONTROLS)
+}
+
+fn chunk_name(chunk: &Chunk, expected: &str) -> bool {
+    chunk.id() == *b"tdmn"
+        && chunk
+            .data_payload()
+            .is_some_and(|bytes| bytes.split(|byte| *byte == 0).next() == Some(expected.as_bytes()))
+}
+
+fn synthetic_name(name: &str) -> Chunk {
+    let mut bytes = name.as_bytes().to_vec();
+    bytes.resize(40, 0);
+    Chunk::data(*b"tdmn", bytes).unwrap()
+}
+
+fn effect_run(chunks: &[Chunk], match_name: &str) -> Option<Vec<Chunk>> {
+    if let Some(index) = chunks
+        .iter()
+        .position(|chunk| chunk_name(chunk, match_name))
+    {
+        let end = chunks[index + 1..]
+            .iter()
+            .position(|chunk| chunk.id() == *b"tdmn")
+            .map_or(chunks.len(), |next| index + 1 + next);
+        return Some(chunks[index + 1..end].to_vec());
+    }
+    chunks.iter().find_map(|chunk| {
+        chunk
+            .children()
+            .and_then(|children| effect_run(children, match_name))
+    })
+}
+
+fn insert_before_effect(
+    chunks: &mut [Chunk],
+    before: &str,
+    match_name: &str,
+    run: &[Chunk],
+) -> bool {
+    for chunk in chunks {
+        let Some(children) = chunk.children_mut() else {
+            continue;
+        };
+        if let Some(index) = children.iter().position(|child| chunk_name(child, before)) {
+            children.splice(
+                index..index,
+                std::iter::once(synthetic_name(match_name)).chain(run.iter().cloned()),
+            );
+            return true;
+        }
+        if insert_before_effect(children, before, match_name, run) {
+            return true;
+        }
+    }
+    false
+}
+
+fn prepend_effect(layer: &mut Layer, match_name: &str, run: Vec<Chunk>) {
+    assert!(insert_before_effect(
+        &mut layer.content,
+        MATCH_NAME,
+        match_name,
+        &run,
+    ));
+}
+
+fn malformed_disabled_effect() -> Vec<Chunk> {
+    vec![Chunk::list(
+        *b"sspc",
+        vec![Chunk::list(
+            *b"tdgp",
+            vec![
+                Chunk::data(*b"tdsb", vec![0, 0, 0, 0]).unwrap(),
+                Chunk::data(*b"tdmn", b"malformed".to_vec()).unwrap(),
+            ],
+        )],
+    )]
+}
+
+fn retain_first_rate_key(chunks: &mut [Chunk]) -> bool {
+    for chunk in chunks {
+        if chunk.list_kind() == Some(*b"list") {
+            let children = chunk.children_mut().unwrap();
+            for child in children {
+                if child.id() == *b"lhd3" {
+                    let mut bytes = child.data_payload().unwrap().to_vec();
+                    bytes[10..12].copy_from_slice(&1_u16.to_be_bytes());
+                    *child = Chunk::data(*b"lhd3", bytes).unwrap();
+                } else if child.id() == *b"ldat" {
+                    *child = Chunk::data(*b"ldat", child.data_payload().unwrap()[..48].to_vec())
+                        .unwrap();
+                }
+            }
+            return true;
+        }
+        if let Some(children) = chunk.children_mut()
+            && retain_first_rate_key(children)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn static_native_adjustment() -> Layer {
+    let mut layer = native_adjustment();
+    assert!(retain_first_rate_key(&mut layer.content));
+    assert_eq!(schedule(&layer, 4.75).unwrap().unwrap().len(), 1);
+    layer
+}
+
+fn synthetic_numeric(values: &[f64]) -> Chunk {
+    let mut metadata = vec![0; 124];
+    metadata[..2].copy_from_slice(&[0xdb, 0x99]);
+    metadata[3] = values.len() as u8;
+    Chunk::list(
+        *b"tdbs",
+        vec![
+            Chunk::data(*b"tdb4", metadata).unwrap(),
+            Chunk::data(*b"tdsb", vec![0, 0, 0, 1]).unwrap(),
+            Chunk::data(
+                *b"cdat",
+                values
+                    .iter()
+                    .flat_map(|value| value.to_be_bytes())
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap(),
+        ],
+    )
+}
+
+fn synthetic_split_controls() -> Vec<Chunk> {
+    let mut controls = Vec::new();
+    for (name, values) in [
+        ("CC Split 2-0001", vec![10.0, 45.0]),
+        ("CC Split 2-0002", vec![500.0, 45.0]),
+        ("CC Split 2-0003", vec![20.0]),
+        ("CC Split 2-0004", vec![20.0]),
+    ] {
+        controls.extend([synthetic_name(name), synthetic_numeric(&values)]);
+    }
+    let profile = [
+        0_u32.to_le_bytes().to_vec(),
+        vec![1_f32; 256]
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect(),
+        [0_u32, 1, 1, 1]
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect(),
+    ]
+    .concat();
+    vec![Chunk::list(
+        *b"tdgp",
+        vec![
+            synthetic_name("ADBE Effect Parade"),
+            Chunk::list(
+                *b"tdgp",
+                vec![
+                    synthetic_name("CC Split 2"),
+                    Chunk::list(
+                        *b"sspc",
+                        vec![
+                            Chunk::list(*b"parT", vec![]),
+                            Chunk::list(*b"tdgp", controls),
+                            Chunk::data(*b"sdat", profile).unwrap(),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )]
+}
+
+fn split_above_posterize_project() -> crate::structure::StructuralProject {
+    let mut project = project();
+    let ItemKind::Composition(comp) = &mut project
+        .items
+        .iter_mut()
+        .find(|item| item.id == 1)
+        .unwrap()
+        .kind
+    else {
+        panic!()
+    };
+    comp.width = 320;
+    comp.height = 180;
+    let below = comp.layers[2].clone();
+    let mut split = below.clone();
+    let mut record = split.record.encode();
+    record[..4].copy_from_slice(&90_u32.to_be_bytes());
+    record[38] |= 2;
+    record[131] = 0;
+    record[40..44].copy_from_slice(&99_u32.to_be_bytes());
+    for (offset, value) in [(12, 0_i32), (20, 0), (28, 456)] {
+        record[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
+    }
+    for offset in [16, 24, 32] {
+        record[offset..offset + 4].copy_from_slice(&96_u32.to_be_bytes());
+    }
+    split.record = LayerRecord::decode(&record).unwrap();
+    split.name = "Synthetic supported Split above Posterize".into();
+    split.content = synthetic_split_controls();
+    comp.layers = vec![split, static_native_adjustment(), below];
+    project.items.push(crate::structure::ProjectItem {
+        id: 99,
+        name: "Synthetic composition-sized Adjustment source".into(),
+        parent_folder: None,
+        kind: ItemKind::Footage,
+        footage: None,
+        media: None,
+        native_media: None,
+        solid: Some(Ok(crate::structure::SolidSource {
+            width: 320,
+            height: 180,
+            pixel_aspect: (1, 1),
+            color: [0.0; 3],
+        })),
+    });
+    project
 }
 
 fn project() -> crate::structure::StructuralProject {
@@ -143,6 +369,297 @@ fn native_hold_schedule_uses_ceiling_boundary_and_independent_source_zero_grids(
     // would choose 12 fps and incorrectly jump backward from 291 2/3 to 250 ms.
     assert!(
         (333.0_f64 * 24.0 / 1000.0).floor() / 24.0 > (333.0_f64 * 12.0 / 1000.0).floor() / 12.0
+    );
+}
+
+#[test]
+fn synthetic_omitted_and_malformed_siblings_keep_posterize_and_their_diagnostics() {
+    // Independently synthetic siblings exercise ordering and local recovery around
+    // the existing publishable Cosmic Posterize controls; they are not native proof.
+    let mut layer = native_adjustment();
+    let unsupported = effect_run(&layer.content, MATCH_NAME).unwrap();
+    prepend_effect(&mut layer, "Synthetic Unsupported Effect", unsupported);
+    prepend_effect(
+        &mut layer,
+        "Synthetic Undecodable Effect",
+        vec![Chunk::list(*b"sspc", vec![])],
+    );
+    let (_, warnings) = native::read_effects(&layer.content, [1.0, 1.0]);
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("Synthetic Undecodable Effect"))
+    );
+    assert_eq!(
+        schedule(&layer, 4.75).unwrap().unwrap(),
+        [
+            Interval {
+                start: 0,
+                end: 334,
+                rate: 24.0,
+            },
+            Interval {
+                start: 334,
+                end: 4750,
+                rate: 12.0,
+            },
+        ]
+    );
+
+    let mut project = project();
+    let ItemKind::Composition(comp) = &mut project
+        .items
+        .iter_mut()
+        .find(|item| item.id == 1)
+        .unwrap()
+        .kind
+    else {
+        panic!()
+    };
+    comp.layers[1] = layer;
+    let converted = to_structural_fx_document(&project, Some(1)).unwrap();
+    let root = groups(&converted);
+    assert_eq!(root.layers.len(), 3, "{:?}", converted.diagnostics);
+    assert_eq!(root.layers[0].data().name(), "Above stays live");
+    for layer in &root.layers[1..] {
+        assert_eq!(group_data(layer).layers.len(), 1);
+    }
+    for name in [
+        "Synthetic Unsupported Effect",
+        "Synthetic Undecodable Effect",
+    ] {
+        assert!(
+            converted
+                .diagnostics
+                .iter()
+                .any(|note| note.message.contains(name)),
+            "{name} loss must remain explicit: {:?}",
+            converted.diagnostics
+        );
+    }
+    assert!(
+        converted
+            .diagnostics
+            .iter()
+            .any(|note| note.message.contains("unheld interval gates"))
+    );
+    assert!(
+        !converted
+            .diagnostics
+            .iter()
+            .any(|note| note.message.contains("Posterize Time adjustment omitted"))
+    );
+}
+
+#[test]
+fn undecodable_second_posterize_keeps_original_stack_and_reports_schedule_loss() {
+    let mut posterize = native_adjustment();
+    prepend_effect(
+        &mut posterize,
+        MATCH_NAME,
+        vec![Chunk::list(*b"sspc", vec![])],
+    );
+    let (effects, warnings) = native::read_effects(&posterize.content, [1.0, 1.0]);
+    assert_eq!(
+        effects
+            .iter()
+            .filter(|effect| effect.match_name == MATCH_NAME)
+            .count(),
+        1,
+        "the malformed raw sibling must reproduce the decoded-list ambiguity"
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("native plugin controls missing"))
+    );
+    assert!(
+        schedule(&posterize, 4.75)
+            .unwrap_err()
+            .contains("additional enabled or undecodable Posterize Time")
+    );
+
+    let mut project = project();
+    let ItemKind::Composition(comp) = &mut project
+        .items
+        .iter_mut()
+        .find(|item| item.id == 1)
+        .unwrap()
+        .kind
+    else {
+        panic!()
+    };
+    comp.layers[1] = posterize;
+    let converted = to_structural_fx_document(&project, Some(1)).unwrap();
+    let root = groups(&converted);
+    assert_eq!(root.layers.len(), 3, "{:?}", converted.diagnostics);
+    assert_eq!(root.layers[0].data().name(), "Above stays live");
+    assert!(matches!(root.layers[1].data(), FxLayer::Adjustment(_)));
+    assert!(matches!(root.layers[2].data(), FxLayer::Group(_)));
+    assert!(converted.diagnostics.iter().any(|note| {
+        note.message.contains("Posterize Time adjustment omitted")
+            && note
+                .message
+                .contains("additional enabled or undecodable Posterize Time")
+    }));
+    assert!(
+        !converted
+            .diagnostics
+            .iter()
+            .any(|note| note.message.contains("unheld interval gates"))
+    );
+}
+
+#[test]
+fn malformed_confirmed_disabled_second_posterize_stays_inactive() {
+    let mut posterize = native_adjustment();
+    prepend_effect(&mut posterize, MATCH_NAME, malformed_disabled_effect());
+    let (_, warnings) = native::read_effects(&posterize.content, [1.0, 1.0]);
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("explicit control table malformed"))
+    );
+    assert_eq!(schedule(&posterize, 4.75).unwrap().unwrap().len(), 2);
+
+    let mut project = project();
+    let ItemKind::Composition(comp) = &mut project
+        .items
+        .iter_mut()
+        .find(|item| item.id == 1)
+        .unwrap()
+        .kind
+    else {
+        panic!()
+    };
+    comp.layers[1] = posterize;
+    let converted = to_structural_fx_document(&project, Some(1)).unwrap();
+    let root = groups(&converted);
+    assert_eq!(root.layers.len(), 3, "{:?}", converted.diagnostics);
+    assert_eq!(root.layers[0].data().name(), "Above stays live");
+    for layer in &root.layers[1..] {
+        assert_eq!(group_data(layer).layers.len(), 1);
+    }
+    assert!(
+        converted
+            .diagnostics
+            .iter()
+            .any(|note| note.message.contains("unheld interval gates"))
+    );
+    assert!(
+        !converted
+            .diagnostics
+            .iter()
+            .any(|note| note.message.contains("Posterize Time adjustment omitted"))
+    );
+}
+
+#[test]
+fn mapped_effect_keeps_the_original_adjustment_with_a_specific_reason() {
+    let donor = read_project(include_bytes!(
+        "../../../tests/fixtures/effects/shape_owner_gaussian.aep"
+    ))
+    .unwrap();
+    let ItemKind::Composition(donor_comp) = &donor.item(1).unwrap().kind else {
+        panic!()
+    };
+    let gaussian = effect_run(&donor_comp.layers[0].content, "ADBE Gaussian Blur 2").unwrap();
+    let mut posterize = native_adjustment();
+    prepend_effect(&mut posterize, "ADBE Gaussian Blur 2", gaussian);
+    let mut project = project();
+    let ItemKind::Composition(comp) = &mut project
+        .items
+        .iter_mut()
+        .find(|item| item.id == 1)
+        .unwrap()
+        .kind
+    else {
+        panic!()
+    };
+    comp.layers[1] = posterize;
+
+    let converted = to_structural_fx_document(&project, Some(1)).unwrap();
+    let FxLayer::Adjustment(adjustment) = groups(&converted).layers[1].data() else {
+        panic!("mapped sibling effect must keep the original Adjustment")
+    };
+    assert_eq!(adjustment.effects.len(), 2, "{:?}", converted.diagnostics);
+    assert!(adjustment.effects.iter().any(|effect| matches!(
+        effect.data(),
+        EffectData::Identified {
+            effect: EffectPayload::Known(LayerEffect::GaussianBlur { .. }),
+            ..
+        }
+    )));
+    assert!(converted.diagnostics.iter().any(|note| {
+        note.message
+            .contains("another editable effect shares the Adjustment")
+    }));
+    assert!(
+        !converted
+            .diagnostics
+            .iter()
+            .any(|note| note.message.contains("masked, styled, animated-opacity"))
+    );
+}
+
+#[test]
+fn supported_split_above_keeps_original_correspondence_and_posterize_fallback() {
+    let converted = to_structural_fx_document(&split_above_posterize_project(), Some(1)).unwrap();
+    let root = groups(&converted);
+    assert_eq!(root.layers.len(), 4, "{:?}", converted.diagnostics);
+    assert!(matches!(root.layers[0].data(), FxLayer::Adjustment(_)));
+    assert_eq!(root.layers[1].data().name(), "CC Split unchanged support");
+    assert_eq!(root.layers[2].data().name(), "CC Split editable half");
+    assert_eq!(root.layers[3].data().name(), "CC Split editable half");
+    for layer in &root.layers[1..] {
+        let group = group_data(layer);
+        assert!(matches!(group.layers[0].data(), FxLayer::Adjustment(_)));
+        assert!(!layer.data().name().starts_with("Posterize Time"));
+    }
+    assert!(converted.diagnostics.iter().any(|note| {
+        note.message
+            .contains("CC Split 2 stage above requires original sibling correspondence")
+    }));
+    assert!(
+        converted
+            .diagnostics
+            .iter()
+            .any(|note| note.message.contains("CC Split 2: flat horizontal profile"))
+    );
+}
+
+#[test]
+fn synthetic_same_owner_split_loss_is_explicit_while_posterize_survives() {
+    // The cloned controls only establish an enabled same-owner Split identity.
+    // They deliberately do not claim a native-valid Split profile.
+    let mut posterize = static_native_adjustment();
+    let synthetic_split = effect_run(&posterize.content, MATCH_NAME).unwrap();
+    prepend_effect(&mut posterize, "CC Split 2", synthetic_split);
+    let mut project = project();
+    let ItemKind::Composition(comp) = &mut project
+        .items
+        .iter_mut()
+        .find(|item| item.id == 1)
+        .unwrap()
+        .kind
+    else {
+        panic!()
+    };
+    comp.layers[1] = posterize;
+
+    let converted = to_structural_fx_document(&project, Some(1)).unwrap();
+    let root = groups(&converted);
+    assert_eq!(root.layers.len(), 2, "{:?}", converted.diagnostics);
+    assert_eq!(root.layers[1].data().name(), "Posterize Time interval");
+    assert!(converted.diagnostics.iter().any(|note| {
+        note.message.contains("CC Split 2 omitted")
+            && note.message.contains("same Adjustment as Posterize Time")
+    }));
+    assert!(
+        converted
+            .diagnostics
+            .iter()
+            .any(|note| note.message.contains("unheld interval gates"))
     );
 }
 
@@ -339,7 +856,9 @@ fn nested_copy_identity_failure_restores_converter_context_and_original_output()
     let mut resolver = |_: &super::super::MediaAssetRequest| MediaResolution::Unavailable;
     let first_id = u64::MAX - 8;
     let mut converter = Converter {
+        text_overrides: Default::default(),
         expression_samples: &expression_samples,
+        expression_evaluations: Default::default(),
         items: project.items.iter().map(|item| (item.id, item)).collect(),
         camera_normalizations: Default::default(),
         diagnostics: vec![],

@@ -479,13 +479,28 @@ fn graphic_pop_rejects_overlapping_windows_conflicting_transitions_and_invalid_h
 
 #[test]
 fn native_graphic_pop_changed_or_keyed_profile_retains_graphics_without_pop() {
-    for xml in [
-        native_xml().replace("260300.,0,0,0,0,0,0", "260301.,0,0,0,0,0,0"),
-        native_xml().replace(
+    let source = native_xml();
+    for (from, to) in [
+        ("260300.,0,0,0,0,0,0", "260400.,0,0,0,0,0,0"),
+        (
             "<ParameterID>54</ParameterID>",
             "<ParameterID>54</ParameterID><Keyframes>1,2</Keyframes>",
         ),
+        (
+            "<ParameterID>45</ParameterID>",
+            "<ParameterID>45</ParameterID><CurrentValue>1</CurrentValue>",
+        ),
+        (
+            "<ParameterID>26</ParameterID>",
+            "<ParameterID>26</ParameterID><CurrentValue>0:NaN</CurrentValue>",
+        ),
+        (
+            "<ParameterID>38</ParameterID>",
+            "<ParameterID>38</ParameterID><Private>true</Private>",
+        ),
     ] {
+        assert!(source.contains(from), "mutation not applied: {from}");
+        let xml = source.replace(from, to);
         let (project, read_omissions) = inspect_project_with_omissions(&xml, None).unwrap();
         assert_eq!(
             project.single_sequence().unwrap().video_tracks[0]
@@ -493,18 +508,18 @@ fn native_graphic_pop_changed_or_keyed_profile_retains_graphics_without_pop() {
                 .len(),
             4
         );
-        assert!(project.single_sequence().unwrap().video_tracks[0]
-            .transitions
-            .is_empty());
         assert_eq!(
-            read_omissions
-                .iter()
-                .filter(|o| ["425", "426", "427"].contains(&o.record.as_str()))
-                .count(),
-            3
+            project.single_sequence().unwrap().video_tracks[0]
+                .transitions
+                .len(),
+            3,
+            "{from}: {read_omissions:?}"
         );
+        let baseline = native_project();
         let (doc, _) = convert(&project, project.single_sequence().unwrap());
-        assert!(!doc.to_string().contains("film-impact-pop"));
+        let (expected, _) = convert(&baseline, baseline.single_sequence().unwrap());
+        assert_eq!(doc, expected, "{from}: {read_omissions:?}");
+        assert!(doc.to_string().contains("film-impact-pop"));
     }
 }
 

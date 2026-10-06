@@ -2615,7 +2615,9 @@ mod tests {
             let mut resolver =
                 |_: &super::super::MediaAssetRequest| super::super::MediaResolution::Unavailable;
             let mut converter = super::super::Converter {
+                text_overrides: Default::default(),
                 expression_samples: &samples,
+                expression_evaluations: Default::default(),
                 items: project.items.iter().map(|item| (item.id, item)).collect(),
                 camera_normalizations: Default::default(),
                 diagnostics: Vec::new(),

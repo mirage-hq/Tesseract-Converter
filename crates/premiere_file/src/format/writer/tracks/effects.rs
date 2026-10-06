@@ -96,6 +96,7 @@ pub(super) fn records(effects: &[PrEffect], ids: &[EffectIds]) -> Result<Vec<Rec
                     .then(|| "false".to_owned()),
             }),
             premiere_filter_private_data: levels_private_data(effect)?,
+            media_dependency_map: None,
             sub_components: ids
                 .mask
                 .as_ref()
@@ -278,8 +279,7 @@ pub(super) fn records(effects: &[PrEffect], ids: &[EffectIds]) -> Result<Vec<Rec
                 object_id,
                 class_id: Some(param.record.class_id.to_owned()),
                 version: Some(param.record.version.to_owned()),
-                // A blank spec name is a checkbox saved without the element
-                // (`EffectParamSpec::accepts_name`).
+                // An empty spec name is a checkbox saved without the element.
                 name: (!param.name.is_empty()).then(|| param.name.to_owned()),
                 is_time_varying: match keys {
                     None => {

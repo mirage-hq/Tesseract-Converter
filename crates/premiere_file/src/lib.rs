@@ -40,7 +40,9 @@ mod video_format;
 use error::BuildError;
 use std::path::Path;
 
-pub use adapter::{Premiere, PremiereExportOptions, PremiereImportOptions};
+pub use adapter::{
+    Premiere, PremiereExportOptions, PremiereImportOptions, PremiereImportOptionsWithConsent,
+};
 pub use convert::{
     AfterEffectsPicture, PictureContainer, PictureContainerToken, PicturePackingId,
     PicturePackingRecipe, PictureReplacement, PictureSourceBoundary, SourceBoundaryToken,

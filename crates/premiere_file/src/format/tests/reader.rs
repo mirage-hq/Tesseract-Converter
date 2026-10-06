@@ -590,8 +590,11 @@ fn unknown_feature_and_bad_occurrence_leave_valid_cut() {
         .unwrap()
         .video_occurrences()
         .collect();
-    assert_eq!(clips.len(), 1);
+    assert_eq!(clips.len(), 2);
     assert_eq!(clips[0].timeline_ticks(), 0..508_032_000_000);
+    assert!(clips
+        .iter()
+        .all(|clip| clip.playback_rate == 1.0 && project.media.contains_key(&clip.media)));
     assert!(
         omissions
             .iter()
@@ -602,7 +605,7 @@ fn unknown_feature_and_bad_occurrence_leave_valid_cut() {
     assert!(
         omissions
             .iter()
-            .any(|item| item.scope == OmissionScope::Occurrence
+            .any(|item| item.kind == crate::OmissionKind::Approximated
                 && item.reason.contains("PlaybackSpeed")),
         "{omissions:?}"
     );
@@ -763,10 +766,6 @@ fn unsupported_semantics_fail_with_native_context() {
                 "<FrameRate>8475667200</FrameRate></TrackGroup>",
             ),
             "timeline end must align",
-        ),
-        (
-            SOURCE.replace("<End>1270080000000</End>", "<End>1016064000000</End>"),
-            "source span",
         ),
         (
             SOURCE.replace("<InPoint>0</InPoint>", "<InPoint>-1</InPoint>"),
@@ -1042,7 +1041,7 @@ fn an_occurrence_frame_other_than_its_sequence_canvas_omits_only_that_occurrence
 fn load_rejects_sequence_with_no_convertible_occurrences() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("invalid.prproj");
-    let invalid = SOURCE.replace("<End>1270080000000</End>", "<End>1016064000000</End>");
+    let invalid = SOURCE.replace("<InPoint>0</InPoint>", "<InPoint>-1</InPoint>");
     use std::io::Write as _;
     let mut zip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
     zip.write_all(invalid.as_bytes()).unwrap();
@@ -1052,7 +1051,7 @@ fn load_rejects_sequence_with_no_convertible_occurrences() {
         .to_string();
     assert!(error.contains("no convertible timelines"), "{error}");
     assert!(
-        error.contains("source span") && error.contains("sequence"),
+        error.contains("ranges") && error.contains("sequence"),
         "{error}"
     );
 }
@@ -1638,14 +1637,33 @@ fn unconsumable_source_processing_omits_only_its_placement() {
 }
 
 #[test]
-fn a_source_geometry2_that_hides_its_picture_omits_its_placement() {
-    // Supplementary: the native Geometry2 in a synthetic master chain. Only
-    // its centered positive zoom converts, so one whose Scale Height keys
-    // reach 0, or whose Position moves the picture out of its frame, is left
-    // out where it hides the picture, and the placement is omitted. Its saved
-    // Rotation marker reads as the static 0 (`GEOMETRY2`).
+fn source_geometry2_hiding_admission_follows_convertibility() {
+    // Supplementary: a centered Geometry2 collapse converts as Corner Pin, so
+    // its source placement keeps the effect that hides the picture. A form
+    // that cannot convert still omits the placement where dropping it would
+    // expose content. Its saved Rotation marker reads as static 0 (`GEOMETRY2`).
     const EFFECT: &str = "<Component Index='0' ObjectRef='22'/>";
-    // The native Geometry2 with its Position, record 830, at 1.75:0.5.
+    let xml = with_source_chain(None, EFFECT, &collapsing_geometry2());
+    let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+    let clips: Vec<_> = project
+        .single_sequence()
+        .unwrap()
+        .video_occurrences()
+        .collect();
+    assert_eq!(clips.len(), 2, "{omissions:?}");
+    let source = clips[0].source_effects.as_ref().unwrap();
+    assert!(
+        matches!(source.effects.as_slice(), [effect] if matches!(effect.params, PrEffectParams::CornerPin(_))),
+        "{source:?}"
+    );
+    assert!(
+        !omissions
+            .iter()
+            .any(|item| item.record == "VideoFilterComponent:22" || item.record == "3"),
+        "{omissions:?}"
+    );
+
+    // The same native Geometry2 with its Position, record 830, at 1.75:0.5.
     let geometry2 = native_geometry2();
     let (before, position) = geometry2.split_once("ObjectID=\"830\"").unwrap();
     let moved = format!(
@@ -1656,46 +1674,23 @@ fn a_source_geometry2_that_hides_its_picture_omits_its_placement() {
             1
         )
     );
-    let cases = [
-        (
-            collapsing_geometry2(),
-            "its Scale Height keys reach 0 to 100, which includes 0",
-        ),
-        (
-            moved,
-            "its Position, Anchor Point and Scale can move the whole picture out of its frame on the x axis",
-        ),
-    ];
-    // The second cut, which plays master-2.
-    let sibling = 508_032_000_000..1_278_547_200_000;
-    let mut reported = Vec::new();
-    let outcomes: Vec<_> = cases
-        .iter()
-        .map(|(records, hides)| {
-            let xml = with_source_chain(None, EFFECT, records);
-            let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
-            let cuts: Vec<_> = project
-                .single_sequence()
-                .unwrap()
-                .video_occurrences()
-                .map(|clip| clip.timeline_ticks())
-                .collect();
-            let reason = format!("source effect of MasterClip:master-1: active effect \"Transform\" (match name \"AE.ADBE Geometry2\", VideoFilterComponent version 9, Component version 7) at stack position 1 can hide the clip: {hides}, and it does not convert; the clip is not converted without it");
-            let omitted = omissions.iter().any(|item| {
-                item.scope == OmissionScope::Occurrence
-                    && item.record == "3"
-                    && item.reason.contains(&reason)
-            });
-            reported.extend(omissions);
-            (*hides, cuts, omitted)
-        })
+    let xml = with_source_chain(None, EFFECT, &moved);
+    let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+    let cuts: Vec<_> = project
+        .single_sequence()
+        .unwrap()
+        .video_occurrences()
+        .map(|clip| clip.timeline_ticks())
         .collect();
-    // Each case keeps only the sibling, and its omission says why.
-    let expected: Vec<_> = cases
-        .iter()
-        .map(|(_, hides)| (*hides, vec![sibling.clone()], true))
-        .collect();
-    assert_eq!(outcomes, expected, "{reported:?}");
+    assert_eq!(cuts.len(), 1);
+    assert_eq!(cuts[0], 508_032_000_000..1_278_547_200_000);
+    assert!(
+        omissions.iter().any(|item| item.scope == OmissionScope::Occurrence
+            && item.record == "3"
+            && item.reason.contains("its Position, Anchor Point and Scale can move the whole picture out of its frame on the x axis")
+            && item.reason.contains("it does not convert; the clip is not converted without it")),
+        "{omissions:?}"
+    );
 }
 
 #[test]
@@ -2094,6 +2089,13 @@ fn source_duration_and_role_specific_color_profiles_are_not_rewritten_silently()
         ("source-profile", SOURCE.replace("<VideoStream ObjectID=\"8\">", r#"<VideoStream ObjectID="8"><OriginalColorSpace>{"baseColorProfile":{"colorProfileName":"BT.709,8-bit,Display-Referred"},"baseProfileType":1}</OriginalColorSpace>"#), "OriginalColorSpace profile"),
         ("profile-payload", SOURCE.replace("<VideoStream ObjectID=\"8\">", r#"<VideoStream ObjectID="8"><OriginalColorSpace>{"baseColorProfile":{"colorProfileData":"different","colorProfileName":"BT.709,32f,Display-Referred"},"baseProfileType":1}</OriginalColorSpace>"#), "OriginalColorSpace profile"),
     ] {
+        if name=="source-duration" {
+            let (project,notes)=inspect_project_with_omissions(&xml,None).unwrap();
+            let clip=project.single_sequence().unwrap().video_occurrences().next().unwrap();
+            assert_eq!(project.media[&clip.media].video.as_ref().unwrap().intrinsic_ticks,10*TICKS);
+            assert!(notes.iter().any(|note|note.reason.contains("OriginalDuration cache")),"{notes:?}");
+            continue;
+        }
         let error = inspect_project(&xml, None).unwrap_err();
         assert!(error.to_string().contains(expected), "{name}: {error}");
     }
@@ -2436,18 +2438,28 @@ fn adobe_playback_speed_must_be_positive_and_match_the_source_span() {
             "<Clip><Source",
             &format!("<Clip><PlaybackSpeed>{value}</PlaybackSpeed><Source"),
         );
-        let result = inspect_project(&xml, None);
-        if ["1", "1.0"].contains(&value) {
-            result.unwrap();
-        } else {
-            let error = result.unwrap_err();
+        let (project, notes) = inspect_project_with_omissions(&xml, None).unwrap();
+        let clip = project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .next()
+            .unwrap();
+        assert_eq!(
+            (
+                clip.start_ticks,
+                clip.end_ticks,
+                clip.in_ticks,
+                clip.out_ticks
+            ),
+            (0, 5 * TICKS, 0, 5 * TICKS)
+        );
+        assert_eq!(clip.playback_rate, 1.0);
+        if !["1", "1.0"].contains(&value) {
             assert!(
-                error.to_string().contains(if value == "2" {
-                    "source span"
-                } else {
-                    "PlaybackSpeed must be finite and positive"
-                }),
-                "{value}: {error}"
+                notes.iter().any(|note| note.reason.contains("source trim")
+                    && note.kind == crate::OmissionKind::Approximated),
+                "{notes:?}"
             );
         }
     }
@@ -2622,7 +2634,7 @@ fn non_video_groups_report_omissions() {
 }
 
 #[test]
-fn adobe_sequence_numeric_id_is_non_semantic_but_must_be_valid() {
+fn adobe_sequence_local_id_is_non_semantic() {
     let with_id = SOURCE.replace("<Name>Main</Name>", "<ID>22</ID><Name>Main</Name>");
     let original = inspect_project(SOURCE, None).unwrap();
     let parsed = inspect_project(&with_id, None).unwrap();
@@ -2639,7 +2651,10 @@ fn adobe_sequence_numeric_id_is_non_semantic_but_must_be_valid() {
             .collect::<Vec<_>>()
     );
     let malformed = with_id.replace("<ID>22</ID>", "<ID>not-a-number</ID>");
-    assert!(inspect_project(&malformed, None).is_err());
+    assert_eq!(
+        format!("{:?}", inspect_project(&malformed, None).unwrap()),
+        format!("{original:?}")
+    );
 }
 
 #[test]
@@ -2800,6 +2815,307 @@ fn ignored_subtrees_do_not_change_the_result() {
             baseline,
             "{case}"
         );
+    }
+}
+
+// Disposable mutations of the pinned Premiere 26.5.1 motion/opacity source
+// (SHA-256 a8a966779cf61d4e2547d011b465a791d8b4b7f0a4c8bb06889551eb28df2ff0).
+// These prove parser/editable retention, not independent native render fidelity.
+const METADATA_SEQUENCE: &str = "aad89517-456c-4cbf-8d97-c54bf5af8eb2";
+
+fn native_metadata_xml() -> String {
+    crate::format::read_xml(
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/feature_motion_opacity_26_5_strict.prproj"),
+    )
+    .unwrap()
+}
+
+fn replace_metadata_child(xml: &str, tag: &str, child: &str, replacement: &str) -> String {
+    let document = roxmltree::Document::parse(xml).unwrap();
+    let mut edited = xml.to_owned();
+    // Reverse source order keeps the original byte ranges valid.
+    for record in document
+        .root_element()
+        .children()
+        .rev()
+        .filter(|node| node.has_tag_name(tag))
+    {
+        let range = record
+            .children()
+            .find(|node| node.has_tag_name(child))
+            .map(|node| node.range())
+            .unwrap_or_else(|| {
+                let start = record.range().start;
+                let insert = start + xml[start..].find('>').unwrap() + 1;
+                insert..insert
+            });
+        edited.replace_range(range, replacement);
+    }
+    edited
+}
+
+fn assert_native_metadata_retained(source: &str, edited: &str) {
+    let (expected, expected_notes) =
+        inspect_project_with_omissions(source, Some(METADATA_SEQUENCE)).unwrap();
+    let sequence = expected.single_sequence().unwrap();
+    assert_eq!(sequence.id.as_deref(), Some(METADATA_SEQUENCE));
+    assert!(sequence.video_occurrences().count() >= 2);
+    assert!(sequence
+        .video_occurrences()
+        .any(|clip| !clip.animations.is_empty()));
+    assert!(expected.media.len() >= 2);
+    let expected_document = project_document_with_media(sequence, &expected.media);
+    let (actual, notes) = inspect_project_with_omissions(edited, Some(METADATA_SEQUENCE)).unwrap();
+    // Exact owner/source inventory, placement, values, keys and media facts.
+    assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+    assert_eq!(notes, expected_notes);
+    // Also exercise ordinary editable import and its asset bindings/key tracks.
+    assert_eq!(
+        project_document_with_media(actual.single_sequence().unwrap(), &actual.media),
+        expected_document
+    );
+}
+
+fn replace_native_clip_marker(xml: &str, tag: &str, id: &str, marker: &str) -> String {
+    let document = roxmltree::Document::parse(xml).unwrap();
+    let record = document
+        .root_element()
+        .children()
+        .find(|node| node.has_tag_name(tag) && node.attribute("ObjectID") == Some(id))
+        .unwrap();
+    let clip = record
+        .children()
+        .find(|node| node.has_tag_name("Clip"))
+        .unwrap();
+    let range = clip
+        .children()
+        .find(|node| node.has_tag_name("MarkerOwner"))
+        .map(|node| node.range())
+        .unwrap_or_else(|| {
+            let start = clip.range().start;
+            let insert = start + xml[start..].find('>').unwrap() + 1;
+            insert..insert
+        });
+    let mut edited = xml.to_owned();
+    edited.replace_range(range, &format!("<MarkerOwner>{marker}</MarkerOwner>"));
+    edited
+}
+
+fn assert_native_marker_retained(source: &str, edited: &str, owner: &str, reason: Option<&str>) {
+    let (expected, expected_notes) =
+        inspect_project_with_omissions(source, Some(METADATA_SEQUENCE)).unwrap();
+    let sequence = expected.single_sequence().unwrap();
+    assert_eq!(sequence.id.as_deref(), Some(METADATA_SEQUENCE));
+    assert!(sequence.video_occurrences().count() >= 2);
+    assert!(sequence
+        .video_occurrences()
+        .any(|clip| !clip.animations.is_empty()));
+    assert!(expected.media.len() >= 2);
+    let (actual, mut notes) =
+        inspect_project_with_omissions(edited, Some(METADATA_SEQUENCE)).unwrap();
+    // Full native owner/source IDs, placements, values, keys and media inventory,
+    // followed by ordinary editable output and its asset/key-track bindings.
+    assert_eq!(format!("{actual:?}"), format!("{expected:?}"), "{owner}");
+    assert_eq!(
+        project_document_with_media(actual.single_sequence().unwrap(), &actual.media),
+        project_document_with_media(sequence, &expected.media)
+    );
+    if let Some(reason) = reason {
+        assert!(
+            notes.iter().any(|note| note.scope == OmissionScope::Feature
+                && note.record == owner
+                && note.reason.contains("clip markers not converted")
+                && note.reason.contains(reason)),
+            "{owner}: {notes:?}"
+        );
+        notes.retain(|note| {
+            !(note.scope == OmissionScope::Feature
+                && note.record == owner
+                && note.reason.contains("clip markers not converted"))
+        });
+    }
+    assert_eq!(notes, expected_notes);
+}
+
+#[test]
+fn native_marker_video_edge_keeps_selected_content_keys_and_media() {
+    let source = native_metadata_xml();
+    // Selected blue placement 112 uses VideoClip:198; keyed siblings share its
+    // sequence. The added record follows populated_clip_markers_are_not_dropped.
+    let with_markers = source.replace(
+        "</PremiereData>",
+        "<Markers ObjectID=\"900001\"><ByGUID>byGUID</ByGUID></Markers></PremiereData>",
+    );
+    let healthy = replace_native_clip_marker(
+        &with_markers,
+        "VideoClip",
+        "198",
+        "<Markers ObjectRef=\"900001\"/>",
+    );
+    assert_native_marker_retained(&source, &healthy, "VideoClip:198", None);
+    let populated = healthy.replace(
+        "<Markers ObjectID=\"900001\"><ByGUID>byGUID</ByGUID></Markers>",
+        "<Markers ObjectID=\"900001\"><ByGUID>byGUID</ByGUID><DVAMarker><Name>must-survive</Name></DVAMarker></Markers>",
+    );
+    assert_native_marker_retained(&source, &populated, "VideoClip:198", Some("DVAMarker"));
+    for (marker, reason) in [
+        (
+            "<Markers ObjectRef=\"absent-marker-id\"/>",
+            "missing reference",
+        ),
+        (
+            "<Markers ObjectURef=\"absent-marker-uid\"/>",
+            "missing reference",
+        ),
+        ("<Markers ObjectRef=\"57\"/>", "expected Markers"),
+        ("<Markers/>", "expected exactly one reference"),
+        (
+            "<Markers ObjectRef=\"56\" ObjectURef=\"absent-marker-uid\"/>",
+            "expected exactly one reference",
+        ),
+    ] {
+        let edited = replace_native_clip_marker(&source, "VideoClip", "198", marker);
+        assert_native_marker_retained(&source, &edited, "VideoClip:198", Some(reason));
+    }
+}
+
+#[test]
+fn native_marker_audio_edge_keeps_selected_content_keys_and_media() {
+    let source = native_metadata_xml();
+    // The selected sequence reaches this native sound owner through Keyed inner.
+    // Its nested source contains no sound: this checks marker diagnosis and
+    // independent picture retention, not audible-content recovery.
+    let edited = replace_native_clip_marker(
+        &source,
+        "AudioClip",
+        "147",
+        "<Markers ObjectRef=\"absent-marker-id\"/>",
+    );
+    assert_native_marker_retained(&source, &edited, "AudioClip:147", Some("missing reference"));
+}
+
+#[test]
+fn native_marker_ancestry_is_physical_and_other_bindings_stay_strict() {
+    use crate::format::graph::Graph;
+    use serde::de::IgnoredAny;
+
+    // A similarly named path outside the decoded record's real Clip is not
+    // descriptive marker metadata. IgnoredAny isolates graph traversal here.
+    for record in [
+        "<VideoClip ObjectID='1'><MarkerOwner><Markers ObjectRef='absent'/></MarkerOwner></VideoClip>",
+        "<VideoClip ObjectID='1'><Private><Clip><MarkerOwner><Markers ObjectRef='absent'/></MarkerOwner></Clip></Private></VideoClip>",
+        "<VideoClip ObjectID='1'><Clip><Node><MarkerOwner><Markers ObjectRef='absent'/></MarkerOwner></Node></Clip></VideoClip>",
+        "<VideoMediaSource ObjectID='1'><Clip><MarkerOwner><Markers ObjectRef='absent'/></MarkerOwner></Clip></VideoMediaSource>",
+        "<TranscriptClip ObjectID='1'><Private><DataClip><Clip><MarkerOwner><Markers ObjectRef='absent'/></MarkerOwner></Clip></DataClip></Private></TranscriptClip>",
+        "<VideoClip ObjectID='1'><Clip><MarkerOwner><Markers ObjectRef='absent-marker'/></MarkerOwner><Source ObjectRef='absent-source'/></Clip></VideoClip>",
+        "<VideoClip ObjectID='1'><Clip><TimeRemapping ObjectRef='absent'/></Clip></VideoClip>",
+    ] {
+        let xml = format!("<PremiereData>{record}</PremiereData>");
+        let graph = Graph::parse(&xml).unwrap();
+        assert!(
+            graph
+                .decode::<IgnoredAny>(graph.records().next().unwrap())
+                .unwrap_err()
+                .to_string()
+                .contains("missing reference"),
+            "{record}"
+        );
+    }
+    // The native caption wrapper shares Clip and the existing marker handler.
+    let xml = "<PremiereData><TranscriptClip ObjectID='1'><DataClip><Clip><MarkerOwner><Markers ObjectRef='absent'/></MarkerOwner></Clip></DataClip></TranscriptClip></PremiereData>";
+    let graph = Graph::parse(xml).unwrap();
+    graph
+        .decode::<crate::schema::native::TranscriptClip>(graph.records().next().unwrap())
+        .unwrap();
+}
+
+#[test]
+fn native_marker_nil_and_owner_grammar_are_not_swallowed() {
+    for marker_owner in [
+        "<MarkerOwner xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance' xsi:nil='true'><Markers ObjectRef='8'/></MarkerOwner>",
+        "<MarkerOwner><Markers xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance' xsi:nil='true' ObjectRef='8'/></MarkerOwner>",
+        "<MarkerOwner><Unknown>not-marker-grammar</Unknown></MarkerOwner>",
+        "<MarkerOwner><Markers ObjectRef='8'/><Markers ObjectRef='8'/></MarkerOwner>",
+    ] {
+        let xml = SOURCE.replace("<Clip><Source", &format!("<Clip>{marker_owner}<Source"));
+        assert!(inspect_project(&xml, None).is_err(), "{marker_owner}");
+    }
+}
+
+#[test]
+fn native_metadata_ignored_subtrees_keep_owners_with_dangling_links_and_nil() {
+    let source = native_metadata_xml();
+    for (tag, child) in [
+        ("Sequence", "Node"),
+        ("Sequence", "PersistentGroupContainer"),
+        ("MasterClip", "LoggingInfo"),
+    ] {
+        for payload in [
+            r#"<Private ObjectRef="absent-ui-id"/><Private ObjectURef="absent-ui-uid"/>"#,
+            r#"<Private xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:nil="true"/>"#,
+        ] {
+            let edited = replace_metadata_child(
+                &source,
+                tag,
+                child,
+                &format!("<{child}>{payload}</{child}>"),
+            );
+            assert_native_metadata_retained(&source, &edited);
+        }
+        // The ignored boundary itself can carry a private link or nil.
+        let edited = replace_metadata_child(
+            &source,
+            tag,
+            child,
+            &format!(
+                r#"<{child} ObjectRef="absent-ui-id" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:nil="true"/>"#
+            ),
+        );
+        assert_native_metadata_retained(&source, &edited);
+    }
+}
+
+#[test]
+fn native_metadata_monitor_ui_and_provenance_are_opaque() {
+    let source = native_metadata_xml();
+    for properties in [
+        "<AMM.CurrentSolo>[0,2]</AMM.CurrentSolo><Source.Monitor.Multicam.Enabled>saved-view</Source.Monitor.Multicam.Enabled><MZ.MergeClipUtils.ComponentMasterClipOriginalName><Label/></MZ.MergeClipUtils.ComponentMasterClipOriginalName><MZ.MergeClipUtils.AudioTrackNumberFromOriginalMergedClip>not-a-track</MZ.MergeClipUtils.AudioTrackNumberFromOriginalMergedClip>",
+        r#"<AMM.CurrentSolo ObjectRef="absent-ui-id" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:nil="true"/><Source.Monitor.Multicam.Enabled><Private ObjectURef="absent-ui-uid"/></Source.Monitor.Multicam.Enabled><MZ.MergeClipUtils.ComponentMasterClipOriginalName xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:nil="true"/><MZ.MergeClipUtils.AudioTrackNumberFromOriginalMergedClip><Private ObjectRef="absent-ui-id"/></MZ.MergeClipUtils.AudioTrackNumberFromOriginalMergedClip>"#,
+    ] {
+        let edited = replace_metadata_child(&source, "MasterClip", "Node", &format!("<Node><Properties>{properties}</Properties></Node>"));
+        assert_native_metadata_retained(&source, &edited);
+    }
+}
+
+#[test]
+fn native_metadata_sequence_local_id_does_not_select_or_discard_content() {
+    // The donor has no sequence-local ID. Add a valid descriptive ID to the
+    // control too, so its existing presence-based omission stays identical.
+    let source = replace_metadata_child(&native_metadata_xml(), "Sequence", "ID", "<ID>22</ID>");
+    for value in ["not-a-number", "-1", "18446744073709551616"] {
+        let edited =
+            replace_metadata_child(&source, "Sequence", "ID", &format!("<ID>{value}</ID>"));
+        assert_native_metadata_retained(&source, &edited);
+    }
+}
+
+#[test]
+fn native_metadata_consumed_bindings_offsets_and_identities_stay_strict() {
+    let master = SOURCE.replace("<Clip ObjectRef=\"6\"/>", "<Clip ObjectRef=\"6\"/><MasterClip ObjectURef='master-1'/>")
+        .replace("</PremiereData>", "<MasterClip ObjectUID='master-1'><Node><Properties><BE.MasterClip.Rendered.OffsetToOriginal>0</BE.MasterClip.Rendered.OffsetToOriginal></Properties></Node><Clips><Clip ObjectRef='9'/></Clips></MasterClip><VideoClip ObjectID='9'><Clip><Source ObjectRef='7'/></Clip></VideoClip></PremiereData>");
+    assert!(inspect_project(&master, None).is_ok());
+    for xml in [
+        SOURCE.replace("<Source ObjectRef=\"7\"/>", "<Source ObjectRef='absent-source'/>") ,
+        SOURCE.replace("<Source ObjectRef=\"7\"/>", "<Source ObjectRef='7' xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance' xsi:nil='true'/>") ,
+        SOURCE.replace("ObjectUID=\"sequence-1\"", "ObjectUID=\"\""),
+        SOURCE.replace("ObjectUID=\"sequence-1\"", ""),
+        SOURCE.replace("</PremiereData>", "<Sequence ObjectUID='sequence-1'/></PremiereData>"),
+        master.replace(">0</BE.MasterClip.Rendered.OffsetToOriginal>", ">1</BE.MasterClip.Rendered.OffsetToOriginal>"),
+        master.replace("<BE.MasterClip.Rendered.OffsetToOriginal>", "<BE.MasterClip.Rendered.OffsetToOriginal xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance' xsi:nil='true'>"),
+        master.replace("<Node><Properties>", "<Node xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance' xsi:nil='true'><Properties>"),
+    ] {
+        assert!(inspect_project(&xml, None).is_err(), "consumed content admitted: {xml}");
     }
 }
 
@@ -3211,7 +3527,60 @@ fn native_film_impact_default_tail_profile_is_admitted() {
 }
 
 #[test]
-fn film_impact_tail_rejects_unmeasured_profiles_without_losing_the_picture() {
+fn film_impact_transition_patch_ui_and_numeric_serialization_keep_native_controls() {
+    // These are serialization mutations of pinned native controls, not new
+    // native geometry evidence. Both measured layouts share the admission rules.
+    for source in [
+        crate::tests::support::film_impact_tail_xml(),
+        crate::tests::support::film_impact_pop_xml(),
+    ] {
+        let (expected, omissions) = inspect_project_with_omissions(&source, None).unwrap();
+        assert!(omissions.is_empty(), "{omissions:?}");
+        let changed = source
+            .replace("260300.,0,0,0,0,0,0", "2.60399e5,0.,0e0,0,0,0,0")
+            .replace(
+                "<VideoFilterType>2</VideoFilterType>",
+                "<VideoFilterType>2e0</VideoFilterType>",
+            )
+            .replace("<LowerBound>0</LowerBound>", "<LowerBound>0e0</LowerBound>")
+            .replace("-91445760000000000,70.,", "-91445760000000000,7e1,")
+            .replace(
+                "<ParameterID>8040</ParameterID>\n\t\t<StartKeyframe>-91445760000000000,false,",
+                "<ParameterID>8040</ParameterID>\n\t\t<StartKeyframe>-91445760000000000,true,",
+            )
+            .replace(
+                "<UpperBound>100</UpperBound>",
+                "<UpperBound>1e2</UpperBound>",
+            )
+            .replace(
+                "<ParameterID>8040</ParameterID>",
+                "<ParameterID>8040</ParameterID><CurrentValue>true</CurrentValue>",
+            )
+            .replace(
+                "<ParameterID>8120</ParameterID>",
+                "<ParameterID>8120</ParameterID><CurrentValue>1</CurrentValue>",
+            )
+            .replace(
+                "-91445760000000000,0.5:0.5,",
+                "-91445760000000000,5e-1:0.50,",
+            );
+        assert_ne!(changed, source);
+        let (actual, omissions) = inspect_project_with_omissions(&changed, None).unwrap();
+        assert!(
+            omissions
+                .iter()
+                .all(|loss| loss.kind == crate::OmissionKind::Approximated),
+            "{omissions:?}"
+        );
+        let actual = &actual.single_sequence().unwrap().video_tracks[0];
+        let expected = &expected.single_sequence().unwrap().video_tracks[0];
+        assert_eq!(actual.items.len(), expected.items.len());
+        assert_eq!(actual.transitions, expected.transitions);
+    }
+}
+
+#[test]
+fn film_impact_tail_recovers_noncritical_profiles_without_losing_picture_or_controls() {
     let source = crate::tests::support::film_impact_tail_xml();
     for (from, to) in [
         ("<VideoFilterType>2</VideoFilterType>", "<VideoFilterType>1</VideoFilterType>"),
@@ -3230,7 +3599,8 @@ fn film_impact_tail_rejects_unmeasured_profiles_without_losing_the_picture() {
         ("-91445760000000000,34.,", "-91445760000000000,35.,"),
         ("<ParameterID>16</ParameterID>", "<ParameterID>16</ParameterID><IsTimeVarying>false</IsTimeVarying><Keyframes><!-- saved keys -->1,2</Keyframes>"),
         ("-91445760000000000,34.,0,0,0,0,0,0</StartKeyframe>", "-91445760000000000,34.,0,0,0,0,0,0<!-- split -->,extra</StartKeyframe>"),
-        ("-91445760000000000,260300.,", "-91445760000000000,260301.,"),
+        ("-91445760000000000,260300.,", "-91445760000000000,260299.,"),
+        ("-91445760000000000,260300.,", "-91445760000000000,260400.,"),
         ("-91445760000000000,0.5:0.5,", "-91445760000000000,0.4:0.5,"),
         ("-91445760000000000,100.,", "-91445760000000000,NaN,"),
         ("<ParameterID>5</ParameterID>\n", "<ParameterID>5</ParameterID><ParameterID>5</ParameterID>\n"),
@@ -3242,8 +3612,21 @@ fn film_impact_tail_rejects_unmeasured_profiles_without_losing_the_picture() {
         let (project, omissions) = inspect_project_with_omissions(&source.replace(from, to), None).unwrap();
         let track = &project.single_sequence().unwrap().video_tracks[0];
         assert_eq!(track.items.len(), 1, "{from}: {omissions:?}");
-        assert!(track.transitions.is_empty(), "{from}: {omissions:?}");
-        assert!(omissions.iter().any(|item| item.scope == OmissionScope::Feature && item.record == "1009"), "{from}: {omissions:?}");
+        let clip = track.clip(0);
+        let baseline = inspect_project_with_omissions(&source, None).unwrap().0;
+        let original = baseline.single_sequence().unwrap().video_tracks[0].clip(0);
+        assert_eq!((&clip.media, clip.start_ticks, clip.end_ticks, clip.in_ticks, clip.out_ticks),
+            (&original.media, original.start_ticks, original.end_ticks, original.in_ticks, original.out_ticks));
+        let inseparable = to.contains("<Bypass>") || to.contains("<BinaryData") || to.contains("<ParameterID>17</ParameterID><ParameterID>")
+            || from == "<ParameterID>17</ParameterID>" || from == "<ParameterID>5</ParameterID>\n"
+            || from == "<Alignment>254016000000</Alignment>" || from == "<HasIncomingClip>false</HasIncomingClip>"
+            || from == "<VideoFilterComponent ObjectRef=\"1610\" />";
+        if inseparable {
+            assert!(track.transitions.is_empty(), "{from} -> {to}: {omissions:?}");
+            assert!(omissions.iter().any(|loss| loss.scope == OmissionScope::Feature), "{omissions:?}");
+        } else {
+            assert_eq!(track.transitions, baseline.single_sequence().unwrap().video_tracks[0].transitions, "{from}: {omissions:?}");
+        }
     }
 }
 
@@ -3258,7 +3641,21 @@ fn native_film_impact_curve_expansion_is_ui_without_private_curve_data() {
             .len(),
         1
     );
+    let collapsed = source.replace(
+        "<ECP.Custom.Expanded>true</ECP.Custom.Expanded>",
+        "<ECP.Custom.Expanded>false</ECP.Custom.Expanded>",
+    );
+    let (collapsed_project, omissions) = inspect_project_with_omissions(&collapsed, None).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    assert_eq!(
+        collapsed_project.single_sequence().unwrap().video_tracks[0].transitions,
+        project.single_sequence().unwrap().video_tracks[0].transitions,
+    );
     for (from, to) in [
+        (
+            "<StartKeyframePosition>-91445760000000000</StartKeyframePosition>",
+            "<StartKeyframePosition>-91445760000000000.0</StartKeyframePosition>",
+        ),
         (
             "<ECP.Custom.Expanded>true</ECP.Custom.Expanded>",
             "<ECP.Custom.Expanded>true</ECP.Custom.Expanded><CustomCurve>1</CustomCurve>",
@@ -3280,7 +3677,19 @@ fn native_film_impact_curve_expansion_is_ui_without_private_curve_data() {
             inspect_project_with_omissions(&source.replace(from, to), None).unwrap();
         let track = &project.single_sequence().unwrap().video_tracks[0];
         assert_eq!(track.items.len(), 1);
-        assert!(track.transitions.is_empty(), "{from}: {omissions:?}");
+        if to.contains("<CustomCurve>") {
+            assert!(
+                track.transitions.is_empty(),
+                "{from} -> {to}: {omissions:?}"
+            );
+            assert!(
+                omissions.iter().any(|loss| loss.reason.contains("opaque")),
+                "{omissions:?}"
+            );
+        } else {
+            assert_eq!(track.transitions.len(), 1, "{from}: {omissions:?}");
+            assert!(project.media.contains_key(&track.clip(0).media));
+        }
     }
 }
 

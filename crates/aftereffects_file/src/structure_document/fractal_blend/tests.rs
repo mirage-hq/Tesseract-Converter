@@ -60,6 +60,8 @@ fn identified(id: u64, effect: LayerEffect) -> EffectRecord {
     EffectRecord::from_data(&EffectData::Identified {
         id: EffectId::new(id),
         enabled: true,
+        compositing_options: None,
+        extensions: Default::default(),
         effect: EffectPayload::Known(effect),
     })
     .unwrap()

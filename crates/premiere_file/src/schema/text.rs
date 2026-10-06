@@ -1092,12 +1092,6 @@ impl PrTextDocument {
             document.tracking.is_finite() && document.leading.is_finite(),
             "text tracking and leading must be finite"
         );
-        // The FX renderer centers its stroke on the outline, which differs from
-        // Premiere's outside stroke once no fill covers the inner half.
-        crate::format::ensure_valid!(
-            document.fill.is_some() || document.stroke.is_none(),
-            "outline-only text (stroke without fill) is unsupported"
-        );
         // The FX renderer does not space lines closer than 0.8 em (1.2 em auto - 0.4 em).
         let line_spacing_supported = f64::from(document.leading) >= -0.4 * f64::from(document.size);
         crate::format::ensure_valid!(

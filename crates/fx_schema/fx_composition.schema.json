@@ -11,7 +11,7 @@
   "properties": {
     "version": {
       "description": "FX composition schema version.",
-      "const": 69
+      "const": 70
     },
     "backgroundColor": {
       "description": "Composition-level render background color.",
@@ -2453,9 +2453,65 @@
         },
         "effect": {
           "$ref": "#/$defs/layerEffect"
+        },
+        "compositingOptions": {
+          "description": "Optional AE compositing scope. Mask references resolve to same-layer PathMasks; dangling reader references have zero coverage. Qualifiers are allowed only for pixel-colour and neighbourhood effects.",
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "maskReferences": {"type": "array", "items": {"$ref": "#/$defs/effectId"}, "default": []},
+            "effectOpacity": {"type": "number", "minimum": 0, "maximum": 1, "default": 1},
+            "qualifier": {
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "required": ["semanticVersion", "hue", "saturation", "luminance", "refine", "invert"],
+              "properties": {
+                "semanticVersion": {"const": 1, "default": 1},
+                "hue": {
+                  "type": "object", "additionalProperties": false,
+                  "required": ["center", "width", "softness"],
+                  "properties": {
+                    "center": {"type": "number", "minimum": 0, "maximum": 360, "default": 0},
+                    "width": {"type": "number", "minimum": 0, "maximum": 360, "default": 360},
+                    "softness": {"type": "number", "minimum": 0, "maximum": 360, "default": 0}
+                  }
+                },
+                "saturation": {
+                  "type": "object", "additionalProperties": false,
+                  "required": ["low", "high", "softness"],
+                  "properties": {
+                    "low": {"type": "number", "minimum": 0, "maximum": 1, "default": 0},
+                    "high": {"type": "number", "minimum": 0, "maximum": 1, "default": 1},
+                    "softness": {"type": "number", "minimum": 0, "maximum": 1, "default": 0}
+                  }
+                },
+                "luminance": {
+                  "type": "object", "additionalProperties": false,
+                  "required": ["low", "high", "softness"],
+                  "description": "Rec.709 luminance of unpremultiplied stack input; alpha zero selects zero coverage.",
+                  "properties": {
+                    "low": {"type": "number", "minimum": 0, "maximum": 1, "default": 0},
+                    "high": {"type": "number", "minimum": 0, "maximum": 1, "default": 1},
+                    "softness": {"type": "number", "minimum": 0, "maximum": 1, "default": 0}
+                  }
+                },
+                "refine": {
+                  "type": "object", "additionalProperties": false,
+                  "required": ["denoise", "blurRadius", "choke"],
+                  "description": "Layer-space pixels; select, denoise, choke, blur, then invert. All zero is an exact no-op.",
+                  "properties": {
+                    "denoise": {"type": "number", "minimum": 0, "maximum": 10, "default": 0},
+                    "blurRadius": {"type": "number", "minimum": 0, "maximum": 100, "default": 0},
+                    "choke": {"type": "number", "minimum": -50, "maximum": 50, "default": 0}
+                  }
+                },
+                "invert": {"type": "boolean", "default": false}
+              }
+            }
+          }
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "effectId": {
       "description": "Stable effect-instance identifier (a number). Caller-assigned, like a layer id.",

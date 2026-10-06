@@ -9,6 +9,7 @@ const ROOT: &str = include_str!("box_root.cos");
 const DOCUMENT: &str = include_str!("box_document.cos");
 const POINT_ROOT: &str = include_str!("point_root.cos");
 const POINT_DOCUMENT: &str = include_str!("point_document.cos");
+const PARAGRAPH: &str = include_str!("paragraph.cos");
 const FONT: &str = " << /0 << /99 /CoolTypeFont /0 << /0 {{font}}{{format}} >> >> >>";
 
 fn format(spec: &TextDocumentSpec) -> Vec<u8> {
@@ -151,12 +152,30 @@ fn document_with_template(
         Justification::Center => "2",
         Justification::Justify => "3",
     };
+    // Independent native Box and Point controls split paragraph runs at every
+    // CR, including the terminal marker. A whole-document character run does
+    // not supply these boundaries to Adobe's paragraph layout.
+    let mut paragraphs = vec![b'[', b' '];
+    for paragraph in text.split_inclusive('\r') {
+        paragraphs.extend(expand(
+            PARAGRAPH,
+            &[
+                (
+                    "units",
+                    paragraph.encode_utf16().count().to_string().into_bytes(),
+                ),
+                ("justification", justification.as_bytes().to_vec()),
+            ],
+        )?);
+        paragraphs.push(b' ');
+    }
+    paragraphs.push(b']');
     expand(
         template,
         &[
             ("text", literal(&text)),
             ("units", units),
-            ("justification", justification.as_bytes().to_vec()),
+            ("paragraph_runs", paragraphs),
             ("font_index", font_index.to_string().into_bytes()),
             (
                 "font_size",

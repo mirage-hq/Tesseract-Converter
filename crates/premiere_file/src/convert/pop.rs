@@ -16,6 +16,25 @@ use fx_schema::{
 };
 use std::collections::BTreeMap;
 
+/// Remove only Pop transitions when the public import has not opted in.
+/// The strict source-media preflight runs before this filter.
+pub(crate) fn omit_emulation(
+    project: &mut crate::schema::PrSequence,
+    omissions: &mut Vec<crate::Omission>,
+) {
+    for track in &mut project.video_tracks {
+        track.transitions.retain(|transition| {
+            if transition.kind != PrVideoTransitionKind::FilmImpactPop { return true; }
+            crate::omit(omissions, crate::OmissionScope::Feature, &transition.id,
+                "Film Impact Pop emulation is disabled; opt in with allow_film_impact_pop / --allow-film-impact-pop to retain its measured sampled geometry approximation");
+            false
+        });
+        for nest in &mut track.nests {
+            omit_emulation(&mut nest.sequence, omissions);
+        }
+    }
+}
+
 // Diagnostic white-title fits at these normalized native sample phases. The
 // invisible start has no valid fit; collapse it geometrically and settle at 1.
 const CURVE: [(i64, f64); 16] = [

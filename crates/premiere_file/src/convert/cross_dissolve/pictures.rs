@@ -38,6 +38,7 @@ pub(super) fn prepare(
         fonts: context.fonts,
         audio: &mut audio,
         media_facts: context.media_facts,
+        authored_video_durations: context.authored_video_durations,
         natural_frames: context.natural_frames,
         media,
         packer: &mut packer,

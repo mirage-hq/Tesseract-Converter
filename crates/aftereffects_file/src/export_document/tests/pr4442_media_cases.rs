@@ -922,8 +922,8 @@ fn fresh_aep_composes_cover_geometry_user_crop_mask_and_stored_3d_transform() {
         vec![3.0, 4.0, 5.0]
     );
     let anchor = property_values(layer, "ADBE Anchor Point");
-    assert!((anchor[0] - 690.0).abs() < 1e-9);
-    assert!((anchor[1] - 135.0).abs() < 1e-9);
+    assert!((anchor[0] - 690.0 / 1920.0).abs() < 1e-9);
+    assert!((anchor[1] - 135.0 / 1080.0).abs() < 1e-9);
     let scale = property_values(layer, "ADBE Scale");
     assert!((scale[0] - 0.444_444_444_444_444_4).abs() < 1e-12);
     assert!((scale[1] - 0.296_296_296_296_296_3).abs() < 1e-12);

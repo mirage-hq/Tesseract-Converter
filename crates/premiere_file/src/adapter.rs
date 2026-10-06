@@ -47,6 +47,17 @@ pub struct PremiereImportOptions {
     pub sequence: Option<String>,
 }
 
+/// Explicit feature consent without changing the original selection-options literal.
+/// The original import APIs always deny Pop emulation.
+#[derive(Debug, Clone, Default)]
+pub struct PremiereImportOptionsWithConsent {
+    /// Native sequence selection, with the same identity rules as ordinary import.
+    pub selection: PremiereImportOptions,
+    /// Opt into the measured sampled Film Impact Pop geometry approximation.
+    /// Disabled by default; this does not authorize unsupported hosts or native fidelity.
+    pub allow_film_impact_pop: bool,
+}
+
 /// Premiere-specific export settings.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PremiereExportOptions {
@@ -55,6 +66,48 @@ pub struct PremiereExportOptions {
 }
 
 impl Premiere {
+    /// Import with explicit approximation consent and optional source-bound media.
+    /// Original relocations are authenticated before prepared substitutions; Pop
+    /// consent never bypasses selected-media admission or publication validation.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "consent, original relocation and prepared substitution remain independently validated inputs"
+    )]
+    pub fn import_with_consent_with_progress(
+        &self,
+        input: &Path,
+        output: &Path,
+        options: &PremiereImportOptionsWithConsent,
+        mode: ConversionMode,
+        media_map: Option<&ValidatedMediaMap>,
+        relink: Option<&crate::ValidatedMediaRelink>,
+        progress: Progress<'_>,
+    ) -> Result<ConversionReport<Omission>, ConversionError> {
+        validate_paths(input, output)?;
+        let mut import = TesseractImport::convert_with_options(
+            input,
+            output,
+            &options.selection,
+            options.allow_film_impact_pop,
+            media_map,
+            relink,
+            progress,
+        )?;
+        let report = ConversionReport {
+            diagnostics: std::mem::take(&mut import.omissions),
+            artifacts: import.artifacts(),
+        };
+        if !mode.is_check() {
+            progress.stage("write and publish Tesseract project");
+            if let Some(media_map) = media_map {
+                import.write_with_media_map(media_map)?;
+            } else {
+                import.write()?;
+            }
+        }
+        Ok(report)
+    }
+
     /// Inspect time-based media reached by exactly one native sequence.
     ///
     /// This uses the same target selection, native path resolution, explicit
@@ -131,11 +184,13 @@ impl Premiere {
         progress: Progress<'_>,
     ) -> Result<ConversionReport<Omission>, ConversionError> {
         validate_paths(input, output)?;
-        let mut import = TesseractImport::convert_with_media_map(
+        let mut import = TesseractImport::convert_with_options(
             input,
             output,
-            options.sequence.as_deref(),
-            map,
+            options,
+            false,
+            Some(map),
+            None,
             progress,
         )?;
         let report = ConversionReport {
@@ -203,12 +258,13 @@ impl Premiere {
         progress: Progress<'_>,
     ) -> Result<ConversionReport<Omission>, ConversionError> {
         validate_paths(input, output)?;
-        let mut import = TesseractImport::convert_with_media_relink_and_map(
+        let mut import = TesseractImport::convert_with_options(
             input,
             output,
-            options.sequence.as_deref(),
-            relink,
+            options,
+            false,
             media_map,
+            Some(relink),
             progress,
         )?;
         let report = ConversionReport {
@@ -264,12 +320,8 @@ fn import(
     progress: Progress<'_>,
 ) -> Result<ConversionReport<Omission>, ConversionError> {
     validate_paths(input, output)?;
-    let mut import = TesseractImport::convert_with_progress(
-        input,
-        output,
-        options.sequence.as_deref(),
-        progress,
-    )?;
+    let mut import =
+        TesseractImport::convert_with_options(input, output, options, false, None, None, progress)?;
     let report = ConversionReport {
         diagnostics: std::mem::take(&mut import.omissions),
         artifacts: import.artifacts(),

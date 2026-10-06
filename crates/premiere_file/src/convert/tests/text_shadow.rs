@@ -113,6 +113,7 @@ fn imported(graphic: &PrGraphic) -> (Option<DropShadow>, Vec<Omission>) {
             id,
             enabled: true,
             effect: EffectPayload::Known(LayerEffect::DropShadow(shadow)),
+            ..
         } if *id == EffectId::new(1) => shadow.clone(),
         other => panic!("expected enabled drop shadow 1, got {other:?}"),
     });
@@ -306,7 +307,7 @@ fn imported_text_keeps_its_own_stroke_with_the_shadow_as_its_only_effect() {
         panic!("expected one effect: {:?}", text.effects);
     };
     assert!(
-        matches!(effect.data(), EffectData::Identified { id, enabled: true, effect: EffectPayload::Known(LayerEffect::DropShadow(shadow)) } if *id == EffectId::new(1) && (shadow.spread_radius.value() - 2.934).abs() < 1e-9)
+        matches!(effect.data(), EffectData::Identified { id, enabled: true, effect: EffectPayload::Known(LayerEffect::DropShadow(shadow)), .. } if *id == EffectId::new(1) && (shadow.spread_radius.value() - 2.934).abs() < 1e-9)
     );
 }
 
@@ -364,6 +365,8 @@ fn shadow_record(shadow: &DropShadow) -> EffectRecord {
         id: EffectId::new(1),
         enabled: true,
         effect: EffectPayload::Known(LayerEffect::DropShadow(shadow.clone())),
+        compositing_options: None,
+        extensions: Default::default(),
     })
     .unwrap()
 }
@@ -427,7 +430,7 @@ fn exported_with_all_omissions(
         .video_items()
         .find_map(|item| match item {
             PrVideoItem::Graphic(graphic) => Some(graphic.text().document.shadow),
-            PrVideoItem::Media(_) => None,
+            PrVideoItem::Media(_) | PrVideoItem::Capsule(_) => None,
         })
         .expect("the text still exports");
     (shadow, omissions)

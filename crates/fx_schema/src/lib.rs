@@ -114,7 +114,7 @@ pub use time::{Duration, Time, TimeOffset, TimeRange};
 pub const FX_COMPOSITION_SCHEMA: &str = include_str!("../fx_composition.schema.json");
 
 /// FX composition schema revision.
-pub const FX_SCHEMA_REVISION: u8 = 69;
+pub const FX_SCHEMA_REVISION: u8 = 70;
 
 /// Backward-compatible schema revision name.
 pub const SCHEMA_VERSION: u8 = FX_SCHEMA_REVISION;

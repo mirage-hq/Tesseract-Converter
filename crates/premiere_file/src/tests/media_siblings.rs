@@ -245,8 +245,7 @@ fn media_siblings_native_failed_matte_does_not_expose_its_target() {
                 .diagnostics
                 .iter()
                 .any(|note| note.record == "VideoClipTrackItem:129"
-                    && note.reason.contains("matte clip")
-                    && note.reason.contains("not converted")),
+                    && note.reason.contains("matte track 2 holds no clip")),
             "{report:?}"
         );
         if mode == ConversionMode::Write {
@@ -340,8 +339,7 @@ fn media_siblings_unavailable_video_matte_omits_consumers_including_nests() {
             .unwrap();
             assert!(
                 omissions.iter().any(|note| note.record == "masked-probe"
-                    && note.reason.contains("matte clip")
-                    && note.reason.contains("not converted")),
+                    && note.reason.contains("matte track 1 holds no clip")),
                 "{omissions:?}"
             );
             let output = directory.path().join("result.tsrct");

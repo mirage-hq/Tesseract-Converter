@@ -5,7 +5,10 @@ mod tests;
 use fx_schema::animator::{
     AnimationGraphEntry, AnimatorData, KeyframeId, PropertyKeyframe, PropertyKeyframeTrack,
 };
-use fx_schema::{LayerId, PropType, PropertyAnimator, PropertyTarget, PropertyValue};
+use fx_schema::{
+    GroupLayer, LayerId, Position, PropType, PropertyAnimator, PropertyTarget, PropertyValue,
+    Transform,
+};
 use serde::ser::Error as _;
 
 use crate::structure_document::animation_budget::{
@@ -273,6 +276,124 @@ pub(super) struct OutlineInput {
     pub transforms: Vec<LayerId>,
     /// Round-only stages in each scope, before that scope's outgoing transform.
     pub rounds: Vec<Vec<LayerId>>,
+}
+
+/// Exact transform transport available to a shared-outline paint target.
+///
+/// A nested shape-group chain normally cannot be represented by one FX Shape
+/// transform. The exact additional case is an inner planar transform followed
+/// by static translation parents: each parent contributes `position - anchor`
+/// while every non-position inner key remains independently editable. Parent
+/// opacity is outside the outline geometry contract.
+pub(super) struct SharedOutlineTransform {
+    pub(super) transform: Option<Transform>,
+    pub(super) producer: Option<LayerId>,
+    pub(super) keyframes_only: bool,
+}
+
+/// Resolve vector-group controls ordered from the outline outward to its paint.
+pub(super) fn shared_outline_transform(
+    controls: &[&GroupLayer],
+    animations: &[AnimationGraphEntry],
+) -> Option<SharedOutlineTransform> {
+    match controls {
+        [] => Some(SharedOutlineTransform {
+            transform: None,
+            producer: None,
+            keyframes_only: false,
+        }),
+        [control] => Some(SharedOutlineTransform {
+            transform: Some(control.transform),
+            producer: Some(control.id),
+            keyframes_only: false,
+        }),
+        [inner, parents @ ..] if !parents.is_empty() => {
+            if !exact_translated_child(&inner.transform)
+                || has_dynamic_property(inner.id, animations, |property| {
+                    matches!(
+                        property,
+                        PropType::PositionX | PropType::PositionY | PropType::PositionZ
+                    )
+                })
+                || parents.iter().any(|parent| {
+                    has_dynamic_property(parent.id, animations, |property| {
+                        property != PropType::Opacity
+                    })
+                })
+            {
+                return None;
+            }
+            let Position::TwoD(mut position) = inner.transform.position else {
+                return None;
+            };
+            for parent in parents {
+                let translation = static_translation(&parent.transform)?;
+                position[0] += translation[0];
+                position[1] += translation[1];
+            }
+            if !position.into_iter().all(f64::is_finite) {
+                return None;
+            }
+            let mut transform = inner.transform;
+            transform.position = Position::TwoD(position);
+            Some(SharedOutlineTransform {
+                transform: Some(transform),
+                producer: Some(inner.id),
+                // Static values are already present on `transform`; copying
+                // constants from the inner producer would overwrite the
+                // translated position. Only its authored key tracks belong on
+                // the collapsed target.
+                keyframes_only: true,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn static_translation(transform: &Transform) -> Option<[f64; 2]> {
+    let Position::TwoD(position) = transform.position else {
+        return None;
+    };
+    if transform.scale != [100.0, 100.0]
+        || transform.rotation != 0.0
+        || transform.skew != 0.0
+        || transform.rotation_x != 0.0
+        || transform.rotation_y != 0.0
+        || transform.orientation != [0.0, 0.0, 0.0]
+    {
+        return None;
+    }
+    let translation = [
+        position[0] - transform.anchor_point[0],
+        position[1] - transform.anchor_point[1],
+    ];
+    translation
+        .into_iter()
+        .all(f64::is_finite)
+        .then_some(translation)
+}
+
+fn exact_translated_child(transform: &Transform) -> bool {
+    let Position::TwoD(position) = transform.position else {
+        return false;
+    };
+    position.into_iter().all(f64::is_finite)
+        && transform.rotation_x == 0.0
+        && transform.rotation_y == 0.0
+        && transform.orientation == [0.0, 0.0, 0.0]
+}
+
+fn has_dynamic_property(
+    layer_id: LayerId,
+    animations: &[AnimationGraphEntry],
+    matches_property: impl Fn(PropType) -> bool,
+) -> bool {
+    animations.iter().any(|entry| {
+        entry.target.as_property().is_some_and(|target| {
+            target.layer_id() == layer_id && matches_property(target.property_type())
+        }) && (!entry.dependencies.is_empty()
+            || !matches!(entry.animator.data(), AnimatorData::Constant { .. }))
+    })
 }
 
 pub(super) fn append(

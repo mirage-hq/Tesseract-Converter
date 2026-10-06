@@ -108,9 +108,35 @@ impl SubComponents {
     }
 }
 
+/// Writer shape for optional parameter-to-native-source bindings. Readers admit
+/// this subtree opaquely and let the Capsule boundary inspect supported details.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub(crate) struct MediaDependencyMap {
+    #[serde(rename = "@Version", skip_serializing_if = "Option::is_none")]
+    pub(crate) version: Option<String>,
+    #[serde(rename = "MediaDependency", default)]
+    pub(crate) items: Vec<MediaDependency>,
+}
+
+/// One writer-owned media binding. `First` is the saved ParameterID; `Second`
+/// is the replacement SubClip. `Index` is a serialized entry ordinal, not the
+/// parameter binding identity.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub(crate) struct MediaDependency {
+    #[serde(rename = "@Version", skip_serializing_if = "Option::is_none")]
+    pub(crate) version: Option<String>,
+    #[serde(rename = "@Index", skip_serializing_if = "Option::is_none")]
+    pub(crate) index: Option<usize>,
+    pub(crate) first: usize,
+    pub(crate) second: Reference,
+}
+
 /// One video component. Every reader that decodes one must accept or reject
 /// its `sub_components`: only the intrinsic Opacity converts a mask
-/// (`reader/mask.rs`).
+/// (`reader/mask.rs`). `media_dependency_map` is admitted opaquely here and
+/// interpreted only by the saved Capsule reader.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase", deny_unknown_fields)]
 pub(crate) struct VideoFilterComponent {
@@ -124,6 +150,8 @@ pub(crate) struct VideoFilterComponent {
     pub(crate) component: Option<MotionBody>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) premiere_filter_private_data: Option<RetainedOrSkipped<MotionPrivateData>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) media_dependency_map: Option<RetainedOrSkipped<MediaDependencyMap>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) sub_components: Option<SubComponents>,
     #[serde(skip_serializing_if = "Option::is_none")]

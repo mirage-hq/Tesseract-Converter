@@ -1,5 +1,7 @@
 //! Canonical persisted effect schema.
+mod compositing;
 mod declaration;
+pub use compositing::*;
 mod instance;
 mod instance_declaration;
 pub(crate) mod record;

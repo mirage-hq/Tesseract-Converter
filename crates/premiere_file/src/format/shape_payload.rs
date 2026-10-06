@@ -15,17 +15,18 @@
 //! of our own payloads, which Premiere 26.5.1 saved byte-identically
 //! (calibration runs 1 and 2), and of the gradient fills that Premiere
 //! 26.5.1 saved for fixture `premiere_isolated_gradient_fills_26_5`. The meaning of the other slots that those payloads wrote is
-//! unknown, so they convert only at the values that rendered like the base,
-//! and any other slot or value fails closed.
+//! unknown. Their saved values are not restored, but differing optional fields
+//! produce diagnostics rather than discard the known path and paint.
 //!
 //! A legacy Appearance is UTF-16 JSON instead: a little-endian `u32` byte
 //! count of the UTF-16LE text that follows, a zero `u32`, then one object
 //! `{"mStyle": {...}, "mVersion": 1}` without a byte order mark or
 //! terminator. Its style holds an integer color and a visibility switch for
 //! each of the fill, the stroke and the shadow, the stroke width, and the
-//! shadow angle, blur, offset and opacity. Only that framing and version 1
-//! read, with every style field and no other, so an unknown field, such as a
-//! mask flag, fails closed instead of being dropped.
+//! shadow angle, blur, offset and opacity. Required framing and active paint
+//! switches remain checked. Optional authoring fields and an unrecognized version
+//! are diagnosed without discarding the supported fill; active masks remain
+//! unsupported rather than expose their concealed content.
 //! No render measured the legacy form. By inference from the field names,
 //! a visible gray fill (equal channels, which no channel order changes) and a
 //! fill switched off convert; any other fill color, a color beyond 24 bits
@@ -47,7 +48,7 @@ use serde::{
     de::{value::MapAccessDeserializer, MapAccess, Visitor},
     Deserialize, Deserializer,
 };
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
 
 const PATH_VERSION: u32 = 2;
 const PATH_HEADER_BYTES: usize = 8;
@@ -194,9 +195,9 @@ const LAYOUT_SLOTS: [(usize, Field); 5] = [
     (30, Field::Table(&[])),
 ];
 
-/// Slots of unknown meaning, whether a payload must hold them, and the
-/// values that rendered like run 1's base (calibration runs 1 and 2); the
-/// writer writes the first value of each required slot.
+/// Slots of unknown meaning, whether the writer stores them, and the values
+/// that rendered like run 1's base (calibration runs 1 and 2). Import does not
+/// require these optional fields; the writer retains its calibrated profile.
 const UNMEASURED_SLOTS: [(usize, bool, &[Field]); 3] = [
     (13, false, &[Field::U8(1), Field::U8(2)]),
     (23, true, &[Field::U32(1), Field::U32(0), Field::U32(2)]),
@@ -314,22 +315,26 @@ pub(crate) fn encode_vertex(vertex: &PrPathVertex, payload: &mut Vec<u8>) {
     }
 }
 
-/// Decode one Appearance value: a FlatBuffer, or a legacy JSON one
-/// ([`decode_legacy_appearance`]).
+/// Decode supported paint and report unconverted optional Appearance fields.
 ///
 /// # Errors
-/// Rejects malformed buffers, slots of unknown meaning at values that run 1
-/// did not save and render, a gradient outside the form that the gradient
-/// fixture rendered, a hidden shape, a stroke that is not centred, and an
-/// enabled stroke or shadow that lacks a value.
-pub(crate) fn decode_appearance(payload: &[u8]) -> Result<PrAppearance> {
+/// Rejects malformed required data, unsupported active paint and mask forms,
+/// and an enabled stroke or shadow that lacks a required value.
+pub(crate) fn decode_appearance_with_notes(payload: &[u8]) -> Result<(PrAppearance, Vec<String>)> {
     use slots::*;
     if payload.get(8..10) == Some(LEGACY_JSON_START) {
         return decode_legacy_appearance(payload);
     }
     let buffer = Buffer::from_payload(payload, APPEARANCE)?;
     let root = buffer.table(buffer.offset(0)?)?;
-    root.allow_only(&[0], "root")?;
+    let mut notes: Vec<_> = root
+        .present()?
+        .into_iter()
+        .filter(|slot| *slot != 0)
+        .map(|slot| {
+            format!("optional Appearance root slot {slot} not converted; supported paint retained")
+        })
+        .collect();
     let table = root
         .table(0)?
         .ok_or_else(|| unsupported("Appearance has no style table"))?;
@@ -338,9 +343,15 @@ pub(crate) fn decode_appearance(payload: &[u8]) -> Result<PrAppearance> {
             || LAYOUT_SLOTS.iter().any(|(known, _)| known == slot)
             || UNMEASURED_SLOTS.iter().any(|(known, _, _)| known == slot)
     };
-    if let Some(slot) = table.present()?.into_iter().find(|slot| !known(slot)) {
-        return Err(unsupported(format!("unsupported Appearance slot {slot}")));
-    }
+    notes.extend(
+        table
+            .present()?
+            .into_iter()
+            .filter(|slot| !known(slot))
+            .map(|slot| {
+                format!("optional Appearance slot {slot} not converted; supported paint retained")
+            }),
+    );
     // The gradient fixture's B and D are linear, C radial (G1).
     let gradient = match table.u32(FILL_TYPE)? {
         None => None,
@@ -352,9 +363,7 @@ pub(crate) fn decode_appearance(payload: &[u8]) -> Result<PrAppearance> {
             )))
         }
     };
-    if let Some(slot) = unrendered_slot(table, gradient.is_some())? {
-        return Err(unrendered(slot));
-    }
+    notes.extend(optional_appearance_notes(table, gradient.is_some())?);
     let mask_source = match table.u8(MASK)? {
         None => None,
         Some(1) => Some(PrMaskSource {
@@ -445,53 +454,70 @@ pub(crate) fn decode_appearance(payload: &[u8]) -> Result<PrAppearance> {
     } else {
         None
     };
-    Ok(PrAppearance {
-        fill,
-        stroke,
-        shadow,
-        mask_source,
-    })
+    Ok((
+        PrAppearance {
+            fill,
+            stroke,
+            shadow,
+            mask_source,
+        },
+        notes,
+    ))
 }
 
-/// A legacy JSON Appearance: its style and version, and nothing else.
+// Existing paint-value tests do not consume the reader's contextual notes.
+#[cfg(test)]
+pub(crate) fn decode_appearance(payload: &[u8]) -> Result<PrAppearance> {
+    decode_appearance_with_notes(payload).map(|(appearance, _)| appearance)
+}
+
+/// Required legacy paint fields are separate from unconverted optional data.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct LegacyAppearance {
     #[serde(rename = "mStyle", deserialize_with = "legacy_style_object")]
     style: LegacyStyle,
     #[serde(rename = "mVersion")]
     version: u32,
+    #[serde(flatten)]
+    extra: BTreeMap<String, serde_json::Value>,
 }
 
-/// The version 1 style of a legacy JSON Appearance. Every field is required,
-/// so no switch reads as on or off by default, and no other is accepted. A
-/// disabled stroke or shadow draws nothing, so its values are read only for
-/// their types, as the FlatBuffer reader checks a disabled one's.
+/// Active paint and concealment switches remain typed. Inactive stroke and
+/// shadow values cannot affect the supported fill and need no admission checks.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct LegacyStyle {
     #[serde(rename = "mFillColor")]
     fill_color: u32,
     #[serde(rename = "mFillVisible")]
     fill_visible: bool,
-    #[serde(rename = "mStrokeColor")]
-    stroke_color: u32,
+    #[serde(rename = "mStrokeColor", default)]
+    _stroke_color: Option<serde_json::Value>,
     #[serde(rename = "mStrokeVisible")]
     stroke_visible: bool,
-    #[serde(rename = "mStrokeWidth")]
-    _stroke_width: f64,
-    #[serde(rename = "mShadowAngle")]
-    _shadow_angle: f64,
-    #[serde(rename = "mShadowBlur")]
-    _shadow_blur: f64,
-    #[serde(rename = "mShadowColor")]
-    shadow_color: u32,
-    #[serde(rename = "mShadowOffset")]
-    _shadow_offset: f64,
-    #[serde(rename = "mShadowOpacity")]
-    _shadow_opacity: f64,
+    #[serde(rename = "mStrokeWidth", default)]
+    _stroke_width: Option<serde_json::Value>,
+    #[serde(rename = "mShadowAngle", default)]
+    _shadow_angle: Option<serde_json::Value>,
+    #[serde(rename = "mShadowBlur", default)]
+    _shadow_blur: Option<serde_json::Value>,
+    #[serde(rename = "mShadowColor", default)]
+    _shadow_color: Option<serde_json::Value>,
+    #[serde(rename = "mShadowOffset", default)]
+    _shadow_offset: Option<serde_json::Value>,
+    #[serde(rename = "mShadowOpacity", default)]
+    _shadow_opacity: Option<serde_json::Value>,
     #[serde(rename = "mShadowVisible")]
     shadow_visible: bool,
+    #[serde(rename = "mIsMask", default)]
+    is_mask: bool,
+    #[serde(rename = "mIsMaskInverted", default)]
+    is_mask_inverted: bool,
+    #[serde(rename = "mFillColorType", default)]
+    fill_color_type: u32,
+    #[serde(rename = "mAdditionalStrokes", default)]
+    additional_strokes: Vec<serde_json::Value>,
+    #[serde(flatten)]
+    extra: BTreeMap<String, serde_json::Value>,
 }
 
 /// Require named style fields rather than the positional sequence that a
@@ -518,15 +544,12 @@ where
     deserializer.deserialize_map(StyleObject)
 }
 
-/// Decode a legacy JSON Appearance in the one form seen (module docs): a
-/// visible gray fill or none, with the stroke and the shadow off.
+/// Decode a legacy gray fill without interpreting optional authoring fields.
 ///
 /// # Errors
-/// Rejects other framing, invalid UTF-16, JSON other than one object of the
-/// version 1 fields with their types, other versions, a color beyond 24
-/// bits, an enabled stroke or shadow, and a visible fill that is not gray,
-/// whose channel order is unknown.
-fn decode_legacy_appearance(payload: &[u8]) -> Result<PrAppearance> {
+/// Rejects invalid required framing, UTF-16 or paint fields, active masks,
+/// unsupported active paint and a visible non-gray fill of unknown channel order.
+fn decode_legacy_appearance(payload: &[u8]) -> Result<(PrAppearance, Vec<String>)> {
     let Some((frame, text)) = payload.split_first_chunk::<8>() else {
         return Err(unsupported(format!("truncated {LEGACY_APPEARANCE}")));
     };
@@ -553,15 +576,33 @@ fn decode_legacy_appearance(payload: &[u8]) -> Result<PrAppearance> {
     )
     .collect::<std::result::Result<_, _>>()
     .map_err(|error| unsupported(format!("{LEGACY_APPEARANCE}: invalid UTF-16: {error}")))?;
-    let LegacyAppearance { style, version } = serde_json::from_str(&json)
+    let LegacyAppearance {
+        style,
+        version,
+        extra,
+    } = serde_json::from_str(&json)
         .map_err(|error| unsupported(format!("{LEGACY_APPEARANCE}: {error}")))?;
     ensure!(
-        version == 1,
-        "{LEGACY_APPEARANCE}: version {version} is unsupported; only version 1 converts"
+        !style.is_mask
+            && !style.is_mask_inverted
+            && !style.extra.contains_key("mMaskSource")
+            && !extra.iter().any(|(name, value)| match name.as_str() {
+                "mMaskSource" => true,
+                "mIsMask" | "mIsMaskInverted" => *value != serde_json::Value::Bool(false),
+                _ => false,
+            }),
+        "{LEGACY_APPEARANCE}: unsupported mask fields"
+    );
+    ensure!(
+        !style.fill_visible || style.fill_color_type == 0,
+        "{LEGACY_APPEARANCE}: active fill type {} is unsupported",
+        style.fill_color_type
+    );
+    ensure!(
+        style.additional_strokes.is_empty(),
+        "{LEGACY_APPEARANCE}: additional strokes are unsupported"
     );
     let fill_color = legacy_color("mFillColor", style.fill_color)?;
-    legacy_color("mStrokeColor", style.stroke_color)?;
-    legacy_color("mShadowColor", style.shadow_color)?;
     ensure!(
         !style.stroke_visible,
         "{LEGACY_APPEARANCE}: an enabled stroke is unsupported"
@@ -581,12 +622,29 @@ fn decode_legacy_appearance(payload: &[u8]) -> Result<PrAppearance> {
     } else {
         None
     };
-    Ok(PrAppearance {
-        fill,
-        stroke: None,
-        shadow: None,
-        mask_source: None,
-    })
+    let mut notes: Vec<_> = extra
+        .keys()
+        .chain(style.extra.keys())
+        .map(|name| {
+            format!(
+                "optional Appearance legacy field {name} not converted; supported paint retained"
+            )
+        })
+        .collect();
+    if version != 1 {
+        notes.push(format!(
+            "optional Appearance legacy version {version} not restored; supported paint retained"
+        ));
+    }
+    Ok((
+        PrAppearance {
+            fill,
+            stroke: None,
+            shadow: None,
+            mask_source: None,
+        },
+        notes,
+    ))
 }
 
 /// The three low bytes of the legacy JSON color `value` of the field `name`,
@@ -608,57 +666,58 @@ fn unrendered(slot: usize) -> BuildError {
     ))
 }
 
-/// The first slot of unknown meaning whose value no render covers, if any.
-/// Beside a `gradient` that is the [`GRADIENT_LAYOUT`] form. An Appearance
-/// that holds nothing but a fill color needs no other slot: the gradient
-/// fixture's control A, whose payload Premiere 26.5.1 saved byte-identically,
-/// drew as that solid color (AME f38 interior MAE 0.003). Otherwise each slot
-/// of [`UNMEASURED_SLOTS`] holds one of its values, or is absent where that is
-/// allowed, and each slot of [`LAYOUT_SLOTS`] holds a value of its type when
-/// slot 23 is [`LAYOUT_FREE`], and otherwise its base value. This one rule
-/// covers the calibration layout slots.
-fn unrendered_slot(table: Table<'_>, gradient: bool) -> Result<Option<usize>> {
+/// Optional layout metadata never gates known paint. Calibration comparisons
+/// only decide whether an unconverted saved value needs a diagnostic; an absent
+/// field has no saved value to omit. Active gradient and mask data read separately.
+fn optional_appearance_notes(table: Table<'_>, gradient: bool) -> Result<Vec<String>> {
     let present = table.present()?;
+    let mut checks = Vec::new();
     if gradient {
         for &(slot, field) in &GRADIENT_LAYOUT {
-            if !matches(table, slot, field)? {
-                return Ok(Some(slot));
+            if present.contains(&slot) {
+                checks.push((slot, matches(table, slot, field)));
             }
         }
-        return Ok(NOT_BESIDE_GRADIENT
-            .into_iter()
-            .find(|slot| present.contains(slot)));
-    }
-    if present == [slots::FILL_COLOR] {
-        return Ok(None);
-    }
-    for &(slot, required, values) in &UNMEASURED_SLOTS {
-        if !present.contains(&slot) {
-            if required {
-                return Ok(Some(slot));
+        for slot in NOT_BESIDE_GRADIENT {
+            if present.contains(&slot) {
+                checks.push((slot, Ok(false)));
             }
-            continue;
         }
-        let mut rendered = false;
-        for &value in values {
-            rendered |= matches(table, slot, value)?;
+    } else {
+        for &(slot, _, values) in &UNMEASURED_SLOTS {
+            if present.contains(&slot) {
+                let rendered = values.iter().try_fold(false, |rendered, &value| {
+                    matches(table, slot, value).map(|matched| rendered || matched)
+                });
+                checks.push((slot, rendered));
+            }
         }
-        if !rendered {
-            return Ok(Some(slot));
+        let free = matches!(table.u32(23), Ok(Some(LAYOUT_FREE)));
+        for &(slot, field) in &LAYOUT_SLOTS {
+            if present.contains(&slot) {
+                checks.push((
+                    slot,
+                    if free {
+                        well_formed(table, slot, field)
+                    } else {
+                        matches(table, slot, field)
+                    },
+                ));
+            }
         }
     }
-    let free = table.u32(23)? == Some(LAYOUT_FREE);
-    for &(slot, field) in &LAYOUT_SLOTS {
-        let rendered = if free {
-            well_formed(table, slot, field)?
-        } else {
-            matches(table, slot, field)?
-        };
-        if !rendered {
-            return Ok(Some(slot));
-        }
-    }
-    Ok(None)
+    Ok(checks
+        .into_iter()
+        .filter_map(|(slot, rendered)| match rendered {
+            Ok(true) => None,
+            Ok(false) => Some(format!(
+                "optional Appearance slot {slot} not converted; supported paint retained"
+            )),
+            Err(error) => Some(format!(
+                "optional Appearance slot {slot} not converted ({error}); supported paint retained"
+            )),
+        })
+        .collect())
 }
 
 /// The `kind` gradient of an Appearance in the form Premiere 26.5.1 saved for

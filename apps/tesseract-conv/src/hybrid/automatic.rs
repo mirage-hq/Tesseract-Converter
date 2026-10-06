@@ -252,10 +252,18 @@ pub(super) fn stage(
         let intrinsic = (frames as i64)
             .checked_mul(rate.ticks_per_frame())
             .context("AEP clock overflow")?;
-        ensure!(
-            root.timeline_end_ticks <= intrinsic,
-            "AEP picture is shorter than its native container"
-        );
+        let timeline_end = root.timeline_end_ticks.min(intrinsic);
+        if timeline_end < root.timeline_end_ticks {
+            diagnostics.push(Diagnostic {
+                code: "HYBRID-LINKED-DURATION-ROUNDED",
+                kind: DiagnosticKind::Warning,
+                context: Some(format!("roots {first}..={last}")),
+                message: format!(
+                    "The linked AEP ends {} native ticks before its Premiere container after composition-frame rounding. The Dynamic Link occurrence uses the actual AEP endpoint; the native container and independently retained content keep their authored endpoint. No source clock was extended.",
+                    root.timeline_end_ticks - timeline_end
+                ),
+            });
+        }
         replacements.push(PictureReplacement {
             packing_id: recipe.id(),
             container: root.token,
@@ -266,8 +274,8 @@ pub(super) fn stage(
                 dimensions: root.dimensions,
                 frame_rate: rate,
                 intrinsic_duration_ticks: intrinsic,
-                timeline_ticks: 0..root.timeline_end_ticks,
-                source_ticks: 0..root.timeline_end_ticks,
+                timeline_ticks: 0..timeline_end,
+                source_ticks: 0..timeline_end,
                 enabled: true,
             },
         });

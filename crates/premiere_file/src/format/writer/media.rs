@@ -6,8 +6,8 @@ use super::{
     BoundMedia,
 };
 use crate::schema::{
-    native::*, records, AudioChannels, ColorSpace, PrAudioOccurrence, PrAudioStream, PrMedia,
-    PrMediaKind, PrVideoOccurrence, VideoCodec, TICKS,
+    native::*, records, AudioChannels, ColorSpace, OpenExrChannels, PrAudioOccurrence,
+    PrAudioStream, PrMedia, PrMediaKind, PrVideoOccurrence, VideoCodec, TICKS,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 
@@ -122,6 +122,48 @@ pub(super) fn audio_clip(
     })
 }
 
+fn open_exr_importer_prefs(channels: OpenExrChannels, alpha: bool) -> Option<String> {
+    let names: [&[u8]; 3] = match channels {
+        OpenExrChannels::Rgb { red, green, blue } => [
+            if red {
+                b"R".as_slice()
+            } else {
+                b"(none)".as_slice()
+            },
+            if green {
+                b"G".as_slice()
+            } else {
+                b"(none)".as_slice()
+            },
+            if blue {
+                b"B".as_slice()
+            } else {
+                b"(none)".as_slice()
+            },
+        ],
+        OpenExrChannels::Luma => [b"Y", b"Y", b"Y"],
+        OpenExrChannels::LumaChroma => [b"Y", b"RY", b"BY"],
+        OpenExrChannels::Unspecified => return None,
+    };
+    // `oEXR`, importer settings version 1, initialized-file flag 1, then four
+    // 256-byte channel names. This matches the importer's source-based default.
+    let mut bytes = vec![0_u8; 16 + 4 * 256];
+    bytes[..6].copy_from_slice(b"oEXR\x01\x01");
+    for (index, name) in names
+        .into_iter()
+        .chain([if alpha {
+            b"A".as_slice()
+        } else {
+            b"(none)".as_slice()
+        }])
+        .enumerate()
+    {
+        let start = 16 + index * 256;
+        bytes[start..start + name.len()].copy_from_slice(name);
+    }
+    Some(STANDARD.encode(bytes))
+}
+
 fn utf16_base64(value: &str) -> String {
     STANDARD.encode(
         value
@@ -222,6 +264,9 @@ pub(super) fn records(media: &BoundMedia<'_>, ids: &MediaIds) -> Vec<Record> {
             PrMediaKind::Still { alpha } | PrMediaKind::NumberedStills { alpha } => {
                 still::video_stream(video, alpha, ids)
             }
+            PrMediaKind::OpenExr {
+                alpha, numbered, ..
+            } => still::open_exr_video_stream(video, alpha, numbered, ids),
             PrMediaKind::AfterEffectsComposition(_) => {
                 super::after_effects::video_stream(video, ids)
             }
@@ -333,6 +378,19 @@ fn file_source_records(
                     encoding: records::ENCODING.to_owned(),
                     binary_hash: super::graph::uuid(),
                     value: utf16_base64(&composition.dynamic_link_guid()),
+                })
+                .or_else(|| {
+                    let PrMediaKind::OpenExr {
+                        alpha, channels, ..
+                    } = video?.kind
+                    else {
+                        return None;
+                    };
+                    Some(ImporterPrefs {
+                        encoding: records::ENCODING.to_owned(),
+                        binary_hash: super::graph::uuid(),
+                        value: open_exr_importer_prefs(channels, alpha)?,
+                    })
                 }),
             modification_state: Some(ModificationState {
                 encoding: records::ENCODING.to_owned(),
@@ -480,4 +538,43 @@ fn project_item_records(spec: &PrMedia, ids: &MediaIds, template_clip: Clip) -> 
     .into_iter()
     .flatten()
     .collect()
+}
+
+#[cfg(test)]
+mod open_exr_tests {
+    use super::*;
+
+    #[test]
+    fn importer_preferences_follow_the_bundled_importers_default_channels() {
+        let cases = [
+            (
+                OpenExrChannels::Rgb {
+                    red: true,
+                    green: false,
+                    blue: true,
+                },
+                false,
+                ["R", "(none)", "B", "(none)"],
+            ),
+            (OpenExrChannels::Luma, true, ["Y", "Y", "Y", "A"]),
+            (
+                OpenExrChannels::LumaChroma,
+                false,
+                ["Y", "RY", "BY", "(none)"],
+            ),
+        ];
+        for (channels, alpha, expected) in cases {
+            let bytes = STANDARD
+                .decode(open_exr_importer_prefs(channels, alpha).unwrap())
+                .unwrap();
+            assert_eq!(bytes.len(), 1040);
+            assert_eq!(&bytes[..6], b"oEXR\x01\x01");
+            for (index, expected) in expected.into_iter().enumerate() {
+                let field = &bytes[16 + index * 256..16 + (index + 1) * 256];
+                assert_eq!(&field[..expected.len()], expected.as_bytes());
+                assert!(field[expected.len()..].iter().all(|byte| *byte == 0));
+            }
+        }
+        assert!(open_exr_importer_prefs(OpenExrChannels::Unspecified, true).is_none());
+    }
 }

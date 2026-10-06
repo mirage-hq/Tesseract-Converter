@@ -321,7 +321,7 @@ fn still_files_that_contradict_their_native_record_omit_only_their_occurrence() 
                     fs::write(root.join("feature_still_transparent.psd"), b"8BPS\0\x01").unwrap();
                 })
             },
-            "still media must be a PNG or JPEG file",
+            "still media must match its native PNG, JPEG, or OpenEXR kind",
         ),
     ];
     for (name, alter, expected) in cases {
@@ -365,7 +365,7 @@ fn export_rejects_packaged_stills_whose_name_kind_or_orientation_misrepresent_th
             PNG,
             fixtures().join(PNG),
             AssetKind::Video,
-            "writer requires a packaged PNG or JPEG image asset with matching content type",
+            "packaged still has conflicting asset kind",
         ),
         (JPEG, rotated, AssetKind::Image, "Exif orientation 3"),
     ]

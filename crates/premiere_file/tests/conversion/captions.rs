@@ -164,7 +164,7 @@ fn pinned_captions_stay_timed_editable_text_through_edit_and_graphic_export() {
                         let ticks = graphic.timeline_ticks();
                         Some((ticks.start, ticks.end))
                     }
-                    PrVideoItem::Media(_) => None,
+                    PrVideoItem::Media(_) | PrVideoItem::Capsule(_) => None,
                 })
                 .collect()
         })

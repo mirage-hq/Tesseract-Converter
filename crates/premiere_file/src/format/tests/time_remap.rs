@@ -1,3 +1,4 @@
+use crate::schema::TICKS;
 use crate::{
     format::{read_xml, reader::time_remap::read_time_remapping, Graph},
     schema::{
@@ -50,7 +51,7 @@ fn time_remap_keys_cross_the_former_count_quota() {
         .collect();
     let expanded = xml.replacen(&param.value.keyframes, &keys, 1);
     let graph = Graph::parse(&expanded).unwrap();
-    let remap = read_time_remapping(&graph, reference, &clip.identity).unwrap();
+    let remap = read_time_remapping(&graph, reference, &clip.identity, &mut Vec::new()).unwrap();
     assert_eq!(remap.keys.len(), 4097);
     assert_eq!(remap.keys.last().unwrap().source_ticks, 4096 * TICKS);
 }
@@ -72,7 +73,7 @@ fn adobe_native_variable_speed_ramp_preserves_source_clock_curve() {
         .as_ref()
         .and_then(|clip| clip.time_remapping.as_ref())
         .unwrap();
-    let remap = read_time_remapping(&graph, reference, &clip.identity).unwrap();
+    let remap = read_time_remapping(&graph, reference, &clip.identity, &mut Vec::new()).unwrap();
 
     assert_eq!(
         remap
@@ -236,8 +237,9 @@ fn nonlinear_native_ramp_writer_uses_saved_speed_modes_and_seconds() {
             && node.attribute("ObjectRef") == mapping.attribute("ObjectID")));
 }
 
-#[test]
-fn trimmed_variable_speed_ramp_is_omitted_with_diagnostic() {
+/// Structural-only derivative: a 10 s active span, saved source 5..15 s,
+/// declared intrinsic duration 20 s, and a curve covering only input 0..10 s.
+fn trimmed_native_ramp_xml() -> String {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/feature_time_remap_variable_speed_strict.prproj");
     let xml = read_xml(&fixture).unwrap();
@@ -251,8 +253,7 @@ fn trimmed_variable_speed_ramp_is_omitted_with_diagnostic() {
 
     // Preserve equal 10-second active/source durations while moving the source
     // range to 5..15 seconds, past the curve's last key at input 10 s.
-    let trimmed = xml
-        .replace("508032000000", "2540160000000")
+    xml.replace("508032000000", "2540160000000")
         .replace("<InPoint>0</InPoint>", "<InPoint>1270080000000</InPoint>")
         .replace(
             "<OutPoint>2540160000000</OutPoint>",
@@ -265,20 +266,797 @@ fn trimmed_variable_speed_ramp_is_omitted_with_diagnostic() {
         .replace(
             "<OriginalDuration>2540160000000</OriginalDuration>",
             "<OriginalDuration>5080320000000</OriginalDuration>",
-        );
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("trimmed-time-remap.prproj");
-    let mut zip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
-    zip.write_all(trimmed.as_bytes()).unwrap();
-    std::fs::write(&path, zip.finish().unwrap()).unwrap();
+        )
+}
 
-    let error = crate::format::PrProjectFile::load_selected(&path, None)
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("no convertible timelines"), "{error}");
+fn read_native_ramp_xml(
+    xml: &str,
+) -> crate::error::Result<(crate::format::PrProjectFile, Vec<crate::Omission>)> {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("time-remap.prproj");
+    let mut zip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    zip.write_all(xml.as_bytes()).unwrap();
+    std::fs::write(&path, zip.finish().unwrap()).unwrap();
+    crate::format::PrProjectFile::load_selected(&path, Some("9a10a3b7-a83b-47d9-a68c-91d06d937738"))
+}
+
+#[test]
+fn trimmed_variable_speed_ramp_retains_valid_saved_base_with_diagnostic() {
+    let trimmed = trimmed_native_ramp_xml();
+    let (project, omissions) = read_native_ramp_xml(&trimmed).unwrap();
+    let clip = crate::tests::support::first_clip(&project);
+    assert_eq!(
+        (clip.start_ticks, clip.end_ticks),
+        (0, 10 * crate::schema::TICKS)
+    );
+    assert_eq!(
+        (clip.in_ticks, clip.out_ticks),
+        (5 * crate::schema::TICKS, 15 * crate::schema::TICKS)
+    );
+    assert_eq!(clip.playback_rate, 1.0);
+    assert!(clip.time_remap.is_none());
+    assert_eq!(
+        project.media[&clip.media]
+            .video
+            .as_ref()
+            .unwrap()
+            .intrinsic_ticks,
+        20 * crate::schema::TICKS
+    );
+    clip.validate(
+        project.single_sequence().unwrap().frame_rate,
+        &project.media[&clip.media],
+    )
+    .unwrap();
+    assert_eq!(omissions.len(), 1, "{omissions:?}");
+    assert_eq!(omissions[0].kind, crate::OmissionKind::Approximated);
+    assert_eq!(omissions[0].scope, crate::OmissionScope::Feature);
     assert!(
-        error.contains("TimeRemapping keys do not cover the placement"),
-        "{error}"
+        omissions[0]
+            .reason
+            .contains("TimeRemapping keys do not cover the placement"),
+        "{omissions:?}"
+    );
+    assert!(
+        omissions[0].reason.contains("saved constant-rate playback"),
+        "{omissions:?}"
+    );
+    let document = project_document_with_media(project.single_sequence().unwrap(), &project.media);
+    let layer = &document["composition"]["layers"][0];
+    assert_eq!(layer["type"], "Video");
+    assert_eq!(
+        *crate::test_support::layer_range(layer),
+        json!({"start": 0, "duration": 10000})
+    );
+    assert_eq!(
+        layer["sourceRange"],
+        json!({"start": 5000, "duration": 10000})
+    );
+    assert_eq!(layer["playback"]["mapping"]["type"], "linear");
+    assert!(layer["source"]["assetId"].as_str().is_some());
+}
+
+#[test]
+fn native_time_remap_optional_parse_failure_retains_saved_trim() {
+    let native = trimmed_native_ramp_xml();
+    let parsed = roxmltree::Document::parse(&native).unwrap();
+    let record = parsed
+        .descendants()
+        .find(|node| {
+            node.has_tag_name("TimeComponentParam") && node.attribute("ObjectID") == Some("147")
+        })
+        .unwrap();
+    let keys = record
+        .children()
+        .find(|node| node.has_tag_name("Keyframes"))
+        .unwrap();
+    let xml = native.replace(&native[keys.range()], "<Keyframes></Keyframes>");
+    for reverse in [false, true] {
+        let xml = if reverse {
+            xml.replace(
+                "<InPoint>1270080000000</InPoint>",
+                "<PlayBackwards>true</PlayBackwards><InPoint>1270080000000</InPoint>",
+            )
+        } else {
+            xml.clone()
+        };
+        let (project, omissions) = read_native_ramp_xml(&xml).unwrap();
+        let clip = crate::tests::support::first_clip(&project);
+        assert_eq!(
+            (clip.in_ticks, clip.out_ticks),
+            (5 * crate::schema::TICKS, 15 * crate::schema::TICKS)
+        );
+        assert_eq!(
+            (clip.start_ticks, clip.end_ticks),
+            (0, 10 * crate::schema::TICKS)
+        );
+        assert_eq!(clip.playback_rate, if reverse { -1.0 } else { 1.0 });
+        assert!(clip.time_remap.is_none());
+        assert_eq!(omissions.len(), 1, "{omissions:?}");
+        assert_eq!(omissions[0].kind, crate::OmissionKind::Approximated);
+        assert!(
+            omissions[0].reason.contains("fewer than two usable keys"),
+            "{omissions:?}"
+        );
+        let wire = project_document_with_media(project.single_sequence().unwrap(), &project.media);
+        let layer = &wire["composition"]["layers"][0];
+        assert_eq!(layer["type"], "Video");
+        assert_eq!(
+            layer["sourceRange"],
+            json!({"start": 5000, "duration": 10000})
+        );
+        assert!(layer["source"]["assetId"].as_str().is_some());
+        if reverse {
+            let keys = crate::tests::support::playback_keys(layer);
+            assert_eq!(keys.len(), 2);
+            assert_eq!(keys[0]["time"], 0);
+            assert_eq!(keys[0]["value"], 15000);
+            assert_eq!(keys[1]["time"], 10000);
+            assert_eq!(keys[1]["value"], 5000);
+        }
+    }
+}
+
+#[test]
+fn native_time_remap_unsupported_headers_retain_saved_base_and_sibling_curve() {
+    // Structural edits of the native two-placement source. Only the first
+    // placement's mapping/parameter header changes; its saved base is valid.
+    use sha2::{Digest, Sha256};
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let fixture = fixtures.join("feature_time_remap_trimmed_speed_26_5_strict.prproj");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(std::fs::read(&fixture).unwrap())),
+        "b370546ee11c8cf81395a0fb9acbe7bb0c469aae8733a9f85de96fa6729cd58a"
+    );
+    // Provenance only: this reader test consumes saved XML media facts, not
+    // decoded MP4 samples or public package/media-admission operations.
+    assert_eq!(
+        format!(
+            "{:x}",
+            Sha256::digest(std::fs::read(fixtures.join("feature_timecoded_source.mp4")).unwrap())
+        ),
+        "4256ae026cb923ee0498374a1def4dd8c0e51078099a9f415726935e198ac0fe"
+    );
+    let xml = read_xml(&fixture).unwrap();
+    let (control, _) = read_native_ramp_xml(&xml).unwrap();
+    let clips: Vec<_> = control
+        .single_sequence()
+        .unwrap()
+        .video_occurrences()
+        .collect();
+    assert_eq!(clips.len(), 2);
+    assert_eq!(clips[0].start_ticks, 0);
+    assert_eq!(clips[1].start_ticks, 2 * crate::schema::TICKS);
+    assert!(clips.iter().all(|clip| clip.time_remap.is_some()));
+    let control_document =
+        project_document_with_media(control.single_sequence().unwrap(), &control.media);
+    let document = roxmltree::Document::parse(&xml).unwrap();
+    for (tag, id, field, value, reason) in [
+        (
+            "TimeRemapping",
+            "106",
+            "Version",
+            "99",
+            "incompatible TimeRemapping binding",
+        ),
+        (
+            "TimeRemapping",
+            "106",
+            "ClassID",
+            "00000000-0000-0000-0000-000000000000",
+            "incompatible TimeRemapping binding",
+        ),
+        (
+            "TimeComponentParam",
+            "108",
+            "Version",
+            "10",
+            "incompatible TimeRemapping binding",
+        ),
+        (
+            "TimeComponentParam",
+            "108",
+            "ClassID",
+            "00000000-0000-0000-0000-000000000000",
+            "incompatible TimeRemapping binding",
+        ),
+        (
+            "TimeComponentParam",
+            "108",
+            "ParameterID",
+            "42",
+            "incompatible TimeRemapping binding",
+        ),
+    ] {
+        let node = document
+            .descendants()
+            .find(|node| node.has_tag_name(tag) && node.attribute("ObjectID") == Some(id))
+            .unwrap();
+        let record = &xml[node.range()];
+        let (from, to) = if field == "ParameterID" {
+            (
+                "<ParameterID>-1</ParameterID>".to_owned(),
+                format!("<ParameterID>{value}</ParameterID>"),
+            )
+        } else {
+            (
+                format!("{field}=\"{}\"", node.attribute(field).unwrap()),
+                format!("{field}=\"{value}\""),
+            )
+        };
+        assert_eq!(record.matches(&from).count(), 1);
+        let mut edited_record = record.replacen(&from, &to, 1);
+        if field == "ClassID" {
+            // An unknown class need not match the known typed payload grammar.
+            let closing = format!("</{tag}>");
+            edited_record = edited_record.replace(
+                &closing,
+                &format!("<UnknownCurveLayout>opaque</UnknownCurveLayout>{closing}"),
+            );
+        }
+        let edited = xml.replacen(record, &edited_record, 1);
+        if field == "Version" {
+            let (project, notes) = read_native_ramp_xml(&edited).unwrap();
+            let kept = project
+                .single_sequence()
+                .unwrap()
+                .video_occurrences()
+                .collect::<Vec<_>>();
+            assert_eq!(kept.len(), 2, "{tag}:{id} {notes:?}");
+            for (current, original) in kept.iter().zip(&clips) {
+                assert_eq!(
+                    (
+                        current.start_ticks,
+                        current.end_ticks,
+                        current.in_ticks,
+                        current.out_ticks
+                    ),
+                    (
+                        original.start_ticks,
+                        original.end_ticks,
+                        original.in_ticks,
+                        original.out_ticks
+                    )
+                );
+                let keys = |clip: &crate::schema::PrVideoOccurrence| {
+                    clip.time_remap
+                        .as_ref()
+                        .unwrap()
+                        .keys
+                        .iter()
+                        .map(|key| (key.timeline_ticks, key.source_ticks, key.easing))
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(keys(current), keys(original));
+            }
+            assert!(read_remap(&edited, "106").is_ok());
+            continue;
+        }
+        // Unknown optional layouts must not be decoded as known source-time
+        // curves. Their independently bound physical source and base survive.
+        let (project, notes) = read_native_ramp_xml(&edited).unwrap();
+        let kept: Vec<_> = project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .collect();
+        assert_eq!(kept.len(), 2, "{tag}:{id} {field}: {notes:?}");
+        for (current, original) in kept.iter().zip(&clips) {
+            assert_eq!(
+                (
+                    &current.media,
+                    current.start_ticks,
+                    current.end_ticks,
+                    current.in_ticks,
+                    current.out_ticks,
+                    current.playback_rate,
+                    current.opacity,
+                    current.enabled,
+                ),
+                (
+                    &original.media,
+                    original.start_ticks,
+                    original.end_ticks,
+                    original.in_ticks,
+                    original.out_ticks,
+                    original.playback_rate,
+                    original.opacity,
+                    original.enabled,
+                )
+            );
+            assert_eq!(current.transform, original.transform);
+            assert_eq!(current.blend_mode, original.blend_mode);
+            current
+                .validate(
+                    project.single_sequence().unwrap().frame_rate,
+                    &project.media[&current.media],
+                )
+                .unwrap();
+        }
+        assert!(kept[0].time_remap.is_none());
+        let wire = project_document_with_media(project.single_sequence().unwrap(), &project.media);
+        fn at(document: &serde_json::Value, start: u64) -> &serde_json::Value {
+            document["composition"]["layers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|layer| {
+                    layer["type"] == "Video" && layer["playback"]["inputRange"]["start"] == start
+                })
+                .unwrap()
+        }
+        assert_eq!(at(&wire, 2000), at(&control_document, 2000));
+        let retained = at(&wire, 0);
+        let original = at(&control_document, 0);
+        for field in [
+            "source",
+            "sourceIntrinsicDuration",
+            "transform",
+            "blendMode",
+        ] {
+            assert_eq!(retained[field], original[field], "{field}");
+        }
+        assert_eq!(retained["sourceIntrinsicDuration"], 10000);
+        assert!(retained["source"]["assetId"].as_str().is_some());
+        assert_eq!(
+            retained["sourceRange"],
+            json!({"start": 400, "duration": 1600})
+        );
+        assert_eq!(
+            retained["playback"]["inputRange"],
+            json!({"start": 0, "duration": 2000})
+        );
+        let keys = crate::tests::support::playback_keys(retained);
+        assert_eq!(keys.len(), 2);
+        for (key, (time, value)) in keys.iter().zip([(0, 400), (2000, 2000)]) {
+            assert_eq!(key["time"], time);
+            assert_eq!(key["value"], value);
+            assert_eq!(key["easing"], json!({"type": "linear"}));
+        }
+        assert!(
+            notes.iter().any(|note| {
+                note.kind == crate::OmissionKind::Approximated
+                    && note.scope == crate::OmissionScope::Feature
+                    && note.reason.contains(&format!("{tag}:{id}"))
+                    && note.reason.contains(reason)
+                    && note.reason.contains("saved constant-rate playback")
+            }),
+            "{tag}:{id} {field}: {notes:?}"
+        );
+        assert!(!notes
+            .iter()
+            .any(|note| note.scope == crate::OmissionScope::Occurrence));
+        let error = read_remap(&edited, "106").unwrap_err();
+        assert!(
+            matches!(error, crate::error::BuildError::Unsupported(_)),
+            "{error:?}"
+        );
+    }
+}
+
+#[test]
+fn native_time_remap_unknown_binding_does_not_silently_admit_nonphysical_hosts() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/feature_images_nests_26_5.prproj");
+    let xml = read_xml(&path).unwrap();
+    let sequence = Some("f3c651e6-0302-4499-b6f5-814b7b22c207");
+    let (base, _) = crate::format::inspect_project_with_omissions(&xml, sequence).unwrap();
+    let ramp = version_8_ramp();
+    let start = ramp.find(r#"<TimeRemapping ObjectID="146""#).unwrap();
+    let end = start
+        + ramp[start..].find("</TimeComponentParam>").unwrap()
+        + "</TimeComponentParam>".len();
+    let records = ramp[start..end]
+        .replace("\"146\"", "\"10001\"")
+        .replace("\"147\"", "\"10002\"")
+        .replace(
+            crate::schema::records::TIME_REMAPPING.class_id,
+            "00000000-0000-0000-0000-000000000000",
+        );
+    let document = roxmltree::Document::parse(&xml).unwrap();
+    for (clip_id, nest) in [("179", true), ("262", false)] {
+        let clip = document
+            .descendants()
+            .find(|node| {
+                node.has_tag_name("VideoClip") && node.attribute("ObjectID") == Some(clip_id)
+            })
+            .unwrap();
+        let native = &xml[clip.range()];
+        let edited = native.replace("</Clip>", "<TimeRemapping ObjectRef=\"10001\" /></Clip>");
+        let changed = xml
+            .replacen(native, &edited, 1)
+            .replace("</PremiereData>", &format!("{records}</PremiereData>"));
+        let (project, notes) =
+            crate::format::inspect_project_with_omissions(&changed, sequence).unwrap();
+        let original = base.single_sequence().unwrap();
+        let changed = project.single_sequence().unwrap();
+        assert_eq!(
+            changed.nest_occurrences().count() + usize::from(nest),
+            original.nest_occurrences().count(),
+            "{clip_id}: {notes:?}"
+        );
+        assert_eq!(
+            changed.video_occurrences().count() + usize::from(!nest),
+            original.video_occurrences().count(),
+            "{clip_id}: {notes:?}"
+        );
+        assert!(
+            notes.iter().any(|note| {
+                note.scope == crate::OmissionScope::Occurrence
+                    && note.reason.contains("incompatible TimeRemapping binding")
+            }),
+            "{clip_id}: {notes:?}"
+        );
+        assert!(
+            !notes
+                .iter()
+                .any(|note| note.reason.contains("saved constant-rate playback")),
+            "{clip_id}: {notes:?}"
+        );
+    }
+}
+
+#[test]
+fn native_time_remap_recovers_non_rotation_motion_and_keeps_sibling_curve() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/feature_time_remap_rotation_26_5_strict.prproj");
+    let native = read_xml(&fixture).unwrap();
+    // Give the first physical placement a valid saved unit-rate base and
+    // Position keys. The other placement remains the native healthy sibling.
+    let xml = native.replace(
+        "<PlaybackSpeed>0.8</PlaybackSpeed>\n\t\t\t<InPoint>101606400000</InPoint>",
+        "<PlaybackSpeed>1</PlaybackSpeed>\n\t\t\t<InPoint>0</InPoint>",
+    ).replace(
+        "<Name>Position</Name>",
+        "<Name>Position</Name><Keyframes>0,0.5:0.5,0,0,0,0,0,0,0,0,0,0,0,0;508032000000,0.75:0.5,0,0,0,0,0,0,0,0,0,0,0,0;</Keyframes>",
+    );
+    assert_ne!(xml, native);
+    let absent = xml.replace("<TimeRemapping ObjectRef=\"118\"/>", "");
+    assert_ne!(absent, xml);
+    let (control, _) = read_native_ramp_xml(&absent).unwrap();
+    let first = control
+        .single_sequence()
+        .unwrap()
+        .video_occurrences()
+        .find(|clip| clip.start_ticks == 0)
+        .unwrap();
+    assert_eq!(first.playback_rate, 1.0);
+    assert_eq!(
+        (first.in_ticks, first.out_ticks),
+        (0, 2 * crate::schema::TICKS)
+    );
+    assert!(first.animations.iter().any(
+        |animation| matches!(animation, crate::schema::PrPropertyAnimation::Position(keys)
+            if keys.len() == 2 && keys[1].value == [0.75, 0.5])
+    ));
+    let document = roxmltree::Document::parse(&xml).unwrap();
+    let parameter = document
+        .descendants()
+        .find(|node| {
+            node.has_tag_name("TimeComponentParam") && node.attribute("ObjectID") == Some("120")
+        })
+        .unwrap();
+    let rejected = xml.replace(
+        &xml[parameter.range()],
+        &xml[parameter.range()].replace(
+            "<Name>Speed</Name>",
+            "<Name>Speed</Name><ParameterControlType>99</ParameterControlType>",
+        ),
+    );
+    assert_ne!(rejected, xml);
+    for curve in [&xml, &rejected] {
+        let (project, omissions) = read_native_ramp_xml(curve).unwrap();
+        let clips: Vec<_> = project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .collect();
+        assert_eq!(clips.len(), 2, "{omissions:?}");
+        assert_eq!(clips[0].start_ticks, 0);
+        assert!(clips[0].time_remap.is_none());
+        assert_eq!(clips[0].playback_rate, 1.0);
+        assert_eq!((clips[0].in_ticks, clips[0].out_ticks), (0, 2 * TICKS));
+        assert!(clips[0].animations.iter().any(|animation|matches!(animation,crate::schema::PrPropertyAnimation::Position(keys) if keys.len()==2 && keys[1].value==[0.75,0.5])));
+        assert_eq!(clips[1].start_ticks, 2 * TICKS);
+        assert!(clips[1].time_remap.is_some());
+        assert!(
+            omissions.iter().any(
+                |omission| omission.kind == crate::OmissionKind::Approximated
+                    && omission
+                        .reason
+                        .contains("picture and Motion controls retained")
+            ),
+            "{omissions:?}"
+        );
+        assert!(
+            !omissions
+                .iter()
+                .any(|omission| omission.scope == crate::OmissionScope::Occurrence),
+            "{omissions:?}"
+        );
+    }
+}
+
+#[test]
+fn rejected_native_time_remap_recovers_saved_span_without_normalizing_unit_source_out() {
+    // One native 30 fps frame beyond the saved unit-rate span is stale only
+    // when remapping was genuinely absent, not when its curve was rejected.
+    let xml = trimmed_native_ramp_xml().replace(
+        "<OutPoint>3810240000000</OutPoint>",
+        "<OutPoint>3818707200000</OutPoint>",
+    );
+    let rejected = xml.replace(
+        "<ParameterControlType>21</ParameterControlType>",
+        "<ParameterControlType>99</ParameterControlType>",
+    );
+    let (project, notes) = read_native_ramp_xml(&rejected).unwrap();
+    let clip = crate::tests::support::first_clip(&project);
+    assert_eq!(
+        (clip.in_ticks, clip.out_ticks),
+        (5 * TICKS, 15 * TICKS + TICKS / 30)
+    );
+    assert!((clip.playback_rate - (10.0 + 1.0 / 30.0) / 10.0).abs() < 1e-12);
+    assert!(clip.time_remap.is_none());
+    assert!(
+        notes
+            .iter()
+            .any(|note| note.kind == crate::OmissionKind::Approximated
+                && note.reason.contains("bounded authored source trim")),
+        "{notes:?}"
+    );
+
+    let absent = xml.replace("<TimeRemapping ObjectRef=\"146\" />", "");
+    assert_ne!(absent, xml);
+    let (project, omissions) = read_native_ramp_xml(&absent).unwrap();
+    let clip = crate::tests::support::first_clip(&project);
+    assert_eq!(
+        (clip.start_ticks, clip.end_ticks),
+        (0, 10 * crate::schema::TICKS)
+    );
+    assert_eq!(
+        (clip.in_ticks, clip.out_ticks),
+        (5 * crate::schema::TICKS, 15 * crate::schema::TICKS)
+    );
+    assert_eq!(clip.playback_rate, 1.0);
+    assert!(clip.time_remap.is_none());
+    assert!(omissions.is_empty(), "{omissions:?}");
+}
+
+#[test]
+fn native_time_remap_recovery_rejects_required_clocks_and_graph_errors() {
+    let xml = trimmed_native_ramp_xml();
+    // Saved caches/playback metadata can recover a physically bounded source
+    // selection; actual frame grids and required graph identity remain fatal.
+    for (from,to,expected_out,expected_rate) in [
+        ("<OutPoint>3810240000000</OutPoint>","<OutPoint>3556224000000</OutPoint>",14*TICKS,0.9),
+        ("<Duration>5080320000000</Duration>","<Duration>2540160000000</Duration>",10*TICKS,0.5),
+        ("<OriginalDuration>5080320000000</OriginalDuration>","<OriginalDuration>2540160000000</OriginalDuration>",15*TICKS,1.0),
+        ("<InPoint>1270080000000</InPoint>","<PlaybackSpeed>0</PlaybackSpeed><InPoint>1270080000000</InPoint>",15*TICKS,1.0),
+        ("<InPoint>1270080000000</InPoint>","<PlaybackSpeed>NaN</PlaybackSpeed><InPoint>1270080000000</InPoint>",15*TICKS,1.0),
+        ("<ClipID>0ad61a94-8103-4385-bc5d-86f00a438773</ClipID>\n\t\t</Clip>","<ClipID>0ad61a94-8103-4385-bc5d-86f00a438773</ClipID>\n\t\t</Clip><FrameHold>4</FrameHold><FrameHoldStart>0</FrameHoldStart>",15*TICKS,1.0),
+    ] {
+        assert!(xml.contains(from),"{from}");
+        let (project,notes)=read_native_ramp_xml(&xml.replace(from,to)).unwrap();
+        let clip=crate::tests::support::first_clip(&project);
+        assert_eq!((clip.in_ticks,clip.out_ticks),(5*TICKS,expected_out));
+        assert!((clip.playback_rate-expected_rate).abs()<1e-12,"{notes:?}");
+        assert!(clip.time_remap.is_none());
+        clip.validate(project.single_sequence().unwrap().frame_rate,&project.media[&clip.media]).unwrap();
+        assert!(notes.iter().any(|note|note.kind==crate::OmissionKind::Approximated),"{notes:?}");
+    }
+    for (from, to, reason) in [
+        (
+            "<End>2540160000000</End>",
+            "<End>2540159999999</End>",
+            "frame boundary",
+        ),
+        (
+            "<Source ObjectRef=\"19\"/>",
+            "<Source ObjectRef=\"999999\"/>",
+            "missing reference",
+        ),
+        (
+            "<TimeRemapping ObjectRef=\"146\"/>",
+            "<TimeRemapping ObjectRef=\"999999\"/>",
+            "missing reference",
+        ),
+        (
+            "<Keyframes ObjectRef=\"147\"/>",
+            "<Keyframes ObjectRef=\"19\"/>",
+            "expected TimeComponentParam",
+        ),
+    ] {
+        // Saved native whitespace varies; edit the exact consumed reference.
+        let from = from.replace("/>", " />");
+        let to = to.replace("/>", " />");
+        assert!(xml.contains(&from), "missing mutation {from}");
+        let error = read_native_ramp_xml(&xml.replace(&from, &to))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(reason), "{from}: {error}");
+    }
+    // An overlong source selection recovers only its remaining physical interval.
+    let out_of_bounds = xml
+        .replace(
+            "<Duration>5080320000000</Duration>",
+            "<Duration>2540160000000</Duration>",
+        )
+        .replace(
+            "<OriginalDuration>5080320000000</OriginalDuration>",
+            "<OriginalDuration>2540160000000</OriginalDuration>",
+        );
+    let (project, notes) = read_native_ramp_xml(&out_of_bounds).unwrap();
+    let clip = crate::tests::support::first_clip(&project);
+    assert_eq!((clip.in_ticks, clip.out_ticks), (5 * TICKS, 10 * TICKS));
+    assert_eq!(clip.playback_rate, 0.5);
+    assert!(clip.time_remap.is_none());
+    clip.validate(
+        project.single_sequence().unwrap().frame_rate,
+        &project.media[&clip.media],
+    )
+    .unwrap();
+    assert!(
+        notes
+            .iter()
+            .any(|note| note.reason.contains("bounded authored source trim")),
+        "{notes:?}"
+    );
+    // Required record decoding/graph identity never becomes optional Unsupported.
+    for (xml, decode) in [
+        (
+            version_8_ramp().replace(
+                "<Keyframes ObjectRef=\"147\" />",
+                "<Keyframes ObjectRef=\"999999\" />",
+            ),
+            false,
+        ),
+        (
+            version_8_ramp().replace("<ParameterID>-1</ParameterID>", ""),
+            true,
+        ),
+    ] {
+        let error = read_remap(&xml, "146").unwrap_err();
+        if decode {
+            assert!(
+                matches!(
+                    error,
+                    crate::error::BuildError::Premiere(crate::format::FormatError::Decode { .. })
+                ),
+                "{error:?}"
+            );
+        } else {
+            assert!(
+                matches!(
+                    error,
+                    crate::error::BuildError::Premiere(crate::format::FormatError::Invalid(_))
+                ),
+                "{error:?}"
+            );
+        }
+        assert!(read_native_ramp_xml(&xml).is_err());
+    }
+}
+
+#[test]
+fn native_time_remap_recovery_preserves_still_base_and_omits_uncovered_nest() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/feature_images_nests_26_5.prproj");
+    let xml = read_xml(&path).unwrap();
+    let sequence = Some("f3c651e6-0302-4499-b6f5-814b7b22c207");
+    let (base, _) = crate::format::inspect_project_with_omissions(&xml, sequence).unwrap();
+    let ramp = version_8_ramp();
+    let start = ramp.find(r#"<TimeRemapping ObjectID="146""#).unwrap();
+    let end = start
+        + ramp[start..].find("</TimeComponentParam>").unwrap()
+        + "</TimeComponentParam>".len();
+    let records = ramp[start..end]
+        .replace("\"146\"", "\"10001\"")
+        .replace("\"147\"", "\"10002\"")
+        .replace(
+            "<ParameterControlType>21</ParameterControlType>",
+            "<ParameterControlType>99</ParameterControlType>",
+        );
+    for (clip_id, kind) in [("179", "nest"), ("262", "still")] {
+        let document = roxmltree::Document::parse(&xml).unwrap();
+        let clip = document
+            .descendants()
+            .find(|node| {
+                node.has_tag_name("VideoClip") && node.attribute("ObjectID") == Some(clip_id)
+            })
+            .unwrap();
+        let native = &xml[clip.range()];
+        let edited = native.replace("</Clip>", "<TimeRemapping ObjectRef=\"10001\" /></Clip>");
+        let changed = xml
+            .replacen(native, &edited, 1)
+            .replace("</PremiereData>", &format!("{records}</PremiereData>"));
+        let (project, omissions) =
+            crate::format::inspect_project_with_omissions(&changed, sequence).unwrap();
+        let original = base.single_sequence().unwrap();
+        let changed = project.single_sequence().unwrap();
+        let lost_picture = 0;
+        let lost_nest = usize::from(kind == "nest");
+        assert_eq!(
+            changed.video_occurrences().count() + lost_picture,
+            original.video_occurrences().count(),
+            "{kind}: {omissions:?}"
+        );
+        assert_eq!(
+            changed.nest_occurrences().count() + lost_nest,
+            original.nest_occurrences().count(),
+            "{kind}: {omissions:?}"
+        );
+        assert!(
+            omissions
+                .iter()
+                .any(|omission| omission.reason.contains("TimeRemapping")),
+            "{kind}: {omissions:?}"
+        );
+        if kind == "still" {
+            let original = original
+                .video_occurrences()
+                .find(|clip| clip.id.as_deref() == Some("VideoClipTrackItem:141"))
+                .unwrap();
+            let retained = changed
+                .video_occurrences()
+                .find(|clip| clip.id == original.id)
+                .unwrap();
+            assert_eq!(
+                (
+                    &retained.media,
+                    retained.start_ticks,
+                    retained.end_ticks,
+                    retained.in_ticks,
+                    retained.out_ticks
+                ),
+                (
+                    &original.media,
+                    original.start_ticks,
+                    original.end_ticks,
+                    original.in_ticks,
+                    original.out_ticks
+                )
+            );
+            assert_eq!(retained.transform, original.transform);
+            assert_eq!(retained.opacity, original.opacity);
+            assert!(retained.time_remap.is_none());
+            retained
+                .validate(changed.frame_rate, &project.media[&retained.media])
+                .unwrap();
+            assert!(
+                omissions
+                    .iter()
+                    .any(|note| note.kind == crate::OmissionKind::Approximated
+                        && note.reason.contains("bounded authored source trim")),
+                "{omissions:?}"
+            );
+        } else {
+            assert!(
+                omissions
+                    .iter()
+                    .any(|note| note.scope == crate::OmissionScope::Occurrence
+                        && note.reason.contains(
+                            "invalid, uncovered or out-of-bounds nested TimeRemapping curve"
+                        )),
+                "{omissions:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn trimmed_variable_speed_ramp_recovers_picture_and_source_trim_with_diagnostic() {
+    let (project, omissions) = read_native_ramp_xml(&trimmed_native_ramp_xml()).unwrap();
+    let clip = project.single_sequence().unwrap().video_tracks[0].clip(0);
+    assert_eq!(clip.in_ticks, 5 * TICKS);
+    assert_eq!(clip.out_ticks, 15 * TICKS);
+    assert_eq!(clip.playback_rate, 1.0);
+    assert!(clip.time_remap.is_none());
+    assert!(
+        omissions
+            .iter()
+            .any(|loss| loss.kind == crate::OmissionKind::Approximated
+                && loss.reason.contains("TimeRemapping")),
+        "{omissions:?}"
     );
 }
 
@@ -377,7 +1155,7 @@ fn minimal_variable_speed_ramp_preserves_scaled_native_curve() {
         .as_ref()
         .and_then(|clip| clip.time_remapping.as_ref())
         .unwrap();
-    let remap = read_time_remapping(&graph, reference, &clip.identity).unwrap();
+    let remap = read_time_remapping(&graph, reference, &clip.identity, &mut Vec::new()).unwrap();
 
     assert_eq!(
         remap
@@ -468,7 +1246,12 @@ fn read_remap(xml: &str, id: &str) -> crate::error::Result<PrTimeRemap> {
         uid: None,
         index: None,
     };
-    read_time_remapping(&Graph::parse(xml).unwrap(), &reference, "test clip")
+    read_time_remapping(
+        &Graph::parse(xml).unwrap(),
+        &reference,
+        "test clip",
+        &mut Vec::new(),
+    )
 }
 
 #[test]
@@ -517,32 +1300,32 @@ fn native_version_9_time_remap_reads_all_nine_saved_keys() {
 }
 
 #[test]
-fn time_remap_flags_are_optional_only_in_version_9_and_still_checked_when_saved() {
-    // Supplementary synthetic edits of the native Version 9 records and of the
-    // pinned Version 8 ramp, which saves every flag.
+fn time_remap_metadata_differences_retain_all_source_time_keys() {
     let version_9 = version_9_ramp();
-    for (xml, mapping, reason) in [
+    for (xml, mapping) in [
         (
             version_8_ramp().replace("<IsTimeVarying>true</IsTimeVarying>", ""),
             "146",
-            "TimeComponentParam:147: missing IsTimeVarying",
         ),
         (
             version_9.replace(r#"Version="9""#, r#"Version="10""#),
             "102",
-            "TimeComponentParam:103: unsupported TimeRemapping parameter",
         ),
         (
             version_9.replace(
                 "<Name>Speed</Name>",
-                "<Name>Speed</Name><IsTimeVarying>false</IsTimeVarying>",
+                "<Name>Localized speed</Name><IsTimeVarying>false</IsTimeVarying>",
             ),
             "102",
-            r#"TimeComponentParam:103: unsupported TimeRemapping parameter IsTimeVarying "false""#,
         ),
     ] {
-        let error = read_remap(&xml, mapping).unwrap_err().to_string();
-        assert!(error.contains(reason), "{reason}: {error}");
+        let remap = read_remap(&xml, mapping).unwrap();
+        assert!(remap.keys.len() >= 8);
+        assert_eq!(remap.keys[0].source_ticks, 0);
+        assert!(remap
+            .keys
+            .windows(2)
+            .all(|keys| keys[0].timeline_ticks < keys[1].timeline_ticks));
     }
 }
 
@@ -676,4 +1459,48 @@ fn native_time_remap_unused_tail_exception_rejects_unsafe_curves() {
             "{case}: {error}"
         );
     }
+}
+
+#[test]
+fn time_remap_recovery_skips_unusable_key_and_retains_editable_picture() {
+    let xml = version_9_ramp().replace("56390045901,0.254220210136270885481480", "56390045901,NaN");
+    let graph = Graph::parse(&xml).unwrap();
+    let reference = Reference {
+        id: Some("102".into()),
+        uid: None,
+        index: None,
+    };
+    let mut omissions = Vec::new();
+    let remap =
+        read_time_remapping(&graph, &reference, "retained picture", &mut omissions).unwrap();
+    assert_eq!(remap.keys.len(), 8);
+    let mut sequence = video_sequence();
+    let clip = sequence.video_tracks[0].clip_mut(0);
+    clip.end_ticks = 2 * TICKS;
+    clip.out_ticks = 2 * TICKS;
+    clip.transform.rotation = 25.0;
+    clip.time_remap = Some(remap);
+    let media = video_media();
+    let wire = project_document_with_media(&sequence, &media);
+    let layer = &wire["composition"]["layers"][0];
+    assert!(layer["source"]["assetId"].is_string());
+    assert_eq!(
+        crate::test_support::layer_range(layer),
+        &json!({"start": 0, "duration": 2000})
+    );
+    assert_eq!(layer["transform"]["rotation"], 25.0);
+    assert!(
+        layer["playback"]["mapping"]["property"]["keyframes"]
+            .as_array()
+            .unwrap()
+            .len()
+            >= 5
+    );
+    assert!(
+        omissions
+            .iter()
+            .any(|loss| loss.reason.contains("unusable TimeRemapping key")
+                && loss.reason.contains("retained")),
+        "{omissions:?}"
+    );
 }

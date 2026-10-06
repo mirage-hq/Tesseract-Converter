@@ -416,13 +416,18 @@ fn omitted_video_source_rect_uses_inspected_media_dimensions() {
 
 #[cfg(feature = "ffmpeg-library")]
 #[test]
-fn reversing_video_without_source_rect_is_omitted_without_inspecting_its_media() {
+fn reversing_video_recovery_without_source_rect_inspects_its_used_media() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let mut doc = document(root);
     let layers = doc["composition"]["layers"].as_array_mut().unwrap();
     let mut native = layers[0].take();
     native["parent"] = json!(10);
+    // MEDIA is the 1920x1080 video-30fps fixture, not source_rect_64x36.mp4.
+    let source_rect = native["source"]["sourceRect"].clone();
+    let transform = native["transform"].clone();
+    assert_eq!(source_rect["width"].as_f64(), Some(1920.0));
+    assert_eq!(source_rect["height"].as_f64(), Some(1080.0));
     let mut remapped = native.clone();
     remapped["id"] = json!(3);
     remapped["name"] = json!("Unsupported remapped footage");
@@ -471,19 +476,149 @@ fn reversing_video_without_source_rect_is_omitted_without_inspecting_its_media()
         .write(&source)
         .unwrap();
     let output = root.join("native");
-    let checked = tesseract_to_premiere(&source, &output, true).unwrap();
+    for check in [true, false] {
+        let error = tesseract_to_premiere(&source, &output, check).unwrap_err();
+        assert!(
+            error.to_string().contains("missing-omitted-media")
+                && error
+                    .to_string()
+                    .contains("MP4 metadata box exceeds its parent"),
+            "{error}"
+        );
+        assert!(!output.exists());
+    }
+    let valid = root.join("valid-recovery.tsrct");
+    TesseractFileBuilder::from_project_json(&serde_json::to_vec(&doc).unwrap())
+        .unwrap()
+        .add_asset(
+            "premiere-video-1",
+            root.join("source.mp4"),
+            AssetKind::Video,
+        )
+        .unwrap()
+        .add_asset(
+            "missing-omitted-media",
+            root.join("source.mp4"),
+            AssetKind::Video,
+        )
+        .unwrap()
+        .write(&valid)
+        .unwrap();
+    let checked = tesseract_to_premiere(&valid, &output, true).unwrap();
     assert!(!output.exists());
-    let written = tesseract_to_premiere(&source, &output, false).unwrap();
+    let written = tesseract_to_premiere(&valid, &output, false).unwrap();
     assert_eq!(checked, written);
     assert!(
-        written.iter().any(|item| {
-            item.record.contains("layer 3") && item.reason.contains("time remapping")
-        }),
+        written
+            .iter()
+            .any(|loss| loss.record.contains("layer 3") && loss.reason.contains("time remapping")),
         "{written:?}"
     );
     let xml = read_xml(&output.join("project.prproj"));
-    assert_eq!(xml.matches("<VideoClipTrackItem ObjectID=").count(), 2);
-    assert_eq!(fs::read(output.join("media/source.mp4")).unwrap(), MEDIA);
+    assert_eq!(xml.matches("<VideoClipTrackItem ObjectID=").count(), 3);
+    let parsed = roxmltree::Document::parse(&xml).unwrap();
+    let stream_frames = frames(&parsed, "VideoStream");
+    assert!(!stream_frames.is_empty());
+    assert!(stream_frames.iter().all(|frame| *frame == "0,0,1920,1080"));
+    assert_eq!(frames(&parsed, "VideoTrackGroup"), ["0,0,1920,1080"; 2]);
+    let assets = fs::read_dir(output.join("media"))
+        .unwrap()
+        .map(|entry| fs::read(entry.unwrap().path()).unwrap())
+        .collect::<Vec<_>>();
+    // Identical bytes may share a packaged asset; each recovered child's
+    // actual asset reference is checked independently below.
+    assert!(!assets.is_empty());
+    assert!(assets.iter().all(|bytes| bytes == MEDIA));
+    let imported = root.join("recovered");
+    let (project, _) = premiere_file::PrProjectFile::load(output.join("project.prproj")).unwrap();
+    let outer = project
+        .sequences()
+        .find(|sequence| Some(sequence.name()) == doc["composition"]["name"].as_str())
+        .unwrap();
+    premiere_to_tesseract(output.join("project.prproj"), &imported, outer.id(), false).unwrap();
+    let file = TesseractFile::open(first_project(&imported)).unwrap();
+    let wire = file.project_json().unwrap();
+    let group = wire["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Group")
+        .unwrap();
+    let videos = group["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|layer| layer["type"] == "Video")
+        .collect::<Vec<_>>();
+    assert_eq!(videos.len(), 2);
+    assert_eq!(wire["dimensions"], doc["dimensions"]);
+    assert_eq!(
+        crate::test_support::layer_range(group),
+        &json!({"start":0,"duration":1000})
+    );
+    let sibling = wire["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Rect")
+        .unwrap();
+    assert_eq!(sibling["rect"]["size"], json!([1920.0, 1080.0]));
+    assert_eq!(
+        crate::test_support::layer_range(sibling),
+        &json!({"start":0,"duration":1000})
+    );
+    // The identity parent and identical source-space Motion preserve the world
+    // rectangle; Contain and imported Stretch agree for this square-pixel frame.
+    for owner in [group, sibling] {
+        for property in ["anchorPoint", "position", "scale"] {
+            for axis in 0..2 {
+                assert_eq!(
+                    owner["transform"][property][axis].as_f64(),
+                    transform[property][axis].as_f64()
+                );
+            }
+        }
+        assert_eq!(owner["transform"]["rotation"].as_f64(), Some(0.0));
+        assert_eq!(owner["transform"]["opacity"].as_f64(), Some(100.0));
+    }
+    for video in videos {
+        assert_eq!(
+            crate::test_support::layer_range(video),
+            &json!({"start":0,"duration":1000})
+        );
+        assert_eq!(video["sourceRange"], json!({"start":0,"duration":1000}));
+        for property in ["x", "y", "width", "height"] {
+            assert_eq!(
+                video["source"]["sourceRect"][property].as_f64(),
+                source_rect[property].as_f64()
+            );
+        }
+        assert_eq!(video["source"]["fit"], "stretch");
+        for property in ["anchorPoint", "position", "scale"] {
+            for axis in 0..2 {
+                assert_eq!(
+                    video["transform"][property][axis].as_f64(),
+                    transform[property][axis].as_f64()
+                );
+            }
+        }
+        for property in ["rotation", "opacity"] {
+            assert_eq!(
+                video["transform"][property].as_f64(),
+                transform[property].as_f64()
+            );
+        }
+        use std::io::Read as _;
+        let mut bytes = Vec::new();
+        file.asset(video["source"]["assetId"].as_str().unwrap())
+            .unwrap()
+            .open()
+            .unwrap()
+            .read_to_end(&mut bytes)
+            .unwrap();
+        assert_eq!(bytes, MEDIA);
+        assert_eq!(video["playback"]["mapping"]["output"], video["sourceRange"]);
+    }
 }
 
 #[cfg(feature = "ffmpeg-library")]
@@ -507,6 +642,264 @@ fn source_rect_cannot_disagree_with_packaged_video_frame() {
         assert!(error.contains("matching sourceRect dimensions"), "{error}");
         assert!(!output.exists());
     }
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn non_origin_identity_custom_source_rect_writes_crop_and_keeps_sibling() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut doc = document(root);
+    let mut sibling = doc["composition"]["layers"][0].clone();
+    sibling["id"] = json!(3);
+    sibling["name"] = json!("Independent sibling");
+    doc["composition"]["layers"]
+        .as_array_mut()
+        .unwrap()
+        .push(sibling);
+    let source = &mut doc["composition"]["layers"][0]["source"];
+    source["sourceRect"] = json!({"x": 160, "y": 90, "width": 1600, "height": 900});
+    source["fit"] = json!({"custom": {"contentCenter": [960, 540], "scale": [1, 1]}});
+
+    let archive = archive(root, &doc, &root.join("source.mp4"));
+    let checked = tesseract_to_premiere(&archive, root.join("checked"), true).unwrap();
+    let output = root.join("native");
+    let written = tesseract_to_premiere(&archive, &output, false).unwrap();
+    assert_eq!(checked, written);
+    assert!(
+        !written.iter().any(|item| {
+            item.record.contains("layer 1")
+                && (item.reason.contains("non-origin sourceRect")
+                    || item.reason.contains("MediaFit"))
+        }),
+        "identity-Custom viewport must be represented exactly: {written:?}"
+    );
+    let native = output.join("project.prproj");
+    let xml = read_xml(&native);
+    // The retained offset clip, its sibling, and the existing black canvas.
+    assert_eq!(xml.matches("<VideoClipTrackItem ObjectID=").count(), 3);
+    assert_eq!(
+        xml.matches("<MatchName>AE.ADBE AECrop</MatchName>").count(),
+        1
+    );
+    assert_eq!(fs::read(output.join("media/source.mp4")).unwrap(), MEDIA);
+
+    premiere_to_tesseract(&native, root.join("reimported"), None, false).unwrap();
+    let reimported = TesseractFile::open(first_project(&root.join("reimported")))
+        .unwrap()
+        .project_json()
+        .unwrap();
+    let layers = reimported["composition"]["layers"].as_array().unwrap();
+    let video = layers
+        .iter()
+        .find(|layer| {
+            layer["masks"]
+                .as_array()
+                .is_some_and(|masks| !masks.is_empty())
+        })
+        .unwrap();
+    let guide_id = &video["masks"][0]["layer"];
+    let guide = layers
+        .iter()
+        .find(|layer| layer["id"] == *guide_id)
+        .unwrap();
+    let position = guide["rect"]["position"].as_array().unwrap();
+    let size = guide["rect"]["size"].as_array().unwrap();
+    for (actual, expected) in position
+        .iter()
+        .chain(size)
+        .zip([160.0, 90.0, 1600.0, 900.0])
+    {
+        assert!(
+            (actual.as_f64().unwrap() - expected).abs() < 1e-8,
+            "{guide}"
+        );
+    }
+}
+
+#[cfg(feature = "ffmpeg-library")]
+fn non_origin_identity_custom_masked_document(root: &Path) -> serde_json::Value {
+    let mut doc = document(root);
+    let mut sibling = doc["composition"]["layers"][0].clone();
+    sibling["id"] = json!(3);
+    sibling["name"] = json!("Independent sibling");
+    doc["composition"]["layers"]
+        .as_array_mut()
+        .unwrap()
+        .push(sibling);
+    let video = &mut doc["composition"]["layers"][0];
+    video["source"]["sourceRect"] = json!({"x": 160, "y": 90, "width": 1600, "height": 900});
+    video["source"]["fit"] = json!({"custom": {"contentCenter": [960, 540], "scale": [1, 1]}});
+    video["masks"] = json!([{
+        "id": 20033,
+        "mode": "add",
+        "inverted": false,
+        "opacity": 100.0,
+        "feather": [4.0, 4.0],
+        "expansion": 0.0,
+        "path": {"commands": [
+            {"type": "moveTo", "x": 200.0, "y": 90.0},
+            {"type": "lineTo", "x": 1720.0, "y": 90.0},
+            {"type": "cubicTo", "c1x": 1742.0, "c1y": 90.0, "c2x": 1760.0, "c2y": 108.0, "x": 1760.0, "y": 130.0},
+            {"type": "lineTo", "x": 1760.0, "y": 950.0},
+            {"type": "cubicTo", "c1x": 1760.0, "c1y": 972.0, "c2x": 1742.0, "c2y": 990.0, "x": 1720.0, "y": 990.0},
+            {"type": "lineTo", "x": 200.0, "y": 990.0},
+            {"type": "cubicTo", "c1x": 178.0, "c1y": 990.0, "c2x": 160.0, "c2y": 972.0, "x": 160.0, "y": 950.0},
+            {"type": "lineTo", "x": 160.0, "y": 130.0},
+            {"type": "cubicTo", "c1x": 160.0, "c1y": 108.0, "c2x": 178.0, "c2y": 90.0, "x": 200.0, "y": 90.0},
+            {"type": "close"}
+        ]}
+    }]);
+    doc
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn non_origin_identity_custom_source_rect_and_inline_mask_write_both_controls() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let doc = non_origin_identity_custom_masked_document(root);
+    let archive = archive(root, &doc, &root.join("source.mp4"));
+    let output = root.join("native");
+    let written = tesseract_to_premiere(&archive, &output, false).unwrap();
+    assert!(
+        written
+            .iter()
+            .any(|item| item.reason.contains("Mask Feather converts one to one")),
+        "the retained inline mask must report the established feather approximation: {written:?}"
+    );
+    assert!(!written.iter().any(|item| {
+        item.record.contains("layer 1")
+            && (item.reason.contains("non-origin sourceRect")
+                || item.reason.contains("PictureMedia"))
+    }));
+    let xml = read_xml(&output.join("project.prproj"));
+    let parsed = roxmltree::Document::parse(&xml).unwrap();
+    let component_refs = |match_name: &str| {
+        let component = parsed
+            .descendants()
+            .find(|node| {
+                node.has_tag_name("VideoFilterComponent")
+                    && node.descendants().any(|child| {
+                        child.has_tag_name("MatchName") && child.text() == Some(match_name)
+                    })
+            })
+            .unwrap();
+        component
+            .descendants()
+            .filter(|node| node.has_tag_name("Param"))
+            .filter_map(|node| node.attribute("ObjectRef").map(str::to_owned))
+            .collect::<Vec<_>>()
+    };
+    let start_value = |references: &[String], name: &str| {
+        let parameter = parsed
+            .descendants()
+            .find(|node| {
+                node.attribute("ObjectID")
+                    .is_some_and(|id| references.iter().any(|reference| reference == id))
+                    && node
+                        .children()
+                        .any(|child| child.has_tag_name("Name") && child.text() == Some(name))
+            })
+            .unwrap();
+        parameter
+            .children()
+            .find(|child| child.has_tag_name("StartKeyframe"))
+            .unwrap()
+            .text()
+            .unwrap()
+            .split(',')
+            .nth(1)
+            .unwrap()
+            .parse::<f64>()
+            .unwrap()
+    };
+    let crop = component_refs("AE.ADBE AECrop");
+    for name in ["Left", "Top", "Right", "Bottom"] {
+        assert!((start_value(&crop, name) - 100.0 / 12.0).abs() < 1e-10);
+    }
+    let mask = component_refs("AE.ADBE AEMask");
+    assert_eq!(start_value(&mask, "Mask Feather"), 4.0);
+    assert_eq!(start_value(&mask, "Mask Opacity"), 100.0);
+    assert_eq!(start_value(&mask, "Mask Expansion"), 0.0);
+    let path = parsed
+        .descendants()
+        .find(|node| {
+            node.has_tag_name("ArbVideoComponentParam")
+                && node
+                    .attribute("ObjectID")
+                    .is_some_and(|id| mask.iter().any(|reference| reference == id))
+                && node
+                    .children()
+                    .any(|child| child.has_tag_name("ParameterID") && child.text() == Some("6"))
+        })
+        .unwrap();
+    assert!(path
+        .children()
+        .find(|child| child.has_tag_name("StartKeyframeValue"))
+        .and_then(|node| node.text())
+        .is_some_and(|value| !value.is_empty()));
+    assert_eq!(xml.matches("<VideoClipTrackItem ObjectID=").count(), 3);
+    assert_eq!(fs::read(output.join("media/source.mp4")).unwrap(), MEDIA);
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn non_origin_identity_custom_masked_video_omits_owner_effect_without_losing_crop_mask_or_sibling()
+{
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut doc = non_origin_identity_custom_masked_document(root);
+    doc["composition"]["layers"][0]["effects"] = json!([{
+        "id": 3,
+        "enabled": true,
+        "effect": {
+            "type": "dropShadow",
+            "blendMode": "normal",
+            "color": [0.0, 0.0, 0.0, 0.42],
+            "offset": [0.0, 10.0],
+            "blurRadius": 24.0,
+            "spreadRadius": 0.0,
+            "enabled": true
+        }
+    }]);
+
+    let archive = archive(root, &doc, &root.join("source.mp4"));
+    let output = root.join("native");
+    let omissions = tesseract_to_premiere(&archive, &output, false).unwrap();
+    assert!(
+        omissions.iter().any(|item| {
+            item.record.contains("layer 1")
+                && item
+                    .reason
+                    .contains("effects: dropShadow effect 3 was not exported")
+                && item
+                    .reason
+                    .contains("retaining the mask on a flat clip requires omitting the effect")
+        }),
+        "{omissions:?}"
+    );
+    assert!(
+        !omissions.iter().any(|item| {
+            item.record.contains("layer 1")
+                && (item.reason.contains("masks cannot be exported")
+                    || item.reason.contains("PictureMedia"))
+        }),
+        "{omissions:?}"
+    );
+
+    let xml = read_xml(&output.join("project.prproj"));
+    assert_eq!(
+        xml.matches("<MatchName>AE.ADBE AECrop</MatchName>").count(),
+        1
+    );
+    assert_eq!(
+        xml.matches("<MatchName>AE.ADBE AEMask</MatchName>").count(),
+        1
+    );
+    assert!(!xml.contains("dropShadow") && !xml.contains("Drop Shadow"));
+    assert_eq!(xml.matches("<VideoClipTrackItem ObjectID=").count(), 3);
+    assert_eq!(fs::read(output.join("media/source.mp4")).unwrap(), MEDIA);
 }
 
 #[cfg(feature = "ffmpeg-library")]
@@ -563,6 +956,22 @@ fn tesseract_to_premiere_rejects_inexact_media_duration_and_endpoints_before_out
         );
         let source = archive(root, &doc, &root.join("source.mp4"));
         let output = root.join(label);
+        if label == "inflated" {
+            let checked = tesseract_to_premiere(&source, &output, true).unwrap();
+            assert!(!output.exists());
+            let written = tesseract_to_premiere(&source, &output, false).unwrap();
+            assert_eq!(checked, written);
+            assert!(
+                written
+                    .iter()
+                    .any(|loss| loss.reason.contains("stale sourceIntrinsicDuration 1100")),
+                "{written:?}"
+            );
+            let xml = read_xml(&output.join("project.prproj"));
+            assert!(xml.contains("<Duration>254016000000</Duration>"));
+            assert!(xml.contains("<OutPoint>254016000000</OutPoint>"));
+            continue;
+        }
         let error = tesseract_to_premiere(source, &output, false).unwrap_err();
         assert!(error.to_string().contains(expected), "{label}: {error}");
         assert!(!output.exists());
@@ -725,6 +1134,65 @@ fn media_metadata_and_edit_lists_are_checked_in_both_directions() {
     container_aspect[aspect + 4..aspect + 8].copy_from_slice(&2_u32.to_be_bytes());
     let mut invalid_aspect = MEDIA.to_vec();
     invalid_aspect[aspect + 4..aspect + 8].copy_from_slice(&0_u32.to_be_bytes());
+
+    // Import has only the shortened file and its native declaration, so it
+    // still rejects the contradictory edit list. Export also has the editable
+    // document's coherent one-second source extent and selection. It retains
+    // those known facts, preserves the original bytes, and diagnoses that the
+    // unchanged edit list may present only part of them.
+    fs::write(root.join("media/source.mp4"), &shortened).unwrap();
+    let shortened_archive = root.join("shortened.tsrct");
+    TesseractFileBuilder::from_project_json(&serde_json::to_vec(&document).unwrap())
+        .unwrap()
+        .add_asset(
+            "premiere-video-1",
+            root.join("media/source.mp4"),
+            AssetKind::Video,
+        )
+        .unwrap()
+        .write(&shortened_archive)
+        .unwrap();
+    for check in [true, false] {
+        let output = root.join(format!("shortened-premiere-to-tesseract-{check}"));
+        let error = premiere_to_tesseract(&native, &output, None, check)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("edit list"), "{error}");
+        assert!(!output.exists());
+    }
+    for check in [true, false] {
+        let output = root.join(format!("shortened-tesseract-to-premiere-{check}"));
+        let omissions = tesseract_to_premiere(&shortened_archive, &output, check).unwrap();
+        assert!(omissions.iter().any(|item| item.reason.contains(
+            "presentation edits retained unchanged; physical packets establish the native source rate"
+        )), "{omissions:?}");
+        if check {
+            assert!(!output.exists());
+        } else {
+            let xml = read_xml(&output.join("project.prproj"));
+            let parsed = roxmltree::Document::parse(&xml).unwrap();
+            let values = parsed
+                .descendants()
+                .filter(|node| {
+                    node.has_tag_name("InPoint")
+                        || node.has_tag_name("OutPoint")
+                        || node.has_tag_name("OriginalDuration")
+                })
+                .filter_map(|node| Some((node.tag_name().name(), node.text()?)))
+                .collect::<Vec<_>>();
+            assert!(values.contains(&("InPoint", "0")), "{values:?}");
+            assert!(values.contains(&("OutPoint", "254016000000")), "{values:?}");
+            assert!(
+                values.contains(&("OriginalDuration", "254016000000")),
+                "{values:?}"
+            );
+            assert_eq!(
+                fs::read(output.join("media/source.mp4")).unwrap(),
+                shortened
+            );
+        }
+    }
+
     for (name, bytes, message) in [
         (
             "zero-pixel-aspect",
@@ -745,9 +1213,8 @@ fn media_metadata_and_edit_lists_are_checked_in_both_directions() {
             display_size.as_slice(),
             "display dimensions",
         ),
-        ("shortened", shortened.as_slice(), "edit list"),
-        ("shifted", shifted.as_slice(), "edit list"),
-        ("speed", speed.as_slice(), "edit list"),
+        ("shifted", shifted.as_slice(), "edit"),
+        ("speed", speed.as_slice(), "edit"),
         (
             "container-aspect",
             container_aspect.as_slice(),
@@ -889,6 +1356,9 @@ fn unused_mp4_title_payload_keeps_editable_video_and_exact_bytes() {
             assert!(omissions.is_empty(), "{omissions:?}");
             let exported = root.join(format!("export-{check}"));
             tesseract_to_premiere(&edited, &exported, check).unwrap();
+            if !check {
+                assert_eq!(fs::read(exported.join("media/source.mp4")).unwrap(), bytes);
+            }
             if check {
                 assert!(!imported.exists());
                 assert!(!exported.exists());
@@ -905,6 +1375,14 @@ fn unused_mp4_title_payload_keeps_editable_video_and_exact_bytes() {
                 assert_eq!(
                     videos[0]["sourceRange"],
                     json!({"start": 0, "duration": 1000})
+                );
+                assert_eq!(
+                    crate::test_support::layer_range(videos[0]),
+                    &json!({"start": 0, "duration": 1000})
+                );
+                assert_eq!(
+                    videos[0]["playback"]["mapping"]["output"],
+                    videos[0]["sourceRange"]
                 );
                 let id = videos[0]["source"]["assetId"].as_str().unwrap();
                 assert_eq!(
@@ -940,12 +1418,19 @@ fn repeated_media_still_validates_each_occurrences_source_duration() {
     doc["composition"]["layers"] = json!([first, second, canvas]);
     let path = archive(root, &doc, &root.join("source.mp4"));
     let output = root.join("out");
-    let error = tesseract_to_premiere(&path, &output, true).unwrap_err();
+    let checked = tesseract_to_premiere(&path, &output, true).unwrap();
     assert!(
-        error.to_string().contains("sourceIntrinsicDuration"),
-        "{error}"
+        checked.iter().any(|loss| loss.record.contains("layer 3")
+            && loss.reason.contains("stale sourceIntrinsicDuration 1100")),
+        "{checked:?}"
     );
     assert!(!output.exists());
+    let written = tesseract_to_premiere(&path, &output, false).unwrap();
+    assert_eq!(checked, written);
+    let xml = read_xml(&output.join("project.prproj"));
+    assert_eq!(xml.matches("<VideoClipTrackItem ObjectID=").count(), 2);
+    assert!(xml.contains("<Duration>254016000000</Duration>"));
+    assert_eq!(fs::read(output.join("media/source.mp4")).unwrap(), MEDIA);
 }
 
 #[cfg(feature = "ffmpeg-library")]
@@ -1074,6 +1559,18 @@ fn container_color_profiles_are_validated_in_both_directions() {
                 assert_eq!(warnings[0].kind, premiere_file::OmissionKind::Approximated);
                 assert!(warnings[0]
                     .reason
+                    .contains("unmapped video colour metadata 5/6/6"));
+                let checked = root.join("checked-unmapped");
+                let losses = premiere_to_tesseract(&native, &checked, None, true).unwrap();
+                assert!(!checked.exists());
+                assert!(
+                    losses
+                        .iter()
+                        .any(|loss| loss.reason.contains("unmapped video colour metadata 5/6/6")),
+                    "{losses:?}"
+                );
+                assert!(warnings[0]
+                    .reason
                     .contains("original bytes retained without a colour transform"));
             } else if payload == b"nclx\x00\x09\x00\x10\x00\x09\x00" {
                 assert_eq!(omissions.len(), 1, "{omissions:?}");
@@ -1091,6 +1588,10 @@ fn container_color_profiles_are_validated_in_both_directions() {
             assert_eq!(
                 videos[0]["sourceRange"],
                 json!({"start": 0, "duration": 1000})
+            );
+            assert_eq!(
+                crate::test_support::layer_range(videos[0]),
+                &json!({"start": 0, "duration": 1000})
             );
             let id = videos[0]["source"]["assetId"].as_str().unwrap();
             assert_eq!(

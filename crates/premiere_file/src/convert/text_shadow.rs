@@ -33,8 +33,13 @@
 //!   alpha is 1 − (1 − opacity)^(1/2.4): opacities 50, 80 and 100 fit
 //!   encoded alphas 0.246, 0.492 and 1.0, within 0.005 of that curve.
 //!
-//! Only black shadows of one text, 150 px Arial Bold, were rendered, so
-//! whether blur and size scale with the text size is unverified. The
+//! Calibration originally used black shadows on 150 px Arial Bold. Existing
+//! Premiere 26.5.2 renders at 50 and 300 px, with angle 45°, distance 24, Size 2
+//! and Blur 8, have similar frame-pixel horizontal offset and edge-transition
+//! width. This supports those observables for that fixed case, not universal
+//! font-size invariance. Physical blur sigma and dilation remain unisolated;
+//! spread-size, other controls/fonts and transformed text are unverified.
+//! Opaque RGB measurements do not establish color/alpha or shader fidelity. The
 //! linear-light blend of another color depends on the paint under it, which
 //! one alpha cannot express, so its error is not bounded (INFERRED). The
 //! effect carries what these values mean. The FX renderer draws a text
@@ -149,6 +154,8 @@ fn import_shadow(
     }
     Ok(Some(EffectRecord::from_data(&EffectData::Identified {
         id: effect_ids.take(),
+        compositing_options: None,
+        extensions: Default::default(),
         enabled: true,
         effect: EffectPayload::Known(LayerEffect::DropShadow(effect)),
     })?))
@@ -481,6 +488,7 @@ fn record_parts(effect: &EffectRecord) -> (Option<EffectId>, bool, &EffectPayloa
             id,
             enabled,
             effect,
+            ..
         } => (Some(*id), *enabled, effect),
         EffectData::Legacy(effect) => (None, true, effect),
     }

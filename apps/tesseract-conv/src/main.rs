@@ -35,6 +35,10 @@ struct ConversionOptions {
     /// Select a Premiere sequence by GUID when converting to Tesseract.
     #[arg(long)]
     sequence: Option<String>,
+    /// Opt in to the measured, sampled Film Impact Pop geometry approximation
+    /// on Premiere to Tesseract import (disabled by default).
+    #[arg(long)]
+    allow_film_impact_pop: bool,
     /// Select an After Effects composition by its source project item ID.
     #[arg(long)]
     composition: Option<u32>,
@@ -162,6 +166,7 @@ fn convert(
         input,
         output,
         sequence: options.sequence.as_deref(),
+        allow_film_impact_pop: options.allow_film_impact_pop,
         composition: options.composition,
         expression_samples: options.expression_samples.as_deref(),
         available_fonts: options.available_fonts.as_deref(),

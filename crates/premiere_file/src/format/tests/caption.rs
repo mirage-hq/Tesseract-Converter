@@ -154,7 +154,9 @@ fn graphics(track: &[PrVideoItem]) -> Vec<&PrGraphic> {
         .iter()
         .map(|item| match item {
             PrVideoItem::Graphic(graphic) => graphic,
-            PrVideoItem::Media(_) => panic!("caption lanes hold graphics only"),
+            PrVideoItem::Media(_) | PrVideoItem::Capsule(_) => {
+                panic!("caption lanes hold graphics only")
+            }
         })
         .collect()
 }
@@ -576,13 +578,12 @@ fn caption_styling_beyond_font_size_fill_stroke_shadow_and_background_is_omitted
 #[test]
 fn a_cue_converts_from_its_own_style_whatever_its_track_template() {
     let one = || captions_xml(&[vec![cue(200, 30..90, "Only cue")]]);
-    let track = "CaptionDataClipTrack:caption-track-0";
     let differing = |document: PrTextDocument| {
         STANDARD.encode(caption_payload(&document, PrVerticalAlign::Bottom))
     };
     // Premiere draws the cue's own payload (AME renders: a cue's own fill and
     // a cue without a background over a background template), so a template
-    // in another font, size and shadow only has to decode.
+    // in another font, size and shadow is not consumed.
     for template in [
         differing(PrTextDocument {
             font: "MinionPro-Regular".into(),
@@ -612,37 +613,24 @@ fn a_cue_converts_from_its_own_style_whatever_its_track_template() {
             caption_document("Only cue")
         );
     }
-    // A template that does not decode still omits its track: an unknown
-    // caption layout fails closed before any cue is read.
-    let cases = [
-        (
-            with_template(&one(), 0, "AA=="),
-            omitted(
-                OmissionScope::Track,
-                track,
-                "unsupported conversion: CaptionDataClipTrack:caption-track-0: CaptionDataTemplateStyle: truncated Source Text payload",
-            ),
+    // Opaque unused payload bytes are not validated just to admit the cues.
+    let (captions, reasons) = omission_reasons(&with_template(&one(), 0, "AA=="));
+    assert_eq!(captions, 1);
+    assert!(reasons.is_empty());
+    let missing = one().replace(
+        &format!(
+            r#"<CaptionDataTemplateStyle Encoding="base64" BinaryHash="caption-style-0">{}</CaptionDataTemplateStyle>"#,
+            STANDARD.encode(template())
         ),
-        (
-            one().replace(
-                &format!(
-                    r#"<CaptionDataTemplateStyle Encoding="base64" BinaryHash="caption-style-0">{}</CaptionDataTemplateStyle>"#,
-                    STANDARD.encode(template())
-                ),
-                "",
-            ),
-            omitted(
-                OmissionScope::Track,
-                track,
-                "unsupported conversion: CaptionDataClipTrack:caption-track-0: missing CaptionDataTemplateStyle",
-            ),
-        ),
-    ];
-    for (xml, expected) in cases {
-        let (captions, reasons) = omission_reasons(&xml);
-        assert_eq!(captions, 0, "{expected:?}");
-        assert_eq!(reasons, [expected]);
-    }
+        "",
+    );
+    let (captions, reasons) = omission_reasons(&missing);
+    assert_eq!(captions, 1);
+    assert_eq!(reasons, [omitted(
+        OmissionScope::Feature,
+        "CaptionDataClipTrack:caption-track-0",
+        "caption default template not used: missing CaptionDataTemplateStyle; each admitted cue uses its own FormattedTextData",
+    )]);
 }
 
 #[test]
@@ -887,7 +875,7 @@ fn hidden_caption_tracks_and_disabled_cues_import_as_hidden_text_layers() {
         .flat_map(PrSequence::video_items)
         .filter_map(|item| match item {
             PrVideoItem::Graphic(graphic) => Some((graphic.text().name.as_str(), graphic.enabled)),
-            PrVideoItem::Media(_) => None,
+            PrVideoItem::Media(_) | PrVideoItem::Capsule(_) => None,
         })
         .collect();
     exported_text.sort_unstable();
@@ -1262,16 +1250,15 @@ fn binary_hash_deduplicated_caption_payloads_resolve() {
         [vec!["Same words", "Same words"], vec!["Other track"]]
     );
 
-    // The shared graph rejects conflicting definitions for both empty cue
-    // copies and empty template copies; captions must propagate that error.
+    // A conflicting hash remains an error when consumed by a cue. An unused
+    // template hash is not resolved merely to admit independently complete cues.
     for (hash, expected_count, scope, record, reason) in [
         (
             "caption-text-200", 2, OmissionScope::Occurrence, "CaptionDataClipTrackItem:210",
             "C1 caption 2: invalid Premiere project: Block:213: BinaryHash caption-text-200 is defined with different values",
         ),
         (
-            "caption-style-0", 2, OmissionScope::Track, "CaptionDataClipTrack:caption-track-1",
-            "invalid Premiere project: CaptionDataClipTrack:caption-track-1: BinaryHash caption-style-0 is defined with different values",
+            "caption-style-0", 3, OmissionScope::Feature, "", "",
         ),
     ] {
         let conflicting = deduplicated.replace("</PremiereData>", &format!(
@@ -1279,7 +1266,11 @@ fn binary_hash_deduplicated_caption_payloads_resolve() {
         ));
         let (captions, reasons) = omission_reasons(&conflicting);
         assert_eq!(captions, expected_count);
-        assert_eq!(reasons, [omitted(scope, record, reason)]);
+        if hash == "caption-style-0" {
+            assert!(reasons.is_empty());
+        } else {
+            assert_eq!(reasons, [omitted(scope, record, reason)]);
+        }
     }
 
     let dangling = xml.replace(
@@ -1672,7 +1663,9 @@ fn native_caption_cues_survive_tesseract_and_back_as_graphics() {
             .video_items()
             .map(|item| match item {
                 PrVideoItem::Graphic(graphic) => (graphic.timeline_ticks(), graphic.text().clone()),
-                PrVideoItem::Media(_) => panic!("captions export as graphics only"),
+                PrVideoItem::Media(_) | PrVideoItem::Capsule(_) => {
+                    panic!("captions export as graphics only")
+                }
             })
             .collect();
         texts.sort_by_key(|(ticks, _)| ticks.start);
@@ -1744,4 +1737,134 @@ fn fractional_sequence_clock_retains_caption_text_and_timing() {
         *crate::test_support::layer_range(cue),
         serde_json::json!({"start":1000,"duration":2000})
     );
+}
+
+#[test]
+fn caption_unused_template_metadata_keeps_native_cues_exact() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/feature_caption_styles_26_5_strict.prproj");
+    let xml = crate::format::reader::read_xml(&path).unwrap();
+    let target = Some("c8acf9c1-34b2-4086-9f55-d528950a7059");
+    let (baseline, notes) = inspect_project_with_omissions(&xml, target).unwrap();
+    assert!(notes.is_empty());
+    let baseline = baseline.single_sequence().unwrap();
+    let native = roxmltree::Document::parse(&xml).unwrap();
+    let track = native
+        .descendants()
+        .find(|node| node.has_tag_name("CaptionDataClipTrack"))
+        .unwrap();
+    let template = track
+        .children()
+        .find(|node| node.has_tag_name("CaptionDataTemplateStyle"))
+        .unwrap();
+    let stored = &xml[template.range()];
+    let identity = format!(
+        "CaptionDataClipTrack:{}",
+        track.attribute("ObjectUID").unwrap()
+    );
+    // No template bytes are needed by any of the seven independently complete cues.
+    for (replacement, reason) in [
+        (String::new(), Some("missing CaptionDataTemplateStyle")),
+        (
+            stored.replace("Encoding=\"base64\"", "Encoding=\"hex\""),
+            Some("unsupported CaptionDataTemplateStyle encoding"),
+        ),
+        (
+            stored.replace(" Encoding=\"base64\"", ""),
+            Some("missing CaptionDataTemplateStyle encoding"),
+        ),
+        (
+            "<CaptionDataTemplateStyle Encoding=\"base64\">AA==</CaptionDataTemplateStyle>"
+                .to_owned(),
+            None,
+        ),
+    ] {
+        let changed = xml.replacen(stored, &replacement, 1);
+        let (project, notes) = inspect_project_with_omissions(&changed, target).unwrap();
+        let sequence = project.single_sequence().unwrap();
+        assert_eq!(caption_lanes(sequence, 2), caption_lanes(baseline, 2));
+        assert_eq!(
+            caption_visibility(sequence, 2),
+            caption_visibility(baseline, 2)
+        );
+        assert_eq!(sequence.end_ticks(), baseline.end_ticks());
+        assert_eq!(
+            sequence
+                .video_occurrences()
+                .map(|clip| (clip.timeline_ticks(), clip.source_ticks()))
+                .collect::<Vec<_>>(),
+            baseline
+                .video_occurrences()
+                .map(|clip| (clip.timeline_ticks(), clip.source_ticks()))
+                .collect::<Vec<_>>()
+        );
+        for (actual, expected) in sequence
+            .video_tracks()
+            .skip(2)
+            .flat_map(graphics)
+            .zip(baseline.video_tracks().skip(2).flat_map(graphics))
+        {
+            assert_eq!(actual.text().document, expected.text().document);
+            assert_eq!(actual.text().transform, expected.text().transform);
+            assert_eq!(actual.in_ticks, expected.in_ticks);
+        }
+        if let Some(reason) = reason {
+            assert_eq!(notes, [Omission {
+                scope: OmissionScope::Feature,
+                kind: OmissionKind::Omitted,
+                record: identity.clone(),
+                reason: format!("caption default template not used: {reason}; each admitted cue uses its own FormattedTextData"),
+            }]);
+        } else {
+            assert!(notes.is_empty(), "{notes:?}");
+        }
+    }
+}
+
+#[test]
+fn caption_rejected_cue_does_not_commit_retained_style_notes() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/feature_caption_styles_26_5_strict.prproj");
+    let xml = crate::format::reader::read_xml(&path).unwrap();
+    let native = roxmltree::Document::parse(&xml).unwrap();
+    let stored = native
+        .descendants()
+        .find(|node| node.has_tag_name("FormattedTextData"))
+        .unwrap()
+        .text()
+        .unwrap();
+    let mut payload = STANDARD
+        .decode(stored.split_whitespace().collect::<String>())
+        .unwrap();
+    // C1 PLAIN's native run style[24] marker: keep all wording/style bytes,
+    // changing only its optional metadata value.
+    assert_eq!(&payload[296..300], &2_u32.to_le_bytes());
+    payload[296..300].copy_from_slice(&9_u32.to_le_bytes());
+    let valid = captions_xml(&[vec![Cue {
+        id: 200,
+        frames: 30..90,
+        payload: payload.clone(),
+    }]]);
+    let (project, notes) = inspect_project_with_omissions(&valid, None).unwrap();
+    assert_eq!(
+        caption_lanes(project.single_sequence().unwrap(), 1)[0][0].3,
+        "C1 PLAIN"
+    );
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].kind, OmissionKind::Approximated);
+    assert!(notes[0].reason.contains("run style[24]"));
+    // The synthetic source still binds at unit speed, but final graphic
+    // validation rejects the negative timeline start after decoding the style.
+    let rejected = captions_xml(&[vec![Cue {
+        id: 200,
+        frames: -30..30,
+        payload,
+    }]]);
+    let (project, notes) = inspect_project_with_omissions(&rejected, None).unwrap();
+    assert_eq!(project.single_sequence().unwrap().video_items().count(), 1);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert_eq!(notes[0].scope, OmissionScope::Occurrence);
+    assert_eq!(notes[0].kind, OmissionKind::Omitted);
+    assert_eq!(notes[0].record, "CaptionDataClipTrackItem:200");
+    assert!(!notes[0].reason.contains("preserved"));
 }

@@ -11,13 +11,503 @@ use super::{
 use crate::{
     format::{inspect_project_with_omissions, writer::project_xml, Graph},
     schema::{
-        check_track_matte, native::VideoComponentParam, MediaId, PrKeyframeEasing, PrMatteChannel,
-        PrNestOccurrence, PrPropertyAnimation, PrScalarKeyframe, PrStaticTransform, PrTrackMatte,
-        PrVideoOccurrence, PrVideoTrack, TICKS,
+        check_track_matte, native::VideoComponentParam, MediaId, PrColorMatte, PrKeyframeEasing,
+        PrMatteChannel, PrMediaKind, PrNestOccurrence, PrPropertyAnimation, PrScalarKeyframe,
+        PrStaticTransform, PrTrackMatte, PrVideoOccurrence, PrVideoTrack, TICKS,
     },
     tests::support::{clip_of, nest_of, sequence_of, video_media},
     OmissionScope,
 };
+
+#[derive(Clone, Copy)]
+enum NativeMatteCoverage {
+    Full,
+    ProviderExtends,
+    EarlyEnd,
+    LateStart,
+    Missing,
+}
+
+#[derive(Clone, Copy)]
+enum NativeMatteConsumer {
+    Video,
+    Group,
+    Rect,
+}
+
+fn append_opacity_to_chain(chain: &str, chain_id: u32, component_id: u32, keys: &str) -> String {
+    let opacity = super::nested::opacity_chain(chain_id, component_id, 100.0, keys);
+    let (_, records) = opacity.split_once("</VideoComponentChain>").unwrap();
+    let chain = chain
+        .replace("<DefaultOpacity>true</DefaultOpacity>", "")
+        .replace(
+            "</Components>",
+            &format!("<Component Index=\"1\" ObjectRef=\"{component_id}\"/></Components>"),
+        );
+    format!("{chain}{records}")
+}
+
+/// Reduced native-derived controls, not new Adobe oracles. Keep the authored
+/// Alpha pair129/138, source media and key record forms; alter only placement
+/// windows and add independent source-clock Opacity keys.
+fn native_matte_interval_control(coverage: NativeMatteCoverage) -> String {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/feature_track_matte_key_26_5_strict.prproj");
+    let mut xml = crate::format::read_xml(&path).unwrap();
+    let parsed = roxmltree::Document::parse(&xml).unwrap();
+    let mut removed: Vec<_> = parsed
+        .descendants()
+        .filter(|node| {
+            node.has_tag_name("TrackItem")
+                && node.attribute("ObjectRef").is_some()
+                && node
+                    .ancestors()
+                    .any(|parent| parent.has_tag_name("VideoClipTrack"))
+                && !matches!(node.attribute("ObjectRef"), Some("129" | "138"))
+        })
+        .map(|node| node.range())
+        .collect();
+    removed.sort_by_key(|range| std::cmp::Reverse(range.start));
+    for range in removed {
+        xml.replace_range(range, "");
+    }
+    let still_in = 914_449_132_800_000_i64;
+    for id in ["129", "221", "138", "240", "164", "182"] {
+        let parsed = roxmltree::Document::parse(&xml).unwrap();
+        let node = parsed
+            .root_element()
+            .children()
+            .find(|node| node.attribute("ObjectID") == Some(id))
+            .unwrap();
+        let before = &xml[node.range()];
+        let after = match (id, coverage) {
+            ("129", NativeMatteCoverage::ProviderExtends) => before.replace(
+                "<End>508032000000</End>",
+                &format!("<Start>{TICKS}</Start><End>{}</End>", 2 * TICKS),
+            ),
+            ("221", NativeMatteCoverage::ProviderExtends) => before.replace(
+                "<OutPoint>508032000000</OutPoint>",
+                &format!("<OutPoint>{TICKS}</OutPoint>"),
+            ),
+            ("138", NativeMatteCoverage::EarlyEnd) => before.replace(
+                "<End>508032000000</End>",
+                &format!("<End>{}</End>", 3 * TICKS / 2),
+            ),
+            ("240", NativeMatteCoverage::EarlyEnd) => before.replace(
+                "<OutPoint>914957164800000</OutPoint>",
+                &format!("<OutPoint>{}</OutPoint>", still_in + 3 * TICKS / 2),
+            ),
+            ("138", NativeMatteCoverage::LateStart) => before.replace(
+                "<End>508032000000</End>",
+                &format!("<Start>{}</Start><End>{}</End>", TICKS / 2, 2 * TICKS),
+            ),
+            ("240", NativeMatteCoverage::LateStart) => before.replace(
+                "<OutPoint>914957164800000</OutPoint>",
+                &format!("<OutPoint>{}</OutPoint>", still_in + 3 * TICKS / 2),
+            ),
+            ("138", NativeMatteCoverage::Missing) => before.replace(
+                "<End>508032000000</End>",
+                &format!("<Start>{}</Start><End>{}</End>", 2 * TICKS, 3 * TICKS),
+            ),
+            ("164", NativeMatteCoverage::LateStart | NativeMatteCoverage::Missing) => {
+                append_opacity_to_chain(
+                    before,
+                    164,
+                    10_100,
+                    &format!("<Keyframes>0,100.,0,0,0,0,0,0;{TICKS},50.,0,0,0,0,0,0;</Keyframes>"),
+                )
+            }
+            ("182", _) => super::nested::opacity_chain(
+                182,
+                10_000,
+                100.0,
+                &format!(
+                    "<Keyframes>{still_in},100.,0,0,0,0,0,0;{},50.,0,0,0,0,0,0;</Keyframes>",
+                    still_in + TICKS / 2
+                ),
+            ),
+            _ => before.to_owned(),
+        };
+        xml.replace_range(node.range(), &after);
+    }
+    xml
+}
+
+fn with_nested_matte_consumer(mut xml: String) -> String {
+    let parsed = roxmltree::Document::parse(&xml).unwrap();
+    let clip = parsed
+        .root_element()
+        .children()
+        .find(|node| node.attribute("ObjectID") == Some("221"))
+        .unwrap();
+    let range = clip.range();
+    let before = &xml[range.clone()];
+    let after = before.replace("<Source ObjectRef=\"80\"/>", "<Source ObjectRef=\"9002\"/>");
+    assert_ne!(before, after);
+    xml.replace_range(range, &after);
+    let range = {
+        let parsed = roxmltree::Document::parse(&xml).unwrap();
+        parsed
+            .root_element()
+            .children()
+            .find(|node| node.attribute("ObjectID") == Some("165"))
+            .unwrap()
+            .range()
+    };
+    let before = &xml[range.clone()];
+    let after = before.replace(
+        "<MasterClip ObjectURef=\"f0c217c5-dfb2-475c-a45e-e377882616b0\"/>",
+        "",
+    );
+    assert_ne!(before, after);
+    xml.replace_range(range, &after);
+
+    let placement = Placement {
+        start: 0,
+        end: 2 * TICKS,
+        source_in: 0,
+    };
+    let records = sequence_records("matte-consumer-nest", "Matte consumer nest", 9000, &[9010])
+        + &sequence_source(9002, "matte-consumer-nest")
+        + &placement_records(9010, 80, &placement);
+    with_records(&xml, &records)
+}
+
+fn native_matte_interval_wire(
+    coverage: NativeMatteCoverage,
+    consumer: NativeMatteConsumer,
+) -> (serde_json::Value, Vec<crate::Omission>) {
+    let mut xml = native_matte_interval_control(coverage);
+    if matches!(consumer, NativeMatteConsumer::Group) {
+        xml = with_nested_matte_consumer(xml);
+    }
+    let (mut project, mut omissions) =
+        inspect_project_with_omissions(&xml, Some("3776e3eb-791f-4e6a-a2bb-7e77eff235ef")).unwrap();
+    if matches!(consumer, NativeMatteConsumer::Rect) {
+        let media = project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .find(|clip| clip.track_matte.is_some())
+            .unwrap()
+            .media
+            .clone();
+        project
+            .media
+            .get_mut(&media)
+            .unwrap()
+            .video
+            .as_mut()
+            .unwrap()
+            .kind = PrMediaKind::ColorMatte(PrColorMatte { rgb: [12, 34, 56] });
+    }
+    let sequence = project.single_sequence().unwrap();
+    if !matches!(
+        coverage,
+        NativeMatteCoverage::Missing | NativeMatteCoverage::ProviderExtends
+    ) {
+        assert!(
+            sequence
+                .video_occurrences()
+                .any(|clip| clip.track_matte.is_some())
+                || sequence
+                    .nest_occurrences()
+                    .any(|nest| nest.track_matte.is_some()),
+            "{omissions:?}"
+        );
+    }
+    let ids = crate::tesseract_output::asset_ids_in_order(sequence, &project.media);
+    let document =
+        crate::convert::premiere_to_tesseract(sequence, &project.media, &ids, &mut omissions)
+            .unwrap()
+            .to_json_value()
+            .unwrap();
+    fx_schema::EditableFxCompositionDocument::from_json_value(document.clone()).unwrap();
+    (document, omissions)
+}
+
+#[test]
+fn track_matte_provider_interval_full_coverage_keeps_native_source_clock() {
+    let (document, _) =
+        native_matte_interval_wire(NativeMatteCoverage::Full, NativeMatteConsumer::Video);
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    let consumer = layers
+        .iter()
+        .find(|layer| layer["trackMatte"].is_object())
+        .unwrap();
+    let provider = layers
+        .iter()
+        .find(|layer| layer["id"] == consumer["trackMatte"]["layer"])
+        .unwrap();
+    assert_eq!(consumer["type"], "Video");
+    assert_eq!(
+        consumer["playback"]["inputRange"],
+        serde_json::json!({"start":0,"duration":2000})
+    );
+    assert_eq!(
+        consumer["sourceRange"],
+        serde_json::json!({"start":0,"duration":2000})
+    );
+    assert_eq!(provider["type"], "Image");
+    assert_eq!(
+        provider["activeRange"],
+        serde_json::json!({"start":0,"duration":2000})
+    );
+    let keys = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| {
+            entry["target"]["layerId"] == provider["id"]
+                && entry["target"]["propertyType"] == "opacity"
+        })
+        .unwrap();
+    assert_eq!(keys["animator"]["keyframes"][0]["layerTime"], 0);
+    assert_eq!(keys["animator"]["keyframes"][1]["layerTime"], 500);
+    assert_eq!(keys["animator"]["keyframes"][1]["value"]["value"], 50.0);
+}
+
+#[test]
+fn track_matte_provider_outside_consumer_is_rejected_instead_of_silently_consumed() {
+    let (document, omissions) = native_matte_interval_wire(
+        NativeMatteCoverage::ProviderExtends,
+        NativeMatteConsumer::Video,
+    );
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    assert!(
+        layers.iter().all(|layer| !layer["trackMatte"].is_object()),
+        "{document:#}"
+    );
+    assert!(
+        !layers.iter().any(|layer| layer["type"] == "Image"),
+        "{document:#}"
+    );
+    assert!(
+        omissions.iter().any(|omission| omission
+            .reason
+            .contains("independently painting interval cannot be consumed")),
+        "{omissions:?}"
+    );
+    assert!(
+        omissions
+            .iter()
+            .any(|omission| omission.reason.contains("matte source of the omitted clip")),
+        "{omissions:?}"
+    );
+}
+
+#[test]
+fn track_matte_provider_interval_partial_coverage_keeps_covered_editable_video() {
+    let (document, omissions) =
+        native_matte_interval_wire(NativeMatteCoverage::EarlyEnd, NativeMatteConsumer::Video);
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    let consumer = layers
+        .iter()
+        .find(|layer| layer["trackMatte"].is_object())
+        .unwrap();
+    let provider = layers
+        .iter()
+        .find(|layer| layer["id"] == consumer["trackMatte"]["layer"])
+        .unwrap();
+    assert_eq!(consumer["type"], "Video");
+    assert_eq!(
+        consumer["playback"]["inputRange"],
+        serde_json::json!({"start":0,"duration":1500})
+    );
+    assert_eq!(
+        consumer["playback"]["mapping"]["input"],
+        serde_json::json!({"start":0,"duration":2000})
+    );
+    assert_eq!(
+        consumer["playback"]["mapping"]["output"],
+        serde_json::json!({"start":0,"duration":2000})
+    );
+    assert_eq!(
+        provider["activeRange"],
+        serde_json::json!({"start":0,"duration":1500})
+    );
+    let keys = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| {
+            entry["target"]["layerId"] == provider["id"]
+                && entry["target"]["propertyType"] == "opacity"
+        })
+        .unwrap();
+    assert_eq!(keys["animator"]["keyframes"][0]["layerTime"], 0);
+    assert_eq!(keys["animator"]["keyframes"][1]["layerTime"], 500);
+    assert_eq!(keys["animator"]["keyframes"][1]["value"]["value"], 50.0);
+    assert!(
+        omissions
+            .iter()
+            .any(|omission| omission.reason.contains("uncovered interval")
+                && omission.reason.contains("omitted")),
+        "{omissions:?}"
+    );
+    fx_schema::EditableFxCompositionDocument::from_json_value(document).unwrap();
+}
+
+#[test]
+fn track_matte_provider_late_start_preserves_video_source_and_animation_clocks() {
+    let (document, omissions) =
+        native_matte_interval_wire(NativeMatteCoverage::LateStart, NativeMatteConsumer::Video);
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    let consumer = layers
+        .iter()
+        .find(|layer| layer["trackMatte"].is_object())
+        .unwrap();
+    assert_eq!(consumer["type"], "Video");
+    assert_eq!(
+        consumer["playback"]["inputRange"],
+        serde_json::json!({"start":500,"duration":1500})
+    );
+    assert_eq!(consumer["playback"]["inputOffsetMs"], 0);
+    assert_eq!(
+        consumer["playback"]["mapping"]["input"],
+        serde_json::json!({"start":0,"duration":2000})
+    );
+    assert_eq!(
+        consumer["playback"]["mapping"]["output"],
+        serde_json::json!({"start":0,"duration":2000})
+    );
+    // LayerPlayback samples parent time directly, so the retained 500 ms
+    // boundary still selects source time 500 ms; it never restarts at zero.
+    let playback = &consumer["playback"];
+    let parent_ms = 500_i64;
+    let authored_ms = parent_ms + playback["inputOffsetMs"].as_i64().unwrap();
+    let input = &playback["mapping"]["input"];
+    let output = &playback["mapping"]["output"];
+    let source_ms = output["start"].as_i64().unwrap()
+        + (authored_ms - input["start"].as_i64().unwrap()) * output["duration"].as_i64().unwrap()
+            / input["duration"].as_i64().unwrap();
+    assert_eq!(source_ms, 500);
+    let keys = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| {
+            entry["target"]["layerId"] == consumer["id"]
+                && entry["target"]["propertyType"] == "opacity"
+        })
+        .unwrap();
+    assert_eq!(keys["animator"]["keyframes"][0]["layerTime"], 0);
+    assert_eq!(keys["animator"]["keyframes"][1]["layerTime"], 1000);
+    assert!(
+        omissions
+            .iter()
+            .any(|omission| omission.reason.contains("uncovered interval")),
+        "{omissions:?}"
+    );
+}
+
+#[test]
+fn track_matte_provider_late_start_preserves_group_content_and_animation_clocks() {
+    let (document, omissions) =
+        native_matte_interval_wire(NativeMatteCoverage::LateStart, NativeMatteConsumer::Group);
+    let consumer = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["trackMatte"].is_object())
+        .unwrap();
+    assert_eq!(consumer["type"], "Group");
+    assert_eq!(
+        consumer["playback"]["inputRange"],
+        serde_json::json!({"start":500,"duration":1500})
+    );
+    assert_eq!(consumer["playback"]["inputOffsetMs"], 0);
+    assert_eq!(
+        consumer["playback"]["mapping"]["input"],
+        serde_json::json!({"start":0,"duration":2000})
+    );
+    assert_eq!(
+        consumer["playback"]["mapping"]["output"],
+        serde_json::json!({"start":0,"duration":2000})
+    );
+    let keys = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| {
+            entry["target"]["layerId"] == consumer["id"]
+                && entry["target"]["propertyType"] == "opacity"
+        })
+        .unwrap();
+    assert_eq!(keys["animator"]["keyframes"][0]["layerTime"], 0);
+    assert_eq!(keys["animator"]["keyframes"][1]["layerTime"], 1000);
+    assert!(
+        omissions
+            .iter()
+            .any(|omission| omission.reason.contains("uncovered interval")),
+        "{omissions:?}"
+    );
+}
+
+#[test]
+fn track_matte_provider_late_start_rebases_rect_animation_clock() {
+    let (document, omissions) =
+        native_matte_interval_wire(NativeMatteCoverage::LateStart, NativeMatteConsumer::Rect);
+    let consumer = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["trackMatte"].is_object())
+        .unwrap();
+    assert_eq!(consumer["type"], "Rect");
+    assert_eq!(
+        consumer["activeRange"],
+        serde_json::json!({"start":500,"duration":1500})
+    );
+    let keys = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| {
+            entry["target"]["layerId"] == consumer["id"]
+                && entry["target"]["propertyType"] == "opacity"
+        })
+        .unwrap();
+    assert_eq!(keys["animator"]["keyframes"][0]["layerTime"], -500);
+    assert_eq!(keys["animator"]["keyframes"][1]["layerTime"], 500);
+    assert_eq!(keys["animator"]["keyframes"][1]["value"]["value"], 50.0);
+    assert!(
+        omissions
+            .iter()
+            .any(|omission| omission.reason.contains("uncovered interval")),
+        "{omissions:?}"
+    );
+}
+
+#[test]
+fn track_matte_missing_coverage_publishes_no_orphaned_animation() {
+    let (document, omissions) =
+        native_matte_interval_wire(NativeMatteCoverage::Missing, NativeMatteConsumer::Video);
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    assert!(
+        layers.iter().all(|layer| !layer["trackMatte"].is_object()),
+        "{document:#}"
+    );
+    let layer_ids: std::collections::BTreeSet<_> = layers
+        .iter()
+        .filter_map(|layer| layer["id"].as_str())
+        .collect();
+    for entry in document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap()
+    {
+        if let Some(layer_id) = entry["target"]["layerId"].as_str() {
+            assert!(layer_ids.contains(layer_id), "{entry:#}");
+        }
+    }
+    assert!(
+        omissions
+            .iter()
+            .any(|omission| omission.reason.contains("holds no clip over")),
+        "{omissions:?}"
+    );
+    fx_schema::EditableFxCompositionDocument::from_json_value(document).unwrap();
+}
 
 #[test]
 fn non_canvas_transform_matte_keeps_the_existing_source_size_rejection() {
@@ -295,6 +785,227 @@ fn keyed_nest_xml(motion: Option<&str>) -> String {
         },
     ));
     with_records(SOURCE, &records)
+}
+
+#[test]
+fn nested_geometry2_stack_keeps_curved_position_tint_picture_and_matte_consumers() {
+    const CURVED_POSITION_WARNING: &str = "Transform Position curved spatial path retains editable tangents but FX traverses parametrically rather than native constant-speed distance";
+
+    // The host is the existing native-derived nested Geometry2 fixture. The
+    // Position control is a publishable native-derived control that uses the
+    // saved curved-key form established by the pinned source-effects fixture;
+    // it is not an independently Adobe-rendered oracle.
+    let native = include_str!("../../../tests/fixtures/nested-transform-geometry2.xml");
+    let dom = roxmltree::Document::parse(native).unwrap();
+    let first: String = dom
+        .root_element()
+        .children()
+        .filter(|node| node.is_element())
+        .map(|node| &native[node.range()])
+        .collect();
+    const STATIC_POSITION: &str = "<Name>Position</Name>\n\t\t<StartKeyframe>-91445760000000000,0.3645833432674408:1.6666666269302368,0,0,0,0,0,0,5,4,0,0,0,0</StartKeyframe>";
+    let curved_position = format!(
+        "<Name>Position</Name>\n\t\t<IsTimeVarying>true</IsTimeVarying>\n\t\t<StartKeyframe>-91445760000000000,0.3645833432674408:1.6666666269302368,0,0,0,0,0,0,5,4,0,0,0,0</StartKeyframe>\n\t\t<Keyframes>0,0.25:0.5,0,0,0,0.16666666666666666,0.1,0.16666666666666666,5,4,0,0,0.05,0.04;{TICKS},0.5:0.25,0,0,0,0.16666666666666666,0.1,0.16666666666666666,5,4,-0.04,-0.03,0.03,0.05;{},0.75:0.5,0,0,0,0.16666666666666666,0.1,0.16666666666666666,5,4,-0.05,0.02,0,0;</Keyframes>",
+        2 * TICKS
+    );
+    assert_eq!(first.matches(STATIC_POSITION).count(), 1);
+    let first = first.replace(STATIC_POSITION, &curved_position);
+    let mut second = first.clone();
+    for id in (407..=840).rev() {
+        second = second
+            .replace(
+                &format!("ObjectID=\"{id}\""),
+                &format!("ObjectID=\"{}\"", id + 1000),
+            )
+            .replace(
+                &format!("ObjectRef=\"{id}\""),
+                &format!("ObjectRef=\"{}\"", id + 1000),
+            );
+    }
+    second = second
+        .replace("0.3645833432674408:1.6666666269302368", "0.5:0.5")
+        .replace("762048000000,-90.", "762048000000,45.");
+    let tint = tint(3000).replace("<Name>Amount to Tint</Name><IsTimeVarying>false</IsTimeVarying>", "<Name>Amount to Tint</Name><IsTimeVarying>true</IsTimeVarying>").replace("<StartKeyframe>-91445760000000000,100.,0,0,0,0,0,0</StartKeyframe><LowerBound>0</LowerBound><UpperBound>100</UpperBound><ParameterID>3</ParameterID>",
+        &format!("<StartKeyframe>-91445760000000000,100.,0,0,0,0,0,0</StartKeyframe><Keyframes>{TICKS},25.,0,0,0,0,0,0;{},75.,0,0,0,0,0,0;</Keyframes><LowerBound>0</LowerBound><UpperBound>100</UpperBound><ParameterID>3</ParameterID>", 3 * TICKS));
+    for (components, expected, expected_report_suffixes) in [
+        (
+            vec![
+                (407, first.clone()),
+                (1407, second.clone()),
+                (3000, tint.clone()),
+            ],
+            vec!["tint", "second", "first"],
+            vec!["; retained nested effect 2", "; retained nested effect 3"],
+        ),
+        (
+            vec![(3000, tint.clone()), (407, first.clone())],
+            vec!["first", "tint"],
+            vec!["; retained nested effect 1"],
+        ),
+    ] {
+        let provider = placement_records(
+            93,
+            999,
+            &Placement {
+                start: 0,
+                end: 5 * TICKS,
+                source_in: 0,
+            },
+        );
+        let provider = provider.replace(r#"<VideoComponentChain ObjectID="94"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>"#,
+            &placement_chain(94, "<DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity>", &components));
+        let track = r#"<VideoClipTrack ObjectUID="track-2"><ClipTrack><Track><ID>7</ID><Index>1</Index></Track><ClipItems><TrackItems><TrackItem ObjectRef="93"/></TrackItems></ClipItems></ClipTrack></VideoClipTrack>"#;
+        let child = format!(
+            r#"<VideoClipTrackItem ObjectID="120"><ClipTrackItem><ComponentOwner><Components ObjectRef="121"/></ComponentOwner><TrackItem><End>{}</End></TrackItem><SubClip ObjectRef="5"/></ClipTrackItem><FrameRect>0,0,1920,1080</FrameRect><PixelAspectRatio>1,1</PixelAspectRatio></VideoClipTrackItem><VideoComponentChain ObjectID="121"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>"#,
+            5 * TICKS
+        );
+        let xml = with_matte_track(SOURCE, &[(500, track_matte_key(500))]).replace(
+            MATTE_TRACK,
+            &format!(
+                "{track}{provider}{}{}{child}",
+                sequence_source(999, "provider"),
+                sequence_records("provider", "Provider picture", 200, &[120])
+            ),
+        );
+        let (project, mut notes) =
+            inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+        let outer = project.single_sequence().unwrap();
+        let provider = outer.video_tracks[1]
+            .nests
+            .first()
+            .unwrap_or_else(|| panic!("provider and consumer retained: {notes:?}"));
+        assert_eq!(provider.id.as_deref(), Some("VideoClipTrackItem:93"));
+        assert_eq!(provider.effects.len(), expected.len());
+        assert_eq!(provider.sequence.video_occurrences().count(), 1);
+        assert!(outer.video_tracks[0].clip(0).track_matte.is_some());
+        assert!(
+            notes
+                .iter()
+                .all(|note| note.scope != OmissionScope::Occurrence),
+            "{notes:?}"
+        );
+        let ids = crate::tesseract_output::asset_ids_in_order(outer, &project.media);
+        let document =
+            crate::convert::premiere_to_tesseract(outer, &project.media, &ids, &mut notes)
+                .unwrap()
+                .to_json_value()
+                .unwrap();
+        let curved_position_report_suffixes = notes
+            .iter()
+            .filter(|note| note.kind == crate::OmissionKind::Approximated)
+            .filter_map(|note| note.reason.strip_prefix(CURVED_POSITION_WARNING))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            curved_position_report_suffixes, expected_report_suffixes,
+            "{notes:?}"
+        );
+        let roots = document["composition"]["layers"].as_array().unwrap();
+        let consumer = roots
+            .iter()
+            .find(|layer| !layer["trackMatte"].is_null())
+            .unwrap();
+        let provider = roots
+            .iter()
+            .find(|layer| layer["id"] == consumer["trackMatte"]["layer"])
+            .unwrap();
+        assert_eq!(consumer["trackMatte"]["mode"], "alpha");
+        let mut stage = &provider["layers"][0];
+        let entries = document["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap();
+        for kind in expected.iter().rev() {
+            match *kind {
+                "tint" => {
+                    assert_eq!(stage["effects"][0]["effect"]["type"], "tintTritone");
+                    let entry = entries
+                        .iter()
+                        .find(|entry| entry["target"]["effectId"] == stage["effects"][0]["id"])
+                        .unwrap();
+                    assert_eq!(entry["target"]["paramName"], "amount");
+                    assert_eq!(entry["animator"]["keyframes"][0]["layerTime"], 1000);
+                    assert_eq!(entry["animator"]["keyframes"][1]["layerTime"], 3000);
+                }
+                affine => {
+                    let entry = entries
+                        .iter()
+                        .find(|entry| {
+                            entry["target"]["layerId"] == stage["id"]
+                                && entry["target"]["propertyType"] == "rotation"
+                        })
+                        .unwrap();
+                    assert_eq!(
+                        entry["animator"]["keyframes"][1]["value"]["value"],
+                        if affine == "first" { -90.0 } else { 45.0 }
+                    );
+                    assert_eq!(entry["animator"]["keyframes"][0]["layerTime"], 1000);
+                    assert_eq!(entry["animator"]["keyframes"][1]["layerTime"], 3000);
+                    for (property, values, incoming, outgoing) in [
+                        (
+                            "positionX",
+                            [480.0, 960.0, 1440.0],
+                            [None, Some(-76.8), Some(-96.0)],
+                            [Some(96.0), Some(57.6), None],
+                        ),
+                        (
+                            "positionY",
+                            [540.0, 270.0, 540.0],
+                            [None, Some(-32.4), Some(21.6)],
+                            [Some(43.2), Some(54.0), None],
+                        ),
+                    ] {
+                        let entry = entries
+                            .iter()
+                            .find(|entry| {
+                                entry["target"]["layerId"] == stage["id"]
+                                    && entry["target"]["propertyType"] == property
+                            })
+                            .unwrap();
+                        let keys = entry["animator"]["keyframes"].as_array().unwrap();
+                        assert_eq!(keys.len(), 3);
+                        for (index, key) in keys.iter().enumerate() {
+                            assert_eq!(key["layerTime"], i64::try_from(index).unwrap() * 1000);
+                            assert_eq!(key["value"]["value"], values[index]);
+                            for (actual, expected) in [
+                                (
+                                    key.get("spatialInTangent").and_then(|value| value.as_f64()),
+                                    incoming[index],
+                                ),
+                                (
+                                    key.get("spatialOutTangent")
+                                        .and_then(|value| value.as_f64()),
+                                    outgoing[index],
+                                ),
+                            ] {
+                                match (actual, expected) {
+                                    (Some(actual), Some(expected)) => {
+                                        assert!((actual - expected).abs() < 1e-9)
+                                    }
+                                    (None, None) => {}
+                                    pair => panic!("unpaired spatial tangent {pair:?}"),
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if !stage["masks"].is_null() && !stage["masks"].as_array().unwrap().is_empty() {
+                break;
+            }
+            stage = &stage["layers"][0];
+        }
+        let guide = stage["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["id"] == stage["masks"][0]["layer"])
+            .unwrap();
+        assert_eq!(guide["rect"]["size"], serde_json::json!([1920.0, 1080.0]));
+        assert!(stage["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|layer| layer["type"] == "Video"));
+    }
 }
 
 #[test]
@@ -745,17 +1456,12 @@ fn track_matte_keys_outside_the_supported_form_omit_the_occurrence() {
             "Track Matte Key on media that is not sequence-sized is not converted",
         ),
         (
-            "matte item over part of the range",
-            base.replace(MATTE_TRACK, &matte_track_of(&[(40, 0, 2 * TICKS)])),
-            "the matte clip spans 0..508032000000 ticks, not the clip's 0..1270080000000; only a matte clip spanning exactly the clip's range converts",
-        ),
-        (
             "two matte items over the range",
             base.replace(
                 MATTE_TRACK,
                 &matte_track_of(&[(40, 0, 2 * TICKS), (50, 2 * TICKS, 5 * TICKS)]),
             ),
-            "the matte track 1 holds more than one clip over the clip's range; only one matte clip spanning exactly that range converts",
+            "the matte track 1 holds more than one clip over the clip's range; only one unambiguous provider converts",
         ),
         (
             "disabled matte item",

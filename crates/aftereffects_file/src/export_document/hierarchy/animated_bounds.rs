@@ -36,6 +36,25 @@ pub(super) fn child_union_in_interval(
     .layers_union(&group.layers)
 }
 
+/// Proves one constant raw Shape/Rect subtree AABB over the owner interval.
+/// This follows the renderer's paint eligibility and canonical parent/source
+/// clocks instead of treating a whole-interval swept envelope as one frame.
+pub(super) fn constant_raw_geometry_union_in_interval(
+    layers: &[Layer],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+    canvas: Dimensions,
+    source_interval: SourceInterval,
+    structural_parent: Option<LayerId>,
+) -> Result<Option<Bounds>, &'static str> {
+    Analyzer {
+        dynamics,
+        resolved_media: &BTreeMap::new(),
+        canvas,
+        source_interval: Some(source_interval),
+    }
+    .raw_geometry_layers_union(layers, structural_parent)
+}
+
 /// A certified final-output or planar-consumer source can leave planar Text
 /// unbounded: its visible raster demand is not a guessed glyph box. Validate
 /// every remaining branch with the ordinary analyzer so sibling order cannot
@@ -376,6 +395,254 @@ impl Analyzer<'_> {
             }
         }
         Ok(result)
+    }
+
+    fn raw_geometry_layers_union(
+        &self,
+        layers: &[Layer],
+        structural_parent: Option<LayerId>,
+    ) -> Result<Option<Bounds>, &'static str> {
+        let mut result: Option<Bounds> = None;
+        for layer in layers {
+            if let Some(next) = self.raw_geometry_layer_bounds(layer, structural_parent)? {
+                match &mut result {
+                    Some(result) => result.include(next),
+                    None => result = Some(next),
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    fn raw_geometry_layer_bounds(
+        &self,
+        layer: &Layer,
+        structural_parent: Option<LayerId>,
+    ) -> Result<Option<Bounds>, &'static str> {
+        if super::super::mosaic_domain::not_drawn(layer, self.dynamics) {
+            return Ok(None);
+        }
+        if layer
+            .parent_id()
+            .is_some_and(|parent| Some(parent) != structural_parent)
+        {
+            return Err("Mosaic raw geometry has an external coordinate parent");
+        }
+        let interval = self
+            .source_interval
+            .ok_or("Mosaic raw geometry requires a bounded source interval")?;
+        let active = layer.active_range();
+        let start = interval.range.start.max(active.start);
+        let end = interval.range.end().min(active.end());
+        if start >= end {
+            return Ok(None);
+        }
+        if start != interval.range.start || end != interval.range.end() {
+            return Err("Mosaic lower stack has a part-time geometry contributor");
+        }
+        if temporal_effects(layer.data().effects()) {
+            return Err("Mosaic raw geometry has temporal effects");
+        }
+        let local = TimeRangeProperty::new(
+            fx_schema::Time::from_millis(start.as_millis() - active.start.as_millis()),
+            fx_schema::Duration::from_millis(end.as_millis() - start.as_millis()),
+        );
+        let local_analyzer = Analyzer {
+            source_interval: Some(SourceInterval {
+                range: local,
+                ..interval
+            }),
+            ..*self
+        };
+        if let LayerData::Group(group) = layer.data() {
+            if group.is_hidden {
+                return Ok(None);
+            }
+            if !group.masks.is_empty() || group.track_matte.is_some() || !group.fills.is_empty() {
+                return Err("Mosaic raw geometry has a gated Group");
+            }
+            let child_interval = super::super::hierarchy_clock::affine_source_interval(
+                &group.playback,
+                interval.range,
+            )
+            .map_err(|_| "Mosaic Group source clock cannot prove a constant domain")?
+            .ok_or("Mosaic Group time remap cannot prove a constant domain")?;
+            let child_analyzer = Analyzer {
+                source_interval: Some(SourceInterval {
+                    range: child_interval,
+                    ..interval
+                }),
+                ..*self
+            };
+            let Some(bounds) =
+                child_analyzer.raw_geometry_layers_union(&group.layers, Some(group.id))?
+            else {
+                return Ok(None);
+            };
+            // Group-owned Transform keys do not follow the child source clock.
+            // Prove them constant over all time, as the ordinary bounds path does.
+            return Analyzer {
+                source_interval: None,
+                ..*self
+            }
+            .raw_planar_transform_bounds(bounds, group.id, &group.transform)
+            .map(Some);
+        }
+        local_analyzer.raw_geometry_layer_bounds_inner(layer)
+    }
+
+    fn raw_geometry_layer_bounds_inner(
+        &self,
+        layer: &Layer,
+    ) -> Result<Option<Bounds>, &'static str> {
+        self.validate_layer_animators(layer.id())?;
+        if super::super::mosaic_domain::not_drawn(layer, self.dynamics) {
+            return Ok(None);
+        }
+        match layer.data() {
+            LayerData::Rect(rect) => {
+                if !rect.masks.is_empty() || rect.track_matte.is_some() {
+                    return Err("Mosaic raw Rect geometry is masked or matted");
+                }
+                let size = self.vector_range(rect.id, PropType::RectSize, rect.rect.size)?;
+                require_point(size[0])?;
+                require_point(size[1])?;
+                let mut bounds = bounds_from_origin_and_size(rect.rect.position, size)?;
+                if rect.rect.stroke_enabled && rect.rect.stroke_color.is_some() {
+                    let width = self.raw_scalar_range(
+                        rect.id,
+                        PropType::StrokeWidth,
+                        rect.rect.stroke_width.value(),
+                    )?;
+                    require_point(width)?;
+                    if width.min > 0.0 {
+                        // FX lowers Rect paint to Shape; the renderer pads its
+                        // raw path AABB by half the enabled, colored stroke.
+                        bounds = expand(bounds, width.min / 2.0)?;
+                    } else if !rect.rect.fill_enabled {
+                        return Ok(None);
+                    }
+                }
+                self.raw_planar_transform_bounds(bounds, rect.id, &rect.transform)
+                    .map(Some)
+            }
+            LayerData::Shape(shape) => {
+                if !shape.masks.is_empty() || shape.track_matte.is_some() {
+                    return Err("Mosaic raw Shape geometry is masked or matted");
+                }
+                if shape.shape.ellipse.is_some()
+                    || shape.shape.poly_star.is_some()
+                    || shape.shape.round_corners.is_some()
+                    || shape.shape.offset_paths.is_some()
+                    || shape.shape.trim.is_some()
+                    || self.source(shape.id, PropType::ShapePath)?.is_some()
+                {
+                    return Err("Mosaic raw geometry has generated or animated Shape geometry");
+                }
+                let mut bounds = super::path_bounds(&shape.shape.path.commands)?;
+                let mut stroke_reach: f64 = 0.0;
+                for stroke in shape.shape.strokes.iter().filter(|stroke| stroke.enabled) {
+                    let width = self.raw_scalar_range(
+                        shape.id,
+                        PropType::StrokeWidth,
+                        stroke.width.value(),
+                    )?;
+                    require_point(width)?;
+                    stroke_reach = stroke_reach.max(width.max_abs()? / 2.0);
+                }
+                bounds = expand(bounds, stroke_reach)?;
+                self.raw_planar_transform_bounds(bounds, shape.id, &shape.transform)
+                    .map(Some)
+            }
+            LayerData::Group(_) => unreachable!("Groups are clock-rebased by the caller"),
+            _ => Err("Mosaic raw geometry contains an unmeasured layer kind"),
+        }
+    }
+
+    fn raw_planar_transform_bounds(
+        &self,
+        bounds: Bounds,
+        id: LayerId,
+        transform: &Transform,
+    ) -> Result<Bounds, &'static str> {
+        let anchor = [
+            self.raw_scalar_range(id, PropType::AnchorPointX, transform.anchor_point[0])?,
+            self.raw_scalar_range(id, PropType::AnchorPointY, transform.anchor_point[1])?,
+        ];
+        let Position::TwoD(position) = transform.position else {
+            return Err("Mosaic raw geometry enters the 3D sorting plane");
+        };
+        for (property, base) in [
+            (PropType::RotationX, transform.rotation_x),
+            (PropType::RotationY, transform.rotation_y),
+            (PropType::OrientationX, transform.orientation[0]),
+            (PropType::OrientationY, transform.orientation[1]),
+        ] {
+            let value = self.raw_scalar_range(id, property, base)?;
+            if value.min != 0.0 || value.max != 0.0 {
+                return Err("Mosaic raw geometry has out-of-plane orientation");
+            }
+        }
+        let position = [
+            self.raw_scalar_range(id, PropType::PositionX, position[0])?,
+            self.raw_scalar_range(id, PropType::PositionY, position[1])?,
+        ];
+        let scale = [
+            self.raw_scalar_range(id, PropType::ScaleX, transform.scale[0])?
+                .scaled(0.01)?,
+            self.raw_scalar_range(id, PropType::ScaleY, transform.scale[1])?
+                .scaled(0.01)?,
+        ];
+        let rotation = self
+            .raw_scalar_range(id, PropType::Rotation, transform.rotation)?
+            .add(self.raw_scalar_range(id, PropType::OrientationZ, transform.orientation[2])?)?;
+        let skew = self.raw_scalar_range(id, PropType::Skew, transform.skew)?;
+        let skew_axis = self.raw_scalar_range(id, PropType::SkewAxis, transform.skew_axis)?;
+        for interval in anchor
+            .into_iter()
+            .chain(position)
+            .chain(scale)
+            .chain([rotation, skew, skew_axis])
+        {
+            require_point(interval)?;
+        }
+        if skew.min != 0.0 || rotation.min.rem_euclid(90.0) != 0.0 {
+            return Err("Mosaic raw geometry has skew or non-quarter-turn rotation");
+        }
+        let local = [
+            Interval::new(bounds.min[0], bounds.max[0])?
+                .subtract(anchor[0])?
+                .multiply(scale[0])?,
+            Interval::new(bounds.min[1], bounds.max[1])?
+                .subtract(anchor[1])?
+                .multiply(scale[1])?,
+        ];
+        // Exact quarter turns preserve axis-aligned boxes through nesting;
+        // arbitrary rotations would re-box and lose the original correlation.
+        let rotated = match rotation.min.rem_euclid(360.0) {
+            0.0 => local,
+            90.0 => [local[1].scaled(-1.0)?, local[0]],
+            180.0 => [local[0].scaled(-1.0)?, local[1].scaled(-1.0)?],
+            270.0 => [local[1], local[0].scaled(-1.0)?],
+            _ => return Err("Mosaic raw rotation has no exact quarter-turn box"),
+        };
+        bounds_from_intervals([position[0].add(rotated[0])?, position[1].add(rotated[1])?])
+    }
+
+    fn raw_scalar_range(
+        &self,
+        id: LayerId,
+        property: PropType,
+        base: f64,
+    ) -> Result<Interval, &'static str> {
+        match self.source(id, property)? {
+            None => Interval::point(base),
+            Some(Source::Constant(PropertyValue::Float(value))) => Interval::point(*value),
+            Some(Source::Constant(_)) => Err("Mosaic geometry animator value is not scalar"),
+            Some(Source::Track(track)) => {
+                track_component_range_in_interval(track, Component::Scalar, self.source_interval)
+            }
+        }
     }
 
     fn adjustment_bounds(
@@ -1588,6 +1855,12 @@ impl Interval {
             .then_some(value)
             .ok_or("Animated bounds absolute extent is non-finite")
     }
+}
+
+fn require_point(interval: Interval) -> Result<(), &'static str> {
+    (interval.min == interval.max)
+        .then_some(())
+        .ok_or("Mosaic raw sampling domain changes during the effect interval")
 }
 
 fn degree_sin_cos(degrees: Interval) -> Result<(Interval, Interval), &'static str> {

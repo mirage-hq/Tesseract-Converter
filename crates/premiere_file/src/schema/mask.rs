@@ -75,7 +75,10 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 const MASK_PATH_MAGIC: &[u8; 4] = b"2cin";
 const MASK_PATH_VERSION: u32 = 2;
 const MASK_PATH_HEADER_BYTES: usize = 16;
-/// Each vertex ends with this word in every corpus path.
+const MASK_PATH_V1_MAGIC: &[u8; 4] = b"kcin";
+const MASK_PATH_V1_VERSION: u32 = 1;
+const MASK_PATH_V1_HEADER_BYTES: usize = 12;
+/// Each vertex ends with this word in the `2cin` corpus paths.
 const MASK_VERTEX_TRAILER: u32 = 1;
 const MASK_VERTEX_BYTES: usize = VERTEX_BYTES + 4;
 /// The 26.5.1 Mask Path envelope: two words, one byte, the length word and two
@@ -999,14 +1002,17 @@ fn decode_vertices(
     })
 }
 
-/// Decode one corpus Mask Path value (`2cin`) into a closed outline in
-/// unit-frame fractions.
+/// Decode a saved `kcin` v1 or `2cin` v2 Mask Path into a closed outline
+/// in unit-frame fractions.
 ///
 /// # Errors
-/// Rejects another magic or version, a `z` other than 0 or 1, fewer than
-/// three vertices, a size that does not match the vertex count, a vertex
+/// Rejects another magic or version, a v2 `z` other than 0 or 1, fewer than
+/// three vertices, a size that does not match the vertex count, a v2 vertex
 /// trailer other than 1, and what [`decode_vertex`] rejects.
 pub(crate) fn decode_mask_path(payload: &[u8]) -> crate::error::Result<PrShapePath> {
+    if payload.get(..4) == Some(MASK_PATH_V1_MAGIC) {
+        return decode_mask_path_v1(payload);
+    }
     ensure!(
         payload.get(..4) == Some(MASK_PATH_MAGIC),
         "unknown Mask Path magic"
@@ -1041,6 +1047,32 @@ pub(crate) fn decode_mask_path(payload: &[u8]) -> crate::error::Result<PrShapePa
             Ok(())
         },
     )
+}
+
+/// The native v1 ellipse in `nested-geometry2-output-mask.xml` stores the
+/// same smooth flag and absolute point/tangent coordinates as v2. Its closed
+/// mask contour has only magic/version/count before the vertex bodies: no v2
+/// flag or per-vertex trailer. Keep exact framing so a `kcin` private mask-state
+/// body cannot be mistaken for an outline.
+fn decode_mask_path_v1(payload: &[u8]) -> crate::error::Result<PrShapePath> {
+    let version = word(payload, 4)?;
+    ensure!(
+        version == MASK_PATH_V1_VERSION,
+        "Mask Path version {version} is unsupported"
+    );
+    let count = usize::try_from(word(payload, 8)?)
+        .map_err(|_| unsupported("Mask Path vertex count overflows"))?;
+    ensure!(count >= 3, "a Mask Path needs at least three vertices");
+    ensure!(
+        count
+            .checked_mul(VERTEX_BYTES)
+            .and_then(|bytes| bytes.checked_add(MASK_PATH_V1_HEADER_BYTES))
+            == Some(payload.len()),
+        "Mask Path size does not match its {count} vertices"
+    );
+    decode_vertices(&payload[MASK_PATH_V1_HEADER_BYTES..], VERTEX_BYTES, |_| {
+        Ok(())
+    })
 }
 
 /// Decode one Premiere 26.5.1 Path value into a closed outline in unit-frame
@@ -1135,6 +1167,105 @@ mod tests {
             in_tangent: [x, y],
             out_tangent: [x, y],
         }
+    }
+
+    fn native_kcin_mask_path() -> Vec<u8> {
+        let xml = include_str!("../../tests/fixtures/nested-geometry2-output-mask.xml");
+        let native = roxmltree::Document::parse(xml).unwrap();
+        let parameter = native
+            .root_element()
+            .children()
+            .find(|node| node.attribute("ObjectID") == Some("1929"))
+            .unwrap();
+        let value = parameter
+            .children()
+            .find(|node| node.has_tag_name("StartKeyframeValue"))
+            .unwrap()
+            .text()
+            .unwrap();
+        STANDARD.decode(value).unwrap()
+    }
+
+    #[test]
+    fn native_kcin_mask_path_keeps_closed_ellipse_and_absolute_tangents() {
+        let payload = native_kcin_mask_path();
+        assert_eq!(payload.len(), 124);
+        let path = decode_mask_path(&payload).unwrap();
+        assert!(path.closed);
+        assert_eq!(path.vertices.len(), 4);
+        assert!(path.vertices.iter().all(|vertex| vertex.smooth));
+        assert_eq!(path.vertices[0].point, [0.5, 0.25]);
+        assert_eq!(path.vertices[0].in_tangent, [0.4309644, 0.25]);
+        assert_eq!(path.vertices[0].out_tangent, [0.5690356, 0.25]);
+        assert_eq!(path.vertices[1].point, [0.625, 0.5]);
+        assert_eq!(path.vertices[1].in_tangent, [0.625, 0.36192882]);
+        assert_eq!(path.vertices[1].out_tangent, [0.625, 0.6380712]);
+        assert_eq!(path.vertices[2].point, [0.5, 0.75]);
+        assert_eq!(path.vertices[3].point, [0.375, 0.5]);
+        // The existing editable mask spelling retains every control, not just
+        // the points or a substituted ellipse primitive.
+        assert_eq!(
+            decode_mask_path(&encode_mask_path(&path).unwrap()).unwrap(),
+            path
+        );
+    }
+
+    #[test]
+    fn native_kcin_mask_path_rejects_malformed_required_geometry() {
+        let payload = native_kcin_mask_path();
+        let with = |edit: &dyn Fn(&mut Vec<u8>)| {
+            let mut payload = payload.clone();
+            edit(&mut payload);
+            payload
+        };
+        for (case, payload, reason) in [
+            (
+                "version",
+                with(&|p| p[4] = 2),
+                "Mask Path version 2 is unsupported",
+            ),
+            (
+                "short header",
+                with(&|p| p.truncate(11)),
+                "truncated Mask Path payload",
+            ),
+            (
+                "count",
+                with(&|p| p[8] = 3),
+                "Mask Path size does not match its 3 vertices",
+            ),
+            (
+                "too few vertices",
+                with(&|p| {
+                    p[8] = 2;
+                    p.truncate(12 + 2 * 28);
+                }),
+                "a Mask Path needs at least three vertices",
+            ),
+            (
+                "trailing data",
+                with(&|p| p.push(0)),
+                "Mask Path size does not match its 4 vertices",
+            ),
+            (
+                "smooth flag",
+                with(&|p| p[12] = 2),
+                "unknown Path vertex flag 2",
+            ),
+            (
+                "nonfinite tangent",
+                with(&|p| p[24..28].copy_from_slice(&f32::NAN.to_le_bytes())),
+                "Path vertices must be finite",
+            ),
+        ] {
+            let error = decode_mask_path(&payload).unwrap_err().to_string();
+            assert!(error.contains(reason), "{case}: {error}");
+        }
+        let state = STANDARD.decode(super::MASK_PRIVATE_DATA).unwrap();
+        assert!(
+            decode_mask_path(&state).is_err(),
+            "private state is not a Mask Path"
+        );
     }
 
     #[test]

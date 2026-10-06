@@ -224,6 +224,42 @@ fn derived_explicit_rename_wins_over_the_plugin_name() {
     let effect = mosaic(&renamed);
     let vertical = track(&renamed, &effect, "verticalBlocks").expect("renamed alias");
     assert_eq!(vertical.keys, native_horizontal_keys());
+    assert!(
+        !renamed.diagnostics.iter().any(|message| {
+            message.contains(VERTICAL) && message.contains("converter-evaluated expression lowered")
+        }),
+        "exact renamed same-effect keys must precede fitted evaluator samples: {:#?}",
+        renamed.diagnostics
+    );
+}
+
+#[test]
+fn derived_renamed_non_alias_expression_emits_keys_from_a_continuous_referenced_control() {
+    let imported = import(ANIMATED_CONTROLS, ANIMATED_MOSAIC, |layer| {
+        rename_mosaic(layer, "Pixelate");
+        set_expression(
+            layer,
+            VERTICAL,
+            r#"effect("Pixelate")("Horizontal Blocks") * 2"#,
+            true,
+        );
+    });
+    let effect = mosaic(&imported);
+    let vertical = track(&imported, &effect, "verticalBlocks")
+        .expect("renamed arithmetic expression must emit editable keys");
+    assert_eq!(
+        vertical.keys,
+        vec![(0, 24.0, "hold".into()), (1000, 48.0, "linear".into())],
+        "evaluated arithmetic keys remain editable"
+    );
+    assert!(!lowered(&imported), "non-alias expression must use samples");
+    assert!(
+        imported.diagnostics.iter().any(|message| {
+            message.contains(VERTICAL) && message.contains("converter-evaluated expression lowered")
+        }),
+        "referenced continuous Integer control must reach emitted evaluator keys: {:#?}",
+        imported.diagnostics
+    );
 }
 
 #[test]

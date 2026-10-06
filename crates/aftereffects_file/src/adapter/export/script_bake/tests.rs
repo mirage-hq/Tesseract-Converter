@@ -4,6 +4,7 @@ mod playback;
 mod sampled;
 mod singular_ease;
 mod singular_opacity;
+mod source_text_retention;
 
 use super::*;
 use crate::{AfterEffects, AfterEffectsExportOptions, structure::read_project};

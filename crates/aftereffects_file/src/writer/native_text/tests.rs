@@ -536,6 +536,35 @@ fn boxed_text_replaces_native_authored_content_with_editable_fx_values() {
 }
 
 #[test]
+fn trailing_point_paragraph_runs_match_independent_native_control() {
+    let source = include_bytes!("../../../tests/fixtures/trailing_paragraph/native.aep");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(source)),
+        "7d194b82b6248ce18809210a39892eb8ad652ba80fcb0561102a40a7e70c9979"
+    );
+    let native = Rifx::parse_with(source, |kind| kind == *b"btdk").unwrap();
+    let owner = native.chunks().iter().find_map(find_box_group).unwrap();
+    let original = cos::parse(payload(owner)).unwrap();
+    let mut input = spec("A\r\r");
+    input.box_size = None;
+    input.box_position = None;
+    let generated = point_properties(&timeline(input), 1, PropertyClock::DEFAULT).unwrap();
+    let generated = cos::parse(payload(&generated)).unwrap();
+    for (field, expected) in [("5", vec![2, 1, 1]), ("6", vec![4])] {
+        for root in [&original, &generated] {
+            let runs = at(document(root, 0), &["0", field, "0"])
+                .as_array()
+                .unwrap();
+            let lengths = runs
+                .iter()
+                .map(|run| run.get("1").unwrap().as_i64().unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(lengths, expected);
+        }
+    }
+}
+
+#[test]
 fn trailing_paragraph_box_text_keeps_authored_breaks_and_terminal_run_unit() {
     // The independent native control in trailing_paragraph/native.aep stores
     // A\r\r\r for the managed author/readback edit to A\r\r. The terminal
@@ -552,13 +581,22 @@ fn trailing_paragraph_box_text_keeps_authored_breaks_and_terminal_run_unit() {
         let parsed = cos::parse(payload(&group)).unwrap();
         let doc = document(&parsed, 0);
         assert_eq!(at(doc, &["0", "0"]).as_str(), Some(expected));
-        for name in ["5", "6"] {
-            let run = at(doc, &["0", name, "0"]).index(0).unwrap();
-            assert_eq!(
-                run.get("1").unwrap().as_i64(),
-                Some(i64::try_from(expected.encode_utf16().count()).unwrap())
-            );
-        }
+        let runs = at(doc, &["0", "5", "0"]).as_array().unwrap();
+        let lengths = runs
+            .iter()
+            .map(|run| run.get("1").unwrap().as_i64().unwrap())
+            .collect::<Vec<_>>();
+        let expected_lengths = expected
+            .split_inclusive('\r')
+            .map(|paragraph| i64::try_from(paragraph.encode_utf16().count()).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(lengths, expected_lengths);
+        let characters = at(doc, &["0", "6", "0"]).as_array().unwrap();
+        assert_eq!(characters.len(), 1);
+        assert_eq!(
+            characters[0].get("1").unwrap().as_i64(),
+            Some(i64::try_from(expected.encode_utf16().count()).unwrap())
+        );
     }
 }
 

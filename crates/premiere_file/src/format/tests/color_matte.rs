@@ -1,6 +1,7 @@
 use super::{
     adjustment::opacity,
     animation::animation_fixture::{animated_xml, SOURCE},
+    effects::{blur, tint, with_chain, DEFAULT_FLAGS},
     reader::version_6_dissolve,
 };
 use crate::{
@@ -203,6 +204,82 @@ fn a_color_matte_occurrence_reads_its_colour_infinite_source_and_name() {
     );
 }
 
+/// Convert a native Color Matte source through the public editable-document
+/// path, retaining format-reader and mapping diagnostics separately.
+fn convert_matte_effects(xml: &str) -> (Value, Vec<Omission>, Vec<Omission>) {
+    let (project, reader_notes) = inspect_project_with_omissions(xml, Some("sequence-1")).unwrap();
+    let sequence = project.single_sequence().unwrap();
+    let ids = crate::tesseract_output::asset_ids_in_order(sequence, &project.media);
+    let mut mapping_notes = Vec::new();
+    let document =
+        crate::convert::premiere_to_tesseract(sequence, &project.media, &ids, &mut mapping_notes)
+            .unwrap()
+            .to_json_value()
+            .unwrap();
+    (document, reader_notes, mapping_notes)
+}
+
+#[test]
+fn native_color_matte_tint_retains_editable_values_stack_and_picture() {
+    // Both effect records come from Premiere 12.1 projects. Premiere applies
+    // the component chain in reverse Index order, so Blur stays before Tint.
+    let native = with_chain(SOURCE, DEFAULT_FLAGS, &[(20, tint(20)), (30, blur(30))]);
+    let (document, reader_notes, mapping_notes) =
+        convert_matte_effects(&as_matte(&native, "ZEGlAAEAAAA="));
+    assert!(reader_notes.is_empty(), "{reader_notes:?}");
+    assert!(mapping_notes.is_empty(), "{mapping_notes:?}");
+
+    let matte = &document["composition"]["layers"][0];
+    assert_eq!(matte["type"], "Rect");
+    assert_eq!(
+        matte["rect"]["fillColor"],
+        json!([100.0 / 255.0, 65.0 / 255.0, 165.0 / 255.0, 1.0])
+    );
+    assert!(matte.get("source").is_none());
+    let effects = matte["effects"].as_array().unwrap();
+    assert_eq!(effects.len(), 2);
+    assert_eq!(effects[0]["effect"]["type"], "gaussianBlur");
+    assert_eq!(effects[0]["effect"]["blurriness"], 25.0);
+    assert_eq!(effects[1]["enabled"], true);
+    assert_eq!(effects[1]["effect"]["type"], "tintTritone");
+    assert_eq!(effects[1]["effect"]["blackR"], 163.0 / 255.0);
+    assert_eq!(effects[1]["effect"]["blackG"], 247.0 / 255.0);
+    assert_eq!(effects[1]["effect"]["blackB"], 143.0 / 255.0);
+    assert_eq!(effects[1]["effect"]["whiteR"], 240.0 / 255.0);
+    assert_eq!(effects[1]["effect"]["whiteG"], 242.0 / 255.0);
+    assert_eq!(effects[1]["effect"]["whiteB"], 22.0 / 255.0);
+    assert_eq!(effects[1]["effect"]["amount"], 100.0);
+}
+
+#[test]
+fn invalid_native_color_matte_tint_keeps_picture_and_supported_sibling() {
+    let invalid_tint = tint(20).replace(
+        "<StartKeyframe>-91445760000000000,100.,",
+        "<StartKeyframe>-91445760000000000,150.,",
+    );
+    assert_ne!(invalid_tint, tint(20));
+    let native = with_chain(SOURCE, DEFAULT_FLAGS, &[(20, invalid_tint), (30, blur(30))]);
+    let (document, reader_notes, mapping_notes) =
+        convert_matte_effects(&as_matte(&native, "ZEGlAAEAAAA="));
+    assert!(
+        reader_notes.iter().any(|note| note
+            .reason
+            .contains("Amount to Tint \"150.\" is not a number from 0 to 100")),
+        "{reader_notes:?}"
+    );
+    assert!(mapping_notes.is_empty(), "{mapping_notes:?}");
+
+    let matte = &document["composition"]["layers"][0];
+    assert_eq!(matte["type"], "Rect");
+    assert_eq!(
+        matte["rect"]["fillColor"],
+        json!([100.0 / 255.0, 65.0 / 255.0, 165.0 / 255.0, 1.0])
+    );
+    let effects = matte["effects"].as_array().unwrap();
+    assert_eq!(effects.len(), 1);
+    assert_eq!(effects[0]["effect"]["type"], "gaussianBlur");
+}
+
 #[test]
 fn file_media_with_an_empty_importer_prefs_keeps_its_occurrence() {
     // Adobe writes this empty element on ordinary file media
@@ -235,14 +312,10 @@ fn generator_xml(file_path: Option<&str>, actual_media_file_path: Option<&str>) 
 }
 
 #[test]
-fn malformed_animated_or_non_colr_generator_media_is_omitted_precisely() {
+fn malformed_or_non_colr_generator_media_is_omitted_precisely() {
     const GRAPHIC: &str = "1196574294";
     const BLACK_VIDEO: &str = "1112293707";
     const COLR: &str = "1129270354";
-    let rotation_keys = format!(
-        "{COLOR_MATTE_SOURCE_IN_TICKS},0.,0,0,0,0,0,0;{},90.,0,0,0,0,0,0;",
-        COLOR_MATTE_SOURCE_IN_TICKS + TICKS
-    );
     // Other generators keep fail-closed validation; an absent or mismatched
     // marker is no matte. BLAK has no colour preferences.
     for (xml, expected) in [
@@ -260,10 +333,6 @@ fn malformed_animated_or_non_colr_generator_media_is_omitted_precisely() {
                 r#"<ImporterPrefs Encoding="hex""#,
             ),
             "must be base64",
-        ),
-        (
-            as_matte(&animated_xml(&rotation_keys), "/wAAAAEAAAA="),
-            "Motion keyframes on a Color Matte are not converted",
         ),
         (
             matte_xml("/wAAAAEAAAA=").replacen(
@@ -298,7 +367,7 @@ fn malformed_animated_or_non_colr_generator_media_is_omitted_precisely() {
 }
 
 #[test]
-fn nondefault_static_motion_on_a_matte_is_omitted_not_flattened() {
+fn nondefault_static_motion_on_a_matte_keeps_the_editable_rectangle() {
     let xml = as_matte(&animated_xml(""), "/wAAAAEAAAA=");
     let (project, omissions) = inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
     assert!(omissions.is_empty(), "{omissions:?}");
@@ -330,21 +399,20 @@ fn nondefault_static_motion_on_a_matte_is_omitted_not_flattened() {
     ] {
         let edited = xml.replace(start, changed);
         assert_ne!(edited, xml, "{property}");
-        let mut omissions = Vec::new();
-        let result = crate::format::reader::read_sequence(
-            &crate::format::Graph::parse(&edited).unwrap(),
-            Some("sequence-1"),
-            &std::collections::BTreeSet::new(),
-            &mut std::collections::BTreeMap::new(),
-            &mut omissions,
-        );
-        assert!(result.is_err(), "the only occurrence must be omitted");
-        assert!(omissions.contains(&Omission {
-            scope: OmissionScope::Occurrence,
-            kind: OmissionKind::Omitted,
-            record: "VideoClipTrackItem:3".into(),
-            reason: format!("track 0, range 0..1270080000000 ticks: nondefault {property} on a Color Matte is unsupported; occurrence omitted"),
-        }), "{omissions:?}");
+        let (project, omissions) = inspect_project_with_omissions(&edited, Some("sequence-1")).unwrap();
+        assert!(omissions.is_empty(), "{property}: {omissions:?}");
+        let document = project_document_with_media(project.single_sequence().unwrap(), &project.media);
+        let rect = &document["composition"]["layers"][0];
+        assert_eq!(rect["type"], "Rect");
+        assert_eq!(rect["rect"]["fillColor"], json!([1.0, 0.0, 0.0, 1.0]));
+        let (field, expected) = match property {
+            "Motion Position" => ("position", json!([480.0, 540.0])),
+            "Motion Anchor Point" => ("anchorPoint", json!([480.0, 540.0])),
+            "Motion Scale" => ("scale", json!([150.0, 150.0])),
+            "Motion Rotation" => ("rotation", json!(30.0)),
+            _ => unreachable!(),
+        };
+        assert_eq!(rect["transform"][field], expected);
     }
 }
 
@@ -616,29 +684,24 @@ fn a_matte_keeps_its_static_opacity_on_its_rectangle() {
 }
 
 #[test]
-fn a_matte_with_opacity_keys_or_another_static_edit_is_still_omitted() {
+fn a_matte_with_opacity_keys_keeps_the_editable_keys_and_static_value() {
     let keyed = matte_with_opacity(&format!(
         "{COLOR_MATTE_SOURCE_IN_TICKS},0.,0,0,0,0,0,0;{},60.,0,0,0,0,0,0;",
         COLOR_MATTE_SOURCE_IN_TICKS + TICKS
     ));
-    let error = inspect_project_with_omissions(&keyed, Some("sequence-1"))
-        .unwrap_err()
-        .to_string();
-    assert!(
-        error.contains("Motion keyframes on a Color Matte are not converted"),
-        "{error}"
-    );
-    let rotated = as_matte(&animated_xml(""), "AAAAAAEAAAA=").replace(
-        "<Name>Rotation</Name><ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,0.,",
-        "<Name>Rotation</Name><ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,30.,",
-    );
-    let error = inspect_project_with_omissions(&rotated, Some("sequence-1"))
-        .unwrap_err()
-        .to_string();
-    assert!(
-        error.contains("nondefault Motion Rotation on a Color Matte is unsupported"),
-        "{error}"
-    );
+    let (project, omissions) = inspect_project_with_omissions(&keyed, Some("sequence-1")).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let document = project_document_with_media(project.single_sequence().unwrap(), &project.media);
+    let rect = &document["composition"]["layers"][0];
+    assert_eq!(rect["transform"]["opacity"], 60.0);
+    let entry = &document["composition"]["dynamics"]["entries"][0];
+    assert_eq!(entry["target"]["layerId"], rect["id"]);
+    assert_eq!(entry["target"]["propertyType"], "opacity");
+    let keys = &entry["animator"]["keyframes"];
+    assert_eq!(keys[0]["layerTime"], 0);
+    assert_eq!(keys[0]["value"]["value"], 0.0);
+    assert_eq!(keys[1]["layerTime"], 1000);
+    assert_eq!(keys[1]["value"]["value"], 60.0);
 }
 
 /// [`matte_with_opacity`] placed at 1-5 s with a synthetic Version 6 head
@@ -854,7 +917,7 @@ fn cross_dissolve_matte_exports_edited_translucent_head_and_tail() {
 }
 
 /// A matte dissolve outside the bounded profile is reported with its reason
-/// and keys nothing; the matte keeps its colour, Opacity and lifetime.
+/// adds no ramp; the matte keeps its authored keys, colour, Opacity and lifetime.
 #[test]
 fn unsafe_matte_dissolve_clocks_and_bindings_are_reported_not_keyed() {
     const FRAME: i64 = FrameRate::Fps30.ticks_per_frame();
@@ -944,12 +1007,20 @@ fn unsafe_matte_dissolve_clocks_and_bindings_are_reported_not_keyed() {
                 }),
             "{reason}: {omissions:?}"
         );
-        assert!(
-            document["composition"]["dynamics"]["entries"]
-                .as_array()
-                .is_none_or(Vec::is_empty),
-            "{reason}: {document}"
-        );
+        let entries = document["composition"]["dynamics"]["entries"].as_array();
+        if reason == "no animated opacity" {
+            let entry = &entries.unwrap()[0];
+            let keys = entry["animator"]["keyframes"].as_array().unwrap();
+            assert_eq!(
+                keys.len(),
+                1,
+                "no dissolve ramp may replace authored opacity"
+            );
+            assert_eq!(keys[0]["layerTime"], 0);
+            assert_eq!(keys[0]["value"]["value"], 60.0);
+        } else {
+            assert!(entries.is_none_or(Vec::is_empty), "{reason}: {document}");
+        }
         assert_static_matte(&document["composition"]["layers"][0], reason);
     }
 

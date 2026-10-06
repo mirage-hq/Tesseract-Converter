@@ -1110,8 +1110,19 @@
       "type": "object"
     },
     "JBFXEffectInstanceModel": {
-      "additionalProperties": false,
+      "additionalProperties": true,
       "properties": {
+        "compositingOptions": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "effect": {
           "discriminator": {
             "mapping": {

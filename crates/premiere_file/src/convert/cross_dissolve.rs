@@ -63,11 +63,33 @@ pub(super) fn import(
             let group_id = LayerId::new(*scope.next_index as u64 + 1);
             let guide_id = LayerId::new(*scope.next_index as u64 + 4);
             let mask_id = FxItemId::new(*scope.next_index as u64 + 5);
-            let range = tick_range(0, project.end_ticks())?;
+            let pictures = [outgoing, incoming].map(|id| {
+                track
+                    .items
+                    .iter()
+                    .filter_map(PrVideoItem::media)
+                    .find(|clip| clip.id.as_deref() == Some(id))
+                    .ok_or_else(|| unsupported("a linked physical picture was not retained"))
+            });
+            let [outgoing_picture, incoming_picture] = pictures;
+            let outgoing_picture = outgoing_picture?;
+            let incoming_picture = incoming_picture?;
+            // Keep the document clock inside the group, but isolate only the
+            // union of the pictures, not unrelated parts of the sequence.
+            let range = tick_range(
+                outgoing_picture
+                    .start_ticks
+                    .min(incoming_picture.start_ticks),
+                outgoing_picture.end_ticks.max(incoming_picture.end_ticks),
+            )?;
+            let playback = LayerPlayback::linear(range, range, range, 0).map_err(unsupported)?;
+            let origin = range.start.as_millis();
             let start = time_from_ticks(transition.start_ticks)?.as_millis();
             let cut = time_from_ticks(transition.cut_ticks)?.as_millis();
             let end = time_from_ticks(transition.end_ticks)?.as_millis();
-            if start >= end
+            if start < origin
+                || end > range.end().as_millis()
+                || start >= end
                 || (transition.start_ticks < transition.cut_ticks
                     && transition.cut_ticks < transition.end_ticks
                     && !(start < cut && cut < end))
@@ -219,6 +241,7 @@ pub(super) fn import(
                     vec![Layer::from_data(&picture)?],
                 )?;
                 fade.parent = Some(group_id);
+                fade.playback = playback.clone();
                 fade.blend_mode = BlendMode::Add;
                 children.push(Layer::from_data(&LayerData::Group(fade))?);
                 positions.push(position);
@@ -236,14 +259,20 @@ pub(super) fn import(
                     .into_iter()
                     .enumerate()
                     .map(|(index, (time, value))| {
-                        PropertyKeyframe::new(
+                        let local = time
+                            .checked_sub(origin)
+                            .and_then(|local| i64::try_from(local).ok())
+                            .ok_or_else(|| {
+                                unsupported("dissolve key exceeds its isolation clock")
+                            })?;
+                        Ok(PropertyKeyframe::new(
                             keyframe_id(fade_id, "cross-dissolve", index),
-                            TimeOffset::from_millis(time as i64),
+                            TimeOffset::from_millis(local),
                             PropertyValue::Float(value),
                             PropertyKeyframeEasing::Linear,
-                        )
+                        ))
                     })
-                    .collect();
+                    .collect::<Result<Vec<_>>>()?;
                 let keys = PropertyKeyframeTrack::new(keys).map_err(|error| {
                     unsupported(format!("Cross Dissolve opacity keys: {error}"))
                 })?;
@@ -260,6 +289,7 @@ pub(super) fn import(
                 children,
             )?;
             group.parent = scope.parent;
+            group.playback = playback;
             // Normal groups can pass their children through to lower tracks.
             // A full-canvas mask isolates the sum before Normal compositing.
             group.masks.push(guide_mask(mask_id, guide_id, 0.0));

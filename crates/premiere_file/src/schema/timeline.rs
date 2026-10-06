@@ -3,7 +3,7 @@
 use super::{
     FrameRate, MediaId, PrAudioOccurrence, PrAudioStream, PrEffect, PrGraphic, PrKeyframeEasing,
     PrLinearWipe, PrMedia, PrPropertyAnimation, PrSequence, PrStaticCrop, PrStaticTransform,
-    PrTrackMatte, PrVideoItem, PrVideoOccurrence, PrVideoTrack,
+    PrTimeRemap, PrTrackMatte, PrVideoItem, PrVideoOccurrence, PrVideoTrack,
 };
 use crate::format::{ensure_valid, Result};
 use std::{
@@ -172,6 +172,9 @@ impl PrSequence {
                         )
                     }
                     PrVideoItem::Graphic(graphic) => graphic.validate(self.native_frame_rate()),
+                    PrVideoItem::Capsule(capsule) => capsule
+                        .validate()
+                        .map_err(|error| crate::format::invalid(error.to_string())),
                 };
                 checked.map_err(|error| {
                     crate::format::invalid(format!(
@@ -335,28 +338,41 @@ fn item_label(item: &PrVideoItem) -> &str {
     match item {
         PrVideoItem::Media(clip) => clip.record(),
         PrVideoItem::Graphic(graphic) => graphic.id.as_deref().unwrap_or("graphic"),
+        PrVideoItem::Capsule(capsule) => capsule.placement.id.as_deref().unwrap_or("Capsule"),
     }
 }
 
-/// Checks the matte of a placement on track `track_index` over `range` whose
-/// Track Matte Key is `matte`, or says why the key does not convert: the
-/// matte track is a track of `tracks` strictly above the placement's, and its
-/// one item or nest over `range` spans exactly `range` and is enabled.
-/// Premiere shows a matte clip outside the placement's range, which FX never
-/// does, and FX drops a hidden matte source and shows the placement whole. A
-/// matte item with its own Crop, Linear Wipe, Opacity mask or Track Matte Key
-/// converts as more than one layer or another keyed clip, which neither
-/// direction pairs with a consumer; a graphic's clip Opacity mask imports as
-/// a guide beside the graphic's group, which a stage group that takes the
-/// matte would leave behind. A nested source's existing Group carries its
-/// Motion and source-canvas guide together; its rendered picture is the matte,
-/// not its unclipped children. The reader and model validation share this rule.
+/// The one native provider overlapping a consumer, on its own sequence clock.
+/// `covered_range` bounds activation without changing either authored mapping.
+#[derive(Debug)]
+pub(crate) struct TrackMatteProvider<'a> {
+    pub(crate) record: Option<&'a str>,
+    pub(crate) range: Range<i64>,
+    pub(crate) covered_range: Range<i64>,
+}
+
+/// Checks that a key has one enabled, unambiguous provider above its track.
+/// A provider contained by the consumer is recoverable: import restricts the
+/// consumer without extending the provider. A provider outside the consumer is
+/// rejected because consuming it would hide its independently painting span.
 pub(crate) fn check_track_matte(
     tracks: &[PrVideoTrack],
     track_index: usize,
     range: Range<i64>,
     matte: PrTrackMatte,
 ) -> std::result::Result<(), String> {
+    track_matte_provider(tracks, track_index, range, matte).map(|_| ())
+}
+
+/// Resolves the actual provider span/identity, never the consumer's start.
+/// Independent masked providers remain excluded: their generated guide/stage
+/// owners cannot be substituted by an unclipped child or a guessed picture.
+pub(crate) fn track_matte_provider(
+    tracks: &[PrVideoTrack],
+    track_index: usize,
+    range: Range<i64>,
+    matte: PrTrackMatte,
+) -> std::result::Result<TrackMatteProvider<'_>, String> {
     let matte_track = tracks.get(matte.track_index).ok_or_else(|| {
         format!(
             "Track Matte Key names video track {}, which the sequence does not have",
@@ -398,11 +414,19 @@ pub(crate) fn check_track_matte(
                     || clip.linear_wipe.is_some()
                     || clip.opacity_mask.is_some()
                     || clip.track_matte.is_some(),
+                clip.id.as_deref(),
             ),
             PrVideoItem::Graphic(graphic) => (
                 graphic.timeline_ticks(),
                 graphic.enabled,
                 graphic.opacity_mask.is_some(),
+                graphic.id.as_deref(),
+            ),
+            PrVideoItem::Capsule(capsule) => (
+                capsule.placement.timeline_ticks(),
+                capsule.placement.enabled,
+                capsule.placement.opacity_mask.is_some(),
+                capsule.placement.id.as_deref(),
             ),
         })
         .chain(matte_track.nests.iter().map(|nest| {
@@ -410,10 +434,11 @@ pub(crate) fn check_track_matte(
                 nest.timeline_ticks(),
                 nest.enabled,
                 nest.track_matte.is_some() || nest.opacity_mask.is_some(),
+                nest.id.as_deref(),
             )
         }))
         .filter(|(source_range, ..)| overlaps(source_range));
-    let (source_range, enabled, masked) = match (sources.next(), sources.next()) {
+    let (source_range, enabled, masked, record) = match (sources.next(), sources.next()) {
         (None, _) => {
             return Err(format!(
                 "the matte track {} holds no clip over the clip's range",
@@ -422,15 +447,15 @@ pub(crate) fn check_track_matte(
         }
         (Some(_), Some(_)) => {
             return Err(format!(
-                "the matte track {} holds more than one clip over the clip's range; only one matte clip spanning exactly that range converts",
+                "the matte track {} holds more than one clip over the clip's range; only one unambiguous provider converts",
                 matte.track_index
             ))
         }
         (Some(source), None) => source,
     };
-    if source_range != range {
+    if source_range.start < range.start || source_range.end > range.end {
         return Err(format!(
-            "the matte clip spans {}..{} ticks, not the clip's {}..{}; only a matte clip spanning exactly the clip's range converts",
+            "the matte clip spans {}..{} ticks outside the clip's {}..{}; its independently painting interval cannot be consumed as an FX matte",
             source_range.start, source_range.end, range.start, range.end
         ));
     }
@@ -446,7 +471,11 @@ pub(crate) fn check_track_matte(
                 .to_owned(),
         );
     }
-    Ok(())
+    Ok(TrackMatteProvider {
+        record,
+        covered_range: source_range.start.max(range.start)..source_range.end.min(range.end),
+        range: source_range,
+    })
 }
 
 impl PrStaticTransform {
@@ -535,6 +564,105 @@ impl PrVideoOccurrence {
         self.validate_on_grid(sequence_rate, sequence_rate.ticks_per_frame(), facts)
     }
 
+    /// Curve-only admission. Required placement, media, edits and grid checks
+    /// remain in `validate_on_grid`; a rejected curve is not a valid base clock.
+    pub(crate) fn validate_time_remap_curve(
+        &self,
+        remap: &PrTimeRemap,
+        facts: &super::PrVideoStream,
+    ) -> Result<()> {
+        let intrinsic_ticks = facts
+            .interpreted_duration()
+            .map_err(|error| crate::format::invalid(error.to_string()))?;
+        let active_duration = self
+            .end_ticks
+            .checked_sub(self.start_ticks)
+            .ok_or_else(|| crate::format::invalid("timeline duration exceeds tick range"))?;
+        let source_duration = self
+            .out_ticks
+            .checked_sub(self.in_ticks)
+            .ok_or_else(|| crate::format::invalid("source duration exceeds tick range"))?;
+        let span_at_rate =
+            source_span_matches(active_duration, source_duration, self.playback_rate);
+        // Key times are input ticks after In. An explicit FrameHold maps
+        // the whole unit-speed placement to one source instant. A native
+        // curve, with increasing source times, plays its input from In to
+        // Out at the forward speed (`after_source_in`); Premiere's clock
+        // from another In or speed is measured on physical video.
+        let frame_hold = remap.held_source_ticks(active_duration).is_some();
+        if frame_hold {
+            ensure_valid!(
+                self.playback_rate == 1.0,
+                "constant playback combined with TimeRemapping is unsupported"
+            );
+            ensure_valid!(
+                self.out_ticks - self.in_ticks == active_duration,
+                "trimmed TimeRemapping clips are not supported"
+            );
+        } else {
+            // Unit-speed remap input keeps exact placement length; other
+            // speeds use the shared source-span consistency precision.
+            let span_matches = if self.playback_rate == 1.0 {
+                self.out_ticks - self.in_ticks == active_duration
+            } else {
+                span_at_rate
+            };
+            ensure_valid!(
+                self.playback_rate > 0.0 && span_matches,
+                "TimeRemapping In to Out must match the clip's forward playback rate"
+            );
+            ensure_valid!(
+                !self.remaps_from_in_or_speed()
+                    || matches!(facts.kind, super::PrMediaKind::Video { .. }),
+                "TimeRemapping from a source In or at another speed is converted only on physical video"
+            );
+        }
+        ensure_valid!(
+            matches!(remap.keys.as_slice(), [first, .., last]
+                if first.timeline_ticks <= 0
+                    && last.timeline_ticks >= self.out_ticks - self.in_ticks),
+            "TimeRemapping keys do not cover the placement"
+        );
+        // Saved curves can keep an unused control key past the media end.
+        // Only a final linear tail is admitted, and only while its played
+        // part stays in bounds. Keep the key: it defines the tail's slope.
+        let bounded_tail = matches!(remap.keys.as_slice(), [.., previous, last]
+        if !frame_hold
+            && matches!(facts.kind, super::PrMediaKind::Video { .. })
+            && last.source_ticks > intrinsic_ticks
+            && last.easing == PrKeyframeEasing::Linear
+            && linear_tail_within_media(
+                i128::from(previous.timeline_ticks)..i128::from(last.timeline_ticks),
+                i128::from(previous.source_ticks)..i128::from(last.source_ticks),
+                i128::from(self.out_ticks - self.in_ticks),
+                i128::from(intrinsic_ticks),
+            ));
+        ensure_valid!(
+            remap.keys.len() >= 2
+                && remap.keys.iter().enumerate().all(|(index, key)| {
+                    ((0..=intrinsic_ticks).contains(&key.source_ticks)
+                        || (bounded_tail && index == remap.keys.len() - 1))
+                        && (!frame_hold || key.source_ticks < intrinsic_ticks)
+                })
+                && remap.keys.windows(2).all(|pair| {
+                    pair[0].timeline_ticks < pair[1].timeline_ticks
+                        && (frame_hold || pair[0].source_ticks < pair[1].source_ticks)
+                }),
+            "invalid or unsupported TimeRemapping curve"
+        );
+        // A last key at the media end, like the one that Premiere 26.5.1
+        // appends, ends a segment that is unmeasured from another In or
+        // speed: In to Out must end by the key before it.
+        let plays_media_end_segment = matches!(remap.keys.as_slice(), [.., penultimate, last]
+            if last.source_ticks == intrinsic_ticks
+                && penultimate.timeline_ticks < self.out_ticks - self.in_ticks);
+        ensure_valid!(
+            !(self.remaps_from_in_or_speed() && plays_media_end_segment),
+            "TimeRemapping from a source In or at another speed plays past the key before the curve's media-end key"
+        );
+        Ok(())
+    }
+
     /// Validate saved clip boundaries on the native grid, independently of the
     /// output sampling cadence used to import an approximated sequence.
     pub(crate) fn validate_on_grid(
@@ -543,11 +671,33 @@ impl PrVideoOccurrence {
         frame_ticks: i64,
         facts: &PrMedia,
     ) -> Result<()> {
-        ensure_valid!(frame_ticks > 0, "native sequence grid must be positive");
-        let facts = facts
+        let stream = facts
             .video
             .as_ref()
             .ok_or_else(|| crate::format::invalid("source has no video stream"))?;
+        self.validate_playback_on_grid(sequence_rate, frame_ticks, stream, self.time_remap.as_ref())
+    }
+
+    /// Check the independently saved constant clock without cloning or changing
+    /// the occurrence. Optional-curve recovery must pass every ordinary base,
+    /// property and native-grid check before publishing a fallback.
+    pub(crate) fn validate_base_on_grid(
+        &self,
+        sequence_rate: FrameRate,
+        frame_ticks: i64,
+        facts: &super::PrVideoStream,
+    ) -> Result<()> {
+        self.validate_playback_on_grid(sequence_rate, frame_ticks, facts, None)
+    }
+
+    fn validate_playback_on_grid(
+        &self,
+        sequence_rate: FrameRate,
+        frame_ticks: i64,
+        facts: &super::PrVideoStream,
+        remap: Option<&PrTimeRemap>,
+    ) -> Result<()> {
+        ensure_valid!(frame_ticks > 0, "native sequence grid must be positive");
         let intrinsic_ticks = facts
             .interpreted_duration()
             .map_err(|error| crate::format::invalid(error.to_string()))?;
@@ -569,83 +719,8 @@ impl PrVideoOccurrence {
             self.out_ticks - self.in_ticks,
             self.playback_rate,
         );
-        if let Some(remap) = &self.time_remap {
-            // Key times are input ticks after In. An explicit FrameHold maps
-            // the whole unit-speed placement to one source instant. A native
-            // curve, with increasing source times, plays its input from In to
-            // Out at the forward speed (`after_source_in`); Premiere's clock
-            // from another In or speed is measured on physical video.
-            let frame_hold = remap.held_source_ticks(active_duration).is_some();
-            if frame_hold {
-                ensure_valid!(
-                    self.playback_rate == 1.0,
-                    "constant playback combined with TimeRemapping is unsupported"
-                );
-                ensure_valid!(
-                    self.out_ticks - self.in_ticks == active_duration,
-                    "trimmed TimeRemapping clips are not supported"
-                );
-            } else {
-                // Unit-speed remap input keeps exact placement length; other
-                // speeds use the shared source-span consistency precision.
-                let span_matches = if self.playback_rate == 1.0 {
-                    self.out_ticks - self.in_ticks == active_duration
-                } else {
-                    span_at_rate
-                };
-                ensure_valid!(
-                    self.playback_rate > 0.0 && span_matches,
-                    "TimeRemapping In to Out must match the clip's forward playback rate"
-                );
-                ensure_valid!(
-                    !self.remaps_from_in_or_speed()
-                        || matches!(facts.kind, super::PrMediaKind::Video { .. }),
-                    "TimeRemapping from a source In or at another speed is converted only on physical video"
-                );
-            }
-            ensure_valid!(
-                matches!(remap.keys.as_slice(), [first, .., last]
-                    if first.timeline_ticks <= 0
-                        && last.timeline_ticks >= self.out_ticks - self.in_ticks),
-                "TimeRemapping keys do not cover the placement"
-            );
-            // Saved curves can keep an unused control key past the media end.
-            // Only a final linear tail is admitted, and only while its played
-            // part stays in bounds. Keep the key: it defines the tail's slope.
-            let bounded_tail = matches!(remap.keys.as_slice(), [.., previous, last]
-            if !frame_hold
-                && matches!(facts.kind, super::PrMediaKind::Video { .. })
-                && last.source_ticks > intrinsic_ticks
-                && last.easing == PrKeyframeEasing::Linear
-                && linear_tail_within_media(
-                    i128::from(previous.timeline_ticks)..i128::from(last.timeline_ticks),
-                    i128::from(previous.source_ticks)..i128::from(last.source_ticks),
-                    i128::from(self.out_ticks - self.in_ticks),
-                    i128::from(intrinsic_ticks),
-                ));
-            ensure_valid!(
-                remap.keys.len() >= 2
-                    && remap.keys.iter().enumerate().all(|(index, key)| {
-                        ((0..=intrinsic_ticks).contains(&key.source_ticks)
-                            || (bounded_tail && index == remap.keys.len() - 1))
-                            && (!frame_hold || key.source_ticks < intrinsic_ticks)
-                    })
-                    && remap.keys.windows(2).all(|pair| {
-                        pair[0].timeline_ticks < pair[1].timeline_ticks
-                            && (frame_hold || pair[0].source_ticks < pair[1].source_ticks)
-                    }),
-                "invalid or unsupported TimeRemapping curve"
-            );
-            // A last key at the media end, like the one that Premiere 26.5.1
-            // appends, ends a segment that is unmeasured from another In or
-            // speed: In to Out must end by the key before it.
-            let plays_media_end_segment = matches!(remap.keys.as_slice(), [.., penultimate, last]
-                if last.source_ticks == intrinsic_ticks
-                    && penultimate.timeline_ticks < self.out_ticks - self.in_ticks);
-            ensure_valid!(
-                !(self.remaps_from_in_or_speed() && plays_media_end_segment),
-                "TimeRemapping from a source In or at another speed plays past the key before the curve's media-end key"
-            );
+        if let Some(remap) = remap {
+            self.validate_time_remap_curve(remap, facts)?;
         } else {
             // A still has no media clock: Premiere 26.5.1 keeps a still's
             // 5 s source span when its placement is lengthened, and shows the
@@ -678,7 +753,7 @@ impl PrVideoOccurrence {
             );
         }
         ensure_valid!(
-            self.time_remap.is_none()
+            remap.is_none()
                 || self.animations.is_empty()
                 || (self.has_media_clock_rotation()
                     && matches!(facts.kind, super::PrMediaKind::Video { .. })),

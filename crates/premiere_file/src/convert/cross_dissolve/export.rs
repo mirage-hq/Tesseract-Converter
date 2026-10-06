@@ -8,6 +8,7 @@ use super::super::{
     timing::time_from_ticks,
 };
 use crate::{
+    approximate,
     error::Result,
     export_loss::OmissionSink,
     schema::{
@@ -17,12 +18,12 @@ use crate::{
 };
 use fx_schema::{
     animator::PropertyKeyframeTrack, GroupLayer, LayerData, LayerId, PropType,
-    PropertyKeyframeEasing, PropertyValue, RectLayer, Time,
+    PropertyKeyframeEasing, PropertyValue, RectLayer,
 };
 use std::collections::BTreeSet;
 
-/// Only recognize the generated one-sided ramp. Ordinary authored opacity
-/// animation keeps its existing export path, even when it happens to be linear.
+/// Lower only a current linear edge ramp on a flat picture. Names and key IDs
+/// cannot distinguish an imported dissolve from an equivalent authored ramp.
 pub(in crate::convert) fn place_picture(
     tracks: &mut Vec<PrVideoTrack>,
     mut item: PrVideoItem,
@@ -51,13 +52,18 @@ fn one_sided(
         property == PropType::Opacity
     })?;
     let track = tracks.get(&PropType::Opacity)?;
-    if !track
-        .keyframes()
-        .iter()
-        .all(|key| key.id().as_str().starts_with("premiere-cross-dissolve-"))
+    if ramp(track)?.len() != 2
+        || clip.blend_mode != crate::schema::PrBlendMode::Normal
         || clip.playback_rate != 1.0
         || clip.time_remap.is_some()
         || clip.track_matte.is_some()
+        || !clip.effects.is_empty()
+        || clip.source_effects.is_some()
+        || !clip.crop.is_default()
+        || clip.linear_wipe.is_some()
+        || clip.opacity_mask.is_some()
+        || clip.active_transforms != 0
+        || clip.stroke.is_some()
     {
         return None;
     }
@@ -88,8 +94,12 @@ fn one_sided(
     if !head && !tail {
         return None;
     }
-    let start = clip.start_ticks + first.source_ticks - clip.in_ticks;
-    let end = clip.start_ticks + last.source_ticks - clip.in_ticks;
+    let start = clip
+        .start_ticks
+        .checked_add(first.source_ticks.checked_sub(clip.in_ticks)?)?;
+    let end = clip
+        .start_ticks
+        .checked_add(last.source_ticks.checked_sub(clip.in_ticks)?)?;
     let id = format!("dissolve-picture-{layer}");
     let transition = PrVideoTransition {
         id: format!("dissolve-{layer}"),
@@ -117,13 +127,6 @@ pub(in crate::convert) fn matte_animation(
         return None;
     }
     let track = tracks.get(&PropType::Opacity)?;
-    if !track
-        .keyframes()
-        .iter()
-        .all(|key| key.id().as_str().starts_with("premiere-cross-dissolve-"))
-    {
-        return None;
-    }
     let keys = ramp(track)?;
     let [(first_time, first), (last_time, last)] = keys.as_slice() else {
         return None;
@@ -158,7 +161,8 @@ fn ramp(track: &PropertyKeyframeTrack) -> Option<Vec<(i64, f64)>> {
             let PropertyValue::Float(value) = key.value() else {
                 return None;
             };
-            (key.easing() == PropertyKeyframeEasing::Linear
+            ((0.0..=100.0).contains(value)
+                && key.easing() == PropertyKeyframeEasing::Linear
                 && key.spatial_in_tangent().is_none()
                 && key.spatial_out_tangent().is_none())
             .then_some((key.layer_time().as_millis(), *value))
@@ -214,6 +218,29 @@ pub(in crate::convert) fn export_group(
     tracks: &mut Vec<PrVideoTrack>,
     consumed: &BTreeSet<LayerId>,
     context: &mut LayerExport<'_, '_>,
+    omissions: &mut dyn OmissionSink,
+) -> Result<bool> {
+    if canonical_group(group, tracks, consumed, context, omissions)? {
+        return Ok(true);
+    }
+    // Keep current pictures and coverage on the ordinary nested path when
+    // only native-transition recognition fails. Existing native Linear Dodge
+    // carries Add; do not replace it with Normal or flatten the isolation.
+    let isolated_add = !group.masks.is_empty() && group.layers.iter().any(|layer| {
+        matches!(layer.data(), LayerData::Group(child) if child.blend_mode == fx_schema::BlendMode::Add)
+    });
+    if isolated_add {
+        approximate(omissions, format!("layer {}", group.id),
+            "native Cross Dissolve was not reconstructed from the current topology, controls or clocks; retaining supported current pictures, masks, clocks and Add through ordinary nested export using native Linear Dodge, not Normal; nested rasterization/pass-through and native transition fidelity remain unmeasured; independently unsafe masks or clocks remain scoped omissions");
+    }
+    Ok(false)
+}
+
+fn canonical_group(
+    group: &GroupLayer,
+    tracks: &mut Vec<PrVideoTrack>,
+    consumed: &BTreeSet<LayerId>,
+    context: &mut LayerExport<'_, '_>,
     _omissions: &mut dyn OmissionSink,
 ) -> Result<bool> {
     if context.depth != 0
@@ -221,7 +248,13 @@ pub(in crate::convert) fn export_group(
         || consumed.contains(&group.id)
         || group.layers.len() != 3
         || group.masks.len() != 1
-        || group.playback.input_range().start != Time::ZERO
+        || group.masks.iter().any(|mask| {
+            context
+                .dynamics
+                .entries()
+                .iter()
+                .any(|entry| entry.target.fx_item_id() == Some(mask.id))
+        })
         || !export::layer_tracks(context.dynamics, group.id, |_| true)
             .is_some_and(|tracks| tracks.is_empty())
     {
@@ -236,6 +269,28 @@ pub(in crate::convert) fn export_group(
         return Ok(false);
     };
     let range = group.playback.input_range();
+    let picture_ranges =
+        [outgoing, incoming].map(|fade| fade.layers.first().map(|picture| picture.active_range()));
+    let [Some(out_range), Some(in_range)] = picture_ranges else {
+        return Ok(false);
+    };
+    let [Some(out_end), Some(in_end)] = [out_range, in_range].map(|range| {
+        range
+            .start
+            .as_millis()
+            .checked_add(range.duration.as_millis())
+    }) else {
+        return Ok(false);
+    };
+    if range.start != out_range.start.min(in_range.start)
+        || range
+            .start
+            .as_millis()
+            .checked_add(range.duration.as_millis())
+            != Some(out_end.max(in_end))
+    {
+        return Ok(false);
+    }
     let expected_guide = guide_layer(
         guide.id,
         guide.name.clone(),
@@ -252,6 +307,8 @@ pub(in crate::convert) fn export_group(
         group.layers.clone(),
     )?;
     expected.description = group.description.clone();
+    expected.playback = fx_schema::LayerPlayback::linear(range, range, range, 0)
+        .map_err(crate::error::unsupported)?;
     expected
         .masks
         .push(guide_mask(group.masks[0].id, guide.id, 0.0));
@@ -279,6 +336,8 @@ pub(in crate::convert) fn export_group(
         )?;
         expected.parent = Some(group.id);
         expected.description = fade.description.clone();
+        expected.playback = fx_schema::LayerPlayback::linear(range, range, range, 0)
+            .map_err(crate::error::unsupported)?;
         expected.blend_mode = fx_schema::BlendMode::Add;
         if fade != &expected {
             return Ok(false);
@@ -289,12 +348,29 @@ pub(in crate::convert) fn export_group(
         if properties.len() != 1 {
             return Ok(false);
         }
-        let Some(curve) = properties
+        let Some(mut curve) = properties
             .get(&PropType::Opacity)
             .and_then(|track| ramp(track))
         else {
             return Ok(false);
         };
+        // Fade keys use layer time. Pictures and native transitions use the
+        // retained document clock, even when isolation starts after zero.
+        let (Ok(origin), Ok(duration)) = (
+            i64::try_from(range.start.as_millis()),
+            i64::try_from(range.duration.as_millis()),
+        ) else {
+            return Ok(false);
+        };
+        if curve.iter().any(|(time, _)| !(0..=duration).contains(time)) {
+            return Ok(false);
+        }
+        for (time, _) in &mut curve {
+            let Some(absolute) = time.checked_add(origin) else {
+                return Ok(false);
+            };
+            *time = absolute;
+        }
         curves.push(curve);
         let layer = &fade.layers[0];
         if !export::layer_tracks(context.dynamics, layer.id(), |_| true)

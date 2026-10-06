@@ -50,7 +50,6 @@ input_record!(
 );
 input_record!(SecondaryContent, records::SECONDARY_CONTENT);
 input_record!(ArbVideoComponentParam, text::SOURCE_TEXT_PARAM);
-input_record!(CaptionDataClipTrack, caption::CAPTION_DATA_CLIP_TRACK);
 input_record!(
     CaptionDataClipTrackItem,
     caption::CAPTION_DATA_CLIP_TRACK_ITEM

@@ -79,6 +79,62 @@ pub(crate) fn one_clip_xml(clip: OneClip) -> String {
     )
 }
 
+/// Minimal 2×1 uncompressed HALF RGBA OpenEXR source for package tests.
+#[allow(dead_code)]
+pub(crate) fn half_rgba_openexr() -> Vec<u8> {
+    fn attribute(bytes: &mut Vec<u8>, name: &[u8], kind: &[u8], value: &[u8]) {
+        bytes.extend_from_slice(name);
+        bytes.push(0);
+        bytes.extend_from_slice(kind);
+        bytes.push(0);
+        bytes.extend_from_slice(&(value.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(value);
+    }
+    let mut bytes = vec![0x76, 0x2f, 0x31, 0x01, 2, 0, 0, 0];
+    let mut channels = Vec::new();
+    for name in b"ABGR" {
+        channels.extend_from_slice(&[*name, 0]);
+        channels.extend_from_slice(&1_u32.to_le_bytes());
+        channels.extend_from_slice(&[0; 4]);
+        channels.extend_from_slice(&1_u32.to_le_bytes());
+        channels.extend_from_slice(&1_u32.to_le_bytes());
+    }
+    channels.push(0);
+    attribute(&mut bytes, b"channels", b"chlist", &channels);
+    attribute(&mut bytes, b"compression", b"compression", &[0]);
+    let window = [0_i32, 0, 1, 0]
+        .into_iter()
+        .flat_map(i32::to_le_bytes)
+        .collect::<Vec<_>>();
+    attribute(&mut bytes, b"dataWindow", b"box2i", &window);
+    attribute(&mut bytes, b"displayWindow", b"box2i", &window);
+    attribute(&mut bytes, b"lineOrder", b"lineOrder", &[0]);
+    attribute(
+        &mut bytes,
+        b"pixelAspectRatio",
+        b"float",
+        &1_f32.to_le_bytes(),
+    );
+    attribute(&mut bytes, b"screenWindowCenter", b"v2f", &[0; 8]);
+    attribute(
+        &mut bytes,
+        b"screenWindowWidth",
+        b"float",
+        &1_f32.to_le_bytes(),
+    );
+    bytes.push(0);
+    let chunk = bytes.len() as u64 + 8;
+    bytes.extend_from_slice(&chunk.to_le_bytes());
+    bytes.extend_from_slice(&0_i32.to_le_bytes());
+    bytes.extend_from_slice(&16_u32.to_le_bytes());
+    for sample in [0x3800_u16, 0, 0, 0x3c00] {
+        for _ in 0..2 {
+            bytes.extend_from_slice(&sample.to_le_bytes());
+        }
+    }
+    bytes
+}
+
 /// An editable remap on its authored parent clock, with an independent window.
 pub(crate) fn remapped_playback(window: Value, property: Value) -> Value {
     json!({

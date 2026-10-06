@@ -3,6 +3,7 @@ mod channel_levels;
 mod channel_matte;
 mod empty_root;
 mod export_media;
+mod export_still;
 mod invert_alpha;
 mod linked_alpha;
 mod lumetri;
@@ -12,6 +13,7 @@ mod offset;
 mod pixel_motion_blur;
 mod rates;
 mod sampled;
+mod still_motion;
 mod white_balance;
 
 use super::*;
@@ -194,6 +196,7 @@ fn request<'a>(input: &'a Path, output: &'a Path, mode: ConversionMode) -> Conve
         input,
         output,
         sequence: None,
+        allow_film_impact_pop: false,
         composition: None,
         expression_samples: None,
         available_fonts: None,
@@ -374,6 +377,75 @@ fn hybrid_check_write_and_reimport_preserve_native_sound_and_editable_picture() 
     )
     .is_err());
     assert_eq!(fs::read(&prproj).unwrap(), original_project);
+}
+
+#[test]
+fn linked_direct_rectangle_keeps_static_paint_alpha_and_layer_opacity() {
+    let native = aftereffects_file::structure::read_project(include_bytes!(
+        "../../../../crates/aftereffects_file/tests/fixtures/properties/transform_unseparated.aep"
+    ))
+    .unwrap();
+    let mut value =
+        aftereffects_file::structure_document::to_structural_fx_document(&native, Some(1))
+            .unwrap()
+            .document
+            .to_json_value()
+            .unwrap();
+    let mut rect = value["composition"]["layers"][0]["layers"][0]["layers"][0]["layers"][0].clone();
+    rect["id"] = json!(400);
+    rect["parent"] = Value::Null;
+    rect["name"] = json!("Edited translucent Rectangle");
+    rect["activeRange"] = json!({"start":0,"duration":1000});
+    rect["rect"]["roundness"] = json!(4.0);
+    rect["transform"]["opacity"] = json!(80.0);
+    value["composition"]["dynamics"] = json!({"entries":[]});
+    let temp = tempfile::tempdir().unwrap();
+    for (kind, stroke) in [("Fill", false), ("Stroke", true)] {
+        rect["rect"]["fillEnabled"] = json!(!stroke);
+        rect["rect"]["strokeEnabled"] = json!(stroke);
+        rect["rect"]["fillColor"] = json!([0.2, 0.4, 0.6, 0.72]);
+        rect["rect"]["strokeColor"] = json!([0.2, 0.4, 0.6, 0.72]);
+        rect["rect"]["strokeWidth"] = json!(6.0);
+        value["composition"]["layers"] = json!([rect]);
+        let input = temp.path().join(format!("{kind}.tsrct"));
+        TesseractFileBuilder::from_project_json(&serde_json::to_vec(&value).unwrap())
+            .unwrap()
+            .write(&input)
+            .unwrap();
+        let output = temp.path().join(kind);
+        export(
+            &request(&input, &output, ConversionMode::Write),
+            &Default::default(),
+        )
+        .unwrap();
+        assert!(xml(&output.join("project.prproj")).contains("./media/ae-0001/compositions.aep"));
+        let linked = aftereffects_file::structure::read_project(
+            &fs::read(output.join("media/ae-0001/compositions.aep")).unwrap(),
+        )
+        .unwrap();
+        let aftereffects_file::structure::ItemKind::Composition(comp) =
+            &linked.item(1).unwrap().kind
+        else {
+            panic!("linked composition");
+        };
+        assert_eq!(comp.layers.len(), 1);
+        let contents = &comp.layers[0].content;
+        let opacity = numeric_properties(contents, &format!("ADBE Vector {kind} Opacity"));
+        assert_eq!(opacity.len(), 1);
+        assert_eq!(opacity[0].values, [72.0]);
+        let color = numeric_properties(contents, &format!("ADBE Vector {kind} Color"));
+        assert_eq!(color.len(), 1);
+        assert_eq!(color[0].values, [0.2, 0.4, 0.6, 1.0]);
+        assert_eq!(
+            numeric_properties(contents, "ADBE Opacity")[0].values,
+            [0.8]
+        );
+        assert_eq!(
+            TesseractFile::open(&input).unwrap().project_json().unwrap(),
+            value,
+            "native normalization must not change the editable source"
+        );
+    }
 }
 
 #[test]
@@ -760,7 +832,7 @@ fn hybrid_long_plain_group_retains_native_footage_when_ae_omits_it() {
 }
 
 #[test]
-fn hybrid_long_plain_group_still_rejects_nested_sound() {
+fn hybrid_long_plain_group_retains_native_picture_and_nested_sound_when_ae_omits_picture() {
     let parent = tempfile::tempdir().unwrap();
     let input = parent.path().join("source.tsrct");
     let mut value = long_picture_group();
@@ -772,16 +844,110 @@ fn hybrid_long_plain_group_still_rejects_nested_sound() {
         .push(audio);
     unsupported_video_archive(&value, &input);
     let output = parent.path().join("output");
-    let error = export(
+    let original = fs::read(&input).unwrap();
+    let checked = export(
+        &request(&input, &output, ConversionMode::Check),
+        &Default::default(),
+    )
+    .unwrap();
+    assert!(!output.exists());
+    let written = export(
         &request(&input, &output, ConversionMode::Write),
         &Default::default(),
     )
-    .unwrap_err();
-    assert!(
-        format!("{error:#}").contains("contains nested audio"),
-        "{error:#}"
+    .unwrap();
+    assert_eq!(checked, written);
+    assert!(written
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == "HYBRID-NATIVE-RETAINED"));
+    assert_eq!(fs::read(&input).unwrap(), original);
+    for name in [NATIVE_ONLY_VIDEO, "audio-mono.wav"] {
+        assert_eq!(
+            fs::read(output.join("media").join(name)).unwrap(),
+            fs::read(fixture(name)).unwrap()
+        );
+    }
+    let prproj = output.join("project.prproj");
+    // One inner media item plus its outer sequence-audio placement, not two
+    // independent audible occurrences. The reimport below must flatten once.
+    let native_xml = xml(&prproj);
+    assert_eq!(
+        native_xml.matches("<AudioClipTrackItem ObjectID=").count(),
+        2
     );
-    assert!(!output.exists());
+    let parsed = roxmltree::Document::parse(&native_xml).unwrap();
+    let records = parsed
+        .root_element()
+        .children()
+        .filter_map(|node| Some((node.attribute("ObjectID")?, node)))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let follow = |node: roxmltree::Node<'_, '_>, tag: &str| {
+        records[node
+            .children()
+            .find(|child| child.has_tag_name(tag))
+            .unwrap()
+            .attribute("ObjectRef")
+            .unwrap()]
+    };
+    let mut source_kinds = parsed
+        .root_element()
+        .children()
+        .filter(|node| node.has_tag_name("AudioClipTrackItem"))
+        .map(|item| {
+            let clip_item = item
+                .children()
+                .find(|child| child.has_tag_name("ClipTrackItem"))
+                .unwrap();
+            let clip = follow(follow(clip_item, "SubClip"), "Clip");
+            let clip = clip
+                .children()
+                .find(|child| child.has_tag_name("Clip"))
+                .unwrap();
+            follow(clip, "Source").tag_name().name()
+        })
+        .collect::<Vec<_>>();
+    source_kinds.sort_unstable();
+    assert_eq!(source_kinds, ["AudioMediaSource", "AudioSequenceSource"]);
+    let (native, _) = premiere_file::PrProjectFile::load(&prproj).unwrap();
+    let sequence = native
+        .sequences()
+        .find(|sequence| sequence.name() == "Fresh exact 30")
+        .unwrap()
+        .id()
+        .unwrap()
+        .to_owned();
+    let imported = parent.path().join("imported");
+    let mut import = request(&prproj, &imported, ConversionMode::Write);
+    import.sequence = Some(&sequence);
+    import_premiere(&import).unwrap();
+    let file = TesseractFile::open(imported.join("project.tsrct")).unwrap();
+    let all = layers(file.project().composition().layers());
+    let audio = all
+        .iter()
+        .filter_map(|layer| match layer.data() {
+            LayerData::Audio(audio) => Some(audio),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(audio.len(), 1);
+    assert_eq!(audio[0].playback.input_range().start.as_millis(), 100);
+    assert_eq!(audio[0].playback.input_range().duration.as_millis(), 200);
+    assert_eq!(audio[0].source_range.start.as_millis(), 0);
+    assert_eq!(audio[0].source_range.duration.as_millis(), 200);
+    assert_eq!(audio[0].volume.as_f64(), 0.5);
+    let videos = all
+        .iter()
+        .filter_map(|layer| match layer.data() {
+            LayerData::Video(video) => Some(video),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(videos.len(), 1);
+    assert_eq!(videos[0].playback.input_range().start.as_millis(), 0);
+    assert_eq!(videos[0].playback.input_range().duration.as_millis(), 500);
+    assert_eq!(videos[0].source_range.start.as_millis(), 0);
+    assert_eq!(videos[0].source_range.duration.as_millis(), 500);
 }
 
 #[test]

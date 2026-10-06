@@ -83,8 +83,8 @@ fn parameter_plane_size(match_name: &str, native_size: [u16; 2], group_size: [u1
 
 /// Lowers a control whose enabled expression is a pure alias of another control
 /// of the same effect occurrence to that control's decoded values/keys,
-/// including its integer-slider normalization. Captured Adobe samples take
-/// precedence and are checked by the caller before this is consulted.
+/// including its integer-slider normalization. Exact native keys take precedence
+/// over sampled expression fitting; samples remain the fallback for other programs.
 fn same_effect_alias(
     layer: &Layer,
     source: &native::DecodedEffect,
@@ -340,6 +340,8 @@ fn import_keylight(
         id: EffectId::new(raw_id),
         enabled: source.enabled && layer.record.flags().effects_active,
         effect: EffectPayload::Known(lowered.effect),
+        compositing_options: None,
+        extensions: Default::default(),
     }) {
         Ok(record) => {
             *next_id = candidate_id;
@@ -720,6 +722,8 @@ pub(super) fn import_with_context(
                     id: EffectId::new(id),
                     enabled: source.enabled && layer.record.flags().effects_active,
                     effect: EffectPayload::Known(effect),
+                    compositing_options: None,
+                    extensions: Default::default(),
                 })
                 .map_err(|e| e.to_string())?;
                 Ok((cursor, effect, note, blend, animations))
@@ -769,6 +773,8 @@ pub(super) fn import_with_context(
                     id: EffectId::new(id),
                     enabled: source.enabled && layer.record.flags().effects_active,
                     effect: EffectPayload::Known(effect),
+                    compositing_options: None,
+                    extensions: Default::default(),
                 })
                 .map_err(|e| e.to_string())?;
                 let mut animations = Vec::new();
@@ -863,6 +869,8 @@ pub(super) fn import_with_context(
                             id: EffectId::new(raw_id + index as u64),
                             enabled,
                             effect: EffectPayload::Known(effect),
+                            compositing_options: None,
+                            extensions: Default::default(),
                         })
                         .map_err(|error| error.to_string())
                     })
@@ -960,8 +968,13 @@ pub(super) fn import_with_context(
                     continue;
                 }
             };
-            let evaluated = numeric
+            let same_effect = numeric
                 .expression_enabled
+                .then(|| {
+                    same_effect_alias(layer, &source, parameter, numeric, &mut result.warnings)
+                })
+                .flatten();
+            let evaluated = (numeric.expression_enabled && same_effect.is_none())
                 .then(|| {
                     let index = u32::try_from(source.index).ok()?;
                     context.evaluations.lookup(
@@ -974,25 +987,10 @@ pub(super) fn import_with_context(
                     )
                 })
                 .flatten();
-            let alias = (numeric.expression_enabled && evaluated.is_none())
-                .then(|| {
-                    same_effect_alias(layer, &source, parameter, numeric, &mut result.warnings)
-                        .or_else(|| {
-                            static_effect_color_alias(
-                                layer,
-                                &source,
-                                parameter,
-                                numeric,
-                                &context,
-                                &mut result.warnings,
-                            )
-                        })
-                })
-                .flatten();
-            let point_alias =
-                (numeric.expression_enabled && evaluated.is_none() && alias.is_none())
+            let alias =
+                (numeric.expression_enabled && same_effect.is_none() && evaluated.is_none())
                     .then(|| {
-                        static_effect_point_alias(
+                        static_effect_color_alias(
                             layer,
                             &source,
                             parameter,
@@ -1002,7 +1000,26 @@ pub(super) fn import_with_context(
                         )
                     })
                     .flatten();
-            let numeric = point_alias.as_ref().or(alias.as_ref()).unwrap_or(numeric);
+            let point_alias = (numeric.expression_enabled
+                && same_effect.is_none()
+                && evaluated.is_none()
+                && alias.is_none())
+            .then(|| {
+                static_effect_point_alias(
+                    layer,
+                    &source,
+                    parameter,
+                    numeric,
+                    &context,
+                    &mut result.warnings,
+                )
+            })
+            .flatten();
+            let numeric = point_alias
+                .as_ref()
+                .or(alias.as_ref())
+                .or(same_effect.as_ref())
+                .unwrap_or(numeric);
             let mut shifted = numeric.clone();
             let mut shifted_any = false;
             let mut targets = Vec::new();
@@ -1220,6 +1237,8 @@ pub(super) fn import_with_context(
                 id,
                 enabled: source.enabled && layer.record.flags().effects_active,
                 effect: EffectPayload::Known(effect),
+                compositing_options: None,
+                extensions: Default::default(),
             })
         }) {
             Ok(effect) => {

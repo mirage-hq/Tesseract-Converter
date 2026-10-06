@@ -892,7 +892,14 @@ fn video_keys_export_on_the_clock_that_animates_them() {
             [0, 1000],
         ),
     ] {
-        let (project, omissions) = convert_with_omissions(opacity_keyed_clip(playback)).unwrap();
+        // Keep this a general opacity-key clock test. A zero-valued linear
+        // edge ramp now has an equivalent native Cross Dissolve representation.
+        let mut wire = opacity_keyed_clip(playback);
+        let opacity_keys =
+            &mut wire["composition"]["dynamics"]["entries"][0]["animator"]["keyframes"];
+        opacity_keys[0]["value"]["value"] = json!(10.0);
+        opacity_keys[1]["value"]["value"] = json!(90.0);
+        let (project, omissions) = convert_with_omissions(wire).unwrap();
         assert!(omissions.is_empty(), "{case}: {omissions:?}");
         let reading = |project: &PrProjectFile| {
             let clip = first_clip(project);
@@ -917,12 +924,74 @@ fn video_keys_export_on_the_clock_that_animates_them() {
             timeline.map(ms),
             source.map(ms),
             1.0,
-            vec![(ms(keys[0]), 0.0, Linear), (ms(keys[1]), 100.0, Linear)],
+            vec![(ms(keys[0]), 10.0, Linear), (ms(keys[1]), 90.0, Linear)],
         );
         assert_eq!(reading(&project), expected, "{case}");
         // The written project reads back the same keys and media range.
         let reread = write_and_load_with_crate_reader(project);
         assert_eq!(reading(&reread), expected, "{case}");
+    }
+}
+
+#[test]
+fn linear_edge_opacity_clock_exports_as_cross_dissolve_without_key_identity() {
+    let remap = crate::test_support::remapped_playback(
+        json!({"start": 500, "duration": 1000}),
+        json!({"before": "inactive", "after": "inactive", "keyframes": [
+            {"id": "a", "time": 0, "value": 2000, "easing": {"type": "linear"}},
+            {"id": "b", "time": 2000, "value": 4000, "easing": {"type": "linear"}}
+        ]}),
+    );
+    for (playback, keys, timeline, source, fade) in [
+        (
+            unit_playback([1000, 2000], [1000, 9000], 0),
+            [0, 1000],
+            [1000, 3000],
+            [1000, 3000],
+            [1000, 2000],
+        ),
+        (remap, [2500, 3500], [500, 1500], [2500, 3500], [500, 1500]),
+    ] {
+        let mut wire = opacity_keyed_clip(playback);
+        let opacity = &mut wire["composition"]["dynamics"]["entries"][0]["animator"]["keyframes"];
+        for (key, time) in opacity.as_array_mut().unwrap().iter_mut().zip(keys) {
+            key["layerTime"] = json!(time);
+        }
+        let (project, reports) = convert_with_omissions(wire).unwrap();
+        assert!(reports.is_empty(), "{reports:?}");
+        let assert_current = |project: &PrProjectFile| {
+            let track = project
+                .single_sequence()
+                .unwrap()
+                .video_tracks
+                .iter()
+                .find(|track| !track.transitions.is_empty())
+                .unwrap();
+            let clip = track.clip(0);
+            let [transition] = track.transitions.as_slice() else {
+                panic!("one native edge ramp");
+            };
+            let ticks = |millis| millis * TICKS_PER_MILLISECOND;
+            assert_eq!([clip.start_ticks, clip.end_ticks], timeline.map(ticks));
+            assert_eq!([clip.in_ticks, clip.out_ticks], source.map(ticks));
+            assert_eq!(clip.opacity, 100.0);
+            assert!(!clip.animations.iter().any(
+                |animation| animation.property() == crate::schema::PrAnimatedProperty::Opacity
+            ));
+            assert_eq!(
+                transition.kind,
+                crate::schema::PrVideoTransitionKind::CrossDissolve
+            );
+            assert_eq!(
+                [transition.start_ticks, transition.end_ticks],
+                fade.map(ticks)
+            );
+            assert_eq!(transition.cut_ticks, ticks(fade[0]));
+            assert_eq!(transition.incoming_clip, clip.id);
+            assert!(transition.outgoing_clip.is_none());
+        };
+        assert_current(&project);
+        assert_current(&write_and_load_with_crate_reader(project));
     }
 }
 
@@ -1295,7 +1364,7 @@ fn stationary_cubic_position_is_omitted() {
 }
 
 #[test]
-fn dropped_animation_does_not_claim_its_cubic_easing_was_approximated() {
+fn equal_value_cubic_animation_recovers_linear_keys_with_diagnostic() {
     use crate::{
         schema::{PrKeyframeEasing, PrPropertyAnimation, PrScalarKeyframe},
         tests::support::{project_document, video_sequence},
@@ -1322,30 +1391,35 @@ fn dropped_animation_does_not_claim_its_cubic_easing_was_approximated() {
     key["value"]["value"] = json!(0.0);
     key["easing"] = json!({"type":"cubicBezier","x1":0.2,"y1":0.1,"x2":0.8,"y2":0.9});
     let (project, omissions) = convert_with_omissions(wire).unwrap();
-    assert!(project
+    let clip = project
         .single_sequence()
         .unwrap()
         .video_occurrences()
         .next()
-        .unwrap()
-        .animations
-        .is_empty());
-    assert!(
-        omissions.iter().any(|item| item.reason.contains(
-            "Rotation animation was not exported: unsupported conversion: Rotation cubic easing between equal values"
-        )),
-        "{omissions:?}"
+        .unwrap();
+    let keys = clip.animations[0].scalar_keys().unwrap();
+    assert_eq!(
+        keys.iter()
+            .map(|key| (key.source_ticks, key.value, key.easing))
+            .collect::<Vec<_>>(),
+        [
+            (0, 0.0, crate::schema::PrKeyframeEasing::Linear),
+            (TICKS, 0.0, crate::schema::PrKeyframeEasing::Linear)
+        ]
     );
     assert!(
-        !omissions
+        omissions
             .iter()
-            .any(|item| item.reason.contains("cubic easing approximated")),
+            .any(|item| item.kind == crate::OmissionKind::Approximated
+                && item
+                    .reason
+                    .contains("segment easing approximated as linear")),
         "{omissions:?}"
     );
 }
 
 #[test]
-fn a_bezier_curve_into_a_key_that_starts_a_hold_is_reported_and_the_static_value_exports() {
+fn a_bezier_curve_into_a_key_that_starts_a_hold_is_reported_and_valid_keys_export() {
     use crate::{
         schema::{
             PrAnimatedProperty, PrKeyframeEasing, PrPointKeyframe, PrPropertyAnimation,
@@ -1389,17 +1463,28 @@ fn a_bezier_curve_into_a_key_that_starts_a_hold_is_reported_and_the_static_value
         x2: 0.8,
         y2: 0.9,
     });
-    assert!(clip.animations.is_empty(), "{:?}", clip.animations);
-    assert_eq!(clip.transform.rotation, 30.0);
     assert_eq!(
+        clip.animations[0]
+            .scalar_keys()
+            .unwrap()
+            .iter()
+            .map(|key| (key.source_ticks, key.value, key.easing))
+            .collect::<Vec<_>>(),
+        [
+            (0, 0.0, Linear),
+            (2 * TICKS, 90.0, Linear),
+            (4 * TICKS, 180.0, Hold)
+        ]
+    );
+    assert_eq!(clip.transform.rotation, 30.0);
+    assert!(
         omissions
             .iter()
-            .map(|omission| (omission.scope, omission.reason.as_str()))
-            .collect::<Vec<_>>(),
-        [(
-            crate::OmissionScope::Feature,
-            "Rotation animation was not exported: unsupported conversion: Rotation cubic easing into a key that starts a Hold cannot keep its in-handle, which Premiere ignores"
-        )]
+            .any(|item| item.kind == crate::OmissionKind::Approximated
+                && item
+                    .reason
+                    .contains("segment easing approximated as linear")),
+        "{omissions:?}"
     );
     for arrival in [
         CubicBezier {
@@ -1508,10 +1593,37 @@ fn a_linear_wipe_curve_into_a_key_that_starts_a_hold_stops_the_export_like_its_o
         angle_degrees: 270,
         feather: 5.0,
     });
-    let error = convert_with_omissions(project_document(&sequence)).unwrap_err();
+    let (project, reports) = convert_with_omissions(project_document(&sequence)).unwrap();
+    let clip = project
+        .single_sequence()
+        .unwrap()
+        .video_occurrences()
+        .next()
+        .unwrap();
+    let wipe = clip.linear_wipe.as_ref().unwrap();
+    assert_eq!(
+        (wipe.initial_completion, wipe.angle_degrees, wipe.feather),
+        (100.0, 270, 5.0)
+    );
+    assert_eq!(
+        wipe.completion
+            .iter()
+            .map(|key| (key.source_ticks, key.value, key.easing))
+            .collect::<Vec<_>>(),
+        [
+            (0, 100.0, PrKeyframeEasing::Linear),
+            (TICKS, 50.0, PrKeyframeEasing::Linear),
+            (2 * TICKS, 0.0, PrKeyframeEasing::Hold)
+        ]
+    );
     assert!(
-        error.to_string().ends_with("unsupported conversion: Linear Wipe completion cubic easing into a key that starts a Hold cannot keep its in-handle, which Premiere ignores"),
-        "{error}"
+        reports
+            .iter()
+            .any(|item| item.kind == crate::OmissionKind::Approximated
+                && item
+                    .reason
+                    .contains("segment easing approximated as linear")),
+        "{reports:?}"
     );
 }
 
@@ -1576,18 +1688,8 @@ fn exported_with_effects(
 }
 
 #[test]
-fn a_blurriness_curve_into_a_key_that_starts_a_hold_omits_only_its_effect() {
+fn a_blurriness_curve_into_a_key_that_starts_a_hold_retains_effect_keys_and_neighbors() {
     use crate::schema::PrKeyframeEasing::CubicBezier;
-    let expected_omissions = [crate::Omission {
-        scope: crate::OmissionScope::Feature,
-        kind: crate::OmissionKind::Omitted,
-        record: "layer 1 (\"Premiere video 1\")".to_owned(),
-        reason: "effects: gaussianBlur effect 2 was not exported: unsupported conversion: blurriness cubic easing into a key that starts a Hold cannot keep its in-handle, which Premiere ignores".to_owned(),
-    }];
-    // Premiere ignores the in-handle of the key at 1 s. A curve that bends
-    // into the key is reported, and so are curves that only nearly arrive at
-    // (1, 1) or nearly lie on the straight line, because the comparison is
-    // exact.
     for arrival in [
         CubicBezier {
             x1: 0.2,
@@ -1610,15 +1712,39 @@ fn a_blurriness_curve_into_a_key_that_starts_a_hold_omits_only_its_effect() {
     ] {
         let stack = blur_stack_with_an_arrival_into_a_hold(arrival);
         let (clip, omissions) = exported_with_effects(stack.clone());
-        assert_eq!(omissions, expected_omissions, "{arrival:?}");
-        // The whole keyed blur is omitted. The clip keeps its range and the
-        // blurs around it, in stack order.
+        assert!(
+            omissions
+                .iter()
+                .any(|item| item.kind == crate::OmissionKind::Approximated
+                    && item
+                        .reason
+                        .contains("segment easing approximated as linear")),
+            "{arrival:?}: {omissions:?}"
+        );
+        let mut expected = stack;
+        expected[1].animations[0].keys = crate::schema::PrEffectParamKeys::Scalar(vec![
+            crate::schema::PrScalarKeyframe {
+                source_ticks: 0,
+                value: 0.0,
+                easing: crate::schema::PrKeyframeEasing::Linear,
+            },
+            crate::schema::PrScalarKeyframe {
+                source_ticks: TICKS,
+                value: 20.0,
+                easing: crate::schema::PrKeyframeEasing::Linear,
+            },
+            crate::schema::PrScalarKeyframe {
+                source_ticks: 2 * TICKS,
+                value: 40.0,
+                easing: crate::schema::PrKeyframeEasing::Hold,
+            },
+        ]);
         assert_eq!(
             clip.effects,
-            [
-                current_blur_export(stack[0].clone()),
-                current_blur_export(stack[2].clone())
-            ],
+            expected
+                .into_iter()
+                .map(current_blur_export)
+                .collect::<Vec<_>>(),
             "{arrival:?}"
         );
         assert_eq!(
@@ -1761,12 +1887,26 @@ fn linear_wipe_keys_arriving_at_a_hold_key_read_back_natively_or_stop_the_export
             y2: 0.7 + 1e-12,
         },
     ] {
-        let Err(error) = exported(arrival) else {
-            panic!("{arrival:?}: the export did not stop");
-        };
+        let (project, reports) = exported(arrival).unwrap();
+        let project = write_and_load_with_crate_reader(project);
+        let wipe = project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .next()
+            .unwrap()
+            .linear_wipe
+            .as_ref()
+            .unwrap();
+        assert_eq!(wipe.completion, completion(Linear));
         assert!(
-            error.to_string().ends_with("unsupported conversion: Linear Wipe completion cubic easing into a key that starts a Hold cannot keep its in-handle, which Premiere ignores"),
-            "{arrival:?}: {error}"
+            reports
+                .iter()
+                .any(|item| item.kind == crate::OmissionKind::Approximated
+                    && item
+                        .reason
+                        .contains("segment easing approximated as linear")),
+            "{reports:?}"
         );
     }
 }
@@ -2402,19 +2542,47 @@ fn stage_groups_that_one_clip_cannot_carry_export_as_nests() {
                 (0..2 * TICKS, 50.0, 15.0, 1),
                 "{reason}"
             );
-        } else {
-            assert!(
-                omissions.contains(&crate::Omission {
-                    scope: crate::OmissionScope::Occurrence,
-                    kind: crate::OmissionKind::Omitted,
-                    record: "layer 5 (\"Premiere stage 1\")".into(),
-                    reason: reason.into(),
-                }),
-                "{reason}: {omissions:?}"
+        } else if reason.contains("the video's range is not the group's")
+            || reason.contains("track matte with masks")
+            || reason.contains("the mask guide is not a rectangle")
+        {
+            assert_eq!(
+                sequence.video_occurrences().count(),
+                1,
+                "case {index}: {omissions:?}"
             );
-            assert_eq!(sequence.nest_occurrences().count(), 0, "{reason}");
+            assert_eq!(sequence.nest_occurrences().count(), 0);
+            assert!(
+                omissions.iter().any(|loss| loss.reason == reason),
+                "case {index}: {omissions:?}"
+            );
+        } else {
+            if let Some(nest) = sequence.nest_occurrences().next() {
+                assert!(nest.sequence.video_occurrences().next().is_some());
+                assert_eq!(nest.timeline_ticks(), 0..2 * TICKS);
+            } else {
+                let clip = sequence
+                    .video_occurrences()
+                    .find(|clip| clip.start_ticks == 0)
+                    .unwrap_or_else(|| panic!("case {index}: {omissions:?}"));
+                assert!(clip.enabled && project.media.contains_key(&clip.media));
+                assert_eq!(clip.end_ticks, 2 * TICKS);
+            }
+            assert!(
+                omissions
+                    .iter()
+                    .any(|item| item.kind == crate::OmissionKind::Approximated),
+                "{omissions:?}"
+            );
         }
-        assert_eq!(first_clip(&project).start_ticks, 3 * TICKS, "{reason}");
+        let sibling = sequence
+            .video_occurrences()
+            .find(|clip| clip.start_ticks == 3 * TICKS)
+            .unwrap();
+        assert!(
+            sibling.enabled && project.media.contains_key(&sibling.media),
+            "{reason}"
+        );
     }
 }
 
@@ -2560,6 +2728,154 @@ fn transform_stage_groups_export_as_one_clip_ending_in_a_transform() {
 }
 
 #[test]
+fn transform_stage_recognition_validates_current_semantics_not_labels_or_ids() {
+    let base = crate::tests::support::project_document(&transform_stage_sequence());
+    let (expected, _) = convert_with_omissions(base.clone()).unwrap();
+    let expected_clip = first_clip(&expected);
+    let mut renamed = base;
+    let stage = &mut renamed["composition"]["layers"][0];
+    let old = stage["id"].as_u64().unwrap();
+    stage["id"] = json!(9000);
+    stage["name"] = json!("Authored composition");
+    let video = &mut stage["layers"][0];
+    let old_video = video["id"].as_u64().unwrap();
+    video["id"] = json!(9001);
+    video["parent"] = json!(9000);
+    video["name"] = json!("Authored picture");
+    for entry in renamed["composition"]["dynamics"]["entries"]
+        .as_array_mut()
+        .unwrap()
+    {
+        let id = entry["target"]["layerId"].as_u64().unwrap();
+        entry["target"]["layerId"] = json!(if id == old {
+            9000
+        } else {
+            assert_eq!(id, old_video);
+            9001
+        });
+        let property = entry["target"]["propertyType"].as_str().unwrap().to_owned();
+        for (index, key) in entry["animator"]["keyframes"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .enumerate()
+        {
+            key["id"] = json!(format!("remapped-{id}-{property}-{index}"));
+        }
+    }
+    let (actual, notes) = convert_with_omissions(renamed.clone()).unwrap();
+    assert!(notes.is_empty(), "{notes:?}");
+    assert_eq!(
+        actual.single_sequence().unwrap().nest_occurrences().count(),
+        0
+    );
+    let actual_clip = first_clip(&actual);
+    assert_eq!(
+        (
+            actual_clip.timeline_ticks(),
+            actual_clip.in_ticks,
+            actual_clip.out_ticks,
+            actual_clip.transform,
+            &actual_clip.effects
+        ),
+        (
+            expected_clip.timeline_ticks(),
+            expected_clip.in_ticks,
+            expected_clip.out_ticks,
+            expected_clip.transform,
+            &expected_clip.effects
+        )
+    );
+    // An identity outer group around a moved/keyed picture remains an
+    // ordinary nest. Capturing it would introduce Transform Opacity mixing
+    // and discard its raster boundary, regardless of its copied display label.
+    let mut neutral = renamed.clone();
+    neutral["composition"]["layers"][0]["transform"] =
+        serde_json::to_value(identity_transform()).unwrap();
+    neutral["composition"]["layers"][0]["name"] = json!("Premiere stage forged");
+    let (ordinary, reports) = convert_with_omissions(neutral).unwrap();
+    assert!(reports.is_empty(), "{reports:?}");
+    let nest = ordinary
+        .single_sequence()
+        .unwrap()
+        .nest_occurrences()
+        .next()
+        .unwrap();
+    assert_eq!(
+        ordinary
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .count(),
+        0
+    );
+    let child = nest.sequence.video_occurrences().next().unwrap();
+    assert!(child
+        .effects
+        .iter()
+        .all(|effect| !matches!(effect.params, crate::schema::PrEffectParams::Transform(_))));
+
+    // A one-video shape with a changed content clock is not a stage. It
+    // cannot gain native Transform ownership by copying an imported label.
+    renamed["composition"]["layers"][0]["name"] = json!("Premiere stage forged");
+    renamed["composition"]["layers"][0]["playback"]["mapping"]["output"]["start"] = json!(10);
+    let document = EditableFxCompositionDocument::from_json_value(renamed).unwrap();
+    let LayerData::Group(group) = document.composition().layers()[0].data() else {
+        panic!("group")
+    };
+    assert!(transform_stage_layers(group, document.composition().dynamics()).is_none());
+}
+
+#[test]
+fn linear_wipe_script_ownership_uses_current_cardinal_geometry_not_guide_name() {
+    for name in ["Renamed guide", "Premiere Linear Wipe guide forged"] {
+        let mut wire = two_clips_with_mask(true, |_| {});
+        wire["composition"]["layers"][1]["name"] = json!(name);
+        wire["composition"]["dynamics"]["entries"][0]["animator"] = json!({
+            "type": "jsScript", "layerTimeJsCode": "return 100 * input.time.seconds / 2;"
+        });
+        let document = EditableFxCompositionDocument::from_json_value(wire.clone()).unwrap();
+        let mut notes = Vec::new();
+        let baked = crate::convert::bake_scripts(&document, &mut notes).unwrap();
+        let (project, notes) =
+            convert_with_omissions(baked.document().to_json_value().unwrap()).unwrap();
+        assert!(notes.is_empty(), "{notes:?}");
+        let wipe = first_clip(&project).linear_wipe.as_ref().unwrap();
+        assert_eq!(wipe.angle_degrees, 270);
+        assert_eq!(
+            wipe.completion
+                .iter()
+                .map(|key| (key.source_ticks, key.value))
+                .collect::<Vec<_>>(),
+            [(TICKS, 100.0), (3 * TICKS, 0.0)]
+        );
+        // Forging the label on a Crop-sized rectangle cannot give its script
+        // the scalar Scale binding used by native completion.
+        wire["composition"]["layers"][1]["rect"]["size"] = json!([1800.0, 1080.0]);
+        let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
+        let mut notes = Vec::new();
+        let baked = crate::convert::bake_scripts(&document, &mut notes).unwrap();
+        assert!(
+            notes
+                .iter()
+                .any(|note| note.reason.contains("kept their animator")),
+            "{notes:?}"
+        );
+        let (project, _) =
+            convert_with_omissions(baked.document().to_json_value().unwrap()).unwrap();
+        assert_eq!(
+            project
+                .single_sequence()
+                .unwrap()
+                .video_occurrences()
+                .count(),
+            1,
+            "healthy sibling"
+        );
+    }
+}
+
+#[test]
 fn a_transform_stage_whose_keyed_video_holds_a_frame_is_not_one_clip() {
     // The video of `transform_stage_sequence` holds source 1 s, inside its
     // 0.5 to 2.5 s selection, for its whole 2 s window and keeps its
@@ -2618,6 +2934,9 @@ fn transform_skew_axis_round_trips_through_the_fx_axis_90_less() {
             PrTransform {
                 skew,
                 skew_axis,
+                // Retain an actual extra affine stage even in the no-skew
+                // case; a spatial identity is an ordinary nest, not origin proof.
+                position: [0.6, 0.5],
                 ..DEFAULT_PR_TRANSFORM
             },
             vec![],
@@ -2675,7 +2994,7 @@ fn transform_skew_axes_beyond_premiere_bounds_round_trip_as_the_same_shear() {
 }
 
 #[test]
-fn transform_stages_that_one_transform_cannot_carry_export_as_nests_like_renamed_ones() {
+fn transform_stages_that_one_transform_cannot_carry_export_as_nests() {
     let base = crate::tests::support::project_document(&transform_stage_sequence());
     let video = "/composition/layers/0/layers/0";
     let field = |pointer: &'static str, value: Value| {
@@ -2711,13 +3030,7 @@ fn transform_stages_that_one_transform_cannot_carry_export_as_nests_like_renamed
     };
     /// (edit, the nest's own report of what the inner clip loses, or "")
     type Edit<'a> = (Box<dyn Fn(&mut Value) + 'a>, &'a str);
-    let edits: [Edit<'_>; 5] = [
-        // A renamed group is a nest of one moved clip, as a Premiere nest
-        // imports.
-        (
-            Box::new(field("/composition/layers/0/name", json!("Inner"))),
-            "",
-        ),
+    let edits: [Edit<'_>; 4] = [
         (Box::new(retarget("anchorPointX")), ""),
         (
             Box::new(move |wire: &mut Value| {
@@ -3329,6 +3642,22 @@ fn masks_that_one_crop_or_wipe_cannot_carry_omit_their_clip_or_stage() {
     });
     for (wire, record, reason, only) in flat.into_iter().chain(stage) {
         let (project, omissions) = convert_with_omissions(wire).unwrap();
+        if reason.contains("group backgrounds") {
+            let nest = project
+                .single_sequence()
+                .unwrap()
+                .nest_occurrences()
+                .next()
+                .unwrap();
+            assert!(!nest.sequence.video_tracks.is_empty());
+            assert!(
+                omissions
+                    .iter()
+                    .any(|item| item.reason.contains("Group background/padding")),
+                "{omissions:?}"
+            );
+            continue;
+        }
         let omission = crate::Omission {
             scope: crate::OmissionScope::Occurrence,
             kind: crate::OmissionKind::Omitted,
@@ -3512,16 +3841,6 @@ fn opacity_masks_that_one_mask_record_cannot_carry_omit_their_clip_or_stage() {
             "layer 1 (\"Premiere video 1\")",
             omitted("the Opacity mask guide's transform or Motion keys differ from its video's"),
         ),
-        // The staged form of this clip exports the blur before the mask
-        // (`edited_opacity_masks_export_as_the_native_mask_and_reread`).
-        (
-            flat(&|wire| {
-                wire["composition"]["layers"][0]["effects"] =
-                    json!([{"id": 1, "effect": {"type": "gaussianBlur", "blurriness": 10.0}}])
-            }),
-            "layer 1 (\"Premiere video 1\")",
-            omitted("the video has effects, which FX applies after its mask and Premiere before an Opacity mask; the mask needs a stage group"),
-        ),
         (
             flat(&|wire| wire["composition"]["layers"][0]["masks"][0]["feather"] = json!([1500.0, 1500.0])),
             "layer 1 (\"Premiere video 1\")",
@@ -3558,6 +3877,44 @@ fn opacity_masks_that_one_mask_record_cannot_carry_omit_their_clip_or_stage() {
         assert_eq!(starts, [3 * TICKS], "{omission}");
         assert_eq!(sequence.video_items().filter_map(PrVideoItem::graphic).count(), 0, "{omission}");
     }
+}
+
+#[test]
+fn flat_opacity_mask_keeps_coverage_and_omits_owner_effect_instead_of_reordering_it() {
+    let mut wire = crate::tests::support::project_document(&flat_opacity_mask_sequence());
+    wire["composition"]["layers"][0]["effects"] =
+        json!([{"id": 1, "effect": {"type": "gaussianBlur", "blurriness": 10.0}}]);
+
+    let (project, omissions) = convert_with_omissions(wire).unwrap();
+    let sequence = project.single_sequence().unwrap();
+    assert_eq!(
+        sequence
+            .video_occurrences()
+            .map(|clip| clip.start_ticks)
+            .collect::<Vec<_>>(),
+        [0, 3 * TICKS]
+    );
+    let clip = first_clip(&project);
+    assert!(clip.opacity_mask.is_some());
+    assert!(clip.effects.is_empty());
+    assert!(
+        omissions.iter().any(|item| {
+            item.record == "layer 1 (\"Premiere video 1\")"
+                && item
+                    .reason
+                    .contains("effects: gaussianBlur effect 1 was not exported")
+                && item
+                    .reason
+                    .contains("retaining the mask on a flat clip requires omitting the effect")
+        }),
+        "{omissions:?}"
+    );
+    assert!(
+        !omissions
+            .iter()
+            .any(|item| item.reason.contains("masks cannot be exported")),
+        "{omissions:?}"
+    );
 }
 
 /// The second key of the one `shapePath` track of `wire`.
@@ -3968,20 +4325,24 @@ fn a_video_z_position_is_reported_as_not_exported() {
             reported("layer 1 (\"Source\")"),
         ]
     );
-    // On a stage group it omits the group, as before, with no new report.
+    // A 3D property loses only its keys/base depth, retaining the 2D owner.
     let mut keyed = staged;
     z(&mut keyed["composition"]["layers"][0], 0.0);
     add_keys(&mut keyed, position_z(5), "z");
-    let (_, omissions) = convert_with_omissions(keyed).unwrap();
+    let (project, omissions) = convert_with_omissions(keyed).unwrap();
+    assert!(project
+        .single_sequence()
+        .unwrap()
+        .nest_occurrences()
+        .next()
+        .is_some());
     assert!(
-        omissions.iter().any(|omission| omission.reason
-            == "group was not exported as a nested sequence: group PositionZ animation is not supported"),
+        omissions.contains(&reported("layer 5 (\"Premiere stage 1\")")),
         "{omissions:?}"
     );
-    assert!(
-        !omissions.contains(&reported("layer 5 (\"Premiere stage 1\")")),
-        "{omissions:?}"
-    );
+    assert!(!omissions
+        .iter()
+        .any(|item| item.scope == crate::OmissionScope::Occurrence));
 }
 
 #[test]
@@ -4437,7 +4798,9 @@ fn trimmed_unit_remap_keeps_opacity_keys_on_the_source_clock() {
         ]}),
     );
     wire["composition"]["layers"][1]["activeRange"]["duration"] = json!(1500);
-    let mut opacity = two_layer_keys(1, "opacity", [0.0, 100.0], json!({"type": "linear"}));
+    // Nonzero opacity retains ordinary native keys rather than selecting the
+    // equivalent linear Cross Dissolve edge-ramp representation.
+    let mut opacity = two_layer_keys(1, "opacity", [10.0, 90.0], json!({"type": "linear"}));
     opacity["animator"]["keyframes"][0]["layerTime"] = json!(2500);
     opacity["animator"]["keyframes"][1]["layerTime"] = json!(3500);
     wire["composition"]["dynamics"] = json!({"entries": [opacity]});
@@ -4462,8 +4825,8 @@ fn trimmed_unit_remap_keeps_opacity_keys_on_the_source_clock() {
     assert_eq!(
         keys,
         vec![
-            (2500 * TICKS_PER_MILLISECOND, 0.0),
-            (3500 * TICKS_PER_MILLISECOND, 100.0)
+            (2500 * TICKS_PER_MILLISECOND, 10.0),
+            (3500 * TICKS_PER_MILLISECOND, 90.0)
         ]
     );
 }
@@ -5143,11 +5506,7 @@ fn bounded_constant_playback_approximates_curves_but_rejects_invalid_windows() {
             .unwrap()
             .video_occurrences()
             .collect();
-        assert_eq!(
-            clips.len(),
-            if retained { 2 } else { 1 },
-            "{path}: {omissions:?}"
-        );
+        assert_eq!(clips.len(), 2, "{path}: {omissions:?}");
         assert_eq!(clips.last().unwrap().start_ticks, 3 * TICKS);
         if retained {
             assert_eq!((clips[0].start_ticks, clips[0].end_ticks), (0, 2 * TICKS));
@@ -5161,12 +5520,13 @@ fn bounded_constant_playback_approximates_curves_but_rejects_invalid_windows() {
                 "{path}: {omissions:?}"
             );
         } else {
+            assert_eq!((clips[0].in_ticks, clips[0].out_ticks), (TICKS, 8 * TICKS));
             assert!(
                 omissions
                     .iter()
-                    .any(|item| item.scope == OmissionScope::Occurrence
-                        && item.reason.contains("time remapping was not exported")),
-                "{path}: {omissions:?}"
+                    .any(|item| item.kind == OmissionKind::Approximated
+                        && item.reason.contains("bounded authored source selection")),
+                "{omissions:?}"
             );
         }
     }
@@ -5179,7 +5539,7 @@ fn bounded_constant_playback_keeps_media_duration_checks() {
         (10000, SOURCE_MILLIS, true, true),
         (11000, SOURCE_MILLIS, false, false),
         (11000, SOURCE_MILLIS, true, false),
-        (10000, SOURCE_MILLIS - 1, false, false),
+        (10000, SOURCE_MILLIS - 1, false, true),
     ] {
         let mut wire = document();
         let video = &mut wire["composition"]["layers"][0];
@@ -5200,7 +5560,16 @@ fn bounded_constant_playback_keeps_media_duration_checks() {
         let result = convert_with_omissions(wire);
         if accepted {
             let (project, omissions) = result.unwrap();
-            assert_reverse_boundary_loss(&omissions, reverse);
+            if intrinsic_duration == SOURCE_MILLIS {
+                assert_reverse_boundary_loss(&omissions, reverse);
+            } else {
+                assert!(
+                    omissions
+                        .iter()
+                        .any(|loss| loss.reason.contains("stale sourceIntrinsicDuration")),
+                    "{omissions:?}"
+                );
+            }
             let clips: Vec<_> = project
                 .single_sequence()
                 .unwrap()
@@ -5244,7 +5613,7 @@ fn bounded_constant_playback_keeps_media_duration_checks() {
 }
 
 #[test]
-fn intrinsic_duration_accepts_only_floor_or_nearest_of_the_exact_source_clock() {
+fn intrinsic_duration_cache_recovers_against_exact_inspected_source_clock() {
     for (ticks, authored, accepted) in [
         (121 * FrameRate::Fps24.ticks_per_frame(), 5041, true),
         (121 * FrameRate::Fps24.ticks_per_frame(), 5042, true),
@@ -5268,17 +5637,6 @@ fn intrinsic_duration_accepts_only_floor_or_nearest_of_the_exact_source_clock() 
         );
         let report = collector.finish(result.is_ok());
         let omissions = &report.diagnostics;
-        if !accepted {
-            let Err(error) = result else {
-                panic!("invalid sourceIntrinsicDuration {authored} was accepted");
-            };
-            let error = error.to_string();
-            assert!(
-                error.contains("sourceIntrinsicDuration"),
-                "{authored}: {error}"
-            );
-            continue;
-        }
         let project = result.unwrap().project.unwrap();
         assert_eq!(
             project.media[&MediaId("premiere-video-1".into())]
@@ -5299,11 +5657,21 @@ fn intrinsic_duration_accepts_only_floor_or_nearest_of_the_exact_source_clock() 
             (0, TICKS, 1.0)
         );
         let truncated = authored == 5041;
+        let stale = !accepted;
         assert_eq!(
             omissions.len(),
-            usize::from(truncated),
+            usize::from(truncated || stale),
             "{authored}: {omissions:?}"
         );
+        if stale {
+            assert!(
+                omissions[0]
+                    .reason
+                    .contains("stale sourceIntrinsicDuration"),
+                "{omissions:?}"
+            );
+            assert_eq!(report.losses[0].domain, ExportLossDomain::Metadata);
+        }
         if truncated {
             assert!(omissions[0]
                 .reason
@@ -5367,45 +5735,20 @@ fn playback_that_native_speed_cannot_carry_omits_its_clip() {
             })
             .collect();
         let sibling = (3 * TICKS, 6 * TICKS, 8 * TICKS, 1.0);
-        let (expected_clips, scope, expected_reason) = if reason.is_empty() {
-            let clip = if duration == 1000 {
-                (0, 4 * TICKS, 5 * TICKS, 0.5) // Legacy case: rate 0.5
-            } else {
-                (0, 4 * TICKS, 6 * TICKS, 1.0) // Unit rate
-            };
-            (
-                vec![clip, sibling],
-                crate::OmissionScope::Feature,
-                "time remap (using source range at constant speed) was not exported",
-            )
-        } else {
-            (vec![sibling], crate::OmissionScope::Occurrence, reason)
-        };
-        assert_eq!(clips, expected_clips, "{reason}");
-        let expected_omissions = if duration == 1000 && reason.is_empty() {
-            vec![
-                crate::Omission {
-                    scope: crate::OmissionScope::Feature,
-                    kind: crate::OmissionKind::Omitted,
-                    record: "layer 1 (\"Source\")".into(),
-                    reason: expected_reason.into(),
-                },
-                crate::Omission {
-                    scope: crate::OmissionScope::Feature,
-                    kind: crate::OmissionKind::Approximated,
-                    record: "layer 1 (\"Source\")".into(),
-                    reason: "affine picture clock normalized to physical source and effective native clip speed; original interpretation and speed controls are not restored separately".into(),
-                },
-            ]
-        } else {
-            vec![crate::Omission {
-                scope,
-                kind: crate::OmissionKind::Omitted,
-                record: "layer 1 (\"Source\")".into(),
-                reason: expected_reason.into(),
-            }]
-        };
-        assert_eq!(omissions, expected_omissions, "{reason}");
+        assert_eq!(clips.len(), 2, "{omissions:?}");
+        assert_eq!(clips[1], sibling);
+        assert_eq!(
+            (clips[0].0, clips[0].1, clips[0].2),
+            (0, start * TICKS / 1000, (start + duration) * TICKS / 1000)
+        );
+        assert_eq!(clips[0].3, duration as f64 / active as f64);
+        assert!(
+            omissions
+                .iter()
+                .any(|item| item.scope == crate::OmissionScope::Feature
+                    && item.reason.contains("time remap")),
+            "{reason}: {omissions:?}"
+        );
     }
 }
 
@@ -5442,13 +5785,26 @@ fn shared_asset_rejects_conflicting_intrinsic_durations() {
     let mut wire = two_clips();
     wire["composition"]["layers"][1]["sourceIntrinsicDuration"] = json!(9000);
     // The inspected file, not the other layer, decides which claim is wrong.
-    let error = convert(wire).unwrap_err().to_string();
+    let (project, reports) = convert_with_omissions(wire).unwrap();
+    let clips = project
+        .single_sequence()
+        .unwrap()
+        .video_occurrences()
+        .collect::<Vec<_>>();
+    assert_eq!(clips.len(), 2);
+    assert_eq!(clips[0].media, clips[1].media);
+    assert_eq!(
+        project.media[&clips[0].media]
+            .video
+            .as_ref()
+            .unwrap()
+            .intrinsic_ticks,
+        10 * TICKS
+    );
     assert!(
-        error.starts_with("layer 3 ")
-            && error.contains(
-                "sourceIntrinsicDuration 9000 ms differs from the packaged MP4 duration 10000 ms"
-            ),
-        "{error}"
+        reports.iter().any(|item| item.record.starts_with("layer 3")
+            && item.reason.contains("stale sourceIntrinsicDuration")),
+        "{reports:?}"
     );
 }
 
@@ -5663,7 +6019,8 @@ fn supported_opacity_keeps_both_clips_and_only_reports_unsupported_effects() {
 }
 
 #[test]
-fn preserved_unknown_fields_are_reported_at_every_document_level() {
+fn preserved_unknown_fields_retain_supported_owners_at_every_document_level() {
+    let baseline = convert(document()).unwrap();
     for pointer in [
         "",
         "/composition",
@@ -5676,7 +6033,77 @@ fn preserved_unknown_fields_are_reported_at_every_document_level() {
             .as_object_mut()
             .unwrap()
             .insert("futureBehavior".into(), json!({"enabled": true}));
-        let (_, omissions) = convert_with_omissions(wire).unwrap();
+        let (project, omissions) = convert_with_omissions(wire).unwrap();
+        let sequence = project.single_sequence().unwrap();
+        let expected = baseline.single_sequence().unwrap();
+        assert_eq!(
+            sequence.video_items().count(),
+            expected.video_items().count()
+        );
+        let current_video: Vec<_> = sequence
+            .video_occurrences()
+            .map(|clip| {
+                (
+                    &clip.media,
+                    clip.timeline_ticks(),
+                    clip.in_ticks,
+                    clip.out_ticks,
+                    &clip.transform,
+                    clip.opacity,
+                    clip.enabled,
+                )
+            })
+            .collect();
+        let expected_video: Vec<_> = expected
+            .video_occurrences()
+            .map(|clip| {
+                (
+                    &clip.media,
+                    clip.timeline_ticks(),
+                    clip.in_ticks,
+                    clip.out_ticks,
+                    &clip.transform,
+                    clip.opacity,
+                    clip.enabled,
+                )
+            })
+            .collect();
+        assert_eq!(
+            current_video, expected_video,
+            "retain current video at {pointer}"
+        );
+        let current_text: Vec<_> = sequence
+            .video_items()
+            .filter_map(PrVideoItem::graphic)
+            .map(|graphic| {
+                (
+                    &graphic.objects,
+                    graphic.timeline_ticks(),
+                    graphic.in_ticks,
+                    &graphic.clip_motion,
+                    graphic.opacity,
+                    graphic.enabled,
+                )
+            })
+            .collect();
+        let expected_text: Vec<_> = expected
+            .video_items()
+            .filter_map(PrVideoItem::graphic)
+            .map(|graphic| {
+                (
+                    &graphic.objects,
+                    graphic.timeline_ticks(),
+                    graphic.in_ticks,
+                    &graphic.clip_motion,
+                    graphic.opacity,
+                    graphic.enabled,
+                )
+            })
+            .collect();
+        assert_eq!(
+            current_text, expected_text,
+            "retain current text at {pointer}"
+        );
         assert!(
             omissions
                 .iter()
@@ -5717,7 +6144,7 @@ fn edited_static_motion_exports_as_normalized_native_values() {
 }
 
 #[test]
-fn a_clip_whose_scale_or_rotation_motion_cannot_show_is_omitted() {
+fn motion_recovery_retains_picture_siblings_valid_keys_and_controls() {
     // Premiere's Motion holds Scale 0 to 10000 and Rotation -32768 to 32767.
     // (fields of the first clip's static transform, its tracks from their
     // first value at the source In to `key` at 500 ms, which they reach with
@@ -5790,7 +6217,7 @@ fn a_clip_whose_scale_or_rotation_motion_cannot_show_is_omitted() {
         .into_iter()
         .map(Layer::id)
         .collect();
-        let kept = if reason.is_empty() { &[1, 3][..] } else { &[3] };
+        let kept = &[1, 3][..];
         assert_eq!(
             inspected,
             kept.iter().map(|id| LayerId::new(*id)).collect::<Vec<_>>(),
@@ -5824,24 +6251,28 @@ fn a_clip_whose_scale_or_rotation_motion_cannot_show_is_omitted() {
             assert_eq!(keys, fx_keys, "{case}");
             continue;
         }
-        // The clip is omitted whole, its keys with it; its sibling exports.
-        let starts: Vec<_> = clips.iter().map(|clip| clip.start_ticks).collect();
-        assert_eq!(starts, [3 * TICKS], "{case}");
-        let mut expected = vec![crate::Omission {
-            scope: crate::OmissionScope::Occurrence,
-            kind: crate::OmissionKind::Omitted,
-            record: "layer 1 (\"Source\")".into(),
-            reason: reason.into(),
-        }];
-        if !tracks.is_empty() {
-            expected.push(crate::Omission {
-                scope: crate::OmissionScope::Feature,
-                kind: crate::OmissionKind::Omitted,
-                record: "layer 1".into(),
-                reason: "animation on an omitted or unsupported layer was not exported".into(),
-            });
-        }
-        assert_eq!(omissions, expected, "{case}");
+        assert_eq!(clips.len(), 2, "{case}");
+        assert_eq!(
+            clips
+                .iter()
+                .map(|clip| clip.start_ticks)
+                .collect::<Vec<_>>(),
+            [0, 3 * TICKS],
+            "{case}"
+        );
+        assert!(
+            clips.iter().all(|clip| clip.enabled
+                && clip.out_ticks > clip.in_ticks
+                && project.media.contains_key(&clip.media)),
+            "{case}"
+        );
+        assert!(
+            omissions
+                .iter()
+                .any(|loss| loss.scope == OmissionScope::Feature
+                    && (loss.reason.contains("retained") || loss.reason.contains("linear"))),
+            "{case}: {omissions:?}"
+        );
     }
 }
 
@@ -7280,7 +7711,7 @@ fn audible_video_without_sound_exports_only_the_picture() {
 }
 
 #[test]
-fn unsupported_audio_properties_are_omitted_and_invalid_ranges_reject() {
+fn unsupported_audio_properties_are_omitted_and_duration_metadata_recovers() {
     let with_audio = |key: &str, value: Value| {
         let mut wire = document();
         let mut layer = audio_layer(3, "music", 0, 1.0);
@@ -7307,33 +7738,53 @@ fn unsupported_audio_properties_are_omitted_and_invalid_ranges_reject() {
             "{key}: {omissions:?}"
         );
     }
-    for (key, value, reason) in [
-        (
-            "sourceRange",
-            json!({"start": 9500, "duration": 700}),
-            "audio playback window extends beyond the authored source selection",
-        ),
-        (
-            "sourceRange",
-            json!({"start": 250, "duration": 600}),
-            "audio playback window extends beyond the authored source selection",
-        ),
-        (
-            "sourceIntrinsicDuration",
-            json!(9000),
-            "sourceIntrinsicDuration",
-        ),
+    for value in [
+        json!({"start": 9500, "duration": 700}),
+        json!({"start": 250, "duration": 600}),
     ] {
-        let error = convert(with_audio(key, value)).unwrap_err().to_string();
+        let error = convert(with_audio("sourceRange", value))
+            .unwrap_err()
+            .to_string();
         assert!(
-            error.contains("Audio 3") && error.contains(reason),
-            "{key}: {error}"
+            error.contains("Audio 3")
+                && error
+                    .contains("audio playback window extends beyond the authored source selection"),
+            "{error}"
         );
     }
+    let (project, omissions) =
+        convert_with_omissions(with_audio("sourceIntrinsicDuration", json!(9000))).unwrap();
+    let sound = music(&project);
+    assert_eq!(
+        (
+            sound.start_ticks,
+            sound.end_ticks,
+            sound.in_ticks,
+            sound.out_ticks
+        ),
+        (
+            0,
+            700 * TICKS_PER_MILLISECOND,
+            250 * TICKS_PER_MILLISECOND,
+            950 * TICKS_PER_MILLISECOND,
+        )
+    );
+    assert!(
+        omissions.iter().any(|item| {
+            item.record.contains("Audio 3")
+                && item
+                    .reason
+                    .contains("sourceIntrinsicDuration 9000 ms differs from the packaged audio duration 10000 ms")
+                && item
+                    .reason
+                    .contains("retained fully available mapped source [250,950) ms")
+        }),
+        "{omissions:?}"
+    );
 }
 
 #[test]
-fn audio_clock_constant_remapping_exports_but_source_identity_mismatch_rejects() {
+fn audio_clock_constant_remapping_exports_and_recovers_duration_metadata_mismatch() {
     // An audio layer whose `playback` plays `source_millis` of source in 700 ms.
     let with_playback = |source_millis: i64, intrinsic_millis: i64| {
         let mut wire = document();
@@ -7430,11 +7881,37 @@ fn audio_clock_constant_remapping_exports_but_source_identity_mismatch_rejects()
             950 * TICKS_PER_MILLISECOND
         )
     );
-    // Retimed sound still requires the independently inspected source duration.
-    let error = convert(with_playback(1400, 9000)).unwrap_err().to_string();
+    // Retimed sound keeps its fully available mapped window when only the
+    // authored source-duration metadata differs from the inspected source.
+    let (project, omissions) = convert_with_omissions(with_playback(1400, 9000)).unwrap();
+    let sound = music(&project);
+    assert_eq!(
+        (
+            sound.start_ticks,
+            sound.end_ticks,
+            sound.in_ticks,
+            sound.out_ticks,
+            sound.playback_rate,
+        ),
+        (
+            0,
+            700 * TICKS_PER_MILLISECOND,
+            250 * TICKS_PER_MILLISECOND,
+            1650 * TICKS_PER_MILLISECOND,
+            2.0,
+        )
+    );
     assert!(
-        error.contains("Audio 3") && error.contains("sourceIntrinsicDuration"),
-        "{error}"
+        omissions.iter().any(|item| {
+            item.record.contains("Audio 3")
+                && item
+                    .reason
+                    .contains("sourceIntrinsicDuration 9000 ms differs from the packaged audio duration 10000 ms")
+                && item
+                    .reason
+                    .contains("retained fully available mapped source [250,1650) ms")
+        }),
+        "{omissions:?}"
     );
 }
 
@@ -7612,6 +8089,8 @@ fn export_stills(wire: Value) -> (ExportedProject, Vec<crate::Omission>) {
         format: crate::image_media::ImageFormat::Png,
         width: 1920,
         height: 1080,
+        pixel_aspect: Default::default(),
+        open_exr_channels: None,
         alpha: false,
         icc_profile: false,
     };
@@ -8851,13 +9330,20 @@ fn unwritten_motion_keys_leave_a_static_crop_and_omit_a_flat_wiped_clip() {
         let all: Vec<_> = entries.iter().cloned().chain(guide_entries).collect();
         wire["composition"]["dynamics"] = json!({ "entries": all });
         let (clip, omissions) = export(wire);
-        assert!(clip.animations.is_empty(), "{reason}");
+        if reason.contains("cubic easing between equal") {
+            assert_eq!(clip.animations[0].scalar_keys().unwrap().len(), 2);
+        } else {
+            assert!(clip.animations.is_empty(), "{reason}");
+        }
         assert!(
             (clip.crop.left - 7.0).abs() < 1e-9,
             "{reason}: {omissions:?}"
         );
         assert!(
-            omissions.iter().any(|item| item.reason.contains(reason)),
+            omissions.iter().any(|item| item.reason.contains(reason)
+                || item
+                    .reason
+                    .contains("segment easing approximated as linear")),
             "{reason}: {omissions:?}"
         );
         assert!(
@@ -8872,10 +9358,7 @@ fn unwritten_motion_keys_leave_a_static_crop_and_omit_a_flat_wiped_clip() {
             .as_array_mut()
             .unwrap()
             .extend(entries);
-        omitted(
-            wire,
-            "the video does not map its frame onto the canvas unchanged, so its Linear Wipe guide is not its frame",
-        );
+        omitted(wire,"the video does not map its frame onto the canvas unchanged, so its Linear Wipe guide is not its frame");
     }
 
     // Written Position keys that the guide does not repeat would move the clip
@@ -9216,6 +9699,8 @@ fn track_mattes_export_as_the_key_with_the_source_above_every_keyed_clip() {
             format: crate::image_media::ImageFormat::Png,
             width: 1920,
             height: 1080,
+            pixel_aspect: Default::default(),
+            open_exr_channels: None,
             alpha: true,
             icc_profile: false,
         }),
@@ -9347,6 +9832,8 @@ fn still_track_matte_sources_that_export_at_defaults_omit_their_clip() {
             format: crate::image_media::ImageFormat::Png,
             width: 1920,
             height: 1080,
+            pixel_aspect: Default::default(),
+            open_exr_channels: None,
             alpha: false,
             icc_profile: false,
         }),
@@ -9811,7 +10298,7 @@ fn shape_track_matte_sources_export_as_the_graphic_above_the_keyed_clip() {
             .flat_map(|(track, items)| {
                 items.items.iter().filter_map(move |item| match item {
                     PrVideoItem::Graphic(graphic) => Some((track, graphic.start_ticks / TICKS)),
-                    PrVideoItem::Media(_) => None,
+                    PrVideoItem::Media(_) | PrVideoItem::Capsule(_) => None,
                 })
             })
             .collect()
@@ -10006,13 +10493,13 @@ fn interpretation_keyed_affine_omits_picture_not_sibling() {
                     crate::schema::PrMediaKind::Video { .. }
                 ))
                 .count(),
-            1,
+            2,
             "{omissions:?}"
         );
         assert!(
             omissions
                 .iter()
-                .any(|o| o.reason.contains("affine") && o.reason.contains("static")),
+                .any(|o| o.reason.contains("affine picture clock normalized")),
             "{omissions:?}"
         );
     }
@@ -10038,12 +10525,20 @@ fn interpretation_affine_stage_rejects_keyed_matte_effect() {
     ]}}]});
     let (project, omissions) = convert_with_omissions(wire).unwrap();
     let sequence = project.single_sequence().unwrap();
-    assert_eq!(sequence.video_occurrences().count(), 1, "{omissions:?}");
-    assert_eq!(sequence.nest_occurrences().count(), 0, "{omissions:?}");
+    assert_eq!(sequence.video_occurrences().count(), 3, "{omissions:?}");
+    let consumer = sequence
+        .video_occurrences()
+        .find(|clip| clip.track_matte.is_some())
+        .unwrap();
+    let binding = consumer.track_matte.as_ref().unwrap();
+    let source = sequence.video_tracks[binding.track_index].clip(0);
+    assert_eq!(consumer.timeline_ticks(), source.timeline_ticks());
+    assert!(source.enabled && source.track_matte.is_none());
+    assert!(!source.effects[0].animations.is_empty());
     assert!(
         omissions
             .iter()
-            .any(|o| o.reason.contains("nonunit affine picture requires static")),
+            .any(|o| o.reason.contains("affine picture clock normalized")),
         "{omissions:?}"
     );
 }
@@ -10065,7 +10560,7 @@ fn interpretation_keyed_affine_stage_cannot_escape_through_nest() {
                 crate::schema::PrMediaKind::Video { .. }
             ))
             .count(),
-        1,
+        2,
         "{omissions:?}"
     );
     assert_eq!(
@@ -10080,7 +10575,7 @@ fn interpretation_keyed_affine_stage_cannot_escape_through_nest() {
     assert!(
         omissions
             .iter()
-            .any(|o| o.reason.contains("affine") && o.reason.contains("static")),
+            .any(|o| o.reason.contains("affine picture clock normalized")),
         "{omissions:?}"
     );
 }
@@ -10800,4 +11295,36 @@ fn audio_pitch_edited_constant_clock_flag_writes_canonical_on_and_off_without_re
             assert_eq!(loaded.sequences[0].audio[0].playback_rate, rate);
         }
     }
+}
+
+#[test]
+fn unsupported_time_remap_recovers_authored_selection_without_losing_picture_or_sibling() {
+    let mut wire = two_clips();
+    let video = &mut wire["composition"]["layers"][0];
+    let range = crate::test_support::layer_range(video).clone();
+    video["playback"] = json!({"type": "windowed", "inputRange": range, "inputOffsetMs": 0,
+    "mapping": {"type": "timeRemap", "property": {"before": "inactive", "after": "inactive", "keyframes": [
+        {"id":"recovery-1","time": 0, "value": 0, "easing": {"type": "linear"}},
+        {"id":"recovery-2","time": 500, "value": 900, "easing": {"type": "cubicBezier", "x1": 0.3, "y1": 0.1, "x2": 0.7, "y2": 0.9}},
+        {"id":"recovery-3","time": 1000, "value": 500, "easing": {"type": "linear"}}
+    ]}}});
+    video["transform"]["rotation"] = json!(25.0);
+    let (project, omissions) = convert_with_omissions(wire).unwrap();
+    let clips = project
+        .single_sequence()
+        .unwrap()
+        .video_occurrences()
+        .collect::<Vec<_>>();
+    assert_eq!(clips.len(), 2);
+    assert_eq!(clips[0].transform.rotation, 25.0);
+    assert!(clips.iter().all(|clip| clip.enabled
+        && clip.out_ticks > clip.in_ticks
+        && project.media.contains_key(&clip.media)));
+    assert!(
+        omissions.iter().any(|loss| loss
+            .reason
+            .contains("time remapping was not exported faithfully")
+            && loss.reason.contains("source selection")),
+        "{omissions:?}"
+    );
 }

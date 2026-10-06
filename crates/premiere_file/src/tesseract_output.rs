@@ -168,6 +168,14 @@ pub(crate) fn source_pixel_aspect(
                 "missing native PAR override: source image pixel aspect is unavailable for this format");
             crate::image_media::inspect_png_pixel_aspect(File::open(&path)?)?
         }
+        PrMediaKind::OpenExr { .. } => {
+            let facts = crate::image_media::inspect_image_media(File::open(&path)?)?;
+            ensure!(
+                facts.format == crate::image_media::ImageFormat::OpenExr,
+                "missing native PAR override: source is not OpenEXR"
+            );
+            (facts.pixel_aspect, "OpenEXR pixelAspectRatio metadata")
+        }
         PrMediaKind::Video { .. } => {
             let file = File::open(&path)?;
             let facts = crate::media::inspect_video_media(
@@ -229,6 +237,9 @@ pub(crate) struct PendingTesseractFile {
     /// backs that archive's asset files until this value is dropped, and its
     /// local sources are checked with the other media.
     linked_media: LinkedMedia,
+    /// Qualified Capsule containers and normalized picture assets stay owned
+    /// through source/packaged-byte verification, independently of Dynamic Link.
+    capsule_resources: crate::capsule::picture::PictureResources,
     builder: Option<TesseractFileBuilder>,
     // Keep extracted channel files alive until the archive builder is dropped.
     _channel_files: Option<tempfile::TempDir>,
@@ -468,7 +479,8 @@ fn inspect_media(
         Some(
             PrMediaKind::Video { .. }
             | PrMediaKind::Still { .. }
-            | PrMediaKind::NumberedStills { .. },
+            | PrMediaKind::NumberedStills { .. }
+            | PrMediaKind::OpenExr { .. },
         )
         | None => {}
     }
@@ -497,7 +509,13 @@ fn inspect_media(
         .unwrap_or(&native_path)
         .to_owned();
     if let Some(native) = media.video.as_ref() {
-        if let PrMediaKind::NumberedStills { alpha } = native.kind {
+        if let PrMediaKind::NumberedStills { alpha }
+        | PrMediaKind::OpenExr {
+            alpha,
+            numbered: true,
+            ..
+        } = native.kind
+        {
             if path != native_path {
                 return Ok(MediaInspection::Omitted("numbered-image replacement must preserve the complete saved frame set; single-file replacement is unsupported".into()));
             }
@@ -530,7 +548,7 @@ fn inspect_media(
     }
     let Some(container) = admitted_container(media, &path) else {
         let error = unsupported(if media.is_still() {
-            "still media must be a PNG or JPEG file"
+            "still media must match its native PNG, JPEG, or OpenEXR kind"
         } else {
             "supported media: MP4/MOV video and WAV/MP3/M4A audio"
         });
@@ -626,9 +644,9 @@ fn inspect_media(
                 }
                 Ok(selected_only)
             }
-            MediaFacts::Still(_) | MediaFacts::UnsupportedVideo(_) => {
-                facts.validate_source(native).map(|()| false)
-            }
+            MediaFacts::Still(_)
+            | MediaFacts::UnsupportedStill(_)
+            | MediaFacts::UnsupportedVideo(_) => facts.validate_source(native).map(|()| false),
         }?;
         if selected_only {
             let declared_tail = matches!(
@@ -641,7 +659,11 @@ fn inspect_media(
                 "original sample timestamps and first affine MP4 edit retained for proved selected unit source intervals; whole-source endpoint and later edit playback are unsupported"
             }));
         }
-        if let (MediaFacts::Still(image), PrMediaKind::Still { alpha }) = (&facts, native.kind) {
+        if let (
+            MediaFacts::Still(image),
+            PrMediaKind::Still { alpha } | PrMediaKind::OpenExr { alpha, .. },
+        ) = (&facts, native.kind)
+        {
             if let Some(reason) = image.declaration_mismatch(extension, alpha) {
                 return Ok(MediaInspection::Omitted(unsupported(reason).to_string()));
             }
@@ -821,6 +843,11 @@ fn inspect_numbered_frames(
             let hash = media_hash(&path, digests)?;
             tesseract_file::validate_asset_source_name(&path)?;
             let image = crate::image_media::inspect_image_media(File::open(&path)?)?;
+            ensure!(
+                image.format.matches_media_kind(native.kind),
+                "numbered-image frame {} format contradicts its native media kind",
+                path.display()
+            );
             ensure!(
                 (image.width, image.height) == (native.width, native.height),
                 "numbered-image frame {} dimensions differ from native dimensions",
@@ -1080,7 +1107,9 @@ fn inspect_media_references<'a>(
             || media.video.as_ref().is_some_and(|video| {
                 matches!(
                     video.kind,
-                    PrMediaKind::Still { .. } | PrMediaKind::NumberedStills { .. }
+                    PrMediaKind::Still { .. }
+                        | PrMediaKind::NumberedStills { .. }
+                        | PrMediaKind::OpenExr { .. }
                 )
             })
         {
@@ -1531,6 +1560,7 @@ fn convert_premiere_sequence_with_options(
         };
         media.insert(id, resolved);
     }
+    let capsule_resources = crate::capsule::picture::PictureResources::collect(&parsed);
     let document = crate::convert::sequence_document_with_progress(
         &parsed,
         &project_media,
@@ -1566,12 +1596,14 @@ fn convert_premiere_sequence_with_options(
         }
     }
     let (builder, linked_media) = linked.package(builder)?;
+    let builder = capsule_resources.package(builder)?;
     builder.validate()?;
     let output = PendingTesseractFile {
         source: source.to_owned(),
         project_media,
         media,
         linked_media,
+        capsule_resources,
         builder: Some(builder),
         _channel_files: channel_files,
         _raw_audio_files: raw_audio_files,
@@ -1617,6 +1649,12 @@ impl PendingTesseractFile {
             );
         }
         self.linked_media.verify_sources()?;
+        self.capsule_resources
+            .verify()
+            .map_err(|source| BuildError::Capsule {
+                context: "Capsule publication sources".into(),
+                source: Box::new(source),
+            })?;
         Ok(())
     }
 
@@ -1652,6 +1690,12 @@ impl PendingTesseractFile {
             );
         }
         self.linked_media.verify_packaged(&written)?;
+        self.capsule_resources
+            .verify_packaged(&written)
+            .map_err(|source| BuildError::Capsule {
+                context: "Capsule packaged assets".into(),
+                source: Box::new(source),
+            })?;
         self.verify_media()
     }
 }

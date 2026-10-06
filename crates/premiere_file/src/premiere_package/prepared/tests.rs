@@ -2,6 +2,7 @@
 
 mod black_canvas;
 mod export_media;
+mod export_still;
 
 use std::{fs, io::Read};
 
@@ -113,7 +114,7 @@ fn natural_video_frame_uses_active_media_and_preserves_the_original_view() {
 #[cfg(feature = "ffmpeg-library")]
 #[test]
 fn a_long_plain_group_keeps_child_script_keys_but_an_omitted_effect_group_does_not() {
-    for (duration, effect, written) in [(500, false, 1), (1000, false, 1), (1000, true, 0)] {
+    for (duration, effect, written) in [(500, false, 1), (1000, false, 1), (1000, true, 1)] {
         let root = tempfile::tempdir().unwrap();
         let mut value = scripted("return 100 - 20 * input.time.seconds;");
         let mut child = value["composition"]["layers"][0].clone();
@@ -607,8 +608,17 @@ fn unsupported_motion_keeps_native_sibling() {
             .unwrap()
             .video_occurrences()
             .count(),
-        1
+        2
     );
+    let clips = native
+        .single_sequence()
+        .unwrap()
+        .video_occurrences()
+        .collect::<Vec<_>>();
+    assert_eq!(clips[0].transform.scale, [100.0, 100.0]);
+    assert!(clips
+        .iter()
+        .all(|clip| native.media.contains_key(&clip.media)));
 }
 
 #[cfg(feature = "ffmpeg-library")]

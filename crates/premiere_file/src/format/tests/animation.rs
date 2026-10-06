@@ -84,6 +84,118 @@ fn position_path_preserves_coordinates_timing_easing_and_paired_tangents() {
 }
 
 #[test]
+fn mode_five_spatial_flags_two_keep_native_position_keys_and_supported_video() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/feature_motion_position_path_strict.prproj");
+    let xml = crate::format::read_xml(&path).unwrap();
+    let wire = {
+        let records = roxmltree::Document::parse(&xml).unwrap();
+        records
+            .descendants()
+            .find(|record| {
+                record.has_tag_name("PointComponentParam")
+                    && record
+                        .children()
+                        .find(|child| child.has_tag_name("Name"))
+                        .and_then(|child| child.text())
+                        == Some("Position")
+            })
+            .and_then(|record| {
+                record
+                    .children()
+                    .find(|child| child.has_tag_name("Keyframes"))
+                    .and_then(|child| child.text())
+            })
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(wire.matches(",5,4,").count(), 2);
+    let flags_two = wire.replace(",5,4,", ",5,2,");
+    let xml = xml.replacen(
+        &format!("<Keyframes>{wire}</Keyframes>"),
+        &format!("<Keyframes>{flags_two}</Keyframes>"),
+        1,
+    );
+    let parsed = crate::format::inspect_project_with_media(
+        &xml,
+        Some("c8acf9c1-34b2-4086-9f55-d528950a7059"),
+    )
+    .unwrap();
+    let sequence = parsed.single_sequence().unwrap();
+    let clip = sequence.video_occurrences().next().unwrap();
+    assert_eq!(clip.in_ticks, 0);
+    assert_eq!(clip.transform.scale, [100.0, 100.0]);
+    assert_eq!(clip.transform.rotation, 0.0);
+    assert_eq!(clip.transform.anchor_point, [0.5, 0.5]);
+    let position = clip
+        .animations
+        .iter()
+        .find(|animation| animation.property() == PrAnimatedProperty::Position)
+        .unwrap();
+    let keys = position.point_keys().unwrap();
+    assert_eq!(keys.len(), 2);
+    assert_eq!(keys[0].source_ticks, TICKS / 2);
+    assert_eq!(keys[1].source_ticks, 7 * TICKS / 2);
+    assert_eq!(keys[0].value, [-0.028645824640989304, 0.7314815521240234]);
+    assert_eq!(keys[1].value, [0.36979167461395257, 0.7314815097384987]);
+    assert_eq!(
+        keys[0].spatial_out_tangent,
+        Some([0.06640624987582365, -7.064254126110115e-9])
+    );
+    assert_eq!(
+        keys[1].spatial_in_tangent,
+        Some([-0.06640624987582365, 7.064254126110115e-9])
+    );
+    assert!(crate::schema::spatial::curved_segment(keys).is_none());
+
+    let document = crate::tests::support::project_document_with_media(sequence, &parsed.media);
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    assert_eq!(
+        layers
+            .iter()
+            .filter(|layer| layer["type"].as_str() == Some("Video"))
+            .count(),
+        1
+    );
+    let entries = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    assert_eq!(entries.len(), 2);
+    assert!(entries.iter().all(|entry| matches!(
+        entry["target"]["propertyType"].as_str(),
+        Some("positionX" | "positionY")
+    )));
+    let editable = fx_schema::EditableFxCompositionDocument::from_json_value(document).unwrap();
+    let position_tracks = editable.composition().dynamics().entries();
+    assert_eq!(position_tracks.len(), 2);
+    for entry in position_tracks {
+        let fx_schema::animator::AnimatorData::Keyframes { track, .. } = entry.animator.data()
+        else {
+            panic!("expected editable Position keys");
+        };
+        assert_eq!(track.keyframes().len(), 2);
+        assert_eq!(track.keyframes()[0].layer_time().as_millis(), 500);
+        assert_eq!(track.keyframes()[1].layer_time().as_millis(), 3500);
+        // These native handles lie on their chord, so the existing mapping
+        // keeps temporal traversal by dropping them from the editable track.
+        assert!(!track.has_spatial_tangents());
+    }
+
+    let unknown = xml.replacen(",5,2,", ",5,3,", 1);
+    let error = crate::format::inspect_project_with_media(
+        &unknown,
+        Some("c8acf9c1-34b2-4086-9f55-d528950a7059"),
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("unsupported spatial interpolation mode 5 with flags 3"),
+        "{error}"
+    );
+}
+
+#[test]
 fn linear_spatial_flags_two_keep_editable_position_values_easing_and_clip_clock() {
     let keys = format!(
         "{},0.25:0.5,5,0,0,0.2,0,0.4,0,2,0,0,0,0;{},0.75:0.75,5,0,0,0.2,0,0.4,0,2,0,0,0,0;",
@@ -466,7 +578,6 @@ fn disabled_or_invalid_motion_keyframe_state_rejects_without_activating_keys() {
 fn shared_motion_record_rejects_missing_required_fields_with_native_identity() {
     let xml = animated_xml("");
     for (field, replacement) in [
-        ("Name", "<Name>Rotation</Name>"),
         ("ParameterID", "<ParameterID>5</ParameterID>"),
         (
             "StartKeyframe",
@@ -484,16 +595,100 @@ fn shared_motion_record_rejects_missing_required_fields_with_native_identity() {
 }
 
 #[test]
-fn unsupported_animated_scale_width_rejects() {
+fn inactive_width_keys_preserve_height_driven_video_in_all_motion_layouts() {
+    // Creative's legacy Motion saves Bezier Height beside Linear inactive Width.
+    // Use the public native-record scaffold and neutral values, not licensed XML.
+    let start = TICKS * 14 / 30;
+    let end = TICKS * 24 / 30;
+    let height = format!(
+        "{start},100.,5,0,30,0.33333333333333331,30,0.33333333333333331;{end},120.,5,0,30,0.33333333333333331,30,0.33333333333333331;"
+    );
+    for source in [
+        animated_xml(""),
+        legacy_motion_with_passive_crop_xml(),
+        premiere_26_5_xml(),
+    ] {
+        for keyed_height in [false, true] {
+            for width in [
+                format!("{start},100.,0,0,0,0,0,0;{end},120.,0,0,0,0,0,0;"),
+                format!("0,-50.,0,0,0,0,0,0;{TICKS},50.,0,0,0,0,0,0;"),
+                format!("{TICKS},75.,0,0,0,0,0,0;"),
+            ] {
+                let xml = source
+                    .replace(
+                        "<Name>Scale</Name>",
+                        &format!(
+                            "<Name>Scale</Name><Keyframes>{}</Keyframes>",
+                            if keyed_height { &height } else { "" }
+                        ),
+                    )
+                    .replace(
+                        "<Name>Scale Width</Name>",
+                        &format!("<Name>Scale Width</Name><Keyframes>{width}</Keyframes>"),
+                    );
+                let parsed =
+                    crate::format::inspect_project_with_media(&xml, Some("sequence-1")).unwrap();
+                let sequence = parsed.single_sequence().unwrap();
+                let clip = sequence.video_occurrences().next().unwrap();
+                assert_eq!(clip.transform.scale, [100.0, 100.0]);
+                assert_eq!((clip.start_ticks, clip.end_ticks), (0, 5 * TICKS));
+                assert_eq!((clip.in_ticks, clip.out_ticks), (0, 5 * TICKS));
+                assert!(clip.crop.is_default());
+                assert_eq!(clip.animations.len(), usize::from(keyed_height));
+                if keyed_height {
+                    assert_eq!(
+                        clip.animations[0].property(),
+                        PrAnimatedProperty::UniformScale
+                    );
+                    assert_eq!(clip.animations[0].keys()[0].source_ticks, start);
+                    assert_eq!(clip.animations[0].keys()[1].source_ticks, end);
+                    assert_eq!(clip.animations[0].keys()[1].value, 120.0);
+                }
+                let document =
+                    crate::tests::support::project_document_with_media(sequence, &parsed.media);
+                assert_eq!(document["composition"]["layers"][0]["type"], "Video");
+                assert_eq!(
+                    document["composition"]["layers"][0]["transform"]["scale"],
+                    serde_json::json!([100.0, 100.0])
+                );
+                let entries = document["composition"]["dynamics"]["entries"]
+                    .as_array()
+                    .unwrap();
+                assert_eq!(entries.len(), if keyed_height { 2 } else { 0 });
+                if keyed_height {
+                    for property in ["scaleX", "scaleY"] {
+                        let entry = entries
+                            .iter()
+                            .find(|entry| entry["target"]["propertyType"] == property)
+                            .unwrap();
+                        let keys = entry["animator"]["keyframes"].as_array().unwrap();
+                        assert_eq!(keys.len(), 2);
+                        assert_eq!(keys[0]["layerTime"], 467);
+                        assert_eq!(keys[0]["value"]["value"], 100.0);
+                        assert_eq!(keys[1]["layerTime"], 800);
+                        assert_eq!(keys[1]["value"]["value"], 120.0);
+                        assert_eq!(keys[1]["easing"]["type"], "cubicBezier");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn inactive_animated_scale_width_preserves_rotation_sibling() {
     let xml = animated_xml(&format!("0,0.,0,0,0,0,0,0;{},90.,0,0,0,0,0,0;", TICKS));
     let width = xml.replace(
         "<Name>Scale Width</Name>",
         "<Name>Scale Width</Name><Keyframes>0,100.,0,0,0,0,0,0;</Keyframes>",
     );
-    assert!(inspect_project(&width, Some("sequence-1"))
-        .unwrap_err()
-        .to_string()
-        .contains("animated Scale Width is unsupported"));
+    let sequence = inspect_project(&width, Some("sequence-1")).unwrap();
+    let clip = sequence.video_occurrences().next().unwrap();
+    assert_eq!(clip.transform.scale, [100.0, 100.0]);
+    assert_eq!(clip.animations.len(), 1);
+    assert_eq!(clip.animations[0].property(), PrAnimatedProperty::Rotation);
+    assert_eq!(clip.animations[0].keys()[1].source_ticks, TICKS);
+    assert_eq!(clip.animations[0].keys()[1].value, 90.0);
 }
 
 #[test]
@@ -544,21 +739,19 @@ fn duplicate_scale_width_under_uniform_scale_imports_once() {
 }
 
 #[test]
-fn duplicate_scale_width_admission_preserves_curve_rejections() {
+fn inactive_scale_width_preserves_key_integrity_rejections() {
     let scale = format!("0,0.,0,0,0,0,0,0;{TICKS},75.,0,0,0,0,0,0;");
-    let mismatch = "animated Scale Width is unsupported under Uniform Scale";
     for (width, expected) in [
-        (scale.replace("75.", "50."), mismatch),
-        (
-            scale.replace(&TICKS.to_string(), &(TICKS / 2).to_string()),
-            mismatch,
-        ),
-        (format!("{TICKS},75.,0,0,0,0,0,0;"), mismatch),
         (
             scale.replace("0,0.,0,", "0,0.,4,"),
             "only Linear Scale Width keys convert",
         ),
         (scale.replace("75.", "invalid"), "invalid"),
+        (scale.replace("75.", "NaN"), "nonfinite key value"),
+        (
+            scale.replace(&TICKS.to_string(), "0"),
+            "strictly increasing source times",
+        ),
     ] {
         let xml = animated_xml("")
             .replace(
@@ -1166,11 +1359,6 @@ fn legacy_motion_passive_crop_rejects_active_values_or_missing_identity() {
             "duplicate Motion ParameterID",
         ),
         (
-            "<Name>Crop Left</Name>",
-            "<Name>Not Crop</Name>",
-            "unexpected Motion parameter",
-        ),
-        (
             "VideoComponentParam",
             "PointComponentParam",
             "unexpected Motion parameter",
@@ -1190,11 +1378,6 @@ fn legacy_motion_passive_crop_rejects_active_values_or_missing_identity() {
             "<Keyframes>0,0.,0,0,0,0,0,0;</Keyframes>",
             "animated Motion Crop Left",
         ),
-        (
-            "<IsTimeVarying>false</IsTimeVarying>",
-            "<IsTimeVarying>true</IsTimeVarying>",
-            "animated Motion Crop Left",
-        ),
     ] {
         let altered = crop_left.replace(from, to);
         assert_ne!(altered, crop_left);
@@ -1203,6 +1386,20 @@ fn legacy_motion_passive_crop_rejects_active_values_or_missing_identity() {
             .to_string();
         assert!(error.contains(diagnostic), "{diagnostic}: {error}");
     }
+}
+
+#[test]
+fn motion_numeric_binding_preserves_picture_without_display_labels() {
+    let xml = legacy_motion_with_passive_crop_xml()
+        .replace("<Name>Crop Left</Name>", "")
+        .replace("<Name>Scale</Name>", "<Name>Localized scale label</Name>");
+    let parsed = crate::format::inspect_project_with_media(&xml, Some("sequence-1")).unwrap();
+    let sequence = parsed.single_sequence().unwrap();
+    let clip = sequence.video_occurrences().next().unwrap();
+    assert!(clip.crop.is_default());
+    assert_eq!(sequence.video_occurrences().count(), 1);
+    let document = crate::tests::support::project_document_with_media(sequence, &parsed.media);
+    assert!(document.to_string().contains("\"type\":\"Video\""));
 }
 
 #[test]
@@ -1298,8 +1495,19 @@ fn premiere_26_5_layout_reads_only_linear_anchor_point_and_scale_width_keys() {
             ]),
         ]
     );
-    // Hold, Bezier and spatial forms stay unsupported, as do Scale Width
-    // keys without a matching Scale track under Uniform Scale.
+    let uniform_sequence = inspect_project(
+        &keyed(&linear_width, &linear_anchor, "true"),
+        Some("sequence-1"),
+    )
+    .unwrap();
+    let uniform_clip = uniform_sequence.video_occurrences().next().unwrap();
+    assert_eq!(uniform_clip.transform.scale, [100.0, 100.0]);
+    assert_eq!(uniform_clip.animations.len(), 1);
+    assert_eq!(
+        uniform_clip.animations[0].property(),
+        PrAnimatedProperty::AnchorPoint
+    );
+    // Active Width Hold, Anchor Bezier and spatial forms stay unsupported.
     let hold_width = format!("0,100.,4,0,0,0,0,0;{TICKS},50.,0,0,0,0,0,0;");
     let bezier_anchor = format!(
         "0,0.5:0.5,5,0,0,0.16666666666666666,0.3,0.33333333333333331,0,0,0,0,0,0;{TICKS},0.25:0.75,0,0,0.3,0.33333333333333331,0,0.16666666666666666,0,0,0,0,0,0;"
@@ -1314,12 +1522,6 @@ fn premiere_26_5_layout_reads_only_linear_anchor_point_and_scale_width_keys() {
         (&hold_width, &linear_anchor, "false", width_rule),
         (&linear_width, &bezier_anchor, "false", anchor_rule),
         (&linear_width, &spatial_anchor, "false", anchor_rule),
-        (
-            &linear_width,
-            &linear_anchor,
-            "true",
-            "VideoFilterComponent:10: animated Scale Width is unsupported under Uniform Scale",
-        ),
     ] {
         let error = inspect_project(
             &keyed(width_keys, anchor_keys, uniform_value),
@@ -1504,22 +1706,36 @@ fn premiere_26_5_static_motion_crop_imports_as_a_crop_guide_in_the_clip_frame() 
 }
 
 #[test]
+fn keyless_enabled_nonzero_motion_crop_uses_the_static_crop_guide() {
+    let (from, static_value) = motion_crop_edit("Left", 8, "20.25");
+    let enabled_value = static_value.replace(
+        "<ParameterID>8</ParameterID>",
+        "<IsTimeVarying>true</IsTimeVarying><ParameterID>8</ParameterID>",
+    );
+    let read = |value: &str| {
+        let xml = premiere_26_5_edit(&[(&from, value)]);
+        let (project, omissions) =
+            inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+        assert!(omissions.is_empty(), "{omissions:?}");
+        let sequence = project.single_sequence().unwrap();
+        assert_eq!(
+            sequence.video_occurrences().next().unwrap().crop.left,
+            20.25
+        );
+        crate::tests::support::project_document_with_media(sequence, &project.media)
+    };
+    assert_eq!(read(&enabled_value), read(&static_value));
+}
+
+#[test]
 fn premiere_26_5_keyed_or_invalid_motion_crop_omits_the_clip() {
     // The keyed Crop Top of the Premiere 26.5.1 probe project.
     let top = "<Name>Crop Top</Name><ParameterID>9</ParameterID><StartKeyframe>-91445760000000000,0.,0,0,0,0,0,0</StartKeyframe>";
     let keyed = format!("{top}<Keyframes>127008000000,0.,0,0,0,0.16666666666666666,10,0.16666666666666666;381024000000,10.,0,0,10,0.16666666666666666,0,0.16666666666666666;</Keyframes>")
         .replace("<Name>Crop Top</Name>", "<Name>Crop Top</Name><IsTimeVarying>true</IsTimeVarying>");
-    let time_varying = top.replace(
-        "<Name>Crop Top</Name>",
-        "<Name>Crop Top</Name><IsTimeVarying>true</IsTimeVarying>",
-    );
     for (edits, expected) in [
         (
             vec![(top.to_owned(), keyed)],
-            "VideoComponentParam:38: animated Motion Crop Top is unsupported",
-        ),
-        (
-            vec![(top.to_owned(), time_varying)],
             "VideoComponentParam:38: animated Motion Crop Top is unsupported",
         ),
         (
@@ -1600,6 +1816,192 @@ fn with_plain_second_clip(xml: &str) -> String {
 <SubClip ObjectID=\"92\"><Clip ObjectRef=\"93\"/><Name>Second</Name></SubClip>\
 <VideoClip ObjectID=\"93\"><Clip><Source ObjectRef=\"7\"/><InPoint>1270080000000</InPoint><OutPoint>2540160000000</OutPoint></Clip></VideoClip></PremiereData>",
         )
+}
+
+#[test]
+fn empty_blend_stopwatches_keep_screen_video_and_source_identity() {
+    let xml = premiere_26_5_edit(&[
+        (
+            "<Name>Blend Mode</Name><DiscontinuousInterpolate>true</DiscontinuousInterpolate><ParameterControlType>10</ParameterControlType>",
+            "<Name>Blend Mode</Name><IsTimeVarying>true</IsTimeVarying><DiscontinuousInterpolate>true</DiscontinuousInterpolate><ParameterControlType>10</ParameterControlType>",
+        ),
+        (
+            "<Name>Blend Mode</Name><DiscontinuousInterpolate>true</DiscontinuousInterpolate><ParameterID>3</ParameterID>",
+            "<Name>Blend Mode</Name><IsTimeVarying>true</IsTimeVarying><DiscontinuousInterpolate>true</DiscontinuousInterpolate><ParameterID>3</ParameterID>",
+        ),
+        (
+            "<ParameterID>2</ParameterID><StartKeyframe>-91445760000000000,18,",
+            "<ParameterID>2</ParameterID><StartKeyframe>-91445760000000000,22,",
+        ),
+    ]);
+    let (project, omissions) = inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let sequence = project.single_sequence().unwrap();
+    let clip = sequence.video_occurrences().next().unwrap();
+    assert_eq!(clip.media_id().as_str(), "Media:ObjectUID:media-1");
+    assert_eq!(project.media(clip).unwrap().name(), "source.mp4");
+    assert_eq!(clip.blend_mode, PrBlendMode::Screen);
+    assert_eq!(clip.opacity, 100.0);
+    assert_eq!(clip.transform.scale, [100.0, 100.0]);
+
+    let document = crate::tests::support::project_document_with_media(sequence, &project.media);
+    let video = &document["composition"]["layers"][0];
+    assert_eq!(video["type"], "Video");
+    assert_eq!(video["blendMode"], "screen");
+    assert_eq!(video["transform"]["opacity"], 100.0);
+    assert_eq!(video["source"]["assetId"], "premiere-video-1");
+}
+
+/// A Premiere 26.5 Motion/Opacity packet whose static auxiliary controls have
+/// enabled stopwatches, using this public fixture's native record IDs.
+fn premiere_26_5_empty_motion_stopwatches_xml() -> String {
+    let mut xml = premiere_26_5_edit(&[
+        (
+            "<Name>Scale</Name><ParameterID>2</ParameterID><UpperUIBound>200</UpperUIBound><StartKeyframe>-91445760000000000,100.,",
+            "<Name>Scale</Name><ParameterID>2</ParameterID><UpperUIBound>200</UpperUIBound><StartKeyframe>-91445760000000000,50.,",
+        ),
+        (
+            "<Name>Scale Width</Name><ParameterID>3</ParameterID><UpperUIBound>200</UpperUIBound><StartKeyframe>-91445760000000000,100.,",
+            "<Name>Scale Width</Name><ParameterID>3</ParameterID><UpperUIBound>200</UpperUIBound><StartKeyframe>-91445760000000000,50.,",
+        ),
+        (
+            "<Name>Blend Mode</Name><DiscontinuousInterpolate>true</DiscontinuousInterpolate><ParameterControlType>10</ParameterControlType>",
+            "<Name>Blend Mode</Name><IsTimeVarying>true</IsTimeVarying><DiscontinuousInterpolate>true</DiscontinuousInterpolate><ParameterControlType>10</ParameterControlType>",
+        ),
+        (
+            "<Name>Blend Mode</Name><DiscontinuousInterpolate>true</DiscontinuousInterpolate><ParameterID>3</ParameterID>",
+            "<Name>Blend Mode</Name><IsTimeVarying>true</IsTimeVarying><DiscontinuousInterpolate>true</DiscontinuousInterpolate><ParameterID>3</ParameterID>",
+        ),
+        (
+            "<ParameterID>2</ParameterID><StartKeyframe>-91445760000000000,18,",
+            "<ParameterID>2</ParameterID><StartKeyframe>-91445760000000000,22,",
+        ),
+    ]);
+    for (name, id) in [
+        (" ", 4),
+        ("Anti-flicker Filter", 7),
+        ("Crop Left", 8),
+        ("Crop Top", 9),
+        ("Crop Right", 10),
+        ("Crop Bottom", 11),
+    ] {
+        let saved = format!("<Name>{name}</Name><ParameterID>{id}</ParameterID>");
+        assert_eq!(xml.matches(&saved).count(), 1, "{saved}");
+        xml = xml.replacen(
+            &saved,
+            &format!(
+                "<Name>{name}</Name><IsTimeVarying>true</IsTimeVarying><ParameterID>{id}</ParameterID>"
+            ),
+            1,
+        );
+    }
+    xml
+}
+
+#[test]
+fn empty_motion_stopwatches_keep_video_and_supported_controls() {
+    let (project, omissions) = inspect_project_with_omissions(
+        &premiere_26_5_empty_motion_stopwatches_xml(),
+        Some("sequence-1"),
+    )
+    .unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let sequence = project.single_sequence().unwrap();
+    let clip = sequence.video_occurrences().next().unwrap();
+    assert_eq!(clip.media_id().as_str(), "Media:ObjectUID:media-1");
+    assert_eq!(project.media(clip).unwrap().name(), "source.mp4");
+    assert_eq!(clip.blend_mode, PrBlendMode::Screen);
+    assert_eq!(clip.opacity, 100.0);
+    assert_eq!(clip.transform.position, [0.5, 0.5]);
+    assert_eq!(clip.transform.scale, [50.0, 50.0]);
+    assert_eq!(clip.transform.rotation, 0.0);
+    assert_eq!(clip.transform.anchor_point, [0.5, 0.5]);
+    assert!(clip.animations.is_empty());
+
+    let document = crate::tests::support::project_document_with_media(sequence, &project.media);
+    let video = &document["composition"]["layers"][0];
+    assert_eq!(video["type"], "Video");
+    assert_eq!(video["blendMode"], "screen");
+    assert_eq!(video["transform"]["opacity"], 100.0);
+    assert_eq!(video["transform"]["scale"], serde_json::json!([50.0, 50.0]));
+    assert_eq!(video["source"]["assetId"], "premiere-video-1");
+}
+
+#[test]
+fn unsupported_anti_flicker_reports_each_cause_without_claiming_clip_retention() {
+    let neutral = "<Name>Anti-flicker Filter</Name><IsTimeVarying>true</IsTimeVarying><ParameterID>7</ParameterID><StartKeyframe>-91445760000000000,0.,0,0,0,0,0,0</StartKeyframe>";
+    let source = premiere_26_5_empty_motion_stopwatches_xml();
+    assert_eq!(source.matches(neutral).count(), 1);
+    for (label, replacement, cause) in [
+        (
+            "nondefault static value",
+            "<Name>Anti-flicker Filter</Name><IsTimeVarying>true</IsTimeVarying><ParameterID>7</ParameterID><StartKeyframe>-91445760000000000,0.5,0,0,0,0,0,0</StartKeyframe>",
+            "VideoComponentParam:36: nondefault or unknown Motion parameter \"Anti-flicker Filter\"",
+        ),
+        (
+            "neutral keyed value",
+            "<Name>Anti-flicker Filter</Name><IsTimeVarying>true</IsTimeVarying><ParameterID>7</ParameterID><StartKeyframe>-91445760000000000,0.,0,0,0,0,0,0</StartKeyframe><Keyframes>0,0.,0,0,0,0,0,0;</Keyframes>",
+            "keyed",
+        ),
+        (
+            "malformed static value",
+            "<Name>Anti-flicker Filter</Name><IsTimeVarying>true</IsTimeVarying><ParameterID>7</ParameterID><StartKeyframe>-91445760000000000,not-a-value,0,0,0,0,0,0</StartKeyframe>",
+            "VideoComponentParam:36: nondefault or unknown Motion parameter \"Anti-flicker Filter\"",
+        ),
+    ] {
+        let xml = source.replacen(neutral, replacement, 1);
+        let (project, omissions) =
+            inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+        assert_eq!(omissions.len(), 1, "{label}: {omissions:?}");
+        assert_eq!(omissions[0].scope, crate::OmissionScope::Feature);
+        assert_eq!(omissions[0].kind, crate::OmissionKind::Omitted);
+        assert_eq!(omissions[0].record, "VideoComponentParam:36");
+        assert!(
+            omissions[0]
+                .reason
+                .contains(&format!("Anti-flicker Filter not converted ({cause})")),
+            "{label}: {:?}",
+            omissions[0]
+        );
+        assert!(!omissions[0].reason.contains("retained"));
+        let sequence = project.single_sequence().unwrap();
+        let clip = sequence.video_occurrences().next().unwrap();
+        assert_eq!(clip.media_id().as_str(), "Media:ObjectUID:media-1");
+        assert_eq!(project.media(clip).unwrap().name(), "source.mp4");
+        assert_eq!(clip.blend_mode, PrBlendMode::Screen);
+        assert_eq!(clip.opacity, 100.0);
+        assert_eq!(clip.transform.scale, [50.0, 50.0]);
+    }
+}
+
+#[test]
+fn invalid_anti_flicker_stopwatch_metadata_omits_the_occurrence() {
+    let neutral = "<Name>Anti-flicker Filter</Name><IsTimeVarying>true</IsTimeVarying><ParameterID>7</ParameterID>";
+    let source = with_plain_second_clip(&premiere_26_5_empty_motion_stopwatches_xml());
+    assert_eq!(source.matches(neutral).count(), 1);
+    let xml = source.replacen(
+        neutral,
+        "<Name>Anti-flicker Filter</Name><IsTimeVarying>yes</IsTimeVarying><ParameterID>7</ParameterID>",
+        1,
+    );
+    let (project, omissions) = inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+    assert_eq!(
+        project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .count(),
+        1
+    );
+    assert!(
+        omissions.iter().any(|omission| {
+            omission.scope == crate::OmissionScope::Occurrence
+                && omission
+                    .reason
+                    .contains("VideoComponentParam:36: invalid IsTimeVarying")
+        }),
+        "{omissions:?}"
+    );
 }
 
 #[test]

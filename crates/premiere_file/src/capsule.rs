@@ -20,9 +20,9 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{
-    format::Graph,
+    format::{Element, Graph},
     schema::{
-        native::{EncodedValue, Reference, VideoFilterComponent},
+        native::{EncodedValue, Reference, SubClip, VideoFilterComponent},
         records,
     },
     ConversionError,
@@ -237,6 +237,13 @@ impl SavedCapsule {
         {
             return Err(invalid("invalid saved template frame"));
         }
+        let mut diagnostics = private.extra.keys().chain(private.framesize.extra.keys()).chain(private.capsuleparams.extra.keys()).map(|field| format!("{}: optional capsule field {field:?} not mapped; known frame and controllers retained", input.identity)).collect::<Vec<_>>();
+        let mut media_dependencies = media_dependencies(
+            graph,
+            record.element().child("MediaDependencyMap"),
+            &input.identity,
+            &mut diagnostics,
+        );
         let params = input
             .value
             .component
@@ -249,7 +256,6 @@ impl SavedCapsule {
         }
         let mut uuids = BTreeSet::new();
         let mut controls = Vec::with_capacity(params.items.len());
-        let mut diagnostics = private.extra.keys().chain(private.framesize.extra.keys()).chain(private.capsuleparams.extra.keys()).map(|field| format!("{}: optional capsule field {field:?} not mapped; known frame and controllers retained", input.identity)).collect::<Vec<_>>();
         for (index, (reference, control)) in params
             .items
             .iter()
@@ -316,6 +322,22 @@ impl SavedCapsule {
                     &parameter,
                     &mut diagnostics,
                 )?,
+                11 => match media_dependencies.remove(&index) {
+                    Some(sub_clip) => match controls::validate_media_dependency(param) {
+                        Ok(()) => {
+                            diagnostics.push(format!("{parameter}: controller {}: media replacement dependency {sub_clip} is not mapped; template source/animation and supported siblings retained", control.uuid));
+                            CapsuleValue::Unsupported { kind: 11 }
+                        }
+                        Err(reason) => {
+                            diagnostics.push(format!("{parameter}: controller {}: {reason} for media replacement dependency {sub_clip}; template source/animation and supported siblings retained", control.uuid));
+                            CapsuleValue::Unsupported { kind: 11 }
+                        }
+                    },
+                    None => {
+                        diagnostics.push(format!("{parameter}: controller {}: media replacement has no supported MediaDependencyMap binding; template source/animation and supported siblings retained", control.uuid));
+                        CapsuleValue::Unsupported { kind: 11 }
+                    }
+                },
                 kind => match saved_numeric(param, kind, private.framesize.size) {
                     Ok(value) => CapsuleValue::Numeric(value),
                     Err(reason) => {
@@ -329,6 +351,9 @@ impl SavedCapsule {
                 parameter,
                 value,
             });
+        }
+        for (parameter_id, sub_clip) in media_dependencies {
+            diagnostics.push(format!("{}: MediaDependencyMap ParameterID {parameter_id} targets {sub_clip} but does not identify a media replacement controller; supported controls and template content retained", input.identity));
         }
         validate_groups(&controls)?;
         Ok(Self {
@@ -398,6 +423,191 @@ impl SavedCapsule {
 
 mod controls;
 use controls::{saved_numeric, saved_text};
+
+/// Version whose `First` child is a saved ParameterID and whose `Second` child
+/// is a replacement SubClip reference. Other versions remain optional metadata.
+const MEDIA_DEPENDENCY_VERSION: &str = "1";
+
+fn media_dependencies(
+    graph: &Graph<'_>,
+    map: Option<Element<'_>>,
+    owner: &str,
+    diagnostics: &mut Vec<String>,
+) -> BTreeMap<usize, String> {
+    let Some(map) = map else {
+        return BTreeMap::new();
+    };
+    for attribute in map.attributes().filter(|attribute| *attribute != "Version") {
+        diagnostics.push(format!(
+            "{owner}: unsupported MediaDependencyMap attribute {attribute:?}; known entries retained"
+        ));
+    }
+    for child in map
+        .children()
+        .filter(|child| child.tag() != "MediaDependency")
+    {
+        diagnostics.push(format!(
+            "{owner}: unsupported MediaDependencyMap child {:?}; known entries retained",
+            child.tag()
+        ));
+    }
+    if map.attribute("Version") != Some(MEDIA_DEPENDENCY_VERSION) {
+        diagnostics.push(format!(
+            "{owner}: unsupported MediaDependencyMap version {:?}; template content retained",
+            map.attribute("Version")
+        ));
+        return BTreeMap::new();
+    }
+
+    let mut bindings = BTreeMap::new();
+    let mut ambiguous = BTreeSet::new();
+    for (position, dependency) in map
+        .children()
+        .filter(|child| child.tag() == "MediaDependency")
+        .enumerate()
+    {
+        for attribute in dependency
+            .attributes()
+            .filter(|attribute| !matches!(*attribute, "Version" | "Index"))
+        {
+            diagnostics.push(format!(
+                "{owner}: MediaDependencyMap entry {position} has unsupported attribute {attribute:?}; known binding fields retained"
+            ));
+        }
+        for child in dependency
+            .children()
+            .filter(|child| !matches!(child.tag(), "First" | "Second"))
+        {
+            diagnostics.push(format!(
+                "{owner}: MediaDependencyMap entry {position} has unsupported child {:?}; known binding fields retained",
+                child.tag()
+            ));
+        }
+
+        let first_fields = dependency
+            .children()
+            .filter(|child| child.tag() == "First")
+            .collect::<Vec<_>>();
+        let first = match first_fields.as_slice() {
+            [first] => {
+                for attribute in first.attributes() {
+                    diagnostics.push(format!(
+                        "{owner}: MediaDependencyMap entry {position} First has unsupported attribute {attribute:?}; its saved ParameterID is retained"
+                    ));
+                }
+                if !first.is_text_only() {
+                    diagnostics.push(format!(
+                        "{owner}: MediaDependencyMap entry {position} First has unsupported child content; template content retained"
+                    ));
+                    None
+                } else {
+                    match first
+                        .text()
+                        .map(str::trim)
+                        .and_then(|value| value.parse().ok())
+                    {
+                        Some(first) => Some(first),
+                        None => {
+                            diagnostics.push(format!(
+                                "{owner}: MediaDependencyMap entry {position} First is not a saved ParameterID; template content retained"
+                            ));
+                            None
+                        }
+                    }
+                }
+            }
+            [] => {
+                diagnostics.push(format!(
+                    "{owner}: MediaDependencyMap entry {position} has no First saved ParameterID; template content retained"
+                ));
+                None
+            }
+            _ => {
+                diagnostics.push(format!(
+                    "{owner}: MediaDependencyMap entry {position} has ambiguous First saved ParameterIDs; template content retained"
+                ));
+                None
+            }
+        };
+
+        let second_fields = dependency
+            .children()
+            .filter(|child| child.tag() == "Second")
+            .collect::<Vec<_>>();
+        let sub_clip = match second_fields.as_slice() {
+            [second] => {
+                for attribute in second.attributes().filter(|attribute| {
+                    !matches!(
+                        *attribute,
+                        records::OBJECT_REF | records::OBJECT_UREF | "Index"
+                    )
+                }) {
+                    diagnostics.push(format!(
+                        "{owner}: MediaDependencyMap entry {position} Second has unsupported attribute {attribute:?}; its native reference is retained"
+                    ));
+                }
+                for child in second.children() {
+                    diagnostics.push(format!(
+                        "{owner}: MediaDependencyMap entry {position} Second has unsupported child {:?}; its native reference is retained",
+                        child.tag()
+                    ));
+                }
+                let reference = second.reference();
+                match graph.follow::<SubClip>(&reference, owner) {
+                    Ok(sub_clip) => Some(sub_clip.identity),
+                    Err(error) => {
+                        diagnostics.push(format!(
+                            "{owner}: MediaDependencyMap entry {position} target is not a usable SubClip: {error}; template content retained"
+                        ));
+                        None
+                    }
+                }
+            }
+            [] => {
+                diagnostics.push(format!(
+                    "{owner}: MediaDependencyMap entry {position} has no Second replacement reference; template content retained"
+                ));
+                None
+            }
+            _ => {
+                diagnostics.push(format!(
+                    "{owner}: MediaDependencyMap entry {position} has ambiguous Second replacement references; template content retained"
+                ));
+                None
+            }
+        };
+
+        if dependency.attribute("Version") != Some(MEDIA_DEPENDENCY_VERSION) {
+            let target = sub_clip
+                .as_deref()
+                .map(|sub_clip| format!(" targeting {sub_clip}"))
+                .unwrap_or_default();
+            diagnostics.push(format!(
+                "{owner}: MediaDependencyMap entry {position}{target} has unsupported version {:?}; template content retained",
+                dependency.attribute("Version")
+            ));
+            continue;
+        }
+        let (Some(first), Some(sub_clip)) = (first, sub_clip) else {
+            continue;
+        };
+        if ambiguous.contains(&first) {
+            diagnostics.push(format!(
+                "{owner}: MediaDependencyMap ParameterID {first} has another ambiguous target {sub_clip}; template content retained"
+            ));
+            continue;
+        }
+        if let Some(previous) = bindings.remove(&first) {
+            ambiguous.insert(first);
+            diagnostics.push(format!(
+                "{owner}: MediaDependencyMap ParameterID {first} ambiguously targets {previous} and {sub_clip}; template content retained"
+            ));
+        } else {
+            bindings.insert(first, sub_clip);
+        }
+    }
+    bindings
+}
 
 fn validate_children(children: &[String]) -> Result<(), CapsuleError> {
     let mut seen = BTreeSet::new();
@@ -530,6 +740,7 @@ fn validate_value(value: &TextValue) -> Result<(), CapsuleError> {
 /// Requires bounded single-disk ZIP32 directory/footer framing. Rejects ZIP64
 /// sentinels/locators, ambiguous footers, duplicate/path-traversing members,
 /// encryption, excessive expansion, recursive graphics, and missing AEPs.
+#[cfg(test)]
 pub(crate) fn decode_template<R: Read + Seek>(
     container: R,
 ) -> Result<SavedGraphicTemplate, CapsuleError> {
@@ -691,7 +902,15 @@ impl<R: Seek> Seek for CapsuleZipReader<'_, R> {
     }
 }
 
-fn aep_member<R: Read + Seek>(mut reader: R, nested: bool) -> Result<Vec<u8>, CapsuleError> {
+fn with_archive<R: Read + Seek, T>(
+    mut reader: R,
+    nested: bool,
+    consume: impl FnOnce(
+        &mut zip::ZipArchive<CapsuleZipReader<'_, R>>,
+        usize,
+        bool,
+    ) -> Result<T, CapsuleError>,
+) -> Result<T, CapsuleError> {
     let footer = zip32_footer(&mut reader)?;
     let metadata_only = Cell::new(true);
     let mut zip = zip::ZipArchive::new(CapsuleZipReader {
@@ -744,6 +963,13 @@ fn aep_member<R: Read + Seek>(mut reader: R, nested: bool) -> Result<Vec<u8>, Ca
         target = Some((index, graphic));
     }
     let (index, graphic) = target.ok_or_else(|| invalid("graphic container has no AEP"))?;
+    consume(&mut zip, index, graphic)
+}
+
+fn read_member<R: Read + Seek>(
+    zip: &mut zip::ZipArchive<R>,
+    index: usize,
+) -> Result<Vec<u8>, CapsuleError> {
     let mut member = zip.by_index(index)?;
     let mut data = Vec::new();
     member
@@ -753,12 +979,22 @@ fn aep_member<R: Read + Seek>(mut reader: R, nested: bool) -> Result<Vec<u8>, Ca
     if data.len() as u64 > MAX_EXPANDED_MEMBER_BYTES {
         return Err(invalid("graphic container exceeds 64 MiB actual expansion"));
     }
-    if graphic {
-        aep_member(Cursor::new(&data), true)
-    } else {
-        Ok(data)
-    }
+    Ok(data)
 }
+
+#[cfg(test)]
+fn aep_member<R: Read + Seek>(reader: R, nested: bool) -> Result<Vec<u8>, CapsuleError> {
+    with_archive(reader, nested, |zip, index, graphic| {
+        let data = read_member(zip, index)?;
+        if graphic {
+            aep_member(Cursor::new(&data), true)
+        } else {
+            Ok(data)
+        }
+    })
+}
+
+pub(crate) mod picture;
 
 #[cfg(test)]
 mod tests;

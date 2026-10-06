@@ -28,6 +28,7 @@ use crate::{
 mod diagnostics;
 mod export;
 mod fonts;
+pub(crate) mod graphic_picture;
 mod linked_import;
 mod media;
 mod publication;
@@ -35,6 +36,7 @@ mod publication;
 pub use export::{
     AepPreparationControl, StagedAfterEffectsExport, StagedAfterEffectsPictureExport,
 };
+pub use graphic_picture::GraphicPicture;
 pub use linked_import::{
     DynamicLinkImportError, ImportedAfterEffectsComposition, LinkedAudio, LinkedMedia,
     LinkedPicture, LinkedPictureTarget, PreparedAfterEffectsImport,

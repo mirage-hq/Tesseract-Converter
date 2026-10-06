@@ -245,6 +245,7 @@ fn writer_encodes_disabled_clips_and_leaves_tracks_enabled() {
                 .map(|item| match item {
                     crate::schema::PrVideoItem::Media(clip) => clip.enabled,
                     crate::schema::PrVideoItem::Graphic(graphic) => graphic.enabled,
+                    crate::schema::PrVideoItem::Capsule(capsule) => capsule.placement.enabled,
                 })
                 .collect()
         })

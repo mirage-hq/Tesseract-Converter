@@ -10,6 +10,7 @@ use thiserror::Error;
 use crate::structure::{ItemKind, StructuralProject};
 
 mod controls;
+pub use crate::adapter::GraphicPicture;
 pub use controls::SavedGraphicNumeric;
 
 /// A malformed or unsupported saved controller cannot select another text layer.
@@ -24,6 +25,9 @@ pub enum GraphicTemplateError {
     /// A controller is absent, ambiguous, or outside the static text subset.
     #[error("saved graphic template: {0}")]
     Controller(String),
+    /// Full editable picture construction or media preflight failed.
+    #[error(transparent)]
+    Picture(#[from] crate::adapter::AepConversionError),
 }
 
 /// Opaque typed Source Text error; its native property/COS cause stays available.
@@ -71,6 +75,68 @@ impl SavedGraphicTemplate {
     /// Read the immutable typed source for geometry/clock conversion.
     pub fn source(&self) -> &StructuralProject {
         &self.project
+    }
+
+    /// Import this instantiated snapshot through the full editable AEP mapper.
+    /// Selection uses the real native composition ID, not a Dynamic Link GUID.
+    /// The returned owner keeps normalized media alive through host publication.
+    ///
+    /// # Errors
+    /// Rejects forged/ambiguous Text identities, invalid ID reservations and
+    /// unrecoverable required structure/media. Ordinary omissions are diagnostic.
+    pub fn import_editable_picture(
+        &self,
+        media_context: &std::path::Path,
+        composition_id: u32,
+        first_id: u64,
+        asset_namespace: &str,
+        values: &[SavedGraphicText],
+    ) -> Result<GraphicPicture, GraphicTemplateError> {
+        self.import_editable_picture_with_collected_media(
+            media_context,
+            composition_id,
+            first_id,
+            asset_namespace,
+            values,
+            &mut |_| Ok(()),
+        )
+    }
+
+    /// Import a saved picture while letting its container stage each exact
+    /// adjacent Collect Files candidate requested by the full picture mapper.
+    /// The callback runs immediately before ordinary media resolution; it must
+    /// not search for alternative files or stage unrelated archive members.
+    ///
+    /// # Errors
+    /// Returns callback I/O failures as picture-preflight failures in addition
+    /// to the ordinary [`Self::import_editable_picture`] errors.
+    pub fn import_editable_picture_with_collected_media(
+        &self,
+        media_context: &std::path::Path,
+        composition_id: u32,
+        first_id: u64,
+        asset_namespace: &str,
+        values: &[SavedGraphicText],
+        stage_collected_media: &mut dyn FnMut(&std::path::Path) -> std::io::Result<()>,
+    ) -> Result<GraphicPicture, GraphicTemplateError> {
+        self.validate_text_bindings(values)?;
+        let mut targets = std::collections::BTreeSet::new();
+        for value in values {
+            if !targets.insert((value.composition_id, value.layer_id)) {
+                return Err(GraphicTemplateError::Controller(
+                    "ambiguous saved Text target".into(),
+                ));
+            }
+        }
+        Ok(crate::adapter::graphic_picture::import(
+            &self.project,
+            media_context,
+            composition_id,
+            first_id,
+            asset_namespace,
+            values,
+            stage_collected_media,
+        )?)
     }
 
     /// Decode current independent Text/Shape contents for the ordinary graphic

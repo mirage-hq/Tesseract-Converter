@@ -21,11 +21,11 @@
 //! inner time zero over the group's range. The placement takes the group's
 //! Motion, Opacity, their keys, its blend mode, its one Crop, Linear Wipe or
 //! track matte, its effects and its Enable, as a clip takes its layer's. A
-//! group with a background, a clock other than the plain one (a time remap or
-//! another rate, as an imported retimed nest has) or another mask is omitted.
-//! Unmapped Group motion blur is omitted separately from retained content.
-//! Groups with no exportable picture are omitted, as is the smallest group
-//! around a layer that export would place
+//! group retains current children with local field/clock approximations when
+//! native controls cannot reproduce them. Inseparable unsupported coverage
+//! remains omitted. Unmapped Group motion blur is reported separately.
+//! A group is also omitted if it exports no
+//! picture, and the smallest group around a layer that export would place
 //! but whose range the sequence grid collapses to no frame, which no
 //! placement can hold.
 
@@ -34,20 +34,22 @@ use super::{
     effects::{export_effects, import_nest_effects, EffectHost, EffectIdAllocator},
     packing::{PictureContainerToken, PicturePacker, SourceBoundaryToken},
     premiere_to_tesseract::{
-        audio_layers, clip_transform, crop_rect, guide_layer, guide_mask,
-        map_animation_graph_error, matte_layer, motion_tracks, opacity_mask, scalar_keys,
-        set_tracks, shape_guide, staged_video_transform, tick_range, transform_stage_tracks,
-        validate_time_range, video_layers, CompositionShutter,
+        audio_layers, clip_transform, crop_rect, curved_transform_position_approximation,
+        guide_layer, guide_mask, map_animation_graph_error, matte_layer, motion_tracks,
+        opacity_mask, scalar_keys, set_tracks, shape_guide, staged_video_transform, tick_range,
+        transform_stage_tracks, validate_time_range, video_layers, CompositionShutter,
     },
     tesseract_to_premiere::{
         animates_motion, canonical_mask, clip_omitted, consumed_layer_ids, export_layers,
         export_mask, export_motion_keys, export_transform, has_background, image_mask,
         is_background_property, layer_animations, layer_tracks, mask_guide_ids, stage_layers,
-        stage_video, stage_video_spans_group, track_matte_sources, unexportable_clip,
-        unexportable_motion, unplaced_track_matte, CanonicalMask, ClipLayers, MotionHost,
-        WrittenAnimation,
+        stage_video, stage_video_spans_group, track_matte_sources, unplaced_track_matte,
+        CanonicalMask, ClipLayers, MotionHost, WrittenAnimation,
     },
-    timing::{frame_ticks_from_time, linear_source_range, ticks_from_time, time_from_ticks},
+    timing::{
+        duration_from_ticks, frame_ticks_from_time, linear_source_range, ticks_from_time,
+        time_from_ticks,
+    },
 };
 use crate::{
     audio_media::SourceSound,
@@ -57,8 +59,8 @@ use crate::{
     linked_compositions::LinkedCompositions,
     media::MediaFacts,
     schema::{
-        PrAnimatedProperty, PrAudioFade, PrAudioOccurrence, PrBlendMode, PrNestOccurrence,
-        PrStaticTransform, PrVideoTrack, MAX_NEST_DEPTH,
+        PrAnimatedProperty, PrAudioFade, PrAudioOccurrence, PrBlendMode, PrKeyframeEasing,
+        PrNestOccurrence, PrStaticTransform, PrTimeRemap, PrVideoTrack, MAX_NEST_DEPTH,
     },
     {approximate, omit, Omission, OmissionKind, OmissionScope},
 };
@@ -73,11 +75,35 @@ use std::{
     ops::Range,
 };
 
-/// Explicit editable stage identity. Recognition also validates its structure,
-/// clocks and exact source guide; the name alone never authorizes collapse.
+/// Display label only; current structure, clocks and source guide select
+/// and validate a nested Transform stage independently of this spelling.
 const NEST_TRANSFORM_STAGE: &str = "Premiere nested Transform ";
 const NEST_TRANSFORM_APPROXIMATION: &str = "nested Transform is approximated as editable source-frame affine before Motion with source-canvas clipping; Geometry2 order, clipping and transparent pixels may differ; export uses ordinary Transform";
 const NESTED_MATTE_CONTROLS_APPROXIMATION: &str = "nested matte Motion/Opacity is retained on its editable Group with source-canvas clipping where needed; native group sampling and edge/alpha fidelity are unmeasured";
+
+/// One native-render-order stage, innermost first. Affine stages use existing
+/// Group transforms; pixel effects use the unchanged nested-host effect mapping.
+struct NestEffectStage<'a> {
+    id: LayerId,
+    parent: LayerId,
+    transform: fx_schema::Transform,
+    tracks: Vec<(fx_schema::Property, PropertyKeyframeTrack)>,
+    effects: &'a [crate::schema::PrEffect],
+    warnings: Vec<String>,
+    affine: bool,
+    coverage: Option<NestGeometry2Coverage>,
+}
+
+/// Stationary output coverage above one translating Geometry2 picture. The
+/// guides use the nested source plane, not the parent's Motion canvas.
+struct NestGeometry2Coverage {
+    id: LayerId,
+    parent: LayerId,
+    masks: Vec<fx_schema::PathMask>,
+    guides: Vec<Layer>,
+    tracks: Vec<(fx_schema::PropertyTarget, PropertyKeyframeTrack)>,
+    reports: Vec<Omission>,
+}
 
 /// The root layer of each converted item and nest of one sequence, by track
 /// index and timeline start, which a Track Matte Key on a lower track names.
@@ -318,6 +344,7 @@ fn blends_inside(sequence: &PrSequence) -> bool {
     sequence.video_items().any(|item| match item {
         PrVideoItem::Media(clip) => blends(clip.blend_mode),
         PrVideoItem::Graphic(graphic) => blends(graphic.blend_mode),
+        PrVideoItem::Capsule(capsule) => blends(capsule.placement.blend_mode),
     }) || sequence
         .nest_occurrences()
         .any(|nest| blends(nest.blend_mode))
@@ -356,6 +383,7 @@ pub(super) fn track_nests(
             Some(matte) => {
                 match matte_layer(
                     &scope.item_layers,
+                    &project.video_tracks,
                     matte,
                     nest.timeline_ticks(),
                     track_index,
@@ -435,40 +463,6 @@ pub(super) fn track_nests(
         };
         let group_id = LayerId::new(*scope.next_index as u64 + 1);
         let key_origin = if inner_clock { 0 } else { nest.in_ticks };
-        // Prepare before importing children or reserving identities. Native
-        // tick keys may collide on the FX millisecond clock; keep siblings.
-        let wipe_guide = match &nest.linear_wipe {
-            Some(wipe) => {
-                // An admitted Wipe cannot accompany an Opacity mask. Only
-                // retained effects therefore reserve its picture-stage ID.
-                let guide_number =
-                    *scope.next_index as u64 + 2 + u64::from(!nest.effects.is_empty());
-                let guide_id = LayerId::new(guide_number);
-                match super::premiere_to_tesseract::linear_wipe_guide(
-                    wipe,
-                    key_origin,
-                    guide_id,
-                    nest.sequence.dimensions(),
-                ) {
-                    Ok(guide) => Some((
-                        guide_id,
-                        FxItemId::new(guide_number + 1),
-                        wipe.feather,
-                        guide,
-                    )),
-                    Err(error) => {
-                        omit(
-                            omissions,
-                            OmissionScope::Occurrence,
-                            nest.record(),
-                            format!("nested Linear Wipe not converted: {error}"),
-                        );
-                        continue;
-                    }
-                }
-            }
-            None => None,
-        };
         // Opacity keys that do not convert, as two native keys within one
         // millisecond do not, would leave the group at its static Opacity
         // where they fade it, so they omit the nest before it takes an id;
@@ -501,16 +495,18 @@ pub(super) fn track_nests(
             let prepare = || -> Result<_> {
                 let stage_id = LayerId::new(*scope.next_index as u64 + 2);
                 if !transform_stage {
-                    return Ok((stage_id, identity_transform(), Vec::new(), Vec::new()));
+                    return Ok(vec![NestEffectStage {
+                        id: stage_id,
+                        parent: group_id,
+                        transform: identity_transform(),
+                        tracks: Vec::new(),
+                        effects: &nest.effects,
+                        warnings: Vec::new(),
+                        affine: false,
+                        coverage: None,
+                    }]);
                 }
-                let [effect] = nest.effects.as_slice() else {
-                    return Err(unsupported("nested Transform requires one retained effect"));
-                };
-                let crate::schema::PrEffectParams::Transform(transform) = &effect.params else {
-                    return Err(unsupported("nested Transform requires affine parameters"));
-                };
-                if !effect.enabled
-                    || inner_clock
+                if inner_clock
                     || !nest.crop.is_default()
                     || nest.linear_wipe.is_some()
                     || nest.opacity_mask.is_some()
@@ -519,16 +515,6 @@ pub(super) fn track_nests(
                     return Err(unsupported(
                         "nested Transform requires unit-forward matching clocks and no masks",
                     ));
-                }
-                if let Some(reason) = crate::schema::nested_transform_import_canvas_reason(
-                    nest.sequence.dimensions(),
-                    project.dimensions(),
-                    &nest.transform,
-                    nest.opacity,
-                    &nest.animations,
-                    effect,
-                ) {
-                    return Err(unsupported(reason));
                 }
                 let mut reports = Vec::new();
                 let _ = motion_tracks(
@@ -547,18 +533,130 @@ pub(super) fn track_nests(
                         "nested Transform requires every intrinsic Motion/Opacity key to convert",
                     ));
                 }
-                Ok((
-                    stage_id,
-                    staged_video_transform(transform, nest.sequence.dimensions())?,
-                    transform_stage_tracks(
-                        effect,
+                let count = nest.effects.len();
+                let mut next = *scope.next_index as u64 + 2;
+                let mut parent = group_id;
+                let mut layout = Vec::with_capacity(count);
+                for position in (0..count).rev() {
+                    let coverage = nest
+                        .geometry2_masks
+                        .get(&position)
+                        .filter(|masks| !masks.is_empty())
+                        .map(|_| {
+                            let id = LayerId::new(next);
+                            next += 1;
+                            (id, parent)
+                        });
+                    let id = LayerId::new(next);
+                    next += 1;
+                    layout.push((id, coverage.map_or(parent, |(id, _)| id), coverage));
+                    parent = id;
+                }
+                layout.reverse();
+                let mut stages = Vec::with_capacity(count);
+                for ((position, effect), (id, parent, coverage_owner)) in
+                    nest.effects.iter().enumerate().zip(layout)
+                {
+                    let (transform, tracks, effects, warnings, affine) =
+                        if let crate::schema::PrEffectParams::Transform(transform) = &effect.params
+                        {
+                            if coverage_owner.is_none() {
+                                if let Some(reason) =
+                                    crate::schema::nested_transform_import_canvas_reason(
+                                        nest.sequence.dimensions(),
+                                        project.dimensions(),
+                                        &nest.transform,
+                                        nest.opacity,
+                                        &nest.animations,
+                                        effect,
+                                    )
+                                {
+                                    return Err(unsupported(reason));
+                                }
+                            }
+                            let mut warnings = transform.approximations(&effect.animations);
+                            if let Some(warning) = curved_transform_position_approximation(effect) {
+                                warnings.push(format!(
+                                    "{warning}; retained nested effect {}",
+                                    position + 1
+                                ));
+                            }
+                            (
+                                staged_video_transform(transform, nest.sequence.dimensions())?,
+                                transform_stage_tracks(
+                                    effect,
+                                    transform,
+                                    nest.sequence.dimensions(),
+                                    key_origin,
+                                    id,
+                                )?,
+                                &[][..],
+                                warnings,
+                                true,
+                            )
+                        } else {
+                            (
+                                identity_transform(),
+                                Vec::new(),
+                                std::slice::from_ref(effect),
+                                Vec::new(),
+                                false,
+                            )
+                        };
+                    let coverage = if let Some((coverage_id, coverage_parent)) = coverage_owner {
+                        let mut masks = Vec::new();
+                        let mut guides = Vec::new();
+                        let mut mask_tracks = Vec::new();
+                        let mut reports = Vec::new();
+                        for mask in &nest.geometry2_masks[&position] {
+                            let guide_id = LayerId::new(next);
+                            let mask_id = FxItemId::new(next + 1);
+                            next += 2;
+                            let (path_mask, path) = opacity_mask(
+                                mask,
+                                mask_id,
+                                guide_id,
+                                nest.sequence.dimensions(),
+                                &nest.record(),
+                                &mut reports,
+                            )?;
+                            masks.push(path_mask);
+                            mask_tracks.extend(
+                                super::mask_animation::import_tracks(mask, mask_id, key_origin)
+                                    .map_err(unsupported)?,
+                            );
+                            guides.push(Layer::from_data(&LayerData::Shape(shape_guide(
+                                guide_id,
+                                "Nested Geometry2 effect mask".into(),
+                                Some(coverage_id),
+                                content_window,
+                                identity_transform(),
+                                path,
+                            )))?);
+                        }
+                        Some(NestGeometry2Coverage {
+                            id: coverage_id,
+                            parent: coverage_parent,
+                            masks,
+                            guides,
+                            tracks: mask_tracks,
+                            reports,
+                        })
+                    } else {
+                        None
+                    };
+                    stages.push(NestEffectStage {
+                        id,
+                        parent,
                         transform,
-                        nest.sequence.dimensions(),
-                        key_origin,
-                        stage_id,
-                    )?,
-                    transform.approximations(&effect.animations),
-                ))
+                        tracks,
+                        effects,
+                        warnings,
+                        affine,
+                        coverage,
+                    });
+                }
+                Ok(stages)
             };
             match prepare() {
                 Ok(stage) => Some(stage),
@@ -573,6 +671,54 @@ pub(super) fn track_nests(
                 }
             }
         };
+        let stage_ids = stage.as_ref().map_or(0, |stages| {
+            stages
+                .iter()
+                .map(|stage| {
+                    1 + stage
+                        .coverage
+                        .as_ref()
+                        .map_or(0, |coverage| 1 + 2 * coverage.masks.len())
+                })
+                .sum::<usize>()
+        });
+        // Outer guides follow every effect stage, output-coverage owner and
+        // owned guide/mask pair, rather than assuming one picture-stage ID.
+        let mut next_guide_id = *scope.next_index as u64 + 2 + stage_ids as u64;
+        // Prepare before importing children or reserving identities. Native
+        // tick keys may collide on the FX millisecond clock; keep siblings.
+        let wipe_guide = match &nest.linear_wipe {
+            Some(wipe) => {
+                let guide_number = next_guide_id;
+                let guide_id = LayerId::new(guide_number);
+                match super::premiere_to_tesseract::linear_wipe_guide(
+                    wipe,
+                    key_origin,
+                    guide_id,
+                    nest.sequence.dimensions(),
+                ) {
+                    Ok(guide) => {
+                        next_guide_id += 2;
+                        Some((
+                            guide_id,
+                            FxItemId::new(guide_number + 1),
+                            wipe.feather,
+                            guide,
+                        ))
+                    }
+                    Err(error) => {
+                        omit(
+                            omissions,
+                            OmissionScope::Occurrence,
+                            nest.record(),
+                            format!("nested Linear Wipe not converted: {error}"),
+                        );
+                        continue;
+                    }
+                }
+            }
+            None => None,
+        };
         // Opacity coverage belongs above the picture/effects stage, not on
         // that stage's input. Prepare controls before reserving IDs or children.
         let opacity_guide = if let Some(mask) = &nest.opacity_mask {
@@ -583,11 +729,8 @@ pub(super) fn track_nests(
                         && nest.linear_wipe.is_none() && nest.track_matte.is_none(),
                     "nested Opacity mask requires equal canvases, a static outline and a unit-forward matching clock without other masks"
                 );
-                // A mask forces the picture stage at +2 above; this check
-                // excludes Wipe. The owner (+1), stage, guide (+3) and mask
-                // (+4) are reserved together only after preparation succeeds.
-                let guide_id = LayerId::new(*scope.next_index as u64 + 3);
-                let mask_id = FxItemId::new(*scope.next_index as u64 + 4);
+                let guide_id = LayerId::new(next_guide_id);
+                let mask_id = FxItemId::new(next_guide_id + 1);
                 let mut reports = Vec::new();
                 let (path_mask, path) = opacity_mask(
                     mask,
@@ -658,9 +801,9 @@ pub(super) fn track_nests(
             );
             continue;
         }
-        let content_parent = stage.as_ref().map_or(group_id, |stage| stage.0);
+        let content_parent = stage.as_ref().map_or(group_id, |stages| stages[0].id);
         *scope.next_index += 1
-            + usize::from(stage.is_some())
+            + stage_ids
             + 2 * usize::from(wipe_guide.is_some())
             + 2 * usize::from(opacity_guide.is_some());
         scope
@@ -795,49 +938,91 @@ pub(super) fn track_nests(
         {
             approximate(omissions, &record, NESTED_MATTE_CONTROLS_APPROXIMATION);
         }
-        if let Some((stage_id, effect_transform, tracks, warnings)) = stage {
-            set_tracks(dynamics, tracks)?;
-            let (effects, effect_tracks) = if transform_stage {
-                (Vec::new(), Vec::new())
-            } else {
-                import_nest_effects(nest, stage_id, key_origin, scope.effect_ids, omissions)
-            };
-            for (target, track) in effect_tracks {
-                dynamics
-                    .set_property(target, PropertyAnimator::keyframes(track), Vec::new())
-                    .map_err(map_animation_graph_error)?;
-            }
-            let inner = GroupLayer {
-                parent: Some(group_id),
-                masks: if effects_before_coverage {
-                    Vec::new()
-                } else {
-                    std::mem::take(&mut masks)
-                },
-                effects,
-                // This stage does not rebase the inner clock already selected
-                // by the outer Group; children, guides and keys retain it.
-                playback: LayerPlayback::linear(content_window, content_window, content_window, 0)
-                    .map_err(unsupported)?,
-                ..plain_group(
-                    stage_id,
-                    if transform_stage {
-                        "Nested Transform picture"
+        if let Some(stages) = stage {
+            let stacked_affine = transform_stage && stages.len() > 1;
+            for (position, stage) in stages.into_iter().enumerate() {
+                set_tracks(dynamics, stage.tracks)?;
+                let (effects, effect_tracks) = super::effects::import_nest_effect_slice(
+                    nest,
+                    stage.effects,
+                    stage.id,
+                    key_origin,
+                    scope.effect_ids,
+                    omissions,
+                );
+                for (target, track) in effect_tracks {
+                    dynamics
+                        .set_property(target, PropertyAnimator::keyframes(track), Vec::new())
+                        .map_err(map_animation_graph_error)?;
+                }
+                let inner = GroupLayer {
+                    parent: Some(stage.parent),
+                    masks: if position == 0 && !effects_before_coverage {
+                        std::mem::take(&mut masks)
                     } else {
-                        "Nested sequence effects"
+                        Vec::new()
+                    },
+                    effects,
+                    // This stage does not rebase the inner clock already selected
+                    // by the outer Group; children, guides and keys retain it.
+                    playback: LayerPlayback::linear(
+                        content_window,
+                        content_window,
+                        content_window,
+                        0,
+                    )
+                    .map_err(unsupported)?,
+                    ..plain_group(
+                        stage.id,
+                        if stage.affine {
+                            "Nested Transform picture"
+                        } else {
+                            "Nested sequence effects"
+                        }
+                        .into(),
+                        content_window,
+                        stage.transform,
+                        layers,
+                    )?
+                };
+                layers = vec![Layer::from_data(&LayerData::Group(inner))?];
+                if let Some(coverage) = stage.coverage {
+                    for (target, track) in coverage.tracks {
+                        dynamics
+                            .set_property(target, PropertyAnimator::keyframes(track), Vec::new())
+                            .map_err(map_animation_graph_error)?;
                     }
-                    .into(),
-                    content_window,
-                    effect_transform,
-                    layers,
-                )?
-            };
-            layers = vec![Layer::from_data(&LayerData::Group(inner))?];
-            if transform_stage {
-                approximate(omissions, nest.record(), NEST_TRANSFORM_APPROXIMATION);
+                    omissions.extend(coverage.reports);
+                    layers.extend(coverage.guides);
+                    let covered = GroupLayer {
+                        parent: Some(coverage.parent),
+                        masks: coverage.masks,
+                        playback: LayerPlayback::linear(
+                            content_window,
+                            content_window,
+                            content_window,
+                            0,
+                        )
+                        .map_err(unsupported)?,
+                        ..plain_group(
+                            coverage.id,
+                            "Nested Geometry2 output coverage".into(),
+                            content_window,
+                            identity_transform(),
+                            layers,
+                        )?
+                    };
+                    layers = vec![Layer::from_data(&LayerData::Group(covered))?];
+                }
+                if stage.affine && !stacked_affine {
+                    approximate(omissions, nest.record(), NEST_TRANSFORM_APPROXIMATION);
+                }
+                for warning in stage.warnings {
+                    approximate(omissions, nest.record(), warning);
+                }
             }
-            for warning in warnings {
-                approximate(omissions, nest.record(), warning);
+            if stacked_affine {
+                approximate(omissions, nest.record(), "ordered nested affine effects retain separate editable stages; intermediate raster bounds, clipping and native edge/alpha sampling may differ; stacked export is unestablished");
             }
         }
         if let Some(guide) = outer_guide {
@@ -1093,7 +1278,7 @@ fn visible_content(nest: &PrNestOccurrence, omissions: &mut Vec<Omission>) -> Re
         }
     }
     content.audio = audio;
-    for (track_index, track) in content.video_tracks.iter_mut().enumerate() {
+    for track in &mut content.video_tracks {
         let mut items = Vec::with_capacity(track.items.len());
         for mut item in std::mem::take(&mut track.items) {
             let range = item.timeline_ticks();
@@ -1103,46 +1288,24 @@ fn visible_content(nest: &PrNestOccurrence, omissions: &mut Vec<Omission>) -> Re
             let source_in = match &item {
                 PrVideoItem::Media(clip) => clip.in_ticks,
                 PrVideoItem::Graphic(graphic) => graphic.in_ticks,
+                PrVideoItem::Capsule(capsule) => capsule.placement.in_ticks,
             };
-            if let PrVideoItem::Media(clip) = &item {
-                let reason = if clip.held_source_ticks().is_some() {
-                    // Native own-effect key clocks under Frame Hold are unmeasured.
-                    // Conservatively refuse keyed tracks, including bypassed or
-                    // otherwise unsupported effects, outside these three families'
-                    // existing diagnosed handling; do not change that policy here.
-                    clip.effects
-                        .iter()
-                        .enumerate()
-                        .find(|(_, effect)| {
-                            !effect.animations.is_empty()
-                                && !matches!(
-                                    effect.params,
-                                    crate::schema::PrEffectParams::AlphaGlow { .. }
-                                        | crate::schema::PrEffectParams::Transform(_)
-                                        | crate::schema::PrEffectParams::PosterizeTime { .. }
-                                )
-                        })
-                        .map(|(index, effect)| format!(
-                            "held inner clip not converted: {} effect at stack position {} has an unsupported keyed effect clock under Frame Hold",
-                            effect.spec().display_name, index + 1
-                        ))
-                } else {
-                    clip.time_remap.as_ref().map(|_| "retimed inner clip not converted: trimming a source-time remapping inside a nest is not implemented".to_owned())
-                };
-                if let Some(reason) = reason {
-                    omit(
-                        omissions,
-                        OmissionScope::Occurrence,
-                        format!(
-                            "{}, inner video track {track_index}, {} ({}..{} ticks)",
-                            nest.record(),
-                            clip.record(),
-                            range.start,
-                            range.end
-                        ),
-                        reason,
-                    );
-                    continue;
+            if let PrVideoItem::Media(clip) = &mut item {
+                if clip.held_source_ticks().is_some() {
+                    for (index, effect) in clip.effects.iter_mut().enumerate() {
+                        if !effect.animations.is_empty()
+                            && !matches!(
+                                effect.params,
+                                crate::schema::PrEffectParams::AlphaGlow { .. }
+                                    | crate::schema::PrEffectParams::Transform(_)
+                                    | crate::schema::PrEffectParams::PosterizeTime { .. }
+                            )
+                        {
+                            effect.animations.clear();
+                            approximate(omissions, clip.id.as_deref().unwrap_or("inner held picture"),
+                                format!("Frame Hold effect {} keys omitted at stack position {}; authored base effect, picture and independent children retained", effect.spec().display_name, index + 1));
+                        }
+                    }
                 }
             }
             let Some((timeline, mut source)) =
@@ -1172,12 +1335,39 @@ fn visible_content(nest: &PrNestOccurrence, omissions: &mut Vec<Omission>) -> Re
                             &window,
                         )?;
                     }
+                    if clip.held_source_ticks().is_none() {
+                        if let Some(remap) = &mut clip.time_remap {
+                            let delta =
+                                source.start.checked_sub(clip.in_ticks).ok_or_else(|| {
+                                    unsupported("nested remap trim exceeds input clock")
+                                })?;
+                            for key in &mut remap.keys {
+                                key.timeline_ticks =
+                                    key.timeline_ticks.checked_sub(delta).ok_or_else(|| {
+                                        unsupported("nested remap key exceeds input clock")
+                                    })?;
+                            }
+                            // Keep source samples/keys exactly; only the elapsed
+                            // input origin moves with the visible trim.
+                        }
+                    }
                     (clip.start_ticks, clip.end_ticks) = (timeline.start, timeline.end);
                     (clip.in_ticks, clip.out_ticks) = (source.start, source.end);
                 }
                 PrVideoItem::Graphic(graphic) => {
                     (graphic.start_ticks, graphic.end_ticks) = (timeline.start, timeline.end);
                     graphic.in_ticks = source.start;
+                }
+                PrVideoItem::Capsule(capsule) => {
+                    source = constant_source_part(
+                        &range,
+                        &(capsule.placement.in_ticks..capsule.source_out_ticks),
+                        &window,
+                    )?;
+                    (capsule.placement.start_ticks, capsule.placement.end_ticks) =
+                        (timeline.start, timeline.end);
+                    capsule.placement.in_ticks = source.start;
+                    capsule.source_out_ticks = source.end;
                 }
             }
             items.push(item);
@@ -1288,6 +1478,8 @@ pub(super) struct LayerExport<'a, 'd> {
     pub(super) fonts: &'a BTreeMap<String, FontAssetProperties>,
     pub(super) audio: &'a mut Vec<PrAudioOccurrence>,
     pub(super) media_facts: &'a BTreeMap<String, MediaFacts>,
+    /// Longest independently authored duration for each shared video asset.
+    pub(super) authored_video_durations: &'a BTreeMap<String, u64>,
     /// Preset video frames that were natural before source-frame preparation.
     pub(super) natural_frames: &'a BTreeSet<LayerId>,
     pub(super) media: &'a mut BTreeMap<MediaId, PrMedia>,
@@ -1386,7 +1578,7 @@ fn grid_ticks(origin: Time, frame_rate: FrameRate, time: Time, context: &str) ->
 /// when it exports, but not a stage group that export omits instead
 /// ([`stage_exports_as_nest`]); a still that its masks, Motion, frame and
 /// fit let its writer place ([`image_mask`],
-/// [`unexportable_motion`], [`still_facts`](super::still::still_facts)); an
+/// [`still_facts`](super::still::still_facts)); an
 /// adjustment clip; and a Color Matte
 /// ([`exported_matte`](super::color_matte::exported_matte)). A track matte
 /// source exports only above a clip or nest that it keys and over exactly
@@ -1424,7 +1616,6 @@ fn collapsed_child(
             LayerData::Image(image) => {
                 let ImageSource::Asset(source) = &image.source;
                 image_mask(image, layers, dynamics, canvas).is_ok()
-                    && unexportable_motion(MotionHost::image(image), dynamics).is_none()
                     && super::still::still_facts(source, context.media_facts)?.is_ok()
             }
             LayerData::Rect(rect) => {
@@ -1441,7 +1632,7 @@ fn collapsed_child(
             LayerData::Group(child) => {
                 clip_video(layer, layers, dynamics, canvas).is_some()
                     || (super::adjustment_geometry::is_stage(child)
-                        || stage_video(child).is_none()
+                        || stage_video(child, dynamics).is_none()
                         || stage_exports_as_nest(child))
                         && exported_nest(layer, layers, dynamics, context.depth + 1, canvas)
                             .is_some()
@@ -1512,7 +1703,7 @@ fn clip_video<'d>(
     }
     // A stage group exports as one clip of its video.
     let (video, stage) = match layer.data() {
-        LayerData::Group(group) => (stage_video(group)?, Some(group)),
+        LayerData::Group(group) => (stage_video(group, dynamics)?, Some(group)),
         _ => (layer, None),
     };
     let omitted = match super::video_data(video) {
@@ -1617,7 +1808,7 @@ fn exported_nest<'d>(
     canvas: [u32; 2],
 ) -> Option<&'d GroupLayer> {
     match layer.data() {
-        // Mirror export's identity-based dispatch before the one-video shape
+        // Mirror export's structural dispatch before the one-video shape
         // heuristic. The shared admission validates guide, controls and depth.
         LayerData::Group(group) if super::adjustment_geometry::is_stage(group) => {
             unsupported_group(group, layers, dynamics, depth, canvas)
@@ -1696,30 +1887,29 @@ pub(crate) fn exported_clip_videos<'d>(
 /// ([`exported_lists`]): a still whose mask, if any, is one Crop or Opacity
 /// mask beside it in its list ([`image_mask`]), or the track matte source
 /// under a stage group, beside the group's clip, which has no mask; never one
-/// with a Scale or Rotation that its Motion cannot show
-/// ([`unexportable_motion`]). Media of an omitted image is never inspected, so
+/// with an inseparable unsupported mask. Motion fields recover locally.
+/// Media of an omitted image is never inspected, so
 /// it cannot fail the export.
 pub(crate) fn exported_image_layers<'d>(
     layers: &'d [Layer],
     dynamics: &'d AnimationGraph,
     canvas: [u32; 2],
 ) -> impl Iterator<Item = &'d Layer> {
-    let shown = move |image| unexportable_motion(MotionHost::image(image), dynamics).is_none();
     exported_lists(layers, dynamics, canvas)
         .into_iter()
         .flat_map(move |(list, canvas)| {
             list.iter().filter_map(move |layer| match layer.data() {
-                LayerData::Image(image) => (image_mask(image, list, dynamics, canvas).is_ok()
-                    && shown(image))
-                .then_some(layer),
+                LayerData::Image(image) => {
+                    (image_mask(image, list, dynamics, canvas).is_ok()).then_some(layer)
+                }
                 LayerData::Group(group) => group.track_matte.as_ref().and_then(|matte| {
                     stage_layers(group)?;
                     group.layers.iter().find(|child| {
                         child.id() == matte.layer
                             && matches!(child.data(), LayerData::Image(image)
-                                if image.masks.is_empty()
-                                    && image.track_matte.is_none()
-                                    && shown(image))
+                                            if image.masks.is_empty()
+                                                && image.track_matte.is_none()
+                            )
                     })
                 }),
                 _ => None,
@@ -1798,9 +1988,73 @@ struct NestedTransformStage<'a> {
     reports: Vec<Omission>,
 }
 
+/// A structurally isolated inner picture needs one native raster boundary,
+/// not an additional Normal nest. Full geometry/clock/control admission follows
+/// in `nested_transform_stage`; neither owner name establishes authority.
 pub(super) fn is_nested_transform_stage(group: &GroupLayer) -> bool {
-    group.name.starts_with(NEST_TRANSFORM_STAGE) || group.layers.iter().any(|layer|
-        matches!(layer.data(), LayerData::Group(inner) if inner.name == "Nested Transform picture"))
+    matches!(group.layers.as_slice(), [child]
+        if matches!(child.data(), LayerData::Group(picture)
+            // Preserve the existing adjustment owner's native path. Its masked
+            // affine shape must not be captured as a nested Transform picture.
+            if !super::adjustment_geometry::is_stage(picture)
+                && picture.effects.is_empty()
+                && picture.track_matte.is_none()
+                && !picture.masks.is_empty()
+                && picture.masks.iter().any(|mask| mask.layer.is_some_and(|id|
+                    picture.layers.iter().any(|layer|
+                        layer.id() == id && matches!(layer.data(), LayerData::Rect(guide)
+                            if guide.rect.position == [0.0; 2]
+                                && guide.rect.roundness == 0.0))))))
+}
+
+// A failed native control mapping must not shrink a validated current source
+// canvas to the parent canvas before the inner picture can move its pixels.
+fn nested_transform_frame(
+    group: &GroupLayer,
+    dynamics: &AnimationGraph,
+) -> Option<([u32; 2], LayerId)> {
+    let [child] = group.layers.as_slice() else {
+        return None;
+    };
+    let LayerData::Group(picture) = child.data() else {
+        return None;
+    };
+    let [mask] = picture.masks.as_slice() else {
+        return None;
+    };
+    let guide_id = mask.layer?;
+    if *mask != guide_mask(mask.id, guide_id, 0.0)
+        || layer_animations(dynamics, guide_id).next().is_some()
+        || dynamics
+            .entries()
+            .iter()
+            .any(|entry| entry.target.fx_item_id() == Some(mask.id))
+        || consumed_layer_ids(&picture.layers, false).contains(&guide_id)
+    {
+        return None;
+    }
+    let guide = picture.layers.iter().find(|layer| layer.id() == guide_id)?;
+    let LayerData::Rect(guide) = guide.data() else {
+        return None;
+    };
+    let size = guide.rect.size;
+    if size.iter().any(|value| {
+        !value.is_finite() || *value <= 0.0 || *value > f64::from(u32::MAX) || value.fract() != 0.0
+    }) {
+        return None;
+    }
+    let frame = size.map(|value| value as u32);
+    let local = TimeRangeProperty::new(Time::ZERO, group.playback.input_range().duration);
+    let mut expected = guide_layer(
+        guide_id,
+        guide.name.clone(),
+        Some(picture.id),
+        local,
+        identity_transform(),
+        black_shape(frame[0], frame[1]),
+    );
+    expected.rect.fill_enabled = guide.rect.fill_enabled;
+    (guide == &expected).then_some((frame, guide_id))
 }
 
 fn nested_transform_stage<'a>(
@@ -1838,53 +2092,7 @@ fn nested_transform_stage<'a>(
     {
         return Err(invalid());
     }
-    let [mask] = picture.masks.as_slice() else {
-        return Err(invalid());
-    };
-    let guide_id = mask.layer.ok_or_else(invalid)?;
-    if *mask != guide_mask(mask.id, guide_id, 0.0)
-        || layer_animations(dynamics, guide_id).next().is_some()
-        || dynamics
-            .entries()
-            .iter()
-            .any(|entry| entry.target.fx_item_id() == Some(mask.id))
-        || consumed_layer_ids(&picture.layers, false).contains(&guide_id)
-    {
-        return Err(invalid());
-    }
-    let guide = picture
-        .layers
-        .iter()
-        .find(|layer| layer.id() == guide_id)
-        .ok_or_else(invalid)?;
-    let LayerData::Rect(guide) = guide.data() else {
-        return Err(invalid());
-    };
-    // The editable guide's whole-frame geometry is the source canvas. Never
-    // infer it from names or normalize a larger child into the parent frame:
-    // that would discard pixels before the inner Transform can move them.
-    let size = guide.rect.size;
-    if size.iter().any(|value| {
-        !value.is_finite() || *value <= 0.0 || *value > f64::from(u32::MAX) || value.fract() != 0.0
-    }) {
-        return Err(invalid());
-    }
-    // The finite, positive integral bounds above make these casts exact.
-    let frame = size.map(|value| value as u32);
-    let mut expected = guide_layer(
-        guide_id,
-        guide.name.clone(),
-        Some(picture.id),
-        local,
-        identity_transform(),
-        black_shape(frame[0], frame[1]),
-    );
-    // Mask geometry ignores fill. Accept both legacy painted frame guides and
-    // the nonpainting Crop rectangles that import now creates.
-    expected.rect.fill_enabled = guide.rect.fill_enabled;
-    if guide != &expected {
-        return Err(invalid());
-    }
+    let (frame, guide_id) = nested_transform_frame(group, dynamics).ok_or_else(invalid)?;
     let mut reports = Vec::new();
     let effect = super::effects::export_layer_transform(
         MotionHost {
@@ -1945,11 +2153,14 @@ fn nested_transform_stage<'a>(
 /// Generated Geometry2 nests must not be mistaken for their editable stage on
 /// reimport. Use the same name for publication and the writer-bound admission.
 fn nested_sequence_name(group: &GroupLayer) -> String {
-    if super::adjustment_geometry::is_stage(group) {
+    let name = if super::adjustment_geometry::is_stage(group) {
         format!("Adjustment Geometry2 nest ({})", group.name)
+    } else if group.name.is_empty() {
+        format!("Group {}", group.id)
     } else {
         group.name.clone()
-    }
+    };
+    name.chars().take(255).collect()
 }
 
 /// Exports one group as a nest or direct timed stills in `video_tracks`.
@@ -1976,7 +2187,25 @@ pub(super) fn export_group_at<'d>(
     omissions: &mut dyn OmissionSink,
 ) -> Result<Option<usize>> {
     let record = format!("layer {} ({:?})", group.id, group.name);
+    let label_length = group.name.chars().count()
+        + if super::adjustment_geometry::is_stage(group) {
+            "Adjustment Geometry2 nest ()".len()
+        } else {
+            0
+        };
+    if group.name.is_empty() || label_length > 255 {
+        omit_field(omissions, group.id, ExportField::Metadata, &record,
+            "Group name cannot be a native sequence label; generated/truncated the label to 1–255 characters while retaining its content");
+    }
     let canvas = [context.width, context.height];
+    if has_background(group)
+        || layer_animations(context.dynamics, group.id)
+            .any(|(property, _)| is_background_property(property))
+    {
+        omit_field(omissions, group.id, ExportField::Effects, &record,
+            "Group background/padding was not exported; current children, masks, base controls and supported keys retained");
+    }
+    let retimed = !super::timing::is_plain_group_playback(&group.playback);
     if let Some(reason) = unsupported_group(group, layers, context.dynamics, context.depth, canvas)
     {
         omit(
@@ -1988,7 +2217,15 @@ pub(super) fn export_group_at<'d>(
         return Ok(None);
     }
     let stage = if is_nested_transform_stage(group) {
-        Some(nested_transform_stage(group, context.dynamics, canvas).map_err(unsupported)?)
+        match nested_transform_stage(group, context.dynamics, canvas) {
+            Ok(stage) => Some(stage),
+            Err(reason) => {
+                approximate(omissions, &record, format!(
+                    "native nested Transform was not reconstructed: {reason}; retaining current children, masks and supported Motion through ordinary nested export; the additional canvas clipping/raster boundary and native sampling are an approximation"
+                ));
+                None
+            }
+        }
     } else {
         None
     };
@@ -2009,21 +2246,33 @@ pub(super) fn export_group_at<'d>(
             "adjustment Geometry2 stage with authored Group opacity exported as an ordinary moved nest: Group affine controls and Opacity keys retained as native Motion/Opacity, not unmeasured adjustment Geometry2 opacity mix; native sampling and clipping fidelity remain unmeasured");
     }
     let geometry = if is_geometry_stage && !opacity_fallback {
-        Some(
-            super::adjustment_geometry::export_stage(
-                group,
-                context.dynamics,
-                canvas,
-                context.frame_rate.generator_in_ticks(),
-                &mut geometry_reports,
-            )
-            .map_err(unsupported)?,
-        )
+        match super::adjustment_geometry::export_stage(
+            group,
+            context.dynamics,
+            canvas,
+            context.frame_rate.generator_in_ticks(),
+            &mut geometry_reports,
+        ) {
+            Ok(geometry) => Some(geometry),
+            Err(reason) => {
+                approximate(&mut geometry_reports, &record, format!(
+                    "native adjustment Geometry2 controls not reconstructed: {reason}; valid guide and current children retained through ordinary nested Motion/Opacity; sampling/clipping remain approximate"));
+                None
+            }
+        }
     } else {
         None
     };
     let content = stage.as_ref().map_or(group, |stage| stage.picture);
-    let frame = stage.as_ref().map_or(canvas, |stage| stage.frame);
+    let frame = stage
+        .as_ref()
+        .map(|stage| stage.frame)
+        .or_else(|| {
+            is_nested_transform_stage(group)
+                .then(|| nested_transform_frame(group, context.dynamics).map(|(frame, _)| frame))
+                .flatten()
+        })
+        .unwrap_or(canvas);
     // Only a structural, disjoint Image group can bypass a nest. Matte sources
     // and explicit Transform stages retain their native placement boundary.
     let is_track_matte_source =
@@ -2211,6 +2460,7 @@ pub(super) fn export_group_at<'d>(
         property_tracks: &mut *context.property_tracks,
         written: &mut child_written,
         media_facts: context.media_facts,
+        authored_video_durations: context.authored_video_durations,
         natural_frames: context.natural_frames,
         audio_facts: context.audio_facts,
         fonts: context.fonts,
@@ -2302,39 +2552,10 @@ pub(super) fn export_group_at<'d>(
     context
         .packer
         .finish_container(child_container, &mut inner_tracks, captured_end)?;
-    if !empty && end_ticks - start_ticks > inner_end {
-        // Do not manufacture a too-long native placement: it would fail the
-        // whole project before a caller can replace this picture scope.
-        // Unlike picture, nested sound has no independent replacement path.
-        ensure!(
-            audio.is_empty()
-                && !inner_tracks
-                    .iter()
-                    .flat_map(|track| &track.nests)
-                    .any(|nest| nest.sequence.has_sound()),
-            "{record}: group extends past its exported children's end and contains nested audio; cannot omit its native sound"
-        );
-        // A neutral picture-only group has no pixels after its last retained
-        // child. End the native placement there instead of stretching source
-        // time or inventing sequence duration metadata. Keep the authored FX
-        // window for the caller's independent AE fallback.
-        let transparent_tail = group.blend_mode == BlendMode::Normal
-            && group.effects.is_empty()
-            && group.masks.is_empty()
-            && group.track_matte.is_none()
-            && group.transform.opacity.value() == 100.0
-            && transform == PrStaticTransform::default()
-            && motion_reports.is_empty()
-            && animations.is_empty();
-        if !transparent_tail {
-            omit(
-                omissions,
-                OmissionScope::Occurrence,
-                &record,
-                "group extends past its exported children's end; no supported native nested sequence was exported",
-            );
-            return Ok(None);
-        }
+    if !empty && !retimed && end_ticks - start_ticks > inner_end {
+        // Preserve all retained child picture/sound at its authored clock.
+        // Any unsupported background/effect-only tail is a local loss, not a
+        // reason to discard the owner or its already-converted children.
         end_ticks = start_ticks + inner_end;
         omissions.emit_field(
             Omission {
@@ -2412,6 +2633,7 @@ pub(super) fn export_group_at<'d>(
                 opacity_mask: opacity_mask.clone(),
                 track_matte: unplaced_track_matte(mask.as_ref()),
                 effects: pending_effects,
+                geometry2_masks: Default::default(),
                 effects_above_mask: 0,
                 enabled: !group.is_hidden,
                 sequence: PrSequence {
@@ -2464,11 +2686,27 @@ pub(super) fn export_group_at<'d>(
             approximate(omissions, &record, warning);
         }
     }
+    let remap = if retimed {
+        match recovered_group_remap(group, inner_end, end_ticks - start_ticks) {
+            Ok(remap) => {
+                approximate(omissions, &record,
+                    "Group playback retained as bounded native linear TimeRemapping over its authored child selection; non-linear easing/direction changes are approximated, current children and owner keys retained on the input clock");
+                Some(remap)
+            }
+            Err(reason) => {
+                omit(omissions, OmissionScope::Occurrence, &record,
+                    format!("no representable child interval remains for Group playback: {reason}; independent siblings retained"));
+                return Ok(None);
+            }
+        }
+    } else {
+        None
+    };
     let mut nest = PrNestOccurrence {
         id: None,
         reverse_source_duration: None,
         playback_rate: 1.0,
-        time_remap: None,
+        time_remap: remap,
         start_ticks,
         end_ticks,
         in_ticks: 0,
@@ -2509,6 +2747,7 @@ pub(super) fn export_group_at<'d>(
                 omissions,
             )
         },
+        geometry2_masks: Default::default(),
         effects_above_mask: 0,
         enabled: !group.is_hidden,
         sequence: PrSequence {
@@ -2609,31 +2848,15 @@ fn unsupported_group(
             return Some(reason);
         }
         if !super::adjustment_geometry::has_authored_opacity(group, dynamics) {
-            return super::adjustment_geometry::export_stage(
-                group,
-                dynamics,
-                canvas,
-                0,
-                &mut Vec::new(),
-            )
-            .err()
-            .or_else(|| unsupported_group_fields(group, dynamics))
-            .or_else(|| unsupported_nest_depth(depth));
+            // Native-control recognition is not owner admission. A valid guide
+            // can still carry current children through the ordinary mask path.
         }
         // Authored opacity uses the ordinary nest's existing animation and mask
         // admission below, not the adjustment effect's unmeasured mix control.
     }
-    let frame = if is_nested_transform_stage(group) {
-        match nested_transform_stage(group, dynamics, canvas) {
-            Ok(stage) => stage.frame,
-            Err(reason) => return Some(reason),
-        }
-    } else {
-        canvas
-    };
-    unsupported_group_fields(group, dynamics)
-        .or_else(|| unexportable_clip(ClipLayers::Nest(group), dynamics).map(str::to_owned))
-        .or_else(|| unsupported_group_animation(group, dynamics, frame, canvas))
+    let clock_coverage = !super::timing::is_plain_group_playback(&group.playback)
+        && (!group.masks.is_empty() || group.track_matte.is_some());
+    clock_coverage.then(|| "retimed Group coverage cannot share the existing native mask/matte clock; inseparable masked picture omitted without exposing pixels".to_owned())
         .or_else(|| {
             let [width, height] = canvas;
             canonical_mask(
@@ -2661,10 +2884,6 @@ pub(super) fn unsupported_group_fields(
         || layer_animations(dynamics, group.id)
             .any(|(property, _)| is_background_property(property));
     [
-        (
-            group.name.is_empty() || nested_sequence_name(group).chars().count() > 255,
-            "the nested sequence name must have 1 to 255 characters",
-        ),
         (background, "group backgrounds are not supported"),
         (
             !super::timing::is_plain_group_playback(&group.playback),
@@ -2681,32 +2900,101 @@ pub(super) fn unsupported_nest_depth(depth: usize) -> Option<String> {
         .then(|| format!("nesting deeper than {MAX_NEST_DEPTH} levels is not supported"))
 }
 
-/// Why the placement cannot carry the animation of `group`'s own properties,
-/// if it cannot: each must be one enabled keyframe track without dependencies
-/// ([`layer_tracks`]) that the placement's key export writes whole
-/// ([`export_motion_keys`] from the Motion of [`export_transform`]). A dropped
-/// key could show what the group's animation hides.
-fn unsupported_group_animation(
-    group: &GroupLayer,
-    dynamics: &AnimationGraph,
-    frame: [u32; 2],
-    canvas: [u32; 2],
-) -> Option<String> {
-    let Some(mut tracks) = layer_tracks(dynamics, group.id, |_| true) else {
-        return Some(
-            "group animation that is not one enabled keyframe track without dependencies is not supported"
-                .to_owned(),
-        );
+/// Existing native linear remap carrier, bounded by actual child placements.
+fn recovered_group_remap(group: &GroupLayer, inner_end: i64, duration: i64) -> Result<PrTimeRemap> {
+    let selection = match group.playback.mapping() {
+        fx_schema::LayerPlaybackMapping::Linear { .. } => {
+            let range = group.playback.input_range();
+            let start = super::timing::linear_source_ticks(
+                &group.playback,
+                ticks_from_time(range.start, "Group input")?,
+            )?;
+            let end = super::timing::linear_source_ticks(
+                &group.playback,
+                ticks_from_time(range.end(), "Group input")?,
+            )?;
+            start..end
+        }
+        fx_schema::LayerPlaybackMapping::TimeRemap { property } => {
+            // Use existing affine-key evaluation first. Otherwise retain the
+            // authored key-value selection, not an arbitrary zero-origin default.
+            let range = group.playback.input_range();
+            let endpoints = super::tesseract_to_premiere::constant_playback_source_range(
+                property,
+                range,
+                TimeRangeProperty::new(Time::ZERO, duration_from_ticks(inner_end)?),
+                group.playback.input_offset_ms(),
+            );
+            let selected = match endpoints {
+                Ok((range, false)) => range,
+                _ => {
+                    match (
+                        super::tesseract_to_premiere::linear_remap_source_time(
+                            property,
+                            range.start,
+                            group.playback.input_offset_ms(),
+                        ),
+                        super::tesseract_to_premiere::linear_remap_source_time(
+                            property,
+                            range.end(),
+                            group.playback.input_offset_ms(),
+                        ),
+                    ) {
+                        (Ok(start), Ok(end)) if start != end => TimeRangeProperty::new(
+                            start.min(end),
+                            start.max(end).saturating_sub(start.min(end)),
+                        ),
+                        _ => {
+                            // Fractional/unsupported endpoint evaluation retains
+                            // only brackets consumed by this current window, not
+                            // unused keys or historical source-selection tails.
+                            let start = i128::from(range.start.as_millis())
+                                + i128::from(group.playback.input_offset_ms());
+                            let end = i128::from(range.end().as_millis())
+                                + i128::from(group.playback.input_offset_ms());
+                            let values = property
+                                .keyframes()
+                                .windows(2)
+                                .filter(|pair| {
+                                    i128::from(pair[0].time.as_millis()) < end
+                                        && start < i128::from(pair[1].time.as_millis())
+                                })
+                                .flat_map(|pair| [pair[0].value, pair[1].value])
+                                .collect::<Vec<_>>();
+                            let first = values.iter().copied().min().ok_or_else(|| {
+                                unsupported("Group remap has no consumed source keys")
+                            })?;
+                            let last = values.iter().copied().max().ok_or_else(|| {
+                                unsupported("Group remap has no consumed source keys")
+                            })?;
+                            TimeRangeProperty::new(first, last.saturating_sub(first))
+                        }
+                    }
+                }
+            };
+            ticks_from_time(selected.start, "Group source")?
+                ..ticks_from_time(selected.end(), "Group source")?
+        }
     };
-    // Only a dropped track matters here; the export reports the rest.
-    let reports = &mut Vec::new();
-    let motion = ClipLayers::Nest(group).motion();
-    let mut transform = export_transform(motion, frame, canvas, dynamics, "", reports);
-    let (_, dropped) =
-        export_motion_keys(&mut tracks, 0, &mut transform, frame, canvas, "", reports);
-    dropped.or_else(|| {
-        let property = tracks.into_keys().next()?;
-        Some(format!("group {property:?} animation is not supported"))
+    let start = selection.start.max(0);
+    let end = selection.end.min(inner_end);
+    ensure!(
+        start < end && duration > 0,
+        "Group source selection has no positive physical child span"
+    );
+    Ok(PrTimeRemap {
+        keys: vec![
+            crate::schema::PrTimeRemapKeyframe {
+                timeline_ticks: 0,
+                source_ticks: start,
+                easing: PrKeyframeEasing::Linear,
+            },
+            crate::schema::PrTimeRemapKeyframe {
+                timeline_ticks: duration,
+                source_ticks: end,
+                easing: PrKeyframeEasing::Linear,
+            },
+        ],
     })
 }
 
