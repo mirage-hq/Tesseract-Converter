@@ -95,6 +95,7 @@ pub(super) fn animated_property_with_clock(
     clock: super::keyframes::PropertyClock,
 ) -> Result<Chunk, RifxError> {
     validate_owner_size(owner_size)?;
+    validate_animation(track)?;
     let mut normalized = track.clone();
     for key in &mut normalized.keys {
         normalize_pair(&mut key.values, owner_size, false)?;
@@ -111,6 +112,47 @@ pub(super) fn animated_property_with_clock(
             super::keyframes::list_with_clock(&normalized, 2, true, clock)?,
         ],
     ))
+}
+
+/// Keep best-effort lowering's animation admission aligned with native writing.
+/// Unsupported cubic spatial controls must retain the static authored base.
+pub(crate) fn validate_animation(track: &Track) -> Result<(), RifxError> {
+    // The right key owns the segment ease, but its spatial curve also uses
+    // the left key's outgoing tangent (even when that key's ease is Linear).
+    for pair in track.keys.windows(2) {
+        if pair[1]
+            .easing
+            .iter()
+            .any(|easing| matches!(easing, Easing::CubicBezier { .. }))
+            && pair[0]
+                .spatial_out
+                .iter()
+                .chain(&pair[1].spatial_in)
+                .any(|value| *value != 0.0)
+        {
+            return Err(RifxError::Invalid(
+                "cubic native Point requires zero spatial tangents",
+            ));
+        }
+    }
+    for key in &track.keys {
+        shared_easing(&key.easing)?;
+        if key
+            .easing
+            .iter()
+            .any(|easing| matches!(easing, Easing::CubicBezier { .. }))
+            && key
+                .spatial_in
+                .iter()
+                .chain(&key.spatial_out)
+                .any(|value| *value != 0.0)
+        {
+            return Err(RifxError::Invalid(
+                "cubic native Point requires zero spatial tangents",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn normalize_pair(
@@ -131,15 +173,30 @@ fn normalize_pair(
     Ok(())
 }
 
-fn shared_easing(easing: &[Easing]) -> Result<Easing, RifxError> {
+pub(crate) fn shared_easing(easing: &[Easing]) -> Result<Easing, RifxError> {
     if !easing.is_empty() && easing.iter().all(|value| matches!(value, Easing::Linear)) {
         return Ok(Easing::Linear);
     }
     if !easing.is_empty() && easing.iter().all(|value| matches!(value, Easing::Hold)) {
         return Ok(Easing::Hold);
     }
+    // Zero endpoint slopes have native speed zero in both pixel and source-relative
+    // coordinates. Restrict the shared path-speed mapping to that exact profile;
+    // independently eased axes and nonzero-speed unit conversion remain unsupported.
+    if let Some(&curve @ Easing::CubicBezier { x1, y1, x2, y2 }) = easing.first()
+        && y1 == 0.0
+        && y2 == 1.0
+        && x1.is_finite()
+        && x2.is_finite()
+        && x1 > 0.0
+        && x1 <= 1.0
+        && (0.0..1.0).contains(&x2)
+        && easing.iter().all(|value| *value == curve)
+    {
+        return Ok(curve);
+    }
     Err(RifxError::Invalid(
-        "animated native Point requires shared Linear or Hold easing",
+        "animated native Point requires shared Linear, Hold or zero-speed cubic easing",
     ))
 }
 
@@ -187,6 +244,71 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn point_zero_speed_shared_profile_rejects_nonzero_and_independent_eases() {
+        let curve = Easing::CubicBezier {
+            x1: 1.0 / 3.0,
+            y1: 0.0,
+            x2: 2.0 / 3.0,
+            y2: 1.0,
+        };
+        assert_eq!(shared_easing(&[curve, curve]).unwrap(), curve);
+        for other in [
+            Easing::Linear,
+            Easing::CubicBezier {
+                x1: 0.2,
+                y1: 0.0,
+                x2: 0.8,
+                y2: 1.0,
+            },
+            Easing::CubicBezier {
+                x1: 1.0 / 3.0,
+                y1: 0.2,
+                x2: 2.0 / 3.0,
+                y2: 1.0,
+            },
+        ] {
+            assert!(shared_easing(&[curve, other]).is_err());
+        }
+        assert!(shared_easing(&[]).is_err());
+        assert!(
+            shared_easing(&[Easing::CubicBezier {
+                x1: 0.0,
+                y1: 0.0,
+                x2: 1.0,
+                y2: 1.0
+            }])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn point_zero_speed_cubic_rejects_curved_spatial_handles() {
+        let mut track = point_track(
+            [[60.0, 40.0], [72.0, 33.0]],
+            Easing::CubicBezier {
+                x1: 1.0 / 3.0,
+                y1: 0.0,
+                x2: 2.0 / 3.0,
+                y2: 1.0,
+            },
+        );
+        assert!(animated_property(&track, [120.0, 80.0]).is_ok());
+        // The destination key owns the segment ease; the source key's unused
+        // incoming ease may be Linear even when its outgoing handle is curved.
+        track.keys[0].easing.fill(Easing::Linear);
+        for (key_index, incoming) in [(0, false), (1, true)] {
+            let mut curved = track.clone();
+            if incoming {
+                curved.keys[key_index].spatial_in = vec![1.0, 0.0];
+            } else {
+                curved.keys[key_index].spatial_out = vec![1.0, 0.0];
+            }
+            assert!(animated_property(&curved, [120.0, 80.0]).is_err());
+        }
+        assert!(animated_property(&track, [120.0, 80.0]).is_ok());
     }
 
     #[test]

@@ -202,8 +202,11 @@
         {
           "path": "feature_custom_canvas_vertical_26_5_strict.prproj",
           "repo_path": "crates/premiere_file/tests/fixtures/feature_custom_canvas_vertical_26_5_strict.prproj",
-          "size_bytes": 10867,
-          "sha256": "de9225fefbc1158e74c3bc9a55c1c5c63b0125c3bd7e9f4872ab733fc5355770"
+          "size_bytes": 10692,
+          "sha256": "f554ec5898958e568a80c1f51f5fd296ab841bf19702a82a4d078d517f55f10e",
+          "path_sanitization": {
+            "original_sha256": "de9225fefbc1158e74c3bc9a55c1c5c63b0125c3bd7e9f4872ab733fc5355770"
+          }
         },
         {
           "path": "feature_custom_canvas_vertical.mov",
@@ -998,8 +1001,11 @@
         {
           "path": "feature_graphic_shapes_26_5_strict.prproj",
           "repo_path": "crates/premiere_file/tests/fixtures/feature_graphic_shapes_26_5_strict.prproj",
-          "size_bytes": 19465,
-          "sha256": "321801b11c474d8496f5169293a9e2b33f06f717d0fcf9610e4aa4e5413a1a3f"
+          "size_bytes": 18610,
+          "sha256": "f5a0dbd8cbfad93766026863380f0c65dd5c820ccde270478eb2982cc47a6a0c",
+          "path_sanitization": {
+            "original_sha256": "321801b11c474d8496f5169293a9e2b33f06f717d0fcf9610e4aa4e5413a1a3f"
+          }
         },
         {
           "path": "video-30fps-10s.mp4",
@@ -1038,8 +1044,11 @@
         {
           "path": "feature_gradient_fills_26_5_strict.prproj",
           "repo_path": "crates/premiere_file/tests/fixtures/feature_gradient_fills_26_5_strict.prproj",
-          "size_bytes": 14650,
-          "sha256": "7f7f4ca3f2d65cdaee91581f8d1b5c29baadb4848edc6c0b9421f56d54c6b34f"
+          "size_bytes": 14336,
+          "sha256": "6452cbd77860d57a9e637d44bd452f2d503f46a82be036d85d16be9855dd7a91",
+          "path_sanitization": {
+            "original_sha256": "7f7f4ca3f2d65cdaee91581f8d1b5c29baadb4848edc6c0b9421f56d54c6b34f"
+          }
         },
         {
           "path": "feature_timecoded_source.mp4",
@@ -1242,8 +1251,11 @@
         {
           "path": "feature_export_disabled_layers.prproj",
           "repo_path": "crates/premiere_file/tests/fixtures/feature_export_disabled_layers.prproj",
-          "size_bytes": 9952,
-          "sha256": "175d92f3633014cc3831fb9bbea0aa90bab87582f431d9fa44beb712613cb4aa"
+          "size_bytes": 9838,
+          "sha256": "594c6bc72288ccbf243bf9e95f7ddad41fe10a66fdcf45ab2ffaabe2d30ae6dd",
+          "path_sanitization": {
+            "original_sha256": "175d92f3633014cc3831fb9bbea0aa90bab87582f431d9fa44beb712613cb4aa"
+          }
         },
         {
           "path": "media/feature_still_opaque.jpg",
@@ -1318,8 +1330,11 @@
         {
           "path": "feature_hidden_nest_26_5_strict.prproj",
           "repo_path": "crates/premiere_file/tests/fixtures/feature_hidden_nest_26_5_strict.prproj",
-          "size_bytes": 14318,
-          "sha256": "3305384d9b43a94e05841d1a8d7cebc362f47cbc8d3b5a0cb414141eaef87fdc"
+          "size_bytes": 14102,
+          "sha256": "d966eb585091919d52d715922143151d95451374cda02d359eebc800a2b6f04c",
+          "path_sanitization": {
+            "original_sha256": "3305384d9b43a94e05841d1a8d7cebc362f47cbc8d3b5a0cb414141eaef87fdc"
+          }
         },
         {
           "path": "feature_timecoded_source.mp4",
@@ -1444,8 +1459,11 @@
         {
           "path": "feature_graphic_bezier_position_rotation_26_5_strict.prproj",
           "repo_path": "crates/premiere_file/tests/fixtures/feature_graphic_bezier_position_rotation_26_5_strict.prproj",
-          "size_bytes": 13456,
-          "sha256": "8cf643a62bfb570beadbaf738736a9b124a5c1d553bb0a5ed78be6950c0a3074"
+          "size_bytes": 13253,
+          "sha256": "a0bd57af48e55b15c3b8622edf296aab2cab202dc52937cc2596f8e52ecb6e2b",
+          "path_sanitization": {
+            "original_sha256": "8cf643a62bfb570beadbaf738736a9b124a5c1d553bb0a5ed78be6950c0a3074"
+          }
         },
         {
           "path": "fonts/Arial-BoldMT.ttf",
@@ -1491,8 +1509,11 @@
         {
           "path": "feature_transform_track_matte_26_5_strict.prproj",
           "repo_path": "crates/premiere_file/tests/fixtures/feature_transform_track_matte_26_5_strict.prproj",
-          "size_bytes": 14740,
-          "sha256": "0a7254a9908a278cafa9ab114a9dac1af1de651348d5ec2516bb1310ff316095"
+          "size_bytes": 14453,
+          "sha256": "cf874963b8aa0cc5436c6c672bb49a3ad8b655c488a60e3229980714b54758dd",
+          "path_sanitization": {
+            "original_sha256": "0a7254a9908a278cafa9ab114a9dac1af1de651348d5ec2516bb1310ff316095"
+          }
         },
         {
           "path": "tmk_alpha_rect.png",
@@ -1532,8 +1553,11 @@
         {
           "path": "feature_multi_text_source_keys_26_5_derived.prproj",
           "repo_path": "crates/premiere_file/tests/fixtures/feature_multi_text_source_keys_26_5_derived.prproj",
-          "size_bytes": 14418,
-          "sha256": "efa8677cde35d9ff28c0964a482f221e5b16b6aeb653b8ee93914bccc88fd49c"
+          "size_bytes": 14343,
+          "sha256": "de45b54788b009c918314d5ac74be03ec6d9bc45f4a3d6c84221e61a57c836f8",
+          "path_sanitization": {
+            "original_sha256": "efa8677cde35d9ff28c0964a482f221e5b16b6aeb653b8ee93914bccc88fd49c"
+          }
         },
         {
           "path": "fonts/Arial-BoldMT.ttf",

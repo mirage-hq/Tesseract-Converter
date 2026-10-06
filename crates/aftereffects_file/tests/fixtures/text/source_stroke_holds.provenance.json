@@ -1,0 +1,405 @@
+{
+  "feature": "Source Text stroke controls, not Text Animator strokeWidth",
+  "source_sha256": "b9f2c8a8d5c1154d474e8f126a4235b09377a6c1036f64d8e376b966da4fa9ca",
+  "composition_id": 1,
+  "native_job": "107a1a12143b4e938b470049b570e847",
+  "request_id": "accuracy-w03-source-stroke-20261004-v2",
+  "author_script_sha256": "69dd9dd4f7fa3c5f9dcd6525499b42ee5b8fddfe7f1aa15fa7da6271c89c6863",
+  "native_readback": {
+    "beforeEdit": [
+      {
+        "name": "Point source stroke",
+        "value": {
+          "applyFill": true,
+          "applyStroke": true,
+          "baselineShift": 7,
+          "boxText": false,
+          "fillColor": [
+            0.20000000298023,
+            0.40000000596046,
+            0.60000002384186
+          ],
+          "justification": 7414,
+          "strokeColor": [
+            0.10000000149012,
+            0.69999998807907,
+            0.89999997615814
+          ],
+          "strokeOverFill": true,
+          "strokeWidth": 7,
+          "text": "AB\rCD"
+        }
+      },
+      {
+        "name": "Box source stroke",
+        "value": {
+          "applyFill": true,
+          "applyStroke": true,
+          "baselineShift": 7,
+          "boxText": true,
+          "fillColor": [
+            0.20000000298023,
+            0.40000000596046,
+            0.60000002384186
+          ],
+          "justification": 7414,
+          "strokeColor": [
+            0.10000000149012,
+            0.69999998807907,
+            0.89999997615814
+          ],
+          "strokeOverFill": true,
+          "strokeWidth": 7,
+          "text": "AB\rCD"
+        }
+      }
+    ],
+    "opened": {
+      "nativeId": "1",
+      "observations": [
+        {
+          "keys": [
+            {
+              "inHold": true,
+              "outHold": true,
+              "time": 0,
+              "value": {
+                "applyFill": true,
+                "applyStroke": true,
+                "baselineShift": 7,
+                "boxText": true,
+                "fillColor": [
+                  0.20000000298023,
+                  0.40000000596046,
+                  0.60000002384186
+                ],
+                "justification": 7414,
+                "strokeColor": [
+                  0.80000001192093,
+                  0.30000001192093,
+                  0.10000000149012
+                ],
+                "strokeOverFill": true,
+                "strokeWidth": 3,
+                "text": "AB\rCD"
+              }
+            },
+            {
+              "inHold": true,
+              "outHold": true,
+              "time": 0.5,
+              "value": {
+                "applyFill": true,
+                "applyStroke": true,
+                "baselineShift": 7,
+                "boxText": true,
+                "fillColor": [
+                  0.20000000298023,
+                  0.40000000596046,
+                  0.60000002384186
+                ],
+                "justification": 7414,
+                "strokeColor": [
+                  0.10000000149012,
+                  0.69999998807907,
+                  0.89999997615814
+                ],
+                "strokeOverFill": true,
+                "strokeWidth": 9,
+                "text": "AB\rCD"
+              }
+            },
+            {
+              "inHold": true,
+              "outHold": true,
+              "time": 0.75,
+              "value": {
+                "applyFill": true,
+                "applyStroke": false,
+                "baselineShift": 7,
+                "boxText": true,
+                "fillColor": [
+                  0.20000000298023,
+                  0.40000000596046,
+                  0.60000002384186
+                ],
+                "justification": 7414,
+                "strokeControls": "unavailable while disabled",
+                "text": "AB\rCD"
+              }
+            }
+          ],
+          "name": "Box source stroke"
+        },
+        {
+          "keys": [
+            {
+              "inHold": true,
+              "outHold": true,
+              "time": 0,
+              "value": {
+                "applyFill": true,
+                "applyStroke": true,
+                "baselineShift": 7,
+                "boxText": false,
+                "fillColor": [
+                  0.20000000298023,
+                  0.40000000596046,
+                  0.60000002384186
+                ],
+                "justification": 7414,
+                "strokeColor": [
+                  0.80000001192093,
+                  0.30000001192093,
+                  0.10000000149012
+                ],
+                "strokeOverFill": true,
+                "strokeWidth": 3,
+                "text": "AB\rCD"
+              }
+            },
+            {
+              "inHold": true,
+              "outHold": true,
+              "time": 0.5,
+              "value": {
+                "applyFill": true,
+                "applyStroke": true,
+                "baselineShift": 7,
+                "boxText": false,
+                "fillColor": [
+                  0.20000000298023,
+                  0.40000000596046,
+                  0.60000002384186
+                ],
+                "justification": 7414,
+                "strokeColor": [
+                  0.10000000149012,
+                  0.69999998807907,
+                  0.89999997615814
+                ],
+                "strokeOverFill": true,
+                "strokeWidth": 9,
+                "text": "AB\rCD"
+              }
+            },
+            {
+              "inHold": true,
+              "outHold": true,
+              "time": 0.75,
+              "value": {
+                "applyFill": true,
+                "applyStroke": false,
+                "baselineShift": 7,
+                "boxText": false,
+                "fillColor": [
+                  0.20000000298023,
+                  0.40000000596046,
+                  0.60000002384186
+                ],
+                "justification": 7414,
+                "strokeControls": "unavailable while disabled",
+                "text": "AB\rCD"
+              }
+            }
+          ],
+          "name": "Point source stroke"
+        }
+      ]
+    },
+    "reopened": {
+      "nativeId": "1",
+      "observations": [
+        {
+          "keys": [
+            {
+              "inHold": true,
+              "outHold": true,
+              "time": 0,
+              "value": {
+                "applyFill": true,
+                "applyStroke": true,
+                "baselineShift": 7,
+                "boxText": true,
+                "fillColor": [
+                  0.20000000298023,
+                  0.40000000596046,
+                  0.60000002384186
+                ],
+                "justification": 7414,
+                "strokeColor": [
+                  0.80000001192093,
+                  0.30000001192093,
+                  0.10000000149012
+                ],
+                "strokeOverFill": true,
+                "strokeWidth": 3,
+                "text": "AB\rCD"
+              }
+            },
+            {
+              "inHold": true,
+              "outHold": true,
+              "time": 0.5,
+              "value": {
+                "applyFill": true,
+                "applyStroke": true,
+                "baselineShift": 7,
+                "boxText": true,
+                "fillColor": [
+                  0.20000000298023,
+                  0.40000000596046,
+                  0.60000002384186
+                ],
+                "justification": 7414,
+                "strokeColor": [
+                  0.10000000149012,
+                  0.69999998807907,
+                  0.89999997615814
+                ],
+                "strokeOverFill": true,
+                "strokeWidth": 9,
+                "text": "AB\rCD"
+              }
+            },
+            {
+              "inHold": true,
+              "outHold": true,
+              "time": 0.75,
+              "value": {
+                "applyFill": true,
+                "applyStroke": false,
+                "baselineShift": 7,
+                "boxText": true,
+                "fillColor": [
+                  0.20000000298023,
+                  0.40000000596046,
+                  0.60000002384186
+                ],
+                "justification": 7414,
+                "strokeControls": "unavailable while disabled",
+                "text": "AB\rCD"
+              }
+            }
+          ],
+          "name": "Box source stroke"
+        },
+        {
+          "keys": [
+            {
+              "inHold": true,
+              "outHold": true,
+              "time": 0,
+              "value": {
+                "applyFill": true,
+                "applyStroke": true,
+                "baselineShift": 7,
+                "boxText": false,
+                "fillColor": [
+                  0.20000000298023,
+                  0.40000000596046,
+                  0.60000002384186
+                ],
+                "justification": 7414,
+                "strokeColor": [
+                  0.80000001192093,
+                  0.30000001192093,
+                  0.10000000149012
+                ],
+                "strokeOverFill": true,
+                "strokeWidth": 3,
+                "text": "AB\rCD"
+              }
+            },
+            {
+              "inHold": true,
+              "outHold": true,
+              "time": 0.5,
+              "value": {
+                "applyFill": true,
+                "applyStroke": true,
+                "baselineShift": 7,
+                "boxText": false,
+                "fillColor": [
+                  0.20000000298023,
+                  0.40000000596046,
+                  0.60000002384186
+                ],
+                "justification": 7414,
+                "strokeColor": [
+                  0.10000000149012,
+                  0.69999998807907,
+                  0.89999997615814
+                ],
+                "strokeOverFill": true,
+                "strokeWidth": 9,
+                "text": "AB\rCD"
+              }
+            },
+            {
+              "inHold": true,
+              "outHold": true,
+              "time": 0.75,
+              "value": {
+                "applyFill": true,
+                "applyStroke": false,
+                "baselineShift": 7,
+                "boxText": false,
+                "fillColor": [
+                  0.20000000298023,
+                  0.40000000596046,
+                  0.60000002384186
+                ],
+                "justification": 7414,
+                "strokeControls": "unavailable while disabled",
+                "text": "AB\rCD"
+              }
+            }
+          ],
+          "name": "Point source stroke"
+        }
+      ]
+    }
+  },
+  "proof": {
+    "import": "queue1710 fresh import targeted PASS",
+    "export": "queue1693 RED both layers omitted; queue1710 GREEN full-export editable Hold/input width9->11 assertions, own-reader supplementary",
+    "render": "unrun",
+    "rgb": "unmeasured",
+    "alpha": "unmeasured",
+    "audio": "unmeasured",
+    "reference_asset": null,
+    "ready": "managed publication after cleanup and fresh READY",
+    "generated_native_acceptance": {
+      "request_id": "accuracy-w03-source-stroke-acceptance-20261004-v1",
+      "job_id": "87bb8e27ad124281b6039d4e7dcda810",
+      "state": "FAILED EXECUTION_FAILED",
+      "message": "After Effects error: Error reading the text layer. Skipping the text layer.",
+      "ready": true,
+      "generated_sha256": "eb2ac4d1330e7334b3dc39b9c6a2b793545748e4a4b260b606644d799ecc64ee",
+      "input_archive_sha256": "d4c91210a4486dfc70f21861f13894383568e1f320a62797a901ee7536125613",
+      "build_commit": "fb90f9495",
+      "native_edit_response": "UNRUN: open failed"
+    },
+    "final_cpu_gate": {
+      "job_id": 1720,
+      "converter_check": "PASS",
+      "converter_clippy": "PASS",
+      "converter_fmt": "PASS",
+      "ae_suite": {
+        "passed": 1672,
+        "failed": 12,
+        "ignored": 411,
+        "status": "NOT GREEN",
+        "failure_identity_comparison": "exactly matches prior baseline queue1620"
+      }
+    }
+  },
+  "application_version": "26.5x89",
+  "limitations": [
+    "Disabled stroke color/width/order are not native getter evidence; dormant saved-byte assertions are supplementary.",
+    "No independent native reference render/Asset/RGB/alpha/audio/original49 proof.",
+    "Generated native control/readback and width11->13 edit failed before execution because native opening rejected Text.",
+    "Existing native writer/default/cache profiles are unchanged."
+  ]
+}

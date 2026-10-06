@@ -46,7 +46,12 @@ fn constant_shape_path_materializes_effective_geometry_instead_of_stale_base() {
 
     assert_ne!(base, current);
     assert_eq!(
-        effective_static_shape_path(&entries, id, &base).unwrap(),
+        effective_static_shape_path(
+            &crate::export_document::AnimationIndex::new(&entries),
+            id,
+            &base
+        )
+        .unwrap(),
         &current
     );
 }
@@ -72,7 +77,12 @@ fn keyframed_shape_path_remains_excluded_from_native_path_export() {
     let entries = [entry(id, PropertyAnimator::keyframes(track))];
 
     assert_eq!(
-        effective_static_shape_path(&entries, id, &path(0.0)).unwrap_err(),
+        effective_static_shape_path(
+            &crate::export_document::AnimationIndex::new(&entries),
+            id,
+            &path(0.0)
+        )
+        .unwrap_err(),
         "Keyframed Shape Path export is excluded; only the current static editable path can be authored natively"
     );
 }
@@ -86,7 +96,12 @@ fn constant_shape_path_rejects_wrong_value_kind_contextually() {
     )];
 
     assert_eq!(
-        effective_static_shape_path(&entries, id, &path(0.0)).unwrap_err(),
+        effective_static_shape_path(
+            &crate::export_document::AnimationIndex::new(&entries),
+            id,
+            &path(0.0)
+        )
+        .unwrap_err(),
         "Shape Path animator on a Shape layer must evaluate to a path value"
     );
 }

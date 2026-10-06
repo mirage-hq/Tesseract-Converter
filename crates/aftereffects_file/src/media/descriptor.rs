@@ -75,6 +75,7 @@ pub struct MediaDescriptor {
     pub target_is_folder: bool,
     /// AE's native hint for finding `authored_path` after the project moved.
     pub relative_location: Option<RelativeLocation>,
+    pub(crate) relative_hint_malformed: bool,
     pub sequence_names: Vec<String>,
     pub kind: MediaKind,
 }
@@ -270,6 +271,7 @@ pub(super) fn decode_native(pin: &Chunk) -> Result<MediaDescriptor, MediaDecodeE
         authored_path,
         target_is_folder: alias.target_is_folder,
         relative_location: alias.relative_location,
+        relative_hint_malformed: alias.relative_hint_malformed,
         sequence_names,
         kind: MediaKind::StillImage,
     };

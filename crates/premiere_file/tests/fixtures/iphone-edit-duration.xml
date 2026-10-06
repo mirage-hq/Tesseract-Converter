@@ -1,0 +1,15 @@
+<!-- Unchanged VideoStream897 from a Premiere-saved project, SHA-256
+     dff8bc0a167fb5882413a1190d819f9e530cc038334d04f9676a749b11806721.
+     Picture bytes are not included. The timing test pairs these native fields
+     with generated media; codec, geometry and orientation are not its oracle. -->
+<VideoStream ObjectID="897" ClassID="a36e4719-3ec6-4a0c-ab11-8b4aab377aa5" Version="22">
+    <CodecType>1212503619</CodecType>
+    <OriginalColorSpace>{"baseColorProfile":{"colorProfileData":"AQAAAP////8=","colorProfileName":"BT.709,8-bit,Display-Referred"},"baseProfileType":1}</OriginalColorSpace>
+    <FieldTypeIsUncertain>true</FieldTypeIsUncertain>
+    <OriginalImageOrientationType>6</OriginalImageOrientationType>
+    <FrameRate>8469172858</FrameRate>
+    <Duration>3641744328940</Duration>
+    <FrameRect>0,0,1920,1080</FrameRect>
+    <AlphaType>3</AlphaType>
+    <IgnoreAlpha>true</IgnoreAlpha>
+</VideoStream>

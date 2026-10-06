@@ -7,7 +7,7 @@ and nothing here is a score.
 ## Source
 
 - `feature_nest_audio_outer_keys_26_5.prproj`: 15,645 bytes, SHA-256
-  `c24155a36944edb437cdc49ba67d474e64b3a398b97e340fc6f9d458b50b9fee`. A new
+  `76777fbd64aabc3dbf1447a1fea617cde43b71ef8ba9fba19524881bd3c8b7d0`. A new
   project saved once by Premiere Pro 26.5.1 (project version 45) through its
   scripting API; the Premiere UI was not inspected. Its bytes are unchanged,
   including the authoring workspace's absolute media paths beside the

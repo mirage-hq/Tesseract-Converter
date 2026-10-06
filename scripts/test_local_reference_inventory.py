@@ -29,7 +29,7 @@ def test_adobe_import_export_references_are_local():
     references = [composition["reference"] for source in manifest["sources"]
                   for composition in source["compositions"]
                   if composition.get("reference", {}).get("path")]
-    assert len(references) == 668
+    assert len(references) == 678
     for record in references:
         assert_committed_reference(record)
 

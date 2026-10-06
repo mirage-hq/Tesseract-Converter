@@ -1,6 +1,6 @@
 //! Native vector-group animation lowering from current editable FX tracks.
 
-use fx_schema::{LayerId, Position, PropType, Transform, animator::AnimationGraphEntry};
+use fx_schema::{LayerId, Position, PropType, Transform};
 
 use crate::writer::{NumericTrack, VectorGroupAnimations};
 
@@ -13,8 +13,11 @@ mod tests;
 /// Even a zero-valued static skew needs a native vector Transform when its
 /// source owner has an authored Skew or Skew Axis track. A layer Transform has
 /// no matching native properties, so it must never consume those keys.
-pub(super) fn has_skew_tracks(entries: &[AnimationGraphEntry], owner: LayerId) -> bool {
-    entries.iter().any(|entry| {
+pub(super) fn has_skew_tracks(
+    entries: &crate::export_document::AnimationIndex<'_>,
+    owner: LayerId,
+) -> bool {
+    entries.for_layer(owner).any(|entry| {
         entry.target.as_property().is_some_and(|property| {
             property.layer_id() == owner
                 && matches!(
@@ -30,13 +33,13 @@ pub(super) fn has_skew_tracks(entries: &[AnimationGraphEntry], owner: LayerId) -
 /// keys, which belong to separate native operators, not this Transform.
 /// The caller must first validate those targets via its normal partitioner.
 pub(super) fn program_transform_animations(
-    entries: &[AnimationGraphEntry],
+    entries: &crate::export_document::AnimationIndex<'_>,
     owner: LayerId,
     base: &Transform,
 ) -> Result<VectorGroupAnimations, &'static str> {
     let mut seen = Vec::new();
     let transform_entries = entries
-        .iter()
+        .for_layer(owner)
         .filter(|entry| {
             entry.target.as_property().is_some_and(|property| {
                 property.layer_id() == owner && is_transform_property(property.property_type())
@@ -54,7 +57,11 @@ pub(super) fn program_transform_animations(
             Ok(entry.clone())
         })
         .collect::<Result<Vec<_>, _>>()?;
-    group_animations(&transform_entries, owner, base)
+    group_animations(
+        &crate::export_document::AnimationIndex::new(&transform_entries),
+        owner,
+        base,
+    )
 }
 
 /// Lowers animation owned by one FX group or Boolean operand into the matching
@@ -62,7 +69,7 @@ pub(super) fn program_transform_animations(
 /// layer's `VectorContent::AnimatedGroup`; retargeting it to a leaf changes the
 /// transform order.
 pub(super) fn group_animations(
-    entries: &[AnimationGraphEntry],
+    entries: &crate::export_document::AnimationIndex<'_>,
     layer_id: LayerId,
     base: &Transform,
 ) -> Result<VectorGroupAnimations, &'static str> {
@@ -77,16 +84,12 @@ pub(super) fn group_animations(
         PropType::Skew,
         PropType::SkewAxis,
     ];
-    if entries
-        .iter()
-        .filter(|entry| entry.target.layer_id() == Some(layer_id))
-        .any(|entry| {
-            entry.target.as_property().is_none_or(|property| {
-                property.property_type() != PropType::Opacity
-                    && !ALLOWED.contains(&property.property_type())
-            })
+    if entries.for_layer(layer_id).any(|entry| {
+        entry.target.as_property().is_none_or(|property| {
+            property.property_type() != PropType::Opacity
+                && !ALLOWED.contains(&property.property_type())
         })
-    {
+    }) {
         return Err("Vector Group has animator targets outside native Transform support");
     }
     let Position::TwoD(position) = base.position else {

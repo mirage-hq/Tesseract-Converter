@@ -1,3 +1,5 @@
+#![cfg(feature = "ffmpeg-library")]
+
 //! H.264 and HEVC media through both public conversion directions.
 //!
 //! `feature_video_formats_strict.prproj` places an H.264 MP4 (0-2 s, source
@@ -12,7 +14,10 @@
 //! replaced by `feature_hdr_hlg_hvc1.mov`, a 320x180 VideoToolbox Main 10 HLG
 //! QuickTime file with a timecode track: name, path and the stream's FrameRect
 //! changed, and its `CodecType` and `OriginalColorSpace` set to the text that
-//! Premiere 26.5.1 saved for 10-bit HLG `hvc1` sources (`oracle/M2/hdr/facts.md`).
+//! Premiere 26.5.1 saved for 10-bit HLG `hvc1` sources.
+
+mod avcc;
+mod movie_metadata;
 
 use super::support::*;
 use fx_conv::{
@@ -37,7 +42,7 @@ const HEVC: &str = "feature_video_formats_hevc.mp4";
 const EYE_CONTACT_OUTPUT: &str = "video-30fps.mov";
 /// `VideoStream.CodecType` of the two media, in timeline order: the values
 /// Premiere 24.3-26.5.1 store for `avc1` media and Premiere 26.5.1 for HEVC
-/// masters (`oracle/M2/hdr/facts.md`).
+/// masters.
 const CODEC_TYPES: [&str; 2] = ["1635148593", "1212503619"];
 /// The `OriginalColorSpace` that Premiere 26.5.1 saved for the 10-bit HLG
 /// sources of that fixture, verbatim.
@@ -515,7 +520,7 @@ fn enabled_eye_contact_exports_only_the_active_replacement_bytes() {
 }
 
 #[test]
-fn eye_contact_omits_unverified_embedded_sound_without_inspecting_the_original() {
+fn eye_contact_keeps_picture_when_original_sound_is_malformed() {
     for replacement in [false, true] {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
@@ -533,8 +538,8 @@ fn eye_contact_omits_unverified_embedded_sound_without_inspecting_the_original()
         if replacement {
             layer["source"]["eyeContact"] =
                 json!({"enabled": true, "eyeContactAssetId": "eye-contact-output"});
-            // Unusable original bytes must not be inspected for replacement sound.
-            fs::write(root.join("source.mp4"), b"original audio is not inspected").unwrap();
+            // Eye Contact changes picture only; malformed original sound is diagnosed.
+            fs::write(root.join("source.mp4"), b"original audio is malformed").unwrap();
         } else {
             fs::copy(
                 fixture_path("video-with-audio.mp4"),
@@ -591,8 +596,8 @@ fn eye_contact_omits_unverified_embedded_sound_without_inspecting_the_original()
             };
             assert_eq!(omissions.len(), 2, "{omissions:?}");
             for expected in [
-                omission("embedded sound of an Eye Contact clip is not exported: the original asset is not packaged and the replacement's audio is unverified"),
-                omission("Eye Contact exported as its active output \"eye-contact-output\"; the original asset \"premiere-video-1\" and the Eye Contact toggle were not exported"),
+                omission("embedded audio was not exported: unsupported conversion: MP4 metadata box exceeds its parent"),
+                omission("Eye Contact exported as its active output \"eye-contact-output\"; the original picture lineage \"premiere-video-1\" and the Eye Contact toggle were not exported"),
             ] {
                 assert!(omissions.contains(&expected), "{omissions:?}");
             }
@@ -662,7 +667,10 @@ fn subtitle_tracks_reject_in_both_directions() {
     let error = tesseract_to_premiere(&archive, export_root.join("native"), true)
         .unwrap_err()
         .to_string();
-    assert!(error.contains(expected), "{error}");
+    assert!(
+        error.contains("subtitle or caption tracks are unsupported"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -674,14 +682,21 @@ fn unsupported_codecs_are_named_in_both_directions() {
     fs::copy(fixture_path("video-vp9-64x64.mp4"), root.join(HEVC)).unwrap();
     for check in [true, false] {
         let output = dir.path().join(format!("converted-{check}"));
-        let error = premiere_to_tesseract(&project, &output, Some(SEQUENCE), check)
-            .unwrap_err()
-            .to_string();
+        let omissions = premiere_to_tesseract(&project, &output, Some(SEQUENCE), check).unwrap();
         assert!(
-            error.contains("video codec \"vp09\" is unsupported"),
-            "{error}"
+            omissions
+                .iter()
+                .any(|note| note.record == "VideoClipTrackItem:153"
+                    && note.reason.contains("video codec \"vp09\" is unsupported")),
+            "{omissions:?}"
         );
-        assert!(!output.exists());
+        if check {
+            assert!(!output.exists());
+        } else {
+            let file = TesseractFile::open(output.join("project.tsrct")).unwrap();
+            assert_eq!(video_layers(&file), expected_layers()[..1]);
+            assert_eq!(file.metadata().assets.len(), 1);
+        }
     }
 
     let dir = tempfile::tempdir().unwrap();
@@ -699,7 +714,61 @@ fn unsupported_codecs_are_named_in_both_directions() {
 }
 
 #[test]
-fn native_media_of_an_omitted_placement_still_requires_video_admission() {
+fn dolby_vision_entries_omit_source_and_preserve_supported_siblings() {
+    // Supplementary sample-entry mutation of existing HEVC media, not a new
+    // Adobe-native Dolby Vision fixture or proof of decoding/fidelity.
+    for entry in [b"dvh1", b"dvhe"] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("package");
+        let project = stage(&root);
+        let mut bytes = fs::read(root.join(HEVC)).unwrap();
+        let offsets: Vec<_> = bytes
+            .windows(4)
+            .enumerate()
+            .filter_map(|(offset, tag)| (tag == b"hvc1").then_some(offset))
+            .collect();
+        assert!(!offsets.is_empty());
+        for offset in offsets {
+            bytes[offset..offset + 4].copy_from_slice(entry);
+        }
+        fs::write(root.join(HEVC), bytes).unwrap();
+        let expected = format!(
+            "Dolby Vision {} sample entries are not decodable",
+            String::from_utf8_lossy(entry)
+        );
+        for check in [true, false] {
+            let output = directory.path().join(format!("converted-{check}"));
+            let omissions =
+                premiere_to_tesseract(&project, &output, Some(SEQUENCE), check).unwrap();
+            assert!(
+                omissions
+                    .iter()
+                    .any(|note| note.record == "VideoClipTrackItem:153"
+                        && note.reason.contains(&expected)),
+                "{omissions:?}"
+            );
+            if check {
+                assert!(!output.exists());
+            } else {
+                let file = TesseractFile::open(output.join("project.tsrct")).unwrap();
+                assert_eq!(video_layers(&file), expected_layers()[..1]);
+                assert_eq!(file.metadata().assets.len(), 1);
+                let asset = file.metadata().assets.keys().next().unwrap();
+                let healthy = fs::read(root.join(H264)).unwrap();
+                assert_eq!(
+                    file.asset(asset)
+                        .unwrap()
+                        .read_verified_bytes(healthy.len() as u64)
+                        .unwrap(),
+                    healthy
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn native_media_of_an_omitted_placement_only_exempts_unavailable_video() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     let project = stage(root);
@@ -737,8 +806,23 @@ fn native_media_of_an_omitted_placement_still_requires_video_admission() {
         .iter()
         .any(|media| media.status == MediaStatus::RequiresTranscode));
     for check in [true, false] {
-        let output = root.join(format!("invalid-{check}"));
-        assert!(premiere_to_tesseract(&project, &output, Some(SEQUENCE), check).is_err());
+        let output = root.join(format!("unsupported-{check}"));
+        premiere_to_tesseract(&project, &output, Some(SEQUENCE), check).unwrap();
+        if check {
+            assert!(!output.exists());
+        } else {
+            let file = TesseractFile::open(output.join("project.tsrct")).unwrap();
+            assert_eq!(video_layers(&file), expected_layers()[1..]);
+            assert_eq!(file.metadata().assets.len(), 1);
+        }
+    }
+    // Even an occurrence already omitted by the reader cannot bypass native
+    // path/container validation. Malformed present media is not a codec omission.
+    fs::write(root.join(H264), b"invalid movie").unwrap();
+    for check in [true, false] {
+        let output = root.join(format!("malformed-{check}"));
+        let error = premiere_to_tesseract(&project, &output, Some(SEQUENCE), check).unwrap_err();
+        assert!(error.to_string().contains("failed admission"), "{error}");
         assert!(!output.exists());
     }
 }
@@ -753,14 +837,15 @@ fn prepared_media_map_admits_a_bound_replacement_and_rejects_stale_or_wrong_scop
     let replacement = root.join("prepared.mp4");
     fs::copy(fixture_path(HEVC), &replacement).unwrap();
 
-    let ordinary =
-        premiere_to_tesseract(&project, dir.path().join("ordinary"), Some(SEQUENCE), true)
-            .unwrap_err()
-            .to_string();
+    let ordinary_output = dir.path().join("ordinary");
+    let ordinary = premiere_to_tesseract(&project, &ordinary_output, Some(SEQUENCE), true).unwrap();
     assert!(
-        ordinary.contains("video codec \"vp09\" is unsupported"),
-        "{ordinary}"
+        ordinary
+            .iter()
+            .any(|note| note.reason.contains("video codec \"vp09\" is unsupported")),
+        "{ordinary:?}"
     );
+    assert!(!ordinary_output.exists());
 
     let map_path = root.join("media-map.json");
     let map_dto = |source_sha256: String, target: &str| MediaMap {

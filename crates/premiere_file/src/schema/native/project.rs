@@ -1,14 +1,79 @@
 use super::{ClipProjectItem, IndexedURef, Node, ObjectId, Ref, URef, Uid};
 use serde::Serialize;
 
-#[derive(Debug)]
-pub(crate) enum VideoSettings {}
-#[derive(Debug)]
-pub(crate) enum AudioSettings {}
-#[derive(Debug)]
-pub(crate) enum VideoCompileSettings {}
-#[derive(Debug)]
-pub(crate) enum AudioCompileSettings {}
+#[derive(Debug, Serialize)]
+pub(crate) struct VideoSettings {
+    #[serde(rename = "@ObjectID")]
+    pub(crate) object_id: ObjectId<VideoSettings>,
+    #[serde(rename = "@ClassID")]
+    pub(crate) class_id: &'static str,
+    #[serde(rename = "@Version")]
+    pub(crate) version: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AudioSettings {
+    #[serde(rename = "@ObjectID")]
+    pub(crate) object_id: ObjectId<AudioSettings>,
+    #[serde(rename = "@ClassID")]
+    pub(crate) class_id: &'static str,
+    #[serde(rename = "@Version")]
+    pub(crate) version: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub(crate) struct VideoCompileSettings {
+    #[serde(rename = "@ObjectID")]
+    pub(crate) object_id: ObjectId<VideoCompileSettings>,
+    #[serde(rename = "@ClassID")]
+    pub(crate) class_id: &'static str,
+    #[serde(rename = "@Version")]
+    pub(crate) version: &'static str,
+    pub(crate) video_settings: Ref<VideoSettings>,
+    pub(crate) compressor: &'static str,
+    #[serde(rename = "VideoCompilerClassIDFourCC")]
+    pub(crate) video_compiler_class_id_four_cc: &'static str,
+    #[serde(rename = "VideoFileTypeFourCC")]
+    pub(crate) video_file_type_four_cc: &'static str,
+    pub(crate) depth: &'static str,
+    pub(crate) render_depth: &'static str,
+    #[serde(rename = "Aspect43")]
+    pub(crate) aspect_43: &'static str,
+    pub(crate) quality: &'static str,
+    pub(crate) use_data_rate: &'static str,
+    pub(crate) data_rate: &'static str,
+    pub(crate) force_recompress: &'static str,
+    pub(crate) force_recompress_value: &'static str,
+    pub(crate) deinterlace: &'static str,
+    pub(crate) ignore_video_filters: &'static str,
+    pub(crate) optimize_stills: &'static str,
+    pub(crate) frames_at_markers: &'static str,
+    pub(crate) real_time_preview: &'static str,
+    pub(crate) video_field_type: &'static str,
+    #[serde(rename = "DoKeyframeEveryNFrames")]
+    pub(crate) do_keyframe_every_n_frames: &'static str,
+    #[serde(rename = "DoKeyframeEveryNFramesValue")]
+    pub(crate) do_keyframe_every_n_frames_value: &'static str,
+    pub(crate) add_keyframes_at_markers: &'static str,
+    pub(crate) add_keyframes_at_edits: &'static str,
+    pub(crate) relative_frame_size: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub(crate) struct AudioCompileSettings {
+    #[serde(rename = "@ObjectID")]
+    pub(crate) object_id: ObjectId<AudioCompileSettings>,
+    #[serde(rename = "@ClassID")]
+    pub(crate) class_id: &'static str,
+    #[serde(rename = "@Version")]
+    pub(crate) version: &'static str,
+    pub(crate) audio_settings: Ref<AudioSettings>,
+    pub(crate) interleave: &'static str,
+    pub(crate) sample_type: &'static str,
+    pub(crate) compressor: &'static str,
+}
 
 #[derive(Debug, Serialize)]
 pub(crate) struct ProjectProperties {

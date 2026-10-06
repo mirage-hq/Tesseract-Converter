@@ -565,3 +565,179 @@ fn save_as_preserves_source_file() {
     assert_eq!(std::fs::read(&source_path).unwrap(), original);
     assert_ne!(std::fs::read(&revised_path).unwrap(), original);
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn review_equal_size_and_mtime_replacement_is_rejected_before_publication() {
+    for operation in ["save", "save_as", "optimize"] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("original.tsrct");
+        let replacement = directory.path().join("replacement.tsrct");
+        let output = directory.path().join("copy.tsrct");
+        let mut file = TesseractFileBuilder::new(test_document())
+            .write(&path)
+            .unwrap();
+        let original_metadata = std::fs::metadata(&path).unwrap();
+        let replacement_bytes = std::fs::read(&path).unwrap();
+        std::fs::write(&replacement, &replacement_bytes).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&replacement)
+            .unwrap()
+            .set_times(
+                std::fs::FileTimes::new().set_modified(original_metadata.modified().unwrap()),
+            )
+            .unwrap();
+        assert_eq!(
+            std::fs::metadata(&replacement).unwrap().len(),
+            original_metadata.len()
+        );
+        assert_eq!(
+            std::fs::metadata(&replacement).unwrap().modified().unwrap(),
+            original_metadata.modified().unwrap()
+        );
+        // Identical valid bytes isolate file identity from metadata/content checks.
+        std::fs::rename(&replacement, &path).unwrap();
+        enable_motion_blur(&mut file);
+        let error = match operation {
+            "save" => file.save(),
+            "save_as" => file.save_as(&output),
+            "optimize" => file.optimize(),
+            _ => unreachable!(),
+        }
+        .unwrap_err();
+        assert!(error.to_string().contains("changed after it was opened"));
+        assert_eq!(std::fs::read(&path).unwrap(), replacement_bytes);
+        assert!(!output.exists());
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn review_missing_source_check_keeps_original_handle_for_retry() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("original.tsrct");
+    let held = directory.path().join("held.tsrct");
+    let mut file = TesseractFileBuilder::new(test_document())
+        .write(&path)
+        .unwrap();
+    let original = std::fs::read(&path).unwrap();
+    std::fs::rename(&path, &held).unwrap();
+    assert!(file.save().is_err());
+    assert_eq!(std::fs::read(&held).unwrap(), original);
+    std::fs::rename(&held, &path).unwrap();
+    enable_motion_blur(&mut file);
+    file.save().unwrap();
+    assert!(file.project().composition().motion_blur().enabled);
+}
+
+#[test]
+fn review_configured_writer_survives_save_save_as_and_optimize() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("writer.tsrct");
+    let copy = directory.path().join("writer-copy.tsrct");
+    let generator = Generator {
+        name: "review-writer".to_owned(),
+        version: "2.3.4".to_owned(),
+        engine_version: "5.6.7".to_owned(),
+        git_revision: Some("abcdef0123456789".to_owned()),
+    };
+    let mut file = TesseractFileBuilder::new(test_document())
+        .generator(generator.clone())
+        .unwrap()
+        .write(&path)
+        .unwrap();
+
+    for _ in 0..2 {
+        file.save().unwrap();
+        assert_eq!(file.metadata().generator, generator);
+    }
+    file.save_as(&copy).unwrap();
+    file.save().unwrap();
+    assert_eq!(file.metadata().generator, generator);
+    assert_eq!(
+        TesseractFile::open(&copy).unwrap().metadata().generator,
+        generator
+    );
+
+    let configured = Generator {
+        name: "review-reconfigured-writer".to_owned(),
+        ..generator
+    };
+    file.set_generator(configured.clone()).unwrap();
+    file.optimize().unwrap();
+    file.save().unwrap();
+    file.optimize().unwrap();
+    assert_eq!(file.metadata().generator, configured);
+    assert_eq!(
+        TesseractFile::open(&copy).unwrap().metadata().generator,
+        configured
+    );
+}
+
+#[test]
+fn review_failed_save_and_optimize_retain_configured_writer() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("writer-failure.tsrct");
+    let source = directory.path().join("pending.bin");
+    std::fs::write(&source, b"original").unwrap();
+    let mut file = TesseractFileBuilder::new(test_document())
+        .write(&path)
+        .unwrap();
+    let generator = Generator {
+        name: "review-retry-writer".to_owned(),
+        version: "2".to_owned(),
+        engine_version: "3".to_owned(),
+        git_revision: Some("1234567".to_owned()),
+    };
+    file.set_generator(generator.clone()).unwrap();
+    file.add_asset("pending", &source, AssetKind::Other)
+        .unwrap();
+    let before = std::fs::read(&path).unwrap();
+    std::fs::write(&source, b"changed and longer").unwrap();
+    assert!(file.save().is_err());
+    assert!(file.optimize().is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+
+    std::fs::write(&source, b"original").unwrap();
+    file.save().unwrap();
+    file.save().unwrap();
+    assert_eq!(file.metadata().generator, generator);
+    assert_eq!(
+        file.asset("pending")
+            .unwrap()
+            .read_verified_bytes(8)
+            .unwrap(),
+        b"original"
+    );
+}
+
+#[test]
+fn prefixed_archive_saves_through_the_compacting_rewrite() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("source.mp4");
+    std::fs::write(&source, b"0123456789-user-video").unwrap();
+    let original = directory.path().join("original.tsrct");
+    TesseractFileBuilder::new(test_document())
+        .add_asset("source_video", &source, AssetKind::Video)
+        .unwrap()
+        .write(&original)
+        .unwrap();
+    // Prepended bytes leave stored local-header offsets relative to the ZIP,
+    // which the reader accepts through its archive offset.
+    let prefixed = directory.path().join("prefixed.tsrct");
+    let mut bytes = b"self-extracting stub\n".to_vec();
+    bytes.extend(std::fs::read(&original).unwrap());
+    std::fs::write(&prefixed, bytes).unwrap();
+
+    let mut file = TesseractFile::open(&prefixed).unwrap();
+    enable_motion_blur(&mut file);
+    let report = file.save().unwrap();
+    assert_eq!(report.strategy, SaveStrategy::RawCopyRewrite);
+    let reopened = TesseractFile::open(&prefixed).unwrap();
+    assert!(reopened.project().composition().motion_blur().enabled);
+    let mut reader = reopened.asset("source_video").unwrap().open().unwrap();
+    let mut content = String::new();
+    reader.read_to_string(&mut content).unwrap();
+    assert_eq!(content, "0123456789-user-video");
+}

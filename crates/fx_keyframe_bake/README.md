@@ -13,8 +13,11 @@ The package owns:
 - deterministic random seeds and converted-key identities.
 
 Host adapters own document graphs, property types, input construction, and
-owner-local clocks. Boa's loop-iteration, recursion, and VM stack limits are
-defensive execution bounds; they are not a wall-clock or heap sandbox.
+owner-local clocks. Boa's recursion and VM stack limits are defensive execution
+bounds; there is no loop-iteration limit, and they are not a wall-clock or heap
+sandbox. A nonterminating script blocks its caller. Script source is parsed as a
+complete function body before compilation, so it cannot escape the wrapper and
+execute during validation.
 
 This package makes no claim of Adobe fidelity. Each format adapter is responsible
 for validating and documenting the behavior of its conversion.

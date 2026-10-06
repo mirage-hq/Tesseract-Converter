@@ -16,8 +16,197 @@ fn samples(values: Vec<Vec<f64>>) -> EvaluatedProperty {
         },
         start_ms: 2_000,
         sample_times_seconds: Vec::new(),
+        frame_sampled: false,
         values,
     }
+}
+
+#[test]
+fn converter_frame_samples_reuse_fitting_without_claiming_adobe_provenance() {
+    let mut observations = samples(vec![vec![0.0], vec![50.0], vec![100.0]]);
+    observations.start_ms = 0;
+    observations.frame_sampled = true;
+    observations.sample_times_seconds = vec![0.0, 0.5, 1.0];
+    assert_eq!(fitting_grid(&observations).unwrap(), (0, 1001));
+    let (entries, warnings) = evaluated_numeric_entries(
+        "test",
+        &observations,
+        &[target(0, PropType::PositionX)],
+        &[],
+        &mut AnimationBudget::default(),
+    );
+    assert_eq!(entries.len(), 1, "{warnings:?}");
+    let keys = entries[0].animator.keyframe_track().unwrap().keyframes();
+    assert_eq!(keys.len(), 2);
+    assert_eq!(keys[0].layer_time().as_millis(), 0);
+    assert_eq!(keys[1].layer_time().as_millis(), 1000);
+    assert!(matches!(keys[1].value(),PropertyValue::Float(value) if *value==100.0));
+    assert!(warnings[0].contains("Adobe oracle equality pending"));
+}
+
+#[test]
+fn expression_override_invalidation_is_composition_local() {
+    use std::collections::{HashMap, HashSet};
+
+    use crate::{
+        essential::{Override, OverrideValue},
+        expression_samples::ExpressionEvaluationError,
+        structure_document::{
+            AssetNamespace, Converter, MediaAssetRequest, MediaResolution, Progress, shapes,
+        },
+    };
+    const SOURCE: &[u8] = include_bytes!(
+        "../../../../tests/fixtures/expression_samples/sampled_position_expression.aep"
+    );
+    const ORACLE: &[u8] = include_bytes!(
+        "../../../../tests/fixtures/expression_samples/sampled_position_expression.v2.json"
+    );
+    let project = read_project(SOURCE).unwrap();
+    let item = project.item(1).unwrap();
+    let oracle = ExpressionSamples::from_json_for_source(ORACLE, SOURCE).unwrap();
+    let observed = &oracle.properties()[0];
+    let mut captured_error = oracle.clone();
+    captured_error.properties.clear();
+    captured_error.errors.push(ExpressionEvaluationError {
+        composition_id: observed.composition_id(),
+        layer_id: observed.layer_id(),
+        property: observed.property().clone(),
+        message: "native capture failed for this property".into(),
+    });
+    for captures in [&oracle, &captured_error] {
+        let convert = |override_comp: Option<u32>| {
+            let mut resolver = |_: &MediaAssetRequest| MediaResolution::Unavailable;
+            let mut converter = Converter {
+                expression_samples: captures,
+                items: project.items.iter().map(|item| (item.id, item)).collect(),
+                camera_normalizations: HashMap::new(),
+                diagnostics: Vec::new(),
+                next_id: 1,
+                linked: false,
+                asset_namespace: AssetNamespace::STANDALONE,
+                stack: Vec::new(),
+                visited_compositions: HashSet::new(),
+                animations: Vec::new(),
+                animation_budget: AnimationBudget::default(),
+                committed_inline_remap_bytes: 0,
+                unavailable_cutouts: 0,
+                overrides: override_comp
+                    .into_iter()
+                    .map(|source_comp_id| Override {
+                        source_comp_id,
+                        source_layer_id: u32::MAX,
+                        value: OverrideValue::Media {
+                            source_id: u32::MAX,
+                        },
+                    })
+                    .collect(),
+                media_resolver: &mut resolver,
+                assets: Vec::new(),
+                shape_budget: shapes::OutputBudget::default(),
+                mapped_shape_expressions: Default::default(),
+                root_progress: Progress::default().phase(
+                    "Expression override scope test",
+                    "layers",
+                    0,
+                ),
+            };
+            let layers = converter
+                .composition_layers(item, fx_schema::LayerId::new(50_000), 0)
+                .unwrap();
+            (
+                serde_json::to_value(layers).unwrap(),
+                serde_json::to_value(converter.animations).unwrap(),
+                format!("{:?}", converter.diagnostics),
+            )
+        };
+        let unchanged = convert(None);
+        assert_eq!(
+            convert(Some(u32::MAX)),
+            unchanged,
+            "unrelated override invalidated source-keyed captures"
+        );
+        let overridden = convert(Some(item.id));
+        assert!(
+            overridden
+                .2
+                .contains("converter-evaluated expression lowered"),
+            "same-composition override must evaluate fresh: {overridden:?}"
+        );
+        if !captures.errors().is_empty() {
+            assert_ne!(
+                overridden.1, unchanged.1,
+                "same-composition override must invalidate captured errors"
+            );
+        }
+    }
+}
+
+#[test]
+fn expression_lowered_tracks_remove_only_replaced_fallback_warnings() {
+    for frame_sampled in [false, true] {
+        let name = "Owner: Position";
+        let mut observations = samples(vec![vec![0.0], vec![50.0], vec![100.0]]);
+        observations.start_ms = 0;
+        observations.frame_sampled = frame_sampled;
+        observations.sample_times_seconds = if frame_sampled {
+            vec![0.0, 0.5, 1.0]
+        } else {
+            vec![0.0, 0.001, 0.002]
+        };
+        let (entries, evaluated) = evaluated_numeric_entries(
+            name,
+            &observations,
+            &[target(0, PropType::PositionX)],
+            &[],
+            &mut AnimationBudget::default(),
+        );
+        assert_eq!(entries.len(), 1, "{evaluated:?}");
+        let unrelated = "Other: enabled AE expression; authored fallback retained".to_owned();
+        let failure = format!("{name}: lowering failed; static authored/default value retained");
+        let mut warnings = vec![
+            format!("{name}: enabled AE expression; authored fallback retained"),
+            unrelated.clone(),
+            failure.clone(),
+        ];
+        crate::structure_document::suppress_replaced_expression_warnings(&mut warnings, &evaluated);
+        assert_eq!(warnings, vec![unrelated, failure], "{evaluated:?}");
+    }
+}
+
+#[test]
+fn expression_failed_lowering_preserves_fallback_warnings() {
+    let name = "Position";
+    let observations = samples(vec![vec![0.0], vec![100.0]]);
+    let (entries, evaluated) = evaluated_numeric_entries(
+        name,
+        &observations,
+        &[target(1, PropType::PositionY)],
+        &[],
+        &mut AnimationBudget::default(),
+    );
+    assert!(entries.is_empty(), "{evaluated:?}");
+    assert!(evaluated[0].contains("static authored/default value retained"));
+    let fallback = format!("{name}: enabled AE expression; authored fallback retained");
+    let mut warnings = vec![fallback.clone()];
+    crate::structure_document::suppress_replaced_expression_warnings(&mut warnings, &evaluated);
+    assert_eq!(warnings, vec![fallback.clone()]);
+
+    let failed_with_quoted_provenance = vec![format!(
+        "{name}: rejected diagnostic text: converter-evaluated expression lowered into 2 editable scalar keys"
+    )];
+    crate::structure_document::suppress_replaced_expression_warnings(
+        &mut warnings,
+        &failed_with_quoted_provenance,
+    );
+    assert_eq!(warnings, vec![fallback]);
+}
+
+#[test]
+fn sparse_converter_expression_frames_do_not_expand_to_an_unbounded_fitting_grid() {
+    let mut observations = samples(vec![vec![0.0], vec![1.0]]);
+    observations.frame_sampled = true;
+    observations.sample_times_seconds = vec![0.0, 1_000_000.0];
+    assert!(fitting_grid(&observations).unwrap_err().contains("exceeds"));
 }
 
 fn target(component: usize, property: PropType) -> NumericAnimationTarget {
@@ -446,135 +635,4 @@ fn sampled_adjustment_position_does_not_consume_ordinary_sibling_budget() {
         "discarded Adjustment Position must not cause a global budget denial: {:?}",
         converted.diagnostics
     );
-}
-
-/// External Adobe-evaluated evidence is deliberately not synthesized by the test.
-#[test]
-#[ignore = "requires pinned AEP_EXPRESSION_SOURCE and AEP_EXPRESSION_SAMPLES; see support ledger"]
-fn mixkit_evaluated_expression_import_regression() {
-    use crate::structure::{ItemKind, read_project};
-    let (source, evaluations) = pinned_mixkit_evaluation();
-    let project = read_project(&source).unwrap();
-    let main = project.items.iter().find(|item| item.id == 20219).unwrap();
-    let ItemKind::Composition(comp) = &main.kind else {
-        panic!("native Main comp missing")
-    };
-    let layer = comp
-        .layers
-        .iter()
-        .find(|layer| layer.record.id() == 21040)
-        .unwrap();
-    let (entries, warnings) = evaluated_transform_entries(
-        &evaluations,
-        (20219, comp),
-        layer,
-        LayerId::new(6),
-        [1.0; 2],
-        true,
-        &mut AnimationBudget::default(),
-    );
-    let scales: Vec<_> = entries
-        .iter()
-        .filter(|entry| {
-            [PropType::ScaleX, PropType::ScaleY]
-                .iter()
-                .any(|property| entry.target == PropertyTarget::layer(LayerId::new(6), *property))
-        })
-        .collect();
-    assert_eq!(scales.len(), 2, "{warnings:?}");
-    assert_eq!(
-        scales
-            .iter()
-            .map(|entry| entry.animator.keyframe_track().unwrap().keyframes().len())
-            .sum::<usize>(),
-        86
-    );
-    for entry in scales {
-        let keys = entry.animator.keyframe_track().unwrap().keyframes();
-        assert!(keys.len() < 128);
-        assert!(
-            keys.iter()
-                .any(|key| matches!(key.value(), PropertyValue::Float(value) if *value < 1.0))
-        );
-        assert!(
-            keys.iter()
-                .any(|key| matches!(key.value(), PropertyValue::Float(value) if *value > 50.0))
-        );
-        assert!(
-            matches!(keys.last().unwrap().value(), PropertyValue::Float(value) if (*value - 50.0).abs() < 0.02)
-        );
-    }
-    fx_schema::AnimationGraph::from_entries(entries).unwrap();
-}
-
-fn pinned_mixkit_evaluation() -> (Vec<u8>, ExpressionSamples) {
-    use sha2::{Digest, Sha256};
-    let source = std::fs::read(std::env::var("AEP_EXPRESSION_SOURCE").unwrap()).unwrap();
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&source)),
-        "fdca629f14c0b05d4dec459e7bec6a291b1b21b67e7a1341a3ba022b0f37c8d9"
-    );
-    let bytes = std::fs::read(std::env::var("AEP_EXPRESSION_SAMPLES").unwrap()).unwrap();
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&bytes)),
-        "16d03bb64086e73105b903210779b93a5248b4b380d70b8362a31a583d394b7f"
-    );
-    let evaluations = ExpressionSamples::from_json_for_source(&bytes, &source).unwrap();
-    (source, evaluations)
-}
-
-#[test]
-#[ignore = "requires pinned AEP_EXPRESSION_SOURCE and AEP_EXPRESSION_SAMPLES; see support ledger"]
-fn mixkit_evaluated_fill_import_regression() {
-    use crate::structure::{ItemKind, read_project};
-    let (source, evaluations) = pinned_mixkit_evaluation();
-    let project = read_project(&source).unwrap();
-    let item = project.items.iter().find(|item| item.id == 20219).unwrap();
-    let ItemKind::Composition(comp) = &item.kind else {
-        panic!("Main composition missing")
-    };
-    for (layer_id, expected) in [
-        (
-            20828,
-            [0.92941182851791, 0.94509810209274, 0.96470594406128],
-        ),
-        (21020, [1.0, 1.0, 1.0]),
-    ] {
-        let layer = comp
-            .layers
-            .iter()
-            .find(|layer| layer.record.id() == layer_id)
-            .unwrap();
-        let mut next_id = 100;
-        let result = crate::structure_document::effects::import(
-            &evaluations,
-            20219,
-            layer,
-            [1920, 1080],
-            [1920, 1080],
-            &mut next_id,
-            &mut AnimationBudget::default(),
-        );
-        assert_eq!(result.effects.len(), 1, "{:?}", result.warnings);
-        let effect = serde_json::to_value(&result.effects[0]).unwrap();
-        assert_eq!(effect["effect"]["type"], "tintTritone");
-        assert_eq!(result.animations.len(), 6, "{:?}", result.warnings);
-        for (name, expected_value) in ["blackR", "blackG", "blackB", "whiteR", "whiteG", "whiteB"]
-            .into_iter()
-            .zip(expected.into_iter().cycle())
-        {
-            let target = PropertyTarget::effect_param(fx_schema::EffectId::new(100), name);
-            let entry = result
-                .animations
-                .iter()
-                .find(|entry| entry.target == target)
-                .unwrap();
-            let keys = entry.animator.keyframe_track().unwrap().keyframes();
-            assert_eq!(keys.len(), 1);
-            assert!(
-                matches!(keys[0].value(), PropertyValue::Float(value) if (value - expected_value).abs() < 1e-7)
-            );
-        }
-        fx_schema::AnimationGraph::from_entries(result.animations).unwrap();
-    }
 }

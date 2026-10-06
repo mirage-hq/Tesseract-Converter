@@ -1,0 +1,39 @@
+[
+  [
+    {
+      "index": 2,
+      "codec_type": "data",
+      "codec_tag_string": "rtmd",
+      "tags": {
+        "handler_name": "Timed Metadata Media Handler",
+        "timecode": "01:02:03:04"
+      }
+    }
+  ],
+  [
+    {
+      "index": 2,
+      "codec_type": "data",
+      "codec_tag_string": "mebx",
+      "tags": { "handler_name": "Core Media Metadata" }
+    },
+    {
+      "index": 3,
+      "codec_type": "data",
+      "codec_tag_string": "mebx",
+      "tags": { "handler_name": "Core Media Metadata" }
+    },
+    {
+      "index": 4,
+      "codec_type": "data",
+      "codec_tag_string": "mebx",
+      "tags": { "handler_name": "Core Media Metadata" }
+    },
+    {
+      "index": 5,
+      "codec_type": "data",
+      "codec_tag_string": "mebx",
+      "tags": { "handler_name": "Core Media Metadata" }
+    }
+  ]
+]

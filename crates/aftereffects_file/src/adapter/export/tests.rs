@@ -10,6 +10,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 mod audio;
+mod ntsc_clock;
 mod pr4442_package_cases;
 mod review_regressions;
 
@@ -73,6 +74,18 @@ fn native_import_archive_edit_fresh_export_preserves_current_values() {
     occurrence["transform"]["scale"] = json!([-50.0, 125.0]);
     occurrence["transform"]["rotation"] = json!(17.0);
     occurrence["transform"]["opacity"] = json!(62.0);
+    // Native constant Solids now import without sampled-source keys. Explicitly
+    // edit this supplementary FX fixture's source clock to keep this test on
+    // its native Solid hierarchy profile rather than vector normalization.
+    occurrence["layers"][0]["playback"]["mapping"] = json!({
+        "type": "timeRemap", "property": {
+            "keyframes": [
+                {"id": "solid-start", "time": 0, "value": 0, "easing": {"type": "linear"}},
+                {"id": "solid-end", "time": 30000, "value": 30000, "easing": {"type": "linear"}}
+            ],
+            "before": "inactive", "after": "inactive"
+        }
+    });
     let rect = &mut occurrence["layers"][0]["layers"][0];
     rect["name"] = json!("Edited source Ω");
     rect["rect"]["position"] = json!([3.0, 4.0]);
@@ -318,7 +331,7 @@ fn export_package_publishes_current_project_and_owned_media() {
     let media = RelativeMediaPath::new("media/asset.wav").unwrap();
     let output = tmp.path().join("output");
 
-    package::publish_package(&staged, &output, &[media]).unwrap();
+    package::publish_package(&staged, &output, &[media], &[]).unwrap();
 
     assert_eq!(
         fs::read(output.join("project.aep")).unwrap(),
@@ -345,7 +358,7 @@ fn export_package_rolls_back_owned_files_when_a_later_media_file_is_missing() {
     ];
     let output = tmp.path().join("output");
 
-    assert!(package::publish_package(&staged, &output, &files).is_err());
+    assert!(package::publish_package(&staged, &output, &files, &[]).is_err());
     assert!(!output.exists());
     assert_eq!(
         fs::read(staged.join("media/present.wav")).unwrap(),
@@ -360,10 +373,10 @@ fn export_publisher_preserves_late_destination_and_cleans_failed_owned_directory
     let destination = fresh_destination(&output).unwrap();
     fs::create_dir(&output).unwrap();
     fs::write(output.join("user-file"), b"keep").unwrap();
-    assert!(package::publish_package(&tmp.path().join("missing"), &destination, &[]).is_err());
+    assert!(package::publish_package(&tmp.path().join("missing"), &destination, &[], &[]).is_err());
     assert_eq!(fs::read(output.join("user-file")).unwrap(), b"keep");
     let fresh = tmp.path().join("fresh");
-    assert!(package::publish_package(&tmp.path().join("missing"), &fresh, &[]).is_err());
+    assert!(package::publish_package(&tmp.path().join("missing"), &fresh, &[], &[]).is_err());
     assert!(!fresh.exists());
 }
 

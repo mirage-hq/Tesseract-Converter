@@ -1,5 +1,18 @@
 use super::super::tests::{data, list, numeric};
 use super::*;
+
+#[test]
+fn native_hold_endpoint_flags_are_admitted_without_weakening_curve_guards() {
+    let curve = super::super::tests::native_hold_endpoint_curve("control-0");
+    validate_raw_rotation(&curve).unwrap();
+    let mut invalid = curve.clone();
+    invalid.keyframes[1].in_interpolation = 4;
+    assert!(validate_raw_rotation(&invalid).is_err());
+    invalid = curve;
+    invalid.keyframes[0].out_interpolation = 2;
+    invalid.keyframes[1].in_interpolation = 3;
+    assert!(validate_raw_rotation(&invalid).is_err());
+}
 use crate::{
     schema::layer_records::LayerRecord,
     structure::{ItemKind, read_project},
@@ -385,8 +398,9 @@ fn raw_rotation_validation_rejects_malformed_key_metadata() {
     malformed.keyframes[0].out_interpolation = 4;
     assert!(validate_raw_rotation(&malformed).is_err());
     malformed = source.clone();
-    malformed.keyframes[0].out_interpolation = 3;
-    malformed.keyframes[1].in_interpolation = 2;
+    // Incoming Hold is still unsupported when the outgoing segment is curved.
+    malformed.keyframes[0].out_interpolation = 2;
+    malformed.keyframes[1].in_interpolation = 3;
     assert!(validate_raw_rotation(&malformed).is_err());
     malformed = source.clone();
     malformed.keyframes[0].spatial_in = vec![0.0];
@@ -394,113 +408,4 @@ fn raw_rotation_validation_rejects_malformed_key_metadata() {
     malformed = source;
     malformed.keyframes[1].time_secs = malformed.keyframes[0].time_secs;
     assert!(validate_raw_rotation(&malformed).is_err());
-}
-
-#[test]
-#[ignore = "requires local licensed AEP_INTRO_IMPORT_SOURCE, which cannot be redistributed"]
-fn pinned_intro_wall_rotations_counterrotate_halfs_01() {
-    use sha2::{Digest, Sha256};
-    let bytes = std::fs::read(
-        std::env::var_os("AEP_INTRO_IMPORT_SOURCE").expect("local licensed Intro source path"),
-    )
-    .unwrap();
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&bytes)),
-        "75bb7d70238e23ffaafdeacf952217de1fcded8f86875bee39c2e91bda7804d9"
-    );
-    let project = read_project(&bytes).unwrap();
-    let ItemKind::Composition(composition) = &project.item(3).unwrap().kind else {
-        panic!("composition 3")
-    };
-    let source = composition
-        .layers
-        .iter()
-        .find(|layer| layer.record.id() == 2217)
-        .expect("native Halfs_01 layer 2217");
-    assert_eq!(source.name.as_ref(), "Halfs_01");
-    let source_rotation = rotation(source);
-
-    for (owner_id, owner_name, constant) in [(2233, "Wall_L 2", -90.0), (2219, "Wall_L", 90.0)] {
-        let owner = composition
-            .layers
-            .iter()
-            .find(|layer| layer.record.id() == owner_id)
-            .expect("native wall layer");
-        assert_eq!(owner.name.as_ref(), owner_name);
-        let mut lowered = rotation(owner);
-        assert!(lowered.expression_enabled);
-        lower(owner, composition, &mut lowered).unwrap().unwrap();
-        assert_eq!(lowered.keyframes.len(), source_rotation.keyframes.len());
-        for (raw, mapped) in source_rotation.keyframes.iter().zip(&lowered.keyframes) {
-            assert_eq!(mapped.time_secs, raw.time_secs);
-            assert!((mapped.values[0] - (-raw.values[0] + constant)).abs() < 1e-9);
-            assert_eq!(
-                mapped.in_speed,
-                raw.in_speed.iter().map(|speed| -speed).collect::<Vec<_>>()
-            );
-            assert_eq!(
-                mapped.out_speed,
-                raw.out_speed.iter().map(|speed| -speed).collect::<Vec<_>>()
-            );
-            assert_eq!(mapped.in_influence, raw.in_influence);
-            assert_eq!(mapped.out_influence, raw.out_influence);
-        }
-    }
-}
-
-#[test]
-#[ignore = "requires local licensed AEP_SIBLING_ROTATION_SOURCE, which cannot be redistributed"]
-fn local_external_source_restores_comp3_layer392_sibling_rotation() {
-    use sha2::{Digest, Sha256};
-    let bytes = std::fs::read(
-        std::env::var_os("AEP_SIBLING_ROTATION_SOURCE").expect("local licensed source path"),
-    )
-    .unwrap();
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&bytes)),
-        "28bbce1b8c9f9625105d632504a97c598394a4753d6b0d923fb19942e302bb5d"
-    );
-    let project = read_project(&bytes).unwrap();
-    let ItemKind::Composition(composition) = &project.item(3).unwrap().kind else {
-        panic!("composition 3")
-    };
-    let source = composition
-        .layers
-        .iter()
-        .find(|layer| layer.record.id() == 391)
-        .expect("native layer 391");
-    let owner = composition
-        .layers
-        .iter()
-        .find(|layer| layer.record.id() == 392)
-        .expect("native layer 392");
-    assert_eq!(source.name.as_ref(), "Angle_Box_01");
-    assert_eq!(owner.name.as_ref(), "Angle_Box_02");
-
-    let raw = rotation(source);
-    let mut lowered = rotation(owner);
-    assert!(lowered.expression_enabled);
-    lower(owner, composition, &mut lowered).unwrap().unwrap();
-    assert!(!lowered.expression_enabled);
-    assert!(!lowered.expression_present);
-    assert_eq!(raw.keyframes.len(), 3);
-    assert_eq!(lowered.keyframes.len(), 3);
-    for (((source_key, lowered_key), expected_time), (source_value, lowered_value)) in raw
-        .keyframes
-        .iter()
-        .zip(&lowered.keyframes)
-        .zip([3.5416666667, 4.0833333333, 4.4166666667])
-        .zip([(90.0, 180.0), (35.6, 125.6), (0.0, 90.0)])
-    {
-        assert!((source_key.time_secs - expected_time).abs() < 1e-9);
-        assert!((lowered_key.time_secs - expected_time).abs() < 1e-9);
-        assert!((source_key.values[0] - source_value).abs() < 1e-9);
-        assert!((lowered_key.values[0] - lowered_value).abs() < 1e-9);
-        assert_eq!(lowered_key.in_interpolation, source_key.in_interpolation);
-        assert_eq!(lowered_key.out_interpolation, source_key.out_interpolation);
-        assert_eq!(lowered_key.in_speed, source_key.in_speed);
-        assert_eq!(lowered_key.out_speed, source_key.out_speed);
-        assert_eq!(lowered_key.in_influence, source_key.in_influence);
-        assert_eq!(lowered_key.out_influence, source_key.out_influence);
-    }
 }

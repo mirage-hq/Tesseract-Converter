@@ -18,7 +18,73 @@ use std::{
 // below already removes when it locates the final sample.
 const END_SAMPLE_ROUNDING_TICKS: i64 = 3 * super::TICKS_PER_MILLISECOND / 2;
 
+// Compatibility precision, not a claim about Adobe's internal rounding:
+// tolerate one nanosecond of saved source-time residue without changing any
+// authored endpoints or speed. This is unrelated to frame/sample admission.
+const SOURCE_SPAN_PRECISION_TICKS: f64 = super::TICKS as f64 / 1_000_000_000.0;
+
+/// Whether a source span agrees with a constant forward or reverse speed.
+/// Premiere's placement and source endpoints share one tick domain, regardless
+/// of frame rate. Admit one nanosecond of source-time serialization residue,
+/// plus a conservative binary64 error bound; do not reconstruct the speed.
+pub(crate) fn source_span_matches(timeline_ticks: i64, source_ticks: i64, rate: f64) -> bool {
+    if timeline_ticks <= 0 || source_ticks <= 0 || !rate.is_finite() || rate == 0.0 {
+        return false;
+    }
+    let expected = timeline_ticks as f64 * rate.abs();
+    let actual = source_ticks as f64;
+    if !expected.is_finite() {
+        return false;
+    }
+    // Five rounded stages: timeline integer conversion, rate representation,
+    // product, source integer conversion and subtraction. With unit roundoff
+    // u = EPSILON / 2, their absolute errors sum to at most (6u + O(u²)) *
+    // max(expected, actual). 8 * EPSILON conservatively covers this, use of
+    // rounded magnitudes, and rounding of the bound/comparison itself. Since
+    // actual >= 1 tick, it also dominates subnormal rate/product absolute error.
+    // Multiply by the small factor first so a finite product cannot overflow
+    // while computing its allowance.
+    let arithmetic_error = (8.0 * f64::EPSILON) * expected.max(actual);
+    let tolerance = SOURCE_SPAN_PRECISION_TICKS + arithmetic_error;
+    let discrepancy = (actual - expected).abs();
+    tolerance.is_finite() && discrepancy.is_finite() && discrepancy <= tolerance
+}
+
+/// Bounds a forward linear tail at the played endpoint, without rounding its slope.
+/// An endpoint before the tail starts is bounded by the tail's first source value.
+/// Callers separately check chronology, coverage and all preceding source keys.
+pub(crate) fn linear_tail_within_media(
+    input: Range<i128>,
+    source: Range<i128>,
+    played_end: i128,
+    media_end: i128,
+) -> bool {
+    if input.start >= input.end
+        || source.start < 0
+        || source.start >= source.end
+        || source.start > media_end
+        || played_end > input.end
+    {
+        return false;
+    }
+    let bounded = || {
+        let elapsed = played_end.max(input.start).checked_sub(input.start)?;
+        let rise = source.end.checked_sub(source.start)?;
+        let span = input.end.checked_sub(input.start)?;
+        let available = media_end.checked_sub(source.start)?;
+        Some(elapsed.checked_mul(rise)? <= available.checked_mul(span)?)
+    };
+    bounded().unwrap_or(false)
+}
+
 impl PrSequence {
+    /// Saved placement/source grid, before any editable sampling approximation.
+    pub(crate) fn native_frame_rate(&self) -> FrameRate {
+        self.native_frame_ticks
+            .and_then(FrameRate::from_sequence_ticks)
+            .unwrap_or(self.frame_rate)
+    }
+
     pub(crate) fn validate_occurrence_count(count: usize) -> Result<()> {
         ensure_valid!(count > 0, "requires at least one media occurrence");
         Ok(())
@@ -45,6 +111,7 @@ impl PrSequence {
     /// Intervals up to the sequence end that no opaque media covers. Text
     /// graphics are transparent and an adjustment layer only alters the
     /// picture beneath it, so time either covers alone is still a gap.
+    #[cfg(test)]
     pub(crate) fn gaps(&self, media: &BTreeMap<MediaId, PrMedia>) -> Vec<Range<i64>> {
         let mut ranges: Vec<_> = self
             .video_occurrences()
@@ -83,6 +150,10 @@ impl PrSequence {
             "sequence {:?}: dimensions must be positive",
             self.name
         );
+        ensure_valid!(
+            self.native_frame_ticks.is_none_or(|ticks| ticks > 0),
+            "native sequence grid must be positive"
+        );
         for (index, track) in self.video_tracks.iter().enumerate() {
             for item in &track.items {
                 let checked = match item {
@@ -93,9 +164,14 @@ impl PrSequence {
                                 self.name, clip.media
                             ))
                         })?;
-                        clip.validate(self.frame_rate, facts)
+                        clip.validate_on_grid(
+                            self.frame_rate,
+                            self.native_frame_ticks
+                                .unwrap_or(self.frame_rate.ticks_per_frame()),
+                            facts,
+                        )
                     }
-                    PrVideoItem::Graphic(graphic) => graphic.validate(self.frame_rate),
+                    PrVideoItem::Graphic(graphic) => graphic.validate(self.native_frame_rate()),
                 };
                 checked.map_err(|error| {
                     crate::format::invalid(format!(
@@ -163,16 +239,6 @@ impl PrSequence {
             nearest_millisecond(self.end_ticks()),
             nearest_millisecond(occurrence_end)
         );
-        ensure_valid!(
-            self.end_ticks() % self.frame_rate.ticks_per_frame() == 0
-                || self
-                    .audio
-                    .iter()
-                    .any(|clip| clip.end_ticks == self.end_ticks()),
-            "sequence {:?}: timeline end must align to a {} sequence frame boundary",
-            self.name,
-            self.frame_rate
-        );
         Ok(())
     }
 }
@@ -181,6 +247,13 @@ impl PrAudioOccurrence {
     /// Checks one sound placement against its stream. Sound has no frame grid,
     /// so only the shared rounding allowance may pass the media end.
     pub(crate) fn validate(&self, stream: &PrAudioStream) -> Result<()> {
+        ensure_valid!(
+            self.source_channel
+                .as_ref()
+                .is_none_or(|selection| stream.channels == super::AudioChannels::Stereo
+                    && selection.channel() < 2),
+            "mono source-channel selection requires stereo media and channel 0 or 1"
+        );
         let intrinsic_ticks = stream.intrinsic_ticks;
         ensure_valid!(
             self.start_ticks >= 0
@@ -191,9 +264,25 @@ impl PrAudioOccurrence {
             "invalid timeline/source ranges"
         );
         ensure_valid!(
-            self.end_ticks - self.start_ticks == self.out_ticks - self.in_ticks,
-            "retiming is not supported"
+            self.playback_rate.is_finite() && self.playback_rate != 0.0,
+            "audio playback rate must be finite and nonzero"
         );
+        ensure_valid!(
+            self.playback_rate != 1.0
+                || self.end_ticks - self.start_ticks == self.out_ticks - self.in_ticks,
+            "unit audio source and timeline durations differ"
+        );
+        if self.playback_rate != 1.0 {
+            // Audio-only saved-clock consistency: allow one source millisecond
+            // or 1% of the nominal source span, whichever is larger. Donor
+            // clocks carry small non-sample-grid residuals; gross disagreements
+            // must not silently turn a saved rate into a different editable one.
+            let nominal = (self.end_ticks - self.start_ticks) as f64 * self.playback_rate.abs();
+            let residual = ((self.out_ticks - self.in_ticks) as f64 - nominal).abs();
+            let allowance = (super::TICKS_PER_MILLISECOND as f64).max(nominal * 0.01);
+            ensure_valid!(nominal.is_finite() && residual <= allowance,
+                "audio saved speed and source/timeline spans disagree beyond one source millisecond or 1% of the nominal span");
+        }
         ensure_valid!(
             i128::from(self.out_ticks)
                 <= i128::from(intrinsic_ticks) + i128::from(END_SAMPLE_ROUNDING_TICKS),
@@ -226,6 +315,18 @@ impl PrAudioOccurrence {
                 "clip Volume keys must be Linear or Hold, with strictly increasing source times"
             );
         }
+        let fade_ticks = [&self.fade_in, &self.fade_out]
+            .into_iter()
+            .flatten()
+            .try_fold(0_i64, |total, fade| {
+                (fade.duration_ticks > 0)
+                    .then(|| total.checked_add(fade.duration_ticks))
+                    .flatten()
+            });
+        ensure_valid!(
+            fade_ticks.is_some_and(|ticks| ticks <= self.end_ticks - self.start_ticks),
+            "audio fades must lie within the placement without overlapping"
+        );
         Ok(())
     }
 }
@@ -245,8 +346,11 @@ fn item_label(item: &PrVideoItem) -> &str {
 /// does, and FX drops a hidden matte source and shows the placement whole. A
 /// matte item with its own Crop, Linear Wipe, Opacity mask or Track Matte Key
 /// converts as more than one layer or another keyed clip, which neither
-/// direction pairs with a consumer. The reader and the model validation share
-/// this one rule.
+/// direction pairs with a consumer; a graphic's clip Opacity mask imports as
+/// a guide beside the graphic's group, which a stage group that takes the
+/// matte would leave behind. A nested source's existing Group carries its
+/// Motion and source-canvas guide together; its rendered picture is the matte,
+/// not its unclipped children. The reader and model validation share this rule.
 pub(crate) fn check_track_matte(
     tracks: &[PrVideoTrack],
     track_index: usize,
@@ -266,7 +370,23 @@ pub(crate) fn check_track_matte(
         ));
     }
     let overlaps = |other: &Range<i64>| other.start < range.end && range.start < other.end;
-    // Each matte candidate's range, Enable and whether it is masked itself.
+    if matte_track.items.iter().any(|item| matches!(item,
+        PrVideoItem::Graphic(graphic) if overlaps(&graphic.timeline_ticks()) && graphic.objects.iter().any(|object|
+            object.mask_source().is_some() || matches!(object, super::text::PrGraphicObject::Group(_))))) {
+        return Err("Track Matte Key using a graphic with Mask with Shape/Text or SubGroups is unverified".to_owned());
+    }
+    if let Some(loss) = matte_track.items.iter().find_map(|item| match item {
+        PrVideoItem::Graphic(graphic) if overlaps(&graphic.timeline_ticks()) => {
+            graphic.effect_loss.as_ref()
+        }
+        _ => None,
+    }) {
+        return Err(format!(
+            "Track Matte Key using a graphic with omitted Ramp ({}) is not converted: luma changes and graphic-host alpha coverage is unverified",
+            loss.ramp_component
+        ));
+    }
+    // Each matte candidate's range, Enable and independent coverage owners.
     let mut sources = matte_track
         .items
         .iter()
@@ -279,16 +399,20 @@ pub(crate) fn check_track_matte(
                     || clip.opacity_mask.is_some()
                     || clip.track_matte.is_some(),
             ),
-            PrVideoItem::Graphic(graphic) => (graphic.timeline_ticks(), graphic.enabled, false),
+            PrVideoItem::Graphic(graphic) => (
+                graphic.timeline_ticks(),
+                graphic.enabled,
+                graphic.opacity_mask.is_some(),
+            ),
         })
         .chain(matte_track.nests.iter().map(|nest| {
             (
                 nest.timeline_ticks(),
                 nest.enabled,
-                nest.track_matte.is_some(),
+                nest.track_matte.is_some() || nest.opacity_mask.is_some(),
             )
         }))
-        .filter(|(source_range, _, _)| overlaps(source_range));
+        .filter(|(source_range, ..)| overlaps(source_range));
     let (source_range, enabled, masked) = match (sources.next(), sources.next()) {
         (None, _) => {
             return Err(format!(
@@ -325,30 +449,55 @@ pub(crate) fn check_track_matte(
     Ok(())
 }
 
+impl PrStaticTransform {
+    /// Checks the static Motion values against Premiere's parameter bounds.
+    pub(crate) fn validate(&self) -> Result<()> {
+        ensure_valid!(
+            self.position
+                .iter()
+                .chain(&self.anchor_point)
+                .all(|value| value.is_finite())
+                && self
+                    .scale
+                    .iter()
+                    .all(|value| (0.0..=10_000.0).contains(value))
+                && (-32_768.0..=32_767.0).contains(&self.rotation),
+            "static Motion values are outside Premiere's supported range"
+        );
+        Ok(())
+    }
+}
+
 impl PrGraphic {
-    pub(crate) fn validate(&self, sequence_rate: FrameRate) -> Result<()> {
+    /// The measured static mask frame does not cover a graphic moved by clip Motion.
+    pub(crate) fn validate_clip_motion_mask(&self) -> Result<()> {
+        ensure_valid!(
+            self.clip_motion == PrStaticTransform::default() || self.opacity_mask.is_none(),
+            "a graphic with clip Motion and a clip Opacity mask is not converted: its mask frame is unmeasured"
+        );
+        Ok(())
+    }
+
+    // Cadence selects samples; it does not constrain a graphic's tick bounds.
+    pub(crate) fn validate(&self, _sequence_rate: FrameRate) -> Result<()> {
         ensure_valid!(
             self.start_ticks >= 0 && self.end_ticks > self.start_ticks,
             "invalid graphic timeline range"
         );
-        for (name, ticks) in [
-            ("timeline start", self.start_ticks),
-            ("timeline end", self.end_ticks),
-        ] {
-            ensure_valid!(
-                ticks % sequence_rate.ticks_per_frame() == 0,
-                "{name} must align to a {sequence_rate} sequence frame boundary"
-            );
-        }
         if let Some(motion) = &self.vector_motion {
             motion.validate()?;
         }
-        // The clip Opacity follows the video Opacity rules, and the clip's
-        // Motion keeps its default.
+        // The clip Motion and Opacity follow the video rules; the Motion has
+        // no keys.
+        self.clip_motion.validate()?;
+        self.validate_clip_motion_mask()?;
         ensure_valid!(
             self.opacity.is_finite() && (0.0..=100.0).contains(&self.opacity),
             "graphic clip opacity must be finite and between 0 and 100"
         );
+        if let Some(mask) = &self.opacity_mask {
+            mask.validate()?;
+        }
         for (index, animation) in self.animations.iter().enumerate() {
             let PrPropertyAnimation::Opacity(keys) = animation else {
                 return Err(crate::format::invalid(
@@ -383,16 +532,31 @@ impl PrVideoOccurrence {
     /// Checks one occurrence against its sequence frame rate and media facts.
     /// The media keeps its own frame rate.
     pub(crate) fn validate(&self, sequence_rate: FrameRate, facts: &PrMedia) -> Result<()> {
+        self.validate_on_grid(sequence_rate, sequence_rate.ticks_per_frame(), facts)
+    }
+
+    /// Validate saved clip boundaries on the native grid, independently of the
+    /// output sampling cadence used to import an approximated sequence.
+    pub(crate) fn validate_on_grid(
+        &self,
+        sequence_rate: FrameRate,
+        frame_ticks: i64,
+        facts: &PrMedia,
+    ) -> Result<()> {
+        ensure_valid!(frame_ticks > 0, "native sequence grid must be positive");
         let facts = facts
             .video
             .as_ref()
             .ok_or_else(|| crate::format::invalid("source has no video stream"))?;
+        let intrinsic_ticks = facts
+            .interpreted_duration()
+            .map_err(|error| crate::format::invalid(error.to_string()))?;
         ensure_valid!(
             self.start_ticks >= 0
                 && self.end_ticks > self.start_ticks
                 && self.in_ticks >= 0
                 && self.out_ticks > self.in_ticks
-                && self.in_ticks < facts.intrinsic_ticks,
+                && self.in_ticks < intrinsic_ticks,
             "invalid timeline/source ranges"
         );
         ensure_valid!(
@@ -400,38 +564,71 @@ impl PrVideoOccurrence {
             "playback rate must be finite and nonzero"
         );
         let active_duration = self.end_ticks - self.start_ticks;
+        let span_at_rate = source_span_matches(
+            active_duration,
+            self.out_ticks - self.in_ticks,
+            self.playback_rate,
+        );
         if let Some(remap) = &self.time_remap {
-            // An explicit FrameHold maps the whole placement to one source
-            // instant. Native variable-speed curves still require increasing
-            // source times and an untrimmed clip.
-            let frame_hold = matches!(remap.keys.as_slice(), [first, last]
-                if first.timeline_ticks == 0
-                    && last.timeline_ticks == active_duration
-                    && first.source_ticks == last.source_ticks
-                    && first.easing == super::PrKeyframeEasing::Linear
-                    && last.easing == super::PrKeyframeEasing::Linear);
+            // Key times are input ticks after In. An explicit FrameHold maps
+            // the whole unit-speed placement to one source instant. A native
+            // curve, with increasing source times, plays its input from In to
+            // Out at the forward speed (`after_source_in`); Premiere's clock
+            // from another In or speed is measured on physical video.
+            let frame_hold = remap.held_source_ticks(active_duration).is_some();
+            if frame_hold {
+                ensure_valid!(
+                    self.playback_rate == 1.0,
+                    "constant playback combined with TimeRemapping is unsupported"
+                );
+                ensure_valid!(
+                    self.out_ticks - self.in_ticks == active_duration,
+                    "trimmed TimeRemapping clips are not supported"
+                );
+            } else {
+                // Unit-speed remap input keeps exact placement length; other
+                // speeds use the shared source-span consistency precision.
+                let span_matches = if self.playback_rate == 1.0 {
+                    self.out_ticks - self.in_ticks == active_duration
+                } else {
+                    span_at_rate
+                };
+                ensure_valid!(
+                    self.playback_rate > 0.0 && span_matches,
+                    "TimeRemapping In to Out must match the clip's forward playback rate"
+                );
+                ensure_valid!(
+                    !self.remaps_from_in_or_speed()
+                        || matches!(facts.kind, super::PrMediaKind::Video { .. }),
+                    "TimeRemapping from a source In or at another speed is converted only on physical video"
+                );
+            }
             ensure_valid!(
-                self.playback_rate == 1.0,
-                "constant playback combined with TimeRemapping is unsupported"
+                matches!(remap.keys.as_slice(), [first, .., last]
+                    if first.timeline_ticks <= 0
+                        && last.timeline_ticks >= self.out_ticks - self.in_ticks),
+                "TimeRemapping keys do not cover the placement"
             );
-            ensure_valid!(
-                self.out_ticks - self.in_ticks == active_duration
-                    && (frame_hold || self.in_ticks == 0 && self.out_ticks == active_duration),
-                "trimmed TimeRemapping clips are not supported"
-            );
+            // Saved curves can keep an unused control key past the media end.
+            // Only a final linear tail is admitted, and only while its played
+            // part stays in bounds. Keep the key: it defines the tail's slope.
+            let bounded_tail = matches!(remap.keys.as_slice(), [.., previous, last]
+            if !frame_hold
+                && matches!(facts.kind, super::PrMediaKind::Video { .. })
+                && last.source_ticks > intrinsic_ticks
+                && last.easing == PrKeyframeEasing::Linear
+                && linear_tail_within_media(
+                    i128::from(previous.timeline_ticks)..i128::from(last.timeline_ticks),
+                    i128::from(previous.source_ticks)..i128::from(last.source_ticks),
+                    i128::from(self.out_ticks - self.in_ticks),
+                    i128::from(intrinsic_ticks),
+                ));
             ensure_valid!(
                 remap.keys.len() >= 2
-                    && remap
-                        .keys
-                        .first()
-                        .is_some_and(|key| key.timeline_ticks <= 0)
-                    && remap
-                        .keys
-                        .last()
-                        .is_some_and(|key| key.timeline_ticks >= active_duration)
-                    && remap.keys.iter().all(|key| {
-                        (0..=facts.intrinsic_ticks).contains(&key.source_ticks)
-                            && (!frame_hold || key.source_ticks < facts.intrinsic_ticks)
+                    && remap.keys.iter().enumerate().all(|(index, key)| {
+                        ((0..=intrinsic_ticks).contains(&key.source_ticks)
+                            || (bounded_tail && index == remap.keys.len() - 1))
+                            && (!frame_hold || key.source_ticks < intrinsic_ticks)
                     })
                     && remap.keys.windows(2).all(|pair| {
                         pair[0].timeline_ticks < pair[1].timeline_ticks
@@ -439,26 +636,52 @@ impl PrVideoOccurrence {
                     }),
                 "invalid or unsupported TimeRemapping curve"
             );
-        } else {
-            let source_duration = (self.out_ticks - self.in_ticks) as f64;
-            let expected_source_duration = active_duration as f64 * self.playback_rate.abs();
-            // Adobe truncates the floating-point product to integer ticks. The pinned
-            // 0.905x reverse fixture differs by two ticks after decimal reconstruction.
-            let source_span_matches = (source_duration - expected_source_duration).abs() <= 4.0;
+            // A last key at the media end, like the one that Premiere 26.5.1
+            // appends, ends a segment that is unmeasured from another In or
+            // speed: In to Out must end by the key before it.
+            let plays_media_end_segment = matches!(remap.keys.as_slice(), [.., penultimate, last]
+                if last.source_ticks == intrinsic_ticks
+                    && penultimate.timeline_ticks < self.out_ticks - self.in_ticks);
             ensure_valid!(
-                source_span_matches,
+                !(self.remaps_from_in_or_speed() && plays_media_end_segment),
+                "TimeRemapping from a source In or at another speed plays past the key before the curve's media-end key"
+            );
+        } else {
+            // A still has no media clock: Premiere 26.5.1 keeps a still's
+            // 5 s source span when its placement is lengthened, and shows the
+            // still over the whole placement (the Source Graphic save's grey
+            // backdrop, 10 s, grey on every sampled AME frame to 9.97 s). At
+            // unit forward rate its source clock then runs past the saved
+            // Out, which the media-end check below bounds.
+            let lengthened_still = facts.kind.is_still()
+                && self.playback_rate == 1.0
+                && self.out_ticks - self.in_ticks < active_duration;
+            // A normal-forward still also keeps its saved span when shortened
+            // (images/nests inner item123: 5 s source on a 2 s placement).
+            ensure_valid!(
+                span_at_rate || (facts.kind.is_still() && self.playback_rate == 1.0),
                 "source span does not match the constant playback rate"
             );
+            let source_end = if lengthened_still {
+                self.in_ticks.checked_add(active_duration)
+            } else {
+                Some(self.out_ticks)
+            };
             // Source-out is exclusive. A final partial frame can hold the
             // last source image; also admit the bounded ms-rounding error.
             ensure_valid!(
-                i128::from(self.out_ticks) - i128::from(sequence_rate.ticks_per_frame())
-                    <= i128::from(facts.intrinsic_ticks) + i128::from(END_SAMPLE_ROUNDING_TICKS),
+                source_end.is_some_and(|end| {
+                    i128::from(end) - i128::from(sequence_rate.ticks_per_frame())
+                        <= i128::from(intrinsic_ticks) + i128::from(END_SAMPLE_ROUNDING_TICKS)
+                }),
                 "source range requires a frame past the media end and rounding allowance"
             );
         }
         ensure_valid!(
-            self.time_remap.is_none() || self.animations.is_empty(),
+            self.time_remap.is_none()
+                || self.animations.is_empty()
+                || (self.has_media_clock_rotation()
+                    && matches!(facts.kind, super::PrMediaKind::Video { .. })),
             "Motion animation combined with TimeRemapping is unsupported"
         );
         Self::validate_edits(
@@ -474,8 +697,8 @@ impl PrVideoOccurrence {
             ("timeline end", self.end_ticks),
         ] {
             ensure_valid!(
-                ticks % sequence_rate.ticks_per_frame() == 0,
-                "{name} must align to a {sequence_rate} sequence frame boundary"
+                ticks % frame_ticks == 0,
+                "{name} must align to a frame boundary on the native {frame_ticks}-tick grid (editable sequence rate {sequence_rate})"
             );
         }
         Ok(())
@@ -495,19 +718,7 @@ impl PrVideoOccurrence {
             opacity.is_finite() && (0.0..=100.0).contains(&opacity),
             "opacity must be finite and between 0 and 100"
         );
-        ensure_valid!(
-            transform
-                .position
-                .iter()
-                .chain(&transform.anchor_point)
-                .all(|value| value.is_finite())
-                && transform
-                    .scale
-                    .iter()
-                    .all(|value| (0.0..=10_000.0).contains(value))
-                && (-32_768.0..=32_767.0).contains(&transform.rotation),
-            "static Motion values are outside Premiere's supported range"
-        );
+        transform.validate()?;
         crop.validate()?;
         let mut animated_properties = BTreeSet::new();
         for animation in animations {
@@ -533,11 +744,9 @@ impl PrVideoOccurrence {
                 "Linear Wipe angle or feather is unsupported"
             );
             ensure_valid!(
-                !wipe.completion.is_empty()
-                    && wipe
-                        .completion
-                        .iter()
-                        .all(|key| (0.0..=100.0).contains(&key.value))
+                wipe.completion
+                    .iter()
+                    .all(|key| (0.0..=100.0).contains(&key.value))
                     && wipe
                         .completion
                         .windows(2)

@@ -21,9 +21,11 @@ impl MotionParamSpec {
         self.record.tag == records::POINT_COMPONENT_PARAM.tag
     }
 
-    /// Motion Crop Left, Top, Right or Bottom, which only the Premiere 26.5 layout has.
-    pub(crate) fn is_crop(&self) -> bool {
-        matches!(self.id, 8..=11)
+    /// The edge that Motion Crop Left, Top, Right or Bottom crops, as an index
+    /// into `[left, top, right, bottom]` (the edge order of `PrStaticCrop`);
+    /// the modern layout uses them, older eleven-control saves keep them inert.
+    pub(crate) fn crop_edge(&self) -> Option<usize> {
+        self.id.checked_sub(8).filter(|edge| *edge < 4)
     }
 
     /// Whether `value` is finite and inside this parameter's native bounds.
@@ -243,7 +245,7 @@ pub(crate) const MOTION_PARAMS_26_5: [MotionParamSpec; 11] = [
 
 #[cfg(test)]
 mod tests {
-    use super::{MotionParamSpec, MOTION_PARAMS, MOTION_PARAMS_26_5, MOTION_PARAM_COUNT};
+    use super::{MOTION_PARAMS, MOTION_PARAMS_26_5, MOTION_PARAM_COUNT};
     use std::collections::BTreeSet;
 
     #[test]
@@ -286,9 +288,22 @@ mod tests {
                 )
             );
         }
+        let crop_edges: Vec<_> = MOTION_PARAMS_26_5
+            .iter()
+            .filter_map(|spec| Some((spec.crop_edge()?, spec.name)))
+            .collect();
+        assert_eq!(
+            crop_edges,
+            [
+                (0, "Crop Left"),
+                (1, "Crop Top"),
+                (2, "Crop Right"),
+                (3, "Crop Bottom")
+            ]
+        );
         for spec in &MOTION_PARAMS_26_5 {
-            assert_eq!(spec.is_crop(), spec.id > MOTION_PARAM_COUNT);
+            assert_eq!(spec.crop_edge().is_some(), spec.id > MOTION_PARAM_COUNT);
         }
-        assert!(!MOTION_PARAMS.iter().any(MotionParamSpec::is_crop));
+        assert!(MOTION_PARAMS.iter().all(|spec| spec.crop_edge().is_none()));
     }
 }

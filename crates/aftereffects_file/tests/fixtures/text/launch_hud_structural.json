@@ -1,0 +1,339 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "formatVersion": 1,
+  "dimensions": {
+    "width": 1920,
+    "height": 1080
+  },
+  "duration": 77.867,
+  "composition": {
+    "id": "main",
+    "layers": [
+      {
+        "type": "Group",
+        "id": 2400000,
+        "name": "SCENE S24 \u00b7 s24_fourier",
+        "blendMode": "normal",
+        "activeRange": {
+          "start": 60400,
+          "duration": 4000
+        },
+        "transform": {
+          "anchorPoint": [
+            0,
+            0
+          ],
+          "position": [
+            0,
+            0
+          ],
+          "scale": [
+            100,
+            100
+          ],
+          "rotation": 0,
+          "opacity": 100
+        },
+        "layers": [
+          {
+            "type": "Group",
+            "id": 2400078,
+            "name": "HUD",
+            "blendMode": "normal",
+            "activeRange": {
+              "start": 0,
+              "duration": 4000
+            },
+            "transform": {
+              "anchorPoint": [
+                0,
+                0
+              ],
+              "position": [
+                0,
+                0
+              ],
+              "scale": [
+                100,
+                100
+              ],
+              "rotation": 0,
+              "opacity": 100
+            },
+            "layers": [
+              {
+                "type": "Text",
+                "id": 2400081,
+                "name": "spec label \u00b7 1080P / 30 FPS",
+                "blendMode": "normal",
+                "activeRange": {
+                  "start": 0,
+                  "duration": 4000
+                },
+                "transform": {
+                  "anchorPoint": [
+                    0,
+                    0
+                  ],
+                  "position": [
+                    1516.5,
+                    61
+                  ],
+                  "scale": [
+                    100,
+                    100
+                  ],
+                  "rotation": 0,
+                  "opacity": 100
+                },
+                "sourceText": {
+                  "text": "1080P / 30 FPS",
+                  "fontFamily": "Menlo",
+                  "fontStyle": "Regular",
+                  "fontSize": 18,
+                  "fillColor": [
+                    0.7059,
+                    0.8745,
+                    0.8235,
+                    1
+                  ],
+                  "strokeWidth": 0,
+                  "justification": "right",
+                  "tracking": 0,
+                  "boxText": true,
+                  "boxPosition": [
+                    0,
+                    0
+                  ],
+                  "boxSize": [
+                    306.5,
+                    46.8
+                  ],
+                  "verticalAlign": "top"
+                }
+              },
+              {
+                "type": "Shape",
+                "id": 2400080,
+                "name": "crosshairs 22 px #CFF2E4",
+                "blendMode": "normal",
+                "activeRange": {
+                  "start": 0,
+                  "duration": 4000
+                },
+                "transform": {
+                  "anchorPoint": [
+                    0,
+                    0
+                  ],
+                  "position": [
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    100,
+                    100
+                  ],
+                  "rotation": 0,
+                  "opacity": 100
+                },
+                "shape": {
+                  "path": {
+                    "commands": [
+                      {
+                        "type": "moveTo",
+                        "x": 48.5,
+                        "y": 59.5
+                      },
+                      {
+                        "type": "lineTo",
+                        "x": 70.5,
+                        "y": 59.5
+                      },
+                      {
+                        "type": "moveTo",
+                        "x": 59.5,
+                        "y": 48.5
+                      },
+                      {
+                        "type": "lineTo",
+                        "x": 59.5,
+                        "y": 70.5
+                      },
+                      {
+                        "type": "moveTo",
+                        "x": 1848.5,
+                        "y": 59.5
+                      },
+                      {
+                        "type": "lineTo",
+                        "x": 1870.5,
+                        "y": 59.5
+                      },
+                      {
+                        "type": "moveTo",
+                        "x": 1859.5,
+                        "y": 48.5
+                      },
+                      {
+                        "type": "lineTo",
+                        "x": 1859.5,
+                        "y": 70.5
+                      },
+                      {
+                        "type": "moveTo",
+                        "x": 48.5,
+                        "y": 1019.5
+                      },
+                      {
+                        "type": "lineTo",
+                        "x": 70.5,
+                        "y": 1019.5
+                      },
+                      {
+                        "type": "moveTo",
+                        "x": 59.5,
+                        "y": 1008.5
+                      },
+                      {
+                        "type": "lineTo",
+                        "x": 59.5,
+                        "y": 1030.5
+                      },
+                      {
+                        "type": "moveTo",
+                        "x": 1848.5,
+                        "y": 1019.5
+                      },
+                      {
+                        "type": "lineTo",
+                        "x": 1870.5,
+                        "y": 1019.5
+                      },
+                      {
+                        "type": "moveTo",
+                        "x": 1859.5,
+                        "y": 1008.5
+                      },
+                      {
+                        "type": "lineTo",
+                        "x": 1859.5,
+                        "y": 1030.5
+                      }
+                    ]
+                  },
+                  "fills": [],
+                  "strokes": [
+                    {
+                      "paint": {
+                        "type": "solid",
+                        "color": [
+                          0.8118,
+                          0.949,
+                          0.8941,
+                          1
+                        ]
+                      },
+                      "width": 2,
+                      "cap": "butt",
+                      "join": "miter",
+                      "miterLimit": 4,
+                      "blendMode": "normal",
+                      "opacity": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "type": "Shape",
+                "id": 2400079,
+                "name": "HUD frame 2 px #414141 (inset 33)",
+                "blendMode": "normal",
+                "activeRange": {
+                  "start": 0,
+                  "duration": 4000
+                },
+                "transform": {
+                  "anchorPoint": [
+                    0,
+                    0
+                  ],
+                  "position": [
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    100,
+                    100
+                  ],
+                  "rotation": 0,
+                  "opacity": 100
+                },
+                "shape": {
+                  "path": {
+                    "commands": [
+                      {
+                        "type": "moveTo",
+                        "x": 34,
+                        "y": 34
+                      },
+                      {
+                        "type": "lineTo",
+                        "x": 1886,
+                        "y": 34
+                      },
+                      {
+                        "type": "lineTo",
+                        "x": 1886,
+                        "y": 1046
+                      },
+                      {
+                        "type": "lineTo",
+                        "x": 34,
+                        "y": 1046
+                      },
+                      {
+                        "type": "close"
+                      }
+                    ]
+                  },
+                  "fills": [],
+                  "strokes": [
+                    {
+                      "paint": {
+                        "type": "solid",
+                        "color": [
+                          0.2549,
+                          0.2549,
+                          0.2549,
+                          1
+                        ]
+                      },
+                      "width": 2,
+                      "cap": "butt",
+                      "join": "miter",
+                      "miterLimit": 4,
+                      "blendMode": "normal",
+                      "opacity": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "name": "Main",
+    "dynamics": {
+      "entries": []
+    },
+    "motionBlur": {
+      "enabled": true,
+      "shutterAngle": 180,
+      "shutterPhase": -90,
+      "samplesPerFrame": 16,
+      "adaptiveSampleLimit": 128
+    }
+  }
+}

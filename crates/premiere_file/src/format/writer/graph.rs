@@ -45,6 +45,7 @@ pub(super) struct SequenceGraphIds {
     pub(super) audio_placements: Vec<AudioPlacementIds>,
     /// Nested-sequence placements, per track like `placements`.
     pub(super) nests: Vec<Vec<NestIds>>,
+    pub(super) video_transitions: Vec<Vec<ObjectId<VideoTransitionTrackItem>>>,
 }
 
 /// One nested-sequence placement and the sequence it plays.
@@ -124,6 +125,8 @@ pub(super) struct ShellIds {
     pub(super) audio_settings: ObjectId<AudioSettings>,
     pub(super) video_compile_settings: ObjectId<VideoCompileSettings>,
     pub(super) audio_compile_settings: ObjectId<AudioCompileSettings>,
+    pub(super) compile_video_settings: ObjectId<VideoSettings>,
+    pub(super) compile_audio_settings: ObjectId<AudioSettings>,
     pub(super) dummy_capture_settings: ObjectId<DummyCaptureSettings>,
     pub(super) default_sequence_settings: ObjectId<DefaultSequenceSettings>,
 }
@@ -198,7 +201,7 @@ pub(super) struct MediaIds {
     pub(super) template_clip: ObjectId<VideoClipId>,
     pub(super) channels: ObjectId<ClipChannelGroupVectorSerializer>,
     pub(super) media: Uid<Media>,
-    pub(super) media_state: String,
+    pub(super) media_state: uuid::Uuid,
     pub(super) media_binary_hash: String,
     pub(super) media_file_key: String,
     pub(super) template_clip_uid: String,
@@ -226,6 +229,9 @@ pub(super) struct AudioPlacementIds {
     pub(super) secondary: Vec<ObjectId<SecondaryContent>>,
     /// Present unless the placement plays at a static unity level.
     pub(super) volume: Option<ClipVolumeIds>,
+    /// The one-sided transitions of the placement's fades.
+    pub(super) fade_in: Option<ObjectId<AudioTransitionTrackItem>>,
+    pub(super) fade_out: Option<ObjectId<AudioTransitionTrackItem>>,
 }
 
 /// Premiere's intrinsic clip Volume, and the Channel Volume of a stereo clip.
@@ -251,6 +257,7 @@ pub(super) struct PlacementIds {
     pub(super) subclip: ObjectId<SubClip>,
     pub(super) components: ObjectId<VideoComponentChainId>,
     pub(super) track_item: ObjectId<VideoClipTrackItemId>,
+    pub(super) ramp: Option<TimeRemapIds>,
     pub(super) motion: Option<MotionIds>,
     pub(super) opacity: Option<OpacityIds>,
     pub(super) crop: Option<CropIds>,
@@ -264,6 +271,7 @@ pub(super) struct PlacementIds {
 /// The edits of one media or nest placement that decide its components.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct PlacementEdits<'a> {
+    pub(super) ramp: bool,
     pub(super) transform: PrStaticTransform,
     pub(super) opacity: f64,
     pub(super) blend_mode: PrBlendMode,
@@ -282,6 +290,7 @@ pub(super) struct PlacementEdits<'a> {
 impl<'a> From<&'a PrVideoOccurrence> for PlacementEdits<'a> {
     fn from(clip: &'a PrVideoOccurrence) -> Self {
         Self {
+            ramp: clip.time_remap.is_some() && clip.held_source_ticks().is_none(),
             transform: clip.transform,
             opacity: clip.opacity,
             blend_mode: clip.blend_mode,
@@ -299,16 +308,17 @@ impl<'a> From<&'a PrVideoOccurrence> for PlacementEdits<'a> {
 impl<'a> From<&'a PrNestOccurrence> for PlacementEdits<'a> {
     fn from(nest: &'a PrNestOccurrence) -> Self {
         Self {
+            ramp: false,
             transform: nest.transform,
             opacity: nest.opacity,
             blend_mode: nest.blend_mode,
             animations: &nest.animations,
             crop: nest.crop,
             linear_wipe: nest.linear_wipe.as_ref(),
-            opacity_mask: None,
+            opacity_mask: nest.opacity_mask.as_ref(),
             track_matte: nest.track_matte,
             effects: &nest.effects,
-            effects_above_mask: 0,
+            effects_above_mask: nest.effects_above_mask,
         }
     }
 }
@@ -346,6 +356,7 @@ pub(super) struct GraphicIds {
     pub(super) components: ObjectId<VideoComponentChainId>,
     /// One entry per object, in chain order.
     pub(super) objects: Vec<GraphicObjectIds>,
+    pub(super) group_map: Option<GroupMapIds>,
     pub(super) vector_motion: Option<VectorMotionIds>,
     pub(super) opacity: Option<OpacityIds>,
     pub(super) track_item: ObjectId<VideoClipTrackItemId>,
@@ -358,6 +369,24 @@ pub(super) struct GraphicIds {
 pub(super) enum GraphicObjectIds {
     Text(TextIds),
     Shape(ShapeIds),
+    Group(GroupIds),
+}
+
+/// A SubGroup's component, its parameters in the Vector Motion layout, and
+/// its members.
+#[derive(Debug)]
+pub(super) struct GroupIds {
+    pub(super) component: ObjectId<VideoFilterComponent>,
+    pub(super) params: [ObjectId<MotionParamId>; VECTOR_MOTION_PARAM_COUNT],
+    pub(super) objects: Vec<GraphicObjectIds>,
+}
+
+/// A chain's `ComponentGroupMap` and its pins, one per SubGroup member in
+/// chain order.
+#[derive(Debug)]
+pub(super) struct GroupMapIds {
+    pub(super) vector: ObjectId<ComponentPinVectorSerializer>,
+    pub(super) pins: Vec<ObjectId<ComponentPinSerializer>>,
 }
 
 #[derive(Debug)]
@@ -376,6 +405,7 @@ pub(super) struct ShapeIds {
     pub(super) params: [ObjectId<MotionParamId>; SHAPE_PARAM_COUNT],
     pub(super) path_hash: String,
     pub(super) appearance_hash: String,
+    pub(super) mask: Option<MaskIds>,
 }
 
 impl GraphicObjectIds {
@@ -383,8 +413,57 @@ impl GraphicObjectIds {
         match self {
             Self::Text(ids) => ids.component,
             Self::Shape(ids) => ids.component,
+            Self::Group(ids) => ids.component,
         }
     }
+
+    /// Every identity of `objects`, in chain order: a SubGroup, then its
+    /// members.
+    fn allocate(ids: &mut ObjectIdAllocator, objects: &[PrGraphicObject]) -> Vec<Self> {
+        objects
+            .iter()
+            .map(|object| match object {
+                PrGraphicObject::Text(_) | PrGraphicObject::TextLines(_) => Self::Text(TextIds {
+                    component: ids.take(),
+                    source_text: ids.take(),
+                    params: std::array::from_fn(|_| ids.take()),
+                    source_text_hash: uuid(),
+                }),
+                PrGraphicObject::Shape(shape) => Self::Shape(ShapeIds {
+                    component: ids.take(),
+                    path: ids.take(),
+                    appearance: ids.take(),
+                    params: std::array::from_fn(|_| ids.take()),
+                    path_hash: uuid(),
+                    appearance_hash: uuid(),
+                    mask: shape.mask.as_ref().map(|_| MaskIds {
+                        component: ids.take(),
+                        params: std::array::from_fn(|_| ids.take()),
+                        path_hash: uuid(),
+                        private_data_hash: uuid(),
+                    }),
+                }),
+                PrGraphicObject::Group(group) => Self::Group(GroupIds {
+                    component: ids.take(),
+                    params: std::array::from_fn(|_| ids.take()),
+                    objects: Self::allocate(ids, &group.objects),
+                }),
+            })
+            .collect()
+    }
+}
+
+/// The number of SubGroup members among `objects`, at every depth.
+fn group_members(objects: &[PrGraphicObject]) -> usize {
+    objects
+        .iter()
+        .map(|object| match object {
+            PrGraphicObject::Group(group) => group.objects.len() + group_members(&group.objects),
+            PrGraphicObject::Text(_)
+            | PrGraphicObject::TextLines(_)
+            | PrGraphicObject::Shape(_) => 0,
+        })
+        .sum()
 }
 
 /// A keyed graphic's Vector Motion component and its parameters.
@@ -392,6 +471,12 @@ impl GraphicObjectIds {
 pub(super) struct VectorMotionIds {
     pub(super) component: ObjectId<VideoFilterComponent>,
     pub(super) params: [ObjectId<MotionParamId>; VECTOR_MOTION_PARAM_COUNT],
+}
+
+#[derive(Debug)]
+pub(super) struct TimeRemapIds {
+    pub(super) mapping: ObjectId<TimeRemapping>,
+    pub(super) parameter: ObjectId<TimeParamId>,
 }
 
 #[derive(Debug)]
@@ -445,6 +530,7 @@ pub(super) struct EffectIds {
     pub(super) component: ObjectId<VideoFilterComponent>,
     /// Parameter records in the effect's native `Params` order.
     pub(super) params: Vec<ObjectId<MotionParamId>>,
+    pub(super) mask: Option<MaskIds>,
 }
 
 struct ObjectIdAllocator {
@@ -479,31 +565,13 @@ impl ProjectIds {
         let scratch_disk_settings = ids.take();
         let ingest_settings = ids.take();
         let workspace_settings = ids.take();
-        // This order must keep producing IDs 12-15: the reader admits exactly
-        // those dangling references (graph::REGENERATED_PROJECT_DEFAULTS).
+        // Preserve the existing project settings and placement numbering.
         let video_settings = ids.take();
         let audio_settings = ids.take();
         let video_compile_settings = ids.take();
         let audio_compile_settings = ids.take();
         let dummy_capture_settings = ids.take();
         let default_sequence_settings = ids.take();
-        let shell = ShellIds {
-            project,
-            document: Uid::random(),
-            project_guid: uuid(),
-            view_state: uuid(),
-            project_settings,
-            scratch_disk_settings,
-            ingest_settings,
-            workspace_settings,
-            video_settings,
-            audio_settings,
-            video_compile_settings,
-            audio_compile_settings,
-            dummy_capture_settings,
-            default_sequence_settings,
-        };
-
         let sequence_ids =
             SequenceIds::allocate(&mut ids, sequence.video_tracks.len(), audio_track_count);
         let mixer = MixerIds::allocate(&mut ids, audio_track_count);
@@ -571,6 +639,26 @@ impl ProjectIds {
             .collect();
         debug_assert!(flat_placements.next().is_none());
         let nests = NestIds::allocate(&mut ids, sequence, &layouts);
+        // Compile settings own separate empty settings records in native saves.
+        // Allocate them last so existing sequence/media/placement IDs stay fixed.
+        let shell = ShellIds {
+            project,
+            document: Uid::random(),
+            project_guid: uuid(),
+            view_state: uuid(),
+            project_settings,
+            scratch_disk_settings,
+            ingest_settings,
+            workspace_settings,
+            video_settings,
+            audio_settings,
+            video_compile_settings,
+            audio_compile_settings,
+            compile_video_settings: ids.take(),
+            compile_audio_settings: ids.take(),
+            dummy_capture_settings,
+            default_sequence_settings,
+        };
 
         Self {
             shell,
@@ -580,6 +668,11 @@ impl ProjectIds {
                 placements,
                 audio_placements,
                 nests,
+                video_transitions: sequence
+                    .video_tracks
+                    .iter()
+                    .map(|track| track.transitions.iter().map(|_| ids.take()).collect())
+                    .collect(),
             },
             media,
         }
@@ -677,7 +770,7 @@ impl MediaIds {
             template_clip: ids.take(),
             channels: ids.take(),
             media: Uid::random(),
-            media_state: uuid(),
+            media_state: uuid::Uuid::new_v4(),
             media_binary_hash: uuid(),
             media_file_key: uuid(),
             template_clip_uid: uuid(),
@@ -694,6 +787,10 @@ impl PlacementIds {
             subclip: ids.take(),
             components: ids.take(),
             track_item: ids.take(),
+            ramp: edits.ramp.then(|| TimeRemapIds {
+                mapping: ids.take(),
+                parameter: ids.take(),
+            }),
             opacity: (edits.opacity != 100.0
                 || edits.blend_mode != PrBlendMode::Normal
                 || edits.opacity_mask.is_some()
@@ -738,6 +835,12 @@ impl PlacementIds {
                 .map(|effect| EffectIds {
                     component: ids.take(),
                     params: effect.spec().params.iter().map(|_| ids.take()).collect(),
+                    mask: effect.mask.as_ref().map(|_| MaskIds {
+                        component: ids.take(),
+                        params: std::array::from_fn(|_| ids.take()),
+                        path_hash: uuid(),
+                        private_data_hash: uuid(),
+                    }),
                 })
                 .collect(),
             clip_uid: uuid(),
@@ -783,6 +886,11 @@ impl SequenceGraphIds {
             placements,
             audio_placements,
             nests: NestIds::allocate(ids, sequence, layouts),
+            video_transitions: sequence
+                .video_tracks
+                .iter()
+                .map(|track| track.transitions.iter().map(|_| ids.take()).collect())
+                .collect(),
         }
     }
 
@@ -838,41 +946,33 @@ impl GraphicIds {
             placed_clip: ids.take(),
             subclip: ids.take(),
             components: ids.take(),
-            objects: graphic
-                .objects
-                .iter()
-                .map(|object| match object {
-                    PrGraphicObject::Text(_) | PrGraphicObject::TextLines(_) => {
-                        GraphicObjectIds::Text(TextIds {
-                            component: ids.take(),
-                            source_text: ids.take(),
-                            params: std::array::from_fn(|_| ids.take()),
-                            source_text_hash: uuid(),
-                        })
-                    }
-                    PrGraphicObject::Shape(_) => GraphicObjectIds::Shape(ShapeIds {
-                        component: ids.take(),
-                        path: ids.take(),
-                        appearance: ids.take(),
-                        params: std::array::from_fn(|_| ids.take()),
-                        path_hash: uuid(),
-                        appearance_hash: uuid(),
-                    }),
-                })
-                .collect(),
+            objects: GraphicObjectIds::allocate(ids, &graphic.objects),
+            group_map: match group_members(&graphic.objects) {
+                0 => None,
+                members => Some(GroupMapIds {
+                    vector: ids.take(),
+                    pins: (0..members).map(|_| ids.take()).collect(),
+                }),
+            },
             vector_motion: graphic.vector_motion.as_ref().map(|_| VectorMotionIds {
                 component: ids.take(),
                 params: std::array::from_fn(|_| ids.take()),
             }),
-            // As for a media placement: only a nondefault clip Opacity has
-            // its own component.
+            // As for a media placement: only a nondefault or masked clip
+            // Opacity has its own component.
             opacity: (graphic.opacity != 100.0
                 || graphic.blend_mode != PrBlendMode::Normal
-                || !graphic.animations.is_empty())
+                || !graphic.animations.is_empty()
+                || graphic.opacity_mask.is_some())
             .then(|| OpacityIds {
                 component: ids.take(),
                 params: std::array::from_fn(|_| ids.take()),
-                mask: None,
+                mask: graphic.opacity_mask.as_ref().map(|_| MaskIds {
+                    component: ids.take(),
+                    params: std::array::from_fn(|_| ids.take()),
+                    path_hash: uuid(),
+                    private_data_hash: uuid(),
+                }),
             }),
             track_item: ids.take(),
             template_clip_uid: uuid(),
@@ -882,6 +982,11 @@ impl GraphicIds {
 }
 
 impl AudioPlacementIds {
+    /// The placement's transitions, as its track lists them.
+    pub(super) fn transitions(&self) -> Vec<ObjectId<AudioTransitionTrackItem>> {
+        self.fade_in.into_iter().chain(self.fade_out).collect()
+    }
+
     /// The identities of one sound placement whose source has `channels`.
     fn allocate(
         ids: &mut ObjectIdAllocator,
@@ -908,6 +1013,8 @@ impl AudioPlacementIds {
                         .collect(),
                 }),
             }),
+            fade_in: clip.fade_in.as_ref().map(|_| ids.take()),
+            fade_out: clip.fade_out.as_ref().map(|_| ids.take()),
         }
     }
 }
@@ -955,6 +1062,7 @@ pub(super) fn build(
         )?);
     }
     records.extend(nested::records(spec, &ids.main, bound_media, &media_ids)?);
+    super::tracks::transitions::attach(spec, &ids.main, &mut records)?;
     Ok(PremiereData {
         version: "3",
         root: ids.shell.project.into(),

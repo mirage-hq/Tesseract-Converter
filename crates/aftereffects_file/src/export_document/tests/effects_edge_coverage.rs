@@ -1053,3 +1053,299 @@ fn nested_precomposition_effects_stay_on_each_level_and_do_not_leak_to_root_sibl
             && diagnostic.message.contains("may clip effect expansion")
     }));
 }
+
+#[test]
+fn temperature_tint_export_preserves_independent_scalar_keys_and_bypass() {
+    let lowered = super::super::effects::lower(
+        &[record(
+            7,
+            false,
+            json!({"type":"temperatureTint","temperature":40.0,"tint":-25.0}),
+        )],
+        &[
+            linear_entry(7, "temperature", 40.0, -40.0),
+            linear_entry(7, "tint", -25.0, 25.0),
+        ],
+        [320.0, 180.0],
+    );
+    assert_eq!(lowered.effects.len(), 2);
+    assert!(
+        !lowered
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("omitted")),
+        "{:?}",
+        lowered.warnings
+    );
+    for (effect, rows) in lowered.effects.iter().zip([
+        vec![
+            ("ADBE Exposure2-0009", 0.048),
+            ("ADBE Exposure2-0019", -0.048),
+        ],
+        vec![
+            ("ADBE Exposure2-0009", 0.015),
+            ("ADBE Exposure2-0014", -0.03),
+            ("ADBE Exposure2-0019", 0.015),
+        ],
+    ]) {
+        assert!(!effect.enabled);
+        assert_eq!(native_property(effect, "ADBE Exposure2-0001").values, [2.0]);
+        for (name, expected) in rows {
+            let property = native_property(effect, name);
+            assert!((property.values[0] - expected).abs() < 1e-12);
+            let keys = &property.animation.as_ref().unwrap().keys;
+            assert_eq!(keys.len(), 2);
+            assert!((keys[0].values[0] - expected).abs() < 1e-12);
+            assert!((keys[1].values[0] + expected).abs() < 1e-12);
+        }
+    }
+}
+
+#[test]
+fn animated_saturation_uses_real_scalar_control_with_order_and_bypass() {
+    let effect = json!({"type":"hueSaturation","lightness":0.0,"colorize":false,"colorizeHue":0.0,"colorizeSaturation":0.0,"colorizeLightness":0.0,"hue":0.0,"saturation":45.0});
+    let lowered = super::super::effects::lower(
+        &[
+            record(1, true, json!({"type":"exposure","exposure":1.0})),
+            record(7, false, effect),
+            record(
+                8,
+                true,
+                json!({"type":"brightnessContrast","brightness":0.0,"contrast":25.0}),
+            ),
+        ],
+        &[linear_entry(7, "saturation", 45.0, -65.0)],
+        [320.0, 180.0],
+    );
+    assert_eq!(
+        lowered
+            .effects
+            .iter()
+            .map(|e| e.match_name.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "ADBE Exposure2",
+            "ADBE Vibrance",
+            "ADBE Brightness & Contrast 2"
+        ]
+    );
+    let native = &lowered.effects[1];
+    assert!(!native.enabled);
+    assert_eq!(native_property(native, "ADBE Vibrance-0001").values, [0.0]);
+    let saturation = native_property(native, "ADBE Vibrance-0002");
+    assert_eq!(saturation.values, [45.0]);
+    let keys = &saturation.animation.as_ref().unwrap().keys;
+    assert_eq!(keys[0].values, [45.0]);
+    assert_eq!(keys[1].values, [-65.0]);
+    assert!(
+        lowered
+            .warnings
+            .iter()
+            .any(|w| w.contains("Animated saturation-only"))
+    );
+}
+
+#[test]
+fn animated_saturation_does_not_change_static_or_unrelated_hue_controls() {
+    for (effect, tracks) in [
+        (
+            json!({"type":"hueSaturation","lightness":0.0,"colorize":false,"colorizeHue":0.0,"colorizeSaturation":0.0,"colorizeLightness":0.0,"hue":0.0,"saturation":30.0}),
+            vec![],
+        ),
+        (
+            json!({"type":"hueSaturation","lightness":0.0,"colorize":false,"colorizeHue":0.0,"colorizeSaturation":0.0,"colorizeLightness":0.0,"hue":10.0,"saturation":30.0}),
+            vec![linear_entry(7, "saturation", 30.0, -40.0)],
+        ),
+        (
+            json!({"type":"hueSaturation","lightness":0.0,"colorize":false,"colorizeHue":0.0,"colorizeSaturation":0.0,"colorizeLightness":0.0,"hue":0.0,"saturation":30.0}),
+            vec![
+                linear_entry(7, "saturation", 30.0, -40.0),
+                linear_entry(7, "hue", 0.0, 10.0),
+            ],
+        ),
+        (
+            json!({"type":"hueSaturation","lightness":0.0,"colorize":false,"colorizeHue":0.0,"colorizeSaturation":0.0,"colorizeLightness":0.0,"hue":0.0,"saturation":30.0}),
+            vec![linear_entry(7, "saturation", 30.0, -140.0)],
+        ),
+        (
+            json!({"type":"hueSaturation","lightness":0.0,"colorize":false,"colorizeHue":0.0,"colorizeSaturation":0.0,"colorizeLightness":0.0,"hue":0.0,"saturation":30.0}),
+            vec![
+                linear_entry(7, "saturation", 30.0, -40.0),
+                linear_entry(7, "saturation", 30.0, -50.0),
+            ],
+        ),
+    ] {
+        let lowered =
+            super::super::effects::lower(&[record(7, true, effect)], &tracks, [320.0, 180.0]);
+        assert_eq!(lowered.effects[0].match_name, "ADBE HUE SATURATION");
+        if !tracks.is_empty() {
+            assert!(
+                lowered
+                    .warnings
+                    .iter()
+                    .any(|w| w.contains("omitted") || w.contains("duplicate")),
+                "{:?}",
+                lowered.warnings
+            );
+        }
+    }
+}
+
+#[test]
+fn animated_saturation_serializes_current_float_keys_and_interpolation() {
+    for (segment, easing) in [
+        ("linear", json!({"type":"linear"})),
+        ("hold", json!({"type":"hold"})),
+        (
+            "cubic",
+            json!({"type":"cubicBezier","x1":0.25,"y1":0.1,"x2":0.75,"y2":0.9}),
+        ),
+    ] {
+        let mut input: Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/effects_coverage/template.fx.json"
+        ))
+        .unwrap();
+        let name = format!("animated-saturation-{segment}");
+        input["composition"]["name"] = json!(name);
+        input["composition"]["layers"][0]["effects"] = json!([{"id":7,"enabled":false,"effect":{
+            "type":"hueSaturation","hue":0.0,"saturation":45.25,"lightness":0.0,"colorize":false,
+            "colorizeHue":0.0,"colorizeSaturation":0.0,"colorizeLightness":0.0
+        }}]);
+        let mut entry = serde_json::to_value(linear_entry(7, "saturation", 45.25, -65.75)).unwrap();
+        entry["animator"]["keyframes"][0]["layerTime"] = json!(500);
+        entry["animator"]["keyframes"][1]["layerTime"] = json!(1750);
+        entry["animator"]["keyframes"][1]["easing"] = easing;
+        input["composition"]["dynamics"]["entries"] = json!([entry]);
+        let expected = json!({"effect":"ADBE Vibrance","enabled":false,"controls":[
+            {"name":"ADBE Vibrance-0001","value":[0.0]},
+            {"name":"ADBE Vibrance-0002","keys":[[0.5,45.25],[1.75,-65.75]],"segments":[segment]}
+        ]});
+        super::effects_native_panel::check_case(&name, &input.to_string(), &expected.to_string());
+    }
+}
+
+fn saturation_owner_input(easing: Value, end_millis: i64) -> Value {
+    let mut input: Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/effects_coverage/template.fx.json"
+    ))
+    .unwrap();
+    input["composition"]["layers"][0]["effects"] = json!([
+        {"id":1,"enabled":true,"effect":{"type":"exposure","exposure":1.0}},
+        {"id":7,"enabled":false,"effect":{"type":"hueSaturation","hue":0.0,
+            "saturation":45.25,"lightness":0.0,"colorize":false,"colorizeHue":0.0,
+            "colorizeSaturation":0.0,"colorizeLightness":0.0}},
+        {"id":8,"enabled":true,"effect":{"type":"brightnessContrast","brightness":0.0,"contrast":25.0}}
+    ]);
+    let mut entry = serde_json::to_value(linear_entry(7, "saturation", 45.25, -65.75)).unwrap();
+    entry["animator"]["keyframes"][0]["layerTime"] = json!(500);
+    entry["animator"]["keyframes"][1]["layerTime"] = json!(end_millis);
+    entry["animator"]["keyframes"][1]["easing"] = easing;
+    input["composition"]["dynamics"]["entries"] = json!([entry]);
+    input
+}
+
+fn assert_saturation_owner(output: &ExportedDocument, animated: bool, reason: Option<&str>) {
+    let native = read_project(&output.bytes).unwrap();
+    assert_eq!(layers(&native).len(), 1, "{:?}", output.diagnostics);
+    let (effects, _) =
+        crate::effects::native::read_effects(&layers(&native)[0].content, [320.0, 180.0]);
+    assert_eq!(
+        effects
+            .iter()
+            .map(|effect| effect.match_name.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "ADBE Exposure2",
+            "ADBE Vibrance",
+            "ADBE Brightness & Contrast 2"
+        ]
+    );
+    assert!(!effects[1].enabled);
+    let saturation = effects[1]
+        .parameters
+        .iter()
+        .find(|p| p.match_name == "ADBE Vibrance-0002")
+        .unwrap()
+        .numeric
+        .as_ref()
+        .unwrap();
+    assert_eq!(saturation.animated, animated);
+    if animated {
+        assert_eq!(saturation.keyframes.len(), 2);
+        assert_eq!(saturation.keyframes[0].values, [45.25]);
+        assert_eq!(saturation.keyframes[1].values, [-65.75]);
+        assert_eq!(saturation.keyframes[0].time_secs, 0.5);
+        assert_eq!(saturation.keyframes[1].time_secs, 10_000.0);
+    } else {
+        assert_eq!(saturation.values, [45.25]);
+    }
+    for (effect, name, value) in [
+        (&effects[0], "ADBE Exposure2-0003", 1.0),
+        (&effects[2], "ADBE Brightness & Contrast 2-0002", 25.0),
+    ] {
+        assert!(effect.enabled);
+        let numeric = effect
+            .parameters
+            .iter()
+            .find(|p| p.match_name == name)
+            .unwrap()
+            .numeric
+            .as_ref()
+            .unwrap();
+        assert_eq!(numeric.values, [value]);
+        assert!(!numeric.animated);
+    }
+    if let Some(reason) = reason {
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("saturation")
+                    && d.message.contains(reason)
+                    && d.message.contains("animation omitted")),
+            "{:?}",
+            output.diagnostics
+        );
+    } else {
+        assert!(
+            !output
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("animation omitted")),
+            "{:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn animated_saturation_unrepresentable_ease_retains_picture_and_siblings() {
+    for (x1, reason) in [
+        (0.0, "temporal ease"),
+        (1e-310, "non-finite native numeric keyframe speed"),
+    ] {
+        let input = saturation_owner_input(
+            json!({"type":"cubicBezier","x1":x1,"y1":0.1,"x2":0.75,"y2":0.9}),
+            1750,
+        );
+        let document = EditableFxCompositionDocument::from_json_value(input).unwrap();
+        for fps in [24.0, 60.0] {
+            let output = to_aep_with_fps(&document, fps).unwrap();
+            assert_saturation_owner(&output, false, Some(reason));
+        }
+    }
+}
+
+#[test]
+fn animated_saturation_validates_the_actual_owner_clock() {
+    // The same legal FX keys fit the native i32 clock at24fps, but not240fps.
+    let document = EditableFxCompositionDocument::from_json_value(saturation_owner_input(
+        json!({"type":"linear"}),
+        10_000_000,
+    ))
+    .unwrap();
+    let supported = to_aep_with_fps(&document, 24.0).unwrap();
+    assert_saturation_owner(&supported, true, None);
+    let unsupported = to_aep_with_fps(&document, 240.0).unwrap();
+    assert_saturation_owner(&unsupported, false, Some("native keyframe time"));
+}

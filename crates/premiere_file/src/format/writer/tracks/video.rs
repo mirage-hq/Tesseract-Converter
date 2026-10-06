@@ -3,6 +3,7 @@ use crate::format::{
     writer::{
         graph::{MediaIds, PlacementEdits, PlacementIds, SequenceGraphIds},
         media::media_clip,
+        time_remap,
     },
     Result,
 };
@@ -52,19 +53,25 @@ pub(in crate::format::writer) fn track_records(
             placements,
             &ids.nests[index],
         ));
+        let mut clip_track = clip_track(MediaKind::Video, video_track_id(index), index, placements);
+        if !ids.video_transitions[index].is_empty() {
+            clip_track
+                .transition_items
+                .as_mut()
+                .expect("video tracks have transition containers")
+                .track_items = Some(TrackItems::from_indexed(IndexedRef::list(
+                ids.video_transitions[index].iter().copied(),
+            )));
+        }
         records_out.push(Record::VideoClipTrack(VideoClipTrack {
             object_uid: Some(uid.as_native_string()),
             class_id: Some(records::VIDEO_CLIP_TRACK.class_id.to_owned()),
             version: Some(records::VIDEO_CLIP_TRACK.version.to_owned()),
-            clip_track: Some(clip_track(
-                MediaKind::Video,
-                video_track_id(index),
-                index,
-                placements,
-            )),
+            clip_track: Some(clip_track),
         }));
     }
     records_out.push(Record::VideoComponentChain(VideoComponentChain {
+        component_group_map: None,
         object_id: Some(ids.sequence.video_component_chain.as_native_string()),
         class_id: Some(records::VIDEO_COMPONENT_CHAIN.class_id.into()),
         version: Some(records::VIDEO_COMPONENT_CHAIN.version.into()),
@@ -90,17 +97,17 @@ pub(in crate::format::writer) fn placement_records(
 ) -> Result<Vec<Record>> {
     let tone_map =
         serde_json::to_string(&ToneMapSettings::DEFAULT).expect("native tone-map fields serialize");
+    let mut clip = media_clip(media, Some(spec), ids, placement.clip_uid.clone());
+    clip.time_remapping = placement
+        .ramp
+        .as_ref()
+        .map(|ids| Reference::object(ids.mapping));
     let mut output = vec![
         Record::VideoClip(VideoClip {
             object_id: Some(placement.placed_clip.as_native_string()),
             class_id: Some(records::VIDEO_CLIP.class_id.into()),
             version: Some(records::VIDEO_CLIP.version.into()),
-            clip: Some(media_clip(
-                media,
-                Some(spec),
-                ids,
-                placement.clip_uid.clone(),
-            )),
+            clip: Some(clip),
             adjustment_layer: media.is_adjustment().then(|| "true".to_owned()),
             time_interpolation_type: spec.frame_blending.map(|mode| match mode {
                 fx_schema::FrameBlendingMode::Simple => "1".to_owned(),
@@ -114,8 +121,10 @@ pub(in crate::format::writer) fn placement_records(
             deinterlace_on_hold: None,
             reverse_field_dominance: None,
             scale_to_frame_size: None,
-            frame_hold: None,
-            frame_hold_start: None,
+            frame_hold: spec
+                .held_source_ticks()
+                .map(|_| VideoClip::EXPLICIT_FRAME_HOLD.to_owned()),
+            frame_hold_start: spec.held_source_ticks().map(|source| source.to_string()),
         }),
         Record::SubClip(SubClip {
             object_id: placement.subclip,
@@ -155,6 +164,9 @@ pub(in crate::format::writer) fn placement_records(
             frame_rect: Some(format!("0,0,{},{}", project.width, project.height)),
         }),
     ];
+    if let Some(ids) = &placement.ramp {
+        output.extend(time_remap::records(spec, media, ids)?);
+    }
     output.extend(component_records(spec.into(), placement)?);
     Ok(output)
 }
@@ -178,6 +190,7 @@ pub(super) fn component_chain(edits: PlacementEdits<'_>, placement: &PlacementId
         .collect::<Vec<_>>();
     let component_ids = chain_render_order(applied).collect::<Vec<_>>();
     Record::VideoComponentChain(VideoComponentChain {
+        component_group_map: None,
         object_id: Some(placement.components.as_native_string()),
         class_id: Some(records::VIDEO_COMPONENT_CHAIN.class_id.into()),
         version: Some(records::VIDEO_COMPONENT_CHAIN.version.into()),

@@ -13,13 +13,12 @@ use tesseract_file::TesseractFile;
 use super::{
     absolute_output_path, bind_media, copy_native_media_except, inspect_audio, inspect_media,
     output_is_fresh,
-    staging::{insert_overlay, AfterEffectsOverlay, StagedPremiereExport},
 };
 use crate::{
     convert::{
-        active_asset_id, apply_replacements, exported_video_layers, lower_document_with_progress,
-        no_native_content, validate_gap_coverage, video_data, BakedDocument, PicturePackingRecipe,
-        PictureReplacement,
+        active_asset_id, apply_empty_root_picture, apply_replacements, exported_video_layers,
+        lower_document_with_progress, no_native_content, video_data, AfterEffectsPicture,
+        BakedDocument, PicturePackingRecipe, PictureReplacement,
     },
     error::{unsupported, BuildError, Result},
     export_loss::LossCollector,
@@ -47,25 +46,24 @@ pub struct PreparedPremiereExport<'a> {
     project: Option<PrProjectFile>,
     no_native_error: Option<BuildError>,
     packing: PicturePackingRecipe,
-    canvas: Option<std::ops::Range<i64>>,
     losses: ExportLossReport,
 }
 
-/// Owned, unpublished native Premiere files; no foreign AEP is required.
+/// Owned, unpublished Premiere files with optional caller-supplied AEP scopes.
 ///
 /// Authored paths target the requested final destination, not this directory.
 /// Drop/error removes only private staging. The caller must verify whole-source
 /// freshness and publish the common package; borrowing an archive is not a
 /// filesystem lock or an atomic source snapshot.
 #[derive(Debug)]
-pub struct StagedNativePremiereExport {
+pub struct StagedPicturePremiereExport {
     directory: tempfile::TempDir,
     foreign_paths: Vec<PathBuf>,
     report: ConversionReport<Omission>,
     generated_project_sha256: [u8; 32],
 }
 
-impl StagedNativePremiereExport {
+impl StagedPicturePremiereExport {
     /// Private files, laid out according to the report's relative artifact paths.
     pub fn directory(&self) -> &Path {
         self.directory.path()
@@ -80,47 +78,55 @@ impl StagedNativePremiereExport {
     pub fn generated_project_sha256(&self) -> &[u8; 32] {
         &self.generated_project_sha256
     }
-}
 
-/// Unpublished Premiere files with declared, independently supplied AEP scopes.
-/// The coordinator must supply every AEP subtree and verify freshness before
-/// publishing. This stage establishes neither routing safety nor Adobe fidelity.
-#[derive(Debug)]
-pub struct StagedPicturePremiereExport {
-    native: StagedNativePremiereExport,
-}
-
-impl StagedPicturePremiereExport {
-    pub fn directory(&self) -> &Path {
-        self.native.directory()
-    }
-    pub fn report(&self) -> &ConversionReport<Omission> {
-        self.native.report()
-    }
-    /// SHA-256 of the compressed bytes written to the staged project.
-    pub fn generated_project_sha256(&self) -> &[u8; 32] {
-        self.native.generated_project_sha256()
-    }
     /// Canonical package-relative paths; these foreign files are not staged here.
     pub fn after_effects_paths(&self) -> &[PathBuf] {
-        &self.native.foreign_paths
+        &self.foreign_paths
     }
 }
 
 enum PictureStage<'a> {
-    Native,
-    Overlay(&'a AfterEffectsOverlay),
     Replacements(&'a [PictureReplacement]),
+    EmptyRoot(&'a AfterEffectsPicture),
+}
+
+fn validate_empty_root_document(document: &EditableFxCompositionDocument) -> Result<()> {
+    let composition = document.composition();
+    if !composition.layers().is_empty()
+        || !composition.dynamics().entries().is_empty()
+        || document.unknown_field_names().next().is_some()
+        || composition.has_unknown_fields()
+        || document
+            .background_color()
+            .is_some_and(|color| color[3] != 0.0)
+    {
+        return Err(unsupported("empty-root linking requires an originally empty document without unknown fields, animation or painted background"));
+    }
+    // The typed canvas exposes width/height only. The lossless envelope also
+    // retains unknown dimensions controls, which cannot certify an empty root.
+    let envelope = document
+        .to_json_value()
+        .map_err(|error| unsupported(error.to_string()))?;
+    if !envelope["dimensions"].as_object().is_some_and(|fields| {
+        fields
+            .keys()
+            .all(|name| matches!(name.as_str(), "width" | "height"))
+    }) {
+        return Err(unsupported(
+            "empty-root linking cannot omit unknown dimensions fields",
+        ));
+    }
+    Ok(())
 }
 
 impl Premiere {
     /// Prepare one caller-owned document view without publishing or running Adobe.
     ///
-    /// Native-only, inspection and supplied-overlay paths share this operation.
+    /// Native-only, inspection and supplied-picture paths share this operation.
     /// Empty native content retains observations; attempting to stage it returns
     /// the ordinary no-convertible-content error. Other conversion failures are
-    /// returned here. Gap coverage and writer-only constraints are checked on
-    /// the final picture during staging, after any supplied replacements.
+    /// returned here. Writer-only constraints are checked on the final picture
+    /// during staging, after any supplied replacements.
     pub fn prepare_export<'a>(
         &self,
         archive: &'a TesseractFile,
@@ -160,11 +166,13 @@ pub(super) fn prepare_with_progress<'a>(
     let baked = crate::convert::bake_scripts_with_progress(document, &mut collector, progress)?;
     progress.stage("inspecting Premiere media");
     let media = inspect_media(archive, baked.document())?;
-    let resolved = resolve_natural_video_frames(baked.document(), &media)?;
+    let mut natural_frames = BTreeSet::new();
+    let resolved = resolve_natural_video_frames(baked.document(), &media, &mut natural_frames)?;
     let native_document = resolved.as_ref().unwrap_or_else(|| baked.document());
     let audio = inspect_audio(archive, native_document, &media)?;
     let lowered = lower_document_with_progress(
         native_document,
+        &natural_frames,
         &media,
         &audio,
         &archive.metadata().fonts,
@@ -188,7 +196,6 @@ pub(super) fn prepare_with_progress<'a>(
         project,
         no_native_error,
         packing,
-        canvas: lowered.canvas,
         losses,
     })
 }
@@ -201,6 +208,7 @@ pub(super) fn prepare_with_progress<'a>(
 fn resolve_natural_video_frames(
     document: &EditableFxCompositionDocument,
     media: &BTreeMap<String, MediaFacts>,
+    natural_frames: &mut BTreeSet<LayerId>,
 ) -> Result<Option<EditableFxCompositionDocument>> {
     let composition = document.composition();
     let dimensions = document.dimensions();
@@ -223,6 +231,11 @@ fn resolve_natural_video_frames(
         // Presets on the natural frame all have unit media scale. Custom keeps
         // its independently authored content geometry and existing diagnostic.
         let preset = !matches!(video.source.fit, MediaFit::Custom { .. });
+        if preset {
+            // Keep natural display geometry distinct from a fixed coded
+            // frame while existing frame-dependent lowering uses that frame.
+            natural_frames.insert(layer.id());
+        }
         frames.insert(layer.id(), ([facts.width, facts.height], preset));
     }
     if frames.is_empty() {
@@ -290,41 +303,12 @@ impl PreparedPremiereExport<'_> {
             self.no_native_error
                 .unwrap_or_else(|| no_native_content(&self.losses.diagnostics))
         })?;
-        for sequence in project.sequences() {
-            validate_gap_coverage(sequence, &project.media, self.canvas.as_ref())?;
-        }
         Ok((project, self.losses.diagnostics))
     }
 
-    /// Validate and stage the retained native output without re-running scripts.
-    ///
-    /// Final output must be fresh with an existing parent. Native asset bytes
-    /// are checked during copying; no final output directory is created.
-    pub fn stage_native(
-        self,
-        staging_parent: &Path,
-        final_output: &Path,
-    ) -> std::result::Result<StagedNativePremiereExport, ConversionError> {
-        self.stage(staging_parent, final_output, PictureStage::Native)
-            .map_err(Into::into)
-    }
-
-    /// Stage the retained native result with one independently validated overlay.
-    ///
-    /// This keeps the existing full-canvas/topmost overlay restrictions. It does
-    /// not establish safe extraction, complete hybrid support or AEP ownership.
-    pub fn stage_with_after_effects_overlay(
-        self,
-        staging_parent: &Path,
-        final_output: &Path,
-        overlay: &AfterEffectsOverlay,
-    ) -> std::result::Result<StagedPremiereExport, ConversionError> {
-        self.stage(staging_parent, final_output, PictureStage::Overlay(overlay))
-            .map(|native| StagedPremiereExport { native })
-            .map_err(Into::into)
-    }
-
     /// Replay supplied source-slot replacements against this exact preparation.
+    /// An empty slice stages native content only. Final output must be fresh,
+    /// with an existing parent; no final output directory is created here.
     /// No lowering, fitting, or source evaluation is repeated. Admission of the
     /// foreign picture's semantics remains the coordinator's responsibility.
     pub fn stage_with_picture_replacements(
@@ -336,13 +320,31 @@ impl PreparedPremiereExport<'_> {
         self.stage(
             staging_parent,
             final_output,
-            if replacements.is_empty() {
-                PictureStage::Native
-            } else {
-                PictureStage::Replacements(replacements)
-            },
+            PictureStage::Replacements(replacements),
         )
-        .map(|native| StagedPicturePremiereExport { native })
+        .map_err(Into::into)
+    }
+
+    /// Link an independently staged AEP of the original, genuinely empty root.
+    ///
+    /// Both the archive and caller's view must be genuinely empty, including
+    /// retained document, dimensions and composition fields: a stripped view
+    /// cannot hide authored content or unknown semantics. The caller supplies
+    /// the actual generated root GUID and verifies its source duration;
+    /// ordinary picture/path/clock validation and publication apply.
+    pub fn stage_empty_root_with_after_effects(
+        self,
+        staging_parent: &Path,
+        final_output: &Path,
+        picture: &AfterEffectsPicture,
+    ) -> std::result::Result<StagedPicturePremiereExport, ConversionError> {
+        validate_empty_root_document(self.archive.project())?;
+        validate_empty_root_document(self.original)?;
+        self.stage(
+            staging_parent,
+            final_output,
+            PictureStage::EmptyRoot(picture),
+        )
         .map_err(Into::into)
     }
 
@@ -351,15 +353,14 @@ impl PreparedPremiereExport<'_> {
         staging_parent: &Path,
         final_output: &Path,
         pictures: PictureStage<'_>,
-    ) -> Result<StagedNativePremiereExport> {
-        let output = absolute_output_path(final_output, &std::env::current_dir()?)?;
+    ) -> Result<StagedPicturePremiereExport> {
+        let output = absolute_output_path(final_output, Path::new("."))?;
         output_is_fresh(&output)?;
         let Self {
             archive,
             mut project,
             no_native_error,
             packing,
-            canvas,
             losses,
             ..
         } = self;
@@ -368,8 +369,19 @@ impl PreparedPremiereExport<'_> {
         }
         let mut foreign_paths = Vec::new();
         let mut foreign_media_ids = BTreeSet::new();
-        let mut project = if let PictureStage::Replacements(replacements) = &pictures {
-            let packed = apply_replacements(project, packing, replacements, &output)?;
+        let packed = match pictures {
+            PictureStage::Replacements([]) => None,
+            PictureStage::Replacements(replacements) => Some(apply_replacements(
+                project.take(),
+                packing,
+                replacements,
+                &output,
+            )?),
+            PictureStage::EmptyRoot(picture) => {
+                Some(apply_empty_root_picture(packing, picture, &output)?)
+            }
+        };
+        let project = if let Some(packed) = packed {
             foreign_paths = packed.foreign_paths;
             foreign_media_ids = packed.foreign_media_ids;
             packed.project
@@ -393,15 +405,9 @@ impl PreparedPremiereExport<'_> {
             .tempdir_in(staging_parent)?;
         // Foreign sources are never inspected/copied as archive-native media.
         copy_native_media_except(archive, directory.path(), &project, &foreign_media_ids)?;
-        if let PictureStage::Overlay(overlay) = pictures {
-            insert_overlay(&mut project, &output, overlay)?;
-        }
-        for sequence in project.sequences() {
-            validate_gap_coverage(sequence, &project.media, canvas.as_ref())?;
-        }
         let generated_project_sha256 = PremiereProjectXml::new(&project)?
             .write_new(&directory.path().join("project.prproj"))?;
-        Ok(StagedNativePremiereExport {
+        Ok(StagedPicturePremiereExport {
             directory,
             foreign_paths,
             generated_project_sha256,

@@ -4,30 +4,48 @@ use crate::structure_document::to_structural_fx_document;
 use serde_json::{Value, json};
 
 mod adjustment;
+mod animated_direction;
 mod audio;
+mod bframe_presentation;
 mod boolean_geometry;
 mod core_native_panel;
+mod directional_plane;
 mod effectful_vector_groups;
 mod effects;
 mod effects_edge_coverage;
 mod effects_native_coverage;
 mod effects_native_panel;
+mod empty_controls;
+mod hold_endpoints;
 mod implemented_feature_additions;
+mod inert_trim;
 mod io_regressions;
 mod layer_styles;
 mod matte_visibility;
 mod media_native_panel;
+mod mixed_one_second_path;
+mod mosaic_domain;
 mod non_audio_native_panel;
+mod one_vertex_loop;
 mod paint_modes;
 mod paint_opacity;
 mod paired_transform;
+mod parametric_placeholder;
 mod path_keys;
+mod point_zero_speed;
 mod pr4442_media_cases;
 mod pr4442_scene_cases;
 mod pr4442_text_cases;
 mod pr4442_vector_cases;
+mod radial_solid_origin;
+mod reservations;
 mod review_regressions;
+mod selector_index_aliases;
+mod shader_owner;
+mod signed_key_ease;
+mod source_stroke_cases;
 mod static_dashes;
+mod static_polystar_enclosure;
 mod stroke_join;
 mod stroke_keys;
 mod text_controls_native_panel;
@@ -123,10 +141,10 @@ fn constant_entry(
     }
 }
 
-pub(super) fn keyed_entry(
+pub(super) fn keyed_entry<const N: usize>(
     id: LayerId,
     property: PropType,
-    values: [(i64, PropertyValue); 2],
+    values: [(i64, PropertyValue); N],
 ) -> fx_schema::animator::AnimationGraphEntry {
     use fx_schema::animator::{
         AnimationGraphEntry, KeyframeId, PropertyAnimator, PropertyKeyframe, PropertyKeyframeTrack,
@@ -459,6 +477,292 @@ fn transformed_multichild_group_is_not_flattened_and_sibling_survives() {
     }));
 }
 
+fn mixed_scene_with_text_branch() -> Value {
+    let mut value = imported();
+    let mut scene = value["composition"]["layers"][0].clone();
+    scene["id"] = json!(60_000);
+    scene["name"] = json!("S06 scene");
+    scene["transform"]["opacity"] = json!(50.0);
+    let mut text_group = scene.clone();
+    text_group["id"] = json!(60_060);
+    text_group["name"] = json!("S06 words");
+    text_group["transform"]["opacity"] = json!(100.0);
+    text_group["parent"] = json!(60_000);
+    let mut text = json!({
+        "type": "Text", "id": 60_061, "name": "S06 title",
+        "parent": null,
+        "activeRange": {"start": 0, "duration": 2000},
+        "transform": scene["transform"],
+        "sourceText": {
+            "text": "blue", "fontFamily": "Inter-Regular", "fontStyle": "Regular",
+            "fontSize": 42.0, "applyFill": true, "fillColor": [1.0, 1.0, 1.0, 1.0]
+        }
+    });
+    text["transform"]["opacity"] = json!(100.0);
+    text_group["layers"] = json!([text]);
+    let mut painted = rect(&value, 60_100);
+    painted["name"] = json!("S06 shoe");
+    painted["parent"] = json!(60_000);
+    scene["layers"] = json!([painted, text_group]);
+    let sibling = rect(&value, 60_200);
+    value["composition"]["layers"] = json!([scene, sibling]);
+    value["composition"]["dynamics"] = json!({"entries": [keyed_entry(
+        LayerId::new(60_100), PropType::PositionX,
+        [(0, PropertyValue::Float(120.0)), (1000, PropertyValue::Float(240.0))],
+    )]});
+    value
+}
+
+#[test]
+fn mixed_scene_keeps_text_and_independent_paints_with_certified_consumer_bounds() {
+    let output = export(mixed_scene_with_text_branch());
+    let native = read_project(&output.bytes).unwrap();
+    let roundtrip = to_structural_fx_document(&native, Some(1)).unwrap();
+    let owner = group_with_opacity(roundtrip.document.composition().layers(), 50.0)
+        .expect("mixed scene survives as editable precomposition");
+    assert!(has_descendant_named(&owner.layers, "S06 shoe"));
+    assert!(has_descendant_named(&owner.layers, "S06 title"));
+    assert!(
+        roundtrip
+            .document
+            .composition()
+            .dynamics()
+            .entries()
+            .iter()
+            .any(|entry| {
+                entry.target.as_property().is_some_and(|target| {
+                    target.property_type() == PropType::PositionX
+                        && entry.animator.keyframe_track().is_some_and(|track| {
+                            track.keyframes().len() == 2
+                                && matches!(
+                                    (track.keyframes()[0].value(), track.keyframes()[1].value()),
+                                    (PropertyValue::Float(first), PropertyValue::Float(last))
+                                        if (last - first - 120.0).abs() < 0.001
+                                )
+                        })
+                })
+            }),
+        "moving non-Text sibling keeps editable native position keys"
+    );
+    assert!(has_descendant_named(
+        roundtrip.document.composition().layers(),
+        "Current solid 60200"
+    ));
+    assert!(!output.omitted_layer_ids.contains(&LayerId::new(60_060)));
+    assert!(!output.omitted_layer_ids.contains(&LayerId::new(60_061)));
+}
+
+#[test]
+fn custom_shader_group_matches_unshaded_owner_without_discarding_children_or_paint() {
+    let mut source = mixed_scene_with_text_branch();
+    let words = &mut source["composition"]["layers"][0]["layers"][1];
+    words["effects"] = json!([{
+        "id": 60_063, "enabled": true,
+        "effect": {"type": "customShader", "name": "text halo", "wgsl": "", "params": []}
+    }]);
+    source["composition"]["dynamics"]["entries"]
+        .as_array_mut()
+        .unwrap()
+        .push(
+            serde_json::to_value(keyed_entry(
+                LayerId::new(60_060),
+                PropType::ScaleX,
+                [
+                    (0, PropertyValue::Float(100.0)),
+                    (1000, PropertyValue::Float(-100.0)),
+                ],
+            ))
+            .unwrap(),
+        );
+    let output = export(source.clone());
+    let native = read_project(&output.bytes).unwrap();
+    let imported = to_structural_fx_document(&native, Some(1)).unwrap();
+    let scene = group_with_opacity(imported.document.composition().layers(), 50.0)
+        .expect("scene, title and independent paint survive the omitted halo");
+    assert!(has_descendant_named(&scene.layers, "S06 shoe"));
+    assert!(has_descendant_named(&scene.layers, "S06 title"));
+    assert!(output.diagnostics.iter().any(|diagnostic| {
+        diagnostic.layer_id == Some(LayerId::new(60_060))
+            && diagnostic.message.contains("CustomShader")
+    }));
+    assert!(!output.omitted_layer_ids.contains(&LayerId::new(60_060)));
+    assert!(!output.omitted_layer_ids.contains(&LayerId::new(60_061)));
+    assert!(!output.omitted_layer_ids.contains(&LayerId::new(60_000)));
+
+    // A mapped effect must not be silently discarded with its text group.
+    source["composition"]["layers"][0]["layers"][1]["effects"] = json!([{
+        "id": 60_063, "enabled": true,
+        "effect": {"type": "gaussianBlur", "blurriness": 7}
+    }]);
+    let rejected = export(source);
+    assert!(rejected.omitted_layer_ids.contains(&LayerId::new(60_060)));
+}
+
+#[test]
+fn mixed_shader_scope_retains_editable_title_and_paint() {
+    let mut source = mixed_scene_with_text_branch();
+    let mut scene = source["composition"]["layers"][0].clone();
+    let mut scope = scene["layers"][1].clone();
+    scope["name"] = json!("S13 CRT screen");
+    scope["effects"] = json!([
+        {"id": 60_063, "enabled": true, "effect": {
+            "type": "tintTritone", "amount": 100,
+            "blackR": 0.0, "blackG": 0.018, "blackB": 0.008,
+            "whiteR": 0.52, "whiteG": 1.0, "whiteB": 0.7
+        }},
+        {"id": 60_064, "enabled": true, "effect": {
+            "type": "customShader", "name": "omitted CRT look", "wgsl": "", "params": []
+        }}
+    ]);
+    let mut paint = scene["layers"][0].clone();
+    paint["parent"] = json!(60_060);
+    let mut title = scope["layers"][0].clone();
+    title["parent"] = json!(60_060);
+    scope["layers"] = json!([paint, title]);
+    scene["layers"] = json!([scope]);
+    source["composition"]["layers"][0] = scene;
+    source["composition"]["dynamics"]["entries"]
+        .as_array_mut()
+        .unwrap()
+        .push(
+            serde_json::to_value(keyed_entry(
+                LayerId::new(60_060),
+                PropType::PositionX,
+                [
+                    (0, PropertyValue::Float(320.0)),
+                    (1000, PropertyValue::Float(360.0)),
+                ],
+            ))
+            .unwrap(),
+        );
+
+    let output = export(source.clone());
+    assert!(!output.omitted_layer_ids.contains(&LayerId::new(60_000)));
+    assert!(!output.omitted_layer_ids.contains(&LayerId::new(60_061)));
+    assert!(output.diagnostics.iter().any(|diagnostic| {
+        diagnostic.layer_id == Some(LayerId::new(60_060))
+            && diagnostic.message.contains("CustomShader")
+    }));
+    assert!(!output.omitted_layer_ids.contains(&LayerId::new(60_060)));
+    let native = read_project(&output.bytes).unwrap();
+    let roundtrip = to_structural_fx_document(&native, Some(1)).unwrap();
+    assert!(has_descendant_named(
+        roundtrip.document.composition().layers(),
+        "S06 title"
+    ));
+    assert!(has_descendant_named(
+        roundtrip.document.composition().layers(),
+        "S06 shoe"
+    ));
+
+    // A native Gaussian Blur samples beyond its input pixel, so the consumer
+    // viewport cannot certify a canvas for unknown glyph extents.
+    source["composition"]["layers"][0]["layers"][0]["effects"] = json!([{
+        "id": 60_063, "enabled": true,
+        "effect": {"type": "gaussianBlur", "blurriness": 7}
+    }]);
+    let rejected = export(source);
+    assert!(rejected.omitted_layer_ids.contains(&LayerId::new(60_060)));
+}
+
+#[test]
+fn opacity_keyed_multi_glyph_title_keeps_native_group_opacity_and_both_text_layers() {
+    let mut source = mixed_scene_with_text_branch();
+    let words = &mut source["composition"]["layers"][0]["layers"][1];
+    let mut second = words["layers"][0].clone();
+    second["id"] = json!(60_062);
+    second["name"] = json!("S13 subtitle");
+    words["layers"].as_array_mut().unwrap().push(second);
+    source["composition"]["dynamics"]["entries"]
+        .as_array_mut()
+        .unwrap()
+        .push(
+            serde_json::to_value(keyed_entry(
+                LayerId::new(60_060),
+                PropType::Opacity,
+                [
+                    (0, PropertyValue::Float(0.0)),
+                    (1000, PropertyValue::Float(100.0)),
+                ],
+            ))
+            .unwrap(),
+        );
+    let output = export(source);
+    assert!(!output.omitted_layer_ids.contains(&LayerId::new(60_060)));
+    assert!(!output.omitted_layer_ids.contains(&LayerId::new(60_061)));
+    assert!(!output.omitted_layer_ids.contains(&LayerId::new(60_062)));
+    let native = read_project(&output.bytes).unwrap();
+    let roundtrip = to_structural_fx_document(&native, Some(1)).unwrap();
+    assert!(has_descendant_named(
+        roundtrip.document.composition().layers(),
+        "S06 title"
+    ));
+    assert!(has_descendant_named(
+        roundtrip.document.composition().layers(),
+        "S13 subtitle"
+    ));
+    assert!(
+        roundtrip
+            .document
+            .composition()
+            .dynamics()
+            .entries()
+            .iter()
+            .any(|entry| entry.target.as_property().is_some_and(|target| {
+                target.property_type() == PropType::Opacity
+                    && entry
+                        .animator
+                        .keyframe_track()
+                        .is_some_and(|track| track.keyframes().len() == 2)
+            }))
+    );
+}
+
+#[test]
+fn mixed_scene_pruning_rejects_referenced_or_effectful_text_scope() {
+    let document =
+        EditableFxCompositionDocument::from_json_value(mixed_scene_with_text_branch()).unwrap();
+    let LayerData::Group(scene) = document.composition().layers()[0].data() else {
+        panic!("scene group");
+    };
+    let mut references = BTreeMap::new();
+    let mut ids = BTreeSet::new();
+    collect_source_layer_ids(document.composition().layers(), &mut ids);
+    for id in ids {
+        references.insert(id, source_variants::SourceVariantEligibility::default());
+    }
+    assert!(prune_independent_text_branches(scene, &references).is_some());
+    references
+        .get_mut(&LayerId::new(60_061))
+        .unwrap()
+        .referenced_as_matte = true;
+    assert!(prune_independent_text_branches(scene, &references).is_none());
+    references
+        .get_mut(&LayerId::new(60_061))
+        .unwrap()
+        .referenced_as_matte = false;
+    references
+        .get_mut(&LayerId::new(60_000))
+        .unwrap()
+        .referenced_as_matte = true;
+    assert!(prune_independent_text_branches(scene, &references).is_none());
+    references
+        .get_mut(&LayerId::new(60_000))
+        .unwrap()
+        .referenced_as_matte = false;
+    let mut scene = scene.clone();
+    scene.motion_blur = true;
+    assert!(prune_independent_text_branches(&scene, &references).is_none());
+    scene.motion_blur = false;
+    let LayerData::Group(words) = scene.layers[1].data() else {
+        panic!("text-only group");
+    };
+    let mut words = words.clone();
+    words.motion_blur = true;
+    scene.layers[1] = Layer::from_data(&LayerData::Group(words)).unwrap();
+    assert!(prune_independent_text_branches(&scene, &references).is_none());
+}
+
 #[test]
 fn edited_solid_with_vector_paint_exports_shape_and_keeps_solid_sibling() {
     let mut value = imported();
@@ -588,6 +892,102 @@ fn edited_single_paint_shape_exports_current_archive_values_without_aep_source()
             ),
             _ => unreachable!(),
         }
+    }
+}
+
+#[test]
+fn static_ellipse_native_source_import_and_edited_group_export() {
+    let native = read_project(include_bytes!(
+        "../../tests/fixtures/static_ellipse_enclosure/native.aep"
+    ))
+    .unwrap();
+    let document = to_structural_fx_document(&native, Some(1)).unwrap();
+    fn find_shape(value: &mut Value) -> Option<&mut Value> {
+        if value["type"] == "Shape" {
+            return Some(value);
+        }
+        value["layers"]
+            .as_array_mut()?
+            .iter_mut()
+            .find_map(find_shape)
+    }
+    for size in [[82.0, 54.0], [126.0, 70.0]] {
+        let mut value = document.document.to_json_value().unwrap();
+        let group = &mut value["composition"]["layers"][0];
+        let shape = find_shape(group).expect("native editable ellipse");
+        assert_eq!(shape["shape"]["ellipse"]["size"], json!([82.0, 54.0]));
+        assert_eq!(shape["shape"]["ellipse"]["position"], json!([11.0, -8.0]));
+        shape["shape"]["ellipse"]["size"] = json!(size);
+        let mut sibling = shape.clone();
+        sibling["id"] = json!(100);
+        sibling["parent"] = Value::Null;
+        sibling["name"] = json!("independent-sibling");
+        sibling["shape"]["ellipse"]["size"] = json!([12.0, 12.0]);
+        sibling["shape"]["ellipse"]["position"] = json!([250.0, 190.0]);
+        group["transform"]["opacity"] = json!(50.0);
+        value["composition"]["layers"]
+            .as_array_mut()
+            .unwrap()
+            .push(sibling);
+        let output = export(value);
+        let generated = read_project(&output.bytes).unwrap();
+        assert_eq!(layers(&generated).len(), 2, "{:?}", output.diagnostics);
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .all(|diagnostic| !diagnostic.message.contains("subtree omitted")),
+            "{:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn static_ellipse_precomposition_retains_edited_geometry_and_sibling() {
+    for size in [[82.0, 54.0], [126.0, 70.0]] {
+        let mut value = imported();
+        let mut group = value["composition"]["layers"][0].clone();
+        group["name"] = json!("finite-ellipse-group");
+        group["transform"]["opacity"] = json!(50.0);
+        let mut shape = rect(&value, 210);
+        shape["type"] = json!("Shape");
+        shape.as_object_mut().unwrap().remove("rect");
+        shape["name"] = json!("editable-ellipse");
+        shape["parent"] = group["id"].clone();
+        shape["shape"] = json!({
+            "path": {"commands": []},
+            "ellipse": {"size": size, "position": [11.0, -8.0]},
+            "fills": [{"paint": {"type": "solid", "color": [0.0, 1.0, 1.0, 1.0]}}]
+        });
+        group["layers"] = json!([shape]);
+        value["composition"]["layers"] = json!([group, rect(&value, 211)]);
+        value["composition"]["dynamics"] = json!({"entries": []});
+        let output = export(value);
+        let native = read_project(&output.bytes).unwrap();
+        assert_eq!(layers(&native).len(), 2, "{:?}", output.diagnostics);
+        let imported = to_structural_fx_document(&native, Some(1)).unwrap();
+        fn ellipse(layers: &[fx_schema::Layer]) -> Option<&fx_schema::layer::ShapeEllipse> {
+            layers.iter().find_map(|layer| match layer.data() {
+                LayerData::Shape(shape) if shape.name == "editable-ellipse" => {
+                    shape.shape.ellipse.as_ref()
+                }
+                LayerData::Group(group) => ellipse(&group.layers),
+                _ => None,
+            })
+        }
+        let actual =
+            ellipse(imported.document.composition().layers()).expect("editable ellipse retained");
+        assert_eq!(actual.size, size);
+        assert_eq!(actual.position, [11.0, -8.0]);
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .all(|diagnostic| !diagnostic.message.contains("subtree omitted")),
+            "{:?}",
+            output.diagnostics
+        );
     }
 }
 
@@ -831,6 +1231,98 @@ fn edited_leaf_active_range_has_native_local_start_and_out_point() {
 }
 
 #[test]
+fn root_duration_exports_positive_input_with_native_null_frame_endpoint() {
+    let mut value = imported();
+    value["duration"] = json!(0.001);
+    let document = EditableFxCompositionDocument::from_json_value(value).unwrap();
+    assert_eq!(document.duration().as_millis(), 1);
+    let output = to_aep_with_fps(&document, 30.0).unwrap();
+    assert_eq!(output.root.duration_secs, 0.0);
+    let project = read_project(&output.bytes).unwrap();
+    let ItemKind::Composition(composition) = &project.item(1).unwrap().kind else {
+        panic!("composition")
+    };
+    assert_eq!(composition.duration_secs, 0.0);
+    assert!(!composition.layers.is_empty());
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("quantized to 0 frames"))
+    );
+}
+
+#[test]
+fn root_duration_exports_current_duration_edits_without_millisecond_loss() {
+    let mut value = imported();
+    value["duration"] = json!(12.1833);
+    let mut document = EditableFxCompositionDocument::from_json_value(value).unwrap();
+    let original_duration = document.duration();
+    let mut changed = document.to_json_value().unwrap();
+    changed["composition"]["name"] = json!("Edited duration control");
+    let changed = EditableFxCompositionDocument::from_json_value(changed).unwrap();
+    document
+        .replace_composition_and_duration(changed.composition().clone(), original_duration)
+        .unwrap();
+    let unchanged_endpoint = to_aep_with_fps(&document, 30.0).unwrap();
+    assert_eq!(unchanged_endpoint.root.name, "Edited duration control");
+    assert_eq!(
+        unchanged_endpoint.root.duration_secs,
+        f64::from(365 * 24_576 / 30) / 24_576.0
+    );
+
+    // These current JSON edits have the same typed milliseconds but cross the
+    // independently measured native half-frame boundary (365 -> 366).
+    let mut changed = document.to_json_value().unwrap();
+    changed["duration"] = json!(12.1833666666667);
+    let changed = EditableFxCompositionDocument::from_json_value(changed).unwrap();
+    assert_eq!(changed.duration(), original_duration);
+    assert_eq!(
+        to_aep_with_fps(&changed, 30.0).unwrap().root.duration_secs,
+        f64::from(366 * 24_576 / 30) / 24_576.0
+    );
+
+    document
+        .replace_composition_and_duration(
+            document.composition().clone(),
+            fx_schema::time::Duration::from_secs(7.5),
+        )
+        .unwrap();
+    assert_eq!(
+        to_aep_with_fps(&document, 30.0).unwrap().root.duration_secs,
+        7.5
+    );
+}
+
+#[test]
+fn root_duration_preserves_native_endpoint_quantization() {
+    // Independently authored/saved/reopened AE 26.5 controls at 30fps.
+    // The exact JSON endpoint must survive the typed millisecond projection.
+    for (seconds, frames) in [
+        (12.167, 365),
+        (959.0 / 30.0, 959),
+        (77.867, 2336),
+        ((365.5 - 0.001) / 30.0, 365),
+        (365.5 / 30.0, 366),
+        ((365.5 + 0.001) / 30.0, 366),
+    ] {
+        let mut value = imported();
+        value["duration"] = json!(seconds);
+        let document = EditableFxCompositionDocument::from_json_value(value).unwrap();
+        let preserved = document.to_json_value().unwrap()["duration"]
+            .as_f64()
+            .unwrap();
+        assert!((preserved - seconds).abs() <= seconds * f64::EPSILON);
+        let output = to_aep_with_fps(&document, 30.0).unwrap();
+        assert!(
+            (output.root.duration_secs - f64::from(frames) / 30.0).abs() < 1.0 / 24_576.0,
+            "{seconds}s: {}s instead of {frames} frames",
+            output.root.duration_secs
+        );
+    }
+}
+
+#[test]
 fn selected_export_fps_preserves_seconds_based_layer_and_key_times() {
     let mut value = imported();
     value["duration"] = json!(2.001);
@@ -850,7 +1342,7 @@ fn selected_export_fps_preserves_seconds_based_layer_and_key_times() {
         };
         assert!((comp.frame_rate - fps).abs() < 0.00001, "{fps}");
         assert!(
-            (comp.duration_secs - (2.001 * fps).ceil() / fps).abs() < 0.0001,
+            (comp.duration_secs - (2.001 * fps).round() / fps).abs() < 0.0001,
             "{fps}"
         );
         let [layer] = layers(&native) else {
@@ -882,7 +1374,7 @@ fn duration_rounding_and_nonidentity_source_clock_are_explicit() {
         output
             .diagnostics
             .iter()
-            .any(|d| d.message.contains("25 frames"))
+            .any(|d| d.message.contains("24 frames"))
     );
     assert_eq!(layers(&read_project(&output.bytes).unwrap()).len(), 1);
 
@@ -963,26 +1455,61 @@ fn constant_animators_use_validated_single_hold_keys_on_mapped_channels() {
         constant_entry(id, PropType::AudioVolume, PropertyValue::Float(0.5)),
     ];
     let pair = paired_track(
-        track(&entries, id, PropType::AnchorPointX).unwrap(),
-        track(&entries, id, PropType::AnchorPointY).unwrap(),
+        track(
+            &crate::export_document::AnimationIndex::new(&entries),
+            id,
+            PropType::AnchorPointX,
+        )
+        .unwrap(),
+        track(
+            &crate::export_document::AnimationIndex::new(&entries),
+            id,
+            PropType::AnchorPointY,
+        )
+        .unwrap(),
         [0.0; 2],
         1.0,
         true,
     )
     .unwrap()
     .unwrap();
-    let vector = vector_track(track(&entries, id, PropType::RectSize).unwrap())
-        .unwrap()
-        .unwrap();
-    let color = color_track(track(&entries, id, PropType::FillColor).unwrap())
-        .unwrap()
-        .unwrap();
-    let join = stroke_join_track(track(&entries, id, PropType::StrokeJoin).unwrap())
-        .unwrap()
-        .unwrap();
-    let audio = super::audio::levels_animation(&entries, id, true)
-        .unwrap()
-        .unwrap();
+    let vector = vector_track(
+        track(
+            &crate::export_document::AnimationIndex::new(&entries),
+            id,
+            PropType::RectSize,
+        )
+        .unwrap(),
+    )
+    .unwrap()
+    .unwrap();
+    let color = color_track(
+        track(
+            &crate::export_document::AnimationIndex::new(&entries),
+            id,
+            PropType::FillColor,
+        )
+        .unwrap(),
+    )
+    .unwrap()
+    .unwrap();
+    let join = stroke_join_track(
+        track(
+            &crate::export_document::AnimationIndex::new(&entries),
+            id,
+            PropType::StrokeJoin,
+        )
+        .unwrap(),
+    )
+    .unwrap()
+    .unwrap();
+    let audio = super::audio::levels_animation(
+        &crate::export_document::AnimationIndex::new(&entries),
+        id,
+        true,
+    )
+    .unwrap()
+    .unwrap();
     for track in [&pair, &vector, &color, &join, &audio] {
         assert_eq!(track.keys.len(), 1);
         assert_eq!(track.keys[0].time_millis, 0);
@@ -998,7 +1525,18 @@ fn constant_animators_use_validated_single_hold_keys_on_mapped_channels() {
         PropType::Opacity,
         PropertyValue::String("not numeric".into()),
     )];
-    assert!(scalar_track(track(&invalid, id, PropType::Opacity).unwrap(), 100.0).is_err());
+    assert!(
+        scalar_track(
+            track(
+                &crate::export_document::AnimationIndex::new(&invalid),
+                id,
+                PropType::Opacity
+            )
+            .unwrap(),
+            100.0
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -1035,6 +1573,62 @@ fn reflected_gradient_reports_editable_linear_normalization() {
 }
 
 #[test]
+fn zero_gain_video_without_a_source_audio_track_keeps_its_picture() {
+    assert_silent_video_keeps_picture(0);
+}
+
+#[test]
+fn positive_gain_video_without_a_source_audio_track_keeps_its_picture() {
+    assert_silent_video_keeps_picture(1);
+}
+
+fn assert_silent_video_keeps_picture(gain: i32) {
+    use crate::writer::footage::{NativeFrameRate, NativeSourceFormat, RelativeMediaPath};
+    use std::collections::BTreeMap;
+
+    let mut value = imported();
+    value["composition"]["layers"] = json!([{
+        "type": "Video",
+        "id": 884,
+        "name": "Silent source with an authored gain",
+        "playback": fixture_linear_playback(json!({"start": 0, "duration": 1000}), json!({"start": 0, "duration": 1000})),
+        "sourceRange": {"start": 0, "duration": 1000},
+        "sourceIntrinsicDuration": 1000,
+        "volume": gain,
+        "transform": identity_fx_transform(),
+        "source": {"assetId": "silent-mov", "fit": "contain"}
+    }]);
+    value["composition"]["dynamics"] = json!({"entries": []});
+    let document = EditableFxCompositionDocument::from_json_value(value).unwrap();
+    let request = media_requests(&document).unwrap().pop().unwrap();
+    let mut resolved = BTreeMap::new();
+    resolved.insert(
+        "silent-mov".to_owned(),
+        media::ResolvedMediaSource {
+            asset_id: request.asset_id,
+            path: RelativeMediaPath::new("media/silent.mov").unwrap(),
+            native_duration: None,
+            format: NativeSourceFormat::QuickTime,
+            dimensions: [320, 180],
+            duration_millis: 1000,
+            duration_millis_floor: 1000,
+            duration_native_ticks: None,
+            frame_rate: NativeFrameRate::integer(25),
+            audio_sample_rate: 0.0,
+            wave_metadata: None,
+        },
+    );
+    let output = to_aep_with_media(&document, &resolved).unwrap();
+    assert!(
+        !output.omitted_layer_ids.contains(&LayerId::new(884)),
+        "{:?}",
+        output.diagnostics
+    );
+    let native = read_project(&output.bytes).unwrap();
+    assert_eq!(layers(&native).len(), 1, "{:?}", output.diagnostics);
+}
+
+#[test]
 fn legacy_media_reaches_existing_native_media_dispatch() {
     use crate::writer::footage::{NativeFrameRate, NativeSourceFormat, RelativeMediaPath};
     use std::collections::BTreeMap;
@@ -1064,9 +1658,12 @@ fn legacy_media_reaches_existing_native_media_dispatch() {
         media::ResolvedMediaSource {
             asset_id: request.asset_id,
             path: RelativeMediaPath::new("media/legacy.exr".to_owned()).unwrap(),
+            native_duration: None,
             format: NativeSourceFormat::OpenExr,
             dimensions: [320, 180],
             duration_millis: 0,
+            duration_millis_floor: 0,
+            duration_native_ticks: None,
             frame_rate: NativeFrameRate::integer(0),
             audio_sample_rate: 0.0,
             wave_metadata: None,
@@ -1120,12 +1717,15 @@ fn shared_takeover_dispatch_publishes_clip_then_slide_parent() {
         media::ResolvedMediaSource {
             asset_id: request.asset_id,
             path: RelativeMediaPath::new("media/takeover.exr").unwrap(),
+            native_duration: None,
             format: NativeSourceFormat::OpenExr,
             dimensions: [
                 u16::try_from(dimensions.width).unwrap(),
                 u16::try_from(dimensions.height).unwrap(),
             ],
             duration_millis: 0,
+            duration_millis_floor: 0,
+            duration_native_ticks: None,
             frame_rate: NativeFrameRate::integer(0),
             audio_sample_rate: 0.0,
             wave_metadata: None,
@@ -1171,18 +1771,27 @@ fn shared_rectangle_program_keeps_geometry_tracks_before_dash_rewrite() {
         _ => panic!("rectangle"),
     };
     let dynamics = document.composition().dynamics().entries();
-    let paints = paint_controls::materialize(&LayerData::Rect(rect.clone()), dynamics).unwrap();
+    let paints = paint_controls::materialize(
+        &LayerData::Rect(rect.clone()),
+        &crate::export_document::AnimationIndex::new(dynamics),
+    )
+    .unwrap();
     let program = vector_rect_paints_program(
         rect,
         &rect.transform,
         TransformAnimations::default(),
         rect.id,
         &paints,
-        dynamics,
+        &crate::export_document::AnimationIndex::new(dynamics),
         true,
     )
     .unwrap();
-    let rewritten = rect_dashes::isolate_static_dashed_stroke(rect, dynamics, program).unwrap();
+    let rewritten = rect_dashes::isolate_static_dashed_stroke(
+        rect,
+        &crate::export_document::AnimationIndex::new(dynamics),
+        program,
+    )
+    .unwrap();
     let animations = rewritten
         .program
         .contents

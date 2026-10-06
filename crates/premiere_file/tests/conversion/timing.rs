@@ -1,3 +1,5 @@
+#![cfg(feature = "ffmpeg-library")]
+
 use super::support::*;
 use crate::test_support::{one_clip_xml, OneClip};
 use premiere_file::PrProjectFile;
@@ -7,6 +9,66 @@ use tesseract_file::TesseractFile;
 
 const FRAME_30: i64 = TICKS / 30;
 const MILLISECOND: i64 = TICKS / 1000;
+
+#[test]
+fn native_constant_rate_residue_keeps_exact_ticks_and_editable_playback() {
+    // Timing copied unchanged from Co-Editor's Adobe-native occurrence 1159,
+    // SubClip 1349 / VideoClip 1643. Source SHA-256:
+    // 332c86eb7927e19cc4177aa94fe29f4c62a2d3978b8c4de4c894f8f8ac69bae8.
+    // Only the timing is native-derived: unrelated metadata/paths/Motion are
+    // removed and the existing 30 fps / 10 s fixture media replaces the footage.
+    // Its 6.066644689510400-tick residue is already in the saved fields, not
+    // caused by f64 parsing. This is public structural proof, not a render oracle.
+    let temp = tempfile::tempdir().unwrap();
+    let source = fixture(
+        temp.path(),
+        include_str!("../fixtures/native-constant-rate-timing.xml"),
+    );
+    fs::write(
+        temp.path().join("media/source.mp4"),
+        include_bytes!("../fixtures/video-30fps-10s.mp4"),
+    )
+    .unwrap();
+    let (project, omissions) = PrProjectFile::load(&source).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let sequence = project.sequences().next().unwrap();
+    let clips: Vec<_> = sequence.video_occurrences().collect();
+    assert_eq!(clips.len(), 1);
+    assert_eq!(clips[0].id(), Some("VideoClipTrackItem:1159"));
+    assert_eq!(
+        clips[0].timeline_ticks(),
+        5_526_135_014_400..5_661_745_689_600
+    );
+    assert_eq!(clips[0].source_ticks(), 600_830_630_396..999_052_454_391);
+
+    let output = temp.path().join("converted");
+    let omissions = premiere_to_tesseract(&source, &output, None, false).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let file = TesseractFile::open(first_project(&output)).unwrap();
+    assert_eq!(file.metadata().assets.len(), 1);
+    let document = file.project_json().unwrap();
+    let layers = video_layers(&document);
+    assert_eq!(layers.len(), 1);
+    let video = layers[0];
+    // The established output clock rounds each authored endpoint once to ms.
+    assert_eq!(
+        (*crate::test_support::layer_range(video)),
+        json!({"start": 21755, "duration": 534})
+    );
+    assert_eq!(
+        video["sourceRange"],
+        json!({"start": 2365, "duration": 1568})
+    );
+    let mapping = &video["playback"]["mapping"];
+    assert_eq!(mapping["type"], "timeRemap");
+    let keys = mapping["property"]["keyframes"].as_array().unwrap();
+    assert_eq!(keys.len(), 2);
+    for (key, time, value) in [(&keys[0], 21755, 2365), (&keys[1], 22289, 3933)] {
+        assert_eq!(key["time"], time);
+        assert_eq!(key["value"], value);
+        assert_eq!(key["easing"]["type"], "linear");
+    }
+}
 
 #[test]
 fn mixed_rate_import_and_export_preserves_media_timing() {

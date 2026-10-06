@@ -576,7 +576,54 @@ fn large_timeline_mixed_writer_preserves_1657_layers() {
 }
 
 #[test]
-fn no_layers_keeps_the_empty_writer_byte_identical() {
+fn review_solid_native_two_layer_envelope_boundaries_are_preserved() {
+    fn containing_layers(chunks: &[Chunk]) -> Option<&[Chunk]> {
+        if chunks
+            .iter()
+            .any(|chunk| chunk.list_kind() == Some(*b"Layr"))
+        {
+            return Some(chunks);
+        }
+        chunks
+            .iter()
+            .filter_map(Chunk::children)
+            .find_map(containing_layers)
+    }
+
+    fn first_boundary(chunks: &[Chunk]) -> &[Chunk] {
+        let indices: Vec<_> = chunks
+            .iter()
+            .enumerate()
+            .filter(|(_, chunk)| chunk.list_kind() == Some(*b"Layr"))
+            .map(|(index, _)| index)
+            .collect();
+        assert_eq!(indices.len(), 2);
+        &chunks[indices[0] + 1..indices[1]]
+    }
+
+    // The oracle is unchanged Adobe-authored storage, not our writer's output
+    // or the structural reader's ability to recover both layers.
+    let source = include_bytes!("../../../tests/fixtures/render/export_add_blend.aep");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(source)),
+        "d04ffbca88577b14b1702e24a003c3a92aecf038a741a478df4e1fb8c9169aee"
+    );
+    let native = Project::parse(source).unwrap();
+    let first = solid();
+    let mut second = first.clone();
+    second.name = "Second editable solid".into();
+    let bytes = write_solid_composition(&composition(), &[first, second]).unwrap();
+    let generated = Project::parse(&bytes).unwrap();
+    let expected = first_boundary(containing_layers(&native.chunks).unwrap());
+    assert_eq!(expected.len(), 15);
+    assert_eq!(
+        first_boundary(containing_layers(&generated.chunks).unwrap()),
+        expected
+    );
+}
+
+#[test]
+fn review_solid_no_layers_keeps_the_empty_writer_byte_identical() {
     assert_eq!(
         write_solid_composition(&composition(), &[]).unwrap(),
         super::super::write_empty_composition(&composition()).unwrap()

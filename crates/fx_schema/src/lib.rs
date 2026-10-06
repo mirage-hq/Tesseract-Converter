@@ -61,8 +61,9 @@ pub use color::{
     ColorEncodingId, ColorEncodingIdError, ColorLutInterpolation, ColorTransform,
     ColorTransformSemanticVersion, InputTransform, NormalizedColorMix, NormalizedColorMixError,
     PersistedInputTransform, PrimaryGrade, PrimaryGradeError, PrimaryGradeSemanticVersion,
-    INPUT_TRANSFORM_SEMANTIC_ID, LOOK_TRANSFORM_SEMANTIC_ID, PRIMARY_GRADE_SEMANTIC_ID,
-    SDR_REC709_DISPLAY_ENCODING_ID,
+    TonalColor, TonalColorError, TonalColorSemanticVersion, INPUT_TRANSFORM_SEMANTIC_ID,
+    LOOK_TRANSFORM_SEMANTIC_ID, PRIMARY_GRADE_SEMANTIC_ID, SDR_REC709_DISPLAY_ENCODING_ID,
+    TONAL_COLOR_SEMANTIC_ID,
 };
 pub use curves::{
     ColorCurve, ColorCurveError, ColorCurvePoint, ColorCurves, ColorCurvesSemanticVersion,
@@ -113,7 +114,7 @@ pub use time::{Duration, Time, TimeOffset, TimeRange};
 pub const FX_COMPOSITION_SCHEMA: &str = include_str!("../fx_composition.schema.json");
 
 /// FX composition schema revision.
-pub const FX_SCHEMA_REVISION: u8 = 67;
+pub const FX_SCHEMA_REVISION: u8 = 69;
 
 /// Backward-compatible schema revision name.
 pub const SCHEMA_VERSION: u8 = FX_SCHEMA_REVISION;

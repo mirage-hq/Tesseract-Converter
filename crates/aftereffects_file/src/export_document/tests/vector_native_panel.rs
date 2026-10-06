@@ -46,13 +46,11 @@ fn check_case(name: &str, input_json: &str, expected_json: &str) {
         "native editable geometry only"
     );
 
-    let directory = std::env::var_os("AEP_EFFECTS_FX_PANEL_DIR");
-    if let Some(ref directory) = directory {
-        std::fs::create_dir_all(directory).expect("panel output directory");
-    }
+    let directory = crate::adobe_test_support::artifact_directory();
+    std::fs::create_dir_all(&directory).expect("panel output directory");
     let output = export(input);
-    if let Some(ref directory) = directory {
-        let path = std::path::Path::new(directory).join(name);
+    {
+        let path = std::path::Path::new(&directory).join(name);
         std::fs::write(path.with_extension("fx.json"), input_json).expect("FX panel input");
         std::fs::write(path.with_extension("aep"), &output.bytes).expect("FX panel native output");
         std::fs::write(path.with_extension("expected.json"), expected_json)

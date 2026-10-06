@@ -1,6 +1,10 @@
 //! Owned staging and no-replace publication for AEP media packages.
 
+pub(super) mod aliases;
+pub(super) mod fonts;
 mod metadata;
+mod png;
+mod wave;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -8,6 +12,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use super::staging::AepPreparationControl;
 use fx_schema::Dimensions;
 use tesseract_file::{AssetKind, MaterializationCache, TesseractFile};
 
@@ -27,6 +32,25 @@ pub(super) struct PreparedMedia {
     /// The adapter reports these per asset while shared lowering omits layers
     /// whose source is absent.
     pub(super) unsupported: Vec<(String, String)>,
+    /// Prepared sources whose samples or colour interpretation may differ.
+    pub(super) approximations: Vec<(String, &'static str)>,
+    pub(super) preparations: Vec<(String, String)>,
+    /// A verified video failed original admission, but its scope withheld
+    /// destination preparation, so the media engine did not run for it.
+    pub(super) preparation_withheld: bool,
+}
+
+/// Destination preparation for a selected video that fails original admission.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum VideoPreparation {
+    /// Prepare the whole source, then revalidate it with the native parser.
+    Run,
+    /// Record the need without invoking the media engine. All originals still
+    /// pass the same archive, integrity and metadata checks.
+    Withhold,
+    /// Keep the original bytes or report unsupported native interpretation;
+    /// never invoke video remuxing or encoding for this scope.
+    PreserveOriginal,
 }
 
 /// Verifies and stages every requested archive asset below an owned temporary
@@ -36,7 +60,33 @@ pub(super) fn prepare_media(
     requests: &[MediaRequest],
     staging: &Path,
     _canvas: Dimensions,
+    control: AepPreparationControl<'_>,
 ) -> Result<PreparedMedia, AepConversionError> {
+    prepare_media_impl(archive, requests, staging, None, control)
+}
+
+/// Hybrid picture scopes opt into destination preparation, never ordinary admission.
+pub(super) fn prepare_picture_scope_media(
+    archive: &TesseractFile,
+    requests: &[MediaRequest],
+    staging: &Path,
+    preparation: VideoPreparation,
+    control: AepPreparationControl<'_>,
+) -> Result<PreparedMedia, AepConversionError> {
+    prepare_media_impl(archive, requests, staging, Some(preparation), control)
+}
+
+/// Without `preparation`, ordinary export reports unsupported video as omitted.
+fn prepare_media_impl(
+    archive: &TesseractFile,
+    requests: &[MediaRequest],
+    staging: &Path,
+    preparation: Option<VideoPreparation>,
+    control: AepPreparationControl<'_>,
+) -> Result<PreparedMedia, AepConversionError> {
+    control.check_cancelled()?;
+    let progress = control.progress;
+    let uncancelled = std::sync::atomic::AtomicBool::new(false);
     let media_dir = staging.join("media");
     fs::create_dir(&media_dir)
         .map_err(|source| AepConversionError::io("create media staging", &media_dir, source))?;
@@ -53,10 +103,15 @@ pub(super) fn prepare_media(
         }
     }
 
+    let phase = progress.phase("prepare AEP media", "assets", grouped.len());
     let mut sources = BTreeMap::new();
     let mut files = Vec::new();
     let mut unsupported = Vec::new();
+    let mut approximations = Vec::new();
+    let mut preparations = Vec::new();
+    let mut preparation_withheld = false;
     for (ordinal, (asset_id, (request, kinds))) in grouped.into_iter().enumerate() {
+        control.check_cancelled()?;
         if kinds & IMAGE_KIND != 0 && kinds != IMAGE_KIND {
             return Err(AepConversionError::Input(
                 "one archive asset is requested with incompatible media kinds",
@@ -66,7 +121,213 @@ pub(super) fn prepare_media(
         let asset_kind = asset.descriptor().kind;
         ensure_kind(asset_kind, kinds)?;
         let materialized = asset.materialize(&cache)?;
-        let interpreted = match interpret(InterpretRequest {
+        if request.kind == FootageKind::Image
+            && is_preparable_image(
+                asset.descriptor().path.as_str(),
+                asset.descriptor().content_type.as_str(),
+            )
+        {
+            if (asset.descriptor().content_type == "image/png"
+                || is_extension(asset.descriptor().path.as_str(), "png"))
+                && let Some((format, dimensions)) = png::native_profile(materialized.path())?
+            {
+                let path = package_path(ordinal, asset_id, "png")?;
+                let target = staging.join(path.as_str());
+                crate::adapter::publication::publish_file(
+                    materialized.path(),
+                    &target,
+                    fs::hard_link,
+                )
+                .map_err(|error| {
+                    AepConversionError::io("stage byte-preserved PNG", &target, error)
+                })?;
+                files.push(path.clone());
+                sources.insert(
+                    asset_id.to_owned(),
+                    ResolvedMediaSource {
+                        asset_id: request.asset_id.clone(),
+                        path,
+                        format,
+                        dimensions,
+                        duration_millis: 0,
+                        duration_millis_floor: 0,
+                        duration_native_ticks: None,
+                        frame_rate: NativeFrameRate::integer(0),
+                        audio_sample_rate: 0.0,
+                        wave_metadata: None,
+                        native_duration: None,
+                    },
+                );
+                approximations.push((asset_id.to_owned(), "PNG RGB8/RGBA8 staged byte-preserved with native PNG interpretation; embedded colour metadata and alpha bytes are retained, but general tagged-colour and alpha fidelity remain unverified"));
+                control.check_cancelled()?;
+                phase.update(ordinal + 1);
+                continue;
+            }
+            let path = package_path(ordinal, request.asset_id.as_str(), "exr")?;
+            let target = staging.join(path.as_str());
+            normalize_image_to_exr(materialized.path(), &target)?;
+            let byte_length = fs::metadata(&target)
+                .map_err(|source| {
+                    AepConversionError::io("read prepared image metadata", &target, source)
+                })?
+                .len();
+            let interpreted = interpret(InterpretRequest {
+                request,
+                requested_kinds: kinds,
+                asset_kind,
+                archive_path: "prepared.exr",
+                content_type: "image/x-exr",
+                materialized_path: &target,
+                byte_length,
+                ordinal,
+            })
+            .map_err(|error| match error {
+                InterpretError::Unsupported(_) => AepConversionError::Input(
+                    "prepared image does not satisfy the native OpenEXR profile",
+                ),
+                InterpretError::Fatal(error) => error,
+            })?;
+            files.push(interpreted.path.clone());
+            sources.insert(asset_id.to_owned(), interpreted);
+            approximations.push((asset_id.to_owned(), "PNG/JPEG decoded to OpenEXR for native AEP; decoded pixels and alpha are retained as float samples, but embedded colour profiles and AE colour management are unverified"));
+            control.check_cancelled()?;
+            phase.update(ordinal + 1);
+            continue;
+        }
+        if kinds == AUDIO_KIND
+            && asset_kind == AssetKind::Audio
+            && asset.descriptor().byte_length >= 60
+            && (matches!(
+                asset.descriptor().content_type.as_str(),
+                "audio/wav" | "audio/wave"
+            ) || is_extension(asset.descriptor().path.as_str(), "wav"))
+        {
+            let path = package_path(ordinal, request.asset_id.as_str(), "wav")?;
+            let target = staging.join(path.as_str());
+            match wave::normalize_extensible_pcm24(
+                materialized.path(),
+                &target,
+                asset.descriptor().byte_length,
+            ) {
+                Ok(true) => {
+                    let length = fs::metadata(&target)
+                        .map_err(|error| {
+                            AepConversionError::io("stat normalized WAVE", &target, error)
+                        })?
+                        .len();
+                    let interpreted = match interpret(InterpretRequest {
+                        request,
+                        requested_kinds: kinds,
+                        asset_kind,
+                        archive_path: "normalized.wav",
+                        content_type: "audio/wav",
+                        materialized_path: &target,
+                        byte_length: length,
+                        ordinal,
+                    }) {
+                        Ok(source) => source,
+                        Err(InterpretError::Unsupported(reason)) => {
+                            fs::remove_file(&target).map_err(|error| {
+                                AepConversionError::io(
+                                    "remove unsupported normalized WAVE",
+                                    &target,
+                                    error,
+                                )
+                            })?;
+                            unsupported.push((asset_id.to_owned(), reason.to_owned()));
+                            control.check_cancelled()?;
+                            phase.update(ordinal + 1);
+                            continue;
+                        }
+                        Err(InterpretError::Fatal(error)) => return Err(error),
+                    };
+                    files.push(interpreted.path.clone());
+                    sources.insert(asset_id.to_owned(), interpreted);
+                    approximations.push((asset_id.to_owned(), "WAVE_EXTENSIBLE mono/stereo PCM24 envelope normalized to RIFF/WAVE PCM24 without modifying any audio sample bytes; Adobe source decoding remains unverified"));
+                    control.check_cancelled()?;
+                    phase.update(ordinal + 1);
+                    continue;
+                }
+                Ok(false) => {}
+                Err(InterpretError::Unsupported(reason)) => {
+                    unsupported.push((asset_id.to_owned(), reason.to_owned()));
+                    control.check_cancelled()?;
+                    phase.update(ordinal + 1);
+                    continue;
+                }
+                Err(InterpretError::Fatal(error)) => return Err(error),
+            }
+        }
+        if kinds == AUDIO_KIND
+            && asset_kind == AssetKind::Audio
+            && (asset.descriptor().content_type == "audio/mpeg"
+                || is_extension(asset.descriptor().path.as_str(), "mp3"))
+        {
+            let path = package_path(ordinal, request.asset_id.as_str(), "wav")?;
+            let target = staging.join(path.as_str());
+            let prepared = transcode_audio(
+                materialized.path(),
+                &target,
+                control.cancelled.unwrap_or(&uncancelled),
+            );
+            match prepared {
+                Ok(_) => {}
+                Err(media_transcode::TranscodeError::Cancelled) => {
+                    return Err(AepConversionError::Cancelled);
+                }
+                Err(media_transcode::TranscodeError::Policy(reason)) => {
+                    unsupported.push((
+                        asset_id.to_owned(),
+                        format!("bounded MP3 audio preparation unsupported: {reason}"),
+                    ));
+                    control.check_cancelled()?;
+                    phase.update(ordinal + 1);
+                    continue;
+                }
+                Err(source) => {
+                    return Err(AepConversionError::AudioPreparation {
+                        asset_id: asset_id.to_owned(),
+                        source,
+                    });
+                }
+            }
+            let length = fs::metadata(&target)
+                .map_err(|error| AepConversionError::io("stat prepared MP3 WAVE", &target, error))?
+                .len();
+            let interpreted = match interpret(InterpretRequest {
+                request,
+                requested_kinds: kinds,
+                asset_kind,
+                archive_path: "prepared.wav",
+                content_type: "audio/wav",
+                materialized_path: &target,
+                byte_length: length,
+                ordinal,
+            }) {
+                Ok(source) => source,
+                Err(InterpretError::Unsupported(reason)) => {
+                    fs::remove_file(&target).map_err(|error| {
+                        AepConversionError::io(
+                            "remove unsupported prepared MP3 WAVE",
+                            &target,
+                            error,
+                        )
+                    })?;
+                    unsupported.push((asset_id.to_owned(), reason.to_owned()));
+                    control.check_cancelled()?;
+                    phase.update(ordinal + 1);
+                    continue;
+                }
+                Err(InterpretError::Fatal(error)) => return Err(error),
+            };
+            files.push(interpreted.path.clone());
+            sources.insert(asset_id.to_owned(), interpreted);
+            approximations.push((asset_id.to_owned(), "Bounded MP3 decoder priming normalized to a zero-start PCM WAVE. Output samples and duration are independently re-probed, but MP3 decoder timing versus the FX player and Adobe playback have not been compared"));
+            control.check_cancelled()?;
+            phase.update(ordinal + 1);
+            continue;
+        }
+        let original = interpret(InterpretRequest {
             request,
             requested_kinds: kinds,
             asset_kind,
@@ -75,26 +336,147 @@ pub(super) fn prepare_media(
             materialized_path: materialized.path(),
             byte_length: asset.descriptor().byte_length,
             ordinal,
-        }) {
-            Ok(source) => source,
+        });
+        let interpreted = match original {
+            Ok(source) => {
+                let target = staging.join(source.path.as_str());
+                crate::adapter::publication::publish_file(
+                    materialized.path(),
+                    &target,
+                    fs::hard_link,
+                )
+                .map_err(|source| {
+                    AepConversionError::io("stage verified media", &target, source)
+                })?;
+                source
+            }
+            Err(InterpretError::Unsupported(reason))
+                if preparation == Some(VideoPreparation::PreserveOriginal)
+                    && kinds & VIDEO_KIND != 0 =>
+            {
+                unsupported.push((
+                    asset_id.to_owned(),
+                    format!(
+                        "{reason}; original video bytes required, destination preparation disabled"
+                    ),
+                ));
+                control.check_cancelled()?;
+                phase.update(ordinal + 1);
+                continue;
+            }
+            Err(InterpretError::Unsupported(_))
+                if preparation == Some(VideoPreparation::Withhold) && kinds & VIDEO_KIND != 0 =>
+            {
+                preparation_withheld = true;
+                control.check_cancelled()?;
+                phase.update(ordinal + 1);
+                continue;
+            }
+            Err(InterpretError::Unsupported(_))
+                if preparation == Some(VideoPreparation::Run) && kinds & VIDEO_KIND != 0 =>
+            {
+                let relative = package_path(ordinal, asset_id, "mov")?;
+                let target = staging.join(relative.as_str());
+                let result = media_transcode::run_for_after_effects(
+                    media_transcode::TranscodeRequest {
+                        input: materialized.path(),
+                        output: &target,
+                        backend: media_transcode::Backend::Library,
+                        cancelled: control.cancelled.unwrap_or(&uncancelled),
+                    },
+                    &mut |_| {},
+                );
+                let result = match result {
+                    Ok(result) => result,
+                    Err(media_transcode::TranscodeError::Cancelled) => {
+                        return Err(AepConversionError::Cancelled);
+                    }
+                    Err(media_transcode::TranscodeError::Policy(reason)) => {
+                        unsupported.push((
+                            asset_id.to_owned(),
+                            format!("AE destination preparation unsupported: {reason}"),
+                        ));
+                        control.check_cancelled()?;
+                        phase.update(ordinal + 1);
+                        continue;
+                    }
+                    Err(error) => return Err(error.into()),
+                };
+                let byte_length = fs::metadata(&target)
+                    .map_err(|source| {
+                        AepConversionError::io("inspect prepared AE media", &target, source)
+                    })?
+                    .len();
+                let source = match interpret(InterpretRequest {
+                    request,
+                    requested_kinds: kinds,
+                    asset_kind,
+                    archive_path: "prepared.mov",
+                    content_type: "video/quicktime",
+                    materialized_path: &target,
+                    byte_length,
+                    ordinal,
+                }) {
+                    Ok(source) => source,
+                    Err(InterpretError::Unsupported(reason)) => {
+                        unsupported.push((
+                            asset_id.to_owned(),
+                            format!(
+                                "prepared AE media failed native profile revalidation: {reason}"
+                            ),
+                        ));
+                        control.check_cancelled()?;
+                        phase.update(ordinal + 1);
+                        continue;
+                    }
+                    Err(InterpretError::Fatal(error)) => return Err(error),
+                };
+                preparations.push((asset_id.to_owned(), format!(
+                    "AE destination media {:?}: {} -> {}; source timing and alpha presence revalidated.{}",
+                    result.operation, result.input_sha256, result.output_sha256,
+                    if result.operation == media_transcode::Operation::Transcode { " RGB encoding is approximate; native render fidelity remains unverified." } else { " Compressed video packets retained without re-encoding; native render fidelity remains unverified." },
+                )));
+                source
+            }
             Err(InterpretError::Unsupported(reason)) => {
                 unsupported.push((asset_id.to_owned(), reason.to_owned()));
+                control.check_cancelled()?;
+                phase.update(ordinal + 1);
                 continue;
             }
             Err(InterpretError::Fatal(error)) => return Err(error),
         };
-        let target = staging.join(interpreted.path.as_str());
-        fs::hard_link(materialized.path(), &target)
-            .map_err(|source| AepConversionError::io("stage verified media", &target, source))?;
         files.push(interpreted.path.clone());
         sources.insert(asset_id.to_owned(), interpreted);
+        control.check_cancelled()?;
+        phase.update(ordinal + 1);
     }
+    control.check_cancelled()?;
     private_cache.remove()?;
     Ok(PreparedMedia {
         sources,
         files,
         unsupported,
+        approximations,
+        preparations,
+        preparation_withheld,
     })
+}
+
+fn transcode_audio(
+    input: &Path,
+    output: &Path,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<media_transcode::TranscodeResult, media_transcode::TranscodeError> {
+    media_transcode::run_for_after_effects_audio(
+        media_transcode::TranscodeRequest {
+            input,
+            output,
+            backend: media_transcode::Backend::Library,
+            cancelled,
+        },
+        &mut |_| {},
+    )
 }
 
 struct PrivateCache {
@@ -201,11 +583,16 @@ fn interpret(input: InterpretRequest<'_>) -> Result<ResolvedMediaSource, Interpr
             source,
         ))
     })?;
+    let is_mp4 = content_type == "video/mp4" || is_extension(archive_path, "mp4");
     if requested_kinds & (VIDEO_KIND | AUDIO_KIND) != 0
-        && (content_type == "video/quicktime" || is_extension(archive_path, "mov"))
+        && (is_mp4 || content_type == "video/quicktime" || is_extension(archive_path, "mov"))
     {
-        let movie = metadata::quicktime_from_reader(&mut input, byte_length)
-            .map_err(|error| interpret_metadata_error(error, materialized_path))?;
+        let movie = if is_mp4 {
+            metadata::mp4_from_reader(&mut input, byte_length)
+        } else {
+            metadata::quicktime_from_reader(&mut input, byte_length)
+        }
+        .map_err(|error| interpret_metadata_error(error, materialized_path))?;
         if requested_kinds == AUDIO_KIND && movie.audio_sample_rate == 0.0 {
             return Err(InterpretError::Unsupported(
                 "QuickTime source is requested only as audio but has no supported enabled audio track",
@@ -213,14 +600,29 @@ fn interpret(input: InterpretRequest<'_>) -> Result<ResolvedMediaSource, Interpr
         }
         return Ok(ResolvedMediaSource {
             asset_id: request.asset_id.clone(),
-            path: package_path(ordinal, request.asset_id.as_str(), "mov")
-                .map_err(InterpretError::Fatal)?,
-            format: NativeSourceFormat::QuickTime,
+            path: package_path(
+                ordinal,
+                request.asset_id.as_str(),
+                if is_mp4 { "mp4" } else { "mov" },
+            )
+            .map_err(InterpretError::Fatal)?,
+            format: match movie.video_codec {
+                [b'a', b'v', b'c', b'1'] => NativeSourceFormat::QuickTime,
+                [b'a', b'p', b'4', b'h'] => NativeSourceFormat::QuickTimeProRes4444,
+                _ => {
+                    return Err(InterpretError::Unsupported(
+                        "unsupported QuickTime video codec",
+                    ));
+                }
+            },
             dimensions: movie.dimensions,
             duration_millis: movie.duration_millis,
+            duration_millis_floor: movie.duration_millis_floor,
+            duration_native_ticks: movie.duration_native_ticks,
             frame_rate: movie.frame_rate,
             audio_sample_rate: movie.audio_sample_rate,
             wave_metadata: None,
+            native_duration: movie.native_duration,
         });
     }
 
@@ -235,9 +637,12 @@ fn interpret(input: InterpretRequest<'_>) -> Result<ResolvedMediaSource, Interpr
                 format: NativeSourceFormat::OpenExr,
                 dimensions,
                 duration_millis: 0,
+                duration_millis_floor: 0,
+                duration_native_ticks: None,
                 frame_rate: NativeFrameRate::integer(0),
                 audio_sample_rate: 0.0,
                 wave_metadata: None,
+                native_duration: None,
             })
         }
         FootageKind::Audio
@@ -255,16 +660,19 @@ fn interpret(input: InterpretRequest<'_>) -> Result<ResolvedMediaSource, Interpr
                 format: NativeSourceFormat::Wave,
                 dimensions: [0, 0],
                 duration_millis: wave.duration_millis,
+                duration_millis_floor: wave.duration_millis,
+                duration_native_ticks: None,
                 frame_rate: NativeFrameRate::integer(0),
                 audio_sample_rate: f64::from(wave.sample_rate),
                 wave_metadata: Some(NativeWaveMetadata {
                     sample_frames: wave.sample_frames,
                     file_length: wave.file_length,
                 }),
+                native_duration: None,
             })
         }
         FootageKind::Video => Err(InterpretError::Unsupported(
-            "video asset is not a source-identified QuickTime .mov profile",
+            "video asset is not a source-identified QuickTime .mov or AVC .mp4 profile",
         )),
         FootageKind::Image => Err(InterpretError::Unsupported(
             "image asset does not use the source-backed OpenEXR native profile",
@@ -322,17 +730,45 @@ fn is_extension(path: &str, extension: &str) -> bool {
         .is_some_and(|value| value.eq_ignore_ascii_case(extension))
 }
 
+fn is_preparable_image(path: &str, content_type: &str) -> bool {
+    matches!(content_type, "image/png" | "image/jpeg")
+        || ["png", "jpg", "jpeg"]
+            .into_iter()
+            .any(|extension| is_extension(path, extension))
+}
+
+fn normalize_image_to_exr(source: &Path, target: &Path) -> Result<(), AepConversionError> {
+    let mut reader = image::ImageReader::open(source)
+        .map_err(|error| AepConversionError::io("open image for dimension check", source, error))?
+        .with_guessed_format()
+        .map_err(|error| AepConversionError::io("identify image format", source, error))?;
+    // Preserve source resolution without imposing decoder allocation policy.
+    reader.no_limits();
+    let image = reader.decode()?;
+    if image.width() == 0 || image.height() == 0 {
+        return Err(AepConversionError::Input("image has zero dimensions"));
+    }
+    image
+        .to_rgba32f()
+        .save_with_format(target, image::ImageFormat::OpenExr)?;
+    Ok(())
+}
+
 /// Publishes a staged `project.aep` plus media files without replacement.
-/// Rollback and cancellation-by-drop remove only links/directories created by
+/// Rollback and cancellation-by-drop remove only files/directories created by
 /// this invocation; caller-owned entries are never recursively deleted.
 pub(super) fn publish_package(
     staging: &Path,
     destination: &Path,
     media: &[RelativeMediaPath],
+    fonts: &[String],
 ) -> Result<(), AepConversionError> {
-    let mut paths = Vec::with_capacity(media.len() + 1);
+    let mut paths = Vec::with_capacity(media.len() + fonts.len() + 1);
     paths.push(PathBuf::from("project.aep"));
     paths.extend(media.iter().map(|path| PathBuf::from(path.as_str())));
+    // Font paths are generated internally from verified SHA-256 values, never
+    // archive filenames. Keep the existing media-only path contract intact.
+    paths.extend(fonts.iter().map(PathBuf::from));
     let mut directories = BTreeSet::new();
     for path in &paths {
         if let Some(parent) = path.parent()
@@ -356,9 +792,9 @@ pub(super) fn publish_package(
     for relative in paths {
         let source = staging.join(&relative);
         let target = destination.join(&relative);
-        fs::hard_link(&source, &target).map_err(|error| {
-            AepConversionError::io("publish converted package entry", &target, error)
-        })?;
+        crate::adapter::publication::publish_file(&source, &target, fs::hard_link).map_err(
+            |error| AepConversionError::io("publish converted package entry", &target, error),
+        )?;
         rollback.files.push(target);
     }
     rollback.committed = true;
@@ -437,6 +873,112 @@ mod tests {
         fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
             self.inner.seek(position)
         }
+    }
+
+    #[test]
+    fn audio_transcode_receives_caller_cancellation_before_opening_input() {
+        let parent = tempfile::tempdir().unwrap();
+        let sentinel = parent.path().join("keep.txt");
+        fs::write(&sentinel, b"keep").unwrap();
+        let cancelled = std::sync::atomic::AtomicBool::new(true);
+        let output = parent.path().join("prepared.wav");
+        let error =
+            transcode_audio(&parent.path().join("absent.mp3"), &output, &cancelled).unwrap_err();
+        assert!(matches!(error, media_transcode::TranscodeError::Cancelled));
+        assert!(!output.exists());
+        assert_eq!(fs::read_dir(parent.path()).unwrap().count(), 1);
+        assert_eq!(fs::read(sentinel).unwrap(), b"keep");
+    }
+
+    #[test]
+    fn png_is_normalized_to_revalidated_open_exr() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.png");
+        image::RgbaImage::from_pixel(3, 2, image::Rgba([10, 20, 30, 128]))
+            .save(&source)
+            .unwrap();
+        let target = root.path().join("prepared.exr");
+
+        normalize_image_to_exr(&source, &target).unwrap();
+
+        let length = fs::metadata(&target).unwrap().len();
+        let mut file = File::open(&target).unwrap();
+        assert_eq!(
+            metadata::open_exr_dimensions(&mut file, length).unwrap(),
+            [3, 2]
+        );
+        let pixel = image::open(&target).unwrap().to_rgba32f().get_pixel(0, 0).0;
+        for (actual, expected) in pixel.into_iter().zip([10.0, 20.0, 30.0, 128.0]) {
+            assert!((actual - expected / 255.0).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn image_past_former_pixel_limit_preserves_dimensions_and_pixels() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("oversized.png");
+        let target = root.path().join("prepared.exr");
+        let mut pixels = image::RgbaImage::from_pixel(4000, 3001, image::Rgba([10, 20, 30, 128]));
+        pixels.put_pixel(3999, 3000, image::Rgba([255, 64, 0, 255]));
+        pixels.save(&source).unwrap();
+        drop(pixels);
+        normalize_image_to_exr(&source, &target).unwrap();
+        let length = fs::metadata(&target).unwrap().len();
+        let mut file = File::open(&target).unwrap();
+        assert_eq!(
+            metadata::open_exr_dimensions(&mut file, length).unwrap(),
+            [4000, 3001]
+        );
+        let pixels = image::open(&target).unwrap().to_rgba32f();
+        for (position, expected) in [
+            ((0, 0), [10.0, 20.0, 30.0, 128.0]),
+            ((3999, 3000), [255.0, 64.0, 0.0, 255.0]),
+        ] {
+            for (actual, expected) in pixels
+                .get_pixel(position.0, position.1)
+                .0
+                .into_iter()
+                .zip(expected)
+            {
+                assert!((actual - expected / 255.0).abs() < 0.001);
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_images_are_rejected_without_output() {
+        let root = tempfile::tempdir().unwrap();
+        for (name, bytes) in [
+            ("truncated.png", &b"\x89PNG\r\n\x1a\n"[..]),
+            ("truncated.jpg", &b"\xff\xd8\xff"[..]),
+        ] {
+            let source = root.path().join(name);
+            let target = root.path().join(format!("{name}.exr"));
+            fs::write(&source, bytes).unwrap();
+            assert!(normalize_image_to_exr(&source, &target).is_err());
+            assert!(!target.exists());
+        }
+    }
+
+    #[test]
+    fn jpeg_is_normalized_to_revalidated_open_exr() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.jpg");
+        image::RgbImage::from_pixel(2, 1, image::Rgb([10, 20, 30]))
+            .save(&source)
+            .unwrap();
+        let target = root.path().join("prepared.exr");
+        normalize_image_to_exr(&source, &target).unwrap();
+        let length = fs::metadata(&target).unwrap().len();
+        let mut file = File::open(&target).unwrap();
+        assert_eq!(
+            metadata::open_exr_dimensions(&mut file, length).unwrap(),
+            [2, 1]
+        );
+        assert_eq!(
+            image::open(&target).unwrap().to_rgba32f().get_pixel(0, 0).0[3],
+            1.0
+        );
     }
 
     fn parse_wave(bytes: &[u8]) -> Result<metadata::WaveMetadata, metadata::MetadataReadError> {

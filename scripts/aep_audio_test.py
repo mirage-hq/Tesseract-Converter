@@ -149,7 +149,8 @@ def validate_policy(policy: dict) -> None:
         raise AudioTestError("invalid policy limits")
 
 
-def compare(actual: Path, reference: Path, policy: dict) -> dict:
+def compare(actual: Path, reference: Path, policy: dict, *, report_duration_failure: bool = False) -> dict:
+    """Optionally score duration mismatches too, but never let them pass."""
     validate_policy(policy)
     ref_rate, ref_channels, ref = decode(reference)
     rate, channels, data = decode(actual)
@@ -159,7 +160,9 @@ def compare(actual: Path, reference: Path, policy: dict) -> dict:
     ref_frames, frames = len(ref) // channels, len(data) // channels
     duration = policy["duration_seconds"]
     tolerance = policy["duration_tolerance_seconds"]
-    if any(abs(n / rate - duration) > tolerance for n in (ref_frames, frames)) or abs(ref_frames - frames) / rate > tolerance:
+    duration_passed = (all(abs(n / rate - duration) <= tolerance for n in (ref_frames, frames))
+                       and abs(ref_frames - frames) / rate <= tolerance)
+    if not duration_passed and not report_duration_failure:
         raise AudioTestError("reference/actual duration differs from pinned policy")
     # Overlapping samples are measured, but a tolerated duration tail is never
     # silently ignored: zero-pad the shorter side and score it as a mismatch.
@@ -198,8 +201,13 @@ def compare(actual: Path, reference: Path, policy: dict) -> dict:
                         "error_rms": error_rms, "relative_rms_error": relative_error,
                         "peak_sample_error": peak_error, "worst_window_rms_error": worst_window,
                         "max_silence_window_actual_rms": max_silence_leak, "passed": passed})
-    return {"passed": all(item["passed"] for item in results), "rate": rate,
-            "channels": channels, "actual_frames": frames, "reference_frames": ref_frames,
-            "window_seconds": WINDOW_SECONDS, "channel_results": results,
-            "note": "Artifact comparison only; no conversion or native-render proof",
-            "decode_contract": "Zero-origin samples; at most one AAC packet beyond the declared stream end is discarded"}
+    result = {"passed": duration_passed and all(item["passed"] for item in results), "rate": rate,
+              "channels": channels, "actual_frames": frames, "reference_frames": ref_frames,
+              "window_seconds": WINDOW_SECONDS, "channel_results": results,
+              "note": "Artifact comparison only; no conversion or native-render proof",
+              "decode_contract": "Zero-origin samples; at most one AAC packet beyond the declared stream end is discarded"}
+    if report_duration_failure:
+        result["duration"] = {"passed": duration_passed, "expected_seconds": duration,
+                              "tolerance_seconds": tolerance, "actual_seconds": frames / rate,
+                              "reference_seconds": ref_frames / rate}
+    return result

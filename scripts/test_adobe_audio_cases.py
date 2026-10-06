@@ -126,11 +126,14 @@ class AudioInventoryTests(unittest.TestCase):
                   mock.patch.object(audio.e2e, "_acquire_reference", return_value=reference),
                   mock.patch.object(audio.e2e, "_reference_windows"),
                   mock.patch.object(audio, "compare", return_value={"passed": False}) as comparator):
-                # A mock render still needs a distinct native artifact.
-                def fake_render(*_args: object) -> str:
-                    (work / "export/adobe-native.mp4").write_bytes(b"fresh Adobe render")
-                    return ""
-                with mock.patch.object(audio.e2e, "_run", side_effect=fake_render):
+                # Native rendering goes through the central headless-adobe
+                # boundary; mock it so this offline test needs no worker. A mock
+                # render still needs a distinct native artifact.
+                def fake_copy(_artifact: object, output: Path) -> None:
+                    output.write_bytes(b"fresh Adobe render")
+                with (mock.patch.object(audio.adobe_native, "execute", return_value={}),
+                      mock.patch.object(audio.adobe_native, "copy_artifact", side_effect=fake_copy),
+                      mock.patch.object(audio.adobe_native, "read_render_log", return_value=b"")):
                     phase = audio._native_acceptance(case=case, work=work, aerender="aerender", timeout=1)
             self.assertEqual(phase["status"], "failure")
             self.assertEqual(comparator.call_args.args[0], work / "export/adobe-native.mp4")

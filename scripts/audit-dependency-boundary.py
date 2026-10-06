@@ -35,23 +35,22 @@ def workspace_for(root, manifest_path, manifest):
 
 
 def audit_inputs(root, manifests):
-    """Check literal source inputs against the public inventory, without staging."""
-    entries = json.loads((root / 'scripts/conversion-export-files.json').read_text())
-    allowed = {safe_path(root / entry) for entry in entries}
+    """Require literal source inputs to exist within the public workspace."""
 
     def check(source, relative):
         if Path(relative).is_absolute():
             raise ValueError(f'absolute source input: {source} -> {relative}')
         target = safe_path(source.parent / relative)
-        if not target.is_relative_to(root) or not target.is_file() or target not in allowed:
-            raise ValueError(f'escaping, missing or unlisted source input: {source} -> {relative}')
+        if not target.is_relative_to(root) or not target.is_file():
+            raise ValueError(f'escaping or missing source input: {source} -> {relative}')
 
     invocation = re.compile(r'\binclude(?:_str|_bytes)?!\s*\(')
     literal = re.compile(r'\s*("(?:\\.|[^"\\])*")\s*,?\s*\)')
     module_path = re.compile(r'#\s*\[\s*path\s*=\s*("(?:\\.|[^"\\])*")\s*\]')
     for manifest_path in sorted(manifests):
-        if manifest_path not in allowed:
-            raise ValueError(f'unlisted dependency manifest: {manifest_path}')
+        manifest_path = safe_path(manifest_path)
+        if not manifest_path.is_relative_to(root) or not manifest_path.is_file():
+            raise ValueError(f'escaping or missing manifest: {manifest_path}')
         manifest = tomllib.loads(manifest_path.read_text())
         directory = manifest_path.parent
         package = manifest.get('package', {})

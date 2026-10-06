@@ -265,21 +265,35 @@ fn merged_stops(
         .collect();
     offsets.sort_by(f64::total_cmp);
     offsets.dedup_by(|left, right| *left == *right);
-    let stops: Vec<_> = offsets
-        .into_iter()
-        .map(|offset| {
-            let color = interpolate_color(colors, offset);
+    let mut stops = Vec::new();
+    for offset in offsets {
+        let color_start = colors.partition_point(|stop| stop.offset < offset);
+        let color_end = colors.partition_point(|stop| stop.offset <= offset);
+        let alpha_start = alphas.partition_point(|stop| stop.offset < offset);
+        let alpha_end = alphas.partition_point(|stop| stop.offset <= offset);
+        let color_knots = &colors[color_start..color_end];
+        let alpha_knots = &alphas[alpha_start..alpha_end];
+        // Keep authored same-position events in stable order. A channel with
+        // fewer events holds its last value while the other channel jumps.
+        for event in 0..color_knots.len().max(alpha_knots.len()) {
+            let color = if color_knots.is_empty() {
+                interpolate_color(colors, offset)
+            } else {
+                color_knots[event.min(color_knots.len() - 1)].color
+            };
             let alpha = if alphas.is_empty() {
                 1.0
-            } else {
+            } else if alpha_knots.is_empty() {
                 interpolate_alpha(alphas, offset)
+            } else {
+                alpha_knots[event.min(alpha_knots.len() - 1)].alpha
             };
-            ShapeGradientStop {
+            stops.push(ShapeGradientStop {
                 offset,
                 color: [color[0], color[1], color[2], alpha],
-            }
-        })
-        .collect();
+            });
+        }
+    }
     (stops.len() >= 2)
         .then_some(stops)
         .ok_or_else(|| "gradient has fewer than two merged stops".to_owned())
@@ -408,6 +422,94 @@ mod tests {
             interpolate(&duplicate, 0.75, |stop| stop.0, |stop| stop.1),
             0.9
         );
+    }
+
+    #[test]
+    fn review_merged_gradient_retains_color_and_alpha_discontinuities() {
+        let colors: Vec<_> = [(0.0, 0.0), (0.5, 0.2), (0.5, 0.8), (1.0, 1.0)]
+            .into_iter()
+            .map(|(offset, value)| ColorStop {
+                offset,
+                midpoint: 0.5,
+                color: [value; 3],
+            })
+            .collect();
+        let alphas: Vec<_> = [(0.0, 1.0), (0.5, 0.7), (0.5, 0.3), (0.5, 0.9), (1.0, 1.0)]
+            .into_iter()
+            .map(|(offset, alpha)| AlphaStop {
+                offset,
+                midpoint: 0.5,
+                alpha,
+            })
+            .collect();
+        let stops = merged_stops(&colors, &alphas).unwrap();
+        assert_eq!(stops.len(), 5);
+        assert_eq!(stops[1].color, [0.2, 0.2, 0.2, 0.7]);
+        assert_eq!(stops[2].color, [0.8, 0.8, 0.8, 0.3]);
+        assert_eq!(stops[3].color, [0.8, 0.8, 0.8, 0.9]);
+        assert_eq!(
+            interpolate(&stops, 0.75, |stop| stop.offset, |stop| stop.color[0]),
+            0.9
+        );
+        assert_eq!(
+            interpolate(&stops, 0.75, |stop| stop.offset, |stop| stop.color[3]),
+            0.95
+        );
+        let opaque = merged_stops(&colors, &[]).unwrap();
+        assert_eq!(opaque.len(), 4);
+        assert_eq!(opaque[2].color, [0.8, 0.8, 0.8, 1.0]);
+    }
+
+    #[test]
+    fn review_native_fixture_derived_duplicate_gradient_keeps_editable_events() {
+        let decoded = gradients(include_bytes!(
+            "../../../tests/fixtures/shapes/gradient.aep"
+        ));
+        let ShapePaint::Gradient { stops, .. } = &decoded[0].paint else {
+            panic!("native fixture must decode to gradient paint")
+        };
+        // Supplemental mutation of decoded native values, not an independently
+        // Adobe-authored duplicate-stop oracle.
+        let colors = [
+            ColorStop {
+                offset: 0.5,
+                midpoint: 0.5,
+                color: [stops[0].color[0], stops[0].color[1], stops[0].color[2]],
+            },
+            ColorStop {
+                offset: 0.5,
+                midpoint: 0.5,
+                color: [
+                    stops[stops.len() - 1].color[0],
+                    stops[stops.len() - 1].color[1],
+                    stops[stops.len() - 1].color[2],
+                ],
+            },
+        ];
+        let merged = merged_stops(&colors, &[]).unwrap();
+        assert_eq!(merged.len(), 2);
+        assert_eq!(&merged[0].color[..3], &colors[0].color);
+        assert_eq!(&merged[1].color[..3], &colors[1].color);
+    }
+
+    #[test]
+    fn review_coincident_endpoint_gradient_keeps_two_authored_stops() {
+        let colors = [
+            ColorStop {
+                offset: 0.5,
+                midpoint: 0.5,
+                color: [0.0; 3],
+            },
+            ColorStop {
+                offset: 0.5,
+                midpoint: 0.5,
+                color: [1.0; 3],
+            },
+        ];
+        let stops = merged_stops(&colors, &[]).unwrap();
+        assert_eq!(stops.len(), 2);
+        assert_eq!(stops[0].color, [0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(stops[1].color, [1.0; 4]);
     }
 
     #[test]

@@ -65,6 +65,20 @@ pub(crate) struct Mapping {
     pub note: &'static str,
 }
 
+impl Mapping {
+    pub(crate) fn export_note(self) -> &'static str {
+        if self.fx_type == "radialBlur" {
+            "FX radialBlur exports native Zoom mode; the FX 16-sample radial kernel, amount scaling and native quality/seed behavior remain approximate, not proven render-equivalent."
+        } else if self.fx_type == "directionalBlur" {
+            "FX Direction/Length are screen-space; native raster controls are source-plane. Only an isolated static ordinary2D Solid with uniform positive Scale receives export compensation. Other planes/stages and native/FX sampling kernels remain approximate."
+        } else if matches!(self.fx_type, "waveWarp" | "ripple") {
+            "Current editable height, wavelength, direction/center and phase export through native controls; native Wave Speed is explicitly zero so only authored phase keys cause motion. Reciprocal wavelength animation is omitted. Native kernel, Wave Type/pinning/radius confinement and source-plane versus FX normalized-axis projection remain approximate."
+        } else {
+            self.note
+        }
+    }
+}
+
 macro_rules! field {
     ($native:literal, $field:literal) => {
         Field {
@@ -105,7 +119,7 @@ static MAPPINGS: &[Mapping] = &[
     mapping!("ADBE Glo2" => "glow", "Only the default glow source/composite/color mode is modeled; other controls are omitted.";
         field!("ADBE Glo2-0002", "glowThreshold", 0, Scale::Factor(100.0 / 255.0), 0.0, false, true),
         field!("ADBE Glo2-0003", "glowRadius"), field!("ADBE Glo2-0004", "glowIntensity")),
-    mapping!("ADBE Motion Blur" => "directionalBlur", "AE direction/length units are already FX units.";
+    mapping!("ADBE Motion Blur" => "directionalBlur", "Native source-plane Direction/Length use degrees/pixels, while FX controls are screen-space. Import compensation is bounded to an isolated static raster Solid; transformed-raster export, other planes and native/FX sampling-kernel equality remain unverified.";
         field!("ADBE Motion Blur-0001", "direction"), field!("ADBE Motion Blur-0002", "blurLength")),
     mapping!("ADBE OFMotionBlur" => "pixelMotionBlur", "Shutter Control popup (1 Manual, 2 Automatic) is static; automatic ignores shutter keys; unsupported popup animation diagnosed.";
         field!("ADBE OFMotionBlur-0002", "shutterAngle"), field!("ADBE OFMotionBlur-0003", "shutterSamples"),
@@ -177,11 +191,11 @@ static MAPPINGS: &[Mapping] = &[
         field!("ADBE Exposure2-0005", "gammaCorrection")),
     mapping!("ADBE Vibrance" => "vibrance", "Engine preset approximates Adobe color math.";
         field!("ADBE Vibrance-0001", "vibrance"), field!("ADBE Vibrance-0002", "saturation")),
-    mapping!("ADBE Twirl" => "twirl", "Legacy AE Twirl geometry is approximated by engine shader.";
+    mapping!("ADBE Twirl" => "twirl", "Twirl uses an approximate native percentage/FX UV radius and different kernel/falloff/edge sampling. Bounded composition-plane import uses late image transport; eligible Group export uses a full-frame carrier. Other source planes, ancestor transforms and unsupported staging retain a diagnosed editable coordinate approximation; native render equivalence is unmeasured.";
         field!("ADBE Twirl-0001", "angle"), field!("ADBE Twirl-0002", "radius", 0, Scale::Factor(0.01), 0.0, false, true),
         field!("ADBE Twirl-0003", "centerX", 0, Scale::Width, 0.0, false, true),
         field!("ADBE Twirl-0003", "centerY", 1, Scale::Height, 0.0, false, true)),
-    mapping!("ADBE Ripple" => "ripple", "Source pixel amplitude/center/wavelength are mapped to the composition-sized destination Group UV plane. Wavelength is reciprocal and static only; keyed wavelength needs nonlinear animation. After that ordinary lowering, the retained amplitude and every emitted amplitude key are scaled by one factor when the largest exceeds the visual strength limit (amplitude * frequency <= 1.25, beyond the FX ring fold-over threshold of 1, so rings can still fold), approximating the omitted Radius confinement. Speed/radius/conversion mode are omitted.";
+    mapping!("ADBE Ripple" => "ripple", "Source pixel amplitude/center/wavelength are mapped to the composition-sized destination Group UV plane. Wavelength is reciprocal and static only; keyed wavelength needs nonlinear animation. After that ordinary lowering, the retained amplitude and every emitted amplitude key are scaled by one factor when the largest exceeds the visual strength limit (amplitude * frequency <= 1.25, beyond the FX ring fold-over threshold of 1, so rings can still fold), approximating the omitted Radius confinement. Nonzero speed/radius/conversion mode are omitted; zero speed retains explicit static phase.";
         field!("ADBE Ripple-0006", "amplitude", 0, Scale::Width, 0.0, false, true),
         field!("ADBE Ripple-0007", "phase", 0, Scale::Factor(std::f64::consts::PI / 180.0), 0.0, false, true),
         field!("ADBE Ripple-0002", "centerX", 0, Scale::Width, 0.0, false, true),
@@ -197,7 +211,7 @@ static MAPPINGS: &[Mapping] = &[
         Field { param: "intensity", ..field!("VISINF Grain Implant-0008", "amount") }, field!("VISINF Grain Implant-0007", "size"),
         field!("VISINF Grain Implant-0130", "softness"), field!("VISINF Grain Implant-0030", "aspectRatio"),
         field!("VISINF Grain Implant-0013", "seed")),
-    mapping!("ADBE Wave Warp" => "waveWarp", "Source pixel height/wavelength are mapped to the composition-sized destination Group UV plane. Wave Type, Speed, Pinning and Antialiasing are omitted. Wavelength is reciprocal and static only; phase degrees to radians is affine and animatable. Engine approximates warp.";
+    mapping!("ADBE Wave Warp" => "waveWarp", "Source pixel height/wavelength are mapped to the composition-sized destination Group UV plane. Wave Type, nonzero Speed, Pinning and Antialiasing are omitted; zero Speed retains explicit static phase. Wavelength is reciprocal and static only; phase degrees to radians is affine and animatable. Engine approximates warp.";
         field!("ADBE Wave Warp-0002", "waveHeight", 0, Scale::Height, 0.0, false, true),
         field!("ADBE Wave Warp-0004", "direction"),
         field!("ADBE Wave Warp-0007", "phase", 0, Scale::Factor(std::f64::consts::PI / 180.0), 0.0, false, true)),
@@ -249,20 +263,69 @@ const INVERT_IMPORT_MAPPING: Mapping = mapping!("ADBE Invert" => "levels", "Stat
     field!("ADBE Invert-0002", "outputBlack", 0, Scale::Factor(-2.55), 255.0, false, false),
     field!("ADBE Invert-0002", "outputWhite", 0, Scale::Factor(2.55), 0.0, false, false));
 
+// Import-only: the legacy scalar-only profile has no modern dimensions/edge controls.
+const LEGACY_GAUSSIAN_IMPORT_MAPPING: Mapping = mapping!("ADBE Gaussian Blur" => "gaussianBlur", "Legacy scalar Blurriness and authored keys map to editable GaussianBlur. Native legacy kernel, radius calibration and edge alpha are unverified; modern dimensions/repeat-edge controls are not inferred. Export uses the existing modern Gaussian Blur writer, not legacy plugin restoration.";
+    field!("ADBE Gaussian Blur-0001", "blurriness"));
+
 #[cfg(test)]
 pub(crate) fn mappings() -> &'static [Mapping] {
     MAPPINGS
 }
 pub(crate) fn by_native(native: &str) -> Option<&'static Mapping> {
+    // The FX radial falloff is not native CC Vignette's kernel. Keep the
+    // historical export mapping separate; import must diagnose an omission.
+    if native == "CS Vignette" {
+        return None;
+    }
+    if native == SPHERIZE_IMPORT_MAPPING.native {
+        return Some(&SPHERIZE_IMPORT_MAPPING);
+    }
     if native == INVERT_IMPORT_MAPPING.native {
         return Some(&INVERT_IMPORT_MAPPING);
     }
     if native == FILL_IMPORT_MAPPING.native {
         return Some(&FILL_IMPORT_MAPPING);
     }
+    if native == LEGACY_GAUSSIAN_IMPORT_MAPPING.native {
+        return Some(&LEGACY_GAUSSIAN_IMPORT_MAPPING);
+    }
     MAPPINGS.iter().find(|mapping| mapping.native == native)
 }
+// Spherize has no strength control. Export the edited approximation as Bulge,
+// never reconstruct the original Spherize or replay its saved controls.
+static SPHERIZE_IMPORT_MAPPING: Mapping = mapping!("ADBE Spherize" => "bulge", "Spherize approximated by editable Bulge with circular pixel radii and positive height pi-2 (central inverse magnification slope 2/pi). This is a chosen spherical-profile approximation, not a calibrated Adobe kernel. FX falloff, owner-plane projection and edge alpha differ; export writes current Bulge controls, not Spherize. Native animation/live expressions are unsupported by this static route; disabled expression text does not prevent static conversion.";
+    field!("ADBE Spherize-0001", "horizontalRadius", 0, Scale::Width, 0.0, false, false),
+    field!("ADBE Spherize-0001", "verticalRadius", 0, Scale::Height, 0.0, false, false),
+    field!("ADBE Spherize-0002", "centerX", 0, Scale::Width, 0.0, false, false),
+    field!("ADBE Spherize-0002", "centerY", 1, Scale::Height, 0.0, false, false));
+
+// Export-only decomposition of the existing shader's additive RGB shifts.
+// Two native effects keep independently timed Temperature/Tint tracks editable.
+static WHITE_BALANCE_TEMPERATURE: Mapping = mapping!("ADBE Exposure2" => "temperatureTint", "Temperature/Tint uses ordered native individual-channel Exposure offsets. Native color space, premultiplication and intermediate clipping can differ; this is not a calibrated white-balance transfer.";
+    field!("ADBE Exposure2-0009", "temperature", 0, Scale::Factor(1.0 / 0.0012), 0.0, false, true),
+    field!("ADBE Exposure2-0019", "temperature", 0, Scale::Factor(-1.0 / 0.0012), 0.0, false, true));
+static WHITE_BALANCE_TINT: Mapping = mapping!("ADBE Exposure2" => "temperatureTint", "Tint uses the current FX shader's signed offsets, not its contradictory green/magenta description. Alpha is not intentionally changed; native alpha fidelity is unmeasured.";
+    field!("ADBE Exposure2-0009", "tint", 0, Scale::Factor(-1.0 / 0.0006), 0.0, false, true),
+    field!("ADBE Exposure2-0014", "tint", 0, Scale::Factor(1.0 / 0.0012), 0.0, false, true),
+    field!("ADBE Exposure2-0019", "tint", 0, Scale::Factor(-1.0 / 0.0006), 0.0, false, true));
+
+pub(crate) fn export_mappings(fx_type: &str) -> Vec<&'static Mapping> {
+    if fx_type == "temperatureTint" {
+        vec![&WHITE_BALANCE_TEMPERATURE, &WHITE_BALANCE_TINT]
+    } else {
+        by_fx(fx_type).into_iter().collect()
+    }
+}
+
+// Export-only: the canonical AE26 Vibrance plugin has a genuine float Saturation
+// leaf. Its transfer is not FX HSV saturation; do not use this for static H/S/L.
+pub(crate) static ANIMATED_SATURATION: Mapping = mapping!("ADBE Vibrance" => "hueSaturation", "Animated saturation-only Hue/Saturation is approximated by native Vibrance Saturation with Vibrance=0. Scalar values and supported keys are retained, but native colour transfer, clipping and RGB/alpha fidelity differ or are unmeasured; not packed Hue/Saturation restoration.";
+    field!("ADBE Vibrance-0002", "saturation"));
+
 pub(crate) fn by_fx(fx_type: &str) -> Option<&'static Mapping> {
+    if fx_type == "temperatureTint" {
+        return Some(&WHITE_BALANCE_TEMPERATURE);
+    }
     // Easy Levels' non-animatable master controls ignored ordinary property
     // overrides in Adobe readback. Individual Controls has
     // the same mapped RGB master controls with native editable numeric keys.
@@ -312,6 +375,7 @@ pub(crate) fn default_effect(fx_type: &str) -> Value {
         "posterizeTime" => json!({"type":fx_type,"frameRate":8}),
         "vignette" => json!({"type":fx_type,"amount":0.5,"radius":0.75,"feather":0.35}),
         "findEdges" => json!({"type":fx_type,"invert":1}),
+        "temperatureTint" => json!({"type":fx_type,"temperature":0,"tint":0}),
         "exposure" => json!({"type":fx_type,"exposure":0,"offset":0,"gammaCorrection":1}),
         "vibrance" => json!({"type":fx_type,"vibrance":25,"saturation":0}),
         "twirl" => json!({"type":fx_type,"angle":120,"radius":0.5,"centerX":0.5,"centerY":0.5}),
@@ -393,11 +457,24 @@ mod tests {
     }
 
     #[test]
-    fn vignette_mapping_is_bidirectional() {
-        let import = by_native("CS Vignette").expect("native CC Vignette import mapping");
-        let export = by_fx("vignette").expect("editable FX Vignette export mapping");
-        assert_eq!(import.native, export.native);
-        assert_eq!(import.fx_type, export.fx_type);
+    fn legacy_gaussian_mapping_is_import_only() {
+        let mapping = by_native("ADBE Gaussian Blur").unwrap();
+        assert_eq!(mapping.fx_type, "gaussianBlur");
+        assert_eq!(mapping.fields.len(), 1);
+        assert_eq!(mapping.fields[0].native, "ADBE Gaussian Blur-0001");
+        assert_eq!(mapping.fields[0].field, "blurriness");
+        assert_eq!(
+            by_fx("gaussianBlur").unwrap().native,
+            "ADBE Gaussian Blur 2"
+        );
+    }
+
+    #[test]
+    fn vignette_mapping_is_export_only() {
+        assert!(by_native("CS Vignette").is_none());
+        let export = by_fx("vignette").expect("historical FX Vignette export mapping");
+        assert_eq!(export.native, "CS Vignette");
+        assert_eq!(export.fx_type, "vignette");
         assert!(serde_json::from_value::<LayerEffect>(default_effect("vignette")).is_ok());
     }
 

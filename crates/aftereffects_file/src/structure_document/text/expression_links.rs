@@ -5,9 +5,11 @@
 //! (`effect(name)(1)` or a named value parameter), earlier `var` bindings that
 //! are all used, unary and binary `+`/`-`, `value[i]` of a static vector owner,
 //! `linear(t, tMin, tMax, v1, v2)` with static bounds, and
-//! `text.animator(name).selector(name).field` aliases of percentage Range
-//! Selector fields on the same text. The result is a static value, or the
+//! `text.animator(name).selector(name).field` aliases of static Percentage or
+//! Index Range Selector fields on the same text. The result is a static value, or the
 //! Slider's own keys with mapped values and speeds in the shared layer clock.
+//! A separate complete direct alias profile admits finite static Angle Controls
+//! for scalar owners; Angle aliases cannot participate in the affine grammar.
 //! Nothing is executed or sampled. Every other form, ambiguous name, cycle and
 //! clamping case is rejected, so the caller keeps the stored value.
 //!
@@ -29,6 +31,8 @@ use super::super::control_links::{
     token,
 };
 use super::range_default;
+
+mod static_angle;
 
 /// AE's stored display name for a group that keeps its default name.
 const DEFAULT_NAME: &str = "-_0_/-";
@@ -176,7 +180,11 @@ impl<'a> ExpressionLinks<'a> {
         storage: &'a [Chunk],
         own: &NumericProperty,
     ) -> Result<NumericProperty, PropertyError> {
-        let value = self.evaluate(expression(storage)?, own, &mut Aliases::default())?;
+        let text = expression(storage)?;
+        if let Some(lowered) = static_angle::lower(text, own, self.effects()) {
+            return lowered;
+        }
+        let value = self.evaluate(text, own, &mut Aliases::default())?;
         value.into_property(own)
     }
 
@@ -211,7 +219,16 @@ impl<'a> ExpressionLinks<'a> {
         aliases: &mut Aliases,
     ) -> Result<Scalar, PropertyError> {
         let Some(storage) = selector.storage(field)? else {
-            // A sparse selector keeps AE's native default; no curve is invented.
+            // Sparse Index controls can have text-dependent native defaults.
+            // Only the independently established Percentage defaults are safe.
+            if matches!(
+                field,
+                "ADBE Text Index Start" | "ADBE Text Index End" | "ADBE Text Index Offset"
+            ) {
+                return Err(PropertyError::Layout(
+                    "aliased Range Selector has an unmaterialized Index field",
+                ));
+            }
             return Ok(Scalar::Constant(range_default(field)));
         };
         let numeric = read_numeric(storage)?;
@@ -441,7 +458,7 @@ impl<'a> Evaluation<'_, 'a> {
                 "aliased selector is not a Range Selector",
             ));
         }
-        selector.require_percentage_units()?;
+        let field = selector.active_field(field)?;
         let address = (animator_index, selector_index, field);
         if self.aliases.path.contains(&address) {
             return Err(PropertyError::Layout("cyclic Range Selector alias"));
@@ -489,18 +506,30 @@ impl<'a> Selector<'a> {
         unique_list(run, *b"tdbs").map(Some)
     }
 
-    /// Field aliases name percentage values; Index units are not admitted.
-    fn require_percentage_units(&self) -> Result<(), PropertyError> {
+    /// AE's logical Start/End/Offset aliases return the active native units,
+    /// not the dormant Percentage controls or an FX-normalized fraction.
+    fn active_field(&self, field: &'static str) -> Result<&'static str, PropertyError> {
         let Some(storage) = self.storage("ADBE Text Range Units")? else {
-            return Ok(());
+            return Ok(field);
         };
         let units = read_numeric(storage)?;
-        if units.expression_enabled || units.animated || units.values != [1.0] {
+        if units.expression_enabled
+            || units.animated
+            || !matches!(units.values.as_slice(), [1.0] | [2.0])
+        {
             return Err(PropertyError::Layout(
-                "aliased Range Selector does not use percentage units",
+                "aliased Range Selector needs static Percentage or Index units",
             ));
         }
-        Ok(())
+        if units.values == [2.0] {
+            return Ok(match field {
+                "ADBE Text Percent Start" => "ADBE Text Index Start",
+                "ADBE Text Percent End" => "ADBE Text Index End",
+                "ADBE Text Percent Offset" => "ADBE Text Index Offset",
+                _ => field,
+            });
+        }
+        Ok(field)
     }
 }
 
@@ -688,8 +717,8 @@ fn number(text: &mut &str) -> Option<f64> {
     (!suffix).then_some(value)
 }
 
-/// `text.animator(name).selector(name).field` for the percentage fields that
-/// bounded rigs alias, as `(animator, selector, field match name)`.
+/// Parse a bounded logical field alias using its Percentage match name;
+/// `Selector::active_field` selects the Index equivalent after resolving units.
 fn selector_field<'a>(text: &mut &'a str) -> Option<(&'a str, &'a str, &'static str)> {
     for part in ["text", ".", "animator", "("] {
         token(text, part)?;

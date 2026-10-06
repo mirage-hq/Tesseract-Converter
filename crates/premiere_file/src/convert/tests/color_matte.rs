@@ -13,7 +13,7 @@ use crate::{
         TICKS_PER_MILLISECOND,
     },
     test_support::editable_document,
-    tests::support::{project_document_with_media, video_media, video_sequence},
+    tests::support::{clip_of, nest_of, project_document_with_media, video_media, video_sequence},
     Omission, OmissionKind, OmissionScope,
 };
 use fx_schema::EditableFxCompositionDocument;
@@ -26,6 +26,204 @@ use std::collections::BTreeMap;
 const RED: PrColorMatte = PrColorMatte { rgb: [255, 0, 0] };
 const BLACK: PrColorMatte = PrColorMatte { rgb: [0, 0, 0] };
 
+/// Portable synthetic coverage for edited Color Matte fills and nested sources;
+/// this does not establish independent native-source or Adobe-render fidelity.
+#[test]
+fn color_matte_binding_exports_edited_fill_and_nested_source() {
+    let mut inner = video_sequence();
+    inner.top_level = Some(false);
+    inner.video_tracks = vec![PrVideoTrack::media([clip_of("source", 0..15 * TICKS, 0)])];
+    inner.timeline_end_ticks = 15 * TICKS;
+    let mut fill = matte_occurrence("red", 0, 15);
+    fill.track_matte = Some(crate::schema::PrTrackMatte {
+        track_index: 1,
+        channel: crate::schema::PrMatteChannel::Luma,
+    });
+    let mut outer = video_sequence();
+    outer.video_tracks = vec![
+        PrVideoTrack::media([fill]),
+        PrVideoTrack {
+            items: Vec::new(),
+            transitions: Vec::new(),
+            nests: vec![nest_of(inner, 0..15 * TICKS, 0)],
+        },
+    ];
+    outer.timeline_end_ticks = 15 * TICKS;
+    let mut media = video_media();
+    media
+        .get_mut(&MediaId("source".into()))
+        .unwrap()
+        .video
+        .as_mut()
+        .unwrap()
+        .intrinsic_ticks = 15 * TICKS;
+    media.insert(MediaId("red".into()), matte_media(RED));
+    edited_color_matte_binding(PrProjectFile::from_sequences(vec![outer], media));
+}
+
+fn edited_color_matte_binding(project: PrProjectFile) {
+    let mut document =
+        project_document_with_media(project.single_sequence().unwrap(), &project.media);
+    let layers = document["composition"]["layers"].as_array_mut().unwrap();
+    let fill_index = layers
+        .iter()
+        .position(|layer| layer["type"] == "Rect" && layer["trackMatte"].is_object())
+        .unwrap();
+    let source_id = layers[fill_index]["trackMatte"]["layer"].clone();
+    assert_eq!(layers[fill_index]["trackMatte"]["mode"], "luma");
+    assert_eq!(
+        crate::test_support::layer_range(&layers[fill_index]),
+        &json!({"start": 0, "duration": 15000})
+    );
+    let source_index = layers
+        .iter()
+        .position(|layer| layer["id"] == source_id)
+        .unwrap();
+    assert_eq!(layers[source_index]["type"], "Group");
+    let child = &layers[source_index]["layers"][0];
+    assert_eq!(child["type"], "Video");
+    let asset = child["source"]["assetId"].as_str().unwrap().to_owned();
+    let facts = BTreeMap::from([(
+        asset,
+        MediaFacts::Video(VideoMedia {
+            pixel_aspect: Default::default(),
+            orientation: crate::schema::VideoOrientation::Identity,
+            codec: VideoCodec::H264,
+            bit_depth: 8,
+            colour: None,
+            width: 1920,
+            height: 1080,
+            timing: crate::media::VideoTiming::for_test(FrameRate::Fps30, 15 * TICKS),
+        }),
+    )]);
+    layers[fill_index]["rect"]["fillColor"] = json!([0.2, 0.4, 0.6, 1.0]);
+    layers[fill_index]["trackMatte"]["mode"] = json!("alphaInverted");
+    layers[source_index]["name"] = json!("Edited nested source");
+    // A separate solid remains visible even when the keyed stack is rejected.
+    let mut sibling = layers[fill_index].clone();
+    sibling["id"] = json!(1000);
+    sibling.as_object_mut().unwrap().remove("trackMatte");
+    sibling["rect"]["fillColor"] = json!([1.0, 0.0, 0.0, 1.0]);
+    layers.insert(layers.len() - 1, sibling);
+    let lower = |value: Value| {
+        let document = EditableFxCompositionDocument::from_json_value(value).unwrap();
+        let mut omissions = Vec::new();
+        let project = tesseract_to_premiere(
+            &document,
+            &facts,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            FrameRate::Fps30,
+            &mut omissions,
+        )
+        .unwrap();
+        (project, omissions)
+    };
+    let (mut exported, omissions) = lower(document.clone());
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let outer = exported.single_sequence().unwrap();
+    let (fill_track, fill) = outer
+        .video_tracks
+        .iter()
+        .enumerate()
+        .find_map(|(track, value)| {
+            value
+                .items
+                .iter()
+                .filter_map(PrVideoItem::media)
+                .find(|clip| clip.track_matte.is_some())
+                .map(|clip| (track, clip))
+        })
+        .unwrap();
+    let matte = fill.track_matte.unwrap();
+    assert_eq!(matte.channel, crate::schema::PrMatteChannel::AlphaInverted);
+    assert!(matte.track_index > fill_track);
+    let source = &outer.video_tracks[matte.track_index].nests[0];
+    assert_eq!(source.timeline_ticks(), fill.timeline_ticks());
+    assert_eq!(source.sequence.name, "Edited nested source");
+    assert_eq!(source.sequence.video_items().count(), 1);
+    assert_eq!(
+        exported.media(fill).unwrap().video.as_ref().unwrap().kind,
+        PrMediaKind::ColorMatte(PrColorMatte {
+            rgb: [51, 102, 153]
+        })
+    );
+    for media in exported
+        .media
+        .values_mut()
+        .filter(|media| !media.is_generator())
+    {
+        media.name = "noise-texture.mp4".into();
+        media.relative_path = Some("./media/noise-texture.mp4".into());
+        media.relative_paths = vec!["./media/noise-texture.mp4".into()];
+        media.absolute_paths = vec![(
+            crate::schema::records::MediaPathField::FilePath,
+            "/media/noise-texture.mp4".into(),
+        )];
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("edited.prproj");
+    crate::format::PremiereProjectXml::new(&exported)
+        .unwrap()
+        .write_new(&path)
+        .unwrap();
+    let (reread, omissions) = PrProjectFile::load(&path).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let again = project_document_with_media(reread.single_sequence().unwrap(), &reread.media);
+    let layers = again["composition"]["layers"].as_array().unwrap();
+    let fill = layers
+        .iter()
+        .find(|layer| layer["trackMatte"].is_object())
+        .unwrap();
+    assert_eq!(fill["rect"]["fillColor"], json!([0.2, 0.4, 0.6, 1.0]));
+    assert_eq!(fill["trackMatte"]["mode"], "alphaInverted");
+    let source = layers
+        .iter()
+        .find(|layer| layer["id"] == fill["trackMatte"]["layer"])
+        .unwrap();
+    assert_eq!(source["type"], "Group");
+    assert_eq!(
+        crate::test_support::layer_range(source),
+        crate::test_support::layer_range(fill)
+    );
+    assert_eq!(source["layers"][0]["type"], "Video");
+    assert_eq!(
+        layers
+            .iter()
+            .filter(|layer| layer["type"] == "Video")
+            .count(),
+        0
+    );
+
+    let mut rounded = document.clone();
+    rounded["composition"]["layers"][source_index]["layers"][0]["cornerRadius"] = json!(0.1);
+    let (rejected, omissions) = lower(rounded);
+    assert!(
+        omissions
+            .iter()
+            .any(|omission| omission.reason.contains("source video has rounded corners")),
+        "{omissions:?}"
+    );
+    assert_eq!(
+        track_kinds(&rejected),
+        vec![vec![PrMediaKind::ColorMatte(RED)]]
+    );
+
+    document["composition"]["layers"][source_index]["transform"]["rotation"] = json!(10.0);
+    let (rejected, omissions) = lower(document);
+    assert!(
+        omissions
+            .iter()
+            .any(|omission| omission.reason.contains("track matte source")),
+        "{omissions:?}"
+    );
+    assert_eq!(rejected.single_sequence().unwrap().video_items().count(), 1);
+    assert_eq!(
+        track_kinds(&rejected),
+        vec![vec![PrMediaKind::ColorMatte(RED)]]
+    );
+}
+
 fn matte_media(matte: PrColorMatte) -> PrMedia {
     PrMedia {
         name: "Color Matte".into(),
@@ -33,6 +231,8 @@ fn matte_media(matte: PrColorMatte) -> PrMedia {
         relative_paths: Vec::new(),
         absolute_paths: Vec::new(),
         video: Some(crate::schema::PrVideoStream {
+            pixel_aspect: Default::default(),
+            interpretation: Default::default(),
             orientation: crate::schema::VideoOrientation::Identity,
             intrinsic_ticks: COLOR_MATTE_INTRINSIC_TICKS,
             frame_rate: (FrameRate::Fps30).into(),
@@ -68,6 +268,7 @@ fn matte_occurrence(id: &str, start_secs: i64, end_secs: i64) -> PrVideoOccurren
         effects_above_mask: 0,
         stroke: None,
         active_transforms: 0,
+        source_effects: None,
     }
 }
 
@@ -102,6 +303,7 @@ fn video_facts(document: &Value) -> BTreeMap<String, MediaFacts> {
             (
                 layer["source"]["assetId"].as_str().unwrap().to_owned(),
                 MediaFacts::Video(VideoMedia {
+                    pixel_aspect: Default::default(),
                     orientation: crate::schema::VideoOrientation::Identity,
                     codec: VideoCodec::H264,
                     bit_depth: 8,
@@ -362,10 +564,8 @@ fn solid_fill_document() -> Value {
     document
 }
 
-/// Independent editable input matching `insert_rect` and `canvas_transform`
-/// in `project_mutation/src/actions/fx/insert_fullscreen_layer.rs`: one 2 s
-/// solid with anchor = position = canvas centre. Keep the conversion test
-/// portable rather than invoking the private mutation host.
+/// Independent editable input: one 2 s fullscreen solid with anchor and
+/// position at the canvas centre.
 fn fullscreen_solid_document(color: [f64; 4]) -> EditableFxCompositionDocument {
     EditableFxCompositionDocument::from_json_value(json!({
         "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
@@ -535,12 +735,14 @@ fn rectangles_other_than_color_mattes_export_as_one_shape_or_with_the_shape_reas
             closed: true,
         },
         appearance: PrAppearance {
+            mask_source: None,
             fill,
             stroke,
             shadow: None,
         },
         transform,
         horizontal_scale: None,
+        mask: None,
     };
     let placed = |position, anchor, scale, rotation, opacity| PrTextTransform {
         position,
@@ -820,7 +1022,7 @@ fn rectangles_other_than_color_mattes_export_as_one_shape_or_with_the_shape_reas
         ),
         (
             vec![("/0/trackMatte", json!({"mode": "alpha", "layer": 2}))],
-            Err("graphic was not exported: its shape layer must have no track matte".to_owned()),
+            Err("Color Matte track matte was not exported: the track matte source is a Rect layer; only a video, still image, graphic shape or bounded nested source is exported".to_owned()),
         ),
         // A text on its path, in a group or at the root, consumes the bar or
         // the canvas-sized solid, which is then no Color Matte.
@@ -869,7 +1071,7 @@ fn rectangles_other_than_color_mattes_export_as_one_shape_or_with_the_shape_reas
             Ok(shape(bar_corners, red(), None, bar_placed())),
             approximated(
                 "conic",
-                "unsupported conversion: reflected and conic gradient shape fills are unsupported (JRB-2015)",
+                "unsupported conversion: reflected and conic gradient shape fills are unsupported",
             ),
         ),
         (
@@ -1065,4 +1267,68 @@ fn a_non_black_bottom_rectangle_is_an_authored_matte_not_the_canvas() {
     let tracks: Vec<_> = project.single_sequence().unwrap().video_tracks().collect();
     assert_eq!(tracks[0][0].timeline_ticks(), 0..TICKS);
     assert_eq!(tracks[1][0].timeline_ticks(), TICKS / 2..TICKS);
+}
+
+#[test]
+fn sharp_crop_color_matte_guide_keeps_parent_range_and_independent_opacity() {
+    use crate::schema::PrStaticCrop;
+    use fx_schema::{BlendMode, FxItemId, LayerId, PercentageProperty};
+    let crop = PrStaticCrop {
+        left: 50.0,
+        ..PrStaticCrop::default()
+    };
+    for hidden in [false, true] {
+        let mut owner = super::rect_layer(
+            &video_sequence(),
+            RED,
+            crate::convert::premiere_to_tesseract::tick_range(0, 966226060800).unwrap(),
+            LayerId::new(10),
+            "Matte".into(),
+            hidden,
+        );
+        owner.parent = Some(LayerId::new(9));
+        owner.blend_mode = BlendMode::Multiply;
+        owner.transform.opacity = PercentageProperty::new(47.0).unwrap();
+        let guide = super::bind_sharp_crop(
+            &mut owner,
+            &crop,
+            [1920, 1080],
+            LayerId::new(11),
+            FxItemId::new(12),
+        )
+        .unwrap();
+        assert_eq!(guide.parent, owner.parent);
+        assert_eq!(guide.active_range, owner.active_range);
+        assert!(!guide.is_hidden && !guide.rect.fill_enabled && !guide.rect.stroke_enabled);
+        assert_eq!(guide.rect.position, [960.0, 0.0]);
+        assert_eq!(guide.rect.size, [960.0, 1080.0]);
+        assert_eq!(guide.transform, super::identity_transform());
+        assert_eq!(
+            owner.transform.opacity,
+            PercentageProperty::new(47.0).unwrap()
+        );
+        assert_eq!(owner.blend_mode, BlendMode::Multiply);
+        assert_eq!(owner.is_hidden, hidden);
+        assert_eq!(
+            owner.masks,
+            [super::guide_mask(FxItemId::new(12), LayerId::new(11), 0.0)]
+        );
+        let before = owner.masks.clone();
+        let feathered = PrStaticCrop {
+            edge_feather: 12.0,
+            ..crop
+        };
+        assert!(super::bind_sharp_crop(
+            &mut owner,
+            &feathered,
+            [1920, 1080],
+            LayerId::new(13),
+            FxItemId::new(14)
+        )
+        .is_err());
+        assert_eq!(
+            owner.masks, before,
+            "failed binding never attaches a partial mask"
+        );
+    }
 }

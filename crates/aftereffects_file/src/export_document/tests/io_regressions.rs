@@ -4,6 +4,182 @@ use crate::properties;
 use crate::timing::FrameRate;
 use sha2::{Digest, Sha256};
 
+fn native_remap(chunks: &[crate::rifx::Chunk]) -> Option<properties::NumericProperty> {
+    if let Ok(runs) = properties::runs(chunks) {
+        for (name, run) in runs {
+            if name == "ADBE Time Remapping" {
+                return Some(
+                    properties::read_numeric(properties::unique_list(run, *b"tdbs").unwrap())
+                        .unwrap(),
+                );
+            }
+        }
+    }
+    chunks
+        .iter()
+        .filter_map(crate::rifx::Chunk::children)
+        .find_map(native_remap)
+}
+
+#[test]
+fn native_time_remap_endpoints_export_with_the_selected_composition_clock() {
+    let bytes =
+        include_bytes!("../../../tests/fixtures/pr4442_native/sources/timing_time_remap_hold.aep");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(bytes)),
+        "9af84d67acbdf35b4faf800750d8b2c27c3b0d9ed68a62685ba6ad6465b5cdda"
+    );
+    let source = read_project(bytes).unwrap();
+    let comp = &source.item(1).unwrap();
+    assert_eq!(comp.name, "PR4442_TIMING_TIME_REMAP_HOLD");
+    let ItemKind::Composition(comp) = &comp.kind else {
+        panic!("native root composition")
+    };
+    let authored = native_remap(&comp.layers[0].content).unwrap();
+    let authored_keys = authored
+        .keyframes
+        .iter()
+        .map(|key| (key.time_secs, key.values.clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(authored_keys.len(), 3, "{authored_keys:?}");
+    assert_eq!(authored_keys[0].0, 0.0);
+    assert_eq!(authored_keys[2].0, 2.0, "{authored_keys:?}");
+    assert_eq!(authored.keyframes[0].out_interpolation, 3);
+    let mut value = to_structural_fx_document(&source, Some(1))
+        .unwrap()
+        .document
+        .to_json_value()
+        .unwrap();
+    // The imported authored wrapper has unbounded Hold extrapolation. This
+    // explicit edited FX input bounds it to the native consuming interval;
+    // the native curve and moving editable child remain unchanged.
+    let remapped = &mut value["composition"]["layers"][0]["layers"][0]["layers"][0]["layers"][0];
+    assert_eq!(remapped["name"], "Authored source remap");
+    remapped["playback"]["inputRange"] = json!({"start": 0, "duration": 2000});
+    let document = EditableFxCompositionDocument::from_json_value(value).unwrap();
+    let output = to_aep_with_fps(&document, 30.0).unwrap();
+    assert!(
+        output.omitted_layer_ids.is_empty(),
+        "{:?}",
+        output.diagnostics
+    );
+    let native = read_project(&output.bytes).unwrap();
+    let exported_layer = native
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ItemKind::Composition(comp) => Some(comp),
+            _ => None,
+        })
+        .flat_map(|comp| &comp.layers)
+        .find(|layer| native_remap(&layer.content).is_some())
+        .expect("native Time Remap occurrence must be retained");
+    let root = exported_layer
+        .content
+        .iter()
+        .find(|chunk| chunk.list_kind() == Some(*b"tdgp"))
+        .unwrap()
+        .children()
+        .unwrap();
+    let first_name = root.iter().find(|chunk| chunk.id() == *b"tdmn").unwrap();
+    assert!(
+        first_name
+            .data_payload()
+            .unwrap()
+            .starts_with(b"ADBE Time Remapping"),
+        "Adobe-authored Time Remap properties precede the Transform group"
+    );
+    let exported = native_remap(&exported_layer.content).unwrap();
+    assert_eq!(exported.keyframes.len(), authored_keys.len());
+    for (key, (time, values)) in exported.keyframes.iter().zip(authored_keys) {
+        assert!((key.time_secs - time).abs() <= 0.5 / 30_720.0);
+        assert!((key.values[0] - values[0]).abs() <= 0.5 / 1000.0);
+    }
+}
+
+#[test]
+fn selected_time_remap_clock_overflow_omits_only_its_media_or_group_owner() {
+    use crate::writer::footage::{NativeFrameRate, NativeSourceFormat, RelativeMediaPath};
+
+    // 75,000,000ms fits the observed 24fps property clock but overflows
+    // 30fps's signed native tick field. The original planning clock must not
+    // let this become a late whole-project serialization error.
+    let property = json!({
+        "keyframes": [
+            {"id": "first", "time": 0, "value": 0, "easing": {"type": "linear"}},
+            {"id": "last", "time": 75000000, "value": 500, "easing": {"type": "linear"}}
+        ],
+        "before": "inactive", "after": "inactive"
+    });
+    for kind in ["Video", "Group"] {
+        let mut value = imported();
+        let mut owner = json!({
+            "type": kind, "id": 40010, "name": "Overflow owner",
+            "transform": identity_fx_transform(),
+            "playback": fixture_remapped_playback(json!({"start": 0, "duration": 1000}), property.clone()),
+        });
+        let mut resolved = BTreeMap::new();
+        if kind == "Video" {
+            owner["source"] = json!({"assetId": "movie", "fit": "contain"});
+            owner["sourceRange"] = json!({"start": 0, "duration": 1000});
+            owner["sourceIntrinsicDuration"] = json!(1000);
+            resolved.insert(
+                "movie".to_owned(),
+                media::ResolvedMediaSource {
+                    asset_id: fx_schema::AssetId::new("movie").unwrap(),
+                    path: RelativeMediaPath::new("media/movie.mov").unwrap(),
+                    format: NativeSourceFormat::QuickTime,
+                    dimensions: [320, 180],
+                    duration_millis: 1000,
+                    duration_millis_floor: 1000,
+                    duration_native_ticks: None,
+                    frame_rate: NativeFrameRate::integer(24),
+                    audio_sample_rate: 0.0,
+                    wave_metadata: None,
+                    native_duration: None,
+                },
+            );
+        } else {
+            let mut child = rect(&value, 40011);
+            child["parent"] = json!(40010);
+            child["activeRange"] = json!({"start": 0, "duration": 1000});
+            owner["layers"] = json!([child]);
+        }
+        value["composition"]["layers"] = json!([owner, rect(&value, 40012)]);
+        value["composition"]["dynamics"] = json!({"entries": []});
+        let document = EditableFxCompositionDocument::from_json_value(value).unwrap();
+        let output = to_aep_with_media_and_fps(&document, &resolved, 30.0).unwrap();
+        assert!(output.omitted_layer_ids.contains(&LayerId::new(40010)));
+        assert_eq!(layers(&read_project(&output.bytes).unwrap()).len(), 1);
+        assert!(
+            output.diagnostics.iter().any(|warning| {
+                warning.layer_id == Some(LayerId::new(40010))
+                    && warning
+                        .message
+                        .contains("selected composition clock grammar")
+            }),
+            "{kind}: {:?}",
+            output.diagnostics
+        );
+        let control = to_aep_with_media_and_fps(&document, &resolved, 24.0).unwrap();
+        assert!(
+            control.omitted_layer_ids.is_empty(),
+            "{kind}: {:?}",
+            control.diagnostics
+        );
+        let mut slower = document.to_json_value().unwrap();
+        slower["composition"]["layers"][0]["playback"]["mapping"]["property"]["keyframes"][1]["time"] =
+            json!(100000000);
+        let slower = EditableFxCompositionDocument::from_json_value(slower).unwrap();
+        let control = to_aep_with_media_and_fps(&slower, &resolved, 10.0).unwrap();
+        assert!(
+            control.omitted_layer_ids.is_empty(),
+            "{kind}: {:?}",
+            control.diagnostics
+        );
+    }
+}
+
 #[test]
 fn large_timeline_export_does_not_omit_the_513th_layer() {
     let mut value = imported();
@@ -47,14 +223,13 @@ fn native_solid_document() -> Value {
     assert_eq!(occurrence["transform"]["anchorPoint"], json!([110.0, 70.0]));
     assert_eq!(occurrence["transform"]["position"], json!([320.0, 180.0]));
     let clock = &occurrence["layers"][0];
-    assert_eq!(
-        clock["playback"]["mapping"]["property"]["keyframes"][0]["value"],
-        json!(0)
+    let content: GroupLayer = serde_json::from_value(clock.clone()).unwrap();
+    assert!(
+        content.playback.time_remap().is_none(),
+        "native Solid content is a constant raster, not a sampled source clock"
     );
-    assert_eq!(
-        clock["playback"]["mapping"]["property"]["keyframes"][1]["value"],
-        json!(2000)
-    );
+    assert_eq!(content.playback.input_range().start.as_millis(), 0);
+    assert_eq!(content.playback.input_range().duration.as_millis(), 2000);
     assert_eq!(clock["layers"][0]["rect"]["size"], json!([220.0, 140.0]));
     value
 }
@@ -64,10 +239,167 @@ fn native_solid_document() -> Value {
 fn short_source_clock() -> GroupLayer {
     let mut value = native_solid_document();
     let clock = &mut value["composition"]["layers"][0]["layers"][0]["layers"][0];
+    // The native Solid now imports without a sampled source clock. These export
+    // clock regressions author their supplementary editable remap explicitly.
     clock["playback"]["inputRange"]["duration"] = json!(40);
-    clock["playback"]["mapping"]["property"]["keyframes"][1]["time"] = json!(40);
-    clock["playback"]["mapping"]["property"]["keyframes"][1]["value"] = json!(40);
+    clock["playback"]["mapping"] = json!({"type": "timeRemap", "property": {
+        "keyframes": [
+            {"id": "a", "time": 0, "value": 0, "easing": {"type": "linear"}},
+            {"id": "b", "time": 40, "value": 40, "easing": {"type": "linear"}}
+        ],
+        "before": "inactive", "after": "inactive"
+    }});
     serde_json::from_value(clock.clone()).unwrap()
+}
+
+// Supplementary edit of a pinned native Rect: a short occurrence cannot visit
+// the late geometry of its long-lived child. Keep the entire authored track.
+fn short_animated_source(end_value: f64) -> Value {
+    use fx_schema::animator::{
+        KeyframeId, PropertyAnimator, PropertyKeyframe, PropertyKeyframeTrack,
+    };
+    let mut value = native_solid_document();
+    let mut child = rect(&value, 7);
+    child["activeRange"] = json!({"start": 0, "duration": 45000});
+    child["rect"]["position"] = json!([0, 0]);
+    child["rect"]["size"] = json!([10, 10]);
+    child["transform"]["anchorPoint"] = json!([0, 0]);
+    child["transform"]["position"] = json!([0, 0]);
+    let mut group = serde_json::to_value(short_source_clock()).unwrap();
+    group["type"] = json!("Group");
+    group["id"] = json!(8);
+    group["parent"] = Value::Null;
+    group["name"] = json!("short animated source");
+    group["transform"] =
+        json!({"anchorPoint":[0,0],"position":[0,0],"scale":[100,100],"rotation":0,"opacity":50});
+    group["playback"] = fixture_linear_playback(
+        json!({"start":2500,"duration":4600}),
+        json!({"start":0,"duration":4600}),
+    );
+    group["layers"] = json!([child]);
+    value["duration"] = json!(45.0);
+    value["composition"]["layers"] = json!([group]);
+    let mut entry = keyed_entry(
+        LayerId::new(7),
+        PropType::PositionY,
+        [
+            (0, PropertyValue::Float(0.0)),
+            (45000, PropertyValue::Float(end_value)),
+        ],
+    );
+    entry.animator = PropertyAnimator::keyframes(
+        PropertyKeyframeTrack::new(vec![
+            PropertyKeyframe::new(
+                KeyframeId::new("early"),
+                fx_schema::TimeOffset::ZERO,
+                PropertyValue::Float(0.0),
+                PropertyKeyframeEasing::Linear,
+            ),
+            PropertyKeyframe::new(
+                KeyframeId::new("late"),
+                fx_schema::TimeOffset::from_millis(45000),
+                PropertyValue::Float(end_value),
+                PropertyKeyframeEasing::CubicBezier {
+                    x1: 1.0 / 3.0,
+                    y1: 0.0,
+                    x2: 2.0 / 3.0,
+                    y2: 1.0 / 3.0,
+                },
+            ),
+        ])
+        .unwrap(),
+    );
+    value["composition"]["dynamics"] = json!({"entries": [entry]});
+    value
+}
+
+#[test]
+fn short_affine_group_bounds_exclude_unreachable_animation_without_trimming_keys() {
+    let output = export(short_animated_source(1_000_000.0));
+    assert!(
+        output.omitted_layer_ids.is_empty(),
+        "{:?}",
+        output.diagnostics
+    );
+    let native = read_project(&output.bytes).unwrap();
+    let source = native
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            ItemKind::Composition(comp)
+                if comp
+                    .layers
+                    .iter()
+                    .any(|layer| layer.name.as_ref() == "Current solid 7") =>
+            {
+                Some(comp)
+            }
+            _ => None,
+        })
+        .expect("long-lived animated child remains editable");
+    assert!(source.height < 20_000, "{}", source.height);
+    assert_eq!(source.duration_secs, 45.0);
+    let position = crate::properties::read_transform(&source.layers[0].content)
+        .unwrap()
+        .into_iter()
+        .find(|property| property.match_name == "ADBE Position")
+        .unwrap()
+        .numeric
+        .unwrap();
+    assert_eq!(position.keyframes.len(), 2);
+    assert_eq!(position.keyframes[1].time_secs, 45.0);
+    assert_eq!(
+        position.keyframes[1].values[1] - position.keyframes[0].values[1],
+        1_000_000.0
+    );
+}
+
+#[test]
+fn short_affine_group_visible_animation_overflow_uses_bounded_viewport() {
+    // Formerly omitted with its whole subtree. The visible overflow now uses a
+    // finite working plane; the authored track is retained untrimmed.
+    let output = export(short_animated_source(10_000_000.0));
+    assert!(
+        output.omitted_layer_ids.is_empty(),
+        "{:?}",
+        output.diagnostics
+    );
+    assert!(output.diagnostics.iter().any(|diagnostic| {
+        diagnostic.layer_id == Some(LayerId::new(8))
+            && diagnostic
+                .message
+                .contains("Oversized source viewport approximation")
+    }));
+    let native = read_project(&output.bytes).unwrap();
+    let source = native
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            ItemKind::Composition(comp)
+                if comp
+                    .layers
+                    .iter()
+                    .any(|layer| layer.name.as_ref() == "Current solid 7") =>
+            {
+                Some(comp)
+            }
+            _ => None,
+        })
+        .expect("visible animated child remains editable");
+    assert_eq!(source.duration_secs, 45.0);
+    let position = crate::properties::read_transform(&source.layers[0].content)
+        .unwrap()
+        .into_iter()
+        .find(|property| property.match_name == "ADBE Position")
+        .unwrap()
+        .numeric
+        .unwrap();
+    assert_eq!(position.keyframes.len(), 2);
+    assert_eq!(position.keyframes[1].time_secs, 45.0);
+    assert_eq!(
+        position.keyframes[1].values[1] - position.keyframes[0].values[1],
+        10_000_000.0
+    );
 }
 
 #[test]
@@ -80,7 +412,13 @@ fn finite_identity_group_does_not_materialize_unbounded_child_lifetimes() {
     let original = serde_json::to_value(&group).unwrap();
     let domains = group_clock_domains(&group).unwrap();
     assert_eq!(domains.lifetime_domain.duration.as_millis(), 40);
-    let clock = hierarchy_clock::plan(&group, &[], domains, false).unwrap();
+    let clock = hierarchy_clock::plan(
+        &group,
+        &crate::export_document::AnimationIndex::new(&[]),
+        domains,
+        false,
+    )
+    .unwrap();
     assert_eq!(clock.source_duration_millis, 40);
     assert!(!clock.occurrence_clock.has_time_remap());
     for time in [0, 1, 20, 39, 40] {
@@ -150,7 +488,15 @@ fn nonidentity_or_partial_group_clocks_keep_the_explicit_child_domain() {
             domains.lifetime_domain.duration.as_millis(),
             1_000_000_000_000
         );
-        assert!(hierarchy_clock::plan(&group, &[], domains, false).is_err());
+        assert!(
+            hierarchy_clock::plan(
+                &group,
+                &crate::export_document::AnimationIndex::new(&[]),
+                domains,
+                false
+            )
+            .is_err()
+        );
     }
 }
 
@@ -176,9 +522,14 @@ fn fraction(value: crate::schema::layer_records::NativeRational) -> (i32, u32) {
 fn two_key_linear_group_clock_is_an_affine_record_while_its_transform_is_static() {
     let group: GroupLayer = serde_json::from_value(offset_occurrence_clock()).unwrap();
     let domains = group_clock_domains(&group).unwrap();
-    let clock = hierarchy_clock::plan(&group, &[], domains, false)
-        .unwrap()
-        .occurrence_clock;
+    let clock = hierarchy_clock::plan(
+        &group,
+        &crate::export_document::AnimationIndex::new(&[]),
+        domains,
+        false,
+    )
+    .unwrap()
+    .occurrence_clock;
     assert!(!clock.has_time_remap());
     let record = clock.record;
     assert_eq!(
@@ -208,23 +559,48 @@ fn two_key_linear_group_clock_is_an_affine_record_while_its_transform_is_static(
             ],
         )];
         assert!(
-            hierarchy_clock::plan(&group, &keyed, domains, false).is_err(),
+            hierarchy_clock::plan(
+                &group,
+                &crate::export_document::AnimationIndex::new(&keyed),
+                domains,
+                false
+            )
+            .is_err(),
             "{property:?}"
         );
         assert!(
-            hierarchy_clock::plan(&group, &keyed, domains, true).is_ok(),
+            hierarchy_clock::plan(
+                &group,
+                &crate::export_document::AnimationIndex::new(&keyed),
+                domains,
+                true
+            )
+            .is_ok(),
             "{property:?}"
         );
     }
 
-    // A non-Linear arrival, a reversed source or a source end past the
-    // explicit domain is not this affine map and stays unrepresented.
+    // A Hold arrival uses native Time Remap, not the affine shortcut. Its
+    // endpoint-aligned authored span is now representable without extrapolation.
+    let mut held = offset_occurrence_clock();
+    held["playback"]["mapping"]["property"]["keyframes"][1]["easing"] = json!({"type": "hold"});
+    let held: GroupLayer = serde_json::from_value(held).unwrap();
+    assert!(
+        hierarchy_clock::plan(
+            &held,
+            &crate::export_document::AnimationIndex::new(&[]),
+            group_clock_domains(&held).unwrap(),
+            false
+        )
+        .unwrap()
+        .occurrence_clock
+        .has_time_remap()
+    );
+
+    // The affine shortcut still rejects a reversed source or a source end
+    // past the explicit domain, preserving its existing safety policy.
     type ClockEdit = fn(&mut Value);
-    let unrepresented: [(&str, ClockEdit); 3] = [
-        ("Hold arrival", |json| {
-            json["playback"]["mapping"]["property"]["keyframes"][1]["easing"] =
-                json!({"type": "hold"});
-        }),
+    let unrepresented: [(&str, ClockEdit); 2] = [
         ("reversed source", |json| {
             json["playback"]["mapping"]["property"]["keyframes"][1]["value"] = json!(100);
         }),
@@ -238,7 +614,13 @@ fn two_key_linear_group_clock_is_an_affine_record_while_its_transform_is_static(
         let group: GroupLayer = serde_json::from_value(json).unwrap();
         let domains = group_clock_domains(&group).unwrap();
         assert!(
-            hierarchy_clock::plan(&group, &[], domains, false).is_err(),
+            hierarchy_clock::plan(
+                &group,
+                &crate::export_document::AnimationIndex::new(&[]),
+                domains,
+                false
+            )
+            .is_err(),
             "{case}"
         );
     }
@@ -583,7 +965,7 @@ fn hierarchy_parenting_never_discards_group_opacity_keys() {
             .duration(group.playback.input_range().end().as_millis())
             .unwrap()
             .1,
-        &dynamics,
+        &crate::export_document::AnimationIndex::new(&dynamics),
         &BTreeMap::new(),
         document.dimensions(),
     );
@@ -715,8 +1097,15 @@ fn native_vector_clock_normalization_rejects_changed_clock_or_child_visibility()
         let mut value = native_solid_document();
         let clock = &mut value["composition"]["layers"][0]["layers"][0]["layers"][0];
         if field == "playback" {
-            // Keep the native keyframe representation, but change its clock.
-            clock["playback"]["mapping"]["property"]["keyframes"][1]["value"] = replacement;
+            // Author a supplementary nonidentity remap: a native Solid imports
+            // as a constant raster without sampled-source keys.
+            clock["playback"]["mapping"] = json!({"type": "timeRemap", "property": {
+                "keyframes": [
+                    {"id": "a", "time": 0, "value": 0, "easing": {"type": "linear"}},
+                    {"id": "b", "time": 2000, "value": replacement, "easing": {"type": "linear"}}
+                ],
+                "before": "inactive", "after": "inactive"
+            }});
         } else {
             clock["layers"][0][field] = replacement;
         }
@@ -724,6 +1113,15 @@ fn native_vector_clock_normalization_rejects_changed_clock_or_child_visibility()
         let LayerData::Group(root) = document.composition().layers()[0].data() else {
             panic!("native root Group");
         };
-        assert!(vector_group_program(root, &root.transform, &[], 0, &mut Vec::new()).is_err());
+        assert!(
+            vector_group_program(
+                root,
+                &root.transform,
+                &crate::export_document::AnimationIndex::new(&[]),
+                0,
+                &mut Vec::new()
+            )
+            .is_err()
+        );
     }
 }

@@ -2,6 +2,9 @@
 //! inputs are FX JSON documents, so neither direction is checked only against
 //! the other's output.
 
+#[path = "graphic_outline.rs"]
+mod graphic_outline;
+
 use super::*;
 use crate::{
     convert::{premiere_to_tesseract, tesseract_to_premiere},
@@ -31,9 +34,15 @@ fn scalar(source_ticks: i64, value: f64, easing: PrKeyframeEasing) -> PrScalarKe
 /// The FX document of the video sequence with `graphic` on a second track,
 /// and every omission.
 fn imported(graphic: PrGraphic) -> (Value, Vec<Omission>) {
+    imported_graphics(vec![graphic])
+}
+
+/// The FX document of the video sequence with `graphics` on a second track,
+/// and every omission.
+fn imported_graphics(graphics: Vec<PrGraphic>) -> (Value, Vec<Omission>) {
     let mut sequence = video_sequence();
     sequence.video_tracks.push(PrVideoTrack {
-        items: vec![PrVideoItem::Graphic(graphic)],
+        items: graphics.into_iter().map(PrVideoItem::Graphic).collect(),
         transitions: Vec::new(),
         nests: Vec::new(),
     });
@@ -504,6 +513,11 @@ fn text_layer_tracks_export_as_text_object_keys_on_the_generator_clock() {
 fn text_tracks_premiere_cannot_hold_are_reported_and_the_text_exports() {
     let title = "layer 9 (\"Title\")";
     for (entries, record, reason) in [
+        (
+            vec![entry("scaleY", &[(0, 100.0, "linear"), (500, 5000.0, "linear")])],
+            title,
+            "Vertical Scale animation was not exported: unsupported conversion: Scale keys must stay within Premiere's range 0..4000",
+        ),
         (
             vec![
                 entry("scaleX", &[(0, 100.0, "linear"), (500, 150.0, "linear")]),
@@ -1057,6 +1071,176 @@ fn export_over_canvas(
     (project, omissions)
 }
 
+#[test]
+fn multi_text_authored_keys_record_each_written_owner_after_group_success() {
+    let mut group = graphic_group(json!({}));
+    let mut sibling = sibling_text();
+    sibling["parent"] = json!(8);
+    group["layers"].as_array_mut().unwrap().push(sibling);
+    let entries = vec![
+        entry_on(9, "opacity", &[(0, 100.0, "linear"), (500, 40.0, "linear")]),
+        entry_on(10, "rotation", &[(0, 0.0, "linear"), (500, 45.0, "linear")]),
+    ];
+    for retained in [true, false] {
+        let mut wire = editable_document();
+        wire["duration"] = json!(2.0);
+        let mut canvas = wire["composition"]["layers"][1].clone();
+        canvas["activeRange"]["duration"] = json!(2000);
+        let mut candidate = group.clone();
+        if !retained {
+            // A missing-font sibling must not discard the first owner or its keys.
+            candidate["layers"][1]["sourceText"]["fontStyle"] = json!("Unpackaged");
+        }
+        wire["composition"]["layers"] = json!([candidate, canvas]);
+        wire["composition"]["dynamics"] = json!({"entries": entries});
+        let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
+        let mut omissions = Vec::new();
+        let exported = crate::convert::lower_document(
+            &document,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            FrameRate::Fps30,
+            &mut omissions,
+        )
+        .unwrap();
+        assert!(exported.project.is_some(), "{omissions:?}");
+        for entry in &entries {
+            let target = serde_json::from_value(entry["target"].clone()).unwrap();
+            assert_eq!(
+                exported.written.contains(&target),
+                retained || entry["target"]["layerId"] == 9,
+                "{omissions:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn native_derived_missing_font_child_keeps_graphic_placement_and_editable_keys() {
+    // Pinned Premiere 26.5.1 G-probe derivative, item 58 at 2–4 s.
+    // The missing-font edit is structural evidence, not a new Adobe save.
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/feature_multi_text_transform_keys_26_5_derived.prproj");
+    let (source, _) = PrProjectFile::load(&path).unwrap();
+    let sequence = source.single_sequence().unwrap();
+    assert_eq!(
+        sequence.id.as_deref(),
+        Some("c8acf9c1-34b2-4086-9f55-d528950a7059")
+    );
+    let wire = premiere_to_tesseract(
+        sequence,
+        &source.media,
+        &crate::tesseract_output::asset_ids_in_order(sequence, &source.media),
+        &mut Vec::new(),
+    )
+    .unwrap()
+    .to_json_value()
+    .unwrap();
+    let group = wire["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Group" && layer["playback"]["inputRange"]["start"] == 2000)
+        .unwrap();
+    assert_eq!(group["layers"][0]["sourceText"]["text"], "py");
+    assert_eq!(group["layers"][1]["sourceText"]["text"], "ok");
+    let owner = group["layers"][0]["id"].as_u64().unwrap();
+    let mut edited = wire.clone();
+    let group = edited["composition"]["layers"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|layer| layer["type"] == "Group" && layer["playback"]["inputRange"]["start"] == 2000)
+        .unwrap();
+    group["layers"][1]["sourceText"]["fontStyle"] = json!("Unpackaged");
+    // Keep this native graphic and the independent imported canvas, not video.
+    edited["composition"]["layers"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|layer| layer["type"] != "Video");
+    let document = EditableFxCompositionDocument::from_json_value(edited).unwrap();
+    let mut omissions = Vec::new();
+    let exported = crate::convert::lower_document(
+        &document,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        FrameRate::Fps30,
+        &mut omissions,
+    )
+    .unwrap();
+    let project = exported.project.unwrap();
+    let graphic = project
+        .single_sequence()
+        .unwrap()
+        .video_items()
+        .filter_map(PrVideoItem::graphic)
+        .find(|graphic| graphic.start_ticks == 2 * TICKS)
+        .unwrap_or_else(|| panic!("native-derived group retained: {omissions:?}"));
+    assert_eq!(graphic.end_ticks, 4 * TICKS);
+    assert_eq!(graphic.objects.len(), 1);
+    let text = graphic.text();
+    assert_eq!(text.document.text, "py");
+    assert_eq!(text.document.font, "Arial-BoldMT");
+    assert_eq!(text.document.size, 160.0);
+    assert_eq!(
+        text.animations
+            .iter()
+            .find(|keys| matches!(keys, PrPropertyAnimation::Opacity(_)))
+            .unwrap(),
+        &PrPropertyAnimation::Opacity(vec![
+            scalar(EXPORT_IN + TICKS / 2, 100.0, PrKeyframeEasing::Linear),
+            scalar(EXPORT_IN + 3 * TICKS / 2, 40.0, PrKeyframeEasing::Linear),
+        ])
+    );
+    assert!(graphic
+        .vector_motion
+        .as_ref()
+        .is_some_and(|motion| !motion.animations.is_empty()));
+    assert!(exported.written.contains(&PropertyTarget::layer(
+        LayerId::new(owner),
+        PropType::Opacity
+    )));
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("retained.prproj");
+    PremiereProjectXml::new(&project)
+        .unwrap()
+        .write_new(&path)
+        .unwrap();
+    let (reopened, _) = PrProjectFile::load(&path).unwrap();
+    let written = reopened
+        .single_sequence()
+        .unwrap()
+        .video_items()
+        .filter_map(PrVideoItem::graphic)
+        .find(|graphic| graphic.start_ticks == 2 * TICKS)
+        .unwrap();
+    assert_eq!(written.objects.len(), 1);
+    assert_eq!(written.text().document, text.document);
+    assert_eq!(written.text().transform, text.transform);
+    assert_eq!(written.text().animations.len(), text.animations.len());
+    for animation in &text.animations {
+        assert!(written.text().animations.contains(animation));
+    }
+    let mut motion = graphic.vector_motion.clone().unwrap();
+    let mut read_motion = written.vector_motion.clone().unwrap();
+    let keys = std::mem::take(&mut motion.animations);
+    let read_keys = std::mem::take(&mut read_motion.animations);
+    assert_eq!(read_motion, motion);
+    assert_eq!(read_keys.len(), keys.len());
+    for animation in keys {
+        assert!(read_keys.contains(&animation));
+    }
+    assert!(
+        omissions
+            .iter()
+            .any(|report| report.reason.contains("Unpackaged")
+                && report.reason.contains("not packaged")),
+        "{omissions:?}"
+    );
+}
+
 /// Export a document whose group 8 (1 s long) holds only text layer 9, with
 /// `group` merged into the group's JSON and `entries` as its animation.
 fn exported_group(group: Value, entries: Vec<Value>) -> (Option<PrGraphic>, Vec<Omission>) {
@@ -1224,20 +1408,290 @@ fn a_graphic_group_with_effects_is_omitted() {
 }
 
 #[test]
-fn a_graphic_group_with_masks_is_omitted() {
+fn a_graphic_group_mask_that_is_no_clip_opacity_mask_is_omitted() {
+    // Only one mask over a shape guide beside the group, at the identity,
+    // is the clip Opacity mask that Premiere applies after the Vector
+    // Motion: an inline outline, a guide moved off the identity, and a
+    // guide inside the group, which the group's transform would move, omit
+    // the graphic rather than export it unmasked.
+    let outline = json!({"commands": [
+        {"type": "moveTo", "x": 0, "y": 0},
+        {"type": "lineTo", "x": 400, "y": 0},
+        {"type": "lineTo", "x": 400, "y": 200},
+        {"type": "close"}
+    ]});
     assert_group_rejected(
-        json!({"masks": [{
-            "id": 51,
-            "mode": "add",
-            "path": {"commands": [
-                {"type": "moveTo", "x": 0, "y": 0},
-                {"type": "lineTo", "x": 400, "y": 0},
-                {"type": "lineTo", "x": 400, "y": 200},
-                {"type": "close"}
-            ]}
-        }]}),
-        "a graphic has no group masks",
+        json!({"masks": [{"id": 51, "mode": "add", "path": outline}]}),
+        "its mask cannot be exported: the mask has an inline path",
     );
+    let guide = |parent: Option<u64>, position: [f64; 2]| {
+        let mut guide = json!({
+            "type": "Shape",
+            "id": 11,
+            "name": "Guide",
+            "activeRange": {"start": 1000, "duration": 1000},
+            "transform": {"anchorPoint": [0, 0], "position": position, "scale": [100, 100], "rotation": 0, "opacity": 100},
+            "shape": {"path": outline}
+        });
+        if let Some(parent) = parent {
+            guide["parent"] = json!(parent);
+            guide["activeRange"]["start"] = json!(0);
+        }
+        guide
+    };
+    let masked = || graphic_group(json!({"masks": [{"id": 51, "mode": "add", "layer": 11}]}));
+    assert_graphic_omitted(
+        vec![masked(), guide(None, [10.0, 0.0])],
+        "layer 8 (\"Graphic\")",
+        "graphic group was not exported: its mask cannot be exported: the graphic's mask guide is not at the identity",
+    );
+    let mut inside = masked();
+    inside["layers"]
+        .as_array_mut()
+        .unwrap()
+        .push(guide(Some(8), [0.0, 0.0]));
+    assert_graphic_omitted(
+        vec![inside],
+        "layer 8 (\"Graphic\")",
+        "graphic group was not exported: the graphic or one of its layers is another layer's track matte, mask or text path",
+    );
+    // Keys on the guide's outline, which only a video clip's mask converts.
+    let outline_keys = json!({
+        "target": {"kind": "layer", "layerId": 11, "propertyType": "shapePath"},
+        "animator": {"type": "keyframes", "enabled": true, "keyframes": [
+            {"id": "outline-0", "layerTime": 0, "value": {"type": "path", "value": outline}, "easing": {"type": "linear"}},
+            {"id": "outline-1", "layerTime": 500, "value": {"type": "path", "value": outline}, "easing": {"type": "linear"}}
+        ]}
+    });
+    let (project, omissions) = export_over_canvas(
+        vec![masked(), guide(None, [0.0, 0.0]), sibling_text()],
+        vec![outline_keys],
+    );
+    let names: Vec<_> = project
+        .unwrap_or_else(|error| panic!("{error}: {omissions:?}"))
+        .single_sequence()
+        .unwrap()
+        .video_items()
+        .filter_map(PrVideoItem::graphic)
+        .map(|graphic| graphic.text().name.clone())
+        .collect();
+    assert_eq!(names, ["Sibling"], "{omissions:?}");
+    assert!(
+        omissions.iter().any(|omission| omission.scope == OmissionScope::Occurrence
+            && omission.record == "layer 8 (\"Graphic\")"
+            && omission.reason
+                == "graphic group was not exported: its mask cannot be exported: the graphic's mask guide has keys"),
+        "{omissions:?}"
+    );
+}
+
+/// `VideoClipTrackItem:66` of `feature_graphic_masks_d_26_5.prproj`, a
+/// Premiere 26.5.1 save whose checker still keeps only its package-relative
+/// `RelativePath`, its two absolute media aliases removed (probe d1): a
+/// Shape graphic whose static Vector Motion (Position 864, Anchor Point 960)
+/// moves it 96 px left and whose clip Opacity holds one static
+/// `AE.ADBE AEMask2`, the rectangle 0.4–0.52 × 0.3–0.7 of the frame. AME
+/// drew that mask in the sequence frame after the Vector Motion. Probe d0
+/// now converts as Mask with Shape; d2 (a mask on Vector Motion) stays omitted.
+#[test]
+fn adobe_graphic_clip_opacity_mask_stays_in_the_sequence_frame_and_exports_its_edits() {
+    use crate::schema::{
+        text::{PrPathVertex, PrShapePath},
+        PrMask,
+    };
+    let corner = |x: f32, y: f32| PrPathVertex {
+        smooth: false,
+        point: [x, y],
+        in_tangent: [x, y],
+        out_tangent: [x, y],
+    };
+    let rectangle = |third: [f32; 2]| PrShapePath {
+        vertices: vec![
+            corner(0.4, 0.3),
+            corner(0.52, 0.3),
+            corner(third[0], third[1]),
+            corner(0.4, 0.7),
+        ],
+        closed: true,
+    };
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/feature_graphic_masks_d_26_5.prproj");
+    let (project, omissions) = PrProjectFile::load(&path).unwrap();
+    let occurrences: Vec<_> = omissions
+        .iter()
+        .filter(|omission| omission.scope == OmissionScope::Occurrence)
+        .map(|omission| omission.reason.as_str())
+        .collect();
+    assert_eq!(occurrences.len(), 1, "{omissions:?}");
+    let reason = "a mask on a graphic Vector Motion is not converted";
+    assert!(
+        occurrences
+            .iter()
+            .any(|occurrence| occurrence.contains(reason)),
+        "{reason}: {omissions:?}"
+    );
+    let sequence = project.single_sequence().unwrap();
+    let probe = sequence
+        .video_items()
+        .filter_map(PrVideoItem::graphic)
+        .find(|graphic| graphic.id() == Some("VideoClipTrackItem:66"))
+        .unwrap_or_else(|| panic!("probe d1 is read: {omissions:?}"));
+    assert_eq!(
+        probe.opacity_mask,
+        Some(PrMask {
+            raster: None,
+            feather_keys: Vec::new(),
+            expansion: 0.0,
+            expansion_keys: Vec::new(),
+            opacity_keys: Vec::new(),
+            path: rectangle([0.52, 0.7]),
+            path_keys: Vec::new(),
+            feather: 0.0,
+            opacity: 100.0,
+            inverted: false,
+        })
+    );
+    // The static Vector Motion folds into the Shape: its Position 900 is 804.
+    assert!(probe.vector_motion.is_none());
+    let [PrGraphicObject::Shape(shape)] = probe.objects.as_slice() else {
+        panic!("{:?}", probe.objects);
+    };
+    assert_eq!(shape.transform.position, [804.0, 540.0]);
+
+    let mut import_omissions = Vec::new();
+    let mut document = premiere_to_tesseract(
+        sequence,
+        &project.media,
+        &crate::tesseract_output::asset_ids_in_order(sequence, &project.media),
+        &mut import_omissions,
+    )
+    .unwrap()
+    .to_json_value()
+    .unwrap();
+    assert!(
+        import_omissions
+            .iter()
+            .all(|omission| !omission.record.contains("VideoClipTrackItem:66")),
+        "{import_omissions:?}"
+    );
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    let group = layers
+        .iter()
+        .find(|layer| {
+            layer["masks"]
+                .as_array()
+                .is_some_and(|masks| !masks.is_empty())
+        })
+        .unwrap_or_else(|| panic!("the masked graphic group: {layers:?}"));
+    assert_eq!(group["type"], "Group");
+    assert_eq!(
+        group["masks"],
+        json!([{"id": group["masks"][0]["id"], "mode": "add", "inverted": false, "layer": group["masks"][0]["layer"], "feather": [0.0, 0.0], "expansion": 0.0, "opacity": 1.0}])
+    );
+    let shape = &group["layers"][0];
+    assert_eq!(
+        (&shape["type"], &shape["transform"]["position"]),
+        (&json!("Shape"), &json!([804.0, 540.0]))
+    );
+    // The guide is the group's sibling at the identity, over its range: the
+    // mask stays where Premiere draws it whatever moves the Shape.
+    let guide = layers
+        .iter()
+        .find(|layer| layer["id"] == group["masks"][0]["layer"])
+        .unwrap_or_else(|| panic!("the guide beside the group: {layers:?}"));
+    let canvas = layers.iter().find(|layer| layer["type"] == "Rect").unwrap();
+    assert_eq!(guide["type"], "Shape");
+    assert_eq!(guide["parent"], group["parent"]);
+    assert_eq!(guide["transform"], canvas["transform"], "identity");
+    assert_eq!(
+        crate::test_support::layer_range(guide),
+        crate::test_support::layer_range(group)
+    );
+    let pixel = |kind: &str, x: f32, y: f32| json!({"type": kind, "x": f64::from(x) * 1920.0, "y": f64::from(y) * 1080.0});
+    assert_eq!(
+        guide["shape"],
+        json!({"path": {"commands": [
+            pixel("moveTo", 0.4, 0.3),
+            pixel("lineTo", 0.52, 0.3),
+            pixel("lineTo", 0.52, 0.7),
+            pixel("lineTo", 0.4, 0.7),
+            {"type": "close"}
+        ]}})
+    );
+
+    // Edit the mask in the document: move its third vertex, invert and
+    // feather it. Export writes the edited guide and controls.
+    let (group_id, guide_id) = (group["id"].clone(), guide["id"].clone());
+    let layers = document["composition"]["layers"].as_array_mut().unwrap();
+    layers.retain(|layer| {
+        layer["id"] == group_id || layer["id"] == guide_id || layer["type"] == "Rect"
+    });
+    for layer in layers.iter_mut() {
+        if layer["id"] == guide_id {
+            layer["shape"]["path"]["commands"][2] =
+                json!({"type": "lineTo", "x": 1200.0, "y": 810.0});
+        } else if layer["id"] == group_id {
+            layer["masks"][0]["inverted"] = json!(true);
+            layer["masks"][0]["feather"] = json!([6.0, 6.0]);
+        }
+    }
+    let document = EditableFxCompositionDocument::from_json_value(document).unwrap();
+    let mut export_omissions = Vec::new();
+    let exported = tesseract_to_premiere(
+        &document,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        FrameRate::Fps30,
+        &mut export_omissions,
+    )
+    .unwrap_or_else(|error| panic!("{error}: {export_omissions:?}"));
+    assert!(
+        export_omissions
+            .iter()
+            .all(|omission| omission.scope != OmissionScope::Occurrence),
+        "{export_omissions:?}"
+    );
+    assert!(
+        export_omissions
+            .iter()
+            .any(|omission| omission.reason == crate::schema::MASK_FEATHER_APPROXIMATION),
+        "{export_omissions:?}"
+    );
+    let edited = PrMask {
+        raster: None,
+        feather_keys: Vec::new(),
+        expansion: 0.0,
+        expansion_keys: Vec::new(),
+        opacity_keys: Vec::new(),
+        path: rectangle([0.625, 0.75]),
+        path_keys: Vec::new(),
+        feather: 6.0,
+        opacity: 100.0,
+        inverted: true,
+    };
+    // The written clip Opacity mask reads back as written.
+    let directory = tempfile::tempdir().unwrap();
+    let written = directory.path().join("edited.prproj");
+    PremiereProjectXml::new(&exported)
+        .unwrap()
+        .write_new(&written)
+        .unwrap();
+    let (reopened, _) = PrProjectFile::load(&written).unwrap();
+    for project in [&exported, &reopened] {
+        let graphics: Vec<_> = project.sequences[0]
+            .video_items()
+            .filter_map(PrVideoItem::graphic)
+            .collect();
+        let [graphic] = graphics.as_slice() else {
+            panic!("one graphic, its guide consumed: {graphics:?}");
+        };
+        assert_eq!(graphic.opacity_mask.as_ref(), Some(&edited));
+        assert!(matches!(
+            graphic.objects.as_slice(),
+            [PrGraphicObject::Shape(_)]
+        ));
+    }
 }
 
 #[test]
@@ -1461,8 +1915,60 @@ fn a_graphic_group_with_playback_is_omitted() {
 }
 
 #[test]
-fn a_graphic_group_with_motion_blur_is_omitted() {
-    assert_group_rejected(json!({"motionBlur": true}), "a graphic has no motion blur");
+fn group_motion_blur_preserves_graphic_title_and_healthy_sibling() {
+    use crate::export_loss::{
+        ExportField, ExportLossDomain, ExportLossKind, ExportLossSource, LossCollector,
+    };
+
+    let mut wire = editable_document();
+    wire["duration"] = json!(2.0);
+    let mut canvas = wire["composition"]["layers"][1].clone();
+    canvas["activeRange"]["duration"] = json!(2000);
+    wire["composition"]["layers"] = json!([
+        graphic_group(json!({"motionBlur": true})),
+        sibling_text(),
+        canvas
+    ]);
+    let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
+    let mut losses = LossCollector::default();
+    let exported = crate::convert::lower_document(
+        &document,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        FrameRate::Fps30,
+        &mut losses,
+    )
+    .unwrap();
+    let report = losses.finish(exported.project.is_some());
+    let project = exported.project.unwrap();
+    let graphics: Vec<_> = project
+        .single_sequence()
+        .unwrap()
+        .video_items()
+        .filter_map(PrVideoItem::graphic)
+        .collect();
+    let names: Vec<_> = graphics
+        .iter()
+        .map(|graphic| graphic.text().name.as_str())
+        .collect();
+    assert_eq!(names, ["Sibling", "Title"], "{report:?}");
+    assert_eq!(graphics[1].text().document.text, "Keys");
+    assert_eq!(report.losses.len(), 1, "{report:?}");
+    let loss = &report.losses[0];
+    assert_eq!(loss.source, ExportLossSource::Layer(LayerId::new(8)));
+    assert_eq!(loss.domain, ExportLossDomain::Picture);
+    assert_eq!(loss.kind, ExportLossKind::Field(ExportField::MotionBlur));
+    assert_eq!(loss.omission.scope, OmissionScope::Feature);
+    assert_eq!(loss.omission.kind, OmissionKind::Omitted);
+    assert_eq!(loss.omission.record, "layer 8 (\"Graphic\")");
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .all(|omission| omission.scope != OmissionScope::Occurrence),
+        "{report:?}"
+    );
 }
 
 #[test]
@@ -2189,7 +2695,7 @@ fn written_graphic(entries: Vec<Value>) -> (Vec<String>, PrGraphic, Vec<Omission
 }
 
 /// The key strings that Premiere 26.5.1 saved in the Bezier speed probe
-/// (JRB-1990): one 1.2 s segment per parameter with Bezier on both keys, on a
+///: one 1.2 s segment per parameter with Bezier on both keys, on a
 /// placement that starts one hour into the generator, where export places a
 /// graphic at 30 fps.
 const PROBE_KEYS: [(&str, &str); 4] = [
@@ -2566,6 +3072,134 @@ fn exported_shape(
 }
 
 #[test]
+fn legacy_json_appearance_placements_edit_apart_and_export_their_current_modern_paint() {
+    use crate::format::shape_payload::{decode_appearance, encode_appearance};
+    use crate::schema::text::PrRgb;
+    use crate::tests::support::{legacy_appearance, legacy_json};
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    use std::io::Read;
+    // Our own version 1 legacy payload: a visible white fill, the stroke and
+    // the shadow off.
+    let legacy = legacy_appearance(&legacy_json(&[("mFillColor", Some("16777215"))]));
+    let white = decode_appearance(&legacy).unwrap();
+    assert_eq!(white.fill, Some(PrFill::Solid(PrRgb([255; 3]))));
+    // Two placements of the decoded shape: A over 1-2 s, and B over 3-5 s,
+    // which ends with the sequence and so keeps the exported duration.
+    let placement = |id: &str, seconds: std::ops::Range<i64>| {
+        let mut graphic = shape_graphic();
+        graphic.id = Some(id.into());
+        (graphic.start_ticks, graphic.end_ticks) = (seconds.start * TICKS, seconds.end * TICKS);
+        shape_mut(&mut graphic).appearance = white.clone();
+        graphic
+    };
+    let (mut document, omissions) =
+        imported_graphics(vec![placement("20", 1..2), placement("21", 3..5)]);
+    assert!(
+        omissions
+            .iter()
+            .all(|omission| omission.scope != OmissionScope::Occurrence),
+        "{omissions:?}"
+    );
+    // A graphic-only export: drop the video layer and keep the black canvas.
+    let layers = document["composition"]["layers"].as_array_mut().unwrap();
+    layers.retain(|layer| layer["type"] != "Video");
+    let shape_from = |layers: &[Value], start: u64| {
+        layers
+            .iter()
+            .position(|layer| layer["type"] == "Shape" && layer["activeRange"]["start"] == start)
+            .unwrap_or_else(|| panic!("no shape layer from {start} ms: {layers:?}"))
+    };
+    let (a, b) = (shape_from(layers, 1000), shape_from(layers, 3000));
+    let white_paint = json!({"type": "solid", "color": [1.0, 1.0, 1.0, 1.0]});
+    for layer in [a, b] {
+        assert_eq!(layers[layer]["shape"]["fills"][0]["paint"], white_paint);
+    }
+    assert_ne!(layers[a]["id"], layers[b]["id"]);
+    // Edit only A: its fill and its position.
+    let b_before = layers[b].clone();
+    layers[a]["shape"]["fills"][0]["paint"]["color"] = json!([1.0, 0.4, 0.0, 1.0]);
+    layers[a]["transform"]["position"] = json!([480.0, 270.0]);
+    assert_eq!(layers[b], b_before);
+    let document = EditableFxCompositionDocument::from_json_value(document).unwrap();
+    let mut omissions = Vec::new();
+    let project = tesseract_to_premiere(
+        &document,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        FrameRate::Fps30,
+        &mut omissions,
+    )
+    .unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    // Write the current content and read it back.
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("legacy-appearance.prproj");
+    PremiereProjectXml::new(&project)
+        .unwrap()
+        .write_new(&path)
+        .unwrap();
+    let mut xml = String::new();
+    flate2::read::GzDecoder::new(std::fs::File::open(&path).unwrap())
+        .read_to_string(&mut xml)
+        .unwrap();
+    let (reopened, reopen_omissions) = PrProjectFile::load(&path).unwrap();
+    assert!(reopen_omissions.is_empty(), "{reopen_omissions:?}");
+    // Each placement keeps its own range, position and paint.
+    let edited = PrAppearance {
+        fill: Some(PrFill::Solid(PrRgb([255, 102, 0]))),
+        ..white.clone()
+    };
+    let shapes = |project: &PrProjectFile| {
+        let mut shapes: Vec<_> = project
+            .single_sequence()
+            .unwrap()
+            .video_items()
+            .filter_map(PrVideoItem::graphic)
+            .map(|graphic| match graphic.objects.as_slice() {
+                [PrGraphicObject::Shape(shape)] => (
+                    graphic.start_ticks,
+                    graphic.end_ticks,
+                    shape.transform.position,
+                    shape.appearance.clone(),
+                ),
+                objects => panic!("one shape, not {objects:?}"),
+            })
+            .collect();
+        shapes.sort_by_key(|shape| shape.0);
+        shapes
+    };
+    let expected = vec![
+        (TICKS, 2 * TICKS, [480.0, 270.0], edited.clone()),
+        (3 * TICKS, 5 * TICKS, [960.0, 540.0], white.clone()),
+    ];
+    assert_eq!(shapes(&project), expected);
+    assert_eq!(shapes(&reopened), expected);
+    // The written Appearance values are the FlatBuffer payloads of the
+    // current paints; the legacy JSON is never replayed.
+    let mut written: Vec<Vec<u8>> = xml
+        .split("<Name>Appearance</Name>")
+        .skip(1)
+        .map(|record| {
+            let value = &record[record.find("<StartKeyframeValue").unwrap()..];
+            let start = value.find('>').unwrap() + 1;
+            let end = value.find("</StartKeyframeValue>").unwrap();
+            STANDARD.decode(&value[start..end]).unwrap()
+        })
+        .collect();
+    written.sort();
+    let mut current = vec![
+        encode_appearance(&edited).unwrap(),
+        encode_appearance(&white).unwrap(),
+    ];
+    current.sort();
+    assert_eq!(written, current);
+    assert!(written
+        .iter()
+        .all(|payload| payload != &legacy && payload.get(8..10) != Some(b"{\0".as_slice())));
+}
+
+#[test]
 fn shape_stroke_joins_convert_only_at_the_corners_calibration_two_measured() {
     use crate::schema::text::{
         stroke_join, PrPathVertex, PrRgb, PrShapePath, PrShapeStroke, StrokeJoin,
@@ -2824,7 +3458,7 @@ fn graphic_shapes_premiere_cannot_hold_are_omitted_on_export() {
             {"type": "close"}
         ])
     };
-    let two_contours: Vec<_> = [square(0.0), square(20.0)]
+    let two_contours: Vec<_> = [square(0.0), square(0.0)]
         .iter()
         .flat_map(|commands| commands.as_array().unwrap().clone())
         .collect();
@@ -2849,7 +3483,7 @@ fn graphic_shapes_premiere_cannot_hold_are_omitted_on_export() {
     for (layer, reason) in [
         (
             paint(gradient("conic", [100.0, 0.0], [0.0, 1.0])),
-            format!("{shape_layer}: reflected and conic gradient shape fills are unsupported (JRB-2015)"),
+            format!("{shape_layer}: reflected and conic gradient shape fills are unsupported"),
         ),
         (
             paint(gradient("radial", [100.0, 10.0], [0.0, 1.0])),
@@ -2869,10 +3503,15 @@ fn graphic_shapes_premiere_cannot_hold_are_omitted_on_export() {
         ),
         (
             edited(&["shape", "fills", "0", "opacity"], json!(0.5)),
-            format!("{shape_layer}: shape fills blend normally at full opacity with the nonzero rule"),
+            format!(
+                "{shape_layer}: shape fills blend normally at full opacity with the nonzero rule"
+            ),
         ),
         (
-            edited(&["shape", "strokes"], json!([stroke(json!({}))[0], stroke(json!({}))[0]])),
+            edited(
+                &["shape", "strokes"],
+                json!([stroke(json!({}))[0], stroke(json!({}))[0]]),
+            ),
             format!("{shape_layer}: a Premiere shape has one stroke"),
         ),
         (
@@ -2889,7 +3528,7 @@ fn graphic_shapes_premiere_cannot_hold_are_omitted_on_export() {
         ),
         (
             edited(&["shape", "path", "commands"], json!(two_contours)),
-            format!("{shape_layer}: a Premiere shape path holds one contour; holes need Mask with Shape (JRB-2083)"),
+            format!("{shape_layer}: contours 1 and 2 of the shape path are not certified apart"),
         ),
         (
             edited(&["shape", "roundCorners"], json!({"radius": 10})),
@@ -2947,10 +3586,6 @@ fn graphic_shapes_premiere_cannot_hold_are_omitted_on_export() {
             child(&[("activeRange", json!({"start": 0, "duration": 500}))]),
             "its shape layer must span the group",
         ),
-        (
-            child(&[("shape", rounded(10)["shape"].clone())]),
-            "layer 11 (\"Box\"): unsupported conversion: rounded shape path corners are unsupported",
-        ),
     ] {
         assert_graphic_omitted(
             vec![group],
@@ -2958,6 +3593,35 @@ fn graphic_shapes_premiere_cannot_hold_are_omitted_on_export() {
             &format!("graphic group was not exported: {reason}"),
         );
     }
+    let mut group = child(&[("shape", rounded(10)["shape"].clone())]);
+    let mut sibling = sibling_text();
+    sibling["parent"] = json!(8);
+    group["layers"].as_array_mut().unwrap().push(sibling);
+    let (project, omissions) = export_over_canvas(vec![group], Vec::new());
+    let project = project.unwrap();
+    let graphics = project
+        .single_sequence()
+        .unwrap()
+        .video_items()
+        .filter_map(PrVideoItem::graphic)
+        .collect::<Vec<_>>();
+    assert_eq!(graphics.len(), 1, "{omissions:?}");
+    assert_eq!(part_names(&graphics[0].objects), "Title Sibling");
+    let documents: Vec<_> = graphics[0]
+        .objects
+        .iter()
+        .filter_map(|object| match object {
+            PrGraphicObject::Text(text) => Some(text.document.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(documents, ["Keys", "Stays"]);
+    assert!(
+        omissions.iter().any(|report| report
+            .reason
+            .contains("rounded shape path corners are unsupported")),
+        "{omissions:?}"
+    );
     let (project, omissions) = export_over_canvas(
         vec![child(&[]), sibling_text()],
         vec![entry_on(
@@ -2974,12 +3638,12 @@ fn graphic_shapes_premiere_cannot_hold_are_omitted_on_export() {
             .video_items()
             .filter_map(PrVideoItem::graphic)
             .count(),
-        1
+        2
     );
     assert!(
         omissions.iter().any(|omission| omission.record == "layer 8 (\"Graphic\")"
             && omission.reason
-                == "graphic group was not exported: layer 11 (\"Box\"): unsupported conversion: keyed objects in a graphic with several objects are unsupported"),
+                == "layer 11 (\"Box\") was not exported: unsupported conversion: keyed graphic shapes are unsupported"),
         "{omissions:?}"
     );
 }
@@ -2994,7 +3658,7 @@ fn gradient_shape_fills_convert_in_both_directions_in_the_rendered_form() {
         position,
         color: PrRgb(color),
     };
-    // The gradient fixture's B and C (Oracle run 23): start and end x in
+    // The gradient fixture's B and C: start and end x in
     // layer pixels, and C's middle stop at its saved f32 position.
     let linear = PrGradient {
         kind: Linear,
@@ -3794,7 +4458,16 @@ fn point_text_source_keys_hold_leading_and_alignment_together_and_export_their_m
         FrameRate::Fps30,
         &mut losses,
     );
-    assert!(rejected.is_err());
+    let retained = rejected.unwrap();
+    let text = retained
+        .single_sequence()
+        .unwrap()
+        .video_items()
+        .find_map(PrVideoItem::graphic)
+        .unwrap()
+        .text();
+    assert!(text.source_text_keys.is_empty());
+    assert!(!text.document.text.is_empty());
     assert!(
         losses.iter().any(|loss| loss
             .reason
@@ -4341,7 +5014,7 @@ fn a_static_shadow_exports_on_every_source_text_key() {
 }
 
 #[test]
-fn source_text_tracks_premiere_cannot_hold_omit_the_graphic() {
+fn source_text_tracks_premiere_cannot_hold_keep_base_text_and_motion() {
     // The FX document itself refuses a string or boolean key with continuous
     // easing, so only numeric and color tracks can arrive with one.
     let text = valued_entry(
@@ -4373,6 +5046,11 @@ fn source_text_tracks_premiere_cannot_hold_omit_the_graphic() {
             "transform": {"anchorPoint": [0, 0], "position": [960, 540], "scale": [100, 100], "rotation": 0, "opacity": 100},
             "sourceText": {"text": "Keys", "fontFamily": "Inter-Bold", "fontStyle": "", "fontSize": 80, "fillColor": [1, 1, 1, 1]},
         });
+        let mut entries = entries;
+        entries.push(entry(
+            "rotation",
+            &[(0, 0.0, "linear"), (500, 45.0, "linear")],
+        ));
         wire["composition"]["dynamics"] = json!({ "entries": entries });
         let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
         let mut omissions = Vec::new();
@@ -4384,16 +5062,2320 @@ fn source_text_tracks_premiere_cannot_hold_omit_the_graphic() {
             FrameRate::Fps30,
             &mut omissions,
         );
-        // The text was the only layer, so its omission ends the export.
-        assert!(result.is_err(), "{reason}");
-        let expected = format!("text layer was not exported: unsupported conversion: {reason}");
+        let project = result.unwrap_or_else(|error| panic!("{error}: {omissions:?}"));
+        let graphic = project
+            .single_sequence()
+            .unwrap()
+            .video_items()
+            .find_map(PrVideoItem::graphic)
+            .unwrap();
+        let text = graphic.text();
+        assert_eq!(text.document.text, "Keys");
+        assert_eq!(text.document.size, 80.0);
+        assert_eq!(text.document.font, "Inter-Bold");
+        assert!(text.source_text_keys.is_empty());
+        assert_eq!(
+            text.animations,
+            [PrPropertyAnimation::Rotation(vec![
+                scalar(EXPORT_IN, 0.0, PrKeyframeEasing::Linear),
+                scalar(EXPORT_IN + TICKS / 2, 45.0, PrKeyframeEasing::Linear),
+            ])]
+        );
+        let expected = format!("Source Text animation was not exported; keeping base Source Text: unsupported conversion: {reason}");
         assert!(
             omissions
                 .iter()
-                .any(|omission| omission.scope == OmissionScope::Occurrence
+                .any(|omission| omission.scope == OmissionScope::Feature
                     && omission.record == "layer 9 (\"Title\")"
                     && omission.reason == expected),
             "{reason}: {omissions:?}"
         );
     }
+}
+
+#[test]
+fn optional_stroke_width_keys_keep_base_text_and_independent_motion() {
+    let mut text = root_title();
+    text["sourceText"]["applyStroke"] = json!(true);
+    text["sourceText"]["strokeColor"] = json!([0.0, 0.0, 0.0, 1.0]);
+    text["sourceText"]["strokeWidth"] = json!(2.0);
+    text["animators"] = json!([{"id": 90002, "strokeWidth": 0.0}]);
+    let mut width = entry("strokeWidth", &[(0, 0.0, "hold"), (500, -3.0, "hold")]);
+    width["target"] =
+        json!({"kind": "fxItemProperty", "itemId": 90002, "propertyName": "strokeWidth"});
+    let (project, omissions) = export_over_canvas(
+        vec![text],
+        vec![
+            width,
+            entry("opacity", &[(0, 100.0, "linear"), (500, 40.0, "linear")]),
+        ],
+    );
+    let project = project.unwrap_or_else(|error| panic!("{error}: {omissions:?}"));
+    let text = project
+        .single_sequence()
+        .unwrap()
+        .video_items()
+        .find_map(PrVideoItem::graphic)
+        .unwrap()
+        .text();
+    assert_eq!(text.document.text, "Keys");
+    // The existing mapping writes half the FX stroke width on either side.
+    assert_eq!(text.document.stroke.unwrap().width, 1.0);
+    assert!(text.source_text_keys.is_empty());
+    assert_eq!(
+        text.animations,
+        [PrPropertyAnimation::Opacity(vec![
+            scalar(EXPORT_IN, 100.0, PrKeyframeEasing::Linear),
+            scalar(EXPORT_IN + TICKS / 2, 40.0, PrKeyframeEasing::Linear),
+        ])]
+    );
+    assert!(
+        omissions.iter().any(|report| report
+            .reason
+            .contains("total stroke width must be finite and nonnegative")),
+        "{omissions:?}"
+    );
+}
+
+/// A clip Motion like a Source Graphic placement's, with unequal axes.
+fn placement_motion() -> crate::schema::PrStaticTransform {
+    crate::schema::PrStaticTransform {
+        position: [0.25, 0.75],
+        anchor_point: [0.5, 0.5],
+        scale: [50.0, 80.0],
+        rotation: 30.0,
+    }
+}
+
+#[test]
+fn a_direct_graphic_with_clip_motion_and_an_opacity_mask_is_rejected() {
+    let graphic = PrGraphic {
+        clip_motion: placement_motion(),
+        opacity_mask: Some(crate::tests::support::opacity_mask()),
+        ..text_graphic()
+    };
+    let reason = "a graphic with clip Motion and a clip Opacity mask is not converted: its mask frame is unmeasured";
+    assert!(graphic
+        .validate(FrameRate::Fps30)
+        .unwrap_err()
+        .to_string()
+        .contains(reason));
+
+    // The typed mapper can also be called without model validation.
+    let mut sequence = video_sequence();
+    sequence.video_tracks.push(PrVideoTrack {
+        items: vec![PrVideoItem::Graphic(graphic)],
+        transitions: Vec::new(),
+        nests: Vec::new(),
+    });
+    let media = video_media();
+    let error = premiere_to_tesseract(
+        &sequence,
+        &media,
+        &crate::tesseract_output::asset_ids_in_order(&sequence, &media),
+        &mut Vec::new(),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains(reason), "{error}");
+}
+
+#[test]
+fn a_clip_motion_moves_the_graphic_root_once_from_a_group() {
+    use crate::schema::PrBlendMode;
+    // A disabled graphic in Screen at clip Opacity 50: its content group
+    // keeps the Opacity and blend, as without the Motion, and the Motion group
+    // takes the placement's range, visibility and Motion.
+    let (document, _) = imported(PrGraphic {
+        clip_motion: placement_motion(),
+        opacity: 50.0,
+        blend_mode: PrBlendMode::Screen,
+        enabled: false,
+        ..text_graphic()
+    });
+    let moved = &document["composition"]["layers"][0];
+    let [content] = moved["layers"].as_array().unwrap().as_slice() else {
+        panic!("a Motion group holds one root: {moved}");
+    };
+    let [text] = content["layers"].as_array().unwrap().as_slice() else {
+        panic!("the content group holds the text: {content}");
+    };
+    assert_eq!(
+        (&moved["type"], &moved["name"], &moved["isHidden"]),
+        (
+            &json!("Group"),
+            &json!("Premiere graphic Motion 2"),
+            &json!(true)
+        )
+    );
+    assert_eq!(
+        *crate::test_support::layer_range(moved),
+        json!({"start": 1000, "duration": 2000})
+    );
+    let transform = &moved["transform"];
+    assert_eq!(
+        ["anchorPoint", "position", "scale", "rotation", "opacity"].map(|field| &transform[field]),
+        [
+            &json!([960.0, 540.0]),
+            &json!([480.0, 810.0]),
+            &json!([50.0, 80.0]),
+            &json!(30.0),
+            &json!(100.0)
+        ]
+    );
+    assert_eq!(moved["blendMode"], "normal");
+    assert_eq!(
+        (
+            &content["name"],
+            &content["parent"],
+            content.get("isHidden")
+        ),
+        (&json!("Premiere graphic 2"), &moved["id"], None)
+    );
+    assert_eq!(
+        *crate::test_support::layer_range(content),
+        json!({"start": 0, "duration": 2000})
+    );
+    assert_eq!(
+        (&content["blendMode"], &content["transform"]["opacity"]),
+        (&json!("screen"), &json!(50.0))
+    );
+    // The text keeps the item's id and its own transform; the groups take
+    // fresh ones.
+    assert_eq!((&text["id"], &text["parent"]), (&json!(2), &content["id"]));
+    assert_eq!(text["transform"]["scale"], json!([80.0, 80.0]));
+    let ids = [&moved["id"], &content["id"], &text["id"], &json!(1)];
+    let unique: std::collections::BTreeSet<_> = ids.iter().map(|id| id.as_u64()).collect();
+    assert_eq!(unique.len(), ids.len(), "{ids:?}");
+
+    // An ungrouped root keeps its keys on its own clock under the group.
+    let (unmoved, _) = imported(keyed_graphic());
+    let (moved, _) = imported(PrGraphic {
+        clip_motion: placement_motion(),
+        ..keyed_graphic()
+    });
+    let text = &moved["composition"]["layers"][0]["layers"][0];
+    assert_eq!(
+        (&text["type"], &text["parent"], &text["activeRange"]),
+        (
+            &json!("Text"),
+            &moved["composition"]["layers"][0]["id"],
+            &json!({"start": 0, "duration": 2000})
+        )
+    );
+    for property in ["positionX", "scaleX", "rotation", "opacity"] {
+        assert_eq!(
+            track(&moved, 2, property),
+            track(&unmoved, 2, property),
+            "{property}"
+        );
+    }
+}
+
+/// A shape object named `name`: a `size` px square about `centre`, filled
+/// with `color`, and a Mask with Shape when `mask_source` says so.
+fn square_object(
+    name: &str,
+    centre: [f64; 2],
+    size: f32,
+    color: [u8; 3],
+    mask_source: Option<crate::schema::text::PrMaskSource>,
+) -> PrGraphicObject {
+    use crate::schema::text::{PrFill, PrRgb};
+    let Some(PrGraphicObject::Shape(mut shape)) = shape_graphic().objects.pop() else {
+        unreachable!("the test graphic holds one shape");
+    };
+    let half = size / 2.0;
+    for (vertex, [x, y]) in shape.path.vertices.iter_mut().zip([
+        [-half, -half],
+        [half, -half],
+        [half, half],
+        [-half, half],
+    ]) {
+        vertex.point = [x, y];
+        vertex.in_tangent = [x, y];
+        vertex.out_tangent = [x, y];
+    }
+    shape.name = name.into();
+    shape.transform.position = centre;
+    shape.appearance.fill = Some(PrFill::Solid(PrRgb(color)));
+    shape.appearance.mask_source = mask_source;
+    PrGraphicObject::Shape(shape)
+}
+
+fn subgroup(name: &str, objects: Vec<PrGraphicObject>) -> PrGraphicObject {
+    PrGraphicObject::Group(crate::schema::text::PrGraphicGroup {
+        name: name.into(),
+        objects,
+    })
+}
+
+const INVERTED: Option<crate::schema::text::PrMaskSource> =
+    Some(crate::schema::text::PrMaskSource { inverted: true });
+const NOT_INVERTED: Option<crate::schema::text::PrMaskSource> =
+    Some(crate::schema::text::PrMaskSource { inverted: false });
+
+/// `graphic` imported beside the video, exported without the video layer,
+/// written, read back by the crate reader, and every omission of the three.
+fn written_back(graphic: PrGraphic) -> (PrGraphic, Vec<Omission>) {
+    let (mut document, mut omissions) = imported(graphic);
+    document["composition"]["layers"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|layer| layer["type"] != "Video");
+    let document = EditableFxCompositionDocument::from_json_value(document).unwrap();
+    let project = tesseract_to_premiere(
+        &document,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        FrameRate::Fps30,
+        &mut omissions,
+    )
+    .unwrap_or_else(|error| panic!("{error}: {omissions:?}"));
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("masks.prproj");
+    PremiereProjectXml::new(&project)
+        .unwrap()
+        .write_new(&path)
+        .unwrap();
+    let (reopened, read) = PrProjectFile::load(&path).unwrap();
+    omissions.extend(read);
+    let graphic = reopened.sequences[0]
+        .video_items()
+        .find_map(PrVideoItem::graphic)
+        .expect("the written graphic loads")
+        .clone();
+    (graphic, omissions)
+}
+
+#[test]
+fn masks_with_shape_and_subgroups_round_trip_through_fx_and_the_written_project() {
+    let blue = [0, 96, 255];
+    let square = |name: &str, x: f64, mask| square_object(name, [x, 540.0], 200.0, blue, mask);
+    for (case, objects) in [
+        (
+            "an inverted mask over two objects (s4)",
+            vec![
+                square("M", 960.0, INVERTED),
+                square("T1", 900.0, None),
+                square("T2", 1020.0, None),
+            ],
+        ),
+        (
+            "an object above a mask (s4 A)",
+            vec![
+                square("A", 700.0, None),
+                square("M", 960.0, NOT_INVERTED),
+                square("T", 960.0, None),
+            ],
+        ),
+        (
+            "two masks with an object between (s9)",
+            vec![
+                square("M1", 800.0, INVERTED),
+                square("X", 700.0, None),
+                square("M2", 1100.0, INVERTED),
+                square("T", 960.0, None),
+            ],
+        ),
+        (
+            "a mask in a SubGroup over its member (b0)",
+            vec![
+                subgroup(
+                    "Group 01",
+                    vec![square("M", 960.0, INVERTED), square("T1", 900.0, None)],
+                ),
+                square("T2", 1020.0, None),
+            ],
+        ),
+        (
+            "a mask with nothing below it (s10)",
+            vec![square("T", 960.0, None), square("M", 960.0, INVERTED)],
+        ),
+        (
+            "a SubGroup without masks",
+            vec![
+                square("A", 700.0, None),
+                subgroup(
+                    "Pair",
+                    vec![square("B", 900.0, None), square("C", 1100.0, None)],
+                ),
+            ],
+        ),
+    ] {
+        let graphic = PrGraphic {
+            objects,
+            ..shape_graphic()
+        };
+        let (written, omissions) = written_back(graphic.clone());
+        assert_eq!(written.objects, graphic.objects, "{case}: {omissions:?}");
+        // The export without the video ends with the graphic.
+        assert!(
+            omissions
+                .iter()
+                .all(|omission| omission.kind == OmissionKind::Approximated
+                    || omission.record == "document.duration"),
+            "{case}: {omissions:?}"
+        );
+    }
+}
+
+fn exported_and_read(layers: Vec<Value>) -> (Vec<PrGraphic>, Vec<Omission>) {
+    let (project, mut omissions) = export_over_canvas(layers, Vec::new());
+    let project = project.unwrap_or_else(|error| panic!("{error}: {omissions:?}"));
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("edited.prproj");
+    PremiereProjectXml::new(&project)
+        .unwrap()
+        .write_new(&path)
+        .unwrap();
+    let (reopened, read) = PrProjectFile::load(&path).unwrap();
+    omissions.extend(read);
+    let graphics = reopened.sequences[0]
+        .video_items()
+        .filter_map(PrVideoItem::graphic)
+        .cloned()
+        .collect();
+    (graphics, omissions)
+}
+
+/// The FX graphic group that importing `objects` makes, on a one-second
+/// clock from zero with every layer inside it, to edit and export again.
+fn imported_graphic_group(objects: Vec<PrGraphicObject>) -> Value {
+    fn reclock(layers: &mut Value) {
+        for layer in layers.as_array_mut().unwrap() {
+            if layer["type"] == "Group" {
+                layer["playback"] = crate::test_support::linear_playback(
+                    json!({"start": 0, "duration": 1000}),
+                    json!({"start": 0, "duration": 1000}),
+                );
+            } else {
+                layer["activeRange"] = json!({"start": 0, "duration": 1000});
+            }
+            if let Some(children) = layer.get_mut("layers") {
+                reclock(children);
+            }
+        }
+    }
+    let (document, _) = imported(PrGraphic {
+        objects,
+        ..shape_graphic()
+    });
+    let mut graphic = document["composition"]["layers"][0].clone();
+    graphic["playback"] = crate::test_support::linear_playback(
+        json!({"start": 0, "duration": 1000}),
+        json!({"start": 0, "duration": 1000}),
+    );
+    reclock(&mut graphic["layers"]);
+    graphic
+}
+
+/// The names of `objects` at every depth, a SubGroup's as `name{…}`.
+fn part_names(objects: &[PrGraphicObject]) -> String {
+    objects
+        .iter()
+        .map(|object| match object {
+            PrGraphicObject::Text(text) => text.name.clone(),
+            PrGraphicObject::TextLines(text) => text.name.clone(),
+            PrGraphicObject::Shape(shape) => shape.name.clone(),
+            PrGraphicObject::Group(group) => {
+                format!("{}{{{}}}", group.name, part_names(&group.objects))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The object names of each of `graphics` but [`sibling_text`]'s.
+fn exported_names(graphics: &[PrGraphic]) -> Vec<String> {
+    graphics
+        .iter()
+        .map(|graphic| part_names(&graphic.objects))
+        .filter(|names| names != "Sibling")
+        .collect()
+}
+
+#[test]
+fn a_mask_with_shape_whose_shadow_does_not_import_takes_its_composite_with_it() {
+    use crate::schema::text::{PrRgb, SHAPE_SHADOW_ANGLE};
+    let blue = [0, 96, 255];
+    let hard = PrTextShadow {
+        color: PrRgb([40; 3]),
+        opacity: 100.0,
+        angle: SHAPE_SHADOW_ANGLE,
+        distance: 20.0,
+        size: 30.0,
+        blur: 0.0,
+    };
+    let graphic = |mask, shadow: PrTextShadow, scale: f64| {
+        let mut source = square_object("M", [960.0, 540.0], 200.0, blue, mask);
+        if let PrGraphicObject::Shape(shape) = &mut source {
+            shape.appearance.shadow = Some(shadow);
+            shape.transform.scale = scale;
+        }
+        PrGraphic {
+            objects: vec![
+                square_object("A", [700.0, 540.0], 200.0, blue, None),
+                source,
+                square_object("T1", [900.0, 540.0], 200.0, blue, None),
+                square_object("T2", [1020.0, 540.0], 200.0, blue, None),
+            ],
+            ..shape_graphic()
+        }
+    };
+    let layer_names = |document: &Value| -> Vec<String> {
+        document["composition"]["layers"][0]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|layer| {
+                format!(
+                    "{} {}",
+                    layer["type"].as_str().unwrap(),
+                    layer["name"].as_str().unwrap()
+                )
+            })
+            .collect()
+    };
+    // A shadow that imports stays in the mask: FX draws it into the matte,
+    // as it joins Premiere's hole (s7).
+    let (document, omissions) = imported(graphic(INVERTED, hard, 100.0));
+    assert_eq!(
+        layer_names(&document),
+        ["Shape A", "Shape M", "Group Premiere masked objects 2"],
+        "{omissions:?}"
+    );
+    assert_eq!(
+        document["composition"]["layers"][0]["layers"][1]["effects"][0]["effect"]["type"],
+        "dropShadow"
+    );
+    // One that does not import would change what the mask keeps, in either
+    // polarity: the mask and the objects it masks stay out, and A stays.
+    for (case, mask, shadow, scale, reason) in [
+        (
+            "an inverted mask with a soft shadow",
+            INVERTED,
+            PrTextShadow { blur: 40.0, ..hard },
+            100.0,
+            "a shape shadow's blur is not measured",
+        ),
+        (
+            "a mask with a soft shadow",
+            NOT_INVERTED,
+            PrTextShadow { blur: 40.0, ..hard },
+            100.0,
+            "a shape shadow's blur is not measured",
+        ),
+        (
+            "an inverted mask with a translucent shadow",
+            INVERTED,
+            PrTextShadow {
+                opacity: 60.0,
+                ..hard
+            },
+            100.0,
+            "a shape shadow's opacity blend is not measured",
+        ),
+        (
+            "a scaled inverted mask with a hard shadow",
+            INVERTED,
+            hard,
+            50.0,
+            "its shape is scaled or rotated",
+        ),
+    ] {
+        let (document, omissions) = imported(graphic(mask, shadow, scale));
+        assert_eq!(layer_names(&document), ["Shape A"], "{case}: {omissions:?}");
+        assert!(!document.to_string().contains("trackMatte"), "{case}");
+        let reports: Vec<_> = omissions
+            .iter()
+            .filter(|omission| omission.reason.contains(reason))
+            .collect();
+        assert_eq!(reports.len(), 1, "{case}: {omissions:?}");
+        assert_eq!(reports[0].scope, OmissionScope::Feature, "{case}");
+        assert!(
+            reports[0]
+                .reason
+                .ends_with("the mask and the 2 objects below it are not converted"),
+            "{case}: {omissions:?}"
+        );
+        assert!(
+            omissions
+                .iter()
+                .all(|omission| omission.reason != super::MASK_SOURCE_LINEAR_LIGHT_APPROXIMATION),
+            "{case}: {omissions:?}"
+        );
+    }
+    // A mask above everything takes the whole graphic, which then is not
+    // converted at all, as the reader omits a graphic with no object left.
+    let mut graphic = graphic(INVERTED, PrTextShadow { blur: 40.0, ..hard }, 100.0);
+    graphic.objects.remove(0);
+    let (document, omissions) = imported(graphic);
+    let types: Vec<_> = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|layer| layer["type"].as_str().unwrap())
+        .collect();
+    assert_eq!(types, ["Video", "Rect"], "{omissions:?}");
+    assert!(
+        omissions
+            .iter()
+            .any(|omission| omission.scope == OmissionScope::Occurrence
+                && omission.reason == "graphic was not converted: none of its objects converts"),
+        "{omissions:?}"
+    );
+}
+
+/// Freshly parse the pinned native source, import its selected ordinary graphic,
+/// and retain both source semantics and the editable root. This is structural
+/// source evidence, not an independent render or Adobe writer acceptance test.
+fn native_mask_graphic(case: &str, occurrence: &str) -> (PrGraphic, Value) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+        "tests/fixtures/feature_graphic_masks_{case}_26_5.prproj"
+    ));
+    let (project, read) = PrProjectFile::load(&path).unwrap();
+    let sequence = project.single_sequence().unwrap();
+    let native = sequence
+        .video_items()
+        .filter_map(PrVideoItem::graphic)
+        .find(|graphic| graphic.id() == Some(occurrence))
+        .unwrap_or_else(|| panic!("{occurrence}: {read:?}"))
+        .clone();
+    let mut omissions = Vec::new();
+    let document = premiere_to_tesseract(
+        sequence,
+        &project.media,
+        &crate::tesseract_output::asset_ids_in_order(sequence, &project.media),
+        &mut omissions,
+    )
+    .unwrap();
+    let start = (native.start_ticks / (TICKS / 1000)) as u64;
+    let root = document
+        .composition()
+        .layers()
+        .iter()
+        .find(|layer| {
+            matches!(layer.data(),
+        LayerData::Group(group) if group.playback.input_range().start.as_millis() == start
+            && group.name.starts_with("Premiere graphic"))
+        })
+        .unwrap_or_else(|| panic!("{occurrence}: {omissions:?}"));
+    (native, serde_json::to_value(root).unwrap())
+}
+
+#[test]
+fn adobe_shape_and_uniform_text_mask_sources_import_composites_and_export_current_edits() {
+    for (case, occurrence, kind) in [
+        ("a", "VideoClipTrackItem:67", "Shape"),
+        ("b", "VideoClipTrackItem:68", "Text"),
+    ] {
+        let (native, mut root) = native_mask_graphic(case, occurrence);
+        assert!(native.objects[0].mask_source().is_some());
+        let layers = root["layers"].as_array_mut().unwrap();
+        assert_eq!(layers.len(), 2);
+        assert_eq!(layers[0]["type"], kind);
+        assert_eq!(layers[1]["type"], "Group");
+        assert_eq!(layers[1]["trackMatte"]["layer"], layers[0]["id"]);
+        assert!(!layers[1]["layers"].as_array().unwrap().is_empty());
+        layers[0]["transform"]["opacity"] = json!(37.0);
+        if kind == "Text" {
+            layers[0]["sourceText"]["text"] = json!("Edited mask");
+        }
+        // Place this edited root in the existing two-second offline export harness.
+        fn reclock(layer: &mut Value) {
+            let range = json!({"start": 0, "duration": 1000});
+            if layer["type"] == "Group" {
+                layer["playback"] = crate::test_support::linear_playback(range.clone(), range);
+                for child in layer["layers"].as_array_mut().unwrap() {
+                    reclock(child);
+                }
+            } else {
+                layer["activeRange"] = range;
+            }
+        }
+        reclock(&mut root);
+        // A distinct sibling avoids colliding with IDs allocated by native import.
+        let mut sibling = sibling_text();
+        sibling["id"] = json!(90000);
+        let (graphics, omissions) = exported_and_read(vec![root, sibling]);
+        let written = graphics
+            .iter()
+            .find(|graphic| {
+                graphic
+                    .objects
+                    .iter()
+                    .any(|object| object.mask_source().is_some())
+            })
+            .unwrap_or_else(|| panic!("{case}: {omissions:?}"));
+        assert_eq!(
+            written.objects[0].mask_source(),
+            native.objects[0].mask_source()
+        );
+        match &written.objects[0] {
+            PrGraphicObject::Shape(shape) => assert_eq!(shape.transform.opacity, 37.0),
+            PrGraphicObject::Text(text) => {
+                assert_eq!(text.transform.opacity, 37.0);
+                assert_eq!(text.document.text, "Edited mask");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+#[test]
+fn adobe_subgroup_bounds_the_mask_and_retains_the_outside_object() {
+    let (native, root) = native_mask_graphic("b", "VideoClipTrackItem:65");
+    let [PrGraphicObject::Group(group), PrGraphicObject::Shape(outside)] =
+        native.objects.as_slice()
+    else {
+        panic!("{:?}", native.objects);
+    };
+    assert!(group.objects[0].mask_source().is_some());
+    let inner = &root["layers"][0];
+    assert_eq!(
+        inner["layers"][1]["trackMatte"]["layer"],
+        inner["layers"][0]["id"]
+    );
+    assert_eq!(root["layers"][1]["name"], outside.name);
+    let (written, omissions) = written_back(PrGraphic {
+        objects: native.objects,
+        ..shape_graphic()
+    });
+    assert!(
+        matches!(
+            written.objects.as_slice(),
+            [PrGraphicObject::Group(_), PrGraphicObject::Shape(_)]
+        ),
+        "{omissions:?}"
+    );
+}
+
+#[test]
+fn failed_graphic_mask_export_suppresses_only_its_composite_and_prunes_empty_subgroups() {
+    let square = |name, mask| square_object(name, [960.0, 540.0], 200.0, [0, 96, 255], mask);
+    for upper in [false, true] {
+        let mut members = vec![square("M", INVERTED), square("T", None)];
+        if upper {
+            members.insert(0, square("A", None));
+        }
+        let mut root =
+            imported_graphic_group(vec![subgroup("G", members), square("Outside", None)]);
+        let mask = &mut root["layers"][0]["layers"][usize::from(upper)];
+        mask["effects"] =
+            json!([{"id": 90000, "effect": {"type": "stroke", "color": [0,0,1,1], "width": 4}}]);
+        let (graphics, omissions) = exported_and_read(vec![root, sibling_text()]);
+        assert_eq!(
+            exported_names(&graphics),
+            if upper {
+                vec!["G{A} Outside"]
+            } else {
+                vec!["Outside"]
+            },
+            "{omissions:?}"
+        );
+        assert!(
+            omissions.iter().any(|report| report
+                .reason
+                .contains("the objects that it masks are not exported either")),
+            "{omissions:?}"
+        );
+    }
+}
+
+#[test]
+fn graphic_subgroup_classification_preserves_keyed_moved_and_text_failure_nest_routes() {
+    let square = |name| square_object(name, [960.0, 540.0], 200.0, [0, 96, 255], None);
+    let base = imported_graphic_group(vec![subgroup("G", vec![square("A")]), square("Outside")]);
+    let subgroup_id = base["layers"][0]["id"].as_u64().unwrap();
+    let classify = |root: Value, entries: Vec<Value>| {
+        let mut wire = editable_document();
+        wire["composition"]["layers"] = json!([root]);
+        wire["composition"]["dynamics"] = json!({"entries": entries});
+        let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
+        let LayerData::Group(group) = document.composition().layers()[0].data() else {
+            panic!()
+        };
+        super::graphic_objects(group, document.composition().dynamics()).is_some()
+    };
+    assert!(classify(base.clone(), Vec::new()));
+    let mut wrapper = base.clone();
+    wrapper["layers"].as_array_mut().unwrap().pop();
+    assert!(classify(wrapper.clone(), Vec::new()));
+    wrapper["transform"]["position"] = json!([20, 0]);
+    assert!(!classify(wrapper.clone(), Vec::new()));
+    wrapper["name"] = json!("Unrelated wrapper name");
+    wrapper["layers"][0]["name"] = json!("Unrelated child name");
+    assert!(!classify(wrapper, Vec::new()));
+    let mask = square_object("M", [960.0, 540.0], 200.0, [0, 96, 255], NOT_INVERTED);
+    let mut masked = imported_graphic_group(vec![subgroup("G", vec![mask, square("T")])]);
+    masked["transform"]["position"] = json!([20, 0]);
+    assert!(classify(masked, Vec::new()));
+    assert!(!classify(
+        base.clone(),
+        vec![entry_on(
+            subgroup_id,
+            "positionX",
+            &[(0, 0.0, "linear"), (500, 20.0, "linear")]
+        )]
+    ));
+    let mut moved = base.clone();
+    moved["layers"][0]["transform"]["position"] = json!([20, 0]);
+    assert!(!classify(moved, Vec::new()));
+    let mut text = text_graphic().objects.remove(0);
+    if let PrGraphicObject::Text(text) = &mut text {
+        text.document.stroke = None;
+    }
+    let text_group = imported_graphic_group(vec![subgroup("G", vec![text]), square("Outside")]);
+    let mut width_keyed = text_group.clone();
+    let text = &mut width_keyed["layers"][0]["layers"][0];
+    text["sourceText"]["strokeColor"] = json!([0.0, 0.0, 0.0, 1.0]);
+    text["sourceText"]["applyStroke"] = json!(true);
+    text["animators"] = json!([{"id": 90002, "strokeWidth": 0.0}]);
+    let mut width = entry("strokeWidth", &[(0, 0.0, "hold"), (500, 2.0, "hold")]);
+    width["target"] =
+        json!({"kind": "fxItemProperty", "itemId": 90002, "propertyName": "strokeWidth"});
+    assert!(!classify(width_keyed, vec![width]));
+    let mut unconvertible = text_group.clone();
+    unconvertible["layers"][0]["layers"][0]["transform"]["scale"] = json!([100, 90]);
+    assert!(classify(unconvertible.clone(), Vec::new()));
+    unconvertible["layers"][0]["layers"][0]["sourceText"]["underline"] = json!(true);
+    assert!(!classify(unconvertible, Vec::new()));
+    // Missing packaging alone is handled by export, not by the structural classifier.
+    let mut fontless = text_group;
+    fontless["layers"][0]["layers"][0]["sourceText"]["fontFamily"] = json!("Unpackaged");
+    fontless["layers"][0]["layers"][0]["sourceText"]["fontStyle"] = json!("Regular");
+    assert!(classify(fontless.clone(), Vec::new()));
+    let (graphics, omissions) = exported_and_read(vec![fontless, sibling_text()]);
+    assert_eq!(exported_names(&graphics), ["Outside"], "{omissions:?}");
+}
+
+#[test]
+fn a_missing_font_mask_takes_its_composite_but_keeps_outside_siblings() {
+    let mut text = text_graphic().objects.remove(0);
+    if let PrGraphicObject::Text(text) = &mut text {
+        text.document.stroke = None;
+        text.mask_source = INVERTED;
+    }
+    let square = |name| square_object(name, [960.0, 540.0], 200.0, [0, 96, 255], None);
+    let mut flat = imported_graphic_group(vec![square("Outside"), text.clone(), square("T")]);
+    flat["layers"][1]["sourceText"]["fontFamily"] = json!("Unpackaged");
+    flat["layers"][1]["sourceText"]["fontStyle"] = json!("Regular");
+    let (graphics, omissions) = exported_and_read(vec![flat, sibling_text()]);
+    assert_eq!(exported_names(&graphics), ["Outside"], "{omissions:?}");
+    assert!(
+        omissions.iter().any(|report| report
+            .reason
+            .contains("the objects that it masks are not exported either")),
+        "{omissions:?}"
+    );
+    let mut root = imported_graphic_group(vec![
+        subgroup("G", vec![text, square("T")]),
+        square("Outside"),
+    ]);
+    let mask = &mut root["layers"][0]["layers"][0];
+    mask["sourceText"]["fontFamily"] = json!("Unpackaged");
+    mask["sourceText"]["fontStyle"] = json!("Regular");
+    let (graphics, omissions) = exported_and_read(vec![root, sibling_text()]);
+    assert_eq!(exported_names(&graphics), ["Outside"], "{omissions:?}");
+    assert!(
+        omissions.iter().any(|report| report
+            .reason
+            .contains("the objects that it masks are not exported either")),
+        "{omissions:?}"
+    );
+}
+
+#[test]
+fn graphic_mask_field_losses_keep_typed_reports_and_do_not_reveal_the_composite() {
+    use crate::export_loss::{ExportField, ExportLossKind, ExportLossSource, LossCollector};
+    let square = |name, mask| square_object(name, [960.0, 540.0], 200.0, [0, 96, 255], mask);
+    for (property, value, field) in [
+        ("skew", 20.0, ExportField::Skew),
+        ("rotationX", 30.0, ExportField::Rotation3d),
+        ("motionBlur", 180.0, ExportField::MotionBlur),
+    ] {
+        let mut source = text_graphic().objects.remove(0);
+        if let PrGraphicObject::Text(text) = &mut source {
+            text.name = "M".into();
+            text.document.stroke = None;
+            text.mask_source = INVERTED;
+        }
+        let mut root = imported_graphic_group(vec![square("A", None), source, square("T", None)]);
+        let id = root["layers"][1]["id"].as_u64().unwrap();
+        if property == "motionBlur" {
+            root["layers"][1]["motionBlur"] = json!(true);
+        } else {
+            root["layers"][1]["transform"][property] = json!(value);
+        }
+        let mut wire = editable_document();
+        let mut canvas = wire["composition"]["layers"][1].clone();
+        canvas["id"] = json!(90001);
+        wire["composition"]["layers"] = json!([root, canvas]);
+        if property == "motionBlur" {
+            wire["composition"]["motionBlur"] = json!({"enabled": true, "shutterAngle": value});
+        }
+        let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
+        let mut reports = LossCollector::default();
+        crate::convert::lower_document(
+            &document,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            FrameRate::Fps30,
+            &mut reports,
+        )
+        .unwrap();
+        let report = reports.finish(true);
+        assert!(
+            report.losses.iter().any(|loss| loss.source
+                == ExportLossSource::Layer(LayerId::new(id))
+                && loss.kind == ExportLossKind::Field(field)),
+            "{report:?}"
+        );
+        assert!(
+            report.losses.iter().any(|loss| loss
+                .omission
+                .reason
+                .contains("the objects that it masks are not exported either")),
+            "{report:?}"
+        );
+    }
+}
+
+#[test]
+fn a_graphic_mask_losing_import_keys_leaves_no_composite_or_animation_targets() {
+    let mut graphic = keyed_graphic();
+    let start = graphic.in_ticks;
+    let source = graphic.text_mut();
+    source.document.stroke = None;
+    source.mask_source = INVERTED;
+    source.animations[1] = PrPropertyAnimation::UniformScale(vec![
+        scalar(start, 80.0, PrKeyframeEasing::Linear),
+        scalar(start + TICKS / 5000, 96.0, PrKeyframeEasing::Linear),
+    ]);
+    graphic.objects.push(square_object(
+        "Target",
+        [960.0, 540.0],
+        200.0,
+        [0, 96, 255],
+        None,
+    ));
+    let (document, omissions) = imported(graphic);
+    assert!(
+        omissions
+            .iter()
+            .any(|report| report.reason.contains("none of its objects converts")),
+        "{omissions:?}"
+    );
+    assert!(document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|layer| layer["type"] != "Group" && layer["type"] != "Text"));
+    assert!(document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .is_none_or(Vec::is_empty));
+}
+
+#[test]
+fn a_graphic_object_used_as_a_mask_across_subgroup_scope_stays_on_the_nest_route() {
+    let square = |name| square_object(name, [960.0, 540.0], 200.0, [0, 96, 255], None);
+    let mut root =
+        imported_graphic_group(vec![subgroup("G", vec![square("Target")]), square("Guide")]);
+    let guide = root["layers"][1]["id"].clone();
+    root["layers"][0]["masks"] = json!([{"id": 90000, "mode": "add", "layer": guide}]);
+    let mut wire = editable_document();
+    wire["composition"]["layers"] = json!([root]);
+    let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
+    let LayerData::Group(group) = document.composition().layers()[0].data() else {
+        panic!()
+    };
+    assert!(super::graphic_objects(group, document.composition().dynamics()).is_none());
+}
+
+#[test]
+fn numeric_mask_graphic_generator_clock_exports_edited_owner_keys() {
+    let mut graphic = shape_graphic();
+    let mut mask = crate::tests::support::opacity_mask();
+    mask.expansion_keys = vec![
+        scalar(graphic.in_ticks - TICKS / 4, -8.0, PrKeyframeEasing::Linear),
+        scalar(graphic.in_ticks + TICKS, 12.0, PrKeyframeEasing::Linear),
+    ];
+    mask.feather_keys = vec![
+        scalar(graphic.in_ticks, 4.0, PrKeyframeEasing::Linear),
+        scalar(
+            graphic.in_ticks + TICKS,
+            20.0,
+            PrKeyframeEasing::CubicBezier {
+                x1: 0.3,
+                y1: 0.0,
+                x2: 0.7,
+                y2: 1.0,
+            },
+        ),
+    ];
+    mask.opacity_keys = vec![
+        scalar(graphic.in_ticks, 100.0, PrKeyframeEasing::Linear),
+        scalar(graphic.in_ticks + TICKS, 60.0, PrKeyframeEasing::Hold),
+    ];
+    graphic.opacity_mask = Some(mask);
+    let (mut wire, omissions) = imported(graphic);
+    wire["duration"] = json!(3.0);
+    assert!(
+        omissions
+            .iter()
+            .any(|o| o.reason.contains("negative expansion remains editable")),
+        "{omissions:?}"
+    );
+    let layers = wire["composition"]["layers"].as_array_mut().unwrap();
+    layers.retain(|layer| layer["type"] != "Video");
+    let owner = layers
+        .iter()
+        .find(|layer| layer["masks"].as_array().is_some_and(|m| !m.is_empty()))
+        .unwrap();
+    let id = owner["masks"][0]["id"].clone();
+    let entry = wire["composition"]["dynamics"]["entries"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|entry| {
+            entry["target"]["itemId"] == id && entry["target"]["propertyName"] == "expansion"
+        })
+        .unwrap();
+    assert_eq!(entry["animator"]["keyframes"][0]["layerTime"], -250);
+    entry["animator"]["keyframes"][1]["layerTime"] = json!(1500);
+    entry["animator"]["keyframes"][1]["value"]["value"] = json!(-24.0);
+    let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
+    let mut omissions = Vec::new();
+    let exported = crate::convert::export_document(
+        &document,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        FrameRate::Fps30,
+        &mut omissions,
+    )
+    .unwrap();
+    assert!(
+        omissions
+            .iter()
+            .all(|o| o.kind == OmissionKind::Approximated),
+        "{omissions:?}"
+    );
+    for entry in document.composition().dynamics().entries() {
+        assert!(exported.written.contains(&entry.target));
+    }
+    let graphic = exported.project.sequences[0]
+        .video_items()
+        .find_map(PrVideoItem::graphic)
+        .unwrap();
+    let mask = graphic.opacity_mask.as_ref().unwrap();
+    assert_eq!(mask.expansion_keys[0].source_ticks, EXPORT_IN - TICKS / 4);
+    assert_eq!(
+        mask.expansion_keys[1].source_ticks,
+        EXPORT_IN + 3 * TICKS / 2
+    );
+    assert_eq!(mask.expansion_keys[1].value, -24.0);
+    assert_eq!(mask.opacity_keys[1].value, 60.0);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("numeric-mask.prproj");
+    PremiereProjectXml::new(&exported.project)
+        .unwrap()
+        .write_new(&path)
+        .unwrap();
+    let (read, _) = PrProjectFile::load(&path).unwrap();
+    let written = read.sequences[0]
+        .video_items()
+        .find_map(PrVideoItem::graphic)
+        .unwrap()
+        .opacity_mask
+        .as_ref()
+        .unwrap();
+    assert_eq!(written.numeric_keys(), mask.numeric_keys());
+}
+
+/// A 200 × 200 px square mask in unit fractions of the sequence frame.
+fn frame_mask(left: f32, top: f32) -> crate::schema::PrMask {
+    use crate::schema::text::{PrPathVertex, PrShapePath};
+    let [width, height] = [200.0 / 1920.0, 200.0 / 1080.0];
+    let corner = |x: f32, y: f32| PrPathVertex {
+        smooth: false,
+        point: [x, y],
+        in_tangent: [x, y],
+        out_tangent: [x, y],
+    };
+    crate::schema::PrMask {
+        raster: None,
+        feather_keys: Vec::new(),
+        expansion: 0.0,
+        expansion_keys: Vec::new(),
+        opacity_keys: Vec::new(),
+        path: PrShapePath {
+            vertices: vec![
+                corner(left, top),
+                corner(left + width, top),
+                corner(left + width, top + height),
+                corner(left, top + height),
+            ],
+            closed: true,
+        },
+        path_keys: Vec::new(),
+        feather: 0.0,
+        opacity: 100.0,
+        inverted: true,
+    }
+}
+
+#[test]
+fn attached_and_clip_opacity_masks_import_as_path_masks_beside_their_owners() {
+    use crate::schema::text::PrVectorMotion;
+    let blue = [0, 96, 255];
+    let mut owner = square_object("Owner", [700.0, 500.0], 300.0, blue, None);
+    if let PrGraphicObject::Shape(shape) = &mut owner {
+        // The attached mask stays in the graphic frame after the Shape's own
+        // transform (c1): an asymmetric anchor, scale and rotation.
+        shape.transform.anchor = [40.0, -20.0];
+        shape.transform.scale = 80.0;
+        shape.transform.rotation = 30.0;
+        shape.mask = Some(frame_mask(0.3, 0.4));
+    }
+    let graphic = PrGraphic {
+        // The clip mask acts after the Vector Motion (d1).
+        vector_motion: Some(PrVectorMotion {
+            position: [864.0, 540.0],
+            anchor: [960.0, 540.0],
+            scale: 100.0,
+            rotation: 15.0,
+            animations: Vec::new(),
+        }),
+        opacity_mask: Some(frame_mask(0.45, 0.35)),
+        objects: vec![
+            owner,
+            square_object("Other", [1200.0, 540.0], 200.0, blue, None),
+        ],
+        ..shape_graphic()
+    };
+    let (document, _) = imported(graphic.clone());
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    let group = &layers[0];
+    let guide = &layers[1];
+    // The clip mask's guide is the group's sibling, at the identity over the
+    // group's range, without paint, and consumed by the group's one mask.
+    assert_eq!(group["type"], "Group");
+    assert_eq!(group["masks"][0]["layer"], guide["id"]);
+    assert_eq!(group["masks"][0]["inverted"], true);
+    assert_eq!(guide.get("parent"), None);
+    assert_eq!(guide["activeRange"], group["playback"]["inputRange"]);
+    assert_eq!(guide["transform"]["position"], json!([0.0, 0.0]));
+    assert_eq!(guide["shape"].get("fills"), None);
+    let shape = &group["layers"][0];
+    let shape_guide = &group["layers"][1];
+    assert_eq!(shape["masks"][0]["layer"], shape_guide["id"]);
+    assert_eq!(shape_guide["parent"], group["id"]);
+    assert_eq!(shape_guide["transform"]["rotation"], json!(0.0));
+    assert_eq!(shape_guide["activeRange"], shape["activeRange"]);
+    // Every layer and mask id is its own.
+    let mut ids = BTreeSet::new();
+    fn collect(layers: &Value, ids: &mut BTreeSet<u64>) {
+        for layer in layers.as_array().unwrap() {
+            assert!(ids.insert(layer["id"].as_u64().unwrap()), "{layer}");
+            for mask in layer["masks"].as_array().into_iter().flatten() {
+                assert!(ids.insert(mask["id"].as_u64().unwrap()), "{mask}");
+            }
+            if let Some(children) = layer.get("layers") {
+                collect(children, ids);
+            }
+        }
+    }
+    collect(&document["composition"]["layers"], &mut ids);
+    // And both masks export and read back in their own hosts.
+    let (written, omissions) = written_back(graphic.clone());
+    assert_eq!(written.opacity_mask, graphic.opacity_mask, "{omissions:?}");
+    assert_eq!(written.objects, graphic.objects, "{omissions:?}");
+    assert_eq!(
+        written.vector_motion, graphic.vector_motion,
+        "{omissions:?}"
+    );
+}
+
+/// The closed square contour from `min` to `max` in FX commands, clockwise
+/// on screen, or the other way with `reversed`.
+fn square_contour(min: f64, max: f64, reversed: bool) -> Vec<Value> {
+    let mut points = [[min, min], [max, min], [max, max], [min, max]];
+    if reversed {
+        points.reverse();
+    }
+    let mut commands = vec![json!({"type": "moveTo", "x": points[0][0], "y": points[0][1]})];
+    commands.extend(
+        points[1..]
+            .iter()
+            .map(|[x, y]| json!({"type": "lineTo", "x": x, "y": y})),
+    );
+    commands.push(json!({"type": "close"}));
+    commands
+}
+
+/// A piece of an exported shape: its kind, first vertex and opacity.
+type Piece = (&'static str, [f32; 2], f64);
+
+/// The pieces of the graphic that exporting shape layer `layer` next to
+/// [`sibling_text`] makes, and every omission; `None` when the shape does
+/// not export as pieces.
+fn exported_pieces(layer: Value) -> (Option<Vec<Piece>>, Vec<Omission>) {
+    let (project, omissions) = export_over_canvas(vec![layer, sibling_text()], Vec::new());
+    let project = project.unwrap_or_else(|error| panic!("{error}: {omissions:?}"));
+    let pieces = project
+        .single_sequence()
+        .unwrap()
+        .video_items()
+        .filter_map(PrVideoItem::graphic)
+        .find_map(|graphic| match graphic.objects.as_slice() {
+            [PrGraphicObject::Group(group)] => Some(group.objects.clone()),
+            _ => None,
+        })
+        .map(|objects| {
+            objects
+                .iter()
+                .map(|object| {
+                    let PrGraphicObject::Shape(shape) = object else {
+                        panic!("a piece is a Shape: {object:?}");
+                    };
+                    let appearance = &shape.appearance;
+                    let kind = match (appearance.mask_source, &appearance.fill, &appearance.stroke)
+                    {
+                        (Some(mask), Some(_), None) if mask.inverted && shape.path.closed => "hole",
+                        (None, Some(_), _) => "fill",
+                        (None, None, Some(_)) => "stroke",
+                        _ => panic!("an unexpected piece: {shape:?}"),
+                    };
+                    (kind, shape.path.vertices[0].point, shape.transform.opacity)
+                })
+                .collect()
+        });
+    (pieces, omissions)
+}
+
+#[test]
+fn compound_shape_paths_export_as_certified_pieces() {
+    let shape = imported_object(shape_graphic());
+    let with = |contours: Vec<Vec<Value>>, rule: &str, stroke: Option<f64>| {
+        let mut layer = shape.clone();
+        layer["shape"]["path"]["commands"] = json!(contours.concat());
+        layer["shape"]["fills"][0]["fillRule"] = json!(rule);
+        layer["transform"]["opacity"] = json!(60);
+        if let Some(width) = stroke {
+            layer["shape"]["strokes"] =
+                json!([{"paint": {"type": "solid", "color": [0, 1, 0.25, 1]}, "width": width}]);
+        }
+        layer
+    };
+    let (outer, inner, island) = (
+        square_contour(0.0, 100.0, false),
+        square_contour(30.0, 70.0, false),
+        square_contour(45.0, 55.0, false),
+    );
+    // Holes are opaque, and visible pieces keep the layer's Opacity 60.
+    for (case, layer, expected) in [
+        (
+            "even-odd donut",
+            with(vec![outer.clone(), inner.clone()], "evenOdd", None),
+            vec![("hole", [30.0, 30.0], 100.0), ("fill", [0.0, 0.0], 60.0)],
+        ),
+        (
+            "nonzero donut of opposite windings",
+            with(
+                vec![outer.clone(), square_contour(30.0, 70.0, true)],
+                "nonZeroWinding",
+                None,
+            ),
+            vec![("hole", [30.0, 70.0], 100.0), ("fill", [0.0, 0.0], 60.0)],
+        ),
+        (
+            "nonzero contours of one winding fill both",
+            with(vec![outer.clone(), inner.clone()], "nonZeroWinding", None),
+            vec![("fill", [0.0, 0.0], 60.0)],
+        ),
+        (
+            "an island in an even-odd hole",
+            with(
+                vec![outer.clone(), inner.clone(), island.clone()],
+                "evenOdd",
+                None,
+            ),
+            vec![
+                ("fill", [45.0, 45.0], 60.0),
+                ("hole", [30.0, 30.0], 100.0),
+                ("fill", [0.0, 0.0], 60.0),
+            ],
+        ),
+        (
+            "disjoint contours",
+            with(
+                vec![
+                    square_contour(0.0, 40.0, false),
+                    square_contour(60.0, 100.0, true),
+                ],
+                "nonZeroWinding",
+                None,
+            ),
+            vec![("fill", [0.0, 0.0], 60.0), ("fill", [60.0, 100.0], 60.0)],
+        ),
+        (
+            "a stroked donut: the hole's stroke above its mask",
+            with(vec![outer.clone(), inner.clone()], "evenOdd", Some(4.0)),
+            vec![
+                ("stroke", [30.0, 30.0], 60.0),
+                ("hole", [30.0, 30.0], 100.0),
+                ("fill", [0.0, 0.0], 60.0),
+            ],
+        ),
+    ] {
+        let (pieces, omissions) = exported_pieces(layer);
+        let reported = |reason: &str| omissions.iter().any(|omission| omission.reason == reason);
+        // Only the stroked translucent donut blends a stroke over a fill, and
+        // only shapes with a hole antialias its edge as a mask.
+        let stroked = expected.iter().any(|(kind, _, _)| *kind == "stroke");
+        let holed = expected.iter().any(|(kind, _, _)| *kind == "hole");
+        assert_eq!(
+            reported(super::COMPOUND_OPACITY_APPROXIMATION),
+            stroked,
+            "{case}: {omissions:?}"
+        );
+        assert_eq!(
+            reported(super::COMPOUND_HOLE_EDGE_APPROXIMATION),
+            holed,
+            "{case}: {omissions:?}"
+        );
+        assert_eq!(pieces, Some(expected), "{case}: {omissions:?}");
+    }
+    // Contours within twice the reach of a 30 px stroke (15 px each, times
+    // FX's miter limit of 4) are not certified apart.
+    let (pieces, omissions) = exported_pieces(with(vec![outer, inner], "evenOdd", Some(30.0)));
+    assert_eq!(pieces, None);
+    assert!(
+        omissions.iter().any(|omission| omission.reason
+            == "shape layer was not exported: unsupported conversion: contours 1 and 2 of the shape path are not certified 120 px apart"),
+        "{omissions:?}"
+    );
+}
+
+#[test]
+fn compound_shape_contours_within_a_pixel_at_the_graphics_scale_export_and_are_reported() {
+    let shape = imported_object(shape_graphic());
+    let donut = |gap: f64, scale: [f64; 2]| {
+        let mut layer = shape.clone();
+        layer["shape"]["path"]["commands"] = json!([
+            square_contour(0.0, 100.0, false),
+            square_contour(gap, 100.0 - gap, false)
+        ]
+        .concat());
+        layer["shape"]["fills"][0]["fillRule"] = json!("evenOdd");
+        layer["transform"]["scale"] = json!(scale);
+        layer
+    };
+    let near = super::compound_near_approximation(1, 2);
+    let reasons = |omissions: &[Omission]| -> Vec<String> {
+        omissions
+            .iter()
+            .filter(|omission| {
+                omission.record == "layer 9 (\"Box\")" && omission.scope == OmissionScope::Feature
+            })
+            .map(|omission| omission.reason.clone())
+            .collect()
+    };
+    let hole_edge = super::COMPOUND_HOLE_EDGE_APPROXIMATION.to_owned();
+    // At the layer's own scale: a 1 px band was refused before; it converts
+    // and is reported, as is the band that a nonuniform scale narrows.
+    for (case, layer, expected) in [
+        (
+            "a 3 px band",
+            donut(3.0, [100.0, 100.0]),
+            vec![hole_edge.clone()],
+        ),
+        (
+            "a 1 px band",
+            donut(1.0, [100.0, 100.0]),
+            vec![hole_edge.clone(), near.clone()],
+        ),
+        (
+            "a 3 px band scaled 100 x 25",
+            donut(3.0, [100.0, 25.0]),
+            vec![hole_edge.clone(), near.clone()],
+        ),
+    ] {
+        let (pieces, omissions) = exported_pieces(layer);
+        assert!(pieces.is_some(), "{case}: {omissions:?}");
+        assert_eq!(reasons(&omissions), expected, "{case}: {omissions:?}");
+    }
+    // A shape that exports no pieces reports none of their approximations:
+    // Premiere's Horizontal Scale does not reach a reflection.
+    let (pieces, omissions) = exported_pieces(donut(1.0, [-100.0, 100.0]));
+    assert_eq!(pieces, None);
+    assert_eq!(reasons(&omissions), Vec::<String>::new(), "{omissions:?}");
+    // Under a Vector Motion that shrinks it, static or by a Scale key, the
+    // same 3 px band may share a device pixel.
+    let mut child = donut(3.0, [100.0, 100.0]);
+    child["parent"] = json!(8);
+    child["activeRange"] = json!({"start": 0, "duration": 1000});
+    for (case, scale, entries) in [
+        ("Vector Motion 100", 100.0, Vec::new()),
+        ("Vector Motion 25", 25.0, Vec::new()),
+        (
+            "Vector Motion keyed to 20",
+            100.0,
+            vec![
+                entry_on(8, "scaleX", &[(0, 100.0, "linear"), (1000, 20.0, "linear")]),
+                entry_on(8, "scaleY", &[(0, 100.0, "linear"), (1000, 20.0, "linear")]),
+            ],
+        ),
+    ] {
+        let group = graphic_group(json!({
+            "transform": {"anchorPoint": [0, 0], "position": [960, 540], "scale": [scale, scale], "rotation": 0, "opacity": 100},
+            "layers": [child.clone()],
+        }));
+        let (project, omissions) = export_over_canvas(vec![group], entries);
+        assert!(project.is_ok(), "{case}: {omissions:?}");
+        let expected = if scale == 100.0 && case == "Vector Motion 100" {
+            vec![hole_edge.clone()]
+        } else {
+            vec![hole_edge.clone(), near.clone()]
+        };
+        assert_eq!(reasons(&omissions), expected, "{case}: {omissions:?}");
+    }
+}
+
+#[test]
+fn compound_shape_shadows_export_visible_pieces_but_not_hole_masks() {
+    // Fresh native A import, then explicit editable compound-path/shadow edits.
+    // This is fixture-backed structure proof, not a compound-shadow Adobe oracle.
+    let (_, root) = native_mask_graphic("a", "VideoClipTrackItem:67");
+    let mut layer = root["layers"][0].clone();
+    assert_eq!(layer["type"], "Shape");
+    layer["activeRange"] = json!({"start": 0, "duration": 1000});
+    layer["transform"]["scale"] = json!([100, 100]);
+    layer["transform"]["rotation"] = json!(0);
+    layer["shape"]["path"]["commands"] = json!([
+        square_contour(0.0, 100.0, false),
+        square_contour(30.0, 70.0, false),
+        square_contour(45.0, 55.0, false),
+    ]
+    .concat());
+    layer["shape"]["fills"][0]["fillRule"] = json!("evenOdd");
+    layer["shape"]["strokes"] = json!([
+        {"paint": {"type": "solid", "color": [0, 1, 0, 1]}, "width": 2}
+    ]);
+    let mut topology = None;
+    for offset in [10.0, 20.0] {
+        layer["effects"] = json!([
+            {"id": 901, "effect": {"type": "dropShadow", "offset": [offset, offset],
+                "color": [0.2, 0.4, 0.6, 1], "blurRadius": 0, "spreadRadius": 0}},
+            {"id": 902, "effect": {"type": "invert"}}
+        ]);
+        let (graphics, omissions) = exported_and_read(vec![layer.clone(), sibling_text()]);
+        let group = graphics
+            .iter()
+            .flat_map(|graphic| &graphic.objects)
+            .find_map(|object| match object {
+                PrGraphicObject::Group(group) => Some(group),
+                _ => None,
+            })
+            .expect("compound pieces survive serialization");
+        let mut visible = 0;
+        let mut holes = 0;
+        for object in &group.objects {
+            let PrGraphicObject::Shape(piece) = object else {
+                panic!("compound piece is not a Shape");
+            };
+            if piece.appearance.mask_source.is_some() {
+                holes += 1;
+                assert_eq!(piece.appearance.mask_source, INVERTED);
+                assert_eq!(piece.transform.opacity, 100.0);
+                assert!(piece.appearance.shadow.is_none());
+            } else {
+                visible += 1;
+                let shadow = piece.appearance.shadow.expect("visible piece shadow");
+                assert_eq!(shadow.color, PrRgb([51, 102, 153]));
+                assert_eq!(shadow.opacity, 100.0);
+                assert_eq!(shadow.angle, crate::schema::text::SHAPE_SHADOW_ANGLE);
+                assert!((f64::from(shadow.distance) - offset * 2_f64.sqrt()).abs() < 0.001);
+                assert_eq!((shadow.blur, shadow.size), (0.0, 0.0));
+            }
+        }
+        assert_eq!((visible, holes), (3, 1));
+        assert_eq!(
+            omissions
+                .iter()
+                .filter(|report| {
+                    report.kind == OmissionKind::Approximated
+                        && report.reason.contains("compound shape shadow")
+                })
+                .count(),
+            1,
+            "{omissions:?}"
+        );
+        assert_eq!(
+            omissions
+                .iter()
+                .filter(|report| {
+                    report.reason.contains("902") && report.reason.contains("not exported")
+                })
+                .count(),
+            1,
+            "{omissions:?}"
+        );
+        let mut unshadowed = group.clone();
+        for object in &mut unshadowed.objects {
+            if let PrGraphicObject::Shape(piece) = object {
+                piece.appearance.shadow = None;
+            }
+        }
+        if let Some(previous) = &topology {
+            assert_eq!(&unshadowed, previous);
+        }
+        topology = Some(unshadowed);
+    }
+}
+
+#[test]
+fn compound_shape_pieces_read_back_and_export_again_as_the_same_pieces() {
+    let mut layer = imported_object(shape_graphic());
+    layer["shape"]["path"]["commands"] = json!([
+        square_contour(0.0, 100.0, false),
+        square_contour(30.0, 70.0, false),
+        square_contour(45.0, 55.0, false),
+    ]
+    .concat());
+    layer["shape"]["fills"][0]["fillRule"] = json!("evenOdd");
+    let (project, omissions) = export_over_canvas(vec![layer, sibling_text()], Vec::new());
+    let project = project.unwrap_or_else(|error| panic!("{error}: {omissions:?}"));
+    let graphic = |project: &PrProjectFile| {
+        project
+            .single_sequence()
+            .unwrap()
+            .video_items()
+            .filter_map(PrVideoItem::graphic)
+            .find(|graphic| matches!(graphic.objects.as_slice(), [PrGraphicObject::Group(_)]))
+            .cloned()
+            .expect("the pieces export")
+    };
+    let first = graphic(&project);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("pieces.prproj");
+    PremiereProjectXml::new(&project)
+        .unwrap()
+        .write_new(&path)
+        .unwrap();
+    let (reopened, _) = PrProjectFile::load(&path).unwrap();
+    let read = graphic(&reopened);
+    assert_eq!(read.objects, first.objects);
+    // Import makes the SubGroup an FX group whose hole mattes the outer
+    // piece, which exports as the same pieces.
+    let (document, omissions) = imported(read);
+    let group = &document["composition"]["layers"][0]["layers"][0];
+    assert_eq!(group["type"], "Group", "{omissions:?}");
+    let members: Vec<_> = group["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|layer| layer["type"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(members, ["Shape", "Shape", "Group"]);
+    assert_eq!(group["layers"][2]["trackMatte"]["mode"], "alphaInverted");
+    let (again, omissions) = written_back(PrGraphic {
+        objects: first.objects.clone(),
+        ..shape_graphic()
+    });
+    assert_eq!(again.objects, first.objects, "{omissions:?}");
+    let mut edited = imported_graphic_group(first.objects);
+    let hole = &mut edited["layers"][0]["layers"][1];
+    hole["shape"]["path"]["commands"][0]["x"] = json!(28.0);
+    let (graphics, omissions) = exported_and_read(vec![edited, sibling_text()]);
+    let hole = graphics
+        .iter()
+        .flat_map(|graphic| &graphic.objects)
+        .find_map(|object| {
+            let PrGraphicObject::Group(group) = object else {
+                return None;
+            };
+            group.objects.iter().find_map(|piece| match piece {
+                PrGraphicObject::Shape(shape) if shape.appearance.mask_source == INVERTED => {
+                    Some(shape)
+                }
+                _ => None,
+            })
+        })
+        .unwrap_or_else(|| panic!("{omissions:?}"));
+    assert_eq!(hole.path.vertices[0].point, [28.0, 30.0]);
+}
+
+#[test]
+fn a_masked_shape_alone_keeps_its_vector_motion_apart_from_its_mask() {
+    use crate::schema::text::PrVectorMotion;
+    // One Shape would fold a static Vector Motion into its own transform,
+    // which would move its attached mask with it.
+    let mut owner = square_object("Owner", [700.0, 500.0], 300.0, [0, 96, 255], None);
+    if let PrGraphicObject::Shape(shape) = &mut owner {
+        shape.mask = Some(frame_mask(0.3, 0.4));
+    }
+    let graphic = PrGraphic {
+        vector_motion: Some(PrVectorMotion {
+            position: [864.0, 540.0],
+            anchor: [960.0, 540.0],
+            scale: 100.0,
+            rotation: 15.0,
+            animations: Vec::new(),
+        }),
+        objects: vec![owner],
+        ..shape_graphic()
+    };
+    let (written, omissions) = written_back(graphic.clone());
+    assert_eq!(
+        written.vector_motion, graphic.vector_motion,
+        "{omissions:?}"
+    );
+    assert_eq!(written.objects, graphic.objects, "{omissions:?}");
+}
+
+#[test]
+fn a_shape_of_several_contours_in_a_subgroup_exports_without_its_unverified_hole() {
+    let shape = imported_object(shape_graphic());
+    let member = |id: u64, name: &str, parent: u64, contours: Vec<Vec<Value>>| {
+        let mut layer = shape.clone();
+        layer["id"] = json!(id);
+        layer["name"] = json!(name);
+        layer["parent"] = json!(parent);
+        layer["activeRange"] = json!({"start": 0, "duration": 1000});
+        // Only a path of several contours reads the even-odd rule.
+        if contours.len() > 1 {
+            layer["shape"]["fills"][0]["fillRule"] = json!("evenOdd");
+        }
+        layer["shape"]["path"]["commands"] = json!(contours.concat());
+        layer
+    };
+    let donut = || {
+        vec![
+            square_contour(0.0, 100.0, false),
+            square_contour(30.0, 70.0, false),
+        ]
+    };
+    let outside = || member(11, "Outside", 8, vec![square_contour(400.0, 500.0, false)]);
+    // Its pieces would be a SubGroup inside the SubGroup, whose hole mask no
+    // render covers and the reader omits: the donut stays out alone.
+    let inner = identity_subgroup(
+        12,
+        "Inner",
+        vec![
+            member(13, "Donut", 12, donut()),
+            member(14, "Square", 12, vec![square_contour(200.0, 300.0, false)]),
+        ],
+    );
+    let group = graphic_group(json!({"layers": [inner, outside()]}));
+    let (graphics, omissions) = exported_and_read(vec![group, sibling_text()]);
+    assert_eq!(
+        exported_names(&graphics),
+        ["Inner{Square} Outside"],
+        "{omissions:?}"
+    );
+    assert!(
+        omissions.iter().any(|omission| omission.scope == OmissionScope::Feature
+            && omission.reason
+                == format!(
+                    "layer 13 (\"Donut\") was not exported: its pieces cannot export: {}",
+                    "a Mask with Shape or Text inside a nested SubGroup is unverified against Premiere"
+                )),
+        "{omissions:?}"
+    );
+    // At the graphic's own level its pieces are one SubGroup deep, a
+    // rendered form, and export.
+    let group = graphic_group(json!({"layers": [member(13, "Donut", 8, donut()), outside()]}));
+    let (graphics, omissions) = exported_and_read(vec![group, sibling_text()]);
+    assert_eq!(
+        exported_names(&graphics),
+        ["Donut{Donut Donut} Outside"],
+        "{omissions:?}"
+    );
+}
+
+#[test]
+fn compound_shape_contours_count_the_scale_of_the_nests_and_keys_that_draw_them() {
+    let mut donut = imported_object(shape_graphic());
+    donut["shape"]["path"]["commands"] = json!([
+        square_contour(0.0, 100.0, false),
+        square_contour(3.0, 97.0, false)
+    ]
+    .concat());
+    donut["shape"]["fills"][0]["fillRule"] = json!("evenOdd");
+    let hole_edge = super::COMPOUND_HOLE_EDGE_APPROXIMATION.to_owned();
+    let near = super::compound_near_approximation(1, 2);
+    let reasons = |omissions: &[Omission]| -> Vec<String> {
+        omissions
+            .iter()
+            .filter(|omission| {
+                omission.record == "layer 9 (\"Box\")" && omission.scope == OmissionScope::Feature
+            })
+            .map(|omission| omission.reason.clone())
+            .collect()
+    };
+    // The donut in a nest beside a solid: the nest's Motion scales it.
+    let mut child = donut.clone();
+    child["parent"] = json!(7);
+    let mut solid = editable_document()["composition"]["layers"][1].clone();
+    solid["id"] = json!(10);
+    solid["parent"] = json!(7);
+    solid["activeRange"] = json!({"start": 0, "duration": 1000});
+    let nest = |scale: f64| {
+        json!({
+            "type": "Group",
+            "id": 7,
+            "name": "Outer",
+            "playback": crate::test_support::linear_playback(json!({"start": 1000, "duration": 1000}), json!({"start": 0, "duration": 1000})),
+            "transform": {"anchorPoint": [960, 540], "position": [960, 540], "scale": [scale, scale], "rotation": 0, "opacity": 100},
+            "layers": [child.clone(), solid.clone()],
+        })
+    };
+    let nest_keys = vec![
+        entry_on(7, "scaleX", &[(0, 100.0, "linear"), (1000, 20.0, "linear")]),
+        entry_on(7, "scaleY", &[(0, 100.0, "linear"), (1000, 20.0, "linear")]),
+    ];
+    for (case, scale, entries, expected) in [
+        ("a nest at 100", 100.0, Vec::new(), vec![hole_edge.clone()]),
+        (
+            "a nest at 25",
+            25.0,
+            Vec::new(),
+            vec![hole_edge.clone(), near.clone()],
+        ),
+        (
+            "a nest keyed to 20",
+            100.0,
+            nest_keys,
+            vec![hole_edge.clone(), near.clone()],
+        ),
+    ] {
+        let (project, omissions) = export_over_canvas(vec![nest(scale)], entries);
+        let project = project.unwrap_or_else(|error| panic!("{case}: {error}: {omissions:?}"));
+        assert_eq!(
+            project
+                .single_sequence()
+                .unwrap()
+                .nest_occurrences()
+                .count(),
+            1,
+            "{case}: {omissions:?}"
+        );
+        assert_eq!(reasons(&omissions), expected, "{case}: {omissions:?}");
+    }
+    // A Vector Motion Scale key whose Bezier easing passes below its keys,
+    // or one that reaches 0, bounds no clearance: the contours are reported
+    // near, and the shape still exports.
+    let mut child = donut;
+    child["parent"] = json!(8);
+    child["activeRange"] = json!({"start": 0, "duration": 1000});
+    let group = graphic_group(json!({
+        "transform": {"anchorPoint": [0, 0], "position": [960, 540], "scale": [100, 100], "rotation": 0, "opacity": 100},
+        "layers": [child],
+    }));
+    let overshoot = |axis: &str| {
+        with_bezier(
+            entry_on(8, axis, &[(0, 100.0, "linear"), (1000, 90.0, "linear")]),
+            1,
+            [0.5, -3.0, 0.5, 1.0],
+        )
+    };
+    let from_zero = |axis: &str| entry_on(8, axis, &[(0, 0.0, "linear"), (1000, 100.0, "linear")]);
+    let flip = |axis: &str| entry_on(8, axis, &[(0, 100.0, "linear"), (1000, -100.0, "linear")]);
+    for (case, entries) in [
+        (
+            "a Scale key that eases past its keys",
+            vec![overshoot("scaleX"), overshoot("scaleY")],
+        ),
+        (
+            "a Scale key from 0",
+            vec![from_zero("scaleX"), from_zero("scaleY")],
+        ),
+        // Keys of both signs pass through 0; export reports them and keeps
+        // the static Scale, so this report is conservative.
+        (
+            "Scale keys of both signs",
+            vec![flip("scaleX"), flip("scaleY")],
+        ),
+    ] {
+        let (project, omissions) = export_over_canvas(vec![group.clone()], entries);
+        let project = project.unwrap_or_else(|error| panic!("{case}: {error}: {omissions:?}"));
+        assert!(
+            project
+                .single_sequence()
+                .unwrap()
+                .video_items()
+                .filter_map(PrVideoItem::graphic)
+                .any(|graphic| matches!(graphic.objects.as_slice(), [PrGraphicObject::Group(_)])),
+            "{case}: {omissions:?}"
+        );
+        assert_eq!(
+            reasons(&omissions),
+            [hole_edge.clone(), super::compound_unbounded_approximation()],
+            "{case}: {omissions:?}"
+        );
+    }
+}
+
+fn identity_subgroup(id: u64, name: &str, layers: Vec<Value>) -> Value {
+    json!({
+        "type": "Group",
+        "id": id,
+        "name": name,
+        "parent": 8,
+        "playback": crate::test_support::linear_playback(json!({"start": 0, "duration": 1000}), json!({"start": 0, "duration": 1000})),
+        "transform": {"anchorPoint": [0, 0], "position": [0, 0], "scale": [100, 100], "rotation": 0, "opacity": 100},
+        "layers": layers,
+    })
+}
+
+#[test]
+fn adobe_shape_attached_masks_keep_the_graphic_frame_and_export_owner_and_guide_edits() {
+    for (case, occurrence, inverted, transformed) in [
+        ("b", "VideoClipTrackItem:66", false, false),
+        ("b", "VideoClipTrackItem:67", true, false),
+        ("c", "VideoClipTrackItem:65", false, true),
+    ] {
+        let (native, mut root) = native_mask_graphic(case, occurrence);
+        let owner = native
+            .objects
+            .iter()
+            .find_map(|object| match object {
+                PrGraphicObject::Shape(shape) if shape.mask.is_some() => Some(shape),
+                _ => None,
+            })
+            .unwrap();
+        let native_mask = owner.mask.as_ref().unwrap();
+        assert_eq!(native_mask.inverted, inverted);
+        assert!(native_mask.path_keys.is_empty());
+        if transformed {
+            assert_eq!(owner.transform.scale, 80.0);
+            assert_eq!(owner.transform.rotation, 30.0);
+        }
+        let children = root["layers"].as_array_mut().unwrap();
+        let owner_index = children
+            .iter()
+            .position(|layer| layer["name"] == owner.name)
+            .unwrap();
+        assert_eq!(
+            children[owner_index]["transform"]["rotation"],
+            if transformed { json!(30.0) } else { json!(0.0) }
+        );
+        assert_eq!(
+            children[owner_index]["transform"]["scale"],
+            if transformed {
+                json!([80.0, 80.0])
+            } else {
+                json!([100.0, 100.0])
+            }
+        );
+        let guide_id = children[owner_index]["masks"][0]["layer"].clone();
+        let guide_index = children
+            .iter()
+            .position(|layer| layer["id"] == guide_id)
+            .unwrap();
+        assert_eq!(
+            children[owner_index]["parent"],
+            children[guide_index]["parent"]
+        );
+        assert_eq!(
+            children[guide_index]["transform"]["position"],
+            json!([0.0, 0.0])
+        );
+        assert_eq!(children[guide_index]["transform"]["rotation"], 0.0);
+        assert_eq!(
+            children[guide_index]["transform"]["scale"],
+            json!([100.0, 100.0])
+        );
+        assert!(children
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != owner_index)
+            .all(|(_, layer)| layer.get("masks").is_none()));
+        let commands = children[guide_index]["shape"]["path"]["commands"]
+            .as_array()
+            .unwrap();
+        for (axis, expected) in [("x", [864.0, 1248.0]), ("y", [324.0, 756.0])] {
+            let values: Vec<_> = commands
+                .iter()
+                .filter_map(|command| command[axis].as_f64())
+                .collect();
+            let bounds = [
+                values.iter().copied().fold(f64::INFINITY, f64::min),
+                values.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+            ];
+            for (actual, expected) in bounds.into_iter().zip(expected) {
+                assert!(
+                    (actual - expected).abs() < 0.001,
+                    "{case} {axis}: {bounds:?}"
+                );
+            }
+        }
+        let x = children[guide_index]["shape"]["path"]["commands"][0]["x"]
+            .as_f64()
+            .unwrap();
+        assert!((x - f64::from(native_mask.path.vertices[0].point[0]) * 1920.0).abs() < 0.001);
+        children[guide_index]["shape"]["path"]["commands"][0]["x"] = json!(x + 24.0);
+        children[owner_index]["transform"]["rotation"] = json!(17.0);
+        children[owner_index]["shape"]["fills"][0]["paint"]["color"] = json!([1.0, 0.0, 0.0, 1.0]);
+        for layer in children {
+            layer["activeRange"] = json!({"start": 0, "duration": 1000});
+        }
+        root["playback"] = crate::test_support::linear_playback(
+            json!({"start": 0, "duration": 1000}),
+            json!({"start": 0, "duration": 1000}),
+        );
+        let mut sibling = sibling_text();
+        sibling["id"] = json!(90000);
+        let (graphics, omissions) = exported_and_read(vec![root, sibling]);
+        let written = graphics
+            .iter()
+            .flat_map(|graphic| &graphic.objects)
+            .find_map(|object| match object {
+                PrGraphicObject::Shape(shape) if shape.name == owner.name => Some(shape),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{case}: {omissions:?}"));
+        assert_eq!(written.transform.rotation, 17.0);
+        assert_eq!(
+            written.appearance.fill,
+            Some(crate::schema::text::PrFill::Solid(
+                crate::schema::text::PrRgb([255, 0, 0])
+            ))
+        );
+        let mask = written.mask.as_ref().unwrap();
+        assert_eq!(mask.inverted, inverted);
+        assert!((f64::from(mask.path.vertices[0].point[0]) * 1920.0 - x - 24.0).abs() < 0.001);
+        let written_count: usize = graphics.iter().filter(|graphic| graphic.objects.iter().any(|object| matches!(object, PrGraphicObject::Shape(shape) if shape.name == owner.name))).map(|graphic| graphic.objects.len()).sum();
+        assert_eq!(
+            written_count,
+            native.objects.len(),
+            "siblings: {omissions:?}"
+        );
+    }
+}
+
+#[test]
+fn attached_numeric_mask_keys_use_the_owner_clock_and_export_edits() {
+    // The human-saved Shape mask has Linear keys with nonzero stored speeds.
+    let (mut graphic, _) = native_mask_graphic("numeric", "VideoClipTrackItem:65");
+    // Supplementary clock shifts must not move owner-local keys.
+    graphic.start_ticks = 2 * TICKS;
+    graphic.end_ticks = 5 * TICKS;
+    graphic.in_ticks += 2 * TICKS;
+    let owner = graphic
+        .objects
+        .iter_mut()
+        .find_map(|object| match object {
+            PrGraphicObject::Shape(shape) if shape.mask.is_some() => Some(shape),
+            _ => None,
+        })
+        .unwrap();
+    let owner_name = owner.name.clone();
+    let mask = owner.mask.as_mut().unwrap();
+    for (keys, values) in [
+        (&mut mask.feather_keys, [0.0, 24.0]),
+        (&mut mask.expansion_keys, [-12.0, 20.0]),
+        (&mut mask.opacity_keys, [100.0, 40.0]),
+    ] {
+        assert_eq!(
+            *keys,
+            [
+                scalar(0, values[0], PrKeyframeEasing::Linear),
+                scalar(2 * TICKS / 3, values[1], PrKeyframeEasing::Linear),
+            ]
+        );
+        for key in keys {
+            key.source_ticks += 2 * TICKS;
+        }
+    }
+    let (mut wire, omissions) = imported(graphic);
+    let layers = wire["composition"]["layers"].as_array_mut().unwrap();
+    layers.retain(|layer| layer["type"] != "Video");
+    let root = &layers[0];
+    let owner = root["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["name"] == owner_name)
+        .unwrap_or_else(|| panic!("{omissions:?}"));
+    assert_eq!(owner["activeRange"]["start"], 0);
+    assert_eq!(owner["transform"]["rotation"], 30.0);
+    let id = owner["masks"][0]["id"].clone();
+    let guide_id = owner["masks"][0]["layer"].clone();
+    let guide = root["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["id"] == guide_id)
+        .unwrap();
+    assert_eq!(owner["parent"], guide["parent"]);
+    assert_eq!(guide["transform"]["rotation"], 0.0);
+    let mut canvas = editable_document()["composition"]["layers"][1].clone();
+    canvas["id"] = json!(90000);
+    canvas["activeRange"]["duration"] = json!(5000);
+    layers.push(canvas);
+    let entries = wire["composition"]["dynamics"]["entries"]
+        .as_array_mut()
+        .unwrap();
+    assert_eq!(entries.len(), 3);
+    for entry in entries {
+        assert_eq!(entry["target"]["itemId"], id);
+        let name = entry["target"]["propertyName"].as_str().unwrap().to_owned();
+        let keys = entry["animator"]["keyframes"].as_array_mut().unwrap();
+        assert_eq!(keys[0]["layerTime"], 0);
+        // Native 2/3 second rounds to the editable model's millisecond clock.
+        assert_eq!(keys[1]["layerTime"], 667);
+        match name.as_str() {
+            "feather" => assert_eq!(keys[1]["value"]["value"], json!([24.0, 24.0])),
+            "opacity" => assert_eq!(keys[1]["value"]["value"], 0.4),
+            "expansion" => {
+                keys[1]["layerTime"] = json!(1500);
+                keys[1]["value"]["value"] = json!(-24.0);
+            }
+            _ => panic!("unexpected target {name}"),
+        }
+    }
+    wire["duration"] = json!(5.0);
+    let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
+    let mut omissions = Vec::new();
+    let exported = crate::convert::export_document(
+        &document,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        FrameRate::Fps30,
+        &mut omissions,
+    )
+    .unwrap();
+    for entry in document.composition().dynamics().entries() {
+        assert!(exported.written.contains(&entry.target), "{omissions:?}");
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("attached-numeric-mask.prproj");
+    PremiereProjectXml::new(&exported.project)
+        .unwrap()
+        .write_new(&path)
+        .unwrap();
+    let (read, reports) = PrProjectFile::load(&path).unwrap();
+    let graphic = read.sequences[0]
+        .video_items()
+        .filter_map(PrVideoItem::graphic)
+        .find(|graphic| {
+            graphic.objects.iter().any(|object| {
+                matches!(object,
+            PrGraphicObject::Shape(shape) if shape.name == owner_name)
+            })
+        })
+        .unwrap_or_else(|| panic!("{reports:?}"));
+    let shape = graphic
+        .objects
+        .iter()
+        .find_map(|object| match object {
+            PrGraphicObject::Shape(shape) if shape.name == owner_name => Some(shape),
+            _ => None,
+        })
+        .unwrap();
+    let mask = shape.mask.as_ref().unwrap();
+    assert_eq!(mask.expansion_keys[0].source_ticks, graphic.in_ticks);
+    assert_eq!(
+        mask.expansion_keys[1].source_ticks,
+        graphic.in_ticks + 3 * TICKS / 2
+    );
+    assert_eq!(mask.expansion_keys[1].value, -24.0);
+    assert_eq!(mask.feather_keys[1].value, 24.0);
+    assert_eq!(mask.opacity_keys[1].value, 40.0);
+    assert_eq!(mask.opacity_keys[1].easing, PrKeyframeEasing::Linear);
+    assert!(graphic.opacity_mask.is_none());
+    assert_eq!(shape.transform.rotation, 30.0);
+}
+
+#[test]
+fn an_unsupported_edited_attachment_keeps_the_owners_sibling() {
+    let mut owner = square_object("Owner", [700.0, 500.0], 300.0, [0, 96, 255], None);
+    if let PrGraphicObject::Shape(shape) = &mut owner {
+        shape.mask = Some(frame_mask(0.3, 0.4));
+    }
+    let mut root = imported_graphic_group(vec![
+        owner,
+        square_object("Other", [1200.0, 540.0], 200.0, [0, 96, 255], None),
+    ]);
+    let guide = &mut root["layers"][1];
+    guide["transform"]["position"] = json!([1.0, 0.0]);
+    let (graphics, omissions) = exported_and_read(vec![root, sibling_text()]);
+    assert_eq!(exported_names(&graphics), ["Other"]);
+    assert!(
+        omissions
+            .iter()
+            .any(|report| report.reason.contains("mask guide is not at the identity")),
+        "{omissions:?}"
+    );
+}
+
+#[test]
+fn native_narrowing_rejects_a_collapsed_hole_without_losing_a_sibling() {
+    const A: f64 = 16_777_216.0;
+    let shape = |size: f64| {
+        let mut layer = imported_object(shape_graphic());
+        let mut commands = square_contour(A - 100.0, A + 100.0, false);
+        commands.extend([
+            json!({"type": "moveTo", "x": A, "y": A}),
+            json!({"type": "lineTo", "x": A + size, "y": A}),
+            json!({"type": "lineTo", "x": A + size, "y": A + size}),
+            json!({"type": "close"}),
+        ]);
+        layer["shape"]["path"]["commands"] = json!(commands);
+        layer["shape"]["fills"][0]["fillRule"] = json!("evenOdd");
+        layer
+    };
+    let (graphics, omissions) = exported_and_read(vec![shape(0.5), sibling_text()]);
+    assert_eq!(
+        graphics
+            .iter()
+            .map(|graphic| part_names(&graphic.objects))
+            .collect::<Vec<_>>(),
+        ["Sibling"],
+        "{omissions:?}"
+    );
+    assert!(
+        omissions.iter().any(|report| report.record.contains("Box")
+            && report.reason.contains("native contour topology")),
+        "{omissions:?}"
+    );
+    let (pieces, omissions) = exported_pieces(shape(32.0));
+    assert_eq!(pieces.unwrap_or_else(|| panic!("{omissions:?}")).len(), 2);
+}
+
+#[test]
+fn a_failed_attached_mask_source_takes_its_lower_composite_only() {
+    let square = |name, role| square_object(name, [700.0, 500.0], 300.0, [0, 96, 255], role);
+    let mut owner = square("Owner", None);
+    if let PrGraphicObject::Shape(shape) = &mut owner {
+        shape.mask = Some(frame_mask(0.3, 0.4));
+    }
+    let attached = imported_graphic_group(vec![owner]);
+    let mut guide = attached["layers"][1].clone();
+    guide["id"] = json!(90001);
+    guide["transform"]["position"] = json!([1.0, 0.0]);
+    let mut masks = attached["layers"][0]["masks"].clone();
+    masks[0]["layer"] = json!(90001);
+    masks[0]["id"] = json!(90002);
+    let mut root = imported_graphic_group(vec![
+        square("Above", None),
+        square("Source", INVERTED),
+        square("Lower", None),
+    ]);
+    guide["parent"] = root["id"].clone();
+    root["layers"][1]["masks"] = masks;
+    root["layers"].as_array_mut().unwrap().insert(2, guide);
+    let (graphics, omissions) = exported_and_read(vec![root, sibling_text()]);
+    assert_eq!(exported_names(&graphics), ["Above"], "{omissions:?}");
+    assert!(
+        omissions.iter().any(
+            |report| report.reason.contains("mask guide is not at the identity")
+                && report
+                    .reason
+                    .contains("objects that it masks are not exported")
+        ),
+        "{omissions:?}"
+    );
+}
+
+#[test]
+fn invalid_attached_numeric_keys_typed_import_preserves_only_healthy_scope() {
+    for property in ["feather", "expansion", "opacity"] {
+        for role in [None, INVERTED] {
+            let square =
+                |name, role| square_object(name, [700.0, 500.0], 300.0, [0, 96, 255], role);
+            let mut owner = square("Owner", role);
+            if let PrGraphicObject::Shape(shape) = &mut owner {
+                let mut mask = frame_mask(0.3, 0.4);
+                let keys = vec![scalar(EXPORT_IN, 1001.0, PrKeyframeEasing::Linear)];
+                match property {
+                    "feather" => mask.feather_keys = keys,
+                    "expansion" => mask.expansion_keys = keys,
+                    _ => mask.opacity_keys = keys,
+                }
+                shape.mask = Some(mask);
+            }
+            assert!(owner
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("key must be finite and within"));
+            let (document, omissions) = imported(PrGraphic {
+                objects: vec![square("Above", None), owner, square("Lower", None)],
+                ..shape_graphic()
+            });
+            let names: Vec<_> = document["composition"]["layers"][0]["layers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|layer| layer["name"].as_str().unwrap())
+                .collect();
+            assert_eq!(
+                names,
+                if role.is_some() {
+                    vec!["Above"]
+                } else {
+                    vec!["Above", "Lower"]
+                },
+                "{property}: {omissions:?}"
+            );
+            assert!(
+                omissions
+                    .iter()
+                    .any(|o| o.reason.contains("key must be finite and within")),
+                "{omissions:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn invalid_attached_numeric_keys_edited_export_preserves_only_healthy_scope() {
+    for property in ["feather", "expansion", "opacity"] {
+        for role in [None, INVERTED] {
+            let square =
+                |name, role| square_object(name, [700.0, 500.0], 300.0, [0, 96, 255], role);
+            let mut owner = square("Owner", None);
+            if let PrGraphicObject::Shape(shape) = &mut owner {
+                shape.mask = Some(frame_mask(0.3, 0.4));
+            }
+            let attached = imported_graphic_group(vec![owner]);
+            let mut guide = attached["layers"][1].clone();
+            guide["id"] = json!(90001);
+            let mut masks = attached["layers"][0]["masks"].clone();
+            masks[0]["layer"] = json!(90001);
+            masks[0]["id"] = json!(90002);
+            let mut root = imported_graphic_group(vec![
+                square("Above", None),
+                square("Owner", role),
+                square("Lower", None),
+            ]);
+            guide["parent"] = root["id"].clone();
+            root["layers"][1]["masks"] = masks;
+            root["layers"].as_array_mut().unwrap().insert(2, guide);
+            let mut track = entry(property, &[(0, 1.0, "linear"), (1000, 1.0, "linear")]);
+            track["animator"]["keyframes"][1]["easing"] = json!({
+                "type": "cubicBezier", "x1": 0.3, "y1": 0.2, "x2": 0.7, "y2": 0.8
+            });
+            track["target"] =
+                json!({"kind": "fxItemProperty", "itemId": 90002, "propertyName": property});
+            if property == "feather" {
+                for key in track["animator"]["keyframes"].as_array_mut().unwrap() {
+                    key["value"] = json!({"type": "vector2", "value": [1.0, 1.0]});
+                }
+            }
+            let (project, omissions) = export_over_canvas(vec![root, sibling_text()], vec![track]);
+            let project = project.unwrap();
+            let graphics: Vec<_> = project.sequences[0]
+                .video_items()
+                .filter_map(PrVideoItem::graphic)
+                .cloned()
+                .collect();
+            assert_eq!(
+                exported_names(&graphics),
+                if role.is_some() {
+                    vec!["Above"]
+                } else {
+                    vec!["Above Lower"]
+                },
+                "{property}: {omissions:?}"
+            );
+            assert!(graphics.iter().any(|g| part_names(&g.objects) == "Sibling"));
+            assert!(
+                omissions.iter().any(|o| o
+                    .reason
+                    .contains("supports only Linear, Hold or zero-speed Bezier")),
+                "{omissions:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn attached_static_signed_expansion_survives_with_approximation_in_both_directions() {
+    for expansion in [-12.0, 12.0] {
+        let mut owner = square_object("Owner", [700.0, 500.0], 300.0, [0, 96, 255], None);
+        if let PrGraphicObject::Shape(shape) = &mut owner {
+            let mut mask = frame_mask(0.3, 0.4);
+            mask.expansion = expansion;
+            shape.mask = Some(mask);
+        }
+        let graphic = PrGraphic {
+            objects: vec![owner],
+            ..shape_graphic()
+        };
+        let (document, omissions) = imported(graphic.clone());
+        assert_eq!(
+            document["composition"]["layers"][0]["layers"][0]["masks"][0]["expansion"],
+            expansion
+        );
+        assert!(
+            omissions
+                .iter()
+                .any(|o| o.kind == OmissionKind::Approximated
+                    && o.reason.contains("negative expansion remains editable")),
+            "{omissions:?}"
+        );
+        let (written, omissions) = written_back(graphic);
+        let PrGraphicObject::Shape(shape) = &written.objects[0] else {
+            panic!()
+        };
+        assert_eq!(shape.mask.as_ref().unwrap().expansion, expansion);
+        assert!(
+            omissions
+                .iter()
+                .filter(|o| o.kind == OmissionKind::Approximated
+                    && o.reason.contains("negative expansion remains editable"))
+                .count()
+                >= 2,
+            "{omissions:?}"
+        );
+    }
+}
+
+#[test]
+fn vertical_text_keys_export_and_import_without_horizontal_keys() {
+    let (graphic, omissions) = exported(
+        vec![entry(
+            "scaleY",
+            &[(0, 5.0, "linear"), (500, 120.0, "linear")],
+        )],
+        None,
+    );
+    assert!(omissions.is_empty(), "{omissions:?}");
+    assert_eq!(graphic.text().horizontal_scale, Some(100.0));
+    assert_eq!(
+        graphic.text().animations,
+        [PrPropertyAnimation::UniformScale(vec![
+            scalar(EXPORT_IN, 5.0, PrKeyframeEasing::Linear),
+            scalar(EXPORT_IN + TICKS / 2, 120.0, PrKeyframeEasing::Linear),
+        ])]
+    );
+    let (document, omissions) = imported(graphic);
+    assert_eq!(omissions.len(), 1, "{omissions:?}");
+    assert!(
+        omissions[0]
+            .reason
+            .contains("font \"Inter-Bold\" is not packaged"),
+        "{omissions:?}"
+    );
+    let scales: Vec<_> = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| {
+            entry["target"]["propertyType"]
+                .as_str()
+                .unwrap()
+                .starts_with("scale")
+        })
+        .collect();
+    assert_eq!(scales.len(), 1);
+    assert_eq!(scales[0]["target"]["propertyType"], "scaleY");
 }

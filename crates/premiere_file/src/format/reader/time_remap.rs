@@ -1,5 +1,6 @@
 //! Fail-closed reader for Premiere's intrinsic source-time curve.
 
+use super::required;
 use crate::{
     error::{ensure, unsupported, Result},
     format::Graph,
@@ -23,7 +24,7 @@ pub(super) fn read_frame_hold(
         _ => return Err(unsupported(format!("{context}: incomplete FrameHold"))),
     };
     ensure!(
-        mode == "4",
+        mode == VideoClip::EXPLICIT_FRAME_HOLD,
         "{context}: unsupported FrameHold mode {mode:?}"
     );
     ensure!(
@@ -39,16 +40,7 @@ pub(super) fn read_frame_hold(
         source_ticks >= 0 && duration > 0,
         "{context}: invalid FrameHold range"
     );
-    Ok(Some(PrTimeRemap {
-        keys: [0, duration]
-            .into_iter()
-            .map(|timeline_ticks| PrTimeRemapKeyframe {
-                timeline_ticks,
-                source_ticks,
-                easing: PrKeyframeEasing::Linear,
-            })
-            .collect(),
-    }))
+    Ok(Some(PrTimeRemap::frame_hold(source_ticks, duration)))
 }
 
 #[derive(Clone, Copy)]
@@ -116,6 +108,34 @@ fn ramp_easing(keys: &[NativeKey], start: usize, context: &str) -> Result<PrKeyf
     })
 }
 
+/// `curve`, whose keys are at native input ticks, with its key times in input
+/// ticks after the `source_in` from which a placement plays it at forward
+/// `rate`. Premiere shows the curve at input `source_in + rate × elapsed`
+/// (Adobe-measured on physical video), so the placement reaches a key
+/// `timeline_ticks / rate` ticks after its start, a quotient that the
+/// converter keeps exact until the millisecond. A key before `source_in`
+/// becomes negative. Source values and easing are unchanged.
+pub(super) fn after_source_in(
+    mut curve: PrTimeRemap,
+    source_in: i64,
+    rate: f64,
+    context: &str,
+) -> Result<PrTimeRemap> {
+    // A NaN speed compares with no number and is rejected too.
+    ensure!(
+        matches!(rate.partial_cmp(&0.0), Some(std::cmp::Ordering::Greater)),
+        "{context}: reverse playback combined with TimeRemapping is unsupported"
+    );
+    for key in &mut curve.keys {
+        key.timeline_ticks = key.timeline_ticks.checked_sub(source_in).ok_or_else(|| {
+            unsupported(format!(
+                "{context}: TimeRemapping key time exceeds Premiere's tick range"
+            ))
+        })?;
+    }
+    Ok(curve)
+}
+
 pub(in crate::format) fn read_time_remapping(
     graph: &Graph<'_>,
     reference: &Reference,
@@ -129,20 +149,44 @@ pub(in crate::format) fn read_time_remapping(
         mapping.identity
     );
     let param = graph.follow::<TimeComponentParam>(&mapping.value.keyframes, &mapping.identity)?;
+    // Premiere 26.5.1 saves Version 9, which omits the five flags below.
+    // Version 8 saves each of them.
+    let omits_flags = param.value.version == "9";
     ensure!(
         param.value.class_id == records::TIME_COMPONENT_PARAM.class_id
-            && param.value.version == records::TIME_COMPONENT_PARAM.version
+            && (omits_flags || param.value.version == records::TIME_COMPONENT_PARAM.version)
             && param.value.name == "Speed"
-            && param.value.is_time_varying == "true"
-            && param.value.is_locked == "false"
-            && param.value.discontinuous_interpolate == "false"
-            && param.value.parameter_control_type == "21"
             && param.value.parameter_id == "-1"
-            && param.value.range_locked == "false"
             && param.value.lower_bound == "0",
         "{}: unsupported TimeRemapping parameter",
         param.identity
     );
+    // A saved flag must hold the value that Version 8 saves, in either version.
+    for (field, value, saved) in [
+        ("IsTimeVarying", &param.value.is_time_varying, "true"),
+        ("IsLocked", &param.value.is_locked, "false"),
+        (
+            "DiscontinuousInterpolate",
+            &param.value.discontinuous_interpolate,
+            "false",
+        ),
+        (
+            "ParameterControlType",
+            &param.value.parameter_control_type,
+            "21",
+        ),
+        ("RangeLocked", &param.value.range_locked, "false"),
+    ] {
+        if value.is_none() && omits_flags {
+            continue;
+        }
+        let value = required(value.as_deref(), &param.identity, field)?;
+        ensure!(
+            value == saved,
+            "{}: unsupported TimeRemapping parameter {field} {value:?}",
+            param.identity
+        );
+    }
     let start: Vec<_> = param.value.start_keyframe.split(',').collect();
     ensure!(
         start.len() == 8

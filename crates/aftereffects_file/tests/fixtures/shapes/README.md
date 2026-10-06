@@ -38,32 +38,17 @@ relabelled native scalar key records from `property_rotation.aep` check Star
 roundness and Gradient Stroke Miter Limit animation dispatch. These are
 supplemental dispatch tests, not native Star/gradient-animation render evidence.
 
-## Additional implementation reference: Bodymovin
+## Direction, traversal and shape blend semantics
 
-Direction/traversal mappings use `airbnb/lottie-web` at
-[`bede03d25d232826e0c9dca1733d542d8a7754fb`](https://github.com/airbnb/lottie-web/tree/bede03d25d232826e0c9dca1733d542d8a7754fb):
-- `build/extension/bodymovin.zxp`, 19,749,022 bytes; Git blob
-  `83ae05eea20569b479e263c41a0198a4b18363dc`, SHA-256
-  `2c57a939f327d154f12145e6e06b494f260b54fa460a8d90b641aa94feeadd2d`.
-- Its `jsx/utils/shapeHelper.jsx`, 29,679 bytes, SHA-256
-  `79624bf6de469b1f89075bfe3356e6c24dc4229b362d2687cb1b578da81fcc4f`,
-  reads AE Shape Direction directly; value 3 reverses explicit paths and is
-  preserved in the exported Rectangle/Ellipse/Star direction field.
-- `jsx/helpers/blendModes.jsx` (5,892 bytes) defines the separate shape blend
-  ordinals: e.g. 1 Normal, 4 Multiply, 10 Screen, 15 Overlay. These are not the
-  AEP layer-record blend bytes. The importer maps this table to existing FX
-  modes for each paint and visual group; non-Normal tests are supplemental, not
-  Adobe blend-render proof.
-- `player/js/utils/shapes/ShapeProperty.js` treats 1/2 as normal and 3 as reverse.
-  Rectangle traversal starts at the upper-right/right-edge anchor in either
+- AE Shape Direction value 3 reverses explicit paths; it is preserved in the
+  exported Rectangle/Ellipse/Star direction field. Values 1/2 are normal.
+- Rectangle traversal starts at the upper-right/right-edge anchor in either
   direction, including nonzero roundness. Closed explicit paths retain their
   first anchor; open paths swap endpoints, with cubic handles reversed.
-
-The archive's size/Git-object hash was verified before reading its source. It
-was not installed or executed in Adobe. This is an implementation reference,
-not an independent Adobe render oracle. Direction-3 records in the new tests
-are synthetic supplements; native default-direction fixture checks remain in
-place. Bodymovin does not establish the native Fill Composite-order ordinals.
+- Shape blend ordinals are separate from AEP layer-record blend bytes (e.g. 1
+  Normal, 4 Multiply, 10 Screen, 15 Overlay). The importer maps them to existing
+  FX modes for each paint and visual group; non-Normal tests are supplemental,
+  not Adobe blend-render proof.
 
 ## libpag AE exporter reference
 

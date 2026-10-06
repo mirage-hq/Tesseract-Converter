@@ -27,7 +27,7 @@ fn string(value: &str) -> Chunk {
     raw(*b"Utf8", value.as_bytes().to_vec())
 }
 
-fn name_record(value: &str) -> Result<Chunk, RifxError> {
+pub(super) fn name_record(value: &str) -> Result<Chunk, RifxError> {
     if value.len() > 40 || !value.is_ascii() {
         return Err(RifxError::Invalid("invalid AE property match name"));
     }
@@ -78,12 +78,16 @@ pub(super) fn indexed_group(
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum ValueKind {
     Scalar,
+    /// Keyed AE Time Remap has leaf flags 1; its static leaf has flags 3.
+    TimeRemap,
     /// Native fixed-point plugin sliders/angles, not Transform scalar records.
     EffectScalar,
     /// Native floating-point plugin sliders have unrestricted animation flags.
     EffectFloat,
     /// Native integer plugin sliders use mode 4/subtype 4 with unrestricted flags.
     EffectInteger,
+    /// Hidden native plugin sentinel, not a checkbox control.
+    EffectRoot,
     /// Native checkbox/popup keys retain their discrete-control descriptor flags.
     EffectToggle,
     /// Plugin Color keys use native storage flags distinct from generic Color.
@@ -110,6 +114,8 @@ pub(crate) enum ValueKind {
     VectorSkew,
     /// Native vector enum record.
     VectorEnum,
+    /// Range Selector Mode uses native enum flags with the discrete-mode bit.
+    TextSelectorMode,
     /// Native vector color record.
     VectorColor,
     Orientation,
@@ -149,16 +155,90 @@ pub(super) fn property_with_clock(
     animation: Option<&super::keyframes::Track>,
     clock: super::keyframes::PropertyClock,
 ) -> Result<Chunk, RifxError> {
+    property_with_scalar_units(kind, values, bounds, animation, clock, None)
+}
+
+pub(super) fn property_with_scalar_units(
+    kind: ValueKind,
+    values: &[f64],
+    bounds: Option<(f64, f64)>,
+    animation: Option<&super::keyframes::Track>,
+    clock: super::keyframes::PropertyClock,
+    scalar_units: Option<&[i32]>,
+) -> Result<Chunk, RifxError> {
+    if scalar_units.is_some() && (kind != ValueKind::Scalar || animation.is_none()) {
+        return Err(RifxError::Invalid(
+            "source ticks require animated scalar property",
+        ));
+    }
+    property_with_native_units(kind, values, bounds, animation, clock, scalar_units, false)
+}
+
+pub(super) fn property_with_scale_units(
+    values: &[f64],
+    animation: Option<&super::keyframes::Track>,
+    clock: super::keyframes::PropertyClock,
+    scale_units: Option<&[i32]>,
+) -> Result<Chunk, RifxError> {
+    if scale_units.is_some() && animation.is_none() {
+        return Err(RifxError::Invalid("source ticks require animated Scale"));
+    }
+    property_with_native_units(
+        ValueKind::Scale,
+        values,
+        Some((0.0, 0.0)),
+        animation,
+        clock,
+        scale_units,
+        true,
+    )
+}
+
+pub(super) fn property_with_follower_units(
+    values: &[f64],
+    bounds: Option<(f64, f64)>,
+    animation: Option<&super::keyframes::Track>,
+    clock: super::keyframes::PropertyClock,
+    units: Option<&[i32]>,
+) -> Result<Chunk, RifxError> {
+    if units.is_some() && animation.is_none() {
+        return Err(RifxError::Invalid(
+            "source ticks require animated Position follower",
+        ));
+    }
+    property_with_native_units(
+        ValueKind::Scalar,
+        values,
+        bounds,
+        animation,
+        clock,
+        units,
+        true,
+    )
+}
+
+fn property_with_native_units(
+    kind: ValueKind,
+    values: &[f64],
+    bounds: Option<(f64, f64)>,
+    animation: Option<&super::keyframes::Track>,
+    clock: super::keyframes::PropertyClock,
+    units: Option<&[i32]>,
+    allow_hold: bool,
+) -> Result<Chunk, RifxError> {
     // Descriptor variants and value-slot counts agree across the independent
     // AE26 empty, resized, duration and solid cases. Extra slots are zeroed
     // static-value/tangent defaults, not a copied payload.
     let (components, selection, variant, flags, mode, subtype, spatial, slots) = match kind {
-        ValueKind::Scalar | ValueKind::Angle => (1, 1, 0, 0x1ffff, 8, 9, false, 5),
+        ValueKind::Scalar | ValueKind::TimeRemap | ValueKind::Angle => {
+            (1, 1, 0, 0x1ffff, 8, 9, false, 5)
+        }
         ValueKind::EffectScalar => (1, 1, 0, u32::MAX, 4, 6, false, 5),
         ValueKind::EffectFloat => (1, 1, 0, u32::MAX, 8, 9, false, 5),
         ValueKind::EffectInteger => (1, 1, 0, u32::MAX, 4, 4, false, 5),
         ValueKind::EffectToggle => (1, 1, 0, 0x10004, 4, 4, false, 5),
         ValueKind::Toggle => (1, 1, 0, 0xffff0004, 4, 4, false, 5),
+        ValueKind::EffectRoot => (1, 1, 0, 0x10000, 4, 4, false, 5),
         ValueKind::Spatial => (3, 15, 3, u32::MAX, 8, 9, true, 9),
         ValueKind::Scale => (3, 1, 0, 0x1ffff, 8, 9, false, 15),
         ValueKind::Pair | ValueKind::VectorPair => (2, 1, 0, u32::MAX, 8, 9, false, 10),
@@ -172,6 +252,7 @@ pub(super) fn property_with_clock(
         ValueKind::VectorAngle => (1, 1, 0, 0x2ffff, 8, 9, false, 5),
         ValueKind::VectorSkew | ValueKind::MaskExpansion => (1, 1, 0, u32::MAX, 8, 9, false, 5),
         ValueKind::VectorEnum => (1, 1, 0, 0x20000, 4, 4, false, 5),
+        ValueKind::TextSelectorMode => (1, 1, 0, 0x20004, 4, 4, false, 5),
         ValueKind::Orientation => (1, 7, 0, 0x60007, 0x10018, 0, false, 3),
         ValueKind::Bevel => (1, 1, 0, 0x20000, 4, 4, false, 5),
         ValueKind::Refraction => (1, 1, 0, u32::MAX, 8, 9, false, 5),
@@ -196,6 +277,9 @@ pub(super) fn property_with_clock(
     padded[..values.len()].copy_from_slice(values);
     let mut descriptor_bytes = descriptor.encode();
     descriptor_bytes[12..16].copy_from_slice(&clock.ticks().to_be_bytes());
+    if kind == ValueKind::EffectRoot {
+        descriptor_bytes[72] = 128;
+    }
     if animation.is_some() {
         descriptor_bytes = match kind {
             ValueKind::MaskFeather | ValueKind::MaskOpacity | ValueKind::EffectScalar => {
@@ -230,6 +314,9 @@ pub(super) fn property_with_clock(
             ValueKind::VectorEnum => {
                 super::keyframes::animated_vector_descriptor(descriptor_bytes, 0, 0, 0x20000, 4, 4)
             }
+            ValueKind::TextSelectorMode => {
+                super::keyframes::animated_vector_descriptor(descriptor_bytes, 0, 0, 0x20004, 4, 4)
+            }
             ValueKind::VectorColor => {
                 super::keyframes::animated_vector_descriptor(descriptor_bytes, 6, 0, 0x2ffff, 1, 1)
             }
@@ -255,12 +342,16 @@ pub(super) fn property_with_clock(
             | ValueKind::VectorAngle
             | ValueKind::VectorSkew
             | ValueKind::VectorEnum
+            | ValueKind::TextSelectorMode
             | ValueKind::VectorColor
     );
     let mut children = vec![
         raw(
             *b"tdsb",
-            (if native_vector || matches!(kind, ValueKind::Spatial | ValueKind::Angle) {
+            (if native_vector
+                || matches!(kind, ValueKind::Spatial | ValueKind::Angle)
+                || (kind == ValueKind::TimeRemap && animation.is_some())
+            {
                 1_u32
             } else {
                 3
@@ -271,12 +362,33 @@ pub(super) fn property_with_clock(
         raw(*b"tdb4", descriptor_bytes),
     ];
     if let Some(track) = animation {
-        let keyframes = if matches!(kind, ValueKind::VectorSpatial) {
+        let keyframes = if let Some(units) = units {
+            match kind {
+                ValueKind::Scalar if allow_hold => {
+                    super::keyframes::scalar_step_list_with_units(track, units)?
+                }
+                ValueKind::Scalar => super::keyframes::linear_scalar_list_with_units(track, units)?,
+                ValueKind::Scale => super::keyframes::scale_list_with_units(track, units)?,
+                _ => {
+                    return Err(RifxError::Invalid(
+                        "source ticks require Scale or scalar property",
+                    ));
+                }
+            }
+        } else if matches!(kind, ValueKind::VectorSpatial) {
             let spatial_track = super::keyframes::spatial_2d_track(track)?;
             super::keyframes::list_with_clock(&spatial_track, usize::from(components), true, clock)?
         } else if matches!(kind, ValueKind::VectorColor) {
             super::keyframes::vector_color_list_with_clock(track, clock)?
-        } else if matches!(kind, ValueKind::Color | ValueKind::EffectColor) {
+        } else if matches!(kind, ValueKind::EffectColor) {
+            match super::keyframes::effect_color_list_with_clock(track, clock) {
+                Ok(keys) => keys,
+                // Lowering validates the default clock, but the owning composition
+                // can overflow or collide at its final clock. Keep the authored
+                // static control rather than aborting otherwise convertible content.
+                Err(_) => return property_with_clock(kind, values, bounds, None, clock),
+            }
+        } else if matches!(kind, ValueKind::Color) {
             super::keyframes::color_list_with_clock(track, clock)?
         } else {
             super::keyframes::list_with_clock(track, usize::from(components), spatial, clock)?
@@ -633,6 +745,42 @@ pub(super) fn build_views_with_clock(
 
 #[cfg(test)]
 mod effect_color_tests {
+    #[test]
+    fn effect_color_final_clock_overflow_retains_static_control() {
+        use super::super::keyframes::{Easing, Keyframe, PropertyClock, Track};
+        let values = [0.0, 25.5, 51.0, 76.5];
+        let track = Track {
+            keys: [0, 50_000_000]
+                .into_iter()
+                .map(|time_millis| Keyframe {
+                    time_millis,
+                    values: values.to_vec(),
+                    easing: vec![Easing::Linear; 4],
+                    spatial_in: Vec::new(),
+                    spatial_out: Vec::new(),
+                })
+                .collect(),
+        };
+        assert!(
+            super::super::keyframes::effect_color_list_with_clock(&track, PropertyClock::DEFAULT,)
+                .is_ok()
+        );
+        let clock = PropertyClock::for_rate(crate::timing::FrameRate::new(60.0).unwrap()).unwrap();
+        assert!(super::super::keyframes::effect_color_list_with_clock(&track, clock).is_err());
+        let actual = super::property_with_clock(
+            super::ValueKind::EffectColor,
+            &values,
+            None,
+            Some(&track),
+            clock,
+        )
+        .unwrap();
+        let expected =
+            super::property_with_clock(super::ValueKind::EffectColor, &values, None, None, clock)
+                .unwrap();
+        assert_eq!(actual, expected);
+    }
+
     #[test]
     fn thirty_fps_working_views_have_no_legacy_property_descriptors() {
         fn clocks(chunks: &[crate::rifx::Chunk], output: &mut Vec<u32>) {

@@ -5,8 +5,9 @@ use super::{
 use crate::{
     format::{inspect_project_with_omissions, FrameRate, PrProjectFile},
     schema::{
-        adjustment::retains_edit, EditKind, OccurrenceEdit, PrAnimatedProperty, PrEffectParams,
-        PrGaussianBlur, PrMediaKind, PrVideoOccurrence, TICKS,
+        adjustment::retains_edit, color_matte::GENERATOR_IMPLEMENTATION_ID, EditKind,
+        OccurrenceEdit, PrAnimatedProperty, PrEffectParams, PrGaussianBlur, PrMediaKind,
+        PrVideoOccurrence, TICKS,
     },
     tests::support::project_document_with_media,
     Omission, OmissionKind, OmissionScope,
@@ -191,6 +192,20 @@ fn a_flagged_black_video_clip_reads_as_an_adjustment_with_its_effects() {
 }
 
 #[test]
+fn adjustment_wipe_does_not_feather_the_composite_outside_its_window() {
+    let mut clip = crate::tests::support::clip_of("source", 0..TICKS, 0);
+    clip.linear_wipe = Some(crate::schema::PrLinearWipe {
+        initial_completion: 50.0,
+        completion: Vec::new(),
+        angle_degrees: 90,
+        feather: 0.0,
+    });
+    assert!(crate::schema::adjustment::supports_wipe_coverage(&clip));
+    clip.linear_wipe.as_mut().unwrap().feather = 1.0;
+    assert!(!crate::schema::adjustment::supports_wipe_coverage(&clip));
+}
+
+#[test]
 fn retained_adjustment_edits_are_opacity_and_its_keys_only() {
     // Every edit that `occurrence_edits` names, through the policy table.
     let properties: Vec<_> = {
@@ -331,15 +346,75 @@ fn adjustment_opacity_converts_and_other_edits_omit_the_occurrence() {
 }
 
 #[test]
-fn adjustment_flags_and_media_that_disagree_with_the_corpus_form_fail_closed() {
-    const GRAPHIC: &str = "1196574294";
+fn adjustment_optional_generator_metadata_keeps_picture_effects_and_opacity_keys() {
+    let keys = format!(
+        "{IN_TICKS},25.,0,0,0,0,0,0;{},75.,0,0,0,0,0,0;",
+        IN_TICKS + TICKS
+    );
+    for media in [
+        BLACK_VIDEO_MEDIA.replace("1112293707", "1129270354"),
+        BLACK_VIDEO_MEDIA.replace("1112293707", "unknown-host-tag"),
+        BLACK_VIDEO_MEDIA.replace("1112293707", "1196574294"),
+        BLACK_VIDEO_MEDIA
+            .replace("<FilePath>1112293707</FilePath>", "")
+            .replace("<ActualMediaFilePath>1112293707</ActualMediaFilePath>", ""),
+        BLACK_VIDEO_MEDIA
+            .replace("<Infinite>true</Infinite>", "")
+            .replace("<IsStill>true</IsStill>", ""),
+        BLACK_VIDEO_MEDIA
+            .replace("<Infinite>true</Infinite>", "<Infinite>false</Infinite>")
+            .replace("<IsStill>true</IsStill>", "<IsStill>false</IsStill>"),
+    ] {
+        let xml = adjustment_xml(
+            "<DefaultMotion>true</DefaultMotion>",
+            &[(50, opacity("25.", &keys)), (60, blur(60))],
+            CLIP_FLAG,
+            MASTER_FLAG,
+            &media,
+        );
+        let (project, clips, kinds, omissions) = read(&xml);
+        assert!(omissions.is_empty(), "{omissions:?}");
+        assert_eq!(clips.len(), 2);
+        assert_eq!(kinds[1], PrMediaKind::Adjustment);
+        let document =
+            project_document_with_media(project.single_sequence().unwrap(), &project.media);
+        let layers = document["composition"]["layers"].as_array().unwrap();
+        assert_eq!(
+            layers
+                .iter()
+                .map(|layer| layer["type"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["Adjustment", "Video", "Rect"]
+        );
+        assert_eq!(layers[0]["effects"][0]["effect"]["type"], "gaussianBlur");
+        assert_eq!(layers[0]["effects"][0]["effect"]["blurriness"], 25.0);
+        assert_eq!(layers[0]["transform"]["opacity"], 25.0);
+        assert_eq!(layers[0]["blendMode"], "normal");
+        assert!(layers[0]["masks"].is_null());
+        let entries = document["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["target"]["layerId"], layers[0]["id"]);
+        assert_eq!(entries[0]["target"]["propertyType"], "opacity");
+        let keys = entries[0]["animator"]["keyframes"].as_array().unwrap();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0]["layerTime"], 0);
+        assert_eq!(keys[0]["value"]["value"], 25.0);
+        assert_eq!(keys[1]["layerTime"], 1000);
+        assert_eq!(keys[1]["value"]["value"], 75.0);
+    }
+}
+
+#[test]
+fn adjustment_flags_and_required_media_identity_fail_closed() {
     let file_media = r#"<Media ObjectUID="adjustment-media"><VideoStream ObjectRef="45"/><RelativePath>media/black.mp4</RelativePath></Media>
 <VideoStream ObjectID="45"><Duration>10973491200000000</Duration><FrameRate>8467200000</FrameRate><FrameRect>0,0,1920,1080</FrameRect></VideoStream>"#;
     for (case, xml, reason) in [
         (
             "flag on file media",
             adjustment_xml(DEFAULT_FLAGS, &[], CLIP_FLAG, MASTER_FLAG, file_media),
-            "Media:adjustment-media: an AdjustmentLayer clip must play Black Video generator media",
+            "Media:adjustment-media: an AdjustmentLayer clip requires generator media without file-backed or audio content",
         ),
         (
             "flag on the video clip's own media",
@@ -355,15 +430,15 @@ fn adjustment_flags_and_media_that_disagree_with_the_corpus_form_fail_closed() {
             "VideoMediaSource:44: media placed both by an AdjustmentLayer clip and by another clip",
         ),
         (
-            "flag on another generator",
+            "unknown generator identity",
             adjustment_xml(
                 DEFAULT_FLAGS,
                 &[],
                 CLIP_FLAG,
                 MASTER_FLAG,
-                &BLACK_VIDEO_MEDIA.replace("1112293707", GRAPHIC),
+                &BLACK_VIDEO_MEDIA.replace(GENERATOR_IMPLEMENTATION_ID, "unknown-generator"),
             ),
-            "Media:adjustment-media: an AdjustmentLayer clip must play Black Video generator media",
+            "Media:adjustment-media: an AdjustmentLayer clip requires generator media without file-backed or audio content",
         ),
         (
             "clip flag without the master flag",
@@ -394,12 +469,12 @@ fn adjustment_flags_and_media_that_disagree_with_the_corpus_form_fail_closed() {
                 MASTER_FLAG,
                 BLACK_VIDEO_MEDIA,
             ),
-            "unexpected graphic generator media",
+            "MasterClip:adjustment-master: IsAdjustmentLayer disagrees with the placed clip's AdjustmentLayer flag",
         ),
         (
             "master flag without the clip flag",
             adjustment_xml(DEFAULT_FLAGS, &[], "", MASTER_FLAG, BLACK_VIDEO_MEDIA),
-            "unexpected graphic generator media",
+            "MasterClip:adjustment-master: IsAdjustmentLayer disagrees with the placed clip's AdjustmentLayer flag",
         ),
         (
             "invalid flag",
@@ -410,7 +485,7 @@ fn adjustment_flags_and_media_that_disagree_with_the_corpus_form_fail_closed() {
                 MASTER_FLAG,
                 BLACK_VIDEO_MEDIA,
             ),
-            "unexpected graphic generator media",
+            "VideoClip:43: invalid AdjustmentLayer",
         ),
         (
             "smaller frame",
@@ -455,15 +530,18 @@ fn adjustment_flags_and_media_that_disagree_with_the_corpus_form_fail_closed() {
             "VideoStream:45: non-square source pixels",
         ),
         (
-            "video stream",
+            "file path on generator",
             adjustment_xml(
                 DEFAULT_FLAGS,
                 &[],
                 CLIP_FLAG,
                 MASTER_FLAG,
-                &BLACK_VIDEO_MEDIA.replace("<IsStill>true</IsStill>", ""),
+                &BLACK_VIDEO_MEDIA.replace(
+                    "<Infinite>true</Infinite>",
+                    "<RelativePath>media/black.mp4</RelativePath>",
+                ),
             ),
-            "VideoStream:45: adjustment layer media must be an IsStill stream",
+            "Media:adjustment-media: an AdjustmentLayer clip requires generator media without file-backed or audio content",
         ),
     ] {
         let (_, clips, _, omissions) = read(&xml);
@@ -608,11 +686,23 @@ fn an_adjustment_imports_the_20_parameter_film_impact_ramp_as_editable_blurrines
 }
 
 #[test]
-fn adjustment_stream_accepts_only_the_measured_missing_rate_override() {
+fn adjustment_stream_keeps_valid_rates_without_optional_override_metadata() {
     let explicit = "<FrameRate>8467200000</FrameRate>";
     let overridden = "<IsFrameRateOverridden>true</IsFrameRateOverridden><OveriddenFrameRate>8467200000</OveriddenFrameRate>";
     for (rate, expected) in [
         (overridden.to_owned(), FrameRate::Fps30),
+        (
+            "<OveriddenFrameRate>10160640000</OveriddenFrameRate>".to_owned(),
+            FrameRate::Fps25,
+        ),
+        (
+            "<IsFrameRateOverridden>false</IsFrameRateOverridden><OveriddenFrameRate>8475667200</OveriddenFrameRate>".to_owned(),
+            FrameRate::Fps30000Over1001,
+        ),
+        (
+            "<IsFrameRateOverridden>unused</IsFrameRateOverridden><OveriddenFrameRate>8467200000</OveriddenFrameRate>".to_owned(),
+            FrameRate::Fps30,
+        ),
         (
             format!("<FrameRate>8475667200</FrameRate>{overridden}"),
             FrameRate::Fps30000Over1001,
@@ -640,12 +730,8 @@ fn adjustment_stream_accepts_only_the_measured_missing_rate_override() {
     }
     for rate in [
         "",
-        "<OveriddenFrameRate>8467200000</OveriddenFrameRate>",
         "<IsFrameRateOverridden>true</IsFrameRateOverridden>",
-        "<IsFrameRateOverridden>false</IsFrameRateOverridden><OveriddenFrameRate>8467200000</OveriddenFrameRate>",
-        "<IsFrameRateOverridden>yes</IsFrameRateOverridden><OveriddenFrameRate>8467200000</OveriddenFrameRate>",
         "<IsFrameRateOverridden>true</IsFrameRateOverridden><OveriddenFrameRate>8467200000.0</OveriddenFrameRate>",
-        "<IsFrameRateOverridden>true</IsFrameRateOverridden><OveriddenFrameRate>10160640000</OveriddenFrameRate>",
         "<IsFrameRateOverridden>true</IsFrameRateOverridden><OveriddenFrameRate>-1</OveriddenFrameRate>",
     ] {
         let (_, clips, _, omissions) = read(&adjustment_xml(DEFAULT_FLAGS, &[], CLIP_FLAG, MASTER_FLAG, &BLACK_VIDEO_MEDIA.replace(explicit, rate)));
@@ -754,6 +840,118 @@ fn adjustment_coverage_checks_active_native_effects_before_they_can_be_omitted()
         assert_eq!(clips.len(), if keep {2} else {1}, "{name}: {omissions:?}");
         assert_eq!(omissions.iter().any(|omission| omission.scope == OmissionScope::Occurrence), !keep, "{name}: {omissions:?}");
     }
+}
+
+#[test]
+fn an_unmoved_adjustment_saved_at_a_moved_point_keeps_its_effects() {
+    use crate::schema::PrStaticTransform;
+    // Motion at Scale 100 with Position and Anchor Point at one point off the
+    // centre, apart only by single-precision noise, as Premiere saves it.
+    let at = |position: &str, anchor: &str| {
+        motion("100.", "")
+            .replace(
+                "<ParameterID>1</ParameterID><StartKeyframe>-91445760000000000,0.5:0.5",
+                &format!(
+                    "<ParameterID>1</ParameterID><StartKeyframe>-91445760000000000,{position}"
+                ),
+            )
+            .replace(
+                "<ParameterID>6</ParameterID><StartKeyframe>-91445760000000000,0.5:0.5",
+                &format!("<ParameterID>6</ParameterID><StartKeyframe>-91445760000000000,{anchor}"),
+            )
+    };
+    let anchor = "0.50094517866770427:0.34285714891221786";
+    let unmoved = at("0.50094517958412099:0.34285714285714303", anchor);
+    let read_with = |motion: String| {
+        read(&adjustment_xml(
+            "<DefaultOpacity>true</DefaultOpacity>",
+            &[(70, motion), (60, blur(60))],
+            CLIP_FLAG,
+            MASTER_FLAG,
+            BLACK_VIDEO_MEDIA,
+        ))
+    };
+    let (_, clips, kinds, omissions) = read_with(unmoved.clone());
+    assert!(omissions.is_empty(), "{omissions:?}");
+    assert_eq!(kinds[1], PrMediaKind::Adjustment);
+    assert_eq!(clips[1].transform, PrStaticTransform::default());
+    assert!(matches!(
+        clips[1].effects.as_slice(),
+        [effect] if matches!(effect.params, PrEffectParams::GaussianBlur(_))
+    ));
+    // A real move of 1.8 px, a larger Scale or a Rotation still moves the
+    // coverage, which is unmeasured with a blur.
+    for (name, motion) in [
+        ("moved", at("0.5:0.34259259700775146", anchor)),
+        (
+            "scaled",
+            unmoved.replace(
+                "<ParameterID>2</ParameterID><StartKeyframe>-91445760000000000,100.",
+                "<ParameterID>2</ParameterID><StartKeyframe>-91445760000000000,101.",
+            ),
+        ),
+        (
+            "rotated",
+            unmoved.replace(
+                "<ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,0.",
+                "<ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,1.",
+            ),
+        ),
+    ] {
+        let (_, clips, _, omissions) = read_with(motion);
+        assert_eq!(clips.len(), 1, "{name}: {omissions:?}");
+        assert!(
+            omissions
+                .iter()
+                .any(|omission| omission.scope == OmissionScope::Occurrence
+                    && omission.reason.contains("nondefault adjustment Motion")),
+            "{name}: {omissions:?}"
+        );
+    }
+}
+
+#[test]
+fn an_unmoved_adjustment_with_a_motion_crop_is_still_omitted_for_its_crop() {
+    // Premiere 26.5.1 Motion (clip S1's records, Position 0.625:0.65) with its
+    // Anchor Point on that Position: an adjustment saved unmoved at a moved
+    // point keeps its blur under the default Motion. Its Motion Crop is no
+    // part of that Motion: a Crop, which no adjustment converts, still omits
+    // the layer.
+    let unmoved = |crop_left: &str| {
+        let motion = super::effects::motion_26_5(crop_left);
+        let (head, anchor) = motion.split_at(motion.find("<Name>Anchor Point</Name>").unwrap());
+        let edited =
+            head.to_owned() + &anchor.replacen(",0.5:0.5,", ",0.625:0.65000000000000002,", 1);
+        assert_ne!(edited, motion);
+        edited
+    };
+    let read_with = |motion: String| {
+        read(&adjustment_xml(
+            "<DefaultOpacity>true</DefaultOpacity>",
+            &[(199, motion), (60, blur(60))],
+            CLIP_FLAG,
+            MASTER_FLAG,
+            BLACK_VIDEO_MEDIA,
+        ))
+    };
+    let (_, clips, kinds, omissions) = read_with(unmoved("0."));
+    assert!(omissions.is_empty(), "{omissions:?}");
+    assert_eq!(kinds[1], PrMediaKind::Adjustment);
+    assert_eq!(
+        clips[1].transform,
+        crate::schema::PrStaticTransform::default()
+    );
+    let (_, clips, _, omissions) = read_with(unmoved("10."));
+    assert_eq!(clips.len(), 1, "{omissions:?}");
+    let omitted: Vec<_> = omissions
+        .iter()
+        .filter(|omission| omission.scope == OmissionScope::Occurrence)
+        .map(|omission| omission.reason.as_str())
+        .collect();
+    assert_eq!(
+        omitted,
+        ["track 1, range 254016000000..1016064000000 ticks: nondefault Crop on an adjustment layer is unsupported; occurrence omitted"]
+    );
 }
 
 #[test]

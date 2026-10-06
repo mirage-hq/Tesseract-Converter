@@ -15,7 +15,7 @@ use crate::structure_document::animation_budget::{
 
 /// Copied controls need independent graph-wide key identities, not only a new target.
 /// These animators are importer-authored; preserve their typed state and timing.
-pub(super) fn copy_animator(
+pub(in crate::structure_document) fn copy_animator(
     animator: &PropertyAnimator,
     target: &PropertyTarget,
     budget: &mut AnimationBudget,

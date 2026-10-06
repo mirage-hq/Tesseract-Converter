@@ -1,0 +1,15 @@
+{
+  "source": "Only three independently Adobe-authored sspc records from independent-descriptor-edited; generated instances/global definitions excluded. Public 320x180 shape; Mosaic49x28 sharp0, Posterize8, GaussianBlur7 dimensions2 repeat0. Original baseline oracle retained for native-omitted default Mosaic checkbox.",
+  "application": "After Effects26.5x89",
+  "request_id": "accuracy-R06-static-effects-reopen-v2",
+  "script_sha256": "6f823f127b7a25cc3e0d09b0971b48182bc73aeccd02b178f93971207f789047",
+  "native_artifact_sha256": "46d2c9c5f5ff8266ea7948baa3df47aa38e05f6a65bb86f57be9ef859177dc14",
+  "fixture_sha256": "59b6cd7ce73f38567f035d0c0f2179fd61995561b1afd9e6f8e0f495a667e6bc",
+  "native_item_offset": 213238,
+  "native_plugin_offsets": [
+    215882,
+    217186,
+    218166
+  ],
+  "proof": "Native authoring,7control editing and same-host save/reopen; no render/Asset/RGB/alpha/audio proof."
+}

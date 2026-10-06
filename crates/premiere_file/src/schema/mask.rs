@@ -1,5 +1,5 @@
-//! Premiere's mask records (JRB-2028): the static Opacity mask that converts,
-//! the three saved record forms and the Mask Path value.
+//! Premiere's mask records: the Opacity mask that converts, the
+//! saved parameter layouts and the Mask Path value with its keys.
 //!
 //! A mask is a standard-shaped `VideoFilterComponent` that its owner names in
 //! `SubComponents`. Two forms are `AE.ADBE AEMask` from the corpus (57 masks in
@@ -12,15 +12,29 @@
 //! G5 shows it accepting and upgrading an XML-written v8/c6 record, and the
 //! export gate the same for the v7 form the writer emits (the generation of
 //! every component it writes): values and vertex bodies survive the re-save.
+//! Premiere 26.3 saves the same record generation with 27 parameters: the
+//! 26.5.1 layout without its sharpness and levels controls (`ParameterID` 30
+//! to 37), observed on both masks of one native project last saved by 26.3
+//! (no public fixture); the parameter count tells the two forms apart.
+//! The older path layout also occurs with three inactive path-selection
+//! controls (IDs 16 to 18). Their saved values are retained as defaults; an
+//! active extra path is not represented by the single-outline mapping.
+//! Record versions and display labels do not select a parameter layout.
 //!
-//! Only the Mask Path, Feather, Opacity, Expansion (at 0) and Inverted convert.
-//! Every other parameter is at the one value each saved mask holds
+//! Mask Path, Feather, Opacity, Expansion and Inverted convert directly.
+//! Saved affine Tracker samples also lower to Path keys over an unchanged
+//! reference outline; the resulting editable paths use linear interpolation.
+//! Every other parameter stays at the one value each saved mask holds
 //! ([`MaskControl::Default`], [`MaskParamRole::Binary`]), or the mask fails
 //! closed: in the corpus forms the tracking booleans (`false`) and the
 //! constants 2, 0 and 0.5 of unknown meaning; in the 26.5.1 form also the mask
 //! transform (Scale 1:1, Scale Height and Width 100, Rotation 0), sharpness
 //! and levels controls at their defaults, the mask Blend Mode and Type 0 and
-//! three opaque tracker values. Mask Position and Anchor Point are the
+//! three tracker values. The version-1 transform has two affine matrices and
+//! reference controls; its samples convert through `decode_mask_tracker`.
+//! Another value may name any tracker ([`MaskParamRole::TrackerState`]).
+//! Constant scalar keys at supported defaults are inert and retained as those
+//! defaults. Mask Position and Anchor Point are the
 //! outline's centre and equal in every saved mask ([`MaskControl::Centre`]).
 //! Inverted is parameter 10 in the corpus forms (the ten inverted Text masks
 //! are its only `true` values) and 17 in the 26.5.1 form (fixture clip D).
@@ -36,8 +50,18 @@
 //! no closed byte: a mask outline is closed. Coordinates are unit fractions of
 //! the clip's source frame, x by its width and y by its height (values outside
 //! 0 to 1 occur): fixture G1 (clip B at Scale 50).
+//!
+//! A keyed Mask Path stores `ticks,base64;` per key in `Keyframes`, each a
+//! complete value of the form's codec on the owner's source clock, with no
+//! interpolation field, as Source Text keys are: without `IsTimeVarying` in a
+//! v8 record that Premiere 26.5.1 opened and AME rendered, and with it `true`
+//! in that record's 26.5.1 save, which also keys mask Position and Anchor
+//! Point identically ([`PrMaskPathKey`], [`MaskControl::Centre`]).
 
-use super::{records, text::PrShapePath};
+mod tracker;
+pub(crate) use tracker::{decode_mask_tracker, MaskTrackerTransform};
+
+use super::{records, text::PrShapePath, PrKeyframeEasing, PrScalarKeyframe};
 use crate::{
     error::{ensure, unsupported},
     format::{
@@ -45,6 +69,7 @@ use crate::{
         shape_payload::{decode_vertex, encode_vertex, VERTEX_BYTES},
     },
 };
+use base64::{engine::general_purpose::STANDARD, Engine};
 
 /// The Mask Path payload magic.
 const MASK_PATH_MAGIC: &[u8; 4] = b"2cin";
@@ -73,6 +98,9 @@ pub(crate) const MASK_MATCH_NAME_26_5: &str = "AE.ADBE AEMask2";
 /// enforce so that an imported mask exports again.
 pub(crate) const MASK_FEATHER_MAX: f64 = 1000.0;
 
+/// The editable value is retained, not calibrated to Premiere's edge radius.
+pub(crate) const MASK_EXPANSION_APPROXIMATION: &str = "Mask Expansion converts one to one; positive FX expansion uses an approximate dilation kernel (half-value growth per axis), whose Premiere radius equivalence is unmeasured; negative expansion remains editable but does not shrink coverage in current FX";
+
 /// Reported once per clip whose mask has a nonzero feather, in both
 /// directions. Premiere's feather is a Gaussian edge of sigma about 0.37 times
 /// Feather on the source frame (fixture G2: 22.1 px at 60, the one measured
@@ -90,36 +118,186 @@ pub(crate) fn mask_match_name(match_name: Option<&str>) -> Option<&'static str> 
         .find(|name| match_name == Some(name))
 }
 
-/// One static Opacity mask: Premiere gates the clip's alpha by the path's
-/// coverage times Mask Opacity, softened by Mask Feather (fixture G1, G2). An
-/// inverted mask renders Mask Opacity times one minus the coverage (G3b),
-/// where FX inverts the opacity-weighted coverage, so Inverted converts only at
-/// Mask Opacity 100. Mask Expansion converts only at 0.
+/// One Opacity mask: Premiere gates the clip's alpha by the path's coverage
+/// times Mask Opacity, softened by Mask Feather (fixture G1, G2). An inverted
+/// mask renders Mask Opacity times one minus the coverage (G3b), where FX
+/// inverts the opacity-weighted coverage, so Inverted converts only at Mask
+/// Opacity 100, including every key. Numeric controls retain their editable
+/// keys; feather and nonzero expansion have explicit rendering approximations.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PrMask {
-    /// The closed outline in unit fractions of the clip's source frame.
+    /// Native saved raster reference, replaced by inspected numbered media before import.
+    pub(crate) raster: Option<RasterMask>,
+    /// The closed outline in unit fractions of the clip's source frame; with
+    /// keys, the first key's, which Premiere shows before that key.
     pub(crate) path: PrShapePath,
+    /// The Mask Path keys in source-time order; empty for a static outline.
+    /// The reader keeps them only on a video clip's mask: a still,
+    /// composition or graphic whose mask is keyed is omitted, so a static
+    /// consumer never meets them.
+    pub(crate) path_keys: Vec<PrMaskPathKey>,
     /// Mask Feather, in source pixels, 0 to [`MASK_FEATHER_MAX`].
     pub(crate) feather: f64,
+    pub(crate) feather_keys: Vec<PrScalarKeyframe>,
+    /// Signed source-pixel expansion, bounded by the written v7 record.
+    pub(crate) expansion: f64,
+    pub(crate) expansion_keys: Vec<PrScalarKeyframe>,
     /// Mask Opacity, in percent.
     pub(crate) opacity: f64,
+    pub(crate) opacity_keys: Vec<PrScalarKeyframe>,
     pub(crate) inverted: bool,
 }
 
+/// Converter-only recovery state; never persisted into FX or replayed on export.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum RasterMask {
+    Saved(crate::format::object_mask::Tracker),
+    Prepared(super::MediaId),
+}
+
+/// One Mask Path key: the outline that the mask has at `source_ticks`.
+/// Premiere 26.5.1 shows the first key's outline before it and the last key's
+/// after it, moves each vertex linearly in time between two keys of one
+/// vertex count, and holds the earlier outline between keys whose counts
+/// differ (the stored value is not drawn; a translated rectangle
+/// within 0.07 px of linear; a 4-vertex key held through at least 1.9 s of a
+/// 1.5 s to 2.0 s interval and the 5-vertex key shown at 2.0 s). Inferred:
+/// that the switch is at the later key, and that tangents and non-rigid
+/// changes move as the translated vertices did.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PrMaskPathKey {
+    /// On the owner's source clock, as Motion keys.
+    pub(crate) source_ticks: i64,
+    pub(crate) path: PrShapePath,
+}
+
+/// Checks one mask outline: closed, of at least three finite vertices.
+fn validate_outline(path: &PrShapePath) -> crate::format::Result<()> {
+    ensure_valid!(
+        path.closed && path.vertices.len() >= 3,
+        "a mask path must be a closed outline of at least three vertices"
+    );
+    ensure_valid!(
+        path.vertices
+            .iter()
+            .flat_map(|vertex| [vertex.point, vertex.in_tangent, vertex.out_tangent])
+            .flatten()
+            .all(f32::is_finite),
+        "mask path vertices must be finite"
+    );
+    Ok(())
+}
+
 impl PrMask {
+    pub(crate) fn numeric_keys(&self) -> [(&'static str, &[PrScalarKeyframe]); 3] {
+        [
+            ("feather", &self.feather_keys),
+            ("expansion", &self.expansion_keys),
+            ("opacity", &self.opacity_keys),
+        ]
+    }
+
+    pub(crate) fn has_numeric_keys(&self) -> bool {
+        self.numeric_keys().iter().any(|(_, keys)| !keys.is_empty())
+    }
+
+    pub(crate) fn approximations(&self) -> impl Iterator<Item = &'static str> {
+        [
+            (
+                self.feather != 0.0 || self.feather_keys.iter().any(|key| key.value != 0.0),
+                MASK_FEATHER_APPROXIMATION,
+            ),
+            (
+                self.expansion != 0.0 || self.expansion_keys.iter().any(|key| key.value != 0.0),
+                MASK_EXPANSION_APPROXIMATION,
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(needed, message)| needed.then_some(message))
+    }
+
     pub(crate) fn validate(&self) -> crate::format::Result<()> {
+        for (name, value, keys, lower, upper) in [
+            (
+                "Feather",
+                self.feather,
+                &self.feather_keys,
+                0.0,
+                MASK_FEATHER_MAX,
+            ),
+            (
+                "Expansion",
+                self.expansion,
+                &self.expansion_keys,
+                -1000.0,
+                1000.0,
+            ),
+            ("Opacity", self.opacity, &self.opacity_keys, 0.0, 100.0),
+        ] {
+            if name == "Expansion" {
+                ensure_valid!(
+                    value.is_finite() && (lower..=upper).contains(&value),
+                    "Mask {name} must be finite and within {lower}..={upper}"
+                );
+            }
+            ensure_valid!(
+                keys.windows(2)
+                    .all(|pair| pair[0].source_ticks < pair[1].source_ticks),
+                "Mask {name} keys must have strictly increasing source times"
+            );
+            for key in keys {
+                ensure_valid!(
+                    key.value.is_finite() && (lower..=upper).contains(&key.value),
+                    "Mask {name} key must be finite and within {lower}..={upper}"
+                );
+                ensure_valid!(
+                    mask_numeric_easing(key.easing),
+                    "Mask {name} supports only Linear, Hold or zero-speed Bezier keys"
+                );
+            }
+            ensure_valid!(
+                keys.windows(2)
+                    .all(|pair| pair[1].easing != PrKeyframeEasing::Hold
+                        || matches!(
+                            pair[0].easing,
+                            PrKeyframeEasing::Linear
+                                | PrKeyframeEasing::Hold
+                                | PrKeyframeEasing::CubicBezier {
+                                    x2: 1.0,
+                                    y2: 1.0,
+                                    ..
+                                }
+                        )),
+                "Mask {name} cannot preserve the curve arriving into a Hold key"
+            );
+        }
+        if self.raster.is_some() {
+            ensure_valid!(
+                self.path.vertices.is_empty()
+                    && self.path_keys.is_empty()
+                    && !self.has_numeric_keys()
+                    && self.feather == 0.0
+                    && self.expansion == 0.0
+                    && (!self.inverted || self.opacity == 100.0),
+                "Object Mask raster requires zero Feather/Expansion and unkeyed coverage; inverted non-full Opacity is unproved (G3b)"
+            );
+        } else {
+            validate_outline(&self.path)?;
+        }
+        for key in &self.path_keys {
+            validate_outline(&key.path)?;
+        }
         ensure_valid!(
-            self.path.closed && self.path.vertices.len() >= 3,
-            "a mask path must be a closed outline of at least three vertices"
+            self.path_keys
+                .windows(2)
+                .all(|pair| pair[0].source_ticks < pair[1].source_ticks),
+            "Mask Path keys must have strictly increasing source times"
         );
         ensure_valid!(
-            self.path
-                .vertices
-                .iter()
-                .flat_map(|vertex| [vertex.point, vertex.in_tangent, vertex.out_tangent])
-                .flatten()
-                .all(f32::is_finite),
-            "mask path vertices must be finite"
+            self.path_keys
+                .first()
+                .is_none_or(|first| first.path == self.path),
+            "a keyed mask's outline is its first key's"
         );
         ensure_valid!(
             self.feather.is_finite() && (0.0..=MASK_FEATHER_MAX).contains(&self.feather),
@@ -130,10 +308,26 @@ impl PrMask {
             "Mask Opacity must be finite and within 0..=100"
         );
         ensure_valid!(
-            !self.inverted || self.opacity == 100.0,
+            !self.inverted
+                || (self.opacity == 100.0
+                    && self.opacity_keys.iter().all(|key| key.value == 100.0)),
             "an inverted mask with Mask Opacity below 100 is not converted: Premiere renders Mask Opacity times the inverted coverage, FX inverts the Mask Opacity-weighted coverage"
         );
         Ok(())
+    }
+}
+
+/// Zero-speed handles avoid inferring Premiere mask velocity units.
+pub(crate) fn mask_numeric_easing(easing: PrKeyframeEasing) -> bool {
+    match easing {
+        PrKeyframeEasing::Linear | PrKeyframeEasing::Hold => true,
+        PrKeyframeEasing::CubicBezier { x1, y1, x2, y2 } => {
+            [x1, y1, x2, y2].into_iter().all(f64::is_finite)
+                && (0.0..=1.0).contains(&x1)
+                && (0.0..=1.0).contains(&x2)
+                && y1 == 0.0
+                && y2 == 1.0
+        }
     }
 }
 
@@ -142,10 +336,9 @@ impl PrMask {
 const SLIDER_RANGE_V7: &str = "1000";
 const SLIDER_RANGE_WIDE: &str = "5000";
 
-/// One saved mask record form: its match and display names, the
-/// `VideoFilterComponent` and `Component` versions, its parameters (the first
-/// `param_count` of `params`), the Feather upper bound (also the Expansion
-/// magnitude) and its Mask Path value.
+/// One supported mask parameter layout and path codec. Names and versions
+/// are also kept for native writing, but record versions and display labels
+/// do not constrain import.
 pub(crate) struct MaskForm {
     pub(crate) match_name: &'static str,
     pub(crate) display_name: &'static str,
@@ -189,6 +382,13 @@ pub(crate) const MASK_FORM_V8: MaskForm = MaskForm {
     decode_path: decode_mask_path,
 };
 
+/// The older path layout with inactive path-selection controls.
+pub(crate) const MASK_FORM_WITH_SELECTION: MaskForm = MaskForm {
+    params: &MASK_PARAMS_WITH_SELECTION,
+    param_count: MASK_PARAMS_WITH_SELECTION.len(),
+    ..MASK_FORM_V8
+};
+
 /// The form Premiere 26.5.1 saves (fixture `feature_opacity_masks_26_5_strict`,
 /// masks A to E).
 pub(crate) const MASK_FORM_26_5: MaskForm = MaskForm {
@@ -203,36 +403,46 @@ pub(crate) const MASK_FORM_26_5: MaskForm = MaskForm {
     decode_path: decode_mask_path_26_5,
 };
 
+/// The form Premiere 26.3 saves: the 26.5.1 record with [`MASK_PARAMS_26_3`].
+pub(crate) const MASK_FORM_26_3: MaskForm = MaskForm {
+    params: &MASK_PARAMS_26_3,
+    param_count: MASK_PARAMS_26_3.len(),
+    ..MASK_FORM_26_5
+};
+
 impl MaskForm {
     /// The parameters this form holds, in the saved `Params` order.
     pub(crate) fn params(&self) -> &'static [MaskParamSpec] {
         &self.params[..self.param_count]
     }
 
-    /// The form with this match name and these record versions, if one is
-    /// known.
-    pub(crate) fn of(
-        match_name: Option<&str>,
-        component_version: Option<&str>,
-        body_version: Option<&str>,
-    ) -> Option<&'static Self> {
-        [&MASK_FORM_V7, &MASK_FORM_V8, &MASK_FORM_26_5]
-            .into_iter()
-            .find(|form| {
-                match_name == Some(form.match_name)
-                    && component_version == Some(form.component_version)
-                    && body_version == Some(form.body_version)
-            })
+    /// Select the layout by mask identity and parameter count. The reader
+    /// then validates every parameter's ID, type, control and required value.
+    pub(crate) fn of(match_name: Option<&str>, param_count: usize) -> Option<&'static Self> {
+        [
+            &MASK_FORM_V7,
+            &MASK_FORM_V8,
+            &MASK_FORM_WITH_SELECTION,
+            &MASK_FORM_26_5,
+            &MASK_FORM_26_3,
+        ]
+        .into_iter()
+        .find(|form| match_name == Some(form.match_name) && form.params().len() == param_count)
     }
 }
 
 /// What one mask parameter holds: the Mask Path value, another binary value
 /// (`ArbVideoComponentParam`) at the one base64 value every saved mask holds,
-/// or one static control (`VideoComponentParam`, `PointComponentParam`).
+/// the tracker state, or one static control (`VideoComponentParam`,
+/// `PointComponentParam`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum MaskParamRole {
     Path,
     Binary(&'static str),
+    /// The 26.5.1 and 26.3 tracker state (`ParameterID` 24): this base64
+    /// value apart from the UUID of the tracker it names
+    /// ([`is_saved_tracker_state`]).
+    TrackerState(&'static str),
     Control(MaskControl),
 }
 
@@ -246,7 +456,10 @@ pub(crate) enum MaskControl {
     Inverted,
     /// Mask Position or Anchor Point (26.5.1): the outline's centre. Every
     /// saved mask holds the same point in both, so a mask translation is
-    /// unobserved and the mask converts only when they are equal.
+    /// unobserved and the mask converts only when they are equal: two equal
+    /// static points, or two identical keyed records, which Premiere 26.5.1
+    /// saved beside a keyed Mask Path. Either way Position minus
+    /// Anchor Point stays zero, so the mask transform stays the identity.
     Centre,
     /// A control with no FX counterpart, at the one `StartKeyframe` value
     /// every saved mask holds (a number, `false` or a point); another value
@@ -269,6 +482,7 @@ pub(crate) fn at_default(value: &str, default: &str) -> bool {
 /// constants; `control`, `lower` and `upper` where the save omits them; on
 /// Feather and Expansion [`Self::bounds`] takes the form's range instead of
 /// `lower` and `upper`.
+#[derive(Clone, Copy)]
 pub(crate) struct MaskParamSpec {
     pub(crate) id: usize,
     pub(crate) tag: &'static str,
@@ -479,6 +693,40 @@ pub(crate) const MASK_PARAMS: [MaskParamSpec; 15] = [
     tracking(15, "16", "true"),
 ];
 
+/// The older path controls plus the saved inactive path-selection records.
+/// Additional Paths holds sixteen zero bytes; Selection Data holds the
+/// static eight-byte value 2, 0. These opaque controls are not replayed or
+/// interpreted as extra outlines. Another value cannot establish the single
+/// Mask Path's coverage, so it must not reveal an unmasked source.
+const MASK_PARAMS_WITH_SELECTION: [MaskParamSpec; 18] = {
+    let mut params = [MASK_PARAMS[0]; 18];
+    let mut index = 0;
+    while index < MASK_PARAMS.len() {
+        params[index] = MASK_PARAMS[index];
+        index += 1;
+    }
+    params[15] = slider(
+        16,
+        Some("Active Path Index"),
+        SLIDER_CLASS_ID,
+        Some("8"),
+        "0",
+        "100",
+        MaskParamRole::Control(MaskControl::Default("0")),
+    );
+    params[16] = binary(
+        17,
+        "Additional Paths",
+        MaskParamRole::Binary("AAAAAAAAAAAAAAAAAAAAAA=="),
+    );
+    params[17] = binary(
+        18,
+        "Selection Data Param",
+        MaskParamRole::Binary("AgAAAAAAAAA="),
+    );
+    params
+};
+
 /// A 26.5.1 unnamed boolean at `false`.
 const fn boolean_26_5(
     id: usize,
@@ -517,10 +765,44 @@ const fn default_26_5(
 
 /// The first tracker value (`ParameterID` 6) of every fixture mask.
 const TRACKER_26_5: &str = "AQAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAACAPwAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAAAA=";
-/// The second tracker value (`ParameterID` 24) of every fixture mask.
+/// The second tracker value (`ParameterID` 24) of every fixture mask: a
+/// 100-byte table whose one string, its 36 bytes at [`TRACKER_STATE_UUID`],
+/// is the canonical UUID of the tracker it names. Every 26.5.1 fixture mask
+/// names `45054be8-1889-424f-97eb-f7f502ddb198`; the observed 26.3 mask
+/// holds the same bytes naming another tracker, and no other record of either
+/// project names one.
 const TRACKER_STATE_26_5: &str = "DAAAAAgADAAEAAgACAAAABgAAABMAAAAEAAMAAAAAAAAAAcAAAAIABAAAAAAAAAABAAAACQAAAA0NTA1NGJlOC0xODg5LTQyNGYtOTdlYi1mN2Y1MDJkZGIxOTgAAAAAAAAAAA==";
+/// The bytes of the tracker UUID in [`TRACKER_STATE_26_5`].
+const TRACKER_STATE_UUID: std::ops::Range<usize> = 56..92;
+
+/// Whether `payload` is the saved tracker state `expected` (base64) naming
+/// any tracker: equal to it but for a canonical lowercase UUID at
+/// [`TRACKER_STATE_UUID`]. The UUID identifies the tracker and is no mask
+/// control; any other difference, such as tracking data, is not converted.
+pub(crate) fn is_saved_tracker_state(payload: &[u8], expected: &str) -> bool {
+    let Ok(expected) = STANDARD.decode(expected) else {
+        return false;
+    };
+    let uuid = TRACKER_STATE_UUID;
+    payload.len() == expected.len()
+        && payload[..uuid.start] == expected[..uuid.start]
+        && payload[uuid.end..] == expected[uuid.end..]
+        && std::str::from_utf8(&payload[uuid]).is_ok_and(|text| {
+            uuid::Uuid::parse_str(text).is_ok_and(|parsed| parsed.hyphenated().to_string() == text)
+        })
+}
 /// The User Interactions value (`ParameterID` 23) of every fixture mask.
 const USER_INTERACTIONS_26_5: &str = "EAAAAAAACgAMAAAABAAIAAoAAAAIAAAADAAAAAAAAAAAAAAAAAAAAA==";
+
+/// The 26.5.1 Type control. The human-authored Object Mask fixture stores 4
+/// here; static vector masks and the intrinsic selection shell store 0.
+pub(crate) const MASK_TYPE_26_5: MaskParamSpec = MaskParamSpec {
+    control: Some("10"),
+    ..default_26_5(22, "Type", POPUP_CLASS_ID, "0", "4", "0")
+};
+
+/// Saved Object Mask selection/propagation, not automatic person segmentation.
+pub(crate) const OBJECT_MASK_TYPE: f64 = 4.0;
 
 /// Every 26.5.1 mask parameter in the saved `Params` order, as fixture mask A
 /// (`VideoFilterComponent:157`) saves them: the observed defaults of every
@@ -536,7 +818,11 @@ pub(crate) const MASK_PARAMS_26_5: [MaskParamSpec; 35] = [
     boolean_26_5(20, "16", None),
     boolean_26_5(5, "12", Some("false")),
     binary(6, "Tracker", MaskParamRole::Binary(TRACKER_26_5)),
-    binary(24, "Tracker", MaskParamRole::Binary(TRACKER_STATE_26_5)),
+    binary(
+        24,
+        "Tracker",
+        MaskParamRole::TrackerState(TRACKER_STATE_26_5),
+    ),
     binary(7, "Path", MaskParamRole::Path),
     boolean(
         8,
@@ -646,16 +932,37 @@ pub(crate) const MASK_PARAMS_26_5: [MaskParamSpec; 35] = [
         MaskParamRole::Control(MaskControl::Default("32")),
     ),
     default_26_5(21, "Blend Mode", POPUP_CLASS_ID, "0", "2", "0"),
-    MaskParamSpec {
-        control: Some("10"),
-        ..default_26_5(22, "Type", POPUP_CLASS_ID, "0", "4", "0")
-    },
+    MASK_TYPE_26_5,
     binary(
         23,
         "User Interactions",
         MaskParamRole::Binary(USER_INTERACTIONS_26_5),
     ),
 ];
+
+/// Every 26.3 mask parameter in the saved `Params` order: the 26.5.1
+/// parameters without the sharpness and levels controls that 26.5.1 added at
+/// their defaults (`ParameterID` 30 to 37). Each kept record has the 26.5.1
+/// name, class, control type and bounds (both masks of the observed 26.3
+/// project).
+pub(crate) const MASK_PARAMS_26_3: [MaskParamSpec; 27] = without_sharpness(MASK_PARAMS_26_5);
+
+const fn without_sharpness(params: [MaskParamSpec; 35]) -> [MaskParamSpec; 27] {
+    let mut kept = [params[0]; 27];
+    let (mut from, mut to) = (0, 0);
+    while from < params.len() {
+        if !matches!(params[from].id, 30..=37) {
+            kept[to] = params[from];
+            to += 1;
+        }
+        from += 1;
+    }
+    assert!(
+        to == kept.len(),
+        "26.5.1 holds eight sharpness and levels controls"
+    );
+    kept
+}
 
 /// The `PremiereFilterPrivateData` that the writer stores on a mask: the
 /// 88-byte `kcin` body of `vhs_slideshow` `VideoFilterComponent:2667`, whose
@@ -803,17 +1110,18 @@ pub(crate) fn encode_mask_path(path: &PrShapePath) -> crate::format::Result<Vec<
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_mask_path, decode_mask_path_26_5, encode_mask_path, MaskControl, MaskParamRole,
-        PrMask, MASK_PARAMS, MASK_PARAMS_26_5,
+        decode_mask_path, decode_mask_path_26_5, encode_mask_path, is_saved_tracker_state,
+        MaskControl, MaskParamRole, PrMask, PrMaskPathKey, MASK_PARAMS, MASK_PARAMS_26_3,
+        MASK_PARAMS_26_5, TRACKER_STATE_26_5, TRACKER_STATE_UUID,
     };
     use crate::schema::text::{PrPathVertex, PrShapePath};
     use base64::{engine::general_purpose::STANDARD, Engine};
 
     /// Fixture mask D (`ArbVideoComponentParam:299`, Premiere 26.5.1): the pen
-    /// path of five vertices, the first smooth, that the Oracle authored as a
+    /// path of five vertices, the first smooth, authored as a
     /// `2cin` value and Premiere re-saved.
     const FIXTURE_PEN_PATH_26_5: &str = "AgAAAAEAAABWlQAAAAIAAAAFAAAAAQAAAM3MTD5mZmY/7FE4PtejcD+uR2E+9ihcPwAAAAAzM7M+mpkZPzMzsz6amRk/MzOzPpqZGT8AAAAAMzMzP83MzD4zMzM/zczMPjMzMz/NzMw+AAAAAGZmZj9cj8I+ZmZmP1yPwj5mZmY/XI/CPgAAAABmZmY/ZmZmP2ZmZj9mZmY/ZmZmP2ZmZj8B";
-    /// The same outline as the Oracle wrote it (`D-written-param6`).
+    /// The same authored outline (`D-written-param6`).
     const FIXTURE_PEN_PATH_WRITTEN: &str = "MmNpbgIAAAAAAAAABQAAAAEAAADNzEw+ZmZmP+xROD7Xo3A/rkdhPvYoXD8BAAAAAAAAADMzsz6amRk/MzOzPpqZGT8zM7M+mpkZPwEAAAAAAAAAMzMzP83MzD4zMzM/zczMPjMzMz/NzMw+AQAAAAAAAABmZmY/XI/CPmZmZj9cj8I+ZmZmP1yPwj4BAAAAAAAAAGZmZj9mZmY/ZmZmP2ZmZj9mZmY/ZmZmPwEAAAA=";
 
     /// `cinemagraph` `ArbVideoComponentParam:110`: the pen path of its
@@ -980,25 +1288,72 @@ mod tests {
             closed: true,
         };
         let valid = PrMask {
+            raster: None,
+            feather_keys: Vec::new(),
+            expansion: 0.0,
+            expansion_keys: Vec::new(),
+            opacity_keys: Vec::new(),
             path: triangle.clone(),
+            path_keys: Vec::new(),
             feather: 1000.0,
             opacity: 100.0,
             inverted: true,
         };
+        let moved = PrShapePath {
+            vertices: vec![corner(0.5, 0.0), corner(1.5, 0.0), corner(1.5, 1.0)],
+            closed: true,
+        };
+        let keyed = |keys: [(i64, &PrShapePath); 2]| PrMask {
+            raster: None,
+            path: keys[0].1.clone(),
+            path_keys: keys
+                .iter()
+                .map(|&(source_ticks, path)| PrMaskPathKey {
+                    source_ticks,
+                    path: path.clone(),
+                })
+                .collect(),
+            ..valid.clone()
+        };
         assert!(valid.validate().is_ok());
         assert!(PrMask {
+            raster: None,
             opacity: 0.0,
             inverted: false,
             ..valid.clone()
         }
         .validate()
         .is_ok());
+        assert!(keyed([(0, &triangle), (1, &moved)]).validate().is_ok());
         for (case, mask) in [
+            ("keys at one time", keyed([(1, &triangle), (1, &moved)])),
+            (
+                "open key outline",
+                keyed([
+                    (0, &triangle),
+                    (
+                        1,
+                        &PrShapePath {
+                            closed: false,
+                            ..moved.clone()
+                        },
+                    ),
+                ]),
+            ),
+            (
+                "outline other than the first key's",
+                PrMask {
+                    raster: None,
+                    path: moved.clone(),
+                    ..keyed([(0, &triangle), (1, &moved)])
+                },
+            ),
             (
                 // Fixture clip D: Premiere renders 0.5 x (1 - coverage), FX
                 // 1 - 0.5 x coverage (G3b).
                 "inverted at Mask Opacity 50",
                 PrMask {
+                    raster: None,
                     opacity: 50.0,
                     ..valid.clone()
                 },
@@ -1006,6 +1361,7 @@ mod tests {
             (
                 "open path",
                 PrMask {
+                    raster: None,
                     path: PrShapePath {
                         closed: false,
                         ..triangle.clone()
@@ -1016,6 +1372,7 @@ mod tests {
             (
                 "two vertices",
                 PrMask {
+                    raster: None,
                     path: PrShapePath {
                         vertices: triangle.vertices[..2].to_vec(),
                         closed: true,
@@ -1026,6 +1383,7 @@ mod tests {
             (
                 "feather above the written bound",
                 PrMask {
+                    raster: None,
                     feather: 1000.5,
                     ..valid.clone()
                 },
@@ -1033,6 +1391,7 @@ mod tests {
             (
                 "negative feather",
                 PrMask {
+                    raster: None,
                     feather: -1.0,
                     ..valid.clone()
                 },
@@ -1040,6 +1399,7 @@ mod tests {
             (
                 "opacity above 100",
                 PrMask {
+                    raster: None,
                     opacity: 100.5,
                     ..valid.clone()
                 },
@@ -1088,18 +1448,100 @@ mod tests {
         assert_eq!(role(17), MaskParamRole::Control(MaskControl::Inverted));
         assert_eq!(role(9), MaskParamRole::Control(MaskControl::Centre));
         assert_eq!(role(10), MaskParamRole::Control(MaskControl::Centre));
-        // Every other parameter converts only at one observed value.
+        // Every other parameter converts only at one observed value, the
+        // tracker state up to the tracker that it names.
         assert_eq!(
             MASK_PARAMS_26_5
                 .iter()
                 .filter(|spec| matches!(
                     spec.role,
-                    MaskParamRole::Binary(_) | MaskParamRole::Control(MaskControl::Default(_))
+                    MaskParamRole::Binary(_)
+                        | MaskParamRole::TrackerState(_)
+                        | MaskParamRole::Control(MaskControl::Default(_))
                 ))
                 .count(),
             35 - 7
         );
         assert!(super::at_default("100.", "100") && super::at_default("1:1", "1:1"));
         assert!(!super::at_default("1:1.5", "1:1") && !super::at_default("true", "false"));
+    }
+
+    #[test]
+    fn premiere_26_3_layout_is_the_26_5_layout_without_sharpness_and_levels() {
+        // The `Params` order of both masks of the observed 26.3 project.
+        assert_eq!(
+            MASK_PARAMS_26_3
+                .iter()
+                .map(|spec| spec.id)
+                .collect::<Vec<_>>(),
+            [
+                1, 2, 3, 4, 19, 20, 5, 6, 24, 7, 8, 9, 11, 26, 27, 28, 12, 10, 13, 14, 15, 16, 17,
+                25, 21, 22, 23
+            ]
+        );
+        for spec in &MASK_PARAMS_26_3 {
+            let saved = MASK_PARAMS_26_5
+                .iter()
+                .find(|saved| saved.id == spec.id)
+                .unwrap();
+            assert_eq!(
+                (spec.role, spec.name, spec.class_id, spec.lower, spec.upper),
+                (
+                    saved.role,
+                    saved.name,
+                    saved.class_id,
+                    saved.lower,
+                    saved.upper
+                )
+            );
+        }
+        let form = |count| {
+            super::MaskForm::of(Some("AE.ADBE AEMask2"), count)
+                .unwrap()
+                .params()
+                .len()
+        };
+        assert_eq!([form(27), form(35)], [27, 35]);
+        assert!(super::MaskForm::of(Some("AE.ADBE AEMask2"), 28).is_none());
+    }
+
+    #[test]
+    fn a_saved_tracker_state_may_name_any_tracker_and_holds_nothing_else() {
+        let saved = STANDARD.decode(TRACKER_STATE_26_5).unwrap();
+        assert_eq!(
+            &saved[TRACKER_STATE_UUID],
+            b"45054be8-1889-424f-97eb-f7f502ddb198"
+        );
+        let naming = |uuid: &[u8]| {
+            let mut state = saved.clone();
+            state[TRACKER_STATE_UUID].copy_from_slice(uuid);
+            state
+        };
+        assert!(is_saved_tracker_state(&saved, TRACKER_STATE_26_5));
+        assert!(is_saved_tracker_state(
+            &naming(b"0f8e3c55-2b1d-4a6e-9c7f-3d2a1b0c9e8d"),
+            TRACKER_STATE_26_5
+        ));
+        let mut flagged = saved.clone();
+        flagged[32] ^= 1;
+        let mut longer = saved.clone();
+        longer.push(0);
+        for (case, state) in [
+            ("capitals", naming(b"0F8E3C55-2B1D-4A6E-9C7F-3D2A1B0C9E8D")),
+            ("no UUID", naming(b"0f8e3c55-2b1d-4a6e-9c7f-3d2a1b0c9e8z")),
+            (
+                "no hyphens",
+                naming(b"0f8e3c552b1d4a6e9c7f3d2a1b0c9e8d0000"),
+            ),
+            ("other data", flagged),
+            ("one byte longer", longer),
+            ("truncated", saved[..91].to_vec()),
+            ("empty", Vec::new()),
+        ] {
+            assert!(
+                !is_saved_tracker_state(&state, TRACKER_STATE_26_5),
+                "{case}"
+            );
+        }
     }
 }

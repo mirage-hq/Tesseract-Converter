@@ -77,6 +77,8 @@ fn disabled_operations_do_not_affect_live_siblings_or_export_group_geometry() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let layers = collector.collect_contents(
         &chunks,
@@ -127,6 +129,8 @@ fn converter_gives_each_paint_an_independent_editable_target() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let layers = collector.collect_contents(
         &chunks,
@@ -271,6 +275,8 @@ fn group_opacity_composites_once_and_paint_opacities_have_separate_targets() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let layers = collector.collect_contents(
         &chunks,
@@ -333,6 +339,8 @@ fn offset_and_trim_controls_are_shared_between_paints() {
             animations: Vec::new(),
             warnings: Vec::new(),
             frame_fade_lowered: false,
+            evaluated_shapes: Default::default(),
+            mapped_expressions: Vec::new(),
         };
         let layers = collector.collect_contents(
             &chunks,
@@ -379,6 +387,8 @@ fn shape_budget_rejects_large_paint_without_dangling_entries_and_keeps_smaller_s
             animations: Vec::new(),
             warnings: Vec::new(),
             frame_fade_lowered: false,
+            evaluated_shapes: Default::default(),
+            mapped_expressions: Vec::new(),
         };
         let mut budget = OutputBudget::with_limit(1_000_000);
         let layers = collector
@@ -413,6 +423,8 @@ fn shape_budget_rejects_large_paint_without_dangling_entries_and_keeps_smaller_s
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let mut layers = collector
         .collect_contents_with_budget(&large, "budget", fx_schema::LayerId::new(1), 8, &mut budget)
@@ -470,6 +482,8 @@ fn review_shapes_boolean_missing_operand_is_atomic_and_keeps_independent_sibling
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let layers = collector.collect_contents(
         &chunks,
@@ -521,6 +535,8 @@ fn review_shapes_hidden_helper_is_charged_once() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let layers = collector
         .collect_contents_with_budget(
@@ -563,6 +579,8 @@ fn review_shapes_failed_group_budget_transaction_keeps_following_sibling() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let baseline_layers = baseline
         .collect_contents_with_budget(
@@ -628,6 +646,8 @@ fn review_shapes_failed_group_budget_transaction_keeps_following_sibling() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let following_layers = following_baseline
         .collect_contents_with_budget(
@@ -655,6 +675,8 @@ fn review_shapes_failed_group_budget_transaction_keeps_following_sibling() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let mut layers = collector
         .collect_contents_with_budget(
@@ -784,6 +806,8 @@ fn review_shapes_invalid_static_enums_diagnose_and_keep_paints() {
             animations: Vec::new(),
             warnings: Vec::new(),
             frame_fade_lowered: false,
+            evaluated_shapes: Default::default(),
+            mapped_expressions: Vec::new(),
         };
         let layers = collector.collect_contents(
             &chunks,
@@ -823,6 +847,8 @@ fn compound_commands_above_former_quota_keep_a_paint_consumer() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let layers = collector.collect_contents(
         &chunks,
@@ -876,6 +902,8 @@ fn native_direction_reverses_primitive_winding_and_rectangle_trim_start() {
                 animations: Vec::new(),
                 warnings: Vec::new(),
                 frame_fade_lowered: false,
+                evaluated_shapes: Default::default(),
+                mapped_expressions: Vec::new(),
             };
             let layer = collector
                 .source_layer(
@@ -991,6 +1019,8 @@ fn shared_native_keys_keep_unique_ids_across_geometry_groups_and_modifiers() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let layers = collector.collect_contents(
         &chunks,
@@ -1058,6 +1088,8 @@ fn native_star_roundess_tracks_use_shared_source_targets() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let layers = collector.collect_contents(
         &chunks,
@@ -1103,6 +1135,8 @@ fn gradient_stroke_miter_limit_keeps_numeric_animation() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let layers = collector.collect_contents(
         &entries(vec![rectangle(), stroke()]),
@@ -1157,6 +1191,8 @@ fn native_star_roundess_names_keep_shared_editable_controls() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let layers = collector.collect_contents(
         &chunks,
@@ -1238,6 +1274,8 @@ fn shape_group_and_each_paint_own_their_blend_modes() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let layers = collector.collect_contents(
         &chunks,
@@ -1298,6 +1336,8 @@ fn long_append_chains_and_boolean_depth_are_bounded() {
             animations: Vec::new(),
             warnings: Vec::new(),
             frame_fade_lowered: false,
+            evaluated_shapes: Default::default(),
+            mapped_expressions: Vec::new(),
         };
         let layers = collector.collect_contents(
             &chunks,
@@ -1358,6 +1398,8 @@ fn bounded_boolean_keeps_native_rectangle_operands_and_typed_keys() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let layers = collector.collect_contents(
         &chunks,
@@ -1447,6 +1489,8 @@ fn nested_boolean_crosses_only_static_identity_vector_scopes() {
             animations: Vec::new(),
             warnings: Vec::new(),
             frame_fade_lowered: false,
+            evaluated_shapes: Default::default(),
+            mapped_expressions: Vec::new(),
         };
         let layers = collector.collect_contents(
             &chunks,
@@ -1514,6 +1558,8 @@ fn groups_and_append_are_not_reinterpreted_as_boolean_rectangle_operands() {
             animations: Vec::new(),
             warnings: Vec::new(),
             frame_fade_lowered: false,
+            evaluated_shapes: Default::default(),
+            mapped_expressions: Vec::new(),
         };
         let layers = collector.collect_contents(
             &chunks,
@@ -1593,6 +1639,8 @@ fn reversed_and_intermediate_modified_rectangles_keep_diagnosed_shape_fallbacks(
             animations: Vec::new(),
             warnings: Vec::new(),
             frame_fade_lowered: false,
+            evaluated_shapes: Default::default(),
+            mapped_expressions: Vec::new(),
         };
         let layers = collector.collect_contents(
             &chunks,
@@ -1658,6 +1706,8 @@ fn typed_rectangle_boolean_budget_failure_rolls_back_owned_tracks() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let layers = collector
         .collect_contents_with_budget(
@@ -1712,6 +1762,8 @@ fn budget_failed_boolean_helper_copy_rolls_back_and_keeps_later_paint() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let baseline_layers = baseline
         .collect_contents_with_budget(
@@ -1745,6 +1797,8 @@ fn budget_failed_boolean_helper_copy_rolls_back_and_keeps_later_paint() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
 
     let failed_layers = collector
@@ -1804,6 +1858,8 @@ fn malformed_shared_operation_is_reported_once_per_native_operation() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let layers = collector.collect_contents(
         &chunks,
@@ -1851,6 +1907,8 @@ fn append_does_not_reorder_trim_before_round_corners() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let layers = collector.collect_contents(
         &chunks,
@@ -1901,6 +1959,8 @@ fn partial_modifier_does_not_leak_to_later_geometry() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let layers = collector.collect_contents(
         &chunks,
@@ -1978,6 +2038,8 @@ fn round_corners_remains_shared_by_independent_paints() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let layers = collector.collect_contents(
         &chunks,
@@ -2166,6 +2228,8 @@ fn native_composite_order_uses_ae_plugin_ordinals_and_preserves_groups() {
         animations: Vec::new(),
         warnings: Vec::new(),
         frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
     };
     let layers = collector.collect_contents(
         &chunks,

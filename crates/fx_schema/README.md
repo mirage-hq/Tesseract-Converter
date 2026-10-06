@@ -33,7 +33,7 @@ are shared directly rather than expanded into separate projections.
 
 The product schema generator reads these canonical declarations for Rust docs and
 default metadata; callback emission shells and runtime wrappers are not competing
-schema sources. Revision 67 uses the existing Video, Audio and Group kinds with required
+schema sources. Since revision 67, the schema uses the existing Video, Audio and Group kinds with required
 `playback: { type: "windowed", inputRange, mapping, inputOffsetMs }`. Video and
 Audio also require an independent `sourceRange`. The mapping is either
 `{ type: "linear", input, output }` or `{ type: "timeRemap", property }`.
@@ -47,9 +47,9 @@ archive reader. New `.tsrct` archives use these canonical fields and reopen
 without a migration pass. Revision numbers inventory schema changes; they are
 not a reader-version gate.
 
-The converter export uses the explicit inventory in
-`scripts/conversion-export-files.json`; directory membership alone never grants
-permission to include a file.
+The entire tracked converter workspace is synchronized to the public repository.
+Keep only distributable sources and fixtures in this directory; no separate
+per-file export list is required.
 
 The repository paths identify source ownership only. Published schema filenames,
 URLs, and bucket paths remain unchanged for compatibility.

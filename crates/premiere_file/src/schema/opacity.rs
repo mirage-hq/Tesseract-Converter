@@ -253,20 +253,7 @@ pub(crate) struct PrOpacityParamSpec {
     pub(crate) control: Option<&'static str>,
     pub(crate) lower_bound: &'static str,
     pub(crate) upper_bound: &'static str,
-    /// A second `UpperBound` the reader accepts: Premiere 26.5.1 re-saves an
-    /// older Opacity record with its existing bound 26 on the primary Blend
-    /// Mode (fixture `feature_opacity_masks_26_5_strict` clips A to D,
-    /// `oracle/17/facts.md`); the bound is the enumeration length, not a value.
-    /// The writer emits `upper_bound`.
-    pub(crate) older_upper_bound: Option<&'static str>,
     pub(crate) animation: Option<PrAnimatedProperty>,
-}
-
-impl PrOpacityParamSpec {
-    /// Whether a saved `UpperBound` is this parameter's.
-    pub(crate) fn accepts_upper_bound(&self, bound: Option<&str>) -> bool {
-        bound == Some(self.upper_bound) || (bound.is_some() && bound == self.older_upper_bound)
-    }
 }
 
 pub(crate) const OPACITY_PARAMS: [PrOpacityParamSpec; OPACITY_PARAM_COUNT] = [
@@ -277,7 +264,6 @@ pub(crate) const OPACITY_PARAMS: [PrOpacityParamSpec; OPACITY_PARAM_COUNT] = [
         control: Some("2"),
         lower_bound: "0",
         upper_bound: "100",
-        older_upper_bound: None,
         animation: Some(PrAnimatedProperty::Opacity),
     },
     PrOpacityParamSpec {
@@ -287,7 +273,6 @@ pub(crate) const OPACITY_PARAMS: [PrOpacityParamSpec; OPACITY_PARAM_COUNT] = [
         control: Some("10"),
         lower_bound: "0",
         upper_bound: "26",
-        older_upper_bound: None,
         animation: None,
     },
     PrOpacityParamSpec {
@@ -297,7 +282,6 @@ pub(crate) const OPACITY_PARAMS: [PrOpacityParamSpec; OPACITY_PARAM_COUNT] = [
         control: Some("7"),
         lower_bound: "0",
         upper_bound: "31",
-        older_upper_bound: None,
         animation: None,
     },
 ];
@@ -312,7 +296,6 @@ pub(crate) const OPACITY_PARAMS_26_5: [PrOpacityParamSpec; OPACITY_PARAM_COUNT] 
         control: None,
         lower_bound: "0",
         upper_bound: "100",
-        older_upper_bound: None,
         animation: Some(PrAnimatedProperty::Opacity),
     },
     PrOpacityParamSpec {
@@ -322,7 +305,6 @@ pub(crate) const OPACITY_PARAMS_26_5: [PrOpacityParamSpec; OPACITY_PARAM_COUNT] 
         control: Some("10"),
         lower_bound: "0",
         upper_bound: "27",
-        older_upper_bound: Some("26"),
         animation: None,
     },
     PrOpacityParamSpec {
@@ -332,7 +314,6 @@ pub(crate) const OPACITY_PARAMS_26_5: [PrOpacityParamSpec; OPACITY_PARAM_COUNT] 
         control: None,
         lower_bound: "0",
         upper_bound: "31",
-        older_upper_bound: None,
         animation: None,
     },
 ];

@@ -16,7 +16,8 @@ pub(crate) fn seconds(ticks: i64) -> String {
 
 /// One of the constant video frame rates that conversion supports.
 ///
-/// Unlisted sequence rates reject; physical source durations use `SourceFrameRate`.
+/// Native sequence clocks retain their exact ticks; physical source durations use
+/// `SourceFrameRate`. The listed rates remain the media/export policy allowlist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameRate {
     /// 24000/1001 (23.976) fps.
@@ -30,6 +31,14 @@ pub enum FrameRate {
     /// 60000/1001 (59.94) fps.
     Fps60000Over1001,
     Fps60,
+    /// An imported sequence clock with a positive tick period.
+    Native(NativeFrameRate),
+}
+
+/// An admitted native sequence clock. Construction validates the editable clock bounds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NativeFrameRate {
+    ticks_per_frame: i64,
 }
 
 impl FrameRate {
@@ -45,7 +54,7 @@ impl FrameRate {
     ];
 
     /// Frames per second as an exact numerator and denominator.
-    pub(crate) const fn frames_per_second(self) -> (u32, u32) {
+    pub(crate) const fn frames_per_second(self) -> (u64, u64) {
         match self {
             Self::Fps24000Over1001 => (24000, 1001),
             Self::Fps24 => (24, 1),
@@ -55,19 +64,22 @@ impl FrameRate {
             Self::Fps50 => (50, 1),
             Self::Fps60000Over1001 => (60000, 1001),
             Self::Fps60 => (60, 1),
+            Self::Native(rate) => (TICKS as u64, rate.ticks_per_frame as u64),
         }
     }
 
     /// Frame duration in Adobe ticks. The division is exact for every listed rate.
     pub const fn ticks_per_frame(self) -> i64 {
+        if let Self::Native(rate) = self {
+            return rate.ticks_per_frame;
+        }
         let (numerator, denominator) = self.frames_per_second();
         TICKS * denominator as i64 / numerator as i64
     }
 
     /// Ticks of the whole frames in `seconds`, rounded down to a frame.
     pub(crate) const fn whole_frame_ticks(self, seconds: i64) -> i64 {
-        let (numerator, denominator) = self.frames_per_second();
-        seconds * numerator as i64 / denominator as i64 * self.ticks_per_frame()
+        seconds * TICKS / self.ticks_per_frame() * self.ticks_per_frame()
     }
 
     /// Source in-point of a new still, Color Matte or graphic placement: one
@@ -85,6 +97,15 @@ impl FrameRate {
             .find(|rate| rate.ticks_per_frame() == ticks)
     }
 
+    /// Keeps a native sequence's exact frame grid without adding a media codec/rate.
+    pub(crate) fn from_sequence_ticks(ticks: i64) -> Option<Self> {
+        Self::from_ticks_per_frame(ticks).or_else(|| {
+            (ticks > 0).then_some(Self::Native(NativeFrameRate {
+                ticks_per_frame: ticks,
+            }))
+        })
+    }
+
     /// Matches a sample duration of `units` on a clock of `timescale` units per second.
     pub(crate) fn from_seconds_per_frame(units: u32, timescale: u32) -> Option<Self> {
         if timescale == 0 {
@@ -92,7 +113,7 @@ impl FrameRate {
         }
         Self::ALL.into_iter().find(|rate| {
             let (numerator, denominator) = rate.frames_per_second();
-            u64::from(units) * u64::from(numerator) == u64::from(timescale) * u64::from(denominator)
+            u64::from(units) * numerator == u64::from(timescale) * denominator
         })
     }
 }
@@ -195,6 +216,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn native_sequence_clocks_keep_exact_ticks_without_widening_media_rates() {
+        for ticks in [
+            1,
+            TICKS_PER_MILLISECOND - 1,
+            8_511_237_907,
+            2 * TICKS,
+            i64::MAX,
+        ] {
+            let rate = FrameRate::from_sequence_ticks(ticks).unwrap();
+            assert_eq!(rate.ticks_per_frame(), ticks);
+            assert_eq!(rate.frames_per_second(), (TICKS as u64, ticks as u64));
+            assert!(FrameRate::from_ticks_per_frame(ticks).is_none());
+        }
+        for ticks in [-1, 0] {
+            assert!(FrameRate::from_sequence_ticks(ticks).is_none());
+        }
+        for rate in FrameRate::ALL {
+            assert_eq!(
+                FrameRate::from_sequence_ticks(rate.ticks_per_frame()),
+                Some(rate)
+            );
+        }
+    }
+
+    #[test]
     fn exact_rates_match_native_ticks_and_container_timescales() {
         for (frame_rate, ticks, units, timescale) in [
             (FrameRate::Fps24000Over1001, 10_594_584_000, 1001, 24000),
@@ -207,7 +253,7 @@ mod tests {
             (FrameRate::Fps60, 4_233_600_000, 256, 15360),
         ] {
             let (num, den) = frame_rate.frames_per_second();
-            assert_eq!(TICKS * i64::from(den) % i64::from(num), 0);
+            assert_eq!(TICKS as u64 * den % num, 0);
             assert_eq!(frame_rate.ticks_per_frame(), ticks);
             assert_eq!(FrameRate::from_ticks_per_frame(ticks), Some(frame_rate));
             assert_eq!(

@@ -70,6 +70,39 @@ fn multiple_same_named_sources_and_repeated_lookups_preserve_identity() {
 }
 
 #[test]
+fn review_bare_relative_media_map_matches_explicit_paths() {
+    let marker = Path::new("relative-media-map-child");
+    if !marker.exists() {
+        let (_directory, _input, absolute, _map) = fixture();
+        let base = absolute.parent().unwrap();
+        fs::write(base.join(marker), b"child").unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "media::tests::review_bare_relative_media_map_matches_explicit_paths",
+                "--nocapture",
+            ])
+            .current_dir(base)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+    let absolute = fs::canonicalize("media-map.json").unwrap();
+    let expected = ValidatedMediaMap::load(&absolute).unwrap();
+    for relative in [Path::new("media-map.json"), Path::new("./media-map.json")] {
+        let actual = ValidatedMediaMap::load(relative).unwrap();
+        assert_eq!(actual.base, expected.base);
+        for entry in &expected.entries {
+            assert_eq!(
+                actual.replacement_for(&entry.original).unwrap(),
+                Some(entry.replacement.as_path())
+            );
+        }
+    }
+}
+
+#[test]
 fn source_project_target_and_format_are_bound() {
     let (_directory, input, path, _map) = fixture();
     let validated = ValidatedMediaMap::load(&path).unwrap();

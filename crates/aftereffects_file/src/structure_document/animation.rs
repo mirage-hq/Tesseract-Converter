@@ -33,6 +33,9 @@ fn legacy_script_fixture_wire_clock_is_owner_local() {
 }
 
 mod expressions;
+#[cfg(test)]
+mod position_z_tests;
+mod spatial_position;
 
 use std::collections::HashMap;
 
@@ -57,7 +60,9 @@ use crate::{
     },
 };
 
-pub(super) use expressions::{evaluated_numeric_entries, evaluated_transform_entries};
+pub(super) use expressions::{
+    evaluated_numeric_entries, evaluated_transform_entries, rebased_samples, rebased_samples_with,
+};
 
 /// Clock used by the FX layer receiving an imported Transform track.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,6 +118,10 @@ impl NumericAnimationClock {
 #[derive(Clone, Debug)]
 enum NumericTargetValue {
     StrokeJoin,
+    OpacityColor {
+        rgb: [f64; 3],
+        scale: f64,
+    },
     Float {
         component: usize,
         scale: f64,
@@ -171,9 +180,42 @@ impl NumericAnimationTarget {
         }
     }
 
+    /// A scalar opacity curve controls alpha while the authored RGB stays fixed.
+    /// Unlike native Color keys, this uses scalar temporal speed normalization.
+    pub(super) const fn opacity_color(target: PropertyTarget, rgb: [f64; 3]) -> Self {
+        Self {
+            target,
+            value: NumericTargetValue::OpacityColor {
+                rgb,
+                scale: 1.0 / 255.0,
+            },
+        }
+    }
+
+    pub(super) const fn property_target(&self) -> &PropertyTarget {
+        &self.target
+    }
+
+    /// The same destination with every component's unit scale multiplied, for
+    /// expression values exposed in different units than native storage.
+    pub(super) fn scaled(&self, factor: f64) -> Self {
+        let mut scaled = self.clone();
+        match &mut scaled.value {
+            NumericTargetValue::Float { scale, .. } => *scale *= factor,
+            NumericTargetValue::Vector2 { scale, .. } => {
+                scale.iter_mut().for_each(|s| *s *= factor)
+            }
+            NumericTargetValue::Color { scale, .. } => scale.iter_mut().for_each(|s| *s *= factor),
+            NumericTargetValue::OpacityColor { scale, .. } => *scale *= factor,
+            NumericTargetValue::StrokeJoin => {}
+        }
+        scaled
+    }
+
     fn easing_component(&self) -> (usize, f64) {
         match self.value {
             NumericTargetValue::StrokeJoin => (0, 1.0),
+            NumericTargetValue::OpacityColor { scale, .. } => (0, scale),
             NumericTargetValue::Float { component, scale } => (component, scale),
             NumericTargetValue::Vector2 { components, scale } => (components[0], scale[0]),
             NumericTargetValue::Color { components, scale } => (components[0], scale[0]),
@@ -198,6 +240,12 @@ impl NumericAnimationTarget {
                 .ok_or_else(|| format!("lacks component {index}"))
         };
         match self.value {
+            NumericTargetValue::OpacityColor { rgb, scale } => Ok(PropertyValue::Color([
+                rgb[0],
+                rgb[1],
+                rgb[2],
+                component(0, scale)?,
+            ])),
             NumericTargetValue::StrokeJoin => {
                 let value = component(0, 1.0)?;
                 let join = match value {
@@ -776,6 +824,64 @@ fn targets(
     }
 }
 
+/// Native keys as ordinary forward-clock import authors them for one scalar
+/// target per component: spatial Position paths become the same refined Linear
+/// keys, and each key carries the incoming easing per component (key 0 is
+/// Linear). Expression evaluation reuses this so its pre-expression `value`
+/// matches what the keyed import of the same property renders.
+pub(crate) fn editable_native_keys(
+    name: &str,
+    numeric: &NumericProperty,
+    layer: &Layer,
+    spatial_position: bool,
+    warnings: &mut Vec<String>,
+) -> Result<(NumericProperty, Vec<Vec<PropertyKeyframeEasing>>), String> {
+    let clock = NumericAnimationClock::parent_identity(layer)?;
+    if clock.reversed() {
+        return Err("reverse-stretched native keys are not admitted".into());
+    }
+    let prepared = if spatial_position {
+        match spatial_position::prepare(numeric, clock)? {
+            Some(prepared) => {
+                warnings.push(format!("{name}: native spatial Position path-speed sampled into adaptive Linear keys before expression evaluation (same 0.25 source-unit refinement as keyed import); original tangents and ease controls replaced"));
+                prepared
+            }
+            None => numeric.clone(),
+        }
+    } else {
+        if numeric.keyframes.iter().any(|key| {
+            key.spatial_in
+                .iter()
+                .chain(&key.spatial_out)
+                .any(|value| *value != 0.0)
+        }) {
+            warnings.push(format!("{name}: native spatial tangents are not applied to non-Position expression input; per-component temporal easing retained"));
+        }
+        numeric.clone()
+    };
+    let keys = &prepared.keyframes;
+    let dimensions = keys.first().map_or(0, |key| key.values.len());
+    let easings = (0..keys.len())
+        .map(|index| {
+            (0..dimensions)
+                .map(|component| {
+                    if prepared.value_kind == NumericValueKind::Color {
+                        return color_easing_for_key(keys, index, clock, warnings, name);
+                    }
+                    if prepared.value_kind == NumericValueKind::Continuous
+                        && let Some(easing) =
+                            straight_spatial_easing_for_key(keys, index, clock, warnings, name)
+                    {
+                        return easing;
+                    }
+                    Ok(easing_for_key(keys, index, component, 1.0, warnings, name))
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((prepared, easings))
+}
+
 /// Converts one decoded numeric property into reusable editable graph entries.
 pub(super) fn numeric_entries(
     name: &str,
@@ -796,6 +902,34 @@ pub(super) fn numeric_entries(
         return (Vec::new(), Vec::new());
     }
     let mut warnings = Vec::new();
+    let prepared;
+    let numeric = if targets.iter().all(|target| {
+        target.target.as_property().is_some_and(|property| {
+            matches!(
+                property.property_type(),
+                PropType::PositionX | PropType::PositionY | PropType::PositionZ
+            )
+        })
+    }) {
+        match spatial_position::prepare(numeric, clock) {
+            Ok(Some(value)) => {
+                prepared = value;
+                warnings.push(format!("{name}: native spatial Position shared path-speed converted to adaptive editable Linear keys (0.25 source-unit quarter-point sampled tolerance on the receiving FX millisecond clock; adjacent milliseconds have no interior sample); original tangents and ease controls replaced, unsampled and fractional-millisecond fidelity unverified"));
+                &prepared
+            }
+            Ok(None) => numeric,
+            Err(error) => {
+                return (
+                    Vec::new(),
+                    vec![format!(
+                        "{name}: {error}; coupled Position animation omitted"
+                    )],
+                );
+            }
+        }
+    } else {
+        numeric
+    };
     if numeric.expression_present {
         warnings.push(format!(
             "{name}: disabled AE expression retained in source; native keyframes imported"
@@ -1365,6 +1499,21 @@ fn validate_target(
 ) -> Result<bool, String> {
     let discrete = matches!(target.value, NumericTargetValue::StrokeJoin);
     if !discrete {
+        if numeric.value_kind == NumericValueKind::Continuous {
+            let components = target
+                .vector_easing_components()
+                .map_or_else(|| vec![target.easing_component()], Vec::from);
+            for (component, multiplier) in components {
+                for (index, pair) in numeric.keyframes.windows(2).enumerate() {
+                    if equal_endpoint_excursion(&pair[0], &pair[1], component, multiplier) {
+                        return Err(format!(
+                            "{name}: equal-endpoint Bezier excursion before key {} on component {component} cannot be represented by normalized FX easing; coupled animation target set omitted and static values retained",
+                            index + 1
+                        ));
+                    }
+                }
+            }
+        }
         return Ok(false);
     }
     if numeric.keyframes.len() > 1 && clock.reversed() {
@@ -1470,9 +1619,17 @@ fn prospective_key(
         } else {
             (&key.spatial_in, &key.spatial_out)
         };
-        // AE Anchor Point is spatial too, but FX only permits tangent metadata
-        // on Position. Zero handles add no scalar-key semantics.
-        if supports_spatial {
+        // AE's zero-handle segments interpolate traveled distance, whereas
+        // present FX zero handles apply cubic geometry to the temporal progress
+        // a second time. Curved Position tracks are normalized by prepare;
+        // omit redundant geometry here rather than changing their temporal ease.
+        // Preserve both handles if either side is nonzero.
+        if supports_spatial
+            && spatial_in
+                .iter()
+                .chain(spatial_out)
+                .any(|value| *value != 0.0)
+        {
             let (component, _) = target.easing_component();
             output = output.with_spatial_tangents(
                 spatial_in.get(component).copied(),
@@ -1628,6 +1785,48 @@ fn reverse_easing_for_key(
     })
 }
 
+fn equal_endpoint_excursion(
+    previous: &NumericKeyframe,
+    current: &NumericKeyframe,
+    component: usize,
+    multiplier: f64,
+) -> bool {
+    // Spatial speeds have distance-space semantics and their own conversion.
+    if !previous.spatial_out.is_empty()
+        || !current.spatial_in.is_empty()
+        || previous.out_interpolation == 3
+        || current.time_secs <= previous.time_secs
+        || multiplier == 0.0
+        || previous
+            .values
+            .get(component)
+            .zip(current.values.get(component))
+            .is_none_or(|(from, to)| from != to)
+    {
+        return false;
+    }
+    let has_handle = |interpolation, speeds: &[f64], influences: &[f64]| {
+        interpolation == 2
+            && speeds
+                .get(component)
+                .or_else(|| speeds.first())
+                .is_some_and(|speed| *speed != 0.0)
+            && influences
+                .get(component)
+                .or_else(|| influences.first())
+                .is_some_and(|influence| *influence > 0.0)
+    };
+    has_handle(
+        previous.out_interpolation,
+        &previous.out_speed,
+        &previous.out_influence,
+    ) || has_handle(
+        current.in_interpolation,
+        &current.in_speed,
+        &current.in_influence,
+    )
+}
+
 pub(super) fn easing_for_key(
     keys: &[NumericKeyframe],
     index: usize,
@@ -1687,6 +1886,11 @@ pub(super) fn easing_for_key(
     };
     let duration = current.time_secs - previous.time_secs;
     let delta = (to - from) * multiplier;
+    if equal_endpoint_excursion(previous, current, component, multiplier) {
+        warnings.push(format!(
+            "{name}: equal-endpoint Bezier excursion before key {index} cannot be represented by normalized FX easing; linear fallback omits the excursion"
+        ));
+    }
     if duration <= 0.0
         || delta.abs() <= f64::EPSILON
         || spatial_displacement_is_rounding(previous, current, from, to)
@@ -1799,6 +2003,79 @@ mod tests {
             spatial_in: Vec::new(),
             spatial_out: Vec::new(),
         }
+    }
+
+    #[test]
+    fn review_equal_endpoint_bezier_excursion_is_contextually_omitted() {
+        let target = NumericAnimationTarget::float(
+            PropertyTarget::layer(LayerId::new(17), PropType::Rotation),
+            0,
+            1.0,
+        );
+        let mut numeric = rect_size_numeric(0.0);
+        numeric.values = vec![10.0];
+        numeric.keyframes = vec![numeric_key(0.0, 10.0), numeric_key(1.0, 10.0)];
+        numeric.keyframes[0].out_speed = vec![120.0];
+        numeric.keyframes[1].in_speed = vec![-120.0];
+        for clock in [
+            NumericAnimationClock::source_local(),
+            NumericAnimationClock::ParentIdentity {
+                start: 1.0,
+                stretch: -1.0,
+            },
+        ] {
+            let (entries, warnings) = numeric_entries(
+                "Review Rotation",
+                &numeric,
+                std::slice::from_ref(&target),
+                clock,
+            );
+            assert!(entries.is_empty());
+            assert!(
+                warnings
+                    .iter()
+                    .any(|warning| warning.contains("Review Rotation")
+                        && warning.contains("equal-endpoint Bezier excursion")
+                        && warning.contains("static values retained")),
+                "{warnings:?}"
+            );
+        }
+        let mut sibling = numeric.clone();
+        sibling.keyframes[1].values = vec![20.0];
+        let (entries, _) = numeric_entries(
+            "Review sibling",
+            &sibling,
+            std::slice::from_ref(&target),
+            NumericAnimationClock::source_local(),
+        );
+        assert_eq!(
+            entries.len(),
+            1,
+            "independent convertible sibling remains supported"
+        );
+        for interpolation in [1, 3] {
+            let mut constant = numeric.clone();
+            constant.keyframes[0].out_interpolation = interpolation;
+            constant.keyframes[1].in_interpolation = interpolation;
+            let (entries, warnings) = numeric_entries(
+                "Review constant",
+                &constant,
+                std::slice::from_ref(&target),
+                NumericAnimationClock::source_local(),
+            );
+            assert_eq!(entries.len(), 1);
+            assert!(warnings.is_empty(), "{warnings:?}");
+        }
+        numeric.keyframes[0].out_speed = vec![0.0];
+        numeric.keyframes[1].in_speed = vec![0.0];
+        let (entries, warnings) = numeric_entries(
+            "Review constant",
+            &numeric,
+            &[target],
+            NumericAnimationClock::source_local(),
+        );
+        assert_eq!(entries.len(), 1);
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     fn rect_size_numeric(second_component_speed: f64) -> NumericProperty {
@@ -2047,6 +2324,19 @@ mod tests {
         } else {
             vec![10.0, 220.0]
         };
+        // A nonzero temporal speed on the unchanged axis is an equal-endpoint
+        // excursion, which the importer omits by design. Keep that axis static
+        // so this case isolates the active axis' easing.
+        let inactive_axis = 1 - active_axis;
+        let mut excursion = numeric.clone();
+        for key in &mut numeric.keyframes {
+            key.in_speed[inactive_axis] = 0.0;
+            key.out_speed[inactive_axis] = 0.0;
+        }
+        for key in &mut excursion.keyframes {
+            key.in_speed[inactive_axis] = 80.0;
+            key.out_speed[inactive_axis] = 80.0;
+        }
         let target = NumericAnimationTarget::vector2(
             PropertyTarget::layer(LayerId::new(42), PropType::RectSize),
             [0, 1],
@@ -2059,6 +2349,20 @@ mod tests {
                 stretch: -1.0,
             },
         ] {
+            let (entries, warnings) = numeric_entries(
+                "ADBE Vector Rect Size",
+                &excursion,
+                std::slice::from_ref(&target),
+                clock,
+            );
+            assert!(entries.is_empty());
+            assert!(
+                warnings.iter().any(
+                    |warning| warning.contains("equal-endpoint Bezier excursion")
+                        && warning.contains(&format!("component {inactive_axis}"))
+                ),
+                "{warnings:?}"
+            );
             let (entries, warnings) = numeric_entries(
                 "ADBE Vector Rect Size",
                 &numeric,
@@ -2254,12 +2558,12 @@ mod tests {
                 );
             } else {
                 assert_eq!(entries.len(), 1);
+                let track = entries[0].animator.keyframe_track().unwrap();
+                assert!(!track.has_spatial_tangents());
                 assert!(
-                    entries[0]
-                        .animator
-                        .keyframe_track()
-                        .unwrap()
-                        .has_spatial_tangents()
+                    warnings
+                        .iter()
+                        .any(|warning| warning.contains("shared path-speed"))
                 );
             }
         }
@@ -2292,6 +2596,75 @@ mod tests {
                     y2: 1.0 - y1,
                 }
             );
+        }
+    }
+
+    #[test]
+    fn native_straight_position_does_not_ease_geometry_twice() {
+        let project = read_project(include_bytes!(
+            "../../tests/fixtures/pr4442_native/sources/hierarchy_animated_bounds_precomp.aep"
+        ))
+        .unwrap();
+        let ItemKind::Composition(composition) = &project.item(16).unwrap().kind else {
+            panic!("pinned composition")
+        };
+        let layer = composition
+            .layers
+            .iter()
+            .find(|layer| layer.record.id() == 29)
+            .unwrap();
+        let numeric = read_transform(&layer.content)
+            .unwrap()
+            .into_iter()
+            .find(|property| property.match_name == "ADBE Position")
+            .unwrap()
+            .numeric
+            .unwrap();
+        assert_eq!(numeric.keyframes.len(), 2);
+        assert_ne!(numeric.keyframes[0].values, numeric.keyframes[1].values);
+        for key in &numeric.keyframes {
+            assert_eq!(key.spatial_in, vec![0.; 3]);
+            assert_eq!(key.spatial_out, vec![0.; 3]);
+        }
+        for clock in [
+            NumericAnimationClock::source_local(),
+            NumericAnimationClock::ParentIdentity {
+                start: 3.,
+                stretch: -1.,
+            },
+        ] {
+            let targets = [PropType::PositionX, PropType::PositionY]
+                .into_iter()
+                .enumerate()
+                .map(|(axis, property)| {
+                    NumericAnimationTarget::float(
+                        PropertyTarget::layer(LayerId::new(29), property),
+                        axis,
+                        1.,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let (entries, warnings) = numeric_entries("ADBE Position", &numeric, &targets, clock);
+            assert_eq!(entries.len(), 2, "{warnings:?}");
+            for (axis, entry) in entries.iter().enumerate() {
+                let track = entry.animator.keyframe_track().unwrap();
+                assert_eq!(track.keyframes().len(), 2);
+                // AE zero-handle geometry is straight traveled distance. In FX,
+                // present zero tangents apply smoothstep to temporal progress,
+                // changing quarter/three-quarter positions despite equal ends.
+                assert!(!track.has_spatial_tangents(), "axis {axis}, {clock:?}");
+                let source_index = if clock.reversed() { 0 } else { 1 };
+                let expected = super::straight_spatial_easing_for_key(
+                    &numeric.keyframes,
+                    source_index,
+                    clock,
+                    &mut Vec::new(),
+                    "ADBE Position",
+                )
+                .unwrap()
+                .unwrap();
+                assert_eq!(track.keyframes()[1].easing(), expected);
+            }
         }
     }
 

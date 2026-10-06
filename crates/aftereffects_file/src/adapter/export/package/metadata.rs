@@ -2,7 +2,13 @@
 
 use std::io::{self, Read, Seek, SeekFrom};
 
-use crate::writer::footage::NativeFrameRate;
+use crate::{
+    media::MediaDuration,
+    writer::footage::{NativeFrameRate, SOURCE_TICKS_PER_SECOND},
+};
+
+mod mp4;
+pub(super) use mp4::from_reader as mp4_from_reader;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum MetadataError {
@@ -35,7 +41,11 @@ impl From<io::Error> for MetadataReadError {
 pub(super) struct QuickTimeMetadata {
     pub(super) dimensions: [u16; 2],
     pub(super) duration_millis: u64,
+    pub(super) duration_millis_floor: u64,
+    pub(super) duration_native_ticks: Option<u64>,
     pub(super) frame_rate: NativeFrameRate,
+    pub(super) native_duration: Option<MediaDuration>,
+    pub(super) video_codec: [u8; 4],
     pub(super) audio_sample_rate: f64,
 }
 
@@ -80,6 +90,8 @@ struct VideoTrack {
     duration: u64,
     timescale: u32,
     frame_rate: NativeFrameRate,
+    native_duration: Option<MediaDuration>,
+    codec: [u8; 4],
 }
 
 #[derive(Clone, Copy)]
@@ -93,6 +105,16 @@ pub(super) fn quicktime_from_reader(
     reader: &mut (impl Read + Seek),
     file_length: u64,
 ) -> Result<QuickTimeMetadata, MetadataReadError> {
+    let retained = container_metadata_from_reader(reader, file_length)?;
+    quicktime_bytes_with_budget(&retained, usize::MAX).map_err(Into::into)
+}
+
+// Shared streaming atom reader: retain only container metadata, seek over media.
+// MOV and MP4 validation use the same structural bounds and no resource quotas.
+fn container_metadata_from_reader(
+    reader: &mut (impl Read + Seek),
+    file_length: u64,
+) -> Result<Vec<u8>, MetadataReadError> {
     let mut cursor = 0_u64;
     let mut metadata_bytes = 0_u64;
     let mut retained = Vec::new();
@@ -160,7 +182,7 @@ pub(super) fn quicktime_from_reader(
         }
         cursor = atom_end;
     }
-    quicktime_bytes_with_budget(&retained, usize::MAX).map_err(Into::into)
+    Ok(retained)
 }
 
 #[cfg(test)]
@@ -213,6 +235,7 @@ fn quicktime_bytes_with_budget(
 
     let mut video = None;
     let mut audio = None;
+    let mut timecode = false;
     for track in tracks {
         match parse_track(track.payload, movie_header, &mut budget)? {
             ParsedTrack::Video(value) if video.replace(value).is_some() => {
@@ -225,6 +248,12 @@ fn quicktime_bytes_with_budget(
                     "QuickTime profile has more than one audio track",
                 ));
             }
+            ParsedTrack::Timecode if timecode => {
+                return Err(MetadataError::Unsupported(
+                    "QuickTime profile has more than one timecode track",
+                ));
+            }
+            ParsedTrack::Timecode => timecode = true,
             ParsedTrack::Video(_) | ParsedTrack::Audio(_) => {}
         }
     }
@@ -245,11 +274,12 @@ fn quicktime_bytes_with_budget(
         }
     }
 
-    let duration_millis = video
+    let duration_numerator = video
         .duration
         .checked_mul(1_000)
-        .ok_or(MetadataError::Malformed("QuickTime duration overflows"))?
-        .div_ceil(u64::from(video.timescale));
+        .ok_or(MetadataError::Malformed("QuickTime duration overflows"))?;
+    let duration_millis_floor = duration_numerator / u64::from(video.timescale);
+    let duration_millis = duration_numerator.div_ceil(u64::from(video.timescale));
     if duration_millis == 0 {
         return Err(MetadataError::Malformed(
             "QuickTime video duration is empty",
@@ -258,7 +288,18 @@ fn quicktime_bytes_with_budget(
     Ok(QuickTimeMetadata {
         dimensions: video.dimensions,
         duration_millis,
+        duration_millis_floor,
+        duration_native_ticks: {
+            let numerator = u128::from(video.duration) * u128::from(SOURCE_TICKS_PER_SECOND);
+            let denominator = u128::from(video.timescale);
+            numerator
+                .is_multiple_of(denominator)
+                .then(|| u64::try_from(numerator / denominator).ok())
+                .flatten()
+        },
         frame_rate: video.frame_rate,
+        native_duration: video.native_duration,
+        video_codec: video.codec,
         audio_sample_rate: audio.map_or(0.0, |track| f64::from(track.sample_rate)),
     })
 }
@@ -266,7 +307,11 @@ fn quicktime_bytes_with_budget(
 enum ParsedTrack {
     Video(VideoTrack),
     Audio(AudioTrack),
+    Timecode,
 }
+
+mod ancillary;
+mod presentation;
 
 fn parse_track(
     payload: &[u8],
@@ -274,11 +319,11 @@ fn parse_track(
     budget: &mut AtomBudget,
 ) -> Result<ParsedTrack, MetadataError> {
     let track_atoms = atoms(payload, budget)?;
-    if track_atoms.iter().any(|atom| atom.kind == *b"edts") {
-        return Err(MetadataError::Unsupported(
-            "QuickTime edit lists are not representable by the native source profile",
-        ));
-    }
+    let edits = optional_one(
+        &track_atoms,
+        *b"edts",
+        "QuickTime track has duplicate edts atoms",
+    )?;
     let track_header = parse_track_header(
         exactly_one(
             &track_atoms,
@@ -335,6 +380,23 @@ fn parse_track(
             "QuickTime stts and mdhd durations disagree",
         ));
     }
+    let presentation_origin = if handler == *b"vide" {
+        presentation::origin(&sample_atoms, timing)?
+    } else {
+        0
+    };
+    if let Some(edits) = edits {
+        require_identity_edit(
+            edits.payload,
+            track_header.duration,
+            presentation_origin,
+            budget,
+        )?;
+    } else if presentation_origin != 0 {
+        return Err(MetadataError::Unsupported(
+            "QuickTime nonzero presentation origin requires a full-span identity edit",
+        ));
+    }
     let descriptions = exactly_one(
         &sample_atoms,
         *b"stsd",
@@ -343,7 +405,7 @@ fn parse_track(
 
     match handler {
         [b'v', b'i', b'd', b'e'] => {
-            let dimensions = parse_video_description(descriptions.payload, budget)?;
+            let (dimensions, codec) = parse_video_description(descriptions.payload, budget)?;
             if track_header.dimensions != dimensions {
                 return Err(MetadataError::Unsupported(
                     "QuickTime encoded and display dimensions differ",
@@ -358,6 +420,22 @@ fn parse_track(
                 duration: timing.duration,
                 timescale: media_header.timescale,
                 frame_rate,
+                native_duration: if is_ntsc_2997(media_header.timescale, timing.sample_delta) {
+                    // AE interprets this exact source ratio as 29.97 fps. The
+                    // independent native fixture stores samples / 29.97, not
+                    // MOV duration or a clock reconstructed from rounded ms.
+                    Some(MediaDuration {
+                        numerator: timing.sample_count.checked_mul(100).ok_or(
+                            MetadataError::Unsupported(
+                                "QuickTime native duration exceeds the native range",
+                            ),
+                        )?,
+                        denominator: 2997,
+                    })
+                } else {
+                    None
+                },
+                codec,
             }))
         }
         [b's', b'o', b'u', b'n'] => {
@@ -378,10 +456,68 @@ fn parse_track(
                 sample_rate,
             }))
         }
+        [b't', b'm', b'c', b'd'] => {
+            if track_header.dimensions != [0, 0] {
+                return Err(MetadataError::Malformed(
+                    "QuickTime timecode track has visual dimensions",
+                ));
+            }
+            ancillary::require_timecode_description(
+                descriptions.payload,
+                media_header,
+                timing,
+                budget,
+            )?;
+            Ok(ParsedTrack::Timecode)
+        }
         _ => Err(MetadataError::Unsupported(
-            "QuickTime profile contains a non-video/non-audio track",
+            "QuickTime profile contains an unknown track handler",
         )),
     }
+}
+
+fn require_identity_edit(
+    payload: &[u8],
+    track_duration: u64,
+    presentation_origin: u64,
+    budget: &mut AtomBudget,
+) -> Result<(), MetadataError> {
+    const UNSUPPORTED: &str =
+        "QuickTime edit lists are not representable by the native source profile";
+    let edits = atoms(payload, budget)?;
+    if edits.len() != 1 || edits[0].kind != *b"elst" {
+        return Err(MetadataError::Unsupported(UNSUPPORTED));
+    }
+    let list = edits[0].payload;
+    if list.len() < 8 {
+        return Err(MetadataError::Malformed(
+            "QuickTime edit list header is truncated",
+        ));
+    }
+    if list[..4] != [0; 4] || read_u32(list, 4, "QuickTime edit count is truncated")? != 1 {
+        return Err(MetadataError::Unsupported(UNSUPPORTED));
+    }
+    if list.len() != 20 {
+        return Err(MetadataError::Malformed(
+            "QuickTime edit entry length is invalid",
+        ));
+    }
+    let duration = u64::from(read_u32(list, 8, "QuickTime edit duration is truncated")?);
+    let media_time = read_i32(list, 12, "QuickTime edit media time is truncated")?;
+    let rate = read_u32(list, 16, "QuickTime edit rate is truncated")?;
+    // A B-frame track may start its complete presentation grid after decode
+    // time zero. Its unit-rate edit removes that origin, not authored footage.
+    if duration != track_duration
+        || u64::try_from(media_time).ok() != Some(presentation_origin)
+        || rate != 0x0001_0000
+    {
+        return Err(MetadataError::Unsupported(UNSUPPORTED));
+    }
+    Ok(())
+}
+
+fn is_ntsc_2997(timescale: u32, sample_delta: u32) -> bool {
+    u64::from(timescale) * 1001 == u64::from(sample_delta) * 30_000
 }
 
 fn native_frame_rate(timescale: u32, sample_delta: u32) -> Result<NativeFrameRate, MetadataError> {
@@ -389,6 +525,14 @@ fn native_frame_rate(timescale: u32, sample_delta: u32) -> Result<NativeFrameRat
 
     if timescale == 0 || sample_delta == 0 {
         return Err(MetadataError::Malformed("QuickTime video timing is empty"));
+    }
+    if is_ntsc_2997(timescale, sample_delta) {
+        // Independently observed AE26.5x89 encoding, not nearest 16.16
+        // rounding of 30000/1001; no other NTSC ratios are inferred.
+        return Ok(NativeFrameRate {
+            integer: 29,
+            fractional: 63570,
+        });
     }
     let scaled_numerator = u64::from(timescale) * FRACTION_SCALE;
     let denominator = u64::from(sample_delta);
@@ -672,13 +816,13 @@ fn require_track_duration(
             "QuickTime track and movie durations differ without an edit list",
         ));
     }
-    let track = u128::from(track_duration)
-        .checked_mul(u128::from(media.timescale))
-        .ok_or(MetadataError::Malformed("QuickTime duration overflows"))?;
+    // A whole media duration may require a partial movie tick. Only its exact
+    // upward integer representation is admissible, not a floating tolerance.
     let media_duration = u128::from(media.duration)
         .checked_mul(u128::from(movie.timescale))
-        .ok_or(MetadataError::Malformed("QuickTime duration overflows"))?;
-    if track != media_duration {
+        .ok_or(MetadataError::Malformed("QuickTime duration overflows"))?
+        .div_ceil(u128::from(media.timescale));
+    if u128::from(track_duration) != media_duration {
         return Err(MetadataError::Unsupported(
             "QuickTime track and media durations differ without an edit list",
         ));
@@ -750,7 +894,7 @@ fn parse_timing(payload: &[u8]) -> Result<Timing, MetadataError> {
 fn parse_video_description(
     payload: &[u8],
     budget: &mut AtomBudget,
-) -> Result<[u16; 2], MetadataError> {
+) -> Result<([u16; 2], [u8; 4]), MetadataError> {
     let entry = sample_description(payload, budget)?;
     // These sample entries are already produced/consumed by this repository's
     // source-media paths. They only gate the container profile; the AEP record
@@ -795,12 +939,13 @@ fn parse_video_description(
     )? {
         require_full_clean_aperture(clean_aperture.payload, [width, height])?;
     }
-    Ok([width, height])
+    Ok(([width, height], entry.kind))
 }
 
 fn parse_audio_description(payload: &[u8], budget: &mut AtomBudget) -> Result<u32, MetadataError> {
     let entry = sample_description(payload, budget)?;
-    if entry.kind != *b"mp4a" {
+    let pcm = matches!(&entry.kind, b"sowt" | b"twos");
+    if entry.kind != *b"mp4a" && !pcm {
         return Err(MetadataError::Unsupported(
             "QuickTime audio sample-entry codec is outside the supported native profile",
         ));
@@ -815,7 +960,7 @@ fn parse_audio_description(payload: &[u8], budget: &mut AtomBudget) -> Result<u3
         8,
         "QuickTime audio sample-entry version is truncated",
     )?;
-    if version != 0 {
+    if version != 0 && !(pcm && version == 1) {
         return Err(MetadataError::Unsupported(
             "QuickTime extended audio sample entries are unsupported",
         ));
@@ -829,6 +974,9 @@ fn parse_audio_description(payload: &[u8], budget: &mut AtomBudget) -> Result<u3
         return Err(MetadataError::Unsupported(
             "QuickTime audio must have an explicit mono or stereo layout",
         ));
+    }
+    if pcm {
+        ancillary::require_pcm_description(entry.payload, version, channels, budget)?;
     }
     let sample_rate_fixed = read_u32(
         entry.payload,
@@ -1376,6 +1524,9 @@ pub(super) fn wave_from_reader(
 
 #[cfg(test)]
 mod tests {
+    mod pcm_timecode;
+    mod presentation;
+
     use std::io::{Cursor, Write};
 
     use super::*;
@@ -1414,6 +1565,75 @@ mod tests {
     }
 
     #[test]
+    fn native_ntsc_movie_clock_is_admitted() {
+        let movie = include_bytes!("../../../../tests/fixtures/ntsc_media_clock/movie.mov");
+        let metadata = quicktime(movie).expect("native-supported NTSC MOV must be admitted");
+        assert_eq!(metadata.dimensions, [160, 90]);
+        assert_eq!(metadata.duration_millis, 1_001);
+        assert_eq!(metadata.duration_millis_floor, 1_001);
+        assert_eq!(
+            metadata.frame_rate,
+            NativeFrameRate {
+                integer: 29,
+                fractional: 63570
+            }
+        );
+        assert_eq!(
+            metadata.native_duration,
+            Some(MediaDuration {
+                numerator: 3000,
+                denominator: 2997
+            })
+        );
+    }
+
+    #[test]
+    fn ntsc_source_clock_accepts_only_exact_equivalent_ratios() {
+        for (timescale, delta) in [(30_000, 1001), (60_000, 2002), (90_000, 3003)] {
+            let metadata = quicktime(&movie_with_video_timing(1001, timescale, 30, delta)).unwrap();
+            assert_eq!(
+                metadata.native_duration,
+                Some(MediaDuration {
+                    numerator: 3000,
+                    denominator: 2997
+                })
+            );
+            assert_eq!(
+                metadata.frame_rate,
+                NativeFrameRate {
+                    integer: 29,
+                    fractional: 63570
+                }
+            );
+        }
+        for (timescale, delta) in [
+            (29_999, 1001),
+            (30_001, 1001),
+            (30_000, 1000 + 2),
+            (24_000, 1001),
+            (60_000, 1001),
+        ] {
+            assert!(matches!(
+                native_frame_rate(timescale, delta),
+                Err(MetadataError::Unsupported(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn ntsc_native_duration_uses_sample_count_not_rounded_millis() {
+        let metadata = quicktime(&movie_with_video_timing(34, 30_000, 1, 1001)).unwrap();
+        assert_eq!(metadata.duration_millis, 34);
+        assert_eq!(
+            metadata.native_duration,
+            Some(MediaDuration {
+                numerator: 100,
+                denominator: 2997
+            })
+        );
+    }
+
+    #[test]
     fn reads_constant_rate_quicktime_metadata() {
         let movie = valid_movie();
         assert_eq!(
@@ -1421,10 +1641,110 @@ mod tests {
             Ok(QuickTimeMetadata {
                 dimensions: [1920, 1080],
                 duration_millis: 1_000,
+                duration_millis_floor: 1_000,
+                duration_native_ticks: Some(24_576),
                 frame_rate: NativeFrameRate::integer(24),
+                native_duration: None,
+                video_codec: *b"avc1",
                 audio_sample_rate: 0.0,
             })
         );
+    }
+
+    #[test]
+    fn quicktime_sample_entry_codec_is_preserved_for_native_import_options() {
+        let mut descriptions = video_descriptions();
+        descriptions[12..16].copy_from_slice(b"ap4h");
+        assert_eq!(
+            parse_video_description(&descriptions, &mut AtomBudget { remaining: 8 }),
+            Ok(([1920, 1080], *b"ap4h"))
+        );
+    }
+
+    #[test]
+    fn identity_quicktime_edit_list_keeps_the_full_track_without_retiming() {
+        let movie = movie_with_video_edit(1_000, 0, 0x0001_0000);
+        assert_eq!(quicktime(&movie), quicktime(&valid_movie()));
+    }
+
+    #[test]
+    fn shifted_or_shortened_quicktime_edit_list_remains_unsupported() {
+        for movie in [
+            movie_with_video_edit(900, 0, 0x0001_0000),
+            movie_with_video_edit(1_000, 1, 0x0001_0000),
+            movie_with_video_edit(1_000, -1, 0x0001_0000),
+            movie_with_video_edit(1_000, 0, 0),
+        ] {
+            assert!(matches!(
+                quicktime(&movie),
+                Err(MetadataError::Unsupported(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn quicktime_keeps_exact_submillisecond_source_duration() {
+        use super::super::{InterpretRequest, MediaRequest, interpret};
+        use crate::writer::footage::{FootageKind, NativeSourceFormat};
+
+        for (codec, format) in [
+            (*b"avc1", NativeSourceFormat::QuickTime),
+            (*b"ap4h", NativeSourceFormat::QuickTimeProRes4444),
+        ] {
+            let mut movie = movie_with_video_timing(241, 12_288, 241, 512);
+            let position = movie
+                .windows(4)
+                .position(|window| window == b"mvhd")
+                .unwrap();
+            movie[position + 16..position + 20].copy_from_slice(&24_u32.to_be_bytes());
+            let position = movie
+                .windows(4)
+                .position(|window| window == b"avc1")
+                .unwrap();
+            movie[position..position + 4].copy_from_slice(&codec);
+            let parsed = quicktime(&movie).unwrap();
+            assert_eq!(parsed.duration_millis, 10_042);
+            assert_eq!(parsed.duration_native_ticks, Some(246_784));
+            assert_eq!(parsed.duration_millis_floor, 10_041);
+            assert_eq!(parsed.video_codec, codec);
+
+            let mut file = tempfile::NamedTempFile::new().unwrap();
+            file.write_all(&movie).unwrap();
+            let request = MediaRequest {
+                layer_id: fx_schema::LayerId::new(1),
+                asset_id: fx_schema::AssetId::new("movie").unwrap(),
+                kind: FootageKind::Video,
+                preferred_name: "movie".into(),
+            };
+            let source = match interpret(InterpretRequest {
+                request: &request,
+                requested_kinds: super::super::VIDEO_KIND,
+                asset_kind: tesseract_file::AssetKind::Video,
+                archive_path: "movie.mov",
+                content_type: "video/quicktime",
+                materialized_path: file.path(),
+                byte_length: movie.len() as u64,
+                ordinal: 0,
+            }) {
+                Ok(source) => source,
+                Err(_) => panic!("bounded movie metadata must pass ordinary interpretation"),
+            };
+            assert_eq!(source.format, format);
+            assert_eq!(source.duration_native_ticks, Some(246_784));
+        }
+    }
+
+    #[test]
+    fn quicktime_fractional_native_source_ticks_keep_existing_millisecond_policy() {
+        let mut movie = movie_with_video_timing(1, 30, 1, 1);
+        let position = movie
+            .windows(4)
+            .position(|window| window == b"mvhd")
+            .unwrap();
+        movie[position + 16..position + 20].copy_from_slice(&30_u32.to_be_bytes());
+        let parsed = quicktime(&movie).unwrap();
+        assert_eq!(parsed.duration_millis, 34);
+        assert_eq!(parsed.duration_native_ticks, None);
     }
 
     #[test]
@@ -1435,10 +1755,14 @@ mod tests {
             Ok(QuickTimeMetadata {
                 dimensions: [1920, 1080],
                 duration_millis: 2_000,
+                duration_millis_floor: 2_000,
+                duration_native_ticks: Some(49_152),
                 frame_rate: NativeFrameRate {
                     integer: 1,
                     fractional: 32_768,
                 },
+                native_duration: None,
+                video_codec: *b"avc1",
                 audio_sample_rate: 0.0,
             })
         );
@@ -1708,6 +2032,27 @@ mod tests {
         let trak = atom(*b"trak", &[tkhd, mdia].concat());
         let moov = atom(*b"moov", &[mvhd, trak].concat());
         [ftyp, moov].concat()
+    }
+
+    fn movie_with_video_edit(duration: u32, media_time: i32, rate: u32) -> Vec<u8> {
+        let movie = valid_movie();
+        let ftyp_size = u32::from_be_bytes(movie[0..4].try_into().unwrap()) as usize;
+        let moov = &movie[ftyp_size..];
+        let mvhd_size = u32::from_be_bytes(moov[8..12].try_into().unwrap()) as usize;
+        let trak = &moov[8 + mvhd_size..];
+        let tkhd_size = u32::from_be_bytes(trak[8..12].try_into().unwrap()) as usize;
+        let mut payload = vec![0_u8; 8];
+        payload[4..8].copy_from_slice(&1_u32.to_be_bytes());
+        payload.extend_from_slice(&duration.to_be_bytes());
+        payload.extend_from_slice(&media_time.to_be_bytes());
+        payload.extend_from_slice(&rate.to_be_bytes());
+        let edts = atom(*b"edts", &atom(*b"elst", &payload));
+        let assembled = atom(
+            *b"trak",
+            &[&trak[8..8 + tkhd_size], &edts, &trak[8 + tkhd_size..]].concat(),
+        );
+        let moov = atom(*b"moov", &[&moov[8..8 + mvhd_size], &assembled].concat());
+        [&movie[..ftyp_size], &moov].concat()
     }
 
     fn atom(kind: [u8; 4], payload: &[u8]) -> Vec<u8> {

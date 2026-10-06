@@ -270,3 +270,16 @@ fn packbits_row_boundaries_and_exact_lengths() {
         );
     }
 }
+
+#[test]
+fn hostile_merged_dimensions_without_pixels_fail_before_allocating_the_image() {
+    // A 30,000-pixel square header with only the fixture's 64x48 payload must
+    // be rejected from the stored byte count, not after a 3.6 GB allocation.
+    let mut hostile = FIXTURE.to_vec();
+    hostile[14..18].copy_from_slice(&30_000_u32.to_be_bytes());
+    hostile[18..22].copy_from_slice(&30_000_u32.to_be_bytes());
+    assert!(matches!(
+        decode(&hostile, Selection::Merged, [30_000, 30_000]),
+        Err(DecodeError::Malformed("truncated section"))
+    ));
+}

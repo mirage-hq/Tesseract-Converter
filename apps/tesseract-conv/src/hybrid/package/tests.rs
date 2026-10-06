@@ -11,8 +11,12 @@ fn scoped_aep_packages_keep_colliding_local_names_separate() {
     for (scope, bytes) in [(1, b"first".as_slice()), (2, b"second".as_slice())] {
         let stage = root.path().join(format!("stage-{scope}"));
         fs::create_dir_all(stage.join("media")).unwrap();
+        fs::create_dir_all(stage.join("fonts")).unwrap();
         fs::write(stage.join("project.aep"), bytes).unwrap();
         fs::write(stage.join("media/picture.png"), bytes).unwrap();
+        // The AE stage packages embedded Text fonts beside its project.
+        fs::write(stage.join("fonts/face.otf"), bytes).unwrap();
+        fs::write(stage.join("fonts/manifest.json"), bytes).unwrap();
         inputs.extend(
             scoped_aep_inputs(
                 scope,
@@ -20,6 +24,8 @@ fn scoped_aep_packages_keep_colliding_local_names_separate() {
                 &[
                     Artifact::project("project.aep"),
                     Artifact::media("media/picture.png"),
+                    Artifact::media("fonts/face.otf"),
+                    Artifact::media("fonts/manifest.json"),
                 ],
             )
             .unwrap(),
@@ -28,16 +34,18 @@ fn scoped_aep_packages_keep_colliding_local_names_separate() {
     let assembly = root.path().join("assembly");
     fs::create_dir(&assembly).unwrap();
     let artifacts = assemble(&assembly, &inputs).unwrap();
-    assert_eq!(artifacts.len(), 4);
+    assert_eq!(artifacts.len(), 8);
     for (scope, bytes) in [(1, b"first".as_slice()), (2, b"second".as_slice())] {
         assert_eq!(
             fs::read(assembly.join(scoped_aep_path(scope).unwrap())).unwrap(),
             bytes
         );
-        assert_eq!(
-            fs::read(assembly.join(format!("media/ae-{scope:04}/media/picture.png"))).unwrap(),
-            bytes
-        );
+        for local in ["media/picture.png", "fonts/face.otf", "fonts/manifest.json"] {
+            assert_eq!(
+                fs::read(assembly.join(format!("media/ae-{scope:04}/{local}"))).unwrap(),
+                bytes
+            );
+        }
     }
 }
 
@@ -74,6 +82,7 @@ fn scoped_aep_manifest_rejects_missing_multiple_and_escaping_projects() {
             Artifact::project("project.aep"),
             Artifact::media("other/picture.png"),
         ],
+        vec![Artifact::project("project.aep"), Artifact::media("fonts")],
         vec![
             Artifact::project("project.aep"),
             Artifact::media("media/CON.png"),

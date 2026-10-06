@@ -1,15 +1,166 @@
 # After Effects native file adapter
 
+## Guide-free export preparation
+
+Documents without cross-layer mask guides or Text Path references skip the
+speculative full native-lowering pass used to collect consumed guide IDs.
+Inline masks still receive ordinary lowering and validation; any guide reference,
+including a hidden or unresolved one, retains the existing probe. Script sampling,
+fresh-runtime validation, generated output and diagnostics are unchanged.
+
+## Oversized source viewport export
+
+An otherwise valid Group whose all-time geometry overflows the native
+composition dimensions is no longer omitted. On that precise overflow only, every
+AEP export retries with a finite output-derived working plane using existing
+planar inverse demand and native source-origin/camera handling. Editable native children,
+effects, clocks and animation are retained; an already checked native source
+clock also remains the retry's demand time domain. Rescued Group Radial Blur
+centers/base and Point keys retain the logical FX composition point domain under
+source-origin translation, rather than being retargeted to the cropped canvas.
+Offscreen blur/motion-blur boundary contributions may differ. Known reach is
+preserved; unproved approved blur reach is not guessed. Unsafe geometry, clocks,
+ownership and unknown bounds remain rejected. Representable/collapsed export and
+import are unchanged. There is no option or CLI flag. See the
+[approximation and proof ledger](../../docs/after-effects-support.md#oversized-native-source-working-plane-approximation).
+Native open/readback and RGB/alpha fidelity are unverified.
+
+## Saved graphic Text-controller decoding
+
+`graphic_template::SavedGraphicTemplate` binds a declared Essential Graphics
+UUID to its explicit native composition/layer and by-name Source Text path.
+Static single-style text snapshots reuse the ordinary AEP Source Text decoder;
+current saved text/font/size/All Caps values can be applied independently without
+changing the source or siblings. Missing/duplicate bindings and unsupported paths,
+keyed/mixed-style documents or invalid values reject instead of choosing by name.
+`editable_layers` feeds the existing Premiere Source Graphic seam in native
+(top-to-bottom) layer order, using ordinary Text/Shape decoders and static native
+parenting. A bounded Rectangle layout recipe estimates current glyph width from
+source-average cached extent, with explicit missing-Slider and fidelity warnings.
+It does not restore responsive controllers, stage an AEP or emit scripts. Ordinary
+AEP import/export and the merged numeric-expression evaluator are unchanged.
+See the [Premiere capsule limits](../premiere_file/README.md#saved-ae-capsule-graphics).
+
+## Alpha stack transfer import
+
+Full-composition ordinary Stencil Alpha / Silhouette Alpha sources now consume
+source paint and mask the accumulated lower siblings using existing editable
+Alpha / AlphaInverted TrackMattes. Identity wrappers retain source IDs, animation
+targets, clocks and upper siblings. This is a stack operation, not a new FX blend
+mode or a source-colored overlay. Partial-span sources, Adjustment sources,
+Preserve Underlying Transparency dependencies and restructuring/depth conflicts
+retain contextual fallback diagnostics. Non-rendering Null/helper kinds and
+sources already diagnosed as placeholders are skipped with a contextual reason,
+leaving the lower stack unchanged. Raster eligibility does not depend on opacity
+or nonempty children; valid transparent/empty raster precomps remain supported.
+Luma stencil/silhouette remain unsupported;
+current inverted-luma masking is not a full luminance complement.
+
+Licensed cases01–03 exercise the real CLI publication route through explicit
+`AEP_ALPHA_STACK_CASE{01,02,03}_SOURCE` environment variables and exact hashes.
+They are opt-in CPU structural regressions, not Adobe/alpha/RGB fidelity proof.
+FX → AEP behavior is unchanged. See the support ledger's alpha-stack checkpoint.
+
+## Archive-backed native font identity
+
+FX → AEP staging now carries an ephemeral embedded-font context into Source Text
+lowering. A unique physical family/style (or exact empty-style PostScript request)
+is matched through archive face metadata; hash-verified bytes and face index must
+confirm the PostScript name. Actual `glyf` versus `CFF ` tables select native `/2`
+values 1 versus 0, established on independent AE26.5 native controls with
+non-substitute font-object type/location readback and verified font bytes.
+Missing, ambiguous, mismatched, variable or unknown/CFF2 faces retain the previous
+candidate with a contextual diagnostic and no guessed format. No system font
+lookup/install, renderer/schema change, vendor-version guess or substitution is
+performed. Correct identity does not establish host font availability/fidelity.
+Import is unchanged. See the [proof/limitation ledger](../../docs/after-effects-support.md#archive-backed-source-text-font-identity-and-outline-format).
+
+## Embedded font package delivery
+
+FX → AEP packages include hash-verified embedded physical font files used by the
+final exported Text documents (including Hold font changes and nested compositions)
+in `fonts/`, byte-for-byte, with `fonts/manifest.json` listing file, family, style,
+PostScript name and SHA-256. Unused embedded faces are not copied. Collection files
+remain intact. The conversion diagnostic requires installing these fonts before
+opening/rendering in After Effects: this transport folder does not activate fonts.
+Redistribution remains subject to the font licenses. Import is unchanged; packaging
+does not establish font availability or pixel fidelity.
+
+## Emitted Point Text bounds
+
+The bounds-only physical-font projection consumes the same Source Text documents
+as native lowering. Already-omitted continuous Tracking/FillColor remain diagnosed
+static-base approximations; supported Hold Tracking uses the emitted outline union.
+Unpainted whitespace contributes no enclosure but stays native editable Text.
+Three actual-case camera/Text profiles and a Tracking-edited minimal pair have
+bounded native acceptance and edit response. Candidate RGB scores, full-timeline
+clipping, general shaping/font-substitution, alpha/audio and formal Asset proof
+remain incomplete. CustomShader stays unsupported. A static zero-spread Group
+Drop Shadow can now use the font projection, enclosing its offset shadow by AE
+Size (`2 * FX blurRadius`) before the owner transform, including native 3D owners.
+Other effect/spatial and native clock/near-plane guards remain unchanged. P037
+Group810 is retained. Native Drop Shadow numeric descriptors now match the
+independent oracle; Size/distance edits survive native save/reopen with all 60
+editable children retained. This is not a whole-case visual pass. Import is unchanged. See the
+[checkpoint](../../docs/after-effects-support.md#emitted-point-text-bounds-and-unpainted-whitespace--export-checkpoint).
+
 Rust-owned bounded RIFX/AEP reader, best-effort **AEP → editable FX** import, and
 experimental **edited FX → new AEP** export. The exporter writes current FX
-content (including layer-local scalar/ShapePath-JS-to-editable-keys preparation
+content (including layer-local scalar/ShapePath/Source-Text-JS-to-editable-keys preparation
 with redundant-sample reduction and fresh playback validation); it does **not** patch or replay the source AEP. Import never generates
 `JsScript`. Native Shape/Mask Path keys have a bounded editable mapping in both
  directions; see [the Path-key evidence and limitations](../../docs/after-effects-support.md#native-shape-and-mask-path-keys).
+A bounded experimental Box Source Text writer uses independent native default
+records while replacing typed content/style/geometry/holds; it preserves native
+COS scalar token types and class-header order. **Bounded static and two-Hold
+cases with explicit ArialMT passed Adobe open/render and cleanup/READY. Full
+project acceptance remains blocked:** a freshly generated original-project AEP
+still produced a Text-reading error and failed cleanup verification under the
+previous lifecycle. Current recovery verifies owned cleanup and fresh READY;
+there is no manual-unlock latch or replay of the failed input. The proposed
+Arial-to-ArialMT alias was withdrawn: no actual FX fallback/custom-font resolution
+or requested font binary had been verified. This follow-up adds no font-name
+aliases. Archive-free candidate-name lowering remains diagnosed;
+its output is not proof of the user's actual resolved typeface. The template's
+Myriad-Roman/Helvetica/AdobeInvisFont defaults have not been validated against FX
+fallback/custom fonts. Box Text now omits inherited glyph/line caches and unknown
+font vendor metadata, using native nonempty automatic-leading storage (0.01).
+P047's 17 Box and 4 Point original text semantics have fresh native acceptance
+and exact text/font/size readback; full-project/render proof remains separate. Default-options Point Text
+now uses a separate cache-free native semantic profile, with generic font-changing
+Hold indices and automatic-leading native defaults. Matched static Arial64/48
+native renders and an unchanged P025 Text probe pass. Unknown per-font vendor
+version is omitted rather than copied from Arial; fresh native Arial48 still
+exactly matches its control. Actual VT323 resolution is unproved: an independently
+authored reference fails missing-font admission despite generated strict receipts
+reporting none. Native Text-control/fontObject readback, immutable references and
+general/richer-owner fidelity remain incomplete.
+Nondefault anchor/path/animators now retain the complete native Source Text envelope and editable sibling groups. Native numeric-control descriptor/bound envelopes and value-before-bounds ordering preserve authored values/keys; fresh P013 animator-only export has bounded native acceptance/cleanup/READY. Full-project render/SBS, exact selector/key readback and general fidelity remain separately measured proof requirements. See the [profile limitations](src/writer/native_text/README.md) and
+[partial evidence ledger](../../docs/after-effects-support.md#deep-blue-v13-destination-media-and-typed-text-export-repair--partial).
+AEP→FX implementation/proof is unchanged by this export-only follow-up.
+
 Missing features and
 approximations carry contextual diagnostics, but success or `--check` does not
 mean that all pixels, alpha, audio or native controls were preserved. Run only
 trusted scripts with external resource limits; VM bounds are not isolation.
+
+FX script export uses a single owner-local 4× output-FPS sampling grid, rounded
+to integer milliseconds and including both endpoints, for evaluation and fresh
+validation. This replaces the former 1ms policy; no opt-in flag or legacy mode
+remains. Scalar fitting uses Linear/Hold keys, text changes become editable Hold Source
+Text keys, and Path fitting keeps the existing 0.01 geometry-space tolerance on
+the sampled grid. Unsampled pulses,
+topology/state changes and motion-blur fidelity are not guaranteed; a warning
+identifies this approximation. This also applies to linked AEP scopes in Premiere
+export, not native Premiere script preparation.
+Independent tracks fit in bounded two-thread batches with separate fit/fresh VMs.
+Key IDs (including failed Text reservations), diagnostics, progress and working-copy
+updates are committed in source order; all workers finish before document validation.
+Console writes also retain source order and synchronous I/O errors, so console-heavy
+tracks can serialize. This adds no VM deadline or resource isolation: nonterminating
+scripts still require external supervision, and wall-clock/random script behavior is
+not made deterministic by parallel fitting. Sampling and fidelity limits are unchanged.
+See the [performance evidence and limits](../../docs/after-effects-support.md#frame-rate-sampled-fx-script-baking--export-performance).
 
 ## Video admission and explicit media preparation
 
@@ -21,7 +172,12 @@ it never decodes or transcodes media. The separate
 [preparation workflow](../../docs/media-preparation.md) owns explicit transcoding.
 Building with `default-features = false` avoids native FFmpeg linkage but makes
 video admission return an explicit unavailable-backend error. Independent Adobe/render,
-alpha/color/audio proof for this workflow remains unmeasured; export is unchanged.
+alpha/color/audio proof for this import workflow remains unmeasured.
+
+Hybrid Premiere export can separately prepare unsupported selected video sources,
+retain exact source durations, write held source clocks as enabled Time Remap keys,
+and bound short affine Group geometry over visited time. Ordinary admission and
+native Premiere fallback remain intact. See the [linked-picture implementation and limits](../../docs/after-effects-support.md#linked-picture-destination-media-and-source-clocks).
 
 ## PSD image import (bounded subset)
 
@@ -36,11 +192,41 @@ produce contextual omissions rather than a whole-image substitution. Existing
 AE layer controls remain editable; Photoshop internals do not. Embedded color
 profiles are not converted, with an explicit approximation diagnostic.
 
-This is the user-approved **PSD import-only** increment. PDF-compatible AI and
-PNG/PSD → fresh AEP export are deferred. Native author/readback and local Adobe
+This was a **PSD import-only** increment. PDF-compatible AI and PSD → fresh AEP
+export remain deferred. A later bounded JPEG/PNG → EXR preparation on FX → AEP
+export is documented in the [support ledger](../../docs/after-effects-support.md#deep-blue-v13-destination-media-and-typed-text-export-repair--partial);
+it does not reconstruct Photoshop internals or prove Adobe image/alpha fidelity. Native author/readback and local Adobe
 30fps renders exist for two pinned cases; Asset publication and fresh FX-render
 comparison are incomplete, and alpha fidelity is unverified. See the
 [support/evidence ledger](../../docs/after-effects-support.md#psd-footage-import).
+
+## Explicit font availability on AEP import
+
+`AfterEffectsImportOptions.available_fonts` optionally supplies an authoritative
+set of available **PostScript face names**. CLI callers use
+`--available-fonts /path/to/fonts.json`, where the file is a JSON array, for example
+`["Inter-Regular", "Inter-BoldItalic", "AuthorFace-Regular"]`.
+
+A font absent from that explicit inventory is replaced in the editable document
+by a same-style Inter PostScript face when listed, otherwise `Inter-Regular`.
+The original authored name and replacement are retained in an `AE-PROPERTIES`
+warning; glyph metrics, shaping and layout can change. This applies to static
+Text and Source Text hold values, including Basic Text's authoritative face.
+No inventory means **no new font rewriting or fallback warnings**. An explicit
+empty array means no source face is available. Found faces remain unchanged.
+
+This is a declaration of availability, not a filesystem/system-font probe or
+font download. It does not package binaries: stage/import the selected font
+bytes separately before rendering. If even Inter-Regular is absent from the
+inventory, the warning explicitly reports that additional rendering requirement.
+There are no font-name-specific mappings or new aliases, and no FX schema or
+renderer changes. FX → AEP behavior is unchanged; a substituted document names
+Inter, not the original native face. Native glyph/render fidelity is unmeasured.
+
+```sh
+tsrct-conv convert source.aep --to tesseract --composition 1 \
+  --available-fonts fonts.json --output imported
+```
 
 ## Optional Adobe expression-sample import
 
@@ -48,8 +234,12 @@ Normal AEP import remains Rust-only and Adobe-free. Import can optionally consum
 numeric Transform and ordinary Effect Parade expression samples captured separately
 in Adobe and bound to the exact source SHA-256. Adobe capture orchestration is
 outside this public workspace; import fits supplied samples into existing editable
-scalar keys. The converter does not evaluate expression source, generate `JsScript`, or
-emit one key per sample.
+scalar keys. The converter also evaluates a closed, deterministic numeric subset
+for direct layer Transform/ordinary Effect targets after occurrence-local Essential
+overrides. Converter observations use the composition FPS and the same fitting path;
+they are not Adobe evidence. It never generates `JsScript` or emits one key per
+sample. See [admission, validation and pending native proof](../../docs/ae-expression-evaluation.md).
+Unsupported source retains contextual diagnostics and the existing fallback.
 
 ```sh
 tsrct-conv convert /path/to/source.aep --to tesseract \
@@ -67,9 +257,16 @@ affine reachable graph and rejects reachable Time Remap edges. The temporary
 clock property and all of its scratch items are removed before source expressions
 are evaluated. The Adobe capture helper retains its own execution bounds
 (60s/property, 250,000 total value-vectors, 4,096 records and 128MiB JSON).
-The Rust sidecar importer no longer imposes those JSON/record/sample quotas;
-source binding, scope, clock order and finite-value validation remain. Shape/Mask subtrees, Layer Styles and nested effect parameters
-are outside this helper's sampled-property surface and are reported separately.
+Legacy v1/v2 Rust sidecar readers retain their prior quota-free behavior;
+source binding, scope, clock order and finite-value validation remain. Explicit
+version 3 adds numeric Shape measurement identities with a root-anchored ordered
+`path` of `{index, match_name}` segments, including native Contents and leaf.
+One-based native indices qualify repeated groups. Paths require 2..64 segments
+and 1..1024 UTF-8-byte match names. Shape records are rejected in v1/v2; v3 retains
+v2 scopes/clocks and enforces the fixed capture quotas. Ordinary-only captures
+remain v2. This parser support does **not** add Shape-to-FX lowering or feature
+export; these measurements require an explicit destination consumer. Path
+geometry/masks, Layer Styles and nested effect parameters remain excluded.
 Adobe may show a project-conversion prompt that requires manual acknowledgement.
 A helper timeout does not cancel the native AE operation: inspect AE and the
 receipt before retrying, and never start a concurrent blind retry.
@@ -84,7 +281,12 @@ sidecar are public regression fixtures.
 ## PDF-compatible Illustrator footage import
 
 A reached local `.ai` still source whose bytes begin with `%PDF-` can be lowered
-into existing editable FX `Shape` layers. The first increment intentionally uses
+into existing editable FX `Shape` layers. Foreign absolute Windows image/video/audio
+paths may resolve from exact native relative alias counts; foreign AI images also
+use the exact adjacent collected-footage hierarchy. Neither route guesses paths
+or relaxes artwork admission. Gateway's pinned AI artwork resolves but remains
+unsupported because of optional visibility and the restricted paint profile;
+path resolution alone does not restore its panels. The first increment intentionally uses
 a restricted, strict, single-page whole-artwork profile: classic xref only, no
 encryption, no optional-content/Illustrator layer selection, no differing
 CropBox, and validated source/object/stream/operator/path/Form structure. It maps
@@ -163,6 +365,14 @@ See the [CLI reference](../../apps/tesseract-conv/README.md) for argument and
 publication details. Native Adobe reference rendering, imported-FX rendering and
 FX→AEP export are separate operations with separate proof requirements.
 
+Bounded Time Remap export accepts keys aligned with the visible endpoints and
+authors them using the selected composition property clock. Inexact millisecond
+times round to the nearest native tick with a diagnostic; an inward-rounded final
+endpoint receives a same-value Hold guard outside the visible interval. Source
+bounds, active in/out points and media admission remain unchanged. Native export
+control/render proof for this timing repair is unrun; see the
+[timing repair and limitations](../../docs/after-effects-support.md#native-time-remap-endpoint-and-selected-clock-export-repair).
+
 ## Generation-time project digest
 
 Both staged handles expose `generated_project_sha256()` from the writer's exact
@@ -198,7 +408,27 @@ private tree when dropped. A coordinator must preserve that relative layout,
 validate safe scope extraction, and publish its complete package separately.
 This API does not partition FX, launch Adobe, or change native-only CLI defaults.
 Check and Write use the same lowering/preparation path (including temporary file
-writes); only Write publishes final files.
+writes). Only ordinary Write binds generated file aliases to canonical final
+package media paths before hashing/publication, retaining native relative
+relocation hints; Check and public staging keep portable relative aliases.
+The borrowed progress observer reports `prepare AEP media` in deduplicated asset
+units on ordinary and selected-picture staging, starting at 0/N and advancing
+after each prepared, diagnostically omitted or scope-withheld asset. Failed assets are not counted. These counts do not imply conversion success
+or fidelity. The opt-in `stage_document_with_control`,
+`stage_picture_only_document_with_control` and `stage_picture_layers_with_control`
+accept `AepPreparationControl { progress, cancelled: Some(&token) }`, borrowing a
+caller-owned `AtomicBool`. Set it to true and leave it set until the call returns.
+Cancellation returns `AepConversionError::Cancelled`, never an omission warning or
+successful fallback, and drops the private stage/cache while preserving foreign
+paths. Checks run before preparation, between assets, before reporting each asset,
+and around native writing; MP3 and selected-video transcoding receive the same token.
+Synchronous script preparation, image decoding and native writing are not interrupted
+mid-operation. Existing entry points remain uncancelled wrappers with unchanged
+progress/output behavior. Within-asset progress and CLI/hybrid cancellation
+threading remain separate integration work.
+File-footage Anchor XY is stored source-relative, as for Solids, after source
+geometry/clock rebasing; native static repair evidence and keyed-anchor proof
+limitations are recorded in the [support ledger](../../docs/after-effects-support.md#fresh-write-export-repair-and-remaining-limitations).
 
 `root_composition()` returns the emitted root's name, numeric ID, canvas and
 rounded native rate/duration. Its Dynamic Link GUID is limited to the current
@@ -235,9 +465,18 @@ sources, and requires a relinked source's authored path to stay missing) and,
 once written, `verify_packaged` (compares packaged footage digests).
 
 The experimental identity profiles are deliberately restricted to the observed
-AE26.5x89 macOS and AE26.3x87 `head` revision/subtype/producer words, whose native
-GUID-to-item evidence is public (H-IDENTITY-01) and private respectively, and to
-the nonzero item-ID/zero-suffix GUID layout. Unknown profiles, GUID layouts,
+AE26.5x89 macOS, AE26.3x87 and Co-Editor format96/subtype6 `head`
+revision/subtype/producer pairs, and to the nonzero item-ID/zero-suffix GUID layout.
+The first two have public (H-IDENTITY-01) and private native identity evidence
+respectively. The third is exactly `[0,96,0,6]` / `0x0f8a0656`:
+[reduced native-derived evidence](tests/fixtures/hybrid/format96/provenance.json)
+pins five Premiere GUIDs to the source AEP's item IDs/names. The reduced fixture
+also keeps opening video53/layer54 with its native video metadata and a missing
+path. `native_format96_links_keep_all_five_editable_pictures_with_missing_footage`
+exercises public Premiere Check/Write and the host admission gate: editable
+title/solid siblings survive genuinely missing linked footage with contextual
+diagnostics; no missing-media slate is synthesized. Invalid present linked video
+remains fatal. This is offline structural evidence, not render fidelity. Unknown profiles, GUID layouts,
 absent/non-composition IDs and unsafe structural identities fail explicitly; there
 is no name/root fallback. Ordinary numeric-ID import is unchanged and does not
 acquire this producer restriction. No Adobe installation is needed at conversion
@@ -409,3 +648,17 @@ premultiplied-over halo composition. Native threshold extraction, alpha and
 blur-kernel behavior are not established. No new Glow implementation or full
 neon-title parity is claimed. Mixed shadow/matte
 Wipe stacks remain outside the isolated Solid Wipe profile above.
+
+File-footage import now normalizes explicit Anchor XY by native source dimensions,
+using the same path as Solid/Composition anchors, while omitted anchors retain
+the existing pixel-center default. Export is unchanged. See the
+[import-only evidence and limits](../../docs/after-effects-support.md#file-footage-anchor-source-units--import-correction).
+
+### Bounded Set Matte Red graph
+
+A pinned static premultiplied Red Set Matte source now imports as an editable
+provider copy over black, public own/off ShiftChannels plus HSV desaturation,
+and a Luma gate. Native bypass preserves the original picture; current graph
+edits export through native effects and track mattes, not Set Matte replay.
+Native exported grayscale/alpha transfer differs and is unmeasured. See the
+[bidirectional evidence and limitations](../../docs/after-effects-support.md#set-matte-premultiplied-red--bounded-editable-graph).

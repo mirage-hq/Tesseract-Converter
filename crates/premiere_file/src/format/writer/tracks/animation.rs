@@ -422,7 +422,11 @@ pub(super) fn linear_wipe_records(wipe: &PrLinearWipe, ids: &LinearWipeIds) -> R
             parameter_control_type: Some("2".to_owned()),
             start_keyframe: scalar_start_keyframe(initial),
             current_value: None,
-            keyframes: Some(scalar_keyframes(&wipe.completion)?),
+            keyframes: if wipe.completion.is_empty() {
+                None
+            } else {
+                Some(scalar_keyframes(&wipe.completion)?)
+            },
             lower_bound: Some("0".to_owned()),
             upper_bound: Some("100".to_owned()),
             parameter_id: "1".to_owned(),

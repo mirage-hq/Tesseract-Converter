@@ -214,6 +214,8 @@ macro_rules! define_effect_payload_schema {
             /// Reader-only canonical primary grade. The payload fixes ten bounded
             /// controls, their operation order, SDR encoding, and straight-alpha math.
             PrimaryGrade(crate::PrimaryGrade),
+            /// Jerboa SDR tonal color v1, not vendor LGG/Offset.
+            TonalColor(crate::TonalColor),
             /// Reader-only, versioned Master/RGB curves in normalized display-referred SDR.
             /// Version 1 uses piecewise-linear interpolation on straight RGB, evaluates
             /// Master before the per-channel curves, and preserves alpha.

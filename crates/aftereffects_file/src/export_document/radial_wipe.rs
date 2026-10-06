@@ -6,7 +6,7 @@ mod proof_tests;
 mod tests;
 use fx_schema::{
     GroupLayer, LayerData, LayerId, Position, PropType, PropertyValue, ShapePathCommand, Time,
-    Transform, animator::AnimationGraphEntry, layer::MaskMode,
+    Transform, layer::MaskMode,
 };
 
 use super::{NativeTrack, scalar_track, track};
@@ -91,7 +91,7 @@ fn child_masks_reference(layers: &[fx_schema::Layer], guide: LayerId) -> bool {
 /// Rejected shapes continue through the ordinary mask lowering unchanged.
 pub(super) fn recognize(
     group: &GroupLayer,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     composition_end: Time,
 ) -> Result<Option<Candidate>, &'static str> {
     let [mask] = group.masks.as_slice() else {

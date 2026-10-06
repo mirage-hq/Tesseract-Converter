@@ -15,52 +15,6 @@ var amnt = easeOut(time, s.key(1).time, s.key(2).time, 1, 0);
 p.valueAtTime(time - amnt * d);
 "#;
 
-#[test]
-#[ignore = "requires local licensed AEP_DELAYED_POSITION_SOURCE, which cannot be redistributed"]
-fn local_external_source_restores_displaced_circle_and_neighbors() {
-    use sha2::{Digest, Sha256};
-    let bytes = std::fs::read(
-        std::env::var_os("AEP_DELAYED_POSITION_SOURCE").expect("local licensed source path"),
-    )
-    .unwrap();
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&bytes)),
-        "28bbce1b8c9f9625105d632504a97c598394a4753d6b0d923fb19942e302bb5d"
-    );
-    let project = read_project(&bytes).unwrap();
-    let ItemKind::Composition(comp) = &project.item(873).unwrap().kind else {
-        panic!("composition 873")
-    };
-    for id in [885, 882, 883] {
-        let owner = comp
-            .layers
-            .iter()
-            .find(|layer| layer.record.id() == id)
-            .unwrap();
-        let (properties, warnings) = control_links::read_layer_transform(owner, comp).unwrap();
-        let numeric = properties
-            .iter()
-            .find(|p| p.match_name == "ADBE Position")
-            .unwrap()
-            .numeric
-            .as_ref()
-            .unwrap();
-        assert!(!numeric.expression_enabled, "{id}: {warnings:?}");
-        assert!(!numeric.keyframes.is_empty() && numeric.keyframes.len() <= 128);
-        assert!(
-            numeric
-                .keyframes
-                .iter()
-                .all(|key| (key.values[0] - 1920.0).abs() < 1e-9)
-        );
-        eprintln!(
-            "native873/{id}: {} editable Position keys, first={:?}",
-            numeric.keyframes.len(),
-            numeric.keyframes[0].values
-        );
-    }
-}
-
 fn fixture_layer(file: &[u8]) -> (Layer, Composition) {
     let project = read_project(file).unwrap();
     let composition = project
@@ -352,4 +306,25 @@ fn nonzero_spatial_tangents_and_equal_endpoint_speed_are_rejected() {
     assert!(native_progress(&source.keyframes[0], &source.keyframes[1], 1, 1.0, 0.5).is_err());
     source.keyframes[0].spatial_out[0] = 1.0;
     assert!(validate_source(&source, 2).is_err());
+}
+
+#[test]
+fn ease_out_follows_ae_hermite_measured_values() {
+    // AE 26.5 `easeOut(t, 0, 1, 0, 1)` readback; the previous Bezier
+    // (0.167,0.167,0.667,1) approximation gave 0.637 at 0.5.
+    for (progress, expected) in [
+        (0.1, 0.109),
+        (0.2, 0.232),
+        (0.3, 0.363),
+        (0.4, 0.496),
+        (0.5, 0.625),
+    ] {
+        let actual = super::ease_out(progress, 0.0, 1.0, 0.0, 1.0);
+        assert!(
+            (actual - expected).abs() < 5e-4,
+            "{progress}: {actual} != {expected}"
+        );
+    }
+    assert_eq!(super::ease_out(-1.0, 0.0, 1.0, 2.0, 4.0), 2.0);
+    assert_eq!(super::ease_out(2.0, 0.0, 1.0, 2.0, 4.0), 4.0);
 }

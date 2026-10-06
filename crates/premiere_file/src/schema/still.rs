@@ -2,15 +2,19 @@
 //!
 //! Premiere gives a still no media clock: its `VideoStream` carries `IsStill`
 //! and, on every still in the corpus, a synthetic twelve-hour `Duration`; its
-//! `Media` record is `Infinite`. A placement's source range lasts as long as the
-//! placement itself. It starts one hour into that clock, rounded down to a
+//! `Media` record is `Infinite`. A new placement's source range lasts as long
+//! as the placement itself; a saved one may keep another span, which shows the
+//! same picture. It starts one hour into that clock, rounded down to a
 //! frame of the sequence rate
 //! ([`FrameRate::generator_in_ticks`](super::FrameRate::generator_in_ticks)):
 //! all 104 still placements of the 30 fps `corporate_slideshow` (93 of them on
 //! still streams with `FrameRate` 8467200000) have `InPoint`
 //! 914457600000000, and its still master clips span 0–5 s. The 29.97 fps
 //! `stills_and_panorama` and `phone_title` start stills at 914456685542400
-//! (107 892 frames).
+//! (107 892 frames). Premiere 26.5.1 can also keep a still's 5 s span on a
+//! placement of another length: both shortening and lengthening convert at
+//! unit forward rate; lengthening uses checked In plus placement duration
+//! for the media-end bound. Other rates keep the source-span rule ([`PrVideoOccurrence::validate`](super::PrVideoOccurrence::validate)).
 
 use super::{HdrProfile, PrAfterEffectsComposition, PrColorMatte, VideoCodec, TICKS};
 
@@ -34,6 +38,9 @@ pub(crate) enum PrMediaKind {
     /// records no alpha fact, so export takes it from the inspected packaged
     /// image.
     Still { alpha: bool },
+    /// Consecutive numbered image files on the stream's finite source clock.
+    /// The linked filename supplies the first number; Duration/FrameRate the count.
+    NumberedStills { alpha: bool },
     /// Editable AEP-backed source; never inspect it as an ordinary video file.
     AfterEffectsComposition(PrAfterEffectsComposition),
     /// Generator media with no file, paths or asset (`schema/color_matte.rs`).

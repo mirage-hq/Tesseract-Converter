@@ -11,6 +11,280 @@ use std::collections::BTreeMap;
 
 use crate::writer::{NativeMaskMode, NativeMaskSpec};
 
+#[test]
+fn animated_text_path_guide_retains_edited_cubic_keys() {
+    let value: Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/text/animated_path/input.json"
+    ))
+    .unwrap();
+    let document = EditableFxCompositionDocument::from_json_value(value.clone()).unwrap();
+    let layers = document.composition().layers();
+    let LayerData::Text(text) = layers[0].data() else {
+        panic!("explicit Text input");
+    };
+    let dynamics = AnimationIndex::new(document.composition().dynamics().entries());
+    let lower = |layers: &[Layer]| {
+        masks::lower(
+            &[],
+            text.path_options.as_ref(),
+            masks::MaskOwner {
+                coordinate_owner: Some(text.id),
+                parent: None,
+                transform: &text.transform,
+                source_size: [640, 360],
+                clock: Some(layers[0].active_range()),
+            },
+            layers,
+            &dynamics,
+        )
+    };
+    let lowered = lower(layers);
+    assert_eq!(
+        lowered.text_path_index,
+        Some(1),
+        "{:?}",
+        lowered.diagnostics
+    );
+    let track = lowered.masks[0].path_track.as_ref().unwrap();
+    assert_eq!(track.keyframes.len(), 2);
+    assert_eq!(track.keyframes[0].time_millis, 0);
+    assert_eq!(track.keyframes[1].time_millis, 1000);
+    let LayerData::Shape(guide) = layers[1].data() else {
+        panic!("explicit Shape guide");
+    };
+    assert_eq!(track.keyframes[0].path, guide.shape.path);
+    for key in &track.keyframes {
+        assert_eq!(key.path.commands.len(), 3);
+        assert!(matches!(
+            key.path.commands[1],
+            fx_schema::ShapePathCommand::CubicTo { .. }
+        ));
+        assert!(matches!(
+            key.path.commands[2],
+            fx_schema::ShapePathCommand::CubicTo { .. }
+        ));
+    }
+    assert_eq!(
+        track.keyframes[0].path.commands[0].endpoint(),
+        Some((80.0, 160.0))
+    );
+    assert_eq!(
+        track.keyframes[1].path.commands[0].endpoint(),
+        Some((80.0, 240.0))
+    );
+    let mut wrong_clock = value.clone();
+    wrong_clock["composition"]["layers"][1]["activeRange"]["start"] = json!(100);
+    let wrong_clock = EditableFxCompositionDocument::from_json_value(wrong_clock).unwrap();
+    let rejected = lower(wrong_clock.composition().layers());
+    assert_eq!(rejected.text_path_index, None);
+    assert!(
+        rejected
+            .diagnostics
+            .iter()
+            .any(|message| message.contains("clocks are not proven equivalent"))
+    );
+    let mut edited_value = value;
+    edited_value["composition"]["layers"][1]["transform"]["position"] = json!([15.0, -5.0]);
+    let edited_document = EditableFxCompositionDocument::from_json_value(edited_value).unwrap();
+    let edited = lower(edited_document.composition().layers());
+    assert_eq!(
+        edited.masks[0].path_track.as_ref().unwrap().keyframes[1]
+            .path
+            .commands[0]
+            .endpoint(),
+        Some((95.0, 235.0))
+    );
+}
+
+#[derive(Clone, Debug)]
+struct TextPathGeometry {
+    bounds: [f64; 4],
+    points: Vec<[f64; 2]>,
+}
+
+fn text_path_property<'a>(
+    chunks: &'a [crate::rifx::Chunk],
+    name: &str,
+) -> &'a [crate::rifx::Chunk] {
+    fn find<'a>(chunks: &'a [crate::rifx::Chunk], name: &str) -> Option<&'a [crate::rifx::Chunk]> {
+        if let Ok(properties) = crate::properties::runs(chunks)
+            && let Some((_, run)) = properties.into_iter().find(|(current, _)| *current == name)
+        {
+            return Some(run);
+        }
+        chunks
+            .iter()
+            .find_map(|chunk| find(chunk.children()?, name))
+    }
+    find(chunks, name).expect("named native Text Path control")
+}
+
+fn text_path_keys(layer: &crate::structure::Layer) -> (Vec<f64>, Vec<TextPathGeometry>) {
+    use crate::properties::{data, read_path_metadata, unique_list};
+    let path = text_path_property(&layer.content, "ADBE Mask Shape");
+    let path = unique_list(path, *b"om-s").unwrap();
+    let metadata = read_path_metadata(unique_list(path, *b"tdbs").unwrap()).unwrap();
+    let times = metadata.keyframes.iter().map(|key| key.time_secs).collect();
+    let shapes = unique_list(path, *b"omks").unwrap();
+    let geometry = shapes
+        .iter()
+        .map(|shape| {
+            assert_eq!(shape.list_kind(), Some(*b"shap"));
+            let shape = shape.children().unwrap();
+            let header = data(shape, *b"shph").unwrap();
+            assert_eq!(&header[..4], &[0xb3, 0xde, 2, 9], "open cubic contour");
+            let bounds: [f64; 4] = std::array::from_fn(|axis| {
+                f64::from(f32::from_be_bytes(
+                    header[4 + axis * 4..8 + axis * 4].try_into().unwrap(),
+                ))
+            });
+            let points = data(unique_list(shape, *b"list").unwrap(), *b"ldat").unwrap();
+            assert_eq!(points.len(), 9 * 8, "three complete vertex/control triples");
+            let points = points
+                .chunks_exact(8)
+                .map(|point| {
+                    std::array::from_fn(|axis| {
+                        let normalized = f64::from(f32::from_be_bytes(
+                            point[axis * 4..axis * 4 + 4].try_into().unwrap(),
+                        ));
+                        bounds[axis] + normalized * (bounds[axis + 2] - bounds[axis])
+                    })
+                })
+                .collect();
+            TextPathGeometry { bounds, points }
+        })
+        .collect();
+    (times, geometry)
+}
+
+fn native_text_path_oracle() -> (Vec<f64>, Vec<TextPathGeometry>) {
+    use sha2::{Digest, Sha256};
+    let bytes = include_bytes!("../../../tests/fixtures/text/animated_path/native.aep");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(bytes)),
+        "9479a75522de5368a4a8d7945cc9cb32b34f353ad445d014c04a05ebe82b1010"
+    );
+    let project = read_project(bytes).unwrap();
+    let layer = named_native(&project, "Path text");
+    assert_eq!(layer.record.id(), 13);
+    assert_eq!(layer.record.layer_type(), 3);
+    text_path_keys(layer)
+}
+
+#[test]
+fn native_text_path_fixture_pins_pixel_cubic_keys() {
+    let (times, keys) = native_text_path_oracle();
+    assert_eq!(times, [0.0, 1.0]);
+    assert_eq!(keys.len(), 2);
+    assert_eq!(keys[0].bounds, [80.0, 100.0, 540.0, 160.0]);
+    assert_eq!(keys[1].bounds, [80.0, 180.0, 540.0, 240.0]);
+    let first = [
+        [80.0, 160.0],
+        [140.0, 100.0],
+        [200.0, 100.0],
+        [280.0, 100.0],
+        [360.0, 100.0],
+        [480.0, 100.0],
+        [540.0, 160.0],
+        [540.0, 160.0],
+        [80.0, 160.0],
+    ];
+    for (index, key) in keys.iter().enumerate() {
+        for (actual, point) in key.points.iter().zip(first) {
+            assert!((actual[0] - point[0]).abs() < 0.0001);
+            assert!((actual[1] - point[1] - if index == 0 { 0.0 } else { 80.0 }).abs() < 0.0001);
+        }
+    }
+}
+
+#[test]
+fn text_path_full_export_keeps_native_pixel_keys_across_canvas_and_input_edits() {
+    use crate::properties::{data, read_numeric, unique_list};
+    let input: Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/text/animated_path/input.json"
+    ))
+    .unwrap();
+    let (times, oracle) = native_text_path_oracle();
+    for canvas in [[640, 360], [360, 640], [1279, 513]] {
+        for edit in ["unchanged", "affine", "second key"] {
+            let mut value = input.clone();
+            value["dimensions"] = json!({"width":canvas[0],"height":canvas[1]});
+            let offset = if edit == "affine" {
+                [15.0, -5.0]
+            } else {
+                [0.0; 2]
+            };
+            value["composition"]["layers"][1]["transform"]["position"] = json!(offset);
+            if edit == "second key" {
+                let commands = value["composition"]["dynamics"]["entries"][0]["animator"]["keyframes"][1]["value"]["value"]["commands"].as_array_mut().unwrap();
+                for command in commands {
+                    for name in ["y", "c1y", "c2y"] {
+                        if let Some(y) = command.get_mut(name) {
+                            *y = json!(y.as_f64().unwrap() + 40.0);
+                        }
+                    }
+                }
+            }
+            let document = EditableFxCompositionDocument::from_json_value(value).unwrap();
+            let output = to_aep(&document).unwrap();
+            assert!(
+                !output.omitted_layer_ids.contains(&LayerId::new(10)),
+                "{:?}",
+                output.diagnostics
+            );
+            let project = read_project(&output.bytes).unwrap();
+            let text = named_native(&project, "Path text");
+            assert_eq!(text.record.layer_type(), 3);
+            let (actual_times, keys) = text_path_keys(text);
+            assert_eq!(actual_times, times);
+            assert_eq!(keys.len(), oracle.len());
+            for (index, (actual, expected)) in keys.iter().zip(&oracle).enumerate() {
+                let dy = offset[1]
+                    + if edit == "second key" && index == 1 {
+                        40.0
+                    } else {
+                        0.0
+                    };
+                for axis in 0..4 {
+                    let delta = if axis % 2 == 0 { offset[0] } else { dy };
+                    assert!(
+                        (actual.bounds[axis] - expected.bounds[axis] - delta).abs() < 0.0001,
+                        "{canvas:?}/{edit}/key{index}: {:?} != {:?}",
+                        actual.bounds,
+                        expected.bounds
+                    );
+                }
+                for (point, expected) in actual.points.iter().zip(&expected.points) {
+                    assert!((point[0] - expected[0] - offset[0]).abs() < 0.0001);
+                    assert!((point[1] - expected[1] - dy).abs() < 0.0001);
+                }
+            }
+            let atom = text_path_property(&text.content, "ADBE Mask Atom");
+            let info = data(atom, *b"mkif").unwrap();
+            assert_eq!(&info[6..8], &0_u16.to_be_bytes(), "Mask None");
+            assert_eq!(&info[8..12], &1_u32.to_be_bytes(), "Mask index1");
+            let selection = text_path_property(&text.content, "ADBE Text Path");
+            assert_eq!(
+                read_numeric(unique_list(selection, *b"tdbs").unwrap())
+                    .unwrap()
+                    .values,
+                [1.0],
+                "authored one-based Text Path link; Adobe acceptance is separate"
+            );
+            assert!(
+                !project.items.iter().any(|item| match &item.kind {
+                    ItemKind::Composition(comp) => comp
+                        .layers
+                        .iter()
+                        .any(|layer| layer.name.as_ref() == "Animated guide"),
+                    _ => false,
+                }),
+                "consumed guide must not be separately painted"
+            );
+        }
+    }
+}
+
 fn document(
     mut value: Value,
     layers: Vec<Value>,
@@ -170,14 +444,14 @@ fn pr4442_static_mask_parade_and_text_guide_use_stable_one_based_indices() {
         &[mask],
         Some(&text_path),
         masks::MaskOwner {
-            id: owner.id(),
+            coordinate_owner: Some(owner.id()),
             parent: None,
             transform,
             source_size: [1920, 1080],
             clock: Some(owner.active_range()),
         },
         &[owner.clone(), guide],
-        &[],
+        &crate::export_document::AnimationIndex::new(&[]),
     );
     assert_eq!(lowered.masks.len(), 2);
     assert_eq!(lowered.text_path_index, Some(2));
@@ -196,7 +470,11 @@ fn pr4442_static_mask_parade_and_text_guide_use_stable_one_based_indices() {
 
     let guide = &lowered.masks[1];
     assert_eq!(guide.name, "Text Path Guide");
-    assert_eq!(guide.source_size, [1920, 1080]);
+    assert_eq!(
+        guide.source_size,
+        [1, 1],
+        "Text Path keeps native pixel units"
+    );
     assert_eq!(guide.mode, NativeMaskMode::None);
     assert!(!guide.inverted);
     assert_eq!(guide.feather, [0.0, 0.0]);
@@ -251,7 +529,7 @@ fn review_disabled_group_mask_track_is_clock_independent_effective_constant() {
     enabled.target = fx_schema::PropertyTarget::fx_item(mask.id, "opacity");
     assert!(group_has_dynamic_mask_properties(
         std::slice::from_ref(&mask),
-        std::slice::from_ref(&enabled)
+        &crate::export_document::AnimationIndex::new(std::slice::from_ref(&enabled))
     ));
 
     let mut disabled = enabled;
@@ -269,7 +547,7 @@ fn review_disabled_group_mask_track_is_clock_independent_effective_constant() {
     disabled.animator = fx_schema::animator::PropertyAnimator::from_data(&animator).unwrap();
     assert!(!group_has_dynamic_mask_properties(
         std::slice::from_ref(&mask),
-        &[disabled]
+        &crate::export_document::AnimationIndex::new(&[disabled])
     ));
 }
 
@@ -290,7 +568,7 @@ fn pr4442_masked_precomposition_uses_proven_origin_for_canvas_and_mask_translati
         group,
         Time::from_millis(2000),
         duration,
-        &[],
+        &crate::export_document::AnimationIndex::new(&[]),
         &BTreeMap::new(),
         fx_schema::Dimensions::new(1920, 1080),
     )
@@ -441,7 +719,7 @@ fn pr4442_analytic_bounds_include_temporal_and_spatial_control_hulls() {
     };
     let bounds = hierarchy::all_time_layer_bounds(
         &layer,
-        &[entry],
+        &crate::export_document::AnimationIndex::new(&[entry]),
         &BTreeMap::new(),
         fx_schema::Dimensions::new(1920, 1080),
     )
@@ -475,7 +753,7 @@ fn pr4442_group_source_clock_eligibility_rejects_nonidentity_without_overwriting
         group,
         Time::from_millis(2000),
         crate::timing::Duration24::from_frames(48).unwrap(),
-        &[],
+        &crate::export_document::AnimationIndex::new(&[]),
         &BTreeMap::new(),
         fx_schema::Dimensions::new(1920, 1080),
     );
@@ -533,7 +811,7 @@ fn review_disabled_layout_track_uses_runtime_visible_value() {
     let actual = layout::normalize_group(
         actual_group,
         LayerId::new(7_602),
-        &[disabled],
+        &crate::export_document::AnimationIndex::new(&[disabled]),
         &BTreeMap::new(),
         fx_schema::Dimensions::new(1920, 1080),
     )
@@ -541,11 +819,11 @@ fn review_disabled_layout_track_uses_runtime_visible_value() {
     let expected = layout::normalize_group(
         expected_group,
         LayerId::new(7_602),
-        &[constant_entry(
+        &crate::export_document::AnimationIndex::new(&[constant_entry(
             expected_group.id,
             PropType::PaddingLeft,
             PropertyValue::Float(41.0),
-        )],
+        )]),
         &BTreeMap::new(),
         fx_schema::Dimensions::new(1920, 1080),
     )
@@ -580,7 +858,7 @@ fn pr4442_static_layout_materializes_background_radii_and_aiedit_keeps_explicit_
     let normalized = layout::normalize_group(
         group,
         LayerId::new(762),
-        &[],
+        &crate::export_document::AnimationIndex::new(&[]),
         &BTreeMap::new(),
         fx_schema::Dimensions::new(1920, 1080),
     )
@@ -631,7 +909,7 @@ fn pr4442_stored_3d_orientation_rebases_owner_tracks_and_rejects_cubic_quaternio
         panic!("rect")
     };
     let lowered = transform3d::lower(
-        &[],
+        &crate::export_document::AnimationIndex::new(&[]),
         &rect.transform,
         rect.id,
         transform3d::Native2dGeometry::centered([3.0, 4.0]),
@@ -691,7 +969,7 @@ fn pr4442_stored_3d_orientation_rebases_owner_tracks_and_rejects_cubic_quaternio
         entries.push(entry);
     }
     assert!(
-        matches!(transform3d::lower(&entries, &rect.transform, rect.id, transform3d::Native2dGeometry::IDENTITY), Err(message) if message.contains("cubic quaternion"))
+        matches!(transform3d::lower(&crate::export_document::AnimationIndex::new(&entries), &rect.transform, rect.id, transform3d::Native2dGeometry::IDENTITY), Err(message) if message.contains("cubic quaternion"))
     );
 }
 

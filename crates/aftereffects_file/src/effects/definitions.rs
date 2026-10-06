@@ -1,6 +1,7 @@
 //! Adobe AE 26.5 parameter ABI declarations, not recorded effect instances.
 //! The checked-in registry retains typed `pard` constants and independently
-//! read Adobe UI values; it contains no original layer values or keyframes.
+//! read Adobe UI values or pinned native descriptor defaults (see provenance);
+//! it contains no original layer values or keyframes.
 
 use std::sync::OnceLock;
 
@@ -22,7 +23,7 @@ pub(crate) struct ParameterDefinition {
     pub payload_words: Vec<u32>,
     /// Optional UTF-8 popup choices from the native `pdnm` declaration.
     pub popup: Option<String>,
-    /// Independently read Adobe numeric values; absent for nonnumeric controls.
+    /// Proven numeric defaults in Adobe units; absent for nonnumeric controls.
     pub defaults: Vec<f64>,
     /// Point ABI defaults are relative to the source canvas, not absolute pixels.
     pub point_relative: bool,
@@ -124,7 +125,7 @@ mod tests {
 
     #[test]
     fn canonical_catalog_contains_hidden_root_and_builtin_group() {
-        assert_eq!(registry().len(), 33);
+        assert_eq!(registry().len(), 34);
         let blur = definition("ADBE Gaussian Blur 2").unwrap();
         assert_eq!(blur.parameters.len(), 5);
         assert_eq!(blur.parameters[0].match_name, "ADBE Gaussian Blur 2-0000");
@@ -134,6 +135,50 @@ mod tests {
         assert_eq!(blur.parameters[4].kind, 9);
         assert!(blur.parameters[4].values([120.0, 80.0]).is_none());
         assert!(definition("not an Adobe match name").is_none());
+    }
+
+    #[test]
+    fn invert_catalog_matches_pinned_native_parameter_declarations() {
+        fn parameter<'a>(chunks: &'a [Chunk], target: &str) -> Option<&'a [u8]> {
+            for chunk in chunks {
+                if let Some(children) = chunk.children() {
+                    if chunk.list_kind() == Some(*b"parT") {
+                        for (name, run) in crate::properties::runs(children).ok()? {
+                            if name == target {
+                                return crate::properties::data(run, *b"pard").ok();
+                            }
+                        }
+                    }
+                    if let Some(bytes) = parameter(children, target) {
+                        return Some(bytes);
+                    }
+                }
+            }
+            None
+        }
+        let native = crate::rifx::Rifx::parse_with(
+            include_bytes!("../../tests/fixtures/effects/cosmic-invert-controls.rifx"),
+            |_| false,
+        )
+        .unwrap();
+        let invert = definition("ADBE Invert").unwrap();
+        for control in &invert.parameters {
+            let encoded = encode_parameter(control).unwrap();
+            assert_eq!(
+                encoded.data_payload(),
+                parameter(native.chunks(), &control.match_name)
+            );
+        }
+        assert_eq!(invert.parameters[1].kind, 7);
+        assert_eq!(
+            invert.parameters[1].values([1920.0, 1080.0]),
+            Some(vec![1.0])
+        );
+        assert_eq!(invert.parameters[2].kind, 2);
+        assert_eq!(
+            invert.parameters[2].values([1920.0, 1080.0]),
+            Some(vec![0.0])
+        );
     }
 
     #[test]

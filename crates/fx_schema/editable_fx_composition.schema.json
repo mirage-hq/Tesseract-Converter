@@ -941,6 +941,9 @@
                 "$ref": "#/$defs/JBFXLayerMediaModel"
               },
               {
+                "$ref": "#/$defs/JBFXLayerVideoModel"
+              },
+              {
                 "$ref": "#/$defs/JBFXLayerImageModel"
               },
               {
@@ -953,6 +956,12 @@
                 "$ref": "#/$defs/JBFXLayerShapeModel"
               },
               {
+                "$ref": "#/$defs/JBFXLayerAudioModel"
+              },
+              {
+                "$ref": "#/$defs/JBFXLayerGroupModel"
+              },
+              {
                 "$ref": "#/$defs/JBFXLayerAiEditModel"
               },
               {
@@ -960,15 +969,6 @@
               },
               {
                 "$ref": "#/$defs/JBFXLayerAdjustmentModel"
-              },
-              {
-                "$ref": "#/$defs/JBFXLayerVideoModel"
-              },
-              {
-                "$ref": "#/$defs/JBFXLayerAudioModel"
-              },
-              {
-                "$ref": "#/$defs/JBFXLayerGroupModel"
               }
             ]
           },
@@ -1156,6 +1156,7 @@
               "stroke": "#/$defs/JBFXLayerEffectStrokeModel",
               "temperatureTint": "#/$defs/JBFXLayerEffectTemperatureTintModel",
               "tintTritone": "#/$defs/JBFXLayerEffectTintTritoneModel",
+              "tonalColor": "#/$defs/JBFXLayerEffectTonalColorModel",
               "turbulentNoise": "#/$defs/JBFXLayerEffectTurbulentNoiseModel",
               "twirl": "#/$defs/JBFXLayerEffectTwirlModel",
               "vibrance": "#/$defs/JBFXLayerEffectVibranceModel",
@@ -1188,6 +1189,9 @@
             },
             {
               "$ref": "#/$defs/JBFXLayerEffectPrimaryGradeModel"
+            },
+            {
+              "$ref": "#/$defs/JBFXLayerEffectTonalColorModel"
             },
             {
               "$ref": "#/$defs/JBFXLayerEffectColorCurvesModel"
@@ -1588,6 +1592,9 @@
                 "$ref": "#/$defs/JBFXLayerMediaModel"
               },
               {
+                "$ref": "#/$defs/JBFXLayerVideoModel"
+              },
+              {
                 "$ref": "#/$defs/JBFXLayerImageModel"
               },
               {
@@ -1600,6 +1607,12 @@
                 "$ref": "#/$defs/JBFXLayerShapeModel"
               },
               {
+                "$ref": "#/$defs/JBFXLayerAudioModel"
+              },
+              {
+                "$ref": "#/$defs/JBFXLayerGroupModel"
+              },
+              {
                 "$ref": "#/$defs/JBFXLayerAiEditModel"
               },
               {
@@ -1607,15 +1620,6 @@
               },
               {
                 "$ref": "#/$defs/JBFXLayerAdjustmentModel"
-              },
-              {
-                "$ref": "#/$defs/JBFXLayerVideoModel"
-              },
-              {
-                "$ref": "#/$defs/JBFXLayerAudioModel"
-              },
-              {
-                "$ref": "#/$defs/JBFXLayerGroupModel"
               }
             ]
           },
@@ -1649,6 +1653,21 @@
           ],
           "default": null,
           "title": "Parent"
+        },
+        "serverEmojis": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Serveremojis"
         },
         "shotStyleId": {
           "anyOf": [
@@ -1954,6 +1973,9 @@
                 "$ref": "#/$defs/JBFXLayerMediaModel"
               },
               {
+                "$ref": "#/$defs/JBFXLayerVideoModel"
+              },
+              {
                 "$ref": "#/$defs/JBFXLayerImageModel"
               },
               {
@@ -1966,6 +1988,12 @@
                 "$ref": "#/$defs/JBFXLayerShapeModel"
               },
               {
+                "$ref": "#/$defs/JBFXLayerAudioModel"
+              },
+              {
+                "$ref": "#/$defs/JBFXLayerGroupModel"
+              },
+              {
                 "$ref": "#/$defs/JBFXLayerAiEditModel"
               },
               {
@@ -1973,15 +2001,6 @@
               },
               {
                 "$ref": "#/$defs/JBFXLayerAdjustmentModel"
-              },
-              {
-                "$ref": "#/$defs/JBFXLayerVideoModel"
-              },
-              {
-                "$ref": "#/$defs/JBFXLayerAudioModel"
-              },
-              {
-                "$ref": "#/$defs/JBFXLayerGroupModel"
               }
             ]
           },
@@ -4777,6 +4796,254 @@
       "title": "JBFXLayerEffectTintTritoneModel",
       "type": "object"
     },
+    "JBFXLayerEffectTonalColorModel": {
+      "additionalProperties": true,
+      "if": {
+        "properties": {
+          "semanticVersion": {
+            "const": 1
+          }
+        },
+        "required": [
+          "semanticVersion"
+        ]
+      },
+      "properties": {
+        "globalBlue": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "globalGreen": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "globalRed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "highlightsBlue": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "highlightsGreen": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "highlightsRed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "midtonesBlue": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "midtonesGreen": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "midtonesRed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "semanticVersion": {
+          "minimum": 1,
+          "title": "Semanticversion",
+          "type": "integer"
+        },
+        "shadowsBlue": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "shadowsGreen": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "shadowsRed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "type": {
+          "const": "tonalColor",
+          "default": "tonalColor",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "semanticVersion"
+      ],
+      "then": {
+        "additionalProperties": false,
+        "properties": {
+          "globalBlue": {
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "type": "number"
+          },
+          "globalGreen": {
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "type": "number"
+          },
+          "globalRed": {
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "type": "number"
+          },
+          "highlightsBlue": {
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "type": "number"
+          },
+          "highlightsGreen": {
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "type": "number"
+          },
+          "highlightsRed": {
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "type": "number"
+          },
+          "midtonesBlue": {
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "type": "number"
+          },
+          "midtonesGreen": {
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "type": "number"
+          },
+          "midtonesRed": {
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "type": "number"
+          },
+          "semanticVersion": {
+            "const": 1
+          },
+          "shadowsBlue": {
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "type": "number"
+          },
+          "shadowsGreen": {
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "type": "number"
+          },
+          "shadowsRed": {
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "type": "number"
+          },
+          "type": {
+            "const": "tonalColor"
+          }
+        },
+        "required": [
+          "globalRed",
+          "globalGreen",
+          "globalBlue",
+          "shadowsRed",
+          "shadowsGreen",
+          "shadowsBlue",
+          "midtonesRed",
+          "midtonesGreen",
+          "midtonesBlue",
+          "highlightsRed",
+          "highlightsGreen",
+          "highlightsBlue"
+        ]
+      },
+      "title": "JBFXLayerEffectTonalColorModel",
+      "type": "object"
+    },
     "JBFXLayerEffectTurbulentNoiseModel": {
       "additionalProperties": false,
       "properties": {
@@ -5345,6 +5612,9 @@
                 "$ref": "#/$defs/JBFXLayerMediaModel"
               },
               {
+                "$ref": "#/$defs/JBFXLayerVideoModel"
+              },
+              {
                 "$ref": "#/$defs/JBFXLayerImageModel"
               },
               {
@@ -5357,6 +5627,12 @@
                 "$ref": "#/$defs/JBFXLayerShapeModel"
               },
               {
+                "$ref": "#/$defs/JBFXLayerAudioModel"
+              },
+              {
+                "$ref": "#/$defs/JBFXLayerGroupModel"
+              },
+              {
                 "$ref": "#/$defs/JBFXLayerAiEditModel"
               },
               {
@@ -5364,15 +5640,6 @@
               },
               {
                 "$ref": "#/$defs/JBFXLayerAdjustmentModel"
-              },
-              {
-                "$ref": "#/$defs/JBFXLayerVideoModel"
-              },
-              {
-                "$ref": "#/$defs/JBFXLayerAudioModel"
-              },
-              {
-                "$ref": "#/$defs/JBFXLayerGroupModel"
               }
             ]
           },

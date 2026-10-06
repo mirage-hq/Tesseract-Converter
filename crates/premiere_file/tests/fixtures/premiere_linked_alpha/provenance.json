@@ -1,0 +1,52 @@
+{
+  "application": "Premiere Pro",
+  "operator": "Premiere clip AE.ADBE Invert Channel15 / Blend0 on linked AEP source; no AEP Invert effect",
+  "premiere": {
+    "blend": 0,
+    "channel": 15,
+    "endTicks": "508032000000",
+    "importReturn": "true",
+    "inTicks": "127008000000",
+    "itemName": "Linked Alpha source/aep.aep",
+    "observations": {
+      "close": {
+        "return_type": "boolean",
+        "value": true
+      },
+      "save": {
+        "method": "save",
+        "return_type": "boolean",
+        "value": true
+      }
+    },
+    "outTicks": "381024000000",
+    "sequence": "92d9c159-77c9-442f-8d46-17f128919537",
+    "startTicks": "254016000000"
+  },
+  "aep": {
+    "audioLayer": 16,
+    "background": [
+      0.4,
+      0.10196078431373,
+      0.6
+    ],
+    "composition": 1,
+    "duration": 3,
+    "fps": 30,
+    "height": 180,
+    "pictureLayer": 14,
+    "width": 320
+  },
+  "hashes": {
+    "author-ae.jsx": "d2b1a0821f92c944da3ea89c76ab64a5aa6287feba71be1dd814a530866cda51",
+    "cells.png": "b65cf47d5350ad5e9bdf9d7305ee1adf2f638252c21542c0d0e5406b6eb10e75",
+    "aep.aep": "68f867c1c0370a37b60b3f3aafceeecab09e5ecfbbeb3718a154ec1785235592",
+    "author-premiere.jsx": "540ece16009f67cc53c125c432e904839e2d93950c62c03166955831a0f116ea",
+    "native.prproj": "b7aa0ec80493b0b7fd5cabddf4577d6e61694e422f2a4d8c293d30addfc16c6b",
+    "video.mp4": "38e257ad454d877f66e5d3ae9b54dd244bed84f41b4ae284011399a136507614"
+  },
+  "path_sanitization_original_sha256": {
+    "aep.aep": "9d15c6b98c9cf5d70ec336ad6da348c0c7c79d2fb8d14c418f5cc16a478daea0",
+    "native.prproj": "59e9045b0101dcd8fa7647b20ca09a66fe5851999c0d8622d95241f278ac782c"
+  }
+}

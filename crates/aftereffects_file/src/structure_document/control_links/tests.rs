@@ -1,5 +1,33 @@
 use crate::{properties, rifx::Chunk};
 
+/// Independently AE-authored, saved/reopened scalar endpoint controls.
+pub(super) fn native_hold_endpoint_curve(layer_name: &str) -> properties::NumericProperty {
+    let project = crate::structure::read_project(include_bytes!(
+        "../../../tests/fixtures/properties/hold_endpoint_flags.aep"
+    ))
+    .unwrap();
+    let composition = project
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            crate::structure::ItemKind::Composition(composition) => Some(composition),
+            _ => None,
+        })
+        .unwrap();
+    let layer = composition
+        .layers
+        .iter()
+        .find(|layer| layer.name.as_ref() == layer_name)
+        .unwrap();
+    properties::read_transform(&layer.content)
+        .unwrap()
+        .into_iter()
+        .find(|property| property.match_name == "ADBE Opacity")
+        .unwrap()
+        .numeric
+        .unwrap()
+}
+
 pub(super) fn data(id: &[u8; 4], value: impl Into<Vec<u8>>) -> Chunk {
     let mut value = value.into();
     if id == b"tdmn" {
@@ -74,6 +102,197 @@ fn content(scale_expression: &str, controls: Vec<Chunk>) -> Vec<Chunk> {
             list(b"tdgp", controls),
         ],
     )]
+}
+
+#[test]
+fn dimension_scale_reaches_editable_static_transform() {
+    use crate::structure::{ItemKind, read_project};
+    let project = read_project(include_bytes!(
+        "../../../tests/fixtures/properties/property_1D_opacity.aep"
+    ))
+    .unwrap();
+    let mut comp = project
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            ItemKind::Composition(comp) => Some(comp.clone()),
+            _ => None,
+        })
+        .unwrap();
+    comp.width = 1920;
+    comp.height = 1080;
+    let mut layer = comp.layers[0].clone();
+    for (expression, expected) in [
+        (
+            "x = thisComp.width;y = thisComp.height;[x, y]",
+            [1920.0, 1080.0],
+        ),
+        (
+            "w = thisComp.width; h = thisComp.height; aspect = 1920/1080; if(w / h >= aspect){[w, w]}else{[h*aspect, h*aspect]}",
+            [1920.0, 1920.0],
+        ),
+    ] {
+        layer.content = content(expression, Vec::new());
+        let (properties, warnings) = super::read_layer_transform(&layer, &comp).unwrap();
+        let scale = properties
+            .iter()
+            .find(|property| property.match_name == "ADBE Scale")
+            .unwrap()
+            .numeric
+            .as_ref()
+            .unwrap();
+        assert!(!scale.expression_enabled, "{warnings:?}");
+        assert!(!scale.animated);
+        assert!(scale.keyframes.is_empty());
+        let (transform, _) =
+            crate::structure_document::transform::static_transform(&layer, [100, 100], &comp);
+        assert_eq!(transform.scale, expected);
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("live composition-resize linkage is not retained"))
+        );
+    }
+}
+
+#[test]
+fn indexed_static_slider_position_preserves_native_layer_depth() {
+    use crate::structure::{ItemKind, read_project};
+    let project = read_project(include_bytes!(
+        "../../../tests/fixtures/properties/property_1D_opacity.aep"
+    ))
+    .unwrap();
+    let mut comp = project
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            ItemKind::Composition(comp) => Some((**comp).clone()),
+            _ => None,
+        })
+        .unwrap();
+    let mut owner = comp.layers[0].clone();
+    owner.record = owner.record.with_three_d_layer(true).unwrap();
+    owner.content = vec![list(
+        b"tdgp",
+        vec![
+            data(b"tdmn", b"ADBE Transform Group"),
+            list(
+                b"tdgp",
+                vec![
+                    data(b"tdmn", b"ADBE Position"),
+                    numeric(
+                        &[1920.0, 1080.0, 0.0],
+                        Some(
+                            "[1920,1080,(index-2)*thisComp.layer(\"Extrude CTRL\").effect(\"Slider Control 1\")(\"ADBE Slider Control-0001\")]",
+                        ),
+                    ),
+                ],
+            ),
+        ],
+    )];
+    let mut controller = owner.clone();
+    let mut record = controller.record.encode();
+    record[..4].copy_from_slice(&999_u32.to_be_bytes());
+    controller.record = crate::schema::layer_records::LayerRecord::decode(&record).unwrap();
+    controller.name = "Extrude CTRL".into();
+    controller.content = vec![list(
+        b"tdgp",
+        vec![
+            data(b"tdmn", b"ADBE Effect Parade"),
+            list(b"tdgp", slider("Slider Control 1", -2.0, None)),
+        ],
+    )];
+    // The native 1-based index includes non-rendering controllers as well.
+    comp.layers = vec![controller.clone(), owner.clone()];
+    for (index, expected_z) in [(1, 0.0), (2, -2.0)] {
+        if index == 2 {
+            let mut preceding = controller.clone();
+            let mut record = preceding.record.encode();
+            record[..4].copy_from_slice(&998_u32.to_be_bytes());
+            preceding.record = crate::schema::layer_records::LayerRecord::decode(&record).unwrap();
+            preceding.name = "Unrelated null".into();
+            comp.layers.insert(0, preceding);
+        }
+        let (properties, warnings) = super::read_layer_transform(&owner, &comp).unwrap();
+        let position = properties
+            .iter()
+            .find(|p| p.match_name == "ADBE Position")
+            .unwrap()
+            .numeric
+            .as_ref()
+            .unwrap();
+        assert!(!position.expression_enabled, "{warnings:?}");
+        assert_eq!(position.values, [1920.0, 1080.0, expected_z]);
+        assert!(!position.animated);
+        assert!(position.keyframes.is_empty());
+        assert!(warnings.iter().any(|warning| {
+            warning.contains("layer-order/controller edit linkage is not retained")
+        }));
+    }
+    for failure in [
+        "duplicate",
+        "missing",
+        "expression",
+        "nonfinite",
+        "2d",
+        "animated",
+    ] {
+        let mut rejected = comp.clone();
+        let mut rejected_owner = owner.clone();
+        match failure {
+            "duplicate" => rejected.layers.push(controller.clone()),
+            "missing" => rejected
+                .layers
+                .retain(|layer| layer.name.as_ref() != "Extrude CTRL"),
+            "2d" => {
+                rejected_owner.record = rejected_owner.record.with_three_d_layer(false).unwrap()
+            }
+            _ => {
+                let value = if failure == "nonfinite" {
+                    f64::INFINITY
+                } else {
+                    -2.0
+                };
+                let expression = (failure == "expression").then_some("time");
+                let mut controls = slider("Slider Control 1", value, expression);
+                if failure == "animated" {
+                    // An animated flag without a supported track must never be
+                    // certified static, even when cdat carries a cached value.
+                    let chunk = &mut controls[1].children_mut().unwrap()[0]
+                        .children_mut()
+                        .unwrap()[2]
+                        .children_mut()
+                        .unwrap()[0];
+                    let mut meta = chunk.data_payload().unwrap().to_vec();
+                    meta[68] = 1;
+                    *chunk = data(b"tdb4", meta);
+                }
+                let controller = rejected
+                    .layers
+                    .iter_mut()
+                    .find(|layer| layer.name.as_ref() == "Extrude CTRL")
+                    .unwrap();
+                controller.content = vec![list(
+                    b"tdgp",
+                    vec![
+                        data(b"tdmn", b"ADBE Effect Parade"),
+                        list(b"tdgp", controls),
+                    ],
+                )];
+            }
+        }
+        let (properties, warnings) =
+            super::read_layer_transform(&rejected_owner, &rejected).unwrap();
+        let position = properties
+            .iter()
+            .find(|p| p.match_name == "ADBE Position")
+            .unwrap()
+            .numeric
+            .as_ref()
+            .unwrap();
+        assert!(position.expression_enabled, "{failure}: {warnings:?}");
+        assert_eq!(position.values, [1920.0, 1080.0, 0.0]);
+    }
 }
 
 const SCALE: &str = "[effect(\"Scale X\")(\"ADBE Slider Control-0001\"), effect(\"Scale Y\")(\"ADBE Slider Control-0001\")]";
@@ -579,4 +798,72 @@ fn animated_links_reach_owner_parent_and_camera_normalized_tracks() {
     assert_eq!(owner.len(), 2);
     assert_eq!(owner, parent);
     assert_eq!(owner, camera);
+}
+
+#[test]
+fn keyed_position_wiggle_keeps_authored_base_motion_with_diagnostics() {
+    use crate::structure::{ItemKind, read_project};
+    use crate::structure_document::{animation, animation_budget::AnimationBudget};
+    use fx_schema::LayerId;
+
+    // Adding the Intro expression to native key storage is supplementary coverage,
+    // not an independently Adobe-authored wiggle fixture or render oracle.
+    let project = read_project(include_bytes!(
+        "../../../tests/fixtures/properties/property_2D_position.aep"
+    ))
+    .unwrap();
+    let composition = project
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            ItemKind::Composition(comp) if !comp.layers.is_empty() => Some(comp),
+            _ => None,
+        })
+        .unwrap();
+    let mut layer = composition.layers[0].clone();
+    let root = properties::root_runs(&layer.content).unwrap();
+    let transform = super::unique_run(&root, "ADBE Transform Group").unwrap();
+    let leaves = properties::runs(properties::unique_list(transform, *b"tdgp").unwrap()).unwrap();
+    let mut storage = properties::unique_list(
+        super::unique_run(&leaves, "ADBE Position").unwrap(),
+        *b"tdbs",
+    )
+    .unwrap()
+    .to_vec();
+    let native = properties::read_numeric(&storage).unwrap();
+    assert!(native.animated && !native.keyframes.is_empty());
+    storage.push(data(b"Utf8", b"posterizeTime(5);\rwiggle(3, 5);"));
+    layer.content = vec![list(
+        b"tdgp",
+        vec![
+            data(b"tdmn", b"ADBE Transform Group"),
+            list(
+                b"tdgp",
+                vec![data(b"tdmn", b"ADBE Position"), list(b"tdbs", storage)],
+            ),
+        ],
+    )];
+    let (resolved, warnings) = super::read_layer_transform(&layer, composition).unwrap();
+    let position = resolved
+        .iter()
+        .find(|property| property.match_name == "ADBE Position")
+        .unwrap()
+        .numeric
+        .as_ref()
+        .unwrap();
+    assert!(!position.expression_enabled);
+    assert_eq!(position.keyframes, native.keyframes);
+    assert!(warnings.iter().any(|warning| {
+        warning.contains("native base Position keys retained")
+            && warning.contains("jitter and posterized sampling omitted")
+    }));
+    let (entries, _) = animation::transform_entries(
+        &layer,
+        composition,
+        LayerId::new(77),
+        animation::AnimationTargetClock::ParentIdentity,
+        [1.0; 2],
+        &mut AnimationBudget::default(),
+    );
+    assert!(!entries.is_empty());
 }

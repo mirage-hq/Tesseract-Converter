@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "profile": "Emitted horizontal Point Text outlines and unpainted whitespace",
+  "applicationVersion": "26.5x89",
+  "independentControl": {
+    "jobId": "81b4a29d2ae14d3885956cd5042db915",
+    "artifactSha256": "cfd88c0ab5133c82a131ff72e5cc2ced6909e7e9de5d12e2b6d3abeca06f9906",
+    "font": "Arial-BoldMT",
+    "fontSize": 64,
+    "trackingEdit": [20, 200],
+    "glyphWidth": [205.712493896484, 263.3125],
+    "glyphHeight": [59.28125, 59.28125],
+    "whitespaceExtent": [0, 0],
+    "ready": true
+  },
+  "generatedAcceptance": {
+    "jobId": "cda19881f76b440eace6155b689a2686",
+    "artifactSha256": "30de7912b368bd8c840d9ad1b44336593610397cd2445f93ed1b7fba0a785c3e",
+    "converterCommit": "20e663905",
+    "converterQueueJob": 2328,
+    "caseIds": ["P006", "P033", "P037"],
+    "caseSourceText": {"text": "Mirage", "font": "Georgia-Bold", "fontSize": 128, "tracking": 180, "sourceTextKeyCount": 0},
+    "caseGlyphExtent": [576.700012207031, 124.5],
+    "editableCameraOccurrencesPerCase": 1,
+    "cameraMotionBlurRetained": true,
+    "minimalFxTrackingEdit": [20, 200],
+    "minimalNativeGlyphWidth": [205.712493896484, 263.3125],
+    "minimalNativeGlyphHeight": [59.28125, 59.28125],
+    "minimalGeneratedCanvas": [[207, 60], [264, 60]],
+    "minimalWhitespaceRetainedAsNativeText": true,
+    "minimalWhitespaceExtent": [0, 0],
+    "initialGlyphEnclosuresPassed": 5,
+    "ready": true
+  },
+  "failedTargetSelection": {"jobId": "38f5510ecc1f4f4fb2c0e929a61f3a36", "reason": "duplicate composition names", "ready": true, "usedAsEvidence": false},
+  "limits": [
+    "Three managed operations total; one independent control, one failed selection, one corrected five-project acceptance.",
+    "Continuous Tracking and FillColor remain diagnosed omissions with their emitted static base; no continuous-layout mapping or CustomShader support was added.",
+    "Group810 Drop Shadow remains a separate unknown-glyph-bounds omission.",
+    "Initial numeric enclosure and edited Tracking response are not full-timeline clipping, RGB, alpha, audio, font-substitution or general shaping fidelity proof.",
+    "W03 subsequently rendered bb7c4a1c4 and measured P006/P033/P037 means 0.3152625071/0.3191932303/0.4456838027; evidence tasks/accuracy-W03/P037-diagnosis/scores.json. These remain below 0.95 and are not fresh post-rebase renders.",
+    "Formal independent 30fps long-term Asset publication remains incomplete."
+  ]
+}

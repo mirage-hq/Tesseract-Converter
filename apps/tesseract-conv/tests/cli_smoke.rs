@@ -14,6 +14,236 @@ const MEDIA: &[u8] = include_bytes!("../../../crates/premiere_file/tests/fixture
 const EDITABLE: &str =
     include_str!("../../../crates/premiere_file/tests/fixtures/editable-video.json");
 
+fn premiere_relocated_alpha_fixture(
+    root: &Path,
+) -> (premiere_file::MediaRelink, fx_conv::MediaMap, String) {
+    use fx_conv::{sha256_file, MediaMapSource, MediaReplacement};
+    let authored = r"\\?\E:\collected\source.mov";
+    let xml = XML
+        .replace("1270080000000", "254016000000")
+        .replace("2540160000000", "254016000000")
+        .replace("1920,1080", "16,16")
+        .replace(
+            "<RelativePath>media/source.mp4</RelativePath>",
+            &format!("<FilePath>{authored}</FilePath>"),
+        );
+    write_prproj(&root.join("source.prproj"), &xml);
+    fs::write(
+        root.join("original.mov"),
+        include_bytes!("../../../crates/premiere_file/tests/fixtures/alpha-media/animation.mov"),
+    )
+    .unwrap();
+    fs::write(
+        root.join("prepared.mov"),
+        include_bytes!("../../../crates/premiere_file/tests/fixtures/alpha-media/prores4444.mov"),
+    )
+    .unwrap();
+    let source = MediaMapSource {
+        format: "premiere".into(),
+        sha256: sha256_file(&root.join("source.prproj")).unwrap(),
+        target: "sequence-1".into(),
+    };
+    let original = root.join("original.mov").canonicalize().unwrap();
+    let original_hash = sha256_file(&original).unwrap();
+    let relink = premiere_file::MediaRelink {
+        version: 1,
+        source: source.clone(),
+        bindings: vec![premiere_file::MediaRelinkBinding {
+            media_uid: "media-1".into(),
+            authored_path: authored.into(),
+            local_path: original.clone(),
+            sha256: original_hash.clone(),
+        }],
+    };
+    let map = fx_conv::MediaMap {
+        version: 1,
+        source,
+        replacements: vec![MediaReplacement {
+            original,
+            original_sha256: original_hash,
+            replacement: "prepared.mov".into(),
+            replacement_sha256: sha256_file(&root.join("prepared.mov")).unwrap(),
+        }],
+    };
+    (relink, map, xml)
+}
+
+#[test]
+fn premiere_media_composition_publishes_prepared_alpha_after_authenticated_relocation() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (relink, map, _) = premiere_relocated_alpha_fixture(root);
+    fs::write(
+        root.join("relink.json"),
+        serde_json::to_vec(&relink).unwrap(),
+    )
+    .unwrap();
+    fs::write(root.join("map.json"), serde_json::to_vec(&map).unwrap()).unwrap();
+    for check in [true, false] {
+        let mut args = vec![
+            "convert",
+            "source.prproj",
+            "--to",
+            "tesseract",
+            "--sequence",
+            "sequence-1",
+            "--output",
+            "converted",
+            "--media-relink",
+            "relink.json",
+            "--media-map",
+            "map.json",
+            "--json",
+        ];
+        if check {
+            args.push("--check");
+        }
+        let result = run(root, &args);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert!(report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|note| {
+                note["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("native FFmpeg playback"))
+            }));
+        assert_eq!(
+            report["artifactStatus"],
+            if check { "planned" } else { "published" }
+        );
+        assert_eq!(root.join("converted").exists(), !check);
+    }
+    let archive =
+        tesseract_file::TesseractFile::open(root.join("converted/project.tsrct")).unwrap();
+    let document = archive.project_json().unwrap();
+    let pictures: Vec<_> = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|layer| layer["type"] == "Video")
+        .collect();
+    assert_eq!(pictures.len(), 1);
+    assert_eq!(
+        pictures[0]["sourceRange"],
+        json!({"start": 0, "duration": 1000})
+    );
+    assert_eq!(pictures[0]["source"]["assetId"], "premiere-video-1");
+    let prepared = fs::read(root.join("prepared.mov")).unwrap();
+    assert_eq!(
+        archive
+            .asset("premiere-video-1")
+            .unwrap()
+            .read_verified_bytes(prepared.len() as u64)
+            .unwrap(),
+        prepared
+    );
+    assert_eq!(
+        fx_conv::sha256_file(&root.join("source.prproj")).unwrap(),
+        map.source.sha256
+    );
+    assert_eq!(
+        fx_conv::sha256_file(&root.join("original.mov")).unwrap(),
+        relink.bindings[0].sha256
+    );
+    assert_eq!(
+        fx_conv::sha256_file(&root.join("prepared.mov")).unwrap(),
+        map.replacements[0].replacement_sha256
+    );
+}
+
+#[test]
+fn premiere_media_composition_rejects_identity_errors_and_native_candidate_conflicts() {
+    for case in [
+        "uid",
+        "authored",
+        "relink-project",
+        "relink-target",
+        "disguised-original",
+        "map-project",
+        "map-target",
+        "map-original-hash",
+        "map-prepared-hash",
+        "other-original-path",
+        "native-conflict",
+        "map-escape",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let (mut relink, mut map, xml) = premiere_relocated_alpha_fixture(root);
+        match case {
+            "uid" => relink.bindings[0].media_uid = "absent-media".into(),
+            "authored" => relink.bindings[0].authored_path = r"E:\other\source.mov".into(),
+            "relink-project" => relink.source.sha256 = "0".repeat(64),
+            "relink-target" => relink.source.target = "other".into(),
+            "disguised-original" => {
+                relink.bindings[0].sha256 = map.replacements[0].replacement_sha256.clone()
+            }
+            "map-project" => map.source.sha256 = "0".repeat(64),
+            "map-target" => map.source.target = "other".into(),
+            "map-original-hash" => map.replacements[0].original_sha256 = "0".repeat(64),
+            "map-prepared-hash" => map.replacements[0].replacement_sha256 = "0".repeat(64),
+            "other-original-path" => {
+                fs::create_dir(root.join("other")).unwrap();
+                fs::copy(root.join("original.mov"), root.join("other/original.mov")).unwrap();
+                map.replacements[0].original =
+                    root.join("other/original.mov").canonicalize().unwrap();
+            }
+            "native-conflict" => {
+                fs::write(root.join("conflict.mov"), b"different original candidate").unwrap();
+                let edited = xml.replace(
+                    "<FilePath>",
+                    "<RelativePath>conflict.mov</RelativePath><FilePath>",
+                );
+                write_prproj(&root.join("source.prproj"), &edited);
+                let hash = fx_conv::sha256_file(&root.join("source.prproj")).unwrap();
+                relink.source.sha256 = hash.clone();
+                map.source.sha256 = hash;
+            }
+            "map-escape" => map.replacements[0].replacement = "../prepared.mov".into(),
+            _ => unreachable!(),
+        }
+        fs::write(
+            root.join("relink.json"),
+            serde_json::to_vec(&relink).unwrap(),
+        )
+        .unwrap();
+        fs::write(root.join("map.json"), serde_json::to_vec(&map).unwrap()).unwrap();
+        let result = run(
+            root,
+            &[
+                "convert",
+                "source.prproj",
+                "--to",
+                "tesseract",
+                "--sequence",
+                "sequence-1",
+                "--output",
+                "converted",
+                "--media-relink",
+                "relink.json",
+                "--media-map",
+                "map.json",
+            ],
+        );
+        assert!(!result.status.success(), "accepted {case}");
+        assert!(!root.join("converted").exists(), "published {case}");
+        if case == "native-conflict" {
+            assert!(
+                String::from_utf8_lossy(&result.stderr).contains("different bytes"),
+                "{:?}",
+                result
+            );
+        }
+    }
+}
+
 #[test]
 fn media_map_import_packages_replacement_bytes_without_modifying_sources() {
     use aftereffects_file::{aep, rifx::Chunk, AfterEffects};
@@ -727,7 +957,11 @@ fn rewrite_fx_schema_version(source: &Path, destination: &Path, version: Option<
             bytes = serde_json::to_vec(&metadata).unwrap();
         }
         output
-            .start_file(entry.name(), zip::write::SimpleFileOptions::default())
+            .start_file(
+                entry.name(),
+                zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Stored),
+            )
             .unwrap();
         output.write_all(&bytes).unwrap();
     }
@@ -1162,6 +1396,10 @@ fn omitted_feature_is_reported_with_success_and_check_parity() {
 
 #[test]
 fn reverse_omissions_are_reported_in_check_and_write_modes() {
+    // SDR HEVC now prepares for editable AEP export. HDR/timecode remains
+    // outside that destination policy and exercises native fallback.
+    let unsupported_media =
+        include_bytes!("../../../crates/premiere_file/tests/fixtures/feature_hdr_hlg_hvc1.mov");
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let mut document: Value = serde_json::from_str(EDITABLE).unwrap();
@@ -1169,14 +1407,17 @@ fn reverse_omissions_are_reported_in_check_and_write_modes() {
     document["composition"]["layers"][0]["effects"] = json!([
         {"id": 1, "effect": {"type": "mosaic", "horizontalBlocks": 10.0, "verticalBlocks": 20.0}}
     ]);
-    fs::write(root.join("source.mp4"), MEDIA).unwrap();
+    document["composition"]["layers"][0]["sourceIntrinsicDuration"] = json!(2000);
+    document["composition"]["layers"][0]["source"]["sourceRect"]["width"] = json!(320);
+    document["composition"]["layers"][0]["source"]["sourceRect"]["height"] = json!(180);
+    fs::write(root.join("source.mov"), unsupported_media).unwrap();
     tesseract_file::TesseractFileBuilder::from_project_json(
         &serde_json::to_vec(&document).unwrap(),
     )
     .unwrap()
     .add_asset(
         "premiere-video-1",
-        root.join("source.mp4"),
+        root.join("source.mov"),
         tesseract_file::AssetKind::Video,
     )
     .unwrap()
@@ -1199,7 +1440,10 @@ fn reverse_omissions_are_reported_in_check_and_write_modes() {
         "{stderr}"
     );
     assert!(!root.join("out/media/ae-0001").exists());
-    assert_eq!(fs::read(root.join("out/media/source.mp4")).unwrap(), MEDIA);
+    assert_eq!(
+        fs::read(root.join("out/media/source.mov")).unwrap(),
+        unsupported_media
+    );
 }
 
 /// Writes the editable video archive with `scripts` on its video layer 1.
@@ -1361,7 +1605,7 @@ fn nested_scripts_bake_or_keep_their_animator_without_aborting() {
         );
         assert!(
             aep_stderr.contains(&format!(
-                "JS animator baking approximated {after_effects_baked} scalar/Path tracks"
+                "JS animator baking approximated {after_effects_baked} scalar/Path/Source Text tracks"
             )),
             "{name}: {aep_stderr}"
         );
@@ -1396,23 +1640,40 @@ fn fps_sets_the_export_rate() {
         ],
     ));
     let document = "tesseract/project.tsrct";
+    // The video clip ranges and the decompressed XML of a Premiere export at `fps`.
+    let export = |fps: &str| {
+        let output = format!("premiere-{fps}");
+        success(run(
+            root,
+            &[
+                "convert",
+                document,
+                "--to",
+                "premiere",
+                "-o",
+                output.as_str(),
+                "--fps",
+                fps,
+            ],
+        ));
+        let project = root.join(output).join("project.prproj");
+        let (native, _) = premiere_file::PrProjectFile::load(&project).unwrap();
+        let clips: Vec<_> = native
+            .sequences()
+            .next()
+            .unwrap()
+            .video_occurrences()
+            .map(|clip| (clip.timeline_ticks(), clip.source_ticks()))
+            .collect();
+        let mut xml = String::new();
+        flate2::read::GzDecoder::new(fs::File::open(&project).unwrap())
+            .read_to_string(&mut xml)
+            .unwrap();
+        (clips, xml)
+    };
 
     // `--fps 24` snaps the cut back to frame 37 of a 24 fps sequence.
-    success(run(
-        root,
-        &[
-            "convert", document, "--to", "premiere", "-o", "premiere", "--fps", "24",
-        ],
-    ));
-    let project = root.join("premiere/project.prproj");
-    let (native, _) = premiere_file::PrProjectFile::load(&project).unwrap();
-    let clips: Vec<_> = native
-        .sequences()
-        .next()
-        .unwrap()
-        .video_occurrences()
-        .map(|clip| (clip.timeline_ticks(), clip.source_ticks()))
-        .collect();
+    let (clips, xml) = export("24");
     let frame = 10_584_000_000;
     assert_eq!(
         clips,
@@ -1421,12 +1682,50 @@ fn fps_sets_the_export_rate() {
             (37 * frame..72 * frame, 0..35 * frame)
         ]
     );
-    let mut xml = String::new();
-    flate2::read::GzDecoder::new(fs::File::open(&project).unwrap())
-        .read_to_string(&mut xml)
-        .unwrap();
     assert!(xml
         .contains("<MZ.Sequence.VideoTimeDisplayFormat>100</MZ.Sequence.VideoTimeDisplayFormat>"));
+
+    // At 50 and 60 fps the 1542 ms cut snaps to frame 77 or 93 of the 3 s
+    // timeline, the sequence stores the display code that Premiere saves for
+    // its rate, and the 24 fps sources keep their own rate.
+    for (fps, frame, cut, end, code) in [
+        ("50", 5_080_320_000, 77, 150, "105"),
+        ("60", 4_233_600_000, 93, 180, "108"),
+    ] {
+        let (clips, xml) = export(fps);
+        assert_eq!(
+            clips,
+            [
+                (0..cut * frame, 0..cut * frame),
+                (cut * frame..end * frame, 0..(end - cut) * frame)
+            ],
+            "{fps} fps"
+        );
+        assert!(xml.contains(&format!(
+            "<MZ.Sequence.VideoTimeDisplayFormat>{code}</MZ.Sequence.VideoTimeDisplayFormat>"
+        )));
+        assert!(xml.contains(&format!("<FrameRate>{frame}</FrameRate>")));
+        assert!(xml.contains("<FrameRate>10584000000</FrameRate>"));
+    }
+
+    // Another rate rejects before any output is written.
+    let output = run(
+        root,
+        &[
+            "convert",
+            document,
+            "--to",
+            "premiere",
+            "-o",
+            "premiere-48",
+            "--fps",
+            "48",
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("--fps 48 is not supported for Premiere export"));
+    assert!(!root.join("premiere-48").exists());
 
     // After Effects takes the decimal rate.
     let output = run(
@@ -1799,7 +2098,7 @@ fn premiere_hybrid_cli_creates_linked_aep_and_reimports_editable_content() {
 }
 
 #[test]
-fn premiere_hybrid_cli_rejects_unsupported_clock_without_publication() {
+fn premiere_hybrid_cli_retains_native_output_for_fractional_clock() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     hybrid_archive(root);
@@ -1820,9 +2119,12 @@ fn premiere_hybrid_cli_rejects_unsupported_clock_without_publication() {
             args.to_vec()
         };
         let output = run(root, &args);
-        assert!(!output.status.success(), "{output:?}");
-        assert!(String::from_utf8_lossy(&output.stderr).contains("integral 24, 25 or 30 fps"));
-        assert!(!root.join("package").exists());
+        assert!(output.status.success(), "{output:?}");
+        let warnings = String::from_utf8_lossy(&output.stderr);
+        assert!(warnings.contains("not exact in linked AEP scopes"));
+        assert!(warnings.contains("retained the native Premiere result"));
+        assert_eq!(root.join("package/project.prproj").exists(), !check);
+        assert!(!root.join("package/media/ae-0001").exists());
     }
 }
 
@@ -1871,4 +2173,1602 @@ fn write_prproj(path: &Path, xml: &str) {
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
     encoder.write_all(xml.as_bytes()).unwrap();
     fs::write(path, encoder.finish().unwrap()).unwrap();
+}
+
+/// Default public routing must preserve deliberately retained native effects,
+/// not replace their picture solely because their approximation was reported.
+#[test]
+fn premiere_hybrid_retained_lens_alpha_glow_native_effects() {
+    fn field<'a>(record: &'a str, tag: &str) -> &'a str {
+        record
+            .split_once(&format!("<{tag}>"))
+            .unwrap()
+            .1
+            .split_once(&format!("</{tag}>"))
+            .unwrap()
+            .0
+    }
+    fn attribute<'a>(record: &'a str, name: &str) -> &'a str {
+        record
+            .split_once(&format!("{name}=\""))
+            .unwrap()
+            .1
+            .split_once('"')
+            .unwrap()
+            .0
+    }
+    fn component<'a>(xml: &'a str, name: &str) -> &'a str {
+        xml.split("<VideoFilterComponent ")
+            .skip(1)
+            .map(|part| part.split_once("</VideoFilterComponent>").unwrap().0)
+            .find(|part| part.contains(&format!("<MatchName>{name}</MatchName>")))
+            .unwrap()
+    }
+    fn parameter<'a>(xml: &'a str, component: &str, index: usize) -> &'a str {
+        let reference = component.split("<Param ").nth(index + 1).unwrap();
+        let id = attribute(reference, "ObjectRef");
+        xml.split_once(&format!("<VideoComponentParam ObjectID=\"{id}\""))
+            .unwrap()
+            .1
+            .split_once("</VideoComponentParam>")
+            .unwrap()
+            .0
+    }
+    for alpha in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mut document: Value = serde_json::from_str(EDITABLE).unwrap();
+        document["composition"]["layers"][0]["effects"] = if alpha {
+            json!([{"id":9,"effect":{"type":"outerGlow","color":[0.2,0.4,0.8,0.6],"size":42.4,"spread":0.2,"range":0.8,"blendMode":"screen"}}])
+        } else {
+            json!([{"id":9,"effect":{"type":"lensDistortion","amount":-0.6,"centerX":0.5,"centerY":0.5}}])
+        };
+        if alpha {
+            document["composition"]["layers"][0]["masks"] =
+                json!([{"id":1,"mode":"add","layer":2,"feather":[0.0,0.0],"opacity":1.0}]);
+            let mut canvas = document["composition"]["layers"][1].clone();
+            canvas["id"] = json!(3);
+            document["composition"]["layers"]
+                .as_array_mut()
+                .unwrap()
+                .push(canvas);
+            document["composition"]["layers"][1]["rect"]["position"] = json!([480.0, 270.0]);
+            document["composition"]["layers"][1]["rect"]["size"] = json!([1440.0, 810.0]);
+        } else {
+            document["composition"]["dynamics"] = json!({"entries":[{
+                "target":{"kind":"effectProperty","effectId":9,"paramName":"amount"},
+                "animator":{"type":"keyframes","enabled":true,"keyframes":[
+                    {"id":"lens-cli-a","layerTime":0,"value":{"type":"float","value":-0.6},"easing":{"type":"linear"}},
+                    {"id":"lens-cli-b","layerTime":500,"value":{"type":"float","value":0.2},"easing":{"type":"linear"}}
+                ]}
+            }]});
+        }
+        fs::write(root.join("source.mp4"), MEDIA).unwrap();
+        tesseract_file::TesseractFileBuilder::from_project_json(
+            &serde_json::to_vec(&document).unwrap(),
+        )
+        .unwrap()
+        .add_asset(
+            "premiere-video-1",
+            root.join("source.mp4"),
+            tesseract_file::AssetKind::Video,
+        )
+        .unwrap()
+        .write(root.join("edited.tsrct"))
+        .unwrap();
+        let saved = run(
+            root,
+            &[
+                "convert",
+                "edited.tsrct",
+                "--to",
+                "premiere",
+                "-o",
+                "native",
+            ],
+        );
+        assert!(saved.status.success(), "{saved:?}");
+        let diagnostics = String::from_utf8_lossy(&saved.stderr);
+        assert!(
+            diagnostics.contains(if alpha {
+                "Alpha Glow"
+            } else {
+                "deliberate slider normalization"
+            }),
+            "{diagnostics}"
+        );
+        assert!(
+            !diagnostics.contains("Editable linked-AEP package"),
+            "{diagnostics}"
+        );
+        let mut xml = String::new();
+        flate2::read::GzDecoder::new(fs::File::open(root.join("native/project.prproj")).unwrap())
+            .read_to_string(&mut xml)
+            .unwrap();
+        assert!(!xml.contains(".aep"), "{xml}");
+        let effect = component(
+            &xml,
+            if alpha {
+                "AE.ADBE Alpha Glow"
+            } else {
+                "PR.ADBE Lens Distortion"
+            },
+        );
+        let first = parameter(&xml, effect, 0);
+        assert_eq!(
+            field(first, "StartKeyframe")
+                .split(',')
+                .nth(1)
+                .unwrap()
+                .parse::<f64>()
+                .unwrap(),
+            if alpha { 42.0 } else { 60.0 }
+        );
+        if alpha {
+            assert_eq!(
+                field(parameter(&xml, effect, 1), "StartKeyframe")
+                    .split(',')
+                    .nth(1),
+                Some("153")
+            );
+            let rgb = (0xff00_u64 << 48) | (0x3300_u64 << 32) | (0x6600_u64 << 16) | 0xcc00;
+            for index in [2, 3] {
+                assert_eq!(
+                    field(parameter(&xml, effect, index), "StartKeyframe")
+                        .split(',')
+                        .nth(1)
+                        .unwrap()
+                        .parse::<u64>()
+                        .unwrap(),
+                    rgb
+                );
+            }
+            assert_eq!(
+                field(parameter(&xml, effect, 4), "StartKeyframe")
+                    .split(',')
+                    .nth(1),
+                Some("false")
+            );
+            assert_eq!(
+                field(parameter(&xml, effect, 5), "StartKeyframe")
+                    .split(',')
+                    .nth(1),
+                Some("true")
+            );
+            let crop = component(&xml, "AE.ADBE AECrop");
+            let index = |component: &str| -> usize {
+                let id = attribute(component, "ObjectID");
+                let reference = xml
+                    .split("<Component ")
+                    .skip(1)
+                    .find(|part| {
+                        part.split_once('>')
+                            .unwrap()
+                            .0
+                            .contains(&format!("ObjectRef=\"{id}\""))
+                    })
+                    .unwrap();
+                attribute(reference, "Index").parse().unwrap()
+            };
+            assert!(index(crop) > index(effect), "Crop must apply before Glow");
+            assert_eq!(
+                field(parameter(&xml, crop, 0), "StartKeyframe")
+                    .split(',')
+                    .nth(1)
+                    .unwrap()
+                    .parse::<f64>()
+                    .unwrap(),
+                25.0
+            );
+        } else {
+            let keys: Vec<_> = field(first, "Keyframes")
+                .split_terminator(';')
+                .map(|key| {
+                    let mut fields = key.split(',');
+                    (
+                        fields.next().unwrap().parse::<i64>().unwrap(),
+                        fields.next().unwrap().parse::<f64>().unwrap(),
+                    )
+                })
+                .collect();
+            assert_eq!(keys, [(0, 60.0), (127_008_000_000, -20.0)]);
+        }
+    }
+}
+
+#[test]
+fn levels_channel_selectors_use_the_native_premiere_cli_route() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut document: Value = serde_json::from_str(EDITABLE).unwrap();
+    let effects = json!([
+        {"id": 1, "enabled": true, "effect": {"type": "shiftChannels", "takeRedFrom": "fullOff", "takeGreenFrom": "fullOn", "takeBlueFrom": "blue"}},
+        {"id": 2, "enabled": true, "effect": {"type": "levels", "inputBlack": 0.0, "inputWhite": 255.0, "gamma": 1.5, "outputBlack": 0.0, "outputWhite": 255.0}}
+    ]);
+    document["composition"]["layers"][0]["effects"] = effects.clone();
+    fs::write(root.join("source.mp4"), MEDIA).unwrap();
+    tesseract_file::TesseractFileBuilder::from_project_json(
+        &serde_json::to_vec(&document).unwrap(),
+    )
+    .unwrap()
+    .add_asset(
+        "premiere-video-1",
+        root.join("source.mp4"),
+        tesseract_file::AssetKind::Video,
+    )
+    .unwrap()
+    .write(root.join("edited.tsrct"))
+    .unwrap();
+    let args = [
+        "convert",
+        "edited.tsrct",
+        "--to",
+        "premiere",
+        "-o",
+        "native",
+    ];
+    let checked = run(root, &[&args[..], &["--check"]].concat());
+    assert!(checked.status.success(), "{checked:?}");
+    assert!(!root.join("native").exists());
+    let saved = run(root, &args);
+    assert!(saved.status.success(), "{saved:?}");
+    assert_eq!(checked.stderr, saved.stderr);
+    assert!(saved.stderr.is_empty(), "{saved:?}");
+    let mut xml = String::new();
+    flate2::read::GzDecoder::new(fs::File::open(root.join("native/project.prproj")).unwrap())
+        .read_to_string(&mut xml)
+        .unwrap();
+    assert_eq!(
+        xml.matches("<MatchName>PR.ADBE Levels</MatchName>").count(),
+        2
+    );
+    assert!(!xml.contains("AfterEffects"));
+    let imported = run(
+        root,
+        &[
+            "convert",
+            "native/project.prproj",
+            "--to",
+            "tesseract",
+            "-o",
+            "imported",
+        ],
+    );
+    assert!(imported.status.success(), "{imported:?}");
+    let archive = tesseract_file::TesseractFile::open(root.join("imported/project.tsrct")).unwrap();
+    assert_eq!(
+        archive.project_json().unwrap()["composition"]["layers"][0]["effects"],
+        effects
+    );
+}
+
+#[path = "../../../crates/premiere_file/tests/support/numbered_sequence_samples.rs"]
+mod numbered_sequence_samples;
+
+#[test]
+fn numbered_sequence_samples_public_export_keeps_original_stills() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let path = numbered_sequence_samples::import(root);
+    let mut archive = tesseract_file::TesseractFile::open(path).unwrap();
+    assert_eq!(archive.metadata().assets.len(), 6);
+    for index in 0..6 {
+        let mut bytes = Vec::new();
+        archive
+            .asset(&format!("premiere-video-1-frame-{index}"))
+            .unwrap()
+            .open()
+            .unwrap()
+            .read_to_end(&mut bytes)
+            .unwrap();
+        assert_eq!(
+            bytes,
+            fs::read(root.join(format!("frame{index:03}.png"))).unwrap()
+        );
+    }
+    let mut document = archive.project_json().unwrap();
+    numbered_sequence_samples::swap(&mut document);
+    let edit = root.join("edited.json");
+    fs::write(&edit, serde_json::to_vec(&document).unwrap()).unwrap();
+    archive.commit_project_json(&edit).unwrap();
+    archive.save_as(root.join("edited.tsrct")).unwrap();
+    let output = run(
+        root,
+        &[
+            "convert",
+            "edited.tsrct",
+            "--to",
+            "premiere",
+            "-o",
+            "exported",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let mut xml = String::new();
+    flate2::read::GzDecoder::new(fs::File::open(root.join("exported/project.prproj")).unwrap())
+        .read_to_string(&mut xml)
+        .unwrap();
+    assert!(
+        !xml.contains(".aep"),
+        "ordinary stills must not seed AE replacement"
+    );
+    assert!(!xml.contains(".exr"));
+    assert!(xml.contains(".png"));
+    assert!(xml.contains("<FrameRect>0,0,640,360</FrameRect>"));
+    fn field<'a>(record: &'a str, tag: &str) -> Option<&'a str> {
+        let (_, value) = record.split_once(&format!("<{tag}>"))?;
+        Some(value.split_once(&format!("</{tag}>"))?.0)
+    }
+    fn reference<'a>(record: &'a str, tag: &str, attribute: &str) -> &'a str {
+        let element = record
+            .split_once(&format!("<{tag} "))
+            .unwrap()
+            .1
+            .split_once('>')
+            .unwrap()
+            .0;
+        element
+            .split_once(&format!("{attribute}=\""))
+            .unwrap()
+            .1
+            .split_once('"')
+            .unwrap()
+            .0
+    }
+    fn record<'a>(xml: &'a str, tag: &str, attribute: &str, id: &str) -> &'a str {
+        let start = xml.find(&format!("<{tag} {attribute}=\"{id}\"")).unwrap();
+        let end = start + xml[start..].find(&format!("</{tag}>")).unwrap() + tag.len() + 3;
+        &xml[start..end]
+    }
+    #[derive(Debug, PartialEq)]
+    struct NativeStill {
+        start: i64,
+        end: i64,
+        frame: usize,
+        extent: String,
+        motion: std::collections::BTreeMap<u32, String>,
+        default_opacity: bool,
+    }
+    fn native_stills(xml: &str, root: &Path) -> Vec<NativeStill> {
+        let mut stills = Vec::new();
+        for item in xml.split("<VideoClipTrackItem ").skip(1) {
+            let item = item.split_once("</VideoClipTrackItem>").unwrap().0;
+            let subclip = record(
+                xml,
+                "SubClip",
+                "ObjectID",
+                reference(item, "SubClip", "ObjectRef"),
+            );
+            let clip = record(
+                xml,
+                "VideoClip",
+                "ObjectID",
+                reference(subclip, "Clip", "ObjectRef"),
+            );
+            let source = record(
+                xml,
+                "VideoMediaSource",
+                "ObjectID",
+                reference(clip, "Source", "ObjectRef"),
+            );
+            let media = record(
+                xml,
+                "Media",
+                "ObjectUID",
+                reference(source, "Media", "ObjectURef"),
+            );
+            let stream = record(
+                xml,
+                "VideoStream",
+                "ObjectID",
+                reference(media, "VideoStream", "ObjectRef"),
+            );
+            assert_eq!(field(stream, "IsStill"), Some("true"));
+            let bytes = fs::read(
+                root.join("exported")
+                    .join(field(media, "RelativePath").unwrap()),
+            )
+            .unwrap();
+            let frame = (0..6)
+                .find(|index| bytes == fs::read(root.join(format!("frame{index:03}.png"))).unwrap())
+                .unwrap();
+            let chain = record(
+                xml,
+                "VideoComponentChain",
+                "ObjectID",
+                reference(item, "Components", "ObjectRef"),
+            );
+            assert_eq!(chain.matches("<Component ").count(), 1);
+            let motion = record(
+                xml,
+                "VideoFilterComponent",
+                "ObjectID",
+                reference(chain, "Component", "ObjectRef"),
+            );
+            assert_eq!(field(motion, "MatchName"), Some("AE.ADBE Motion"));
+            assert_eq!(field(motion, "Bypass"), Some("false"));
+            let mut controls = std::collections::BTreeMap::new();
+            for parameter in motion.split("<Param ").skip(1) {
+                let id = parameter
+                    .split_once("ObjectRef=\"")
+                    .unwrap()
+                    .1
+                    .split_once('"')
+                    .unwrap()
+                    .0;
+                let tag = if xml.contains(&format!("<PointComponentParam ObjectID=\"{id}\"")) {
+                    "PointComponentParam"
+                } else {
+                    "VideoComponentParam"
+                };
+                let parameter = record(xml, tag, "ObjectID", id);
+                assert!(field(parameter, "Keyframes").is_none());
+                controls.insert(
+                    field(parameter, "ParameterID").unwrap().parse().unwrap(),
+                    field(parameter, "StartKeyframe")
+                        .unwrap()
+                        .split(',')
+                        .nth(1)
+                        .unwrap()
+                        .to_owned(),
+                );
+            }
+            stills.push(NativeStill {
+                start: field(item, "Start").unwrap_or("0").parse().unwrap(),
+                end: field(item, "End").unwrap().parse().unwrap(),
+                frame,
+                extent: field(stream, "FrameRect").unwrap().to_owned(),
+                motion: controls,
+                default_opacity: field(chain, "DefaultOpacity") == Some("true"),
+            });
+        }
+        stills.sort_by_key(|still| still.start);
+        stills
+    }
+    let frame_ticks = 8_467_200_000;
+    let expected: Vec<_> = [(0, 2, 3), (2, 3, 4), (3, 5, 1), (5, 6, 2)]
+        .into_iter()
+        .map(|(start, end, frame)| NativeStill {
+            start: start * frame_ticks,
+            end: end * frame_ticks,
+            frame,
+            extent: "0,0,640,360".into(),
+            motion: [
+                (1, "0.5:0.5"),
+                (2, "50"),
+                (3, "50"),
+                (4, "true"),
+                (5, "0"),
+                (6, "0.5:0.5"),
+                (7, "0."),
+            ]
+            .into_iter()
+            .map(|(key, value)| (key, value.to_owned()))
+            .collect(),
+            default_opacity: true,
+        })
+        .collect();
+    assert_eq!(native_stills(&xml, root), expected);
+    // Negative controls exercise the same reference traversal, not independent
+    // range/asset sets: wrong published bytes or Motion must fail equality.
+    let wrong_motion = xml.replacen(",50,", ",25,", 1);
+    assert_ne!(wrong_motion, xml);
+    assert_ne!(native_stills(&wrong_motion, root), expected);
+    let first_media = xml
+        .split("<RelativePath>")
+        .skip(1)
+        .find_map(|rest| {
+            let path = rest.split_once("</RelativePath>").unwrap().0;
+            path.ends_with(".png").then_some(path)
+        })
+        .unwrap();
+    let wrong_image = xml.replace(
+        &format!("<RelativePath>{first_media}</RelativePath>"),
+        "<RelativePath>../frame000.png</RelativePath>",
+    );
+    assert_ne!(native_stills(&wrong_image, root), expected);
+
+    // A genuine off-grid picture change must still enter conservative hybrid
+    // routing; the new typed normalization is not a blanket warning bypass.
+    let group = document["composition"]["layers"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|layer| layer["type"] == "Group" && layer["playback"]["inputRange"]["start"] == 100)
+        .unwrap();
+    group["playback"]["inputRange"]["start"] = 90.into();
+    group["playback"]["mapping"]["input"]["start"] = 90.into();
+    fs::write(&edit, serde_json::to_vec(&document).unwrap()).unwrap();
+    archive.commit_project_json(&edit).unwrap();
+    archive.save_as(root.join("off-grid.tsrct")).unwrap();
+    let changed = run(
+        root,
+        &[
+            "convert",
+            "off-grid.tsrct",
+            "--to",
+            "premiere",
+            "-o",
+            "off-grid",
+        ],
+    );
+    assert!(changed.status.success(), "{changed:?}");
+    let diagnostics = String::from_utf8_lossy(&changed.stderr);
+    assert!(
+        diagnostics.contains("Editable linked-AEP package")
+            || diagnostics.contains("HYBRID-NATIVE-RETAINED"),
+        "{diagnostics}"
+    );
+}
+
+#[test]
+fn premiere_hybrid_noise_keeps_current_native_stack_and_failed_noise_falls_back() {
+    fn field<'a>(record: &'a str, tag: &str) -> &'a str {
+        record
+            .split_once(&format!("<{tag}>"))
+            .unwrap()
+            .1
+            .split_once(&format!("</{tag}>"))
+            .unwrap()
+            .0
+    }
+    fn attribute<'a>(record: &'a str, name: &str) -> &'a str {
+        record
+            .split_once(&format!("{name}=\""))
+            .unwrap()
+            .1
+            .split_once('"')
+            .unwrap()
+            .0
+    }
+    fn parameter<'a>(xml: &'a str, component: &str, index: usize) -> &'a str {
+        let reference = component.split("<Param ").nth(index + 1).unwrap();
+        let id = attribute(reference, "ObjectRef");
+        xml.split_once(&format!("<VideoComponentParam ObjectID=\"{id}\""))
+            .unwrap()
+            .1
+            .split_once("</VideoComponentParam>")
+            .unwrap()
+            .0
+    }
+
+    for (unsupported, strength_keys) in [
+        (false, None),
+        (true, None),
+        (false, Some([0.0, 4.0, 12.0])),
+        (false, Some([2.0, 8.0, 16.0])),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let mut document: Value = serde_json::from_str(EDITABLE).unwrap();
+        document["composition"]["layers"][0]["effects"] = json!([
+            {"id":9,"effect":{"type":"grain","amount":if unsupported {41.0} else {12.0},"size":2.0,"softness":0.7,"aspectRatio":1.3,"seed":17.0}},
+            {"id":10,"enabled":false,"effect":{"type":"grain","amount":2.0,"size":1.0,"softness":0.0,"aspectRatio":1.0,"seed":0.0}}
+        ]);
+        if let Some(values) = strength_keys {
+            document["composition"]["layers"][0]["effects"][0]["effect"]["amount"] =
+                json!(values[0]);
+            // Independently edited current strength, not cached source values.
+            document["composition"]["dynamics"] = json!({"entries":[{
+                "target":{"kind":"effectProperty","effectId":9,"paramName":"intensity"},
+                "animator":{"type":"keyframes","enabled":true,"keyframes":[
+                    {"id":"noise-a","layerTime":0,"value":{"type":"float","value":values[0]},"easing":{"type":"linear"}},
+                    {"id":"noise-b","layerTime":500,"value":{"type":"float","value":values[1]},"easing":{"type":"hold"}},
+                    {"id":"noise-c","layerTime":1000,"value":{"type":"float","value":values[2]},"easing":{"type":"hold"}}
+                ]}
+            }]});
+        }
+        fs::write(root.join("source.mp4"), MEDIA).unwrap();
+        tesseract_file::TesseractFileBuilder::from_project_json(
+            &serde_json::to_vec(&document).unwrap(),
+        )
+        .unwrap()
+        .add_asset(
+            "premiere-video-1",
+            root.join("source.mp4"),
+            tesseract_file::AssetKind::Video,
+        )
+        .unwrap()
+        .write(root.join("edited.tsrct"))
+        .unwrap();
+        let saved = run(
+            root,
+            &[
+                "convert",
+                "edited.tsrct",
+                "--to",
+                "premiere",
+                "-o",
+                "native",
+            ],
+        );
+        assert!(saved.status.success(), "{saved:?}");
+        let mut xml = String::new();
+        flate2::read::GzDecoder::new(fs::File::open(root.join("native/project.prproj")).unwrap())
+            .read_to_string(&mut xml)
+            .unwrap();
+        if unsupported {
+            assert!(
+                xml.contains(".aep"),
+                "failed Grain must still seed hybrid fallback: {xml}"
+            );
+            continue;
+        }
+        assert!(!xml.contains(".aep"), "{xml}");
+        let mut components: Vec<_> = xml
+            .split("<VideoFilterComponent ")
+            .skip(1)
+            .map(|part| part.split_once("</VideoFilterComponent>").unwrap().0)
+            .filter(|part| part.contains("<MatchName>AE.ADBE Noise2</MatchName>"))
+            .collect();
+        assert_eq!(components.len(), 2);
+        let index = |component: &str| -> usize {
+            let id = attribute(component, "ObjectID");
+            let reference = xml
+                .split("<Component ")
+                .skip(1)
+                .find(|part| {
+                    part.split_once('>')
+                        .unwrap()
+                        .0
+                        .contains(&format!("ObjectRef=\"{id}\""))
+                })
+                .unwrap();
+            attribute(reference, "Index").parse().unwrap()
+        };
+        components.sort_by_key(|component| std::cmp::Reverse(index(component)));
+        for (component, expected, bypass) in [
+            (
+                components[0],
+                strength_keys.map_or(30.0, |values| values[0] / 0.4),
+                "false",
+            ),
+            (components[1], 5.0, "true"),
+        ] {
+            let value: f64 = field(parameter(&xml, component, 0), "StartKeyframe")
+                .split(',')
+                .nth(1)
+                .unwrap()
+                .parse()
+                .unwrap();
+            assert_eq!(value, expected);
+            assert_eq!(field(component, "Bypass"), bypass);
+            let amount = parameter(&xml, component, 0);
+            let active_keys = strength_keys.filter(|_| bypass == "false");
+            assert_eq!(
+                field(amount, "IsTimeVarying"),
+                if active_keys.is_some() {
+                    "true"
+                } else {
+                    "false"
+                }
+            );
+            if let Some(values) = active_keys {
+                let keys: Vec<_> = field(amount, "Keyframes")
+                    .split_terminator(';')
+                    .map(|key| {
+                        let fields: Vec<_> = key.split(',').collect();
+                        (
+                            fields[0].parse::<i64>().unwrap(),
+                            fields[1].parse::<f64>().unwrap(),
+                            fields[2].parse::<u8>().unwrap(),
+                        )
+                    })
+                    .collect();
+                assert_eq!(
+                    keys,
+                    [
+                        (0, values[0] / 0.4, 4),
+                        (127_008_000_000, values[1] / 0.4, 4),
+                        (254_016_000_000, values[2] / 0.4, 0)
+                    ]
+                );
+            } else {
+                assert!(!amount.contains("<Keyframes>"));
+            }
+            for index in [1, 2] {
+                assert_eq!(
+                    field(parameter(&xml, component, index), "IsTimeVarying"),
+                    "false"
+                );
+            }
+        }
+    }
+}
+
+/// The source-derived dual-key case must exercise real fallback and inspect its
+/// native controls, not merely prove that some linked AEP was published.
+#[test]
+fn premiere_hybrid_noise_modern_strength_seed_keys_reach_linked_grain() {
+    use aftereffects_file::{properties, rifx::Chunk, structure};
+
+    fn keyed_record(xml: &str, id: u32, values: [f64; 2]) -> String {
+        let start = xml
+            .find(&format!("<VideoComponentParam ObjectID=\"{id}\""))
+            .unwrap();
+        let end = start + xml[start..].find("</VideoComponentParam>").unwrap();
+        let record = &xml[start..end];
+        assert!(!record.contains("<Keyframes>"));
+        // Half-second knots within the one-second media harness. Only the exact
+        // native Seed736 / Intensity737 records are changed; source bytes stay pinned.
+        let keys = format!(
+            "<Keyframes>0,{},0,0,0,0,0,0;127008000000,{},4,0,0,0,0,0;</Keyframes>",
+            values[0], values[1]
+        );
+        format!("{}{}{}{}", &xml[..start], record, keys, &xml[end..])
+    }
+    fn named(chunk: &Chunk, name: &str) -> bool {
+        chunk.id() == *b"tdmn"
+            && chunk
+                .data_payload()
+                .unwrap()
+                .split(|byte| *byte == 0)
+                .next()
+                == Some(name.as_bytes())
+    }
+    fn grain_groups<'a>(chunks: &'a [Chunk], result: &mut Vec<&'a [Chunk]>) {
+        for pair in chunks.windows(2) {
+            if named(&pair[0], "VISINF Grain Implant") && pair[1].list_kind() == Some(*b"sspc") {
+                let group = pair[1]
+                    .children()
+                    .unwrap()
+                    .iter()
+                    .find(|chunk| chunk.list_kind() == Some(*b"tdgp"))
+                    .unwrap();
+                result.push(group.children().unwrap());
+            }
+        }
+        for chunk in chunks {
+            if let Some(children) = chunk.children() {
+                grain_groups(children, result);
+            }
+        }
+    }
+    fn control(group: &[Chunk], name: &str) -> properties::NumericProperty {
+        let pair = group.windows(2).find(|pair| named(&pair[0], name)).unwrap();
+        assert_eq!(pair[1].list_kind(), Some(*b"tdbs"));
+        properties::read_numeric(pair[1].children().unwrap()).unwrap()
+    }
+    fn enabled(group: &[Chunk]) -> bool {
+        let flags = group
+            .iter()
+            .find(|chunk| chunk.id() == *b"tdsb")
+            .unwrap()
+            .data_payload()
+            .unwrap();
+        assert_eq!(flags.len(), 4);
+        flags[3] & 1 != 0
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let records =
+        include_str!("../../../crates/premiere_file/tests/fixtures/noise-native-records.xml");
+    let body = records
+        .split_once("<PremiereData>")
+        .unwrap()
+        .1
+        .split_once("</PremiereData>")
+        .unwrap()
+        .0;
+    let body = keyed_record(&keyed_record(body, 737, [10.0, 30.0]), 736, [3.0, 7.0]);
+    let xml = one_second().replace(
+        "<VideoComponentChain ObjectID=\"4\"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>",
+        &body.replacen("<VideoComponentChain ObjectID=\"388\"", "<VideoComponentChain ObjectID=\"4\"", 1),
+    );
+    fixture(root, &xml);
+    let imported = run(
+        root,
+        &[
+            "convert",
+            "project.prproj",
+            "--to",
+            "tesseract",
+            "--sequence",
+            "sequence-1",
+            "-o",
+            "imported",
+        ],
+    );
+    assert!(imported.status.success(), "{imported:?}");
+    let mut archive =
+        tesseract_file::TesseractFile::open(root.join("imported/project.tsrct")).unwrap();
+    let original = archive.project_json().unwrap();
+    let layers = original["composition"]["layers"].as_array().unwrap();
+    let owner = layers
+        .iter()
+        .position(|layer| {
+            layer["effects"]
+                .as_array()
+                .is_some_and(|effects| effects.len() == 2)
+        })
+        .unwrap();
+    let effects = &layers[owner]["effects"];
+    assert_eq!(effects[0]["effect"]["amount"], json!(4.0));
+    assert_eq!(effects[0]["effect"]["seed"], json!(3.0));
+    assert_eq!(effects[1]["effect"]["amount"], json!(2.0));
+    let modern_id = effects[0]["id"].clone();
+    for (parameter, expected) in [("intensity", [4.0, 12.0]), ("seed", [3.0, 7.0])] {
+        let entries = original["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap();
+        let entry = entries
+            .iter()
+            .find(|entry| {
+                entry["target"]["effectId"] == modern_id
+                    && entry["target"]["paramName"] == parameter
+            })
+            .unwrap();
+        let keys = entry["animator"]["keyframes"].as_array().unwrap();
+        assert_eq!(keys.len(), 2);
+        for (index, expected) in expected.into_iter().enumerate() {
+            assert_eq!(keys[index]["value"]["value"], json!(expected));
+            assert_eq!(keys[index]["layerTime"], json!(index * 500));
+        }
+    }
+    for edited in [false, true] {
+        let mut document = original.clone();
+        let (strength, seed, legacy) = if edited {
+            ([6.0, 14.0], [13.0, 29.0], 9.0)
+        } else {
+            ([4.0, 12.0], [3.0, 7.0], 2.0)
+        };
+        if edited {
+            let effects = &mut document["composition"]["layers"][owner]["effects"];
+            effects[0]["effect"]["amount"] = json!(strength[0]);
+            effects[0]["effect"]["seed"] = json!(seed[0]);
+            effects[0]["effect"]["size"] = json!(2.5);
+            effects[1]["effect"]["amount"] = json!(legacy);
+            effects[1]["enabled"] = json!(false);
+            for entry in document["composition"]["dynamics"]["entries"]
+                .as_array_mut()
+                .unwrap()
+            {
+                if entry["target"]["effectId"] == modern_id {
+                    let values = match entry["target"]["paramName"].as_str().unwrap() {
+                        "intensity" => strength,
+                        "seed" => seed,
+                        other => panic!("unexpected modern track {other}"),
+                    };
+                    for (key, value) in entry["animator"]["keyframes"]
+                        .as_array_mut()
+                        .unwrap()
+                        .iter_mut()
+                        .zip(values)
+                    {
+                        key["value"]["value"] = json!(value);
+                    }
+                }
+            }
+        }
+        let edit = root.join("edited.json");
+        fs::write(&edit, serde_json::to_vec(&document).unwrap()).unwrap();
+        archive.commit_project_json(&edit).unwrap();
+        let input = if edited {
+            "edited.tsrct"
+        } else {
+            "source.tsrct"
+        };
+        archive.save_as(root.join(input)).unwrap();
+        let out = if edited {
+            "edited-native"
+        } else {
+            "source-native"
+        };
+        let exported = run(root, &["convert", input, "--to", "premiere", "-o", out]);
+        assert!(exported.status.success(), "{exported:?}");
+        let diagnostics = String::from_utf8_lossy(&exported.stderr);
+        assert!(
+            !diagnostics.contains("no native animated target"),
+            "{diagnostics}"
+        );
+        let mut xml = String::new();
+        flate2::read::GzDecoder::new(
+            fs::File::open(root.join(out).join("project.prproj")).unwrap(),
+        )
+        .read_to_string(&mut xml)
+        .unwrap();
+        assert!(
+            xml.contains("./media/ae-0001/compositions.aep"),
+            "seed keys must trigger genuine fallback: {xml}"
+        );
+        let native = structure::read_project(
+            &fs::read(root.join(out).join("media/ae-0001/compositions.aep")).unwrap(),
+        )
+        .unwrap();
+        let mut groups = Vec::new();
+        for item in &native.items {
+            if let structure::ItemKind::Composition(composition) = &item.kind {
+                for layer in &composition.layers {
+                    grain_groups(&layer.content, &mut groups);
+                }
+            }
+        }
+        assert_eq!(
+            groups.len(),
+            2,
+            "Modern and Legacy remain in native order on fallback"
+        );
+        assert!(enabled(groups[0]));
+        assert_eq!(enabled(groups[1]), !edited);
+        for (name, expected) in [
+            ("VISINF Grain Implant-0008", strength),
+            ("VISINF Grain Implant-0013", seed),
+        ] {
+            let property = control(groups[0], name);
+            assert!(property.animated);
+            assert_eq!(
+                property
+                    .keyframes
+                    .iter()
+                    .map(|key| (key.time_secs, key.values[0]))
+                    .collect::<Vec<_>>(),
+                [(0.0, expected[0]), (0.5, expected[1])]
+            );
+        }
+        assert_eq!(
+            control(groups[0], "VISINF Grain Implant-0007").values,
+            [if edited { 2.5 } else { 1.0 }]
+        );
+        let legacy_strength = control(groups[1], "VISINF Grain Implant-0008");
+        assert_eq!(legacy_strength.values, [legacy]);
+        assert!(legacy_strength.keyframes.is_empty());
+    }
+}
+
+#[test]
+fn warp_public_native_graphs_keep_current_edits_through_aep_package() {
+    fn children(node: &Value) -> impl Iterator<Item = &Value> {
+        node.get("composition").into_iter().chain(
+            node.get("layers")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten(),
+        )
+    }
+    fn named<'a>(node: &'a Value, name: &str) -> Option<&'a Value> {
+        if node["name"] == name {
+            return Some(node);
+        }
+        children(node).find_map(|child| named(child, name))
+    }
+    fn id_node(node: &Value, id: u64) -> Option<&Value> {
+        if node["id"].as_u64() == Some(id) {
+            return Some(node);
+        }
+        children(node).find_map(|child| id_node(child, id))
+    }
+    fn multiply(a: [f64; 4], b: [f64; 4]) -> [f64; 4] {
+        [
+            a[0] * b[0] + a[1] * b[2],
+            a[0] * b[1] + a[1] * b[3],
+            a[2] * b[0] + a[3] * b[2],
+            a[2] * b[1] + a[3] * b[3],
+        ]
+    }
+    // Follow exporter/importer container normalization down to the actual
+    // pre-Mirror image rather than assuming the named outer Group owns rotation.
+    fn source_matrix(node: &Value, parent: [f64; 4]) -> Option<[f64; 4]> {
+        let t = &node["transform"];
+        assert_eq!(t["skew"].as_f64().unwrap_or(0.), 0.);
+        let angle = t["rotation"].as_f64().unwrap_or(0.).to_radians();
+        let sx = t["scale"][0].as_f64().unwrap_or(100.) / 100.;
+        let sy = t["scale"][1].as_f64().unwrap_or(100.) / 100.;
+        let matrix = multiply(
+            parent,
+            [
+                angle.cos() * sx,
+                -angle.sin() * sy,
+                angle.sin() * sx,
+                angle.cos() * sy,
+            ],
+        );
+        if node["name"] == "Source before Mirror" {
+            return Some(matrix);
+        }
+        children(node).find_map(|child| source_matrix(child, matrix))
+    }
+    fn assert_mask_reference(root: &Value, branch: &Value) {
+        let masks = branch["masks"]
+            .as_array()
+            .expect("branch-local clipping mask");
+        assert!(!masks.is_empty());
+        for mask in masks {
+            let guide = id_node(
+                root,
+                mask["layer"].as_u64().expect("editable guide reference"),
+            )
+            .expect("mask guide is present");
+            assert_eq!(guide["type"], "Shape");
+            assert!(!guide["shape"]["path"]["commands"]
+                .as_array()
+                .expect("editable path")
+                .is_empty());
+        }
+    }
+
+    fn named_path<'a>(node: &'a Value, name: &str) -> Option<Vec<&'a Value>> {
+        if node["name"] == name {
+            return Some(vec![node]);
+        }
+        children(node).find_map(|child| {
+            let mut path = named_path(child, name)?;
+            path.insert(0, node);
+            Some(path)
+        })
+    }
+    fn transform_point(node: &Value, point: [f64; 2]) -> Option<[f64; 2]> {
+        let t = &node["transform"];
+        for key in ["skew", "rotationX", "rotationY"] {
+            if t[key].as_f64().unwrap_or(0.) != 0. {
+                return None;
+            }
+        }
+        if t["orientation"]
+            .as_array()
+            .is_some_and(|axes| axes.iter().any(|v| v.as_f64() != Some(0.)))
+        {
+            return None;
+        }
+        let angle = t["rotation"].as_f64().unwrap_or(0.).to_radians();
+        let p: [f64; 2] = std::array::from_fn(|axis| {
+            (point[axis] - t["anchorPoint"][axis].as_f64().unwrap_or(0.))
+                * t["scale"][axis].as_f64().unwrap_or(100.)
+                / 100.
+        });
+        Some([
+            angle.cos() * p[0] - angle.sin() * p[1] + t["position"][0].as_f64().unwrap_or(0.),
+            angle.sin() * p[0] + angle.cos() * p[1] + t["position"][1].as_f64().unwrap_or(0.),
+        ])
+    }
+    // Only a common ancestor can crop BOTH images. Resolve source-local native
+    // mask coordinates through their carrier's normalized anchor/position.
+    fn finite_canvas_mask(root: &Value) -> Option<(u64, u64)> {
+        let reflected = named_path(root, "Mirror reflected half")?;
+        let retained = named_path(root, "Mirror retained source half")?;
+        for (index, (owner, _)) in reflected
+            .iter()
+            .zip(&retained)
+            .take_while(|(a, b)| std::ptr::eq(**a, **b))
+            .enumerate()
+        {
+            for mask in owner
+                .get("masks")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                if mask["mode"] != "add"
+                    || mask["inverted"] != false
+                    || mask["opacity"] != 1.0
+                    || mask["expansion"] != 0.0
+                    || mask["feather"] != json!([0.0, 0.0])
+                    || owner["isHidden"].as_bool().unwrap_or(false)
+                {
+                    continue;
+                }
+                let guide = id_node(root, mask["layer"].as_u64()?)?;
+                if guide["type"] != "Shape"
+                    || guide["parent"] != owner["id"]
+                    || guide["isHidden"].as_bool().unwrap_or(false)
+                    || guide["activeRange"]["start"].as_u64()? != 0
+                    || guide["activeRange"]["duration"].as_u64()? < 2000
+                    || guide["transform"]["opacity"] != 100.0
+                {
+                    continue;
+                }
+                let commands = guide["shape"]["path"]["commands"].as_array()?;
+                if !matches!(commands.len(), 5 | 6) || commands.last()?["type"] != "close" {
+                    continue;
+                }
+                let corners = [[0., 0.], [320., 0.], [320., 180.], [0., 180.]];
+                let rectangle =
+                    commands[..commands.len() - 1]
+                        .iter()
+                        .enumerate()
+                        .all(|(i, command)| {
+                            if command["type"] != if i == 0 { "moveTo" } else { "lineTo" } {
+                                return false;
+                            }
+                            let Some(point) = command["x"].as_f64().zip(command["y"].as_f64())
+                            else {
+                                return false;
+                            };
+                            let point =
+                                transform_point(guide, [point.0, point.1]).and_then(|point| {
+                                    reflected[..=index]
+                                        .iter()
+                                        .rev()
+                                        .try_fold(point, |point, node| transform_point(node, point))
+                                });
+                            // Native path storage quantizes coordinates to float32.
+                            point.is_some_and(|point| {
+                                (0..2).all(|axis| (point[axis] - corners[i % 4][axis]).abs() < 1e-4)
+                            })
+                        });
+                if rectangle {
+                    return Some((owner["id"].as_u64()?, mask["id"].as_u64()?));
+                }
+            }
+        }
+        None
+    }
+    fn remove_mask(node: &mut Value, owner: u64, mask: u64) {
+        if node["id"].as_u64() == Some(owner) {
+            node["masks"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|m| m["id"].as_u64() != Some(mask));
+            return;
+        }
+        if let Some(comp) = node.get_mut("composition") {
+            remove_mask(comp, owner, mask);
+        }
+        if let Some(layers) = node.get_mut("layers").and_then(Value::as_array_mut) {
+            for child in layers {
+                remove_mask(child, owner, mask);
+            }
+        }
+    }
+
+    fn edit(node: &mut Value, target: &str, count: &mut usize) {
+        if target == "Mirror reflected half" && node["name"] == target {
+            node["transform"]["rotation"] = json!(80.0);
+            *count += 1;
+        }
+        if let Some(effects) = node.get_mut("effects").and_then(Value::as_array_mut) {
+            for record in effects {
+                if record["effect"]["type"] == target {
+                    record["effect"][if target == "bulge" {
+                        "bulgeHeight"
+                    } else {
+                        "phase"
+                    }] = json!(-0.75);
+                    *count += 1;
+                }
+            }
+        }
+        if let Some(comp) = node.get_mut("composition") {
+            edit(comp, target, count);
+        }
+        if let Some(layers) = node.get_mut("layers").and_then(Value::as_array_mut) {
+            for layer in layers {
+                edit(layer, target, count);
+            }
+        }
+    }
+    for (composition, target) in [
+        ("1", "Mirror reflected half"),
+        ("14", "bulge"),
+        ("27", "waveWarp"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(
+            root.join("source.aep"),
+            include_bytes!(
+                "../../../crates/aftereffects_file/tests/fixtures/effects/warp_static.aep"
+            ),
+        )
+        .unwrap();
+        aep_success(run(
+            root,
+            &[
+                "convert",
+                "source.aep",
+                "--composition",
+                composition,
+                "--to",
+                "tesseract",
+                "-o",
+                "imported",
+            ],
+        ));
+        let mut archive =
+            tesseract_file::TesseractFile::open(root.join("imported/project.tsrct")).unwrap();
+        let mut document = archive.project_json().unwrap();
+        let mut count = 0;
+        edit(&mut document, target, &mut count);
+        assert_eq!(
+            count, 1,
+            "source {composition} must retain target before export"
+        );
+        let edit_path = root.join("edit.json");
+        fs::write(&edit_path, serde_json::to_vec(&document).unwrap()).unwrap();
+        archive.commit_project_json(&edit_path).unwrap();
+        archive.save_as(root.join("edited.tsrct")).unwrap();
+        let output = run(
+            root,
+            &[
+                "convert",
+                "edited.tsrct",
+                "--to",
+                "after-effects",
+                "-o",
+                "exported",
+            ],
+        );
+        assert!(output.status.success(), "{output:?}");
+        let native = aftereffects_file::structure::read_project(
+            &fs::read(root.join("exported/project.aep")).unwrap(),
+        )
+        .unwrap();
+        let imported =
+            aftereffects_file::structure_document::to_structural_fx_document(&native, Some(1))
+                .unwrap();
+        let json = imported.document.to_json_value().unwrap();
+        let text = json.to_string();
+        assert!(!text.contains("JsScript"));
+        if composition == "1" {
+            let branch =
+                named(&json, "Mirror reflected half").expect("current reflected branch retained");
+            let actual = source_matrix(branch, [1., 0., 0., 1.])
+                .expect("branch owns editable pre-Mirror content");
+            let reflection = |degrees: f64| {
+                let a = degrees.to_radians();
+                [-a.cos(), -a.sin(), -a.sin(), a.cos()]
+            };
+            let expected = reflection(80.);
+            for (a, e) in actual.into_iter().zip(expected) {
+                assert!(
+                    (a - e).abs() < 1e-6,
+                    "edited branch matrix {actual:?}, expected {expected:?}"
+                );
+            }
+            assert!(
+                actual
+                    .into_iter()
+                    .zip(reflection(60.))
+                    .any(|(a, old)| (a - old).abs() > 0.1),
+                "unchanged native60 must fail the edited80 contract"
+            );
+            // Resolve clipping only along the actual pre-Mirror content path,
+            // not an unrelated masked descendant or the outer canvas crop.
+            fn source_path(node: &Value) -> Option<Vec<&Value>> {
+                if node["name"] == "Source before Mirror" {
+                    return Some(vec![node]);
+                }
+                children(node).find_map(|child| {
+                    let mut path = source_path(child)?;
+                    path.push(node);
+                    Some(path)
+                })
+            }
+            fn assert_half_masks(root: &Value) {
+                for name in ["Mirror reflected half", "Mirror retained source half"] {
+                    let clipped = named(root, name).expect("source branch survives");
+                    let path = source_path(clipped).expect("branch owns pre-Mirror content");
+                    let masked = path
+                        .into_iter()
+                        .find(|node| {
+                            node.get("masks")
+                                .and_then(Value::as_array)
+                                .is_some_and(|m| !m.is_empty())
+                        })
+                        .expect("each source half remains clipped before reflection");
+                    assert_mask_reference(root, masked);
+                }
+            }
+            assert_half_masks(&json);
+            let (owner, mask) = finite_canvas_mask(&json)
+                .expect("common active mask must clip both images to the finite 320x180 canvas");
+            let mut missing_canvas = json.clone();
+            remove_mask(&mut missing_canvas, owner, mask);
+            assert_half_masks(&missing_canvas);
+            assert!(
+                finite_canvas_mask(&missing_canvas).is_none(),
+                "two intact half-plane masks must not substitute for the removed common canvas mask"
+            );
+        } else {
+            assert!(text.contains(target), "{target} lost: {text}");
+            assert!(
+                text.contains("-0.75"),
+                "current edited control lost: {text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn warp_public_fisheye_keeps_native_lens_approximation_instead_of_empty_ae_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut document: Value = serde_json::from_str(EDITABLE).unwrap();
+    document["composition"]["layers"][0]["effects"] =
+        json!([{ "id":9,"effect":{"type":"fisheye","amount":20,"centerX":0.5,"centerY":0.5}}]);
+    fs::write(root.join("source.mp4"), MEDIA).unwrap();
+    tesseract_file::TesseractFileBuilder::from_project_json(
+        &serde_json::to_vec(&document).unwrap(),
+    )
+    .unwrap()
+    .add_asset(
+        "premiere-video-1",
+        root.join("source.mp4"),
+        tesseract_file::AssetKind::Video,
+    )
+    .unwrap()
+    .write(root.join("edited.tsrct"))
+    .unwrap();
+    let output = run(
+        root,
+        &[
+            "convert",
+            "edited.tsrct",
+            "--to",
+            "premiere",
+            "-o",
+            "exported",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let diagnostics = String::from_utf8_lossy(&output.stderr);
+    assert!(diagnostics.contains("quarter-frame"), "{diagnostics}");
+    assert!(
+        !diagnostics.contains("Editable linked-AEP package"),
+        "{diagnostics}"
+    );
+    let mut xml = String::new();
+    flate2::read::GzDecoder::new(fs::File::open(root.join("exported/project.prproj")).unwrap())
+        .read_to_string(&mut xml)
+        .unwrap();
+    assert!(xml.contains("PR.ADBE Lens Distortion"));
+    assert!(!xml.contains(".aep"));
+}
+
+#[test]
+fn procedural_noise_native_keys_and_current_edits_export_canonical_turbulent() {
+    use aftereffects_file::{properties, rifx::Chunk, structure};
+    fn name(chunk: &Chunk) -> Option<&str> {
+        (chunk.id() == *b"tdmn").then(|| {
+            std::str::from_utf8(
+                chunk
+                    .data_payload()
+                    .unwrap()
+                    .split(|b| *b == 0)
+                    .next()
+                    .unwrap(),
+            )
+            .unwrap()
+        })
+    }
+    fn effects<'a>(chunks: &'a [Chunk], result: &mut Vec<(&'a str, &'a [Chunk])>) {
+        for pair in chunks.windows(2) {
+            if let Some(name) = name(&pair[0]).filter(|_| pair[1].list_kind() == Some(*b"sspc")) {
+                let group = pair[1]
+                    .children()
+                    .unwrap()
+                    .iter()
+                    .find(|c| c.list_kind() == Some(*b"tdgp"))
+                    .unwrap();
+                result.push((name, group.children().unwrap()));
+            }
+        }
+        for chunk in chunks {
+            if let Some(children) = chunk.children() {
+                effects(children, result);
+            }
+        }
+    }
+    fn edit_owner(layers: &mut Value) -> usize {
+        let mut count = 0;
+        for layer in layers.as_array_mut().unwrap() {
+            if let Some(list) = layer
+                .get_mut("effects")
+                .and_then(Value::as_array_mut)
+                .filter(|list| {
+                    list.iter()
+                        .any(|effect| effect["effect"]["type"] == "turbulentNoise")
+                })
+            {
+                let noise = list
+                    .iter_mut()
+                    .find(|effect| effect["effect"]["type"] == "turbulentNoise")
+                    .unwrap();
+                noise["enabled"] = json!(false);
+                list.push(json!({"id":9900,"effect":{"type":"gaussianBlur","blurriness":7.0}}));
+                count += 1;
+            }
+            if layer["layers"].is_array() {
+                count += edit_owner(&mut layer["layers"]);
+            }
+        }
+        count
+    }
+    let normal: &[u8] = include_bytes!("../../../crates/aftereffects_file/tests/fixtures/effects/native-fractal-turbulent-keys.aep");
+    let multiply: &[u8] = include_bytes!(
+        "../../../crates/aftereffects_file/tests/fixtures/effects/native-fractal-multiply-keys.aep"
+    );
+    for (target, source, is_multiply) in [
+        ("1", normal, false),
+        ("16", normal, false),
+        ("1", multiply, true),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("source.aep"), source).unwrap();
+        if is_multiply {
+            let native = structure::read_project(source).unwrap();
+            let structure::ItemKind::Composition(comp) = &native.item(1).unwrap().kind else {
+                panic!()
+            };
+            assert_eq!(comp.layers[0].record.id(), 15);
+            let solid = native
+                .item(comp.layers[0].record.source_id())
+                .unwrap()
+                .solid
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .unwrap();
+            assert_eq!(solid.color, [0.25, 0.5, 0.75]);
+            let mut found = Vec::new();
+            effects(&comp.layers[0].content, &mut found);
+            assert_eq!(found.len(), 1);
+            assert_eq!(found[0].0, "ADBE Fractal Noise");
+            let rows = found[0].1;
+            let pair = rows
+                .windows(2)
+                .find(|pair| name(&pair[0]) == Some("ADBE Fractal Noise-0030"))
+                .unwrap();
+            assert_eq!(
+                properties::read_numeric(pair[1].children().unwrap())
+                    .unwrap()
+                    .values,
+                [5.]
+            );
+        }
+        let imported = run(
+            root,
+            &[
+                "convert",
+                "source.aep",
+                "--to",
+                "tesseract",
+                "--composition",
+                target,
+                "-o",
+                "imported",
+            ],
+        );
+        assert!(imported.status.success(), "{imported:?}");
+        let mut archive =
+            tesseract_file::TesseractFile::open(root.join("imported/project.tsrct")).unwrap();
+        let mut document = archive.project_json().unwrap();
+        if is_multiply {
+            let mut pending: Vec<_> = document["composition"]["layers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .collect();
+            let mut generator = None;
+            let mut colored_source = false;
+            let mut multiply_groups = 0;
+            while let Some(layer) = pending.pop() {
+                if layer["blendMode"] == "multiply" {
+                    multiply_groups += 1;
+                    assert_eq!(layer["name"], "Independent Fractal generator");
+                    generator = Some(layer["layers"][0]["effects"][0]["id"].clone());
+                }
+                colored_source |= layer["rect"]["fillColor"] == json!([0.25, 0.5, 0.75, 1.0]);
+                if let Some(children) = layer.get("layers").and_then(Value::as_array) {
+                    pending.extend(children);
+                }
+            }
+            assert_eq!(multiply_groups, 1);
+            assert!(colored_source, "nonneutral input retained below Multiply");
+            let id = generator.unwrap();
+            let entries = document["composition"]["dynamics"]["entries"]
+                .as_array()
+                .unwrap();
+            assert_eq!(
+                entries
+                    .iter()
+                    .filter(|entry| entry["target"]["effectId"] == id)
+                    .count(),
+                6
+            );
+        }
+        assert_eq!(edit_owner(&mut document["composition"]["layers"]), 1);
+        let entries = document["composition"]["dynamics"]["entries"]
+            .as_array_mut()
+            .unwrap();
+        for (parameter, expected, edited) in [
+            ("contrast", [100., 130.], 170.),
+            ("brightness", [0., 10.], 20.),
+            ("scale", [100., 140.], 180.),
+            ("offsetX", [0., 5.], 10.),
+            ("offsetY", [0., -2.5], -5.),
+            ("evolution", [0., 45.], 90.),
+        ] {
+            let entry = entries
+                .iter_mut()
+                .find(|entry| entry["target"]["paramName"] == parameter)
+                .unwrap();
+            let keys = entry["animator"]["keyframes"].as_array_mut().unwrap();
+            assert_eq!(keys.len(), 2);
+            for (i, value) in expected.into_iter().enumerate() {
+                assert!((keys[i]["value"]["value"].as_f64().unwrap() - value).abs() < 1e-8);
+                assert_eq!(keys[i]["layerTime"], json!(i * 1000));
+            }
+            keys[1]["value"]["value"] = json!(edited);
+        }
+        let edit = root.join("edited.json");
+        fs::write(&edit, serde_json::to_vec(&document).unwrap()).unwrap();
+        archive.commit_project_json(&edit).unwrap();
+        archive.save_as(root.join("edited.tsrct")).unwrap();
+        let output = run(
+            root,
+            &[
+                "convert",
+                "edited.tsrct",
+                "--to",
+                "after-effects",
+                "-o",
+                "native",
+            ],
+        );
+        assert!(output.status.success(), "{output:?}");
+        let native =
+            structure::read_project(&fs::read(root.join("native/project.aep")).unwrap()).unwrap();
+        if is_multiply {
+            // Current editable graph exports native Multiply compositing, not Fractal replay.
+            assert_eq!(
+                native
+                    .items
+                    .iter()
+                    .filter_map(|item| match &item.kind {
+                        structure::ItemKind::Composition(comp) => Some(comp),
+                        _ => None,
+                    })
+                    .flat_map(|comp| &comp.layers)
+                    .filter(|layer| layer.record.blend_mode() == 5)
+                    .count(),
+                1
+            );
+        }
+        let mut found = Vec::new();
+        for item in &native.items {
+            if let structure::ItemKind::Composition(comp) = &item.kind {
+                for layer in &comp.layers {
+                    effects(&layer.content, &mut found);
+                }
+            }
+        }
+        assert_eq!(
+            found.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            ["ADBE AIF Perlin Noise 3D", "ADBE Gaussian Blur 2"]
+        );
+        let group = found[0].1;
+        assert_eq!(
+            group
+                .iter()
+                .find(|c| c.id() == *b"tdsb")
+                .unwrap()
+                .data_payload()
+                .unwrap()[3]
+                & 1,
+            0
+        );
+        for (slot, expected) in [
+            ("0004", vec![100., 170.]),
+            ("0005", vec![0., 20.]),
+            ("0010", vec![100., 180.]),
+            ("0020", vec![0., 90.]),
+        ] {
+            let native_name = format!("ADBE AIF Perlin Noise 3D-{slot}");
+            let pair = group
+                .windows(2)
+                .find(|pair| name(&pair[0]) == Some(native_name.as_str()))
+                .unwrap();
+            let property = properties::read_numeric(pair[1].children().unwrap()).unwrap();
+            assert_eq!(property.keyframes.len(), 2);
+            for (index, key) in property.keyframes.iter().enumerate() {
+                assert_eq!(key.time_secs, index as f64);
+                assert!(
+                    (key.values[0] - expected[index]).abs() < 1e-6,
+                    "{slot}: {key:?}"
+                );
+            }
+        }
+    }
 }

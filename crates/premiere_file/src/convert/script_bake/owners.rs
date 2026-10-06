@@ -292,7 +292,7 @@ impl<'d> Owners<'d> {
             .chain(group_guides)
             .collect();
         for layer in layers {
-            let (role, children) = role(layer, place, &guides, dynamics);
+            let (role, children) = role(layer, layers, place, &guides, dynamics, canvas);
             let clock = inherited_clock.or_else(|| own_clock(layer));
             for effect in layer.effects() {
                 if let EffectData::Identified { id, .. } = effect.data() {
@@ -356,9 +356,11 @@ impl<'d> Owners<'d> {
 /// The role of `layer` in `place`, and where its children export.
 fn role(
     layer: &Layer,
+    layers: &[Layer],
     place: &Place,
     guides: &BTreeSet<LayerId>,
     dynamics: &AnimationGraph,
+    canvas: [u32; 2],
 ) -> (Role, Place) {
     let inside = |reason: &str| Place::Unexported(reason.to_owned());
     let unbound = |reason: &str| (Role::Unbound(reason.to_owned()), inside(reason));
@@ -380,7 +382,9 @@ fn role(
                 LayerData::Image(_) => STILL,
                 LayerData::Audio(_) => AUDIO_IN_NEST,
                 LayerData::Text(_) => TEXT_IN_NEST,
-                LayerData::Group(group) if graphic_objects(group).is_some() => GRAPHIC_IN_NEST,
+                LayerData::Group(group) if graphic_objects(group, dynamics).is_some() => {
+                    GRAPHIC_IN_NEST
+                }
                 LayerData::Rect(rect) if !guides.contains(&rect.id) => RECT_IN_NEST,
                 LayerData::BooleanOperation(_) | LayerData::Pag(_) | LayerData::AiEdit(_) => {
                     UNSUPPORTED_LAYER
@@ -399,11 +403,13 @@ fn role(
     match layer.data() {
         LayerData::Audio(_) if root => (Role::Audio, inside(UNSUPPORTED_LAYER)),
         LayerData::Audio(_) => unbound(AUDIO_IN_NEST),
-        LayerData::Adjustment(adjustment) => match adjustment::unexported_reason(adjustment) {
-            None => (Role::Adjustment, inside(UNSUPPORTED_LAYER)),
-            Some(reason) => unbound(reason),
-        },
-        LayerData::Group(group) if graphic_objects(group).is_some() => {
+        LayerData::Adjustment(adjustment) => {
+            match adjustment::unexported_reason(adjustment, layers, dynamics, canvas) {
+                None => (Role::Adjustment, inside(UNSUPPORTED_LAYER)),
+                Some(reason) => unbound(&reason),
+            }
+        }
+        LayerData::Group(group) if graphic_objects(group, dynamics).is_some() => {
             if !root {
                 return unbound(GRAPHIC_IN_NEST);
             }
@@ -418,7 +424,7 @@ fn role(
             } else {
                 unsupported_group_fields(group, dynamics)
                     .or_else(|| unsupported_nest_depth(depth))
-                    .or_else(|| (!places_clip(group)).then(|| NO_CLIP.to_owned()))
+                    .or_else(|| (!places_clip(group, dynamics, canvas)).then(|| NO_CLIP.to_owned()))
             };
             match reason {
                 Some(reason) => (Role::Unbound(reason.clone()), Place::Unexported(reason)),
@@ -449,10 +455,12 @@ fn role(
 /// video or an adjustment layer. The writer places a nest only around at
 /// least one placed clip. An invalid video counts: the writer rejects the
 /// export when it reaches it.
-fn places_clip(group: &GroupLayer) -> bool {
+fn places_clip(group: &GroupLayer, dynamics: &AnimationGraph, canvas: [u32; 2]) -> bool {
     group.layers.iter().any(|layer| match layer.data() {
-        LayerData::Group(inner) => places_clip(inner),
-        LayerData::Adjustment(adjustment) => adjustment::unexported_reason(adjustment).is_none(),
+        LayerData::Group(inner) => places_clip(inner, dynamics, canvas),
+        LayerData::Adjustment(adjustment) => {
+            adjustment::unexported_reason(adjustment, &group.layers, dynamics, canvas).is_none()
+        }
         _ => !matches!(video_data(layer), Ok(None)),
     })
 }
@@ -523,7 +531,7 @@ fn static_position(layer: &Layer) -> std::result::Result<[f64; 2], String> {
 /// that holds them, the only nest and adjustment frame that export supports.
 fn effect_frame(owner: &Owner<'_>) -> std::result::Result<[u32; 2], String> {
     match video_data(owner.layer) {
-        Ok(Some(video)) => source_frame(&video).map_err(|error| error.to_string()),
+        Ok(Some(video)) => source_frame(video.source.frame_rect).map_err(|error| error.to_string()),
         Ok(None) => Ok(owner.canvas),
         Err(error) => Err(error.to_string()),
     }
@@ -664,6 +672,12 @@ fn effect_binding(
         Some(EffectParamBinding::Colour { .. }) => {
             return Err(
                 "native colour keys couple three channels, outside scalar and paired script baking"
+                    .to_owned(),
+            );
+        }
+        Some(EffectParamBinding::TileCount { .. }) => {
+            return Err(
+                "native Replicate Count keys couple four tile fields, outside scalar and paired script baking"
                     .to_owned(),
             );
         }

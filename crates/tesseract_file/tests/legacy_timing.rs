@@ -48,6 +48,142 @@ fn document() -> Value {
     })
 }
 
+fn photographic_document(float_ranges: bool) -> Value {
+    let mut value = document();
+    value["duration"] = json!(17);
+    let mut group = value["composition"]["layers"][0].take();
+    let mut first = group["layers"][0].clone();
+    let mut second = first.clone();
+    group["activeRange"] = if float_ranges {
+        json!({"start":11000.0,"duration":6000.0})
+    } else {
+        json!({"start":11000,"duration":6000})
+    };
+    first["id"] = json!(4);
+    second["id"] = json!(5);
+    first["activeRange"] = if float_ranges {
+        json!({"start":0,"duration":4000.0})
+    } else {
+        json!({"start":0,"duration":4000})
+    };
+    second["activeRange"] = if float_ranges {
+        json!({"start":4000.0,"duration":7000.0})
+    } else {
+        json!({"start":4000,"duration":7000})
+    };
+    first["sourceRange"] = first["activeRange"].clone();
+    second["sourceRange"] = if float_ranges {
+        json!({"start":0,"duration":7000.0})
+    } else {
+        json!({"start":0,"duration":7000})
+    };
+    value["composition"]["layers"] = json!([group, first, second]);
+    value
+}
+
+#[test]
+fn legacy_photographic_integral_float_ranges_match_integer_clocks() {
+    let mut documents = Vec::new();
+    for float_ranges in [false, true] {
+        let value = photographic_document(float_ranges);
+        let (_directory, path, bytes) = archive(&value);
+        let file = TesseractFile::open(path).unwrap();
+        let actual = file.project_json().unwrap();
+        let layers = actual["composition"]["layers"].as_array().unwrap();
+        assert_eq!(layers.len(), 3);
+        assert_eq!(layers[0]["layers"].as_array().unwrap().len(), 2);
+        for (layer, start, duration) in [
+            (&layers[0], 11000, 6000),
+            (&layers[1], 0, 4000),
+            (&layers[2], 4000, 7000),
+        ] {
+            let input = json!({"start":start,"duration":duration});
+            assert_eq!(layer["playback"]["inputRange"], input);
+            assert_eq!(layer["playback"]["mapping"]["input"], input);
+            assert_eq!(
+                layer["playback"]["mapping"]["output"],
+                json!({"start":0,"duration":duration})
+            );
+            assert_eq!(layer["playback"]["inputOffsetMs"], json!(0));
+            assert!(layer.get("activeRange").is_none());
+        }
+        for index in [1, 2] {
+            assert_eq!(
+                layers[index]["sourceRange"],
+                value["composition"]["layers"][index]["sourceRange"]
+            );
+        }
+        assert_eq!(actual["futureEnvelope"], value["futureEnvelope"]);
+        assert_eq!(layers[1]["futureLayer"], json!({"kept":true}));
+        assert_eq!(file.project_json_bytes(), bytes);
+        documents.push(actual);
+    }
+    // Retained sourceRange scalar spelling is not part of the canonical clock.
+    let integer_layers = documents[0]["composition"]["layers"].as_array().unwrap();
+    let float_layers = documents[1]["composition"]["layers"].as_array().unwrap();
+    assert_eq!(integer_layers.len(), float_layers.len());
+    for (integer_layer, float_layer) in integer_layers.iter().zip(float_layers) {
+        assert_eq!(integer_layer["playback"], float_layer["playback"]);
+    }
+}
+
+#[test]
+fn legacy_range_numbers_reject_invalid_and_inexact_boundaries() {
+    const MAX_EXACT_MS: u64 = (1_u64 << 53) - 1;
+    for field in ["activeRange", "sourceRange"] {
+        for scalar in ["start", "duration"] {
+            for invalid in [
+                json!(-1),
+                json!(-1.0),
+                json!(0.5),
+                json!("1"),
+                json!(true),
+                Value::Null,
+                json!(MAX_EXACT_MS + 1),
+                json!((MAX_EXACT_MS + 1) as f64),
+                json!(u64::MAX),
+            ] {
+                let mut value = document();
+                value["composition"]["layers"][0]["layers"][0][field][scalar] = invalid.clone();
+                let (_directory, path, _) = archive(&value);
+                assert!(
+                    TesseractFile::open(path).is_err(),
+                    "accepted {field}.{scalar}={invalid}"
+                );
+            }
+            let mut value = document();
+            value["composition"]["layers"][0]["layers"][0][field]
+                .as_object_mut()
+                .unwrap()
+                .remove(scalar);
+            let (_directory, path, _) = archive(&value);
+            assert!(TesseractFile::open(path).is_err());
+        }
+        for range in [
+            json!({"start":0,"duration":0}),
+            json!({"start":0.0,"duration":0.0}),
+            json!({"start":MAX_EXACT_MS,"duration":1}),
+            json!({"start":(MAX_EXACT_MS - 1) as f64,"duration":2.0}),
+        ] {
+            let mut value = document();
+            value["composition"]["layers"][0]["layers"][0][field] = range;
+            let (_directory, path, _) = archive(&value);
+            assert!(TesseractFile::open(path).is_err());
+        }
+        for range in [
+            json!({"start":0.0,"duration":1.0}),
+            json!({"start":(MAX_EXACT_MS - 1) as f64,"duration":1.0}),
+            json!({"start":0,"duration":MAX_EXACT_MS}),
+        ] {
+            let mut value = document();
+            value["composition"]["layers"][0]["layers"][0][field] = range;
+            let (_directory, path, bytes) = archive(&value);
+            let file = TesseractFile::open(path).unwrap();
+            assert_eq!(file.project_json_bytes(), bytes);
+        }
+    }
+}
+
 #[test]
 fn legacy_archive_preserves_video_audio_group_clocks_and_original_bytes() {
     let value = document();
@@ -154,5 +290,58 @@ fn legacy_reader_does_not_hide_conflicting_or_invalid_clocks() {
         value["composition"]["layers"][0]["layers"][0]["playback"] = playback;
         let (_directory, path, _) = archive(&value);
         assert!(TesseractFile::open(path).is_err());
+    }
+}
+
+#[test]
+fn review_legacy_checkout_edit_commit_preserves_bytes_and_clocks() {
+    let value = document();
+    let (directory, path, _) = archive(&value);
+    let checkout = directory.path().join("project.json");
+    let mut file = TesseractFile::open(&path).unwrap();
+    let before = file.project_json().unwrap();
+    file.checkout_project_json(&checkout).unwrap();
+    // Even an unchanged checkout must be accepted by the same bounded reader.
+    file.commit_project_json(&checkout).unwrap();
+    let original = std::fs::read_to_string(&checkout).unwrap();
+    let edited = original.replacen("\"Legacy\"", "\"Review edit\"", 1);
+    assert_ne!(edited, original);
+    let edited = format!("{edited}\n \n");
+    std::fs::write(&checkout, edited.as_bytes()).unwrap();
+    file.commit_project_json(&checkout).unwrap();
+    assert_eq!(file.project_json_bytes(), edited.as_bytes());
+    file.save().unwrap();
+
+    let reopened = TesseractFile::open(&path).unwrap();
+    assert_eq!(reopened.project_json_bytes(), edited.as_bytes());
+    let mut actual = reopened.project_json().unwrap();
+    assert_eq!(actual["composition"]["name"], "Review edit");
+    actual["composition"]["name"] = before["composition"]["name"].clone();
+    assert_eq!(actual, before);
+}
+
+#[test]
+fn review_legacy_commit_rejects_conflicting_clocks_transactionally() {
+    let value = document();
+    let (directory, path, _) = archive(&value);
+    let checkout = directory.path().join("project.json");
+    let mut file = TesseractFile::open(&path).unwrap();
+    let before = file.project_json().unwrap();
+    let before_bytes = file.project_json_bytes().to_vec();
+    let archive_bytes = std::fs::read(&path).unwrap();
+    let mut conflicting = value.clone();
+    conflicting["composition"]["layers"][0]["layers"][0]["playback"] = json!({"type":"windowed"});
+    let mut missing_asset = value.clone();
+    missing_asset["composition"]["layers"][0]["layers"][0]["source"]["assetId"] =
+        json!("unpackaged-review-video");
+    let mut unknown = value;
+    unknown["composition"]["layers"][0]["activeRange"]["futureClockField"] = json!(true);
+
+    for invalid in [conflicting, unknown, missing_asset] {
+        std::fs::write(&checkout, serde_json::to_vec(&invalid).unwrap()).unwrap();
+        assert!(file.commit_project_json(&checkout).is_err());
+        assert_eq!(file.project_json().unwrap(), before);
+        assert_eq!(file.project_json_bytes(), before_bytes);
+        assert_eq!(std::fs::read(&path).unwrap(), archive_bytes);
     }
 }

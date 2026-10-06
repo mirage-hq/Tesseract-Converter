@@ -1,6 +1,7 @@
 //! Read the public CLI's pre-windowed media clocks without changing source bytes.
 //! The canonical FX schema stays strict; this archive boundary admits only the
 //! historical Video/Audio/Group timing shapes with explicit positive ranges.
+//! Legacy milliseconds may be unsigned integers or exact integer-valued floats.
 use crate::{metadata::invalid, TesseractFileError};
 use fx_schema::{
     Duration, EditableFxCompositionDocument, LayerPlayback, Time, TimeRangeProperty,
@@ -55,6 +56,18 @@ fn migrate_layers(layers: &mut [Value]) -> Result<bool, TesseractFileError> {
     Ok(changed)
 }
 
+fn exact_milliseconds(value: &Value) -> Option<u64> {
+    if let Some(integer) = value.as_u64() {
+        return Some(integer);
+    }
+    let float = value.as_f64()?;
+    if !(0.0..=((1_u64 << 53) - 1) as f64).contains(&float) || float.fract() != 0.0 {
+        return None;
+    }
+    // The exact-clock bound and integral check make this conversion lossless.
+    Some(float as u64)
+}
+
 fn range(layer: &Map<String, Value>, field: &str) -> Result<TimeRangeProperty, TesseractFileError> {
     let value = layer
         .get(field)
@@ -68,10 +81,10 @@ fn range(layer: &Map<String, Value>, field: &str) -> Result<TimeRangeProperty, T
             "legacy activeRange contains unsupported clock fields",
         ));
     }
-    let start = value.get("start").and_then(Value::as_u64);
+    let start = value.get("start").and_then(exact_milliseconds);
     let duration = value
         .get("duration")
-        .and_then(Value::as_u64)
+        .and_then(exact_milliseconds)
         .filter(|duration| *duration > 0);
     let (Some(start), Some(duration)) = (start, duration) else {
         return Err(invalid(format!(

@@ -155,7 +155,7 @@ fn classify_wide(group: &GroupLayer) -> Result<PrecompositionPlan, &'static str>
         group,
         Time::from_millis(2000),
         Duration24::from_frames(48).unwrap(),
-        &[],
+        &crate::export_document::AnimationIndex::new(&[]),
         &BTreeMap::new(),
         canvas(),
     )?;
@@ -187,7 +187,10 @@ fn collapsed_unsafe_occurrences_are_not_enabled() {
     assert!(classify_wide(&value).is_err());
     value.motion_blur = false;
     value.transform.rotation_x = 20.0;
-    assert!(!collapsed::eligible(&value, &[]));
+    assert!(!collapsed::eligible(
+        &value,
+        &crate::export_document::AnimationIndex::new(&[])
+    ));
     value.transform.rotation_x = 0.0;
     let mut json = serde_json::to_value(value).unwrap();
     json["layers"][0]["transform"]["rotationX"] = json!(20);
@@ -226,9 +229,14 @@ fn collapsed_mask_output_bounds_do_not_crop_the_input() {
         value
     })
     .unwrap();
-    let output = animated_bounds::layer_bounds(&layer, &[], &BTreeMap::new(), canvas())
-        .unwrap()
-        .unwrap();
+    let output = animated_bounds::layer_bounds(
+        &layer,
+        &crate::export_document::AnimationIndex::new(&[]),
+        &BTreeMap::new(),
+        canvas(),
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(output.min, [-1000.0, -575.0]);
     assert_eq!(output.max, [1000.0, 575.0]);
     let mut source = group;
@@ -242,17 +250,25 @@ fn collapsed_mask_output_bounds_do_not_crop_the_input() {
 #[test]
 fn collapsed_mask_soft_inverted_and_owner_effects_keep_full_bounds() {
     let mut group = masked_group();
-    assert!(collapsed::mask_output(&group, &[]).is_some());
+    assert!(
+        collapsed::mask_output(&group, &crate::export_document::AnimationIndex::new(&[])).is_some()
+    );
     group.masks[0].inverted = true;
-    assert!(collapsed::mask_output(&group, &[]).is_none());
+    assert!(
+        collapsed::mask_output(&group, &crate::export_document::AnimationIndex::new(&[])).is_none()
+    );
     group.masks[0].inverted = false;
     group.masks[0].feather = [1.0, 0.0];
-    assert!(collapsed::mask_output(&group, &[]).is_none());
+    assert!(
+        collapsed::mask_output(&group, &crate::export_document::AnimationIndex::new(&[])).is_none()
+    );
     group.masks[0].feather = [0.0; 2];
     group
         .effects
         .push(serde_json::from_value(json!({"type":"exposure", "exposure": 1.0})).unwrap());
-    assert!(collapsed::mask_output(&group, &[]).is_none());
+    assert!(
+        collapsed::mask_output(&group, &crate::export_document::AnimationIndex::new(&[])).is_none()
+    );
 }
 
 /// The oversized vector boundary keeps its owner-clock guard, which Text
@@ -295,8 +311,18 @@ fn collapsed_vector_owner_keeps_requiring_canonical_identity() {
     let mut wider_identity = serde_json::to_value(&group().playback).unwrap();
     wider_identity["mapping"]["input"]["duration"] = json!(4_000);
     wider_identity["mapping"]["output"]["duration"] = json!(4_000);
+    let mut short_identity = serde_json::to_value(&group().playback).unwrap();
+    short_identity["inputRange"]["duration"] = json!(383);
+    short_identity["mapping"]["input"]["duration"] = json!(383);
+    short_identity["mapping"]["output"]["duration"] = json!(383);
+    let mut edited_identity = short_identity.clone();
+    edited_identity["inputRange"]["duration"] = json!(250);
+    edited_identity["mapping"]["input"]["duration"] = json!(250);
+    edited_identity["mapping"]["output"]["duration"] = json!(250);
     for (label, playback, rejection) in [
         ("canonical linear identity", None, None),
+        ("short linear identity", Some(short_identity), None),
+        ("edited short identity", Some(edited_identity), None),
         ("wider linear identity mapping", Some(wider_identity), None),
         (
             "identity keys",
@@ -330,7 +356,26 @@ fn collapsed_vector_owner_keeps_requiring_canonical_identity() {
                 && layer.record.flags().collapse_transformation
         });
         match rejection {
-            None => assert!(collapsed, "{label}: {:?}", exported.diagnostics),
+            None => {
+                assert!(collapsed, "{label}: {:?}", exported.diagnostics);
+                let native = comp
+                    .layers
+                    .iter()
+                    .find(|layer| layer.record.flags().collapse_transformation)
+                    .unwrap();
+                assert_eq!(native.record.start_time(), Some(0.0), "{label}");
+                assert_eq!(native.record.in_point(), Some(0.0), "{label}");
+                assert_eq!(native.record.stretch(), Some(1.0), "{label}");
+                let end = match label {
+                    "short linear identity" => 0.383,
+                    "edited short identity" => 0.25,
+                    _ => 2.0,
+                };
+                assert!(
+                    (native.record.out_point().unwrap() - end).abs() <= 1.0 / 24_576.0,
+                    "{label}: visibility changed"
+                );
+            }
             Some(reason) => assert!(
                 !collapsed
                     && exported.diagnostics.iter().any(|diagnostic| {

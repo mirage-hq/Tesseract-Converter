@@ -4,8 +4,8 @@ use super::{
     adjustment,
     animation::{chain_components, read_video_animations, read_video_compositing, MotionAndMasks},
     color_matte, effects, frame_dimensions, graphic, integer, require_zero_subclip_time_offset,
-    required, required_integer, stream_dimensions,
-    time_remap::{read_frame_hold, read_time_remapping},
+    required, required_integer,
+    time_remap::{after_source_in, read_frame_hold, read_time_remapping},
     visibility,
 };
 use crate::error::{ensure, unsupported, BuildError, Result};
@@ -22,9 +22,9 @@ use crate::schema::{
     },
     records::{self, MediaPathField},
     ColorSpace, FrameRate, MediaId, PrBlendMode, PrLinearWipe, PrMask, PrMedia,
-    PrPropertyAnimation, PrStaticCrop, PrStaticTransform, PrTimeRemap, PrTrackMatte, PrVideoItem,
-    PrVideoOccurrence, PrVideoStream, PrVideoTrack, PrVideoTransition, PrVideoTransitionKind,
-    ToneMapSettings, VIDEO_MEDIA,
+    PrPropertyAnimation, PrSourceEffects, PrStaticCrop, PrStaticTransform, PrTimeRemap,
+    PrTrackMatte, PrVideoItem, PrVideoOccurrence, PrVideoStream, PrVideoTrack, PrVideoTransition,
+    PrVideoTransitionKind, ToneMapSettings, SOURCE_CHAIN_NOT_CONVERTED, VIDEO_MEDIA,
 };
 use crate::{omit, Omission, OmissionScope};
 use std::{
@@ -314,6 +314,7 @@ pub(super) fn default_chain(
     graph: &Graph<'_>,
     reference: &Reference,
     from: &str,
+    read: &[&str],
     omissions: &mut Vec<Omission>,
 ) {
     let record = match graph.locate(reference, from) {
@@ -329,19 +330,17 @@ pub(super) fn default_chain(
         }
     };
     let identity = record.identity();
-    report_unknown_children(
-        record.element(),
-        &[
-            "DefaultMotion",
-            "DefaultOpacity",
-            "DefaultMotionComponentID",
-            "DefaultOpacityComponentID",
-            "ComponentChain",
-        ],
-        &identity,
-        "",
-        omissions,
-    );
+    let known: Vec<&str> = [
+        "DefaultMotion",
+        "DefaultOpacity",
+        "DefaultMotionComponentID",
+        "DefaultOpacityComponentID",
+        "ComponentChain",
+    ]
+    .into_iter()
+    .chain(read.iter().copied())
+    .collect();
+    report_unknown_children(record.element(), &known, &identity, "", omissions);
     if let Some(component_chain) = record.element().child("ComponentChain") {
         report_unknown_children(
             component_chain,
@@ -396,6 +395,7 @@ pub(super) fn read_tracks(
     media: &mut BTreeMap<MediaId, PrMedia>,
     nesting: &mut super::nested::Nesting<'_>,
     omissions: &mut Vec<Omission>,
+    selected_video_track: Option<usize>,
 ) -> Result<(FrameRate, [u32; 2], Vec<PrVideoTrack>)> {
     let frame_rect = required(
         video.value.frame_rect.as_deref(),
@@ -455,7 +455,7 @@ pub(super) fn read_tracks(
         .as_ref()
         .and_then(|owner| owner.components.as_ref())
     {
-        default_chain(graph, components, &video.identity, omissions);
+        default_chain(graph, components, &video.identity, &[], omissions);
         let chain = graph.follow::<VideoComponentChain>(components, &video.identity)?;
         let components: Vec<_> = chain_components(&chain)?.iter().collect();
         let MotionAndMasks {
@@ -488,7 +488,7 @@ pub(super) fn read_tracks(
         &video.identity,
         "FrameRate",
     )?;
-    let frame_rate = super::frame_rate(frame_rate_ticks, &video.identity)?;
+    let native_frame_rate = super::frame_rate(frame_rate_ticks, &video.identity)?;
 
     let mut video_tracks = Vec::new();
     let mut seen_clips = BTreeSet::new();
@@ -530,6 +530,38 @@ pub(super) fn read_tracks(
         }
     }
     video_tracks.sort_by_key(|track| track.index);
+    if let Some(index) = selected_video_track {
+        video_tracks.retain(|track| usize::try_from(track.index) == Ok(index));
+        ensure!(
+            video_tracks.len() == 1,
+            "{}: multicam SelectedTrackIndex {index} does not identify one readable video track",
+            video.identity
+        );
+    }
+    let frame_rate = if !nesting.reads_inner_timeline()
+        && frame_rate_ticks == crate::format::object_mask::SAVED_SEQUENCE_FRAME_TICKS
+        && video_tracks
+            .iter()
+            .flat_map(|track| &track.clips)
+            .any(|reference| has_saved_raster(graph, reference, &video.identity).unwrap_or(false))
+    {
+        crate::approximate(omissions, &video.identity, format!(
+            "Object Mask sequence cadence {frame_rate_ticks} ticks/frame is sampled at 30 fps to match the converter's default editable export grid, not the nearest supported rate (29.97 is closer); source cadence, native placement ticks and audio timing are unchanged"));
+        FrameRate::Fps30
+    } else {
+        native_frame_rate
+    };
+    if matches!(frame_rate, FrameRate::Native(_)) {
+        crate::approximate(
+            omissions,
+            &video.identity,
+            format!(
+                "native sequence clock retained as {frame_rate_ticks}/{} seconds per frame; editable boundaries round to milliseconds (at most 0.5 ms each); ordinary export uses its requested frame grid (default 30 fps, period deviation {} ticks per frame), not the native cadence",
+                crate::schema::TICKS,
+                FrameRate::Fps30.ticks_per_frame() - frame_rate_ticks
+            ),
+        );
+    }
     // A Track Matte Key names its matte track by the persistent `Track/ID`;
     // an ID that two tracks carry names neither. The ID resolves to the
     // track's position among the kept tracks, which `parsed_tracks` and
@@ -558,11 +590,12 @@ pub(super) fn read_tracks(
     } in video_tracks
     {
         let parent = super::nested::Parent {
-            frame_rate,
+            frame_rate: native_frame_rate,
             dimensions: [width, height],
             track_output: output_enabled,
             track_index,
             track_ids: &track_ids,
+            nested: nesting.reads_inner_timeline(),
         };
         let mut items = Vec::with_capacity(clips.len());
         let mut nests = Vec::new();
@@ -632,21 +665,35 @@ pub(super) fn read_tracks(
             };
             // Whatever becomes of the placement, an active key consumes its
             // matte track over the placement's range.
-            claims.extend(claimed_matte_tracks(graph, &item, &parent).into_iter().map(
-                |matte_track| MatteClaim {
-                    keyed: item.identity.clone(),
-                    track: parsed_tracks.len(),
-                    range: link.start_ticks..link.end_ticks,
-                    matte_track,
-                },
-            ));
+            claims.extend(
+                claimed_matte_tracks(graph, &item, &parent, omissions)
+                    .into_iter()
+                    .map(|matte_track| MatteClaim {
+                        keyed: item.identity.clone(),
+                        track: parsed_tracks.len(),
+                        range: link.start_ticks..link.end_ticks,
+                        matte_track,
+                    }),
+            );
             // A nest or graphic has no source media, so its transition link keeps
             // no occurrence.
             if let Some(guid) = nested {
                 match super::nested::read_nest(
                     graph, item, &guid, &parent, media, nesting, omissions,
                 ) {
-                    Ok(nest) => nests.push(nest),
+                    Ok(super::nested::NestedVideo::Nest(nest)) => nests.push(*nest),
+                    Ok(super::nested::NestedVideo::Media(occurrence)) => {
+                        link.occurrence = Some(LinkedSource {
+                            in_ticks: occurrence.in_ticks,
+                            out_ticks: occurrence.out_ticks,
+                            intrinsic_ticks: media[&occurrence.media]
+                                .video
+                                .as_ref()
+                                .expect("multicam camera has a picture stream")
+                                .intrinsic_ticks,
+                        });
+                        items.push(PrVideoItem::Media(*occurrence));
+                    }
                     Err(error) => omit(
                         omissions,
                         OmissionScope::Occurrence,
@@ -657,8 +704,8 @@ pub(super) fn read_tracks(
                 transition_links.push(link);
                 continue;
             }
-            // An adjustment layer plays generator media like a graphic; its
-            // flag decides before the graphic reader claims the media.
+            // BLAK media bypasses the graphic reader. A flagged non-BLAK
+            // generator must also reach the adjustment reader's validation.
             let converted = match graphic::graphic_clip(graph, &item)
                 .filter(|_| !adjustment::is_flagged(graph, &item))
             {
@@ -667,7 +714,7 @@ pub(super) fn read_tracks(
                     item,
                     source,
                     [width, height],
-                    frame_rate,
+                    native_frame_rate,
                     omissions,
                 )
                 .map(PrVideoItem::Graphic),
@@ -836,6 +883,7 @@ fn claimed_matte_tracks(
     graph: &Graph<'_>,
     item: &Located<VideoClipTrackItem>,
     parent: &super::nested::Parent<'_>,
+    omissions: &mut Vec<Omission>,
 ) -> Vec<usize> {
     let Some(components) = item
         .value
@@ -852,7 +900,7 @@ fn claimed_matte_tracks(
     let Ok(components) = chain_components(&chain) else {
         return Vec::new();
     };
-    effects::claimed_matte_track_ids(graph, components, &chain.identity)
+    effects::claimed_matte_track_ids(graph, components, &chain.identity, omissions)
         .into_iter()
         .filter_map(|id| parent.matte_track_index(id, &item.identity).ok())
         .collect()
@@ -1082,7 +1130,9 @@ fn native_matte_has_effects(
 }
 
 /// Whether an occurrence's Crop, Linear Wipe or Track Matte Key converts
-/// ([`PrVideoOccurrence::mask_boundary`]), recording why not.
+/// ([`PrVideoOccurrence::mask_boundary`]), recording why not. Its source
+/// effects never omit it: import converts it without them when they cannot
+/// apply before its mask.
 fn keep_mask_boundary(
     clip: &PrVideoOccurrence,
     source: [u32; 2],
@@ -1090,7 +1140,7 @@ fn keep_mask_boundary(
     track_index: i64,
     omissions: &mut Vec<Omission>,
 ) -> bool {
-    let Err(reason) = clip.mask_boundary(source, canvas) else {
+    let Err(reason) = clip.mask_boundary(source, canvas, 0) else {
         return true;
     };
     omit(
@@ -1160,7 +1210,11 @@ fn read_transition(
         "TransitionTrackItem",
     )?;
     let range = required(item.track_item.as_ref(), &transition.identity, "TrackItem")?;
-    let start = required_integer(range.start.as_deref(), &transition.identity, "Start")?;
+    // Premiere omits zero Start, as it does for a clip's range.
+    let start = integer(
+        range.start.as_deref().unwrap_or("0"),
+        &format!("{}: invalid Start", transition.identity),
+    )?;
     let end = integer(&range.end, &format!("{}: invalid End", transition.identity))?;
     ensure!(
         start < end,
@@ -1359,6 +1413,55 @@ struct NativeTrack {
     transitions: Vec<Reference>,
 }
 
+/// Only a reachable, typed saved mask opts this sequence into raster sampling.
+/// Unrelated sequences at the same clock retain ordinary native-clock handling.
+fn has_saved_raster(graph: &Graph<'_>, reference: &Reference, owner: &str) -> Result<bool> {
+    let item = graph.follow::<VideoClipTrackItem>(reference, owner)?;
+    if graphic::graphic_clip(graph, &item).is_some() || adjustment::is_flagged(graph, &item) {
+        return Ok(false);
+    }
+    let body = required(item.value.clip_track_item, &item.identity, "ClipTrackItem")?;
+    let sub = graph.follow::<SubClip>(
+        required(body.sub_clip.as_ref(), &item.identity, "SubClip")?,
+        &item.identity,
+    )?;
+    let clip = graph.follow::<VideoClip>(&sub.value.clip, &sub.identity)?;
+    let native = required(clip.value.clip.as_ref(), &clip.identity, "Clip")?;
+    // A nest/multicam source is not VideoMediaSource. Classify through the same
+    // reader as actual occurrences, excluding stills, generators and AE sources.
+    let source = graph.follow::<VideoMediaSource>(
+        required(native.source.as_ref(), &clip.identity, "Source")?,
+        &clip.identity,
+    )?;
+    let source_media = required(
+        source.value.media_source.as_ref(),
+        &source.identity,
+        "MediaSource",
+    )?;
+    let mut media = BTreeMap::new();
+    let id = read_source_media(
+        graph,
+        required(source_media.media.as_ref(), &source.identity, "Media")?,
+        &source.identity,
+        &mut media,
+        false,
+        &mut Vec::new(),
+    )?;
+    if !media[&id]
+        .video
+        .as_ref()
+        .is_some_and(|stream| matches!(stream.kind, crate::schema::PrMediaKind::Video { .. }))
+    {
+        return Ok(false);
+    }
+    let owner = required(body.component_owner, &item.identity, "ComponentOwner")?;
+    let reference = required(owner.components, &item.identity, "Components")?;
+    let chain = graph.follow::<VideoComponentChain>(&reference, &item.identity)?;
+    let components: Vec<_> = chain_components(&chain)?.iter().collect();
+    let (_, _, _, mask) = read_video_compositing(graph, &chain, &components, &mut Vec::new())?;
+    Ok(mask.is_some_and(|mask| mask.raster.is_some()))
+}
+
 fn read_track(
     graph: &Graph<'_>,
     record: Record<'_>,
@@ -1471,6 +1574,9 @@ pub(super) struct Placement<'g> {
     pub(super) transform: PrStaticTransform,
     pub(super) animations: Vec<PrPropertyAnimation>,
     pub(super) crop: PrStaticCrop,
+    /// Whether `crop` is the Motion Crop, which applies after every standard
+    /// effect (`MotionAndMasks::crop_from_motion`).
+    pub(super) crop_from_motion: bool,
     pub(super) linear_wipe: Option<PrLinearWipe>,
     pub(super) opacity_mask: Option<PrMask>,
     /// The Track Matte Key with its matte track resolved to the track's
@@ -1482,9 +1588,12 @@ pub(super) struct Placement<'g> {
     /// The component chain; the media reader reads its standard effects once
     /// the occurrence validates.
     pub(super) chain: Option<Located<VideoComponentChain>>,
-    /// Whether the chain holds a standard effect other than an active Crop,
+    /// Whether the chain holds an active standard effect other than an active Crop,
     /// Linear Wipe or Track Matte Key, which the Motion reader owns.
     pub(super) has_effects: bool,
+    /// The master clip's own chain ([`admit_source_chain`]); the media reader
+    /// reads its effects once the occurrence validates.
+    pub(super) source_chain: Option<SourceChain>,
     pub(super) start: i64,
     pub(super) end: i64,
     pub(super) sub: Located<SubClip>,
@@ -1494,6 +1603,8 @@ pub(super) struct Placement<'g> {
     pub(super) scale_to_frame: bool,
     pub(super) playback_rate: f64,
     pub(super) frame_blending: Option<fx_schema::FrameBlendingMode>,
+    /// The FrameHold or native curve, with its key times in input ticks after
+    /// the source In (`after_source_in`).
     pub(super) time_remap: Option<PrTimeRemap>,
     pub(super) source_in: i64,
     pub(super) source_out: i64,
@@ -1501,6 +1612,71 @@ pub(super) struct Placement<'g> {
     /// Whether the clip carries `AdjustmentLayer` true, as its master clip
     /// then carries `IsAdjustmentLayer` true (`reader/adjustment.rs`).
     pub(super) adjustment: bool,
+}
+
+/// A master clip's own `VideoComponentChain`, which Premiere applies to the
+/// source before the placement's own pipeline.
+pub(super) struct SourceChain {
+    /// `MasterClip:<uid>`.
+    pub(super) master: String,
+    pub(super) chain: Located<VideoComponentChain>,
+}
+
+/// The master clip's own chain, which the media reader carries for import to
+/// convert before the placement's own pipeline
+/// ([`PrVideoOccurrence::source_effects`]) and the nest reader reports as not
+/// converted. A source Crop, Linear Wipe, Track Matte Key, intrinsic
+/// component, coverage effect or effect mask would hide or move part of the
+/// picture before that pipeline, where import converts none of them, so the
+/// placement is omitted rather than shown with what it hides, as for those
+/// in its own chain. So is one whose active source Transform, or Geometry2
+/// that does not convert, can hide it, alone or beside another effect that
+/// changes which part of the picture shows, or a nondefault placement Crop
+/// (`effects::SplitChain::reject_hiding_transforms`): import converts no
+/// source Transform. A chain that is also the placement's own is ambiguous.
+fn admit_source_chain(
+    graph: &Graph<'_>,
+    reference: &Reference,
+    master: &Located<MasterClip>,
+    own_chain: Option<&Located<VideoComponentChain>>,
+    placement_crop: bool,
+    omissions: &mut Vec<Omission>,
+) -> Result<SourceChain> {
+    let chain = graph.follow::<VideoComponentChain>(reference, &master.identity)?;
+    default_chain(graph, reference, &master.identity, &[], omissions);
+    ensure!(
+        own_chain.is_none_or(|own| own.identity != chain.identity),
+        "{}: the source chain of {} is also the placement's own chain",
+        chain.identity,
+        master.identity
+    );
+    let split = effects::split_chain(graph, chain_components(&chain)?, &chain.identity)?;
+    if let Some(&component) = split.motion_and_masks.first() {
+        let record = graph.locate(component, &chain.identity)?;
+        let match_name = record.element().child("MatchName").and_then(Element::text);
+        return Err(unsupported(format!(
+            "{}: source component {} ({}) of {} is not converted; the placement is not converted without it",
+            chain.identity,
+            record.identity(),
+            match_name.unwrap_or("<no MatchName>"),
+            master.identity
+        )));
+    }
+    split
+        .reject_coverage_effects(graph, false)
+        .and_then(|()| split.reject_hiding_transforms(graph, placement_crop))
+        .map_err(|error| {
+            unsupported(format!(
+                "{}: source effect of {}: {}",
+                chain.identity,
+                master.identity,
+                effects::reason(error)
+            ))
+        })?;
+    Ok(SourceChain {
+        master: master.identity.clone(),
+        chain,
+    })
 }
 
 /// The one `VideoClip` of `master`, which draws its picture.
@@ -1563,6 +1739,7 @@ pub(super) fn read_placement<'g>(
     graph: &'g Graph<'_>,
     item: &Located<VideoClipTrackItem>,
     parent: &super::nested::Parent<'_>,
+    effect_masks: bool,
     omissions: &mut Vec<Omission>,
 ) -> Result<Placement<'g>> {
     if let Some(tone_map_settings) = &item.value.tone_map_settings {
@@ -1619,7 +1796,7 @@ pub(super) fn read_placement<'g>(
         .as_ref()
         .and_then(|owner| owner.components.as_ref())
     {
-        default_chain(graph, components, &item.identity, omissions);
+        default_chain(graph, components, &item.identity, &[], omissions);
         Some(graph.follow::<VideoComponentChain>(components, &item.identity)?)
     } else {
         omit(
@@ -1633,7 +1810,7 @@ pub(super) fn read_placement<'g>(
     let (
         transform,
         animations,
-        crop,
+        (crop, crop_from_motion),
         linear_wipe,
         track_matte,
         opacity,
@@ -1644,11 +1821,12 @@ pub(super) fn read_placement<'g>(
         Some(chain) => {
             let components = chain_components(chain)?;
             let split = effects::split_chain(graph, components, &chain.identity)?;
-            split.reject_coverage_effects(graph)?;
+            split.reject_coverage_effects(graph, effect_masks)?;
             let MotionAndMasks {
                 transform,
                 mut animations,
                 crop,
+                crop_from_motion,
                 linear_wipe,
                 track_matte,
             } = read_video_animations(graph, chain, &split.motion_and_masks, true)?;
@@ -1667,20 +1845,19 @@ pub(super) fn read_placement<'g>(
             (
                 transform,
                 animations,
-                crop,
+                (crop, crop_from_motion),
                 linear_wipe,
                 track_matte,
                 opacity,
                 blend_mode,
                 opacity_mask,
-                // The Motion reader takes every component but the effects.
-                split.motion_and_masks.len() < components.len(),
+                split.has_active_effects_outside_motion(),
             )
         }
         None => (
             Default::default(),
             Vec::new(),
-            Default::default(),
+            (Default::default(), false),
             None,
             None,
             100.0,
@@ -1727,26 +1904,32 @@ pub(super) fn read_placement<'g>(
             item.identity
         ))
     })?;
+    let source_in = required_integer(native_clip.in_point.as_deref(), &clip.identity, "InPoint")?;
+    // A FrameHold's keys are on its unit-speed placement clock, which is its
+    // input clock after In; a native curve's keys move there from its own
+    // input clock. `PrVideoOccurrence::validate` checks the speed, In and Out
+    // that a curve plays.
     let time_remap = match read_frame_hold(&clip.value, duration, &clip.identity)? {
         Some(hold) => Some(hold),
         None => native_clip
             .time_remapping
             .as_ref()
-            .map(|reference| read_time_remapping(graph, reference, &clip.identity))
+            .map(|reference| {
+                ensure!(
+                    !parent.nested || (signed_playback_rate == 1.0 && source_in == 0),
+                    "{}: TimeRemapping from a source In or at another speed inside a nested sequence is not converted",
+                    item.identity
+                );
+                after_source_in(
+                    read_time_remapping(graph, reference, &clip.identity)?,
+                    source_in,
+                    signed_playback_rate,
+                    &item.identity,
+                )
+            })
             .transpose()?,
     };
-    ensure!(
-        time_remap.is_none() || signed_playback_rate == 1.0,
-        "{}: constant playback combined with TimeRemapping is unsupported",
-        item.identity
-    );
-    ensure!(
-        time_remap.is_none() || animations.is_empty(),
-        "{}: Motion animation combined with TimeRemapping is unsupported",
-        item.identity
-    );
     report_markers(graph, native_clip, &clip.identity, omissions);
-    let source_in = required_integer(native_clip.in_point.as_deref(), &clip.identity, "InPoint")?;
     let saved_out = required_integer(native_clip.out_point.as_deref(), &clip.identity, "OutPoint")?;
     let source_out = match end.checked_sub(start) {
         Some(duration) if signed_playback_rate == 1.0 && time_remap.is_none() => {
@@ -1756,6 +1939,26 @@ pub(super) fn read_placement<'g>(
     };
     let source_reference = required(native_clip.source.as_ref(), &clip.identity, "Source")?;
     let source_record = graph.locate(source_reference, &clip.identity)?;
+    ensure!(
+        native_clip.is_multicam.unwrap_or(false) == native_clip.selected_track_index.is_some()
+            && (native_clip.is_multicam != Some(true)
+                || source_record.tag() == records::VIDEO_SEQUENCE_SOURCE.tag),
+        "{}: multicam requires IsMulticam, SelectedTrackIndex and a sequence source together",
+        clip.identity
+    );
+    // Only physical-video Rotation proceeds to the narrower occurrence checks.
+    // Nests keep their existing rejection, including unit-speed placements.
+    ensure!(
+        time_remap.is_none()
+            || animations.is_empty()
+            || (!parent.nested
+                && source_record.tag() == records::VIDEO_MEDIA_SOURCE.tag
+                && animations
+                    .iter()
+                    .all(|animation| { matches!(animation, PrPropertyAnimation::Rotation(_)) })),
+        "{}: Motion animation combined with TimeRemapping is unsupported",
+        item.identity
+    );
 
     // Premiere flags the item and each of its placements together, so the
     // item's flag can only be checked on an item the placement names.
@@ -1764,14 +1967,17 @@ pub(super) fn read_placement<'g>(
         "{}: an AdjustmentLayer clip requires its MasterClip",
         sub.identity
     );
+    let mut source_chain = None;
     // Source/master effects must not disappear merely because occurrence effects are default.
     if let Some(master_reference) = &sub.value.master_clip {
         let master_record = graph.locate(master_reference, &sub.identity)?;
+        // The chain is read below; each caller reports what it does not carry.
         report_unknown_children(
             master_record.element(),
             &[
                 "Node",
                 "LoggingInfo",
+                "VideoComponentChain",
                 "AudioComponentChains",
                 "Clips",
                 "AudioClipChannelGroups",
@@ -1812,12 +2018,35 @@ pub(super) fn read_placement<'g>(
             "{}: source identity mismatch",
             master.identity
         );
+        source_chain = match &master.value.video_component_chain {
+            None => None,
+            // An element without ObjectRef or ObjectURef is no graph edge
+            // (`Graph::validate_record`), so it names no chain to read.
+            Some(reference) if reference.id.is_none() && reference.uid.is_none() => {
+                omit(
+                    omissions,
+                    OmissionScope::Feature,
+                    &master.identity,
+                    SOURCE_CHAIN_NOT_CONVERTED,
+                );
+                None
+            }
+            Some(reference) => Some(admit_source_chain(
+                graph,
+                reference,
+                &master,
+                chain.as_ref(),
+                !crop.is_default(),
+                omissions,
+            )?),
+        };
     }
     Ok(Placement {
         enabled,
         transform,
         animations,
         crop,
+        crop_from_motion,
         linear_wipe,
         opacity_mask,
         track_matte,
@@ -1825,6 +2054,7 @@ pub(super) fn read_placement<'g>(
         blend_mode,
         chain,
         has_effects,
+        source_chain,
         start,
         end,
         sub,
@@ -1854,12 +2084,14 @@ fn read_occurrence(
         transform,
         animations,
         crop,
+        crop_from_motion,
         linear_wipe,
         opacity_mask,
         track_matte,
         opacity,
         blend_mode,
         chain,
+        source_chain,
         start,
         end,
         sub,
@@ -1873,7 +2105,7 @@ fn read_occurrence(
         source_record,
         adjustment,
         ..
-    } = read_placement(graph, &item, parent, omissions)?;
+    } = read_placement(graph, &item, parent, true, omissions)?;
     let source = graph.decode_as::<VideoMediaSource>(source_record, &clip.identity)?;
     let media_source = required(
         source.value.media_source.as_ref(),
@@ -1906,14 +2138,36 @@ fn read_occurrence(
     let stream = media_table[&media_id]
         .video
         .as_ref()
-        .filter(|video| original_duration == video.intrinsic_ticks)
-        .ok_or_else(|| {
-            unsupported(format!(
-                "{}: source OriginalDuration conflicts with VideoStream.Duration",
-                source.identity
-            ))
-        })?;
+        .ok_or_else(|| unsupported("source has no video stream"))?;
+    ensure!(original_duration == stream.interpreted_duration()?,
+        "{}: source OriginalDuration conflicts with the declared picture duration; alternate intrinsic-duration interpretation convention is unverified",
+        source.identity);
+    if !matches!(
+        stream.interpretation,
+        crate::schema::SourceInterpretation::Original
+    ) {
+        let track_item = item.value.clip_track_item.as_ref();
+        ensure!(signed_playback_rate == 1.0 && time_remap.is_none(),
+            "{}: interpreted picture supports only unit native speed without remap, reverse or hold", item.identity);
+        ensure!(
+            animations.is_empty()
+                && linear_wipe.is_none()
+                && opacity_mask.is_none()
+                && track_matte.is_none()
+                && track_item.is_none_or(
+                    |item| item.head_transition.is_none() && item.tail_transition.is_none()
+                ),
+            "{}: interpreted picture with keyed, coverage or transition clocks is unsupported",
+            item.identity
+        );
+    }
+    let interpreted = !matches!(
+        stream.interpretation,
+        crate::schema::SourceInterpretation::Original
+    );
     let kind = stream.kind;
+    let source_is_canvas = stream.orientation == crate::schema::VideoOrientation::Identity
+        && [stream.width, stream.height] == parent.dimensions;
     // Import draws a Color Matte as a rectangle of its sequence's canvas and an
     // adjustment layer over the whole composite below it, so generator media of
     // another size would silently grow to the canvas. Shared media is checked
@@ -1922,6 +2176,7 @@ fn read_occurrence(
         crate::schema::PrMediaKind::ColorMatte(_) => Some("a Color Matte"),
         crate::schema::PrMediaKind::Adjustment => Some("an adjustment layer"),
         crate::schema::PrMediaKind::Video { .. }
+        | crate::schema::PrMediaKind::NumberedStills { .. }
         | crate::schema::PrMediaKind::Still { .. }
         | crate::schema::PrMediaKind::AfterEffectsComposition(_) => None,
     };
@@ -1936,22 +2191,60 @@ fn read_occurrence(
             parent.dimensions[1]
         );
     }
+    // An adjustment's Motion only chooses the pixels that its effects reach
+    // (`schema::adjustment`). Premiere also saves the unmoved one at a moved
+    // point: Position on the Anchor Point at Scale 100 and Rotation 0 keeps
+    // every pixel of the canvas-sized layer in place, as the default does.
+    let transform = if matches!(kind, crate::schema::PrMediaKind::Adjustment)
+        && transform.is_identity_on_canvas()
+        && animations
+            .iter()
+            .all(|animation| animation.property() == crate::schema::PrAnimatedProperty::Opacity)
+    {
+        crate::schema::PrStaticTransform::default()
+    } else {
+        transform
+    };
+    let media = match kind {
+        crate::schema::PrMediaKind::Video { .. } => "a video clip",
+        crate::schema::PrMediaKind::Still { .. } => "a still",
+        crate::schema::PrMediaKind::NumberedStills { .. } => "numbered images",
+        crate::schema::PrMediaKind::AfterEffectsComposition(_) => "an After Effects composition",
+        crate::schema::PrMediaKind::ColorMatte(_) => "a Color Matte",
+        crate::schema::PrMediaKind::Adjustment => "an adjustment layer",
+    };
     ensure!(
         !scale_to_frame,
-        "{}: Scale to Frame Size on {} is not converted",
-        clip.identity,
-        match kind {
-            crate::schema::PrMediaKind::Video { .. } => "a video clip",
-            crate::schema::PrMediaKind::Still { .. } => "a still",
-            crate::schema::PrMediaKind::AfterEffectsComposition(_) =>
-                "an After Effects composition",
-            crate::schema::PrMediaKind::ColorMatte(_) => "a Color Matte",
-            crate::schema::PrMediaKind::Adjustment => "an adjustment layer",
-        }
+        "{}: Scale to Frame Size on {media} is not converted",
+        clip.identity
     );
     ensure!(
         animations.is_empty() || !matches!(kind, crate::schema::PrMediaKind::ColorMatte(_)),
         "{}: Motion keyframes on a Color Matte are not converted",
+        item.identity
+    );
+    // Only a video clip's Opacity mask converts its Mask Path keys, as its
+    // guide's outline keys (`import_video_clip`); no other host may freeze
+    // a keyed mask at one outline. Other static-mask admission is unchanged.
+    ensure!(
+        matches!(kind, crate::schema::PrMediaKind::Video { .. })
+            || opacity_mask
+                .as_ref()
+                .is_none_or(|mask| mask.path_keys.is_empty()),
+        "{}: Mask Path keys on {media} are not converted; only a video clip's Opacity mask converts keyed",
+        item.identity
+    );
+    ensure!(
+        matches!(kind, crate::schema::PrMediaKind::Video { .. })
+            || opacity_mask.as_ref().is_none_or(|mask| !mask.has_numeric_keys()),
+        "{}: numeric Opacity mask keys on {media} are not converted; this host has no admitted numeric mask clock", item.identity
+    );
+    ensure!(
+        !kind.is_still()
+            || opacity_mask
+                .as_ref()
+                .is_none_or(|mask| mask.expansion == 0.0),
+        "{}: Mask Expansion on a still is not converted",
         item.identity
     );
     // Premiere holds a keyed property's first key before that key, also over
@@ -1980,35 +2273,202 @@ fn read_occurrence(
         effects_above_mask: 0,
         stroke: None,
         active_transforms: 0,
+        source_effects: None,
     };
-    occurrence.validate(sequence_rate, &media_table[&media_id])?;
+    if matches!(
+        media_table[&media_id]
+            .video
+            .as_ref()
+            .map(|video| video.kind),
+        Some(crate::schema::PrMediaKind::NumberedStills { .. })
+    ) {
+        if let Some(reason) = crate::numbered_images::unsupported_occurrence(&occurrence) {
+            return Err(unsupported(format!("numbered-image occurrence: {reason}")));
+        }
+        let source = media_table[&media_id]
+            .video
+            .as_ref()
+            .expect("picture stream checked");
+        if occurrence.out_ticks > source.intrinsic_ticks {
+            // Only extend admission for a finite saved Out normalized by
+            // unit_source_out. Previously admitted ranges keep their policy.
+            let native_clip = required(clip.value.clip.as_ref(), &clip.identity, "Clip")?;
+            let saved_out =
+                required_integer(native_clip.out_point.as_deref(), &clip.identity, "OutPoint")?;
+            ensure!(
+                saved_out > occurrence.in_ticks && saved_out <= source.intrinsic_ticks,
+                "numbered-image saved Out extends past its finite source span"
+            );
+            let first = i128::from(occurrence.in_ticks);
+            let span = i128::from(occurrence.end_ticks) - i128::from(occurrence.start_ticks);
+            let step = i128::from(sequence_rate.ticks_per_frame());
+            let last = first + span - step;
+            ensure!(
+                span >= step
+                    && i128::from(occurrence.out_ticks) == first + span
+                    && first >= 0
+                    && first < i128::from(source.intrinsic_ticks)
+                    && last < i128::from(source.intrinsic_ticks),
+                "numbered-image selected sequence sample is outside its finite source span"
+            );
+            // The unchanged validation below still requires aligned Start/End,
+            // unit source-span correspondence and valid media/property facts.
+        }
+    }
+    let frame_ticks = video
+        .value
+        .track_group
+        .as_ref()
+        .and_then(|group| group.frame_rate.as_deref())
+        .and_then(|ticks| ticks.parse::<i64>().ok())
+        .unwrap_or(sequence_rate.ticks_per_frame());
+    occurrence.validate_on_grid(sequence_rate, frame_ticks, &media_table[&media_id])?;
     if let Some(chain) = &chain {
         let split = effects::split_chain(graph, chain_components(chain)?, &chain.identity)?;
+        if interpreted {
+            split.require_static_interpreted_effects(graph, false, source_is_canvas)?;
+        }
+        if matches!(kind, crate::schema::PrMediaKind::ColorMatte(_)) && track_matte.is_some() {
+            ensure!(
+                !split.has_active_non_matte_effects(),
+                "{}: a keyed Color Matte with an active occurrence effect is not converted",
+                item.identity
+            );
+        }
+        ensure!(
+            !matches!(kind, crate::schema::PrMediaKind::NumberedStills { .. })
+                || !split.has_active_standard_effects(),
+            "numbered-image occurrence: active standard effects are unsupported"
+        );
         if adjustment && occurrence.transform != crate::schema::PrStaticTransform::default() {
             split.reject_unmeasured_adjustment_coverage(graph)?;
         }
         let owner = effects::EffectOwner {
             occurrence: &item.identity,
+            source: None,
+            stroke_geometry: true,
             clip_name: sub.value.name.as_deref(),
             track_index: parent.track_index,
             timeline_ticks: start..end,
+            source_is_canvas,
+            adjustment,
         };
-        let mask = !occurrence.crop.is_default()
+        // A Crop effect, Linear Wipe or Track Matte Key applies at its stack
+        // position, which `read_effects` finds.
+        let mask = (!occurrence.crop.is_default() && !crop_from_motion)
             || occurrence.linear_wipe.is_some()
             || occurrence.track_matte.is_some();
         occurrence.stroke = split.read_stroke(graph, omissions);
         occurrence.active_transforms = u8::try_from(split.active_transforms()).unwrap_or(u8::MAX);
         (occurrence.effects, occurrence.effects_above_mask) =
             split.read_effects(graph, &owner, mask, omissions);
-        // Premiere applies Opacity, and so its mask, after every standard
-        // effect; a clip with both a Crop or wipe and an Opacity mask is
-        // omitted by `mask_boundary`.
-        if occurrence.opacity_mask.is_some() {
+        if matches!(kind, crate::schema::PrMediaKind::AfterEffectsComposition(_)) {
+            // read_effects has decoded/validated the native mask and its owner.
+            // This operator has no linked masked lowering. Remove the entire
+            // effect before host admission, never turn it into unmasked Alpha.
+            let boundary = occurrence.effects_above_mask;
+            let mut position = 0;
+            let mut removed_above = 0;
+            occurrence.effects.retain(|effect| {
+                let above = position < boundary;
+                position += 1;
+                let unsupported = effect.enabled && effect.mask.is_some()
+                    && matches!(effect.params, crate::schema::PrEffectParams::Invert(
+                        crate::schema::PrInvert { channel: 15, .. }
+                    ));
+                if unsupported {
+                    removed_above += usize::from(above);
+                    omit(omissions, OmissionScope::Feature, &item.identity,
+                        "masked Invert Alpha on a linked input is unsupported; decoded effect and its mask omitted, original picture, independent audio and supported siblings retained");
+                }
+                !unsupported
+            });
+            occurrence.effects_above_mask -= removed_above;
+        }
+        ensure!(
+            matches!(kind, crate::schema::PrMediaKind::Video { .. })
+                || occurrence
+                    .effects
+                    .iter()
+                    .all(|effect| effect.mask.is_none()),
+            "effect masks require a physical video occurrence"
+        );
+        // Premiere applies Motion, and so its Motion Crop, and then Opacity,
+        // and so its mask, after every standard effect; `mask_boundary` omits
+        // a clip with two of these masks.
+        if crop_from_motion || occurrence.opacity_mask.is_some() {
             occurrence.effects_above_mask = occurrence.effects.len();
         }
     }
+    // Every placement reads its master clip's chain for itself; only the
+    // media is shared.
+    if let Some(SourceChain { master, chain }) = &source_chain {
+        let split = effects::split_chain(graph, chain_components(chain)?, &chain.identity)?;
+        if interpreted {
+            split.require_static_interpreted_effects(graph, true, source_is_canvas)?;
+        }
+        if matches!(kind, crate::schema::PrMediaKind::ColorMatte(_)) && track_matte.is_some() {
+            ensure!(
+                !split.has_active_standard_effects(),
+                "{}: a keyed Color Matte with an active source effect is not converted",
+                item.identity
+            );
+        }
+        let owner = effects::EffectOwner {
+            occurrence: &item.identity,
+            source: Some(master),
+            stroke_geometry: false,
+            source_is_canvas,
+            clip_name: sub.value.name.as_deref(),
+            track_index: parent.track_index,
+            timeline_ticks: start..end,
+            adjustment,
+        };
+        // `admit_source_chain` rejects an active source Crop, Linear Wipe or
+        // Track Matte Key, so no source effect is on a mask boundary.
+        let (source_effects, _) = split.read_effects(graph, &owner, false, omissions);
+        occurrence.source_effects = Some(PrSourceEffects {
+            master: master.clone(),
+            effects: source_effects,
+            active_transforms: u8::try_from(split.active_transforms()).unwrap_or(u8::MAX),
+        });
+    }
+    if interpreted {
+        ensure!(
+            occurrence
+                .effects
+                .iter()
+                .all(|effect| effect.animations.is_empty())
+                && occurrence
+                    .source_effects
+                    .as_ref()
+                    .is_none_or(|source| source
+                        .effects
+                        .iter()
+                        .all(|effect| effect.animations.is_empty())),
+            "{}: interpreted picture with occurrence or source-effect keys is unsupported",
+            item.identity
+        );
+    }
     occurrence.id = Some(item.identity);
     Ok(occurrence)
+}
+
+/// The stable identity of a `Media` record, in the namespace of the native
+/// ID that names it: two references to one record share it.
+pub(super) fn media_id(record: Record<'_>) -> Result<MediaId> {
+    Ok(MediaId(
+        if let Some(id) = record.element().attribute(records::OBJECT_ID) {
+            format!("Media:ObjectID:{id}")
+        } else {
+            let uid = required(
+                record.element().attribute(records::OBJECT_UID),
+                &record.identity(),
+                records::OBJECT_UID,
+            )?;
+            format!("Media:ObjectUID:{uid}")
+        },
+    ))
 }
 
 /// Returns the stable identity of a `Media` record and reads it once. A
@@ -2024,24 +2484,15 @@ pub(super) fn read_source_media(
     omissions: &mut Vec<Omission>,
 ) -> Result<MediaId> {
     let record = graph.locate(reference, from)?;
-    let media_id = MediaId(
-        if let Some(id) = record.element().attribute(records::OBJECT_ID) {
-            format!("Media:ObjectID:{id}")
-        } else {
-            let uid = required(
-                record.element().attribute(records::OBJECT_UID),
-                &record.identity(),
-                records::OBJECT_UID,
-            )?;
-            format!("Media:ObjectUID:{uid}")
-        },
-    );
+    let media_id = media_id(record)?;
     if let std::collections::btree_map::Entry::Vacant(entry) = media_table.entry(media_id.clone()) {
         let media = graph.decode_as::<Media>(record, from)?;
         entry.insert(if adjustment {
             adjustment::read_adjustment_media(graph, media)?
         } else if color_matte::is_color_matte_media(record) {
             color_matte::read_color_matte_media(graph, media)?
+        } else if color_matte::is_black_video_media(record) {
+            color_matte::read_black_video_media(graph, media)?
         } else {
             read_media(graph, media, omissions)?
         });
@@ -2057,6 +2508,7 @@ fn read_video_stream(
     graph: &Graph<'_>,
     reference: &Reference,
     media: &Located<Media>,
+    omissions: &mut Vec<Omission>,
 ) -> Result<PrVideoStream> {
     let stream = graph.follow::<VideoStream>(reference, &media.identity)?;
     let kind = match super::after_effects::media_kind(graph, media, &stream)? {
@@ -2068,12 +2520,62 @@ fn read_video_stream(
         &stream.identity,
         "FrameRate",
     )?;
-    let frame_rate = if matches!(kind, crate::schema::PrMediaKind::Video { .. }) {
+    let frame_rate = if matches!(
+        kind,
+        crate::schema::PrMediaKind::Video { .. }
+            | crate::schema::PrMediaKind::NumberedStills { .. }
+    ) {
         crate::schema::SourceFrameRate::from_ticks_per_frame(frame_rate_ticks)?
     } else {
         super::frame_rate(frame_rate_ticks, &stream.identity)?.into()
     };
-    let [width, height] = stream_dimensions(&stream)?;
+    let [width, height] = super::frame_dimensions(
+        required(
+            stream.value.frame_rect.as_deref(),
+            &stream.identity,
+            "FrameRect",
+        )?,
+        &stream.identity,
+    )?;
+    let par_overridden = stream
+        .value
+        .is_par_overridden
+        .as_deref()
+        .map(|value| native_bool(value, &stream.identity, "IsPAROverridden"))
+        .transpose()?
+        .unwrap_or(false);
+    let original_par = stream
+        .value
+        .original_par
+        .as_deref()
+        .or(stream.value.pixel_aspect_ratio.as_deref());
+    let pixel_aspect = if par_overridden && stream.value.overridden_par.is_none() {
+        let (ratio, origin) = if let Some(original) = original_par {
+            (
+                records::PixelAspectRatio::parse(original, &stream.identity)?,
+                "saved source ratio",
+            )
+        } else {
+            let root = graph.source_dir().ok_or_else(|| unsupported(format!(
+                "{}: missing OverriddenPAR and no source file context for pixel-aspect inspection", stream.identity)))?;
+            let paths = read_media_paths(graph, media)?;
+            crate::tesseract_output::source_pixel_aspect(root, &paths, kind)?
+        };
+        crate::approximate(omissions, &stream.identity, format!(
+            "missing OverriddenPAR while IsPAROverridden is true; retained {ratio} from {origin} instead of the unavailable override"));
+        ratio
+    } else {
+        let par = if par_overridden {
+            required(
+                stream.value.overridden_par.as_deref(),
+                &stream.identity,
+                "OverriddenPAR",
+            )?
+        } else {
+            original_par.unwrap_or("1,1")
+        };
+        records::PixelAspectRatio::parse(par, &stream.identity)?
+    };
     let orientation = match stream.value.original_image_orientation_type.as_deref() {
         Some(code) => crate::schema::VideoOrientation::from_native(code)?,
         None => crate::schema::VideoOrientation::Identity,
@@ -2101,7 +2603,39 @@ fn read_video_stream(
         "{}: After Effects composition duration must be positive",
         stream.identity
     );
+    let interpretation = if matches!(kind, crate::schema::PrMediaKind::Video { .. }) {
+        let read = || -> Result<crate::schema::SourceInterpretation> {
+            let active = stream
+                .value
+                .is_frame_rate_overridden
+                .as_deref()
+                .map(|value| native_bool(value, &stream.identity, "IsFrameRateOverridden"))
+                .transpose()?
+                .unwrap_or(false);
+            if !active {
+                return Ok(crate::schema::SourceInterpretation::Original);
+            }
+            let period = required_integer(
+                stream.value.overidden_frame_rate.as_deref(),
+                &stream.identity,
+                "OveriddenFrameRate",
+            )?;
+            Ok(crate::schema::SourceInterpretation::Rate(
+                crate::schema::SourceFrameRate::from_ticks_per_frame(period)?,
+            ))
+        };
+        read().unwrap_or_else(|error| {
+            crate::schema::SourceInterpretation::Invalid(format!(
+                "{}: invalid picture interpretation: {error}",
+                stream.identity
+            ))
+        })
+    } else {
+        crate::schema::SourceInterpretation::Original
+    };
     Ok(PrVideoStream {
+        pixel_aspect,
+        interpretation,
         orientation,
         kind,
         intrinsic_ticks,
@@ -2120,7 +2654,7 @@ fn read_media(
         .value
         .video_stream
         .as_ref()
-        .map(|reference| read_video_stream(graph, reference, &media))
+        .map(|reference| read_video_stream(graph, reference, &media, omissions))
         .transpose()?;
     let audio = match media
         .value
@@ -2148,12 +2682,49 @@ fn read_media(
         "{}: media has no video or audio stream",
         media.identity
     );
+    let mut parsed = read_media_paths(graph, &media)?;
+    if video.as_ref().is_some_and(|video| {
+        matches!(
+            video.kind,
+            crate::schema::PrMediaKind::AfterEffectsComposition(_)
+        )
+    }) {
+        ensure!(
+            parsed
+                .relative_paths
+                .iter()
+                .map(Path::new)
+                .chain(
+                    media
+                        .value
+                        .actual_media_file_path
+                        .iter()
+                        .chain(media.value.file_path.iter())
+                        .map(Path::new)
+                )
+                .all(|path| path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|value| value.eq_ignore_ascii_case("aep"))),
+            "{}: After Effects linked source must name an AEP file",
+            media.identity
+        );
+    }
+    parsed.video = video;
+    parsed.audio = audio;
+    Ok(parsed)
+}
+
+// The same path/profile validation feeds ordinary import and missing-PAR
+// metadata inspection. Never probe an unchecked saved absolute alias directly.
+fn read_media_paths(graph: &Graph<'_>, media: &Located<Media>) -> Result<PrMedia> {
+    let relinked = graph.relinked_media_path(media.value.object_uid.as_deref());
     let aliases: Vec<(MediaPathField, String)> = [
         (
             MediaPathField::ActualMediaFilePath,
-            media.value.actual_media_file_path,
+            media.value.actual_media_file_path.clone(),
         ),
-        (MediaPathField::FilePath, media.value.file_path),
+        (MediaPathField::FilePath, media.value.file_path.clone()),
     ]
     .into_iter()
     .filter_map(|(field, path)| path.map(|path| (field, path)))
@@ -2164,10 +2735,13 @@ fn read_media(
     // Then only the package-local hint can identify the local copy; the aliases
     // are not local candidates.
     let saved_on_windows = !aliases.is_empty()
-        && aliases
-            .iter()
-            .all(|(_, path)| is_foreign_windows_path(path));
-    let mut hints = media.value.relative_paths;
+        && aliases.iter().all(|(_, path)| {
+            is_foreign_windows_path(path)
+                || (relinked.is_some()
+                    && crate::media_relink::windows_absolute_path(path)
+                    && !Path::new(path).is_absolute())
+        });
+    let mut hints = media.value.relative_paths.clone();
     ensure!(
         !hints.is_empty() || !aliases.is_empty(),
         "{}: missing RelativePath and absolute media aliases",
@@ -2176,7 +2750,8 @@ fn read_media(
     if saved_on_windows {
         for hint in &mut hints {
             ensure!(
-                !has_windows_drive(hint),
+                !has_windows_drive(hint)
+                    && (relinked.is_none() || !hint.split(['\\', '/']).any(has_windows_drive)),
                 "{}: RelativePath names a Windows drive",
                 media.identity
             );
@@ -2184,10 +2759,14 @@ fn read_media(
         }
     }
     let (relative_path, relative_paths) = media_relative_paths(hints, &media.identity)?;
-    let mut absolute_paths: Vec<(MediaPathField, PathBuf)> = Vec::new();
+    // An explicit binding supplies identity, not an exemption from agreeing
+    // live aliases, relative hints, package confinement or media admission.
+    let mut absolute_paths: Vec<(MediaPathField, PathBuf)> = relinked
+        .map(|path| vec![(MediaPathField::FilePath, path.to_owned())])
+        .unwrap_or_default();
     if saved_on_windows {
         ensure!(
-            relative_path.is_some(),
+            relative_path.is_some() || relinked.is_some(),
             "{}: media saved on Windows has no package-local RelativePath",
             media.identity
         );
@@ -2216,32 +2795,13 @@ fn read_media(
             })
         })
         .ok_or_else(|| unsupported("native media reference has no safe UTF-8 name"))?;
-    if video.as_ref().is_some_and(|video| {
-        matches!(
-            video.kind,
-            crate::schema::PrMediaKind::AfterEffectsComposition(_)
-        )
-    }) {
-        ensure!(
-            relative_paths
-                .iter()
-                .map(Path::new)
-                .chain(aliases.iter().map(|(_, path)| Path::new(path)))
-                .all(|path| path
-                    .extension()
-                    .and_then(|value| value.to_str())
-                    .is_some_and(|value| value.eq_ignore_ascii_case("aep"))),
-            "{}: After Effects linked source must name an AEP file",
-            media.identity
-        );
-    }
     Ok(PrMedia {
         name,
         relative_path,
         relative_paths,
         absolute_paths,
-        video,
-        audio,
+        video: None,
+        audio: None,
     })
 }
 
@@ -2273,13 +2833,11 @@ fn has_windows_drive(path: &str) -> bool {
     matches!(path.as_bytes(), [drive, b':', ..] if drive.is_ascii_alphabetic())
 }
 
-/// Whether `path` is a Windows drive-absolute path (`C:\…`) that this host
-/// does not treat as absolute, so it names a file on the machine that saved the
-/// project. Drive-relative (`C:name`), UNC and device paths are not this form.
+/// Whether a plain or extended Windows drive-absolute path names the saving
+/// machine rather than a local candidate. Project-relative candidates retain
+/// the ordinary identity, conflict and package-containment checks.
 fn is_foreign_windows_path(path: &str) -> bool {
-    has_windows_drive(path)
-        && path.as_bytes().get(2) == Some(&b'\\')
-        && !Path::new(path).is_absolute()
+    crate::media_relink::windows_absolute_path(path) && !Path::new(path).is_absolute()
 }
 
 fn media_relative_paths(

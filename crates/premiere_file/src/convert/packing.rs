@@ -235,6 +235,13 @@ pub(crate) enum PlacementLocation {
 struct TrackInventory {
     items: Vec<PlacementToken>,
     nests: Vec<PlacementToken>,
+    transitions: Vec<OwnedTransition>,
+}
+
+#[derive(Debug)]
+struct OwnedTransition {
+    transition: crate::schema::PrVideoTransition,
+    boundary: SourceBoundaryToken,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -535,7 +542,53 @@ impl PicturePacker {
                 "picture track inventory does not match native tracks",
             ));
         }
+        let boundaries: BTreeMap<_, _> = recipe
+            .actions
+            .iter()
+            .map(|action| (action.placement, action.boundary))
+            .collect();
         for (track, inventory) in tracks.iter_mut().zip(&mut recipe.tracks) {
+            inventory.transitions = track
+                .transitions
+                .iter()
+                .map(|transition| {
+                    let mut owners = BTreeSet::new();
+                    for id in transition
+                        .outgoing_clip
+                        .iter()
+                        .chain(&transition.incoming_clip)
+                    {
+                        let mut matches =
+                            track
+                                .items
+                                .iter()
+                                .zip(&inventory.items)
+                                .filter(|(item, _)| {
+                                    item.media().and_then(|clip| clip.id.as_ref()) == Some(id)
+                                });
+                        let (_, placement) = matches.next().ok_or_else(|| {
+                            unsupported("transition picture placement is missing")
+                        })?;
+                        if matches.next().is_some() {
+                            return Err(unsupported("transition picture placement is not unique"));
+                        }
+                        owners.insert(
+                            *boundaries.get(placement).ok_or_else(|| {
+                                unsupported("transition source boundary is missing")
+                            })?,
+                        );
+                    }
+                    if owners.len() != 1 {
+                        return Err(unsupported(
+                            "transition pictures must share one replacement boundary",
+                        ));
+                    }
+                    Ok(OwnedTransition {
+                        transition: transition.clone(),
+                        boundary: *owners.first().unwrap(),
+                    })
+                })
+                .collect::<Result<_>>()?;
             sort_together(&mut track.items, &mut inventory.items, |item| {
                 item.timeline_ticks().start
             })?;
@@ -615,6 +668,7 @@ impl ContainerRecipe {
 
     fn empty_sequence(&self) -> PrSequence {
         PrSequence {
+            native_frame_ticks: None,
             id: None,
             name: self.header.name.clone(),
             top_level: Some(self.header.top_level),
@@ -645,6 +699,57 @@ fn sort_together<T>(
         tokens.push(token);
     }
     Ok(())
+}
+
+/// Link the original empty root, not an empty result of omitted source content.
+/// The prepared-export caller separately verifies the original document is empty.
+pub(crate) fn apply_empty_root_picture(
+    recipe: PicturePackingRecipe,
+    picture: &AfterEffectsPicture,
+    final_output: &Path,
+) -> Result<PackingOutcome> {
+    let root = recipe
+        .containers
+        .get(&recipe.root)
+        .ok_or_else(|| unsupported("root picture packing container is missing"))?;
+    if !recipe.complete || recipe.containers.len() != 1 || !root.boundaries.is_empty() {
+        return Err(unsupported(
+            "empty-root link requires a complete empty source container",
+        ));
+    }
+    validate_picture(picture, root)?;
+    if !picture.enabled
+        || picture.timeline_ticks != (0..root.header.timeline_end_ticks)
+        || picture.source_ticks != picture.timeline_ticks
+        || picture.intrinsic_duration_ticks != root.header.timeline_end_ticks
+    {
+        return Err(unsupported(
+            "empty-root link must preserve the full source and sequence clocks",
+        ));
+    }
+    let mut media = BTreeMap::new();
+    let mut foreign_paths = Vec::new();
+    let item = foreign_item(
+        picture,
+        final_output,
+        &mut BTreeSet::new(),
+        &mut media,
+        &mut foreign_paths,
+    )?;
+    let mut sequence = root.empty_sequence();
+    sequence.video_tracks.push(PrVideoTrack {
+        items: vec![item],
+        nests: Vec::new(),
+        transitions: Vec::new(),
+    });
+    let foreign_media_ids = media.keys().cloned().collect();
+    let project = PrProjectFile::from_sequences(vec![sequence], media);
+    project.validate()?;
+    Ok(PackingOutcome {
+        project,
+        foreign_paths,
+        foreign_media_ids,
+    })
 }
 
 pub(crate) fn apply_replacements(
@@ -981,7 +1086,7 @@ fn replay_container(
             if boundary.token == plan.first && placed.insert(plan.replacement) {
                 let replacement = &replacements[plan.replacement];
                 let item = foreign_item(
-                    replacement,
+                    &replacement.picture,
                     final_output,
                     used_media_ids,
                     media,
@@ -991,6 +1096,38 @@ fn replay_container(
             }
             continue;
         }
+        let transitions: Vec<_> = container
+            .tracks
+            .iter()
+            .flat_map(|track| &track.transitions)
+            .filter(|owned| owned.boundary == boundary.token)
+            .collect();
+        // Place a retained dissolve's pictures together above every existing
+        // overlap of their combined range. Its source boundary is atomic; a
+        // replacement above removed all of these pictures and their records.
+        let shared_track = if transitions.is_empty() {
+            None
+        } else {
+            let mut range: Option<std::ops::Range<i64>> = None;
+            for action in actions {
+                let Some(PackedObject::Item(item)) = objects.get(&action.placement) else {
+                    return Err(unsupported(
+                        "transition boundary contains a non-picture placement",
+                    ));
+                };
+                let next = item.timeline_ticks();
+                range = Some(range.map_or(next.clone(), |range| {
+                    range.start.min(next.start)..range.end.max(next.end)
+                }));
+            }
+            let range = range.ok_or_else(|| unsupported("transition boundary has no pictures"))?;
+            let index = output_tracks
+                .iter()
+                .rposition(|track: &PrVideoTrack| track.overlaps(&range))
+                .map_or(0, |index| index + 1);
+            ensure_track(&mut output_tracks, index);
+            Some(index)
+        };
         for action in actions {
             let object = match action.kind {
                 PlacementKind::PendingNest => {
@@ -1054,7 +1191,19 @@ fn replay_container(
                 .map_or(0, |track| track + 1);
             let track = match object {
                 PackedObject::Item(item) => {
-                    let track = place_replayed_item(&mut output_tracks, item, min_track);
+                    let track = if let Some(track) = shared_track {
+                        if track < min_track
+                            || output_tracks[track].overlaps(&item.timeline_ticks())
+                        {
+                            return Err(unsupported(
+                                "transition picture packing conflicts with another placement",
+                            ));
+                        }
+                        output_tracks[track].items.push(item);
+                        track
+                    } else {
+                        place_replayed_item(&mut output_tracks, item, min_track)
+                    };
                     placement_locations.insert(
                         action.placement,
                         PlacementLocation::Item {
@@ -1077,6 +1226,13 @@ fn replay_container(
                 }
             };
             placement_tracks.insert(action.placement, track);
+        }
+        if let Some(track) = shared_track {
+            output_tracks[track].transitions.extend(
+                transitions
+                    .into_iter()
+                    .map(|owned| owned.transition.clone()),
+            );
         }
     }
     if !objects.is_empty() {
@@ -1155,7 +1311,10 @@ fn take_objects(
     }
     let mut objects = BTreeMap::new();
     for (mut track, inventory) in sequence.video_tracks.drain(..).zip(inventories) {
-        if !track.transitions.is_empty()
+        if track
+            .transitions
+            .iter()
+            .ne(inventory.transitions.iter().map(|owned| &owned.transition))
             || track.items.len() != inventory.items.len()
             || track.nests.len() != inventory.nests.len()
         {
@@ -1246,13 +1405,12 @@ fn set_matte_track(
 }
 
 fn foreign_item(
-    replacement: &PictureReplacement,
+    picture: &AfterEffectsPicture,
     final_output: &Path,
     used_media_ids: &mut BTreeSet<MediaId>,
     media: &mut BTreeMap<MediaId, PrMedia>,
     foreign_paths: &mut Vec<PathBuf>,
 ) -> Result<PrVideoItem> {
-    let picture = &replacement.picture;
     let identity = PrAfterEffectsComposition::parse(&picture.composition_guid)
         .ok_or_else(|| unsupported("replacement composition GUID became invalid"))?;
     let path = normalized_foreign_path(&picture.relative_path)?;
@@ -1284,6 +1442,8 @@ fn foreign_item(
                 (MediaPathField::FilePath, absolute),
             ],
             video: Some(PrVideoStream {
+                pixel_aspect: Default::default(),
+                interpretation: Default::default(),
                 orientation: crate::schema::VideoOrientation::Identity,
                 intrinsic_ticks: picture.intrinsic_duration_ticks,
                 frame_rate: (picture.frame_rate).into(),

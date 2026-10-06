@@ -9,7 +9,7 @@ use fx_schema::{
     AiEditLayer, BlendMode, Dimensions, GroupLayer, Layer, LayerData, LayerId, NonNegativeProperty,
     PercentageProperty, Position, PropType, PropertyValue, RectLayer, RectShape, ShapeContent,
     ShapeFillStyle, ShapeHandleMirror, ShapeLayer, ShapeLineJoin, ShapePaint, ShapePath,
-    ShapePathCommand, TimeRangeProperty, Transform, animator::AnimationGraphEntry,
+    ShapePathCommand, TimeRangeProperty, Transform,
 };
 
 use super::{ExportDiagnostic, effective_constant, hierarchy, media};
@@ -30,7 +30,7 @@ pub(super) struct LayoutNormalization {
 pub(super) fn normalize_group(
     group: &GroupLayer,
     background_id: LayerId,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     resolved_media: &BTreeMap<String, media::ResolvedMediaSource>,
     canvas: Dimensions,
 ) -> Result<LayoutNormalization, serde_json::Error> {
@@ -209,11 +209,12 @@ pub(super) fn normalize_ai_edit(
     })
 }
 
-fn has_descendant_dynamics(layers: &[Layer], dynamics: &[AnimationGraphEntry]) -> bool {
+fn has_descendant_dynamics(
+    layers: &[Layer],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+) -> bool {
     layers.iter().any(|layer| {
-        dynamics
-            .iter()
-            .any(|entry| entry.target.layer_id() == Some(layer.id()))
+        dynamics.for_layer(layer.id()).next().is_some()
             || layer
                 .child_layers()
                 .is_some_and(|children| has_descendant_dynamics(children, dynamics))
@@ -222,11 +223,11 @@ fn has_descendant_dynamics(layers: &[Layer], dynamics: &[AnimationGraphEntry]) -
 
 fn fold_layout_constants(
     group: &mut GroupLayer,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     diagnostics: &mut Vec<ExportDiagnostic>,
 ) -> bool {
     let mut is_static = true;
-    for entry in dynamics {
+    for entry in dynamics.for_layer(group.id) {
         let Some(property) = entry.target.as_property() else {
             continue;
         };

@@ -33,7 +33,7 @@ class ExportHarness:
             "fixture_kind": "offline-temporary-binary",
         }
         self.tools: dict[str, Path] = {}
-        for name in ("aerender", "ffprobe", "validation"):
+        for name in ("ffprobe", "validation"):
             path = root / name
             path.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")
             path.chmod(0o755)
@@ -174,32 +174,35 @@ class ExportHarness:
             }
         )
 
+    def native_execute(self, operation, payload, work, *, timeout):
+        assert operation == "render_aep"
+        assert payload["settings"] == {"format": "mp4", "fps": 30,
+                                       "audio": "off"}
+        case_name = payload["composition_id"]
+        self.commands.append(["typed-render_aep", "-comp", case_name])
+        behavior = self.behaviors.get(case_name, "success")
+        if behavior == "timeout":
+            raise subprocess.TimeoutExpired("headless-adobe", timeout)
+        if behavior == "cancel":
+            raise KeyboardInterrupt
+        if behavior == "mutate":
+            Path(payload["source"]["path"]).write_bytes(b"mutated")
+        if behavior == "nonzero":
+            raise adapter.adobe_native.NativeAdobeError("render rejected")
+        work.mkdir(parents=True)
+        log = work / 'aerender.log'
+        log.write_text('WARNING: substituted content' if behavior == 'warning' else 'PROGRESS: Done')
+        output = work / "output.mp4"
+        output.write_bytes(b"mock-mp4")
+        return {**self._artifact(output), 'metadata': {'render_log': {
+            'path': str(log), 'sha256': adapter.adobe_native.sha256(log)}}}
+
     def executor(
         self, command: list[str], timeout: int
     ) -> adapter.aep_test.CompletedCommand:
         del timeout
         self.commands.append(command)
         executable = Path(command[0]).name
-        if executable == "aerender":
-            case_name = command[command.index("-comp") + 1]
-            behavior = self.behaviors.get(case_name, "success")
-            project = Path(command[command.index("-project") + 1])
-            output = Path(command[command.index("-output") + 1])
-            if behavior == "timeout":
-                raise subprocess.TimeoutExpired(command, 1)
-            if behavior == "cancel":
-                raise KeyboardInterrupt
-            if behavior == "mutate":
-                project.write_bytes(b"mutated")
-            if behavior != "nonzero":
-                output.write_bytes(b"mock-mp4")
-            if behavior == "warning":
-                return adapter.aep_test.CompletedCommand(
-                    0, "WARNING: substituted content", ""
-                )
-            if behavior == "nonzero":
-                return adapter.aep_test.CompletedCommand(7, "", "render rejected")
-            return adapter.aep_test.CompletedCommand(0, "PROGRESS: 100%", "")
         if executable == "ffprobe":
             return adapter.aep_test.CompletedCommand(0, self._metadata(), "")
         if executable == "validation":
@@ -238,6 +241,8 @@ class ExportHarness:
             return destination
 
         with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(
+                adapter.adobe_native, "execute", side_effect=self.native_execute))
             stack.enter_context(
                 mock.patch.object(
                     adapter.aep_test,
@@ -458,14 +463,11 @@ class ExplicitExportAdapterTests(unittest.TestCase):
         render = next(
             command
             for command in self.harness.commands
-            if Path(command[0]).name == "aerender"
+            if Path(command[0]).name == "typed-render_aep"
         )
         self.assertNotIn("-reuse", render)
-        self.assertEqual(render[render.index("-s") + 1], "0")
-        self.assertEqual(render[render.index("-e") + 1], "47")
-        self.assertEqual(
-            render[render.index("-renderSettings") + 1], adapter.RENDER_SETTINGS
-        )
+        # native_execute asserts full-composition output settings (no native-frame bounds).
+        self.assertEqual(render[0], "typed-render_aep")
 
     def test_hue_animated_binds_the_differentiated_native_oracle(self) -> None:
         case_id = "fx-export-hueSaturation-animated"
@@ -534,7 +536,7 @@ class ExplicitExportAdapterTests(unittest.TestCase):
         self.assertEqual(by_name[first]["status"], "failure")
         self.assertIn("warning/error/fatal", by_name[first]["score_reason"])
         self.assertEqual(by_name[second]["status"], "failure")
-        self.assertIn("exited 7", by_name[second]["score_reason"])
+        self.assertIn("render rejected", by_name[second]["score_reason"])
         self.assertEqual(by_name[third]["status"], "success")
 
     def test_failed_cpu_assertion_with_valid_bindings_still_renders_and_scores(
@@ -611,7 +613,7 @@ class ExplicitExportAdapterTests(unittest.TestCase):
         self.harness.behaviors[first.name] = "timeout"
         timed_rows = self.harness.run()
         self.assertEqual(timed_rows[0]["status"], "failure")
-        self.assertIn("exceeded", timed_rows[0]["score_reason"])
+        self.assertIn("timed out", timed_rows[0]["score_reason"])
         self.assertEqual(timed_rows[1]["status"], "success")
 
         self.harness.behaviors.clear()
@@ -632,7 +634,7 @@ class ExplicitExportAdapterTests(unittest.TestCase):
         rendered_cases = [
             command[command.index("-comp") + 1]
             for command in cancellation_commands
-            if Path(command[0]).name == "aerender"
+            if Path(command[0]).name == "typed-render_aep"
         ]
         self.assertEqual(rendered_cases, [first.name, second.name])
         self.assertEqual(len(cancellation_commands), 5)
@@ -700,7 +702,7 @@ class ExplicitExportAdapterTests(unittest.TestCase):
         self.assertIsNone(row["score"])
         self.assertIn(str(adapter.VECTOR_TESTS), row["identity"]["generator_sources"])
         renders = [command for command in self.harness.commands
-                   if Path(command[0]).name == "aerender"]
+                   if Path(command[0]).name == "typed-render_aep"]
         self.assertEqual(len(renders), 1)
         self.assertEqual(renders[0][renders[0].index("-comp") + 1], case.name)
         controls = adapter._native_control_evidence(case, row["identity"], None, None)
@@ -807,7 +809,7 @@ class ExplicitExportAdapterTests(unittest.TestCase):
         self.assertTrue(
             all(
                 set(row["identity"]["tool_identity"])
-                == {"aerender", "ffprobe"}
+                == {"ffprobe"}
                 for row in rows
             )
         )
@@ -827,7 +829,7 @@ class ExplicitExportAdapterTests(unittest.TestCase):
         first_render = [
             command
             for command in self.harness.commands
-            if Path(command[0]).name == "aerender"
+            if Path(command[0]).name == "typed-render_aep"
             and command[command.index("-comp") + 1] == first.name
         ]
         self.assertEqual(first_render, [])

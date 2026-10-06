@@ -852,6 +852,7 @@ fn hidden_caption_tracks_and_disabled_cues_import_as_hidden_text_layers() {
     let facts = std::collections::BTreeMap::from([(
         "premiere-video-1".to_owned(),
         crate::media::MediaFacts::Video(crate::media::VideoMedia {
+            pixel_aspect: Default::default(),
             orientation: crate::schema::VideoOrientation::Identity,
             codec: crate::schema::VideoCodec::H264,
             bit_depth: 8,
@@ -999,22 +1000,6 @@ fn unsupported_caption_structure_is_omitted_without_failing_the_sequence() {
                 "<TimeRemapping ObjectRef=\"4\"/><ClipID>caption-clip-200</ClipID>",
             ),
             item("TranscriptClip:204: caption retiming is unsupported"),
-        ),
-        (
-            one()
-                .replace(
-                    &format!("<Start>{}</Start>", 30 * FRAME),
-                    &format!("<Start>{}</Start>", 30 * FRAME + 1),
-                )
-                .replace(
-                    &format!("<End>{}</End>", 90 * FRAME),
-                    &format!("<End>{}</End>", 90 * FRAME + 1),
-                ),
-            omitted(
-                OmissionScope::Occurrence,
-                "CaptionDataClipTrackItem:200",
-                "C1 caption 1: invalid Premiere project: timeline start must align to a 30 fps sequence frame boundary",
-            ),
         ),
         (
             one().replace(
@@ -1701,4 +1686,62 @@ fn native_caption_cues_survive_tesseract_and_back_as_graphics() {
         assert_eq!(reopened_text.document, text.document);
         assert_eq!(reopened_text.transform, text.transform);
     }
+}
+
+#[test]
+fn object_mask_sampling_preserves_native_caption_admission() {
+    let xml = captions_xml(&[vec![cue(200, 30..60, "Native caption")]]);
+    let xml = super::nested::object_mask_native_clock(&xml, 4);
+    let (project, notes) = inspect_project_with_omissions(&xml, None).unwrap();
+    let sequence = project.single_sequence().unwrap();
+    assert_eq!(sequence.frame_rate, crate::schema::FrameRate::Fps30);
+    let captions: Vec<_> = sequence
+        .video_tracks
+        .iter()
+        .flat_map(|t| &t.items)
+        .filter_map(|i| {
+            if let PrVideoItem::Graphic(g) = i {
+                Some(g)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(captions.len(), 1, "{notes:?}");
+    let step = crate::format::object_mask::SAVED_SEQUENCE_FRAME_TICKS;
+    assert_eq!(
+        captions[0].start_ticks..captions[0].end_ticks,
+        30 * step..60 * step
+    );
+    let doc = crate::tests::support::project_document_with_media(sequence, &project.media);
+    assert!(doc.to_string().contains("Native caption"));
+}
+
+#[test]
+fn fractional_sequence_clock_retains_caption_text_and_timing() {
+    let xml = captions_xml(&[vec![cue(200, 30..90, "Clock cue")]])
+        .replace(
+            &format!("<Start>{}</Start>", 30 * FRAME),
+            &format!("<Start>{}</Start>", 30 * FRAME + 1),
+        )
+        .replace(
+            &format!("<End>{}</End>", 90 * FRAME),
+            &format!("<End>{}</End>", 90 * FRAME + 1),
+        );
+    let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let (sequences, media) = project.into_parts();
+    let document = crate::tests::support::project_document_with_media(&sequences[0], &media);
+    let cue = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["sourceText"]["text"] == "Clock cue")
+        .unwrap();
+    assert_eq!(cue["type"], "Text");
+    assert_eq!(cue["sourceText"]["fontSize"], 48.0);
+    assert_eq!(
+        *crate::test_support::layer_range(cue),
+        serde_json::json!({"start":1000,"duration":2000})
+    );
 }

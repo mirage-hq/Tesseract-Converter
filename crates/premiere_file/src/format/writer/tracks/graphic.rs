@@ -2,15 +2,17 @@
 //! project panel, and one placement whose chain holds any nondefault clip Opacity,
 //! any keyed Vector Motion, then the Text. Premiere 26.5.1 saves show
 //! [Opacity, Text] and [Vector Motion, Text]; the order of all three is inferred.
+//! A clip Opacity mask is the media clip's written mask record (`mask`), which
+//! the Opacity names in `SubComponents`.
 
 use super::{
     animation::{opacity_records, point_keyframes, scalar_keyframes},
-    point_start_keyframe, scalar_start_keyframe,
+    mask, point_start_keyframe, scalar_start_keyframe,
 };
 use crate::format::{
     invalid, shape_payload, text_payload,
     writer::{
-        graph::{GraphicIds, GraphicObjectIds, ShapeIds, TextIds},
+        graph::{GraphicIds, GraphicObjectIds, GroupIds, ShapeIds, TextIds},
         media::video_media_source,
     },
 };
@@ -18,8 +20,8 @@ use crate::schema::{
     native::*,
     records,
     text::{
-        self, GraphicParamRole, GraphicParamSpec, PrGraphicObject, PrShape, PrTextTransform,
-        SHAPE_PARAMS, TEXT_PARAMS, VECTOR_MOTION_PARAMS,
+        self, GraphicParamRole, GraphicParamSpec, PrGraphicGroup, PrGraphicObject, PrShape,
+        PrTextTransform, SHAPE_PARAMS, TEXT_PARAMS, VECTOR_MOTION_PARAMS,
     },
     ColorSpace, PrGraphic, PrPropertyAnimation, PrSequence, PrText, ToneMapSettings,
 };
@@ -49,6 +51,7 @@ pub(in crate::format::writer) fn records(
         .expect("native graphic color fields serialize");
     let tone_map =
         serde_json::to_string(&ToneMapSettings::DEFAULT).expect("native tone-map fields serialize");
+    let components = chain_components(&graphic.objects, &ids.objects)?;
     let clip = |in_point: i64, out_point: i64, clip_id: &str, in_use: Option<&'static str>| Clip {
         version: Some(records::CLIP_VERSION.to_owned()),
         node: Node {
@@ -62,7 +65,10 @@ pub(in crate::format::writer) fn records(
         .into(),
         marker_owner: None,
         time_remapping: None,
+        maintain_audio_pitch: None,
         playback_speed: None,
+        is_multicam: None,
+        selected_track_index: None,
         play_backwards: None,
         source: Some(Reference::object(ids.source)),
         out_point: Some(out_point.to_string()),
@@ -101,7 +107,11 @@ pub(in crate::format::writer) fn records(
             ignore_alpha: None,
             frame_rect: Some(frame_rect.clone()),
             pixel_aspect_ratio: None,
+            original_par: None,
+            is_par_overridden: None,
+            overridden_par: None,
             codec_type: Some(text::GRAPHIC_CODEC_TYPE.to_owned()),
+            is_numbered_stills: None,
             is_still: Some("true".to_owned()),
             is_overriden_image_orientation_type: None,
             is_continuous_time: Some("true".to_owned()),
@@ -120,6 +130,7 @@ pub(in crate::format::writer) fn records(
             node: None,
             logging_info: Some(Ref::from(ids.logging).into()),
             audio_component_chains: None,
+            video_component_chain: None,
             clips: Some(Clips::from_ids(None, Some(ids.template_clip))),
             audio_clip_channel_groups: Some(Ref::from(ids.channels).into()),
             name: Some(text::GRAPHIC_NAME.to_owned().into()),
@@ -197,6 +208,10 @@ pub(in crate::format::writer) fn records(
             object_id: Some(ids.components.as_native_string()),
             class_id: Some(records::VIDEO_COMPONENT_CHAIN.class_id.into()),
             version: Some(records::VIDEO_COMPONENT_CHAIN.version.into()),
+            component_group_map: ids
+                .group_map
+                .as_ref()
+                .map(|map| Reference::object(map.vector)),
             default_motion: Some("true".into()),
             // Premiere 26.5.1 drops `DefaultOpacity` from a graphic clip
             // whose Opacity it keeps, as for a media clip.
@@ -223,22 +238,49 @@ pub(in crate::format::writer) fn records(
                         .map(|opacity| opacity.component)
                         .into_iter()
                         .chain(ids.vector_motion.as_ref().map(|motion| motion.component))
-                        .chain(ids.objects.iter().map(GraphicObjectIds::component)),
+                        .chain(components.iter().map(|part| part.ids.component())),
                 )),
             }),
         }),
     ];
+    if let Some(map) = &ids.group_map {
+        let members: Vec<_> = components
+            .iter()
+            .filter_map(|part| part.group.map(|group| (&part.id, group)))
+            .collect();
+        if members.len() != map.pins.len() {
+            return Err(invalid("graphic SubGroup pins do not follow its members"));
+        }
+        output.push(Record::ComponentPinVectorSerializer(
+            ComponentPinVectorSerializer {
+                object_id: map.vector,
+                class_id: Some(records::COMPONENT_PIN_VECTOR_SERIALIZER.class_id.to_owned()),
+                version: Some(records::COMPONENT_PIN_VECTOR_SERIALIZER.version.to_owned()),
+                pin_vector: PinVector::from_ids(map.pins.iter().copied()),
+            },
+        ));
+        for (&object_id, (child, parent)) in map.pins.iter().zip(members) {
+            output.push(Record::ComponentPinSerializer(ComponentPinSerializer {
+                object_id,
+                class_id: Some(records::COMPONENT_PIN_SERIALIZER.class_id.to_owned()),
+                version: Some(records::COMPONENT_PIN_SERIALIZER.version.to_owned()),
+                child_pin_id: child.clone(),
+                parent_pin_id: parent.to_string(),
+            }));
+        }
+    }
     let frame = [f64::from(sequence.width), f64::from(sequence.height)];
-    // Component IDs count from the first object's 4, as in Premiere 26.5.1
-    // saves of Type-tool graphics.
-    for (index, (object, object_ids)) in graphic.objects.iter().zip(&ids.objects).enumerate() {
-        let id = (4 + index).to_string();
-        match (object, object_ids) {
+    for part in &components {
+        let id = part.id.clone();
+        match (part.object, part.ids) {
             (PrGraphicObject::Text(text), GraphicObjectIds::Text(text_ids)) => {
                 output.extend(text_records(text, text_ids, id, frame)?);
             }
             (PrGraphicObject::Shape(shape), GraphicObjectIds::Shape(shape_ids)) => {
                 output.extend(shape_records(shape, shape_ids, id, frame)?);
+            }
+            (PrGraphicObject::Group(group), GraphicObjectIds::Group(group_ids)) => {
+                output.extend(group_records(group, group_ids, id)?);
             }
             _ => {
                 return Err(crate::format::invalid(
@@ -260,7 +302,7 @@ pub(in crate::format::writer) fn records(
             component: Some(MotionBody {
                 version: Some(text::TEXT_FILTER_BODY_VERSION.to_owned()),
                 params: Some(MotionParams::from_ids(motion_ids.params)),
-                id: Some((4 + ids.objects.len()).to_string()),
+                id: Some((4 + components.len()).to_string()),
                 display_name: Some("Vector Motion".to_owned()),
                 instance_name: None,
                 bypass: None,
@@ -293,6 +335,9 @@ pub(in crate::format::writer) fn records(
             &graphic.animations,
             opacity_ids,
         )?);
+        if let (Some(mask_ids), Some(opacity_mask)) = (&opacity_ids.mask, &graphic.opacity_mask) {
+            output.extend(mask::records(opacity_mask, mask_ids)?);
+        }
     }
     output.push(Record::VideoClipTrackItem(VideoClipTrackItem {
         object_id: Some(ids.track_item.as_native_string()),
@@ -321,6 +366,86 @@ pub(in crate::format::writer) fn records(
         tone_map_settings: Some(tone_map),
         frame_rect: Some(frame_rect),
     }));
+    Ok(output)
+}
+
+/// One component of a graphic's chain: an object or SubGroup, its
+/// identities, its component `ID`, and the `ID` of the SubGroup that holds
+/// it.
+struct ChainComponent<'a> {
+    object: &'a PrGraphicObject,
+    ids: &'a GraphicObjectIds,
+    id: String,
+    group: Option<usize>,
+}
+
+/// The components of `objects` in chain order, each SubGroup before its
+/// members.
+fn chain_components<'a>(
+    objects: &'a [PrGraphicObject],
+    ids: &'a [GraphicObjectIds],
+) -> crate::format::Result<Vec<ChainComponent<'a>>> {
+    fn visit<'a>(
+        objects: &'a [PrGraphicObject],
+        ids: &'a [GraphicObjectIds],
+        group: Option<usize>,
+        out: &mut Vec<ChainComponent<'a>>,
+    ) -> crate::format::Result<()> {
+        if objects.len() != ids.len() {
+            return Err(invalid(
+                "graphic object identities do not follow its objects",
+            ));
+        }
+        for (object, object_ids) in objects.iter().zip(ids) {
+            let id = 4 + out.len();
+            out.push(ChainComponent {
+                object,
+                ids: object_ids,
+                id: id.to_string(),
+                group,
+            });
+            if let (PrGraphicObject::Group(members), GraphicObjectIds::Group(member_ids)) =
+                (object, object_ids)
+            {
+                visit(&members.objects, &member_ids.objects, Some(id), out)?;
+            }
+        }
+        Ok(())
+    }
+    let mut components = Vec::new();
+    visit(objects, ids, None, &mut components)?;
+    Ok(components)
+}
+
+/// The SubGroup component at its identity transform, in the layout that
+/// Premiere 26.5.1 saved: the Vector Motion's
+/// parameters at their defaults and no private data.
+fn group_records(
+    group: &PrGraphicGroup,
+    ids: &GroupIds,
+    id: String,
+) -> crate::format::Result<Vec<Record>> {
+    let mut output = vec![Record::VideoFilterComponent(VideoFilterComponent {
+        object_id: ids.component,
+        class_id: Some(text::TEXT_FILTER_COMPONENT.class_id.to_owned()),
+        version: Some(text::TEXT_FILTER_COMPONENT.version.to_owned()),
+        component: Some(MotionBody {
+            version: Some(text::TEXT_FILTER_BODY_VERSION.to_owned()),
+            params: Some(MotionParams::from_ids(ids.params)),
+            id: Some(id),
+            display_name: Some("Group".to_owned()),
+            instance_name: Some(group.name.clone()),
+            bypass: None,
+            intrinsic: None,
+        }),
+        premiere_filter_private_data: None,
+        sub_components: None,
+        match_name: Some(text::SUBGROUP_MATCH_NAME.to_owned()),
+        video_filter_type: Some("2".to_owned()),
+    })];
+    for (&object_id, spec) in ids.params.iter().zip(&VECTOR_MOTION_PARAMS) {
+        output.push(param_record(spec, object_id, spec.initial.to_owned(), &[])?);
+    }
     Ok(output)
 }
 
@@ -357,8 +482,18 @@ fn text_records(
         source_text_param(*source_text, node, text, source_text_hash)?,
     ];
     for (&object_id, spec) in params.iter().zip(&TEXT_PARAMS) {
-        let value = text_value(&text.transform, spec, frame);
-        output.push(param_record(spec, object_id, value, &text.animations)?);
+        let value = match (spec.role, text.horizontal_scale) {
+            (GraphicParamRole::HorizontalScale, Some(scale)) => scale.to_string(),
+            (GraphicParamRole::Uniform, Some(_)) => "false".to_owned(),
+            _ => text_value(&text.transform, spec, frame),
+        };
+        let mut param = param_record(spec, object_id, value, &text.animations)?;
+        if spec.id == 4 && text.horizontal_scale.is_some() {
+            if let Record::VideoComponentParam(param) = &mut param {
+                param.name = Some("Vertical Scale".to_owned());
+            }
+        }
+        output.push(param);
     }
     Ok(output)
 }
@@ -379,15 +514,21 @@ fn shape_records(
         params,
         path_hash,
         appearance_hash,
+        mask: mask_ids,
     } = ids;
+    let mut shape_component = object_component(
+        *component,
+        [*path, *appearance].into_iter().chain(*params),
+        id,
+        ("Shape", text::SHAPE_MATCH_NAME, text::SHAPE_PRIVATE_DATA),
+        &shape.name,
+    );
+    if let (Record::VideoFilterComponent(filter), Some(mask_ids)) = (&mut shape_component, mask_ids)
+    {
+        filter.sub_components = Some(SubComponents::from_ids([mask_ids.component]));
+    }
     let mut output = vec![
-        object_component(
-            *component,
-            [*path, *appearance].into_iter().chain(*params),
-            id,
-            ("Shape", text::SHAPE_MATCH_NAME, text::SHAPE_PRIVATE_DATA),
-            &shape.name,
-        ),
+        shape_component,
         Record::ArbVideoComponentParam(binary_param(
             *path,
             RetainedOrSkipped::Skipped,
@@ -410,6 +551,15 @@ fn shape_records(
             _ => text_value(&shape.transform, spec, frame),
         };
         output.push(param_record(spec, object_id, value, &[])?);
+    }
+    match (&shape.mask, mask_ids) {
+        (Some(shape_mask), Some(mask_ids)) => output.extend(mask::records(shape_mask, mask_ids)?),
+        (None, None) => {}
+        _ => {
+            return Err(invalid(
+                "graphic Shape mask identities do not follow its mask",
+            ))
+        }
     }
     Ok(output)
 }
@@ -467,12 +617,12 @@ fn source_text_param(
         node.into(),
         ("1", "Source Text", "9"),
         hash,
-        &text_payload::encode(&text.document)?,
+        &text_payload::encode_graphic(&text.document, text.mask_source)?,
     );
     if !text.source_text_keys.is_empty() {
         let mut wire = String::new();
         for key in &text.source_text_keys {
-            let payload = text_payload::encode(&key.document)?;
+            let payload = text_payload::encode_graphic(&key.document, text.mask_source)?;
             wire.push_str(&format!(
                 "{},{};",
                 key.source_ticks,

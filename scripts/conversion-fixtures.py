@@ -45,7 +45,7 @@ def check_blob(blob, context, repo_root, *, video=False):
     provenance = {"format", "sequence_uid", "source_project_sha256", "preset_sha256"}
     required = provenance if video else {"path"}
     allowed = ({"repo_path", "premiere_version", "sequence", "export_settings"}
-               if video else {"repo_path", "size_bytes", "sha256"})
+               if video else {"repo_path", "size_bytes", "sha256", "path_sanitization"})
     require_keys(blob, required | {"repo_path"}, allowed, context)
     has_identity = {"size_bytes", "sha256"} <= blob.keys()
     if ({"size_bytes", "sha256"} & blob.keys()) and not has_identity:
@@ -55,6 +55,13 @@ def check_blob(blob, context, repo_root, *, video=False):
             raise FixtureError(f"{context}: size_bytes must be positive")
         if not isinstance(blob["sha256"], str) or not HASH.fullmatch(blob["sha256"]):
             raise FixtureError(f"{context}: sha256 must be a lowercase 64-digit hex digest")
+    if "path_sanitization" in blob:
+        sanitized = blob["path_sanitization"]
+        require_keys(sanitized, {"original_sha256"}, set(), f"{context}.path_sanitization")
+        original = sanitized["original_sha256"]
+        if (not has_identity or not isinstance(original, str) or not HASH.fullmatch(original)
+                or original == blob["sha256"] or not blob["path"].lower().endswith(".prproj")):
+            raise FixtureError(f"{context}: invalid path-only project sanitization provenance")
     if video:
         if blob["format"] != "mp4":
             raise FixtureError(f"{context}: video reference must be an MP4")
@@ -152,7 +159,12 @@ def load_manifest(manifest, repo_root=REPO_ROOT):
             raise FixtureError(f"{name}: project has no matching package file")
         if video is not None:
             source = next(file for file in files if file["path"].casefold() == project.casefold())
-            if video["source_project_sha256"] != source["sha256"]:
+            if "sha256" not in source:
+                raise FixtureError(f"{name}: video_reference requires a size/SHA-256 pinned project file")
+            # References retain the independently rendered original's identity.
+            # Published derivatives change absolute paths only, not timeline content.
+            original = source.get("path_sanitization", {}).get("original_sha256", source["sha256"])
+            if video["source_project_sha256"] != original:
                 raise FixtureError(f"{name}: video source project differs from pinned bytes")
     return data
 

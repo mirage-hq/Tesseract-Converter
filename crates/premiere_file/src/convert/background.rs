@@ -1,4 +1,4 @@
-//! Map Premiere's black canvas using an ordinary editable FX rectangle.
+//! Preserve explicit black canvases without assuming the FX document background.
 use crate::error::{unsupported, Result};
 use fx_schema::{
     BlendMode, GroupLayer, Layer, LayerId, NonNegativeProperty, PercentageProperty, RectLayer,
@@ -83,12 +83,12 @@ pub(crate) fn black_shape(width: u32, height: u32) -> RectShape {
 }
 
 /// Validate an actual bottommost opaque rectangle, independently of its label.
-/// Only uncovered video intervals need to fall within its active range.
+/// The extracted rectangle uses Premiere's native black background instead of
+/// an emitted clip. Its declared clock must still be representable.
 pub(crate) fn validate_black_canvas(
     actual: &RectLayer,
     width: u32,
     height: u32,
-    frame_rate: crate::format::FrameRate,
 ) -> Result<std::ops::Range<i64>> {
     let expected = RectLayer {
         id: actual.id,
@@ -115,24 +115,7 @@ pub(crate) fn validate_black_canvas(
         .start
         .checked_add_duration(actual.active_range.duration)
         .ok_or_else(|| unsupported("black canvas range overflows"))?;
-    let start = super::timing::frame_ticks_from_time(
-        actual.active_range.start,
-        frame_rate,
-        "black canvas start",
-    )?;
-    let end = super::timing::frame_ticks_from_time(end, frame_rate, "black canvas end")?;
+    let start = super::timing::ticks_from_time(actual.active_range.start, "black canvas start")?;
+    let end = super::timing::ticks_from_time(end, "black canvas end")?;
     Ok(start..end)
-}
-
-pub(crate) fn validate_gap_coverage(
-    sequence: &crate::format::PrSequence,
-    media: &std::collections::BTreeMap<crate::format::MediaId, crate::format::PrMedia>,
-    canvas: Option<&std::ops::Range<i64>>,
-) -> Result<()> {
-    for gap in sequence.gaps(media) {
-        if !canvas.is_some_and(|range| range.start <= gap.start && range.end >= gap.end) {
-            return Err(unsupported(format!("sequence {:?}: gaps require an explicit bottommost opaque black canvas covering each gap; the current engine's document background does not match Premiere", sequence.name)));
-        }
-    }
-    Ok(())
 }

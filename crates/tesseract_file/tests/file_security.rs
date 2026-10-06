@@ -153,7 +153,10 @@ fn json_layout_rejects_the_protobuf_archive_version() {
     let output = std::fs::File::create(&path).unwrap();
     let mut writer = zip::ZipWriter::new(output);
     writer
-        .start_file("metadata.json", SimpleFileOptions::default())
+        .start_file(
+            "metadata.json",
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored),
+        )
         .unwrap();
     writer
         .write_all(&serde_json::to_vec(&metadata).unwrap())
@@ -236,7 +239,11 @@ fn uppercase_digests_are_accepted_for_open_and_materialization() {
         let mut entry = archive.by_index(index).unwrap();
         let name = entry.name().to_string();
         writer
-            .start_file(name.as_str(), zip::write::SimpleFileOptions::default())
+            .start_file(
+                name.as_str(),
+                zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Stored),
+            )
             .unwrap();
         if name == "metadata.json" {
             writer
@@ -252,6 +259,48 @@ fn uppercase_digests_are_accepted_for_open_and_materialization() {
     let cache = MaterializationCache::new(directory.path().join("cache"));
     let materialized = file.asset("video").unwrap().materialize(&cache).unwrap();
     assert_eq!(std::fs::read(materialized.path()).unwrap(), b"asset bytes");
+}
+
+#[test]
+fn cache_hit_rejects_same_length_edits_and_symlink_replacement() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("source.mp4");
+    std::fs::write(&source, b"asset bytes").unwrap();
+    let path = directory.path().join("cached.tsrct");
+    let file = TesseractFileBuilder::new(test_document())
+        .add_asset("video", &source, AssetKind::Video)
+        .unwrap()
+        .write(&path)
+        .unwrap();
+    let cache = MaterializationCache::new(directory.path().join("cache"));
+    let first = file.asset("video").unwrap().materialize(&cache).unwrap();
+
+    // Same length, different bytes, and a distinct modification time.
+    std::fs::write(first.path(), b"ASSET BYTES").unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(first.path())
+        .unwrap()
+        .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1))
+        .unwrap();
+    let again = file.asset("video").unwrap().materialize(&cache).unwrap();
+    assert_eq!(again.path(), first.path());
+    assert_eq!(std::fs::read(again.path()).unwrap(), b"asset bytes");
+
+    #[cfg(unix)]
+    {
+        let decoy = directory.path().join("decoy");
+        std::fs::write(&decoy, b"DECOY BYTES").unwrap();
+        std::fs::remove_file(again.path()).unwrap();
+        std::os::unix::fs::symlink(&decoy, again.path()).unwrap();
+        let replaced = file.asset("video").unwrap().materialize(&cache).unwrap();
+        assert!(!std::fs::symlink_metadata(replaced.path())
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read(replaced.path()).unwrap(), b"asset bytes");
+        assert_eq!(std::fs::read(&decoy).unwrap(), b"DECOY BYTES");
+    }
 }
 
 #[test]
@@ -291,7 +340,10 @@ fn rejects_non_normalized_paths_before_extracting_anything() {
         let output = std::fs::File::create(&path).unwrap();
         let mut writer = zip::ZipWriter::new(output);
         writer
-            .start_file(archive_path, SimpleFileOptions::default())
+            .start_file(
+                archive_path,
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored),
+            )
             .unwrap();
         writer.write_all(b"hostile").unwrap();
         writer.finish().unwrap();
@@ -346,11 +398,17 @@ fn rejects_case_colliding_entry_names() {
     let output = std::fs::File::create(&path).unwrap();
     let mut writer = zip::ZipWriter::new(output);
     writer
-        .start_file("metadata.json", SimpleFileOptions::default())
+        .start_file(
+            "metadata.json",
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored),
+        )
         .unwrap();
     writer.write_all(b"{}").unwrap();
     writer
-        .start_file("METADATA.JSON", SimpleFileOptions::default())
+        .start_file(
+            "METADATA.JSON",
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored),
+        )
         .unwrap();
     writer.write_all(b"{}").unwrap();
     writer.finish().unwrap();
@@ -381,7 +439,10 @@ fn rejects_previous_container_identity() {
         let path = directory.path().join("old.tsrct");
         let mut writer = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
         writer
-            .start_file("metadata.json", SimpleFileOptions::default())
+            .start_file(
+                "metadata.json",
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored),
+            )
             .unwrap();
         writer
             .write_all(&serde_json::to_vec(&metadata).unwrap())

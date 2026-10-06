@@ -150,6 +150,48 @@ fn style_table(payload: &[u8]) -> Table<'_> {
     run.table(run::STYLE).unwrap().unwrap()
 }
 
+/// Supplementary authored white paint: point slot 4 at the native empty
+/// table in slot 21. Empty RGB tables explicitly encode white in this codec.
+/// This does not establish the native meaning of an absent stroke color.
+pub(crate) fn with_explicit_white_stroke(mut payload: Vec<u8>) -> Vec<u8> {
+    let style = style_table(&payload);
+    assert!(style.table(style::STROKE_COLOR).unwrap().is_none());
+    let entry = HEADER_BYTES + style.vtable + 4;
+    let empty = payload[entry + 21 * 2..entry + 21 * 2 + 2].to_vec();
+    payload[entry + style::STROKE_COLOR * 2..entry + style::STROKE_COLOR * 2 + 2]
+        .copy_from_slice(&empty);
+    payload
+}
+
+#[test]
+fn an_absent_run_marker_preserves_known_style_with_a_diagnostic() {
+    let original = document("OUTLINE");
+    let mut payload = encode(&original).unwrap();
+    let style = style_table(&payload);
+    let entry = HEADER_BYTES + style.vtable + 4 + style::FIXED_VALUE.0 * 2;
+    let field = HEADER_BYTES + style.field(style::FIXED_VALUE.0, 4).unwrap().unwrap();
+    let mut unknown = payload.clone();
+    unknown[field..field + 4].copy_from_slice(&9_u32.to_le_bytes());
+    let recovered = decode(&unknown).unwrap();
+    assert_eq!(recovered.document, original);
+    assert_eq!(
+        recovered.omitted,
+        [OmittedTextFeature::RunStyleMetadata {
+            slot: 24,
+            subslot: None
+        }]
+    );
+    payload[entry..entry + 2].fill(0);
+    let decoded = decode(&payload).unwrap();
+    assert_eq!(decoded.document, original);
+    assert_eq!(decoded.omitted, [OmittedTextFeature::MissingRunMarker]);
+    let caption = with_caption_marker(payload);
+    assert!(decode_caption(&caption)
+        .unwrap_err()
+        .to_string()
+        .contains("text style lacks the Premiere 25.5 caption run marker"));
+}
+
 #[test]
 fn decodes_premiere_26_graphic_payloads() {
     let py = decode(&bytes(EG_TEXT_PY)).unwrap();
@@ -223,7 +265,7 @@ fn enabled_shadow_decodes_and_background_is_reported_without_dropping_text() {
 #[test]
 fn rejects_payloads_it_cannot_represent() {
     assert!(error(&bytes(MIXED_RUNS)).contains("mixed text styles"));
-    assert!(error(&bytes(PRE_26_BOX)).contains("unsupported Source Text field document[8]"));
+    assert!(error(&bytes(PRE_26_BOX)).contains("lacks the Premiere 26 document marker"));
 
     let mut legacy = 4_u64.to_le_bytes().to_vec();
     legacy.extend("{}".encode_utf16().flat_map(u16::to_le_bytes));
@@ -261,15 +303,226 @@ fn malformed_native_text_strings_reject() {
 }
 
 #[test]
-fn unknown_style_slots_fail_closed() {
+fn unknown_style_slots_preserve_known_run_properties_with_a_diagnostic() {
     let mut payload = bytes(BEFORE);
+    let expected = decode(&payload).unwrap().document;
     let style = style_table(&payload);
-    // Mark slot 7 present by pointing it at the tracking field.
+    // Mark slot 7 present by pointing it at the tracking field. Its meaning
+    // is not inferred from the known field that shares those bytes.
     let tracking_entry = HEADER_BYTES + style.vtable + 4 + style::TRACKING * 2;
     let unknown_entry = HEADER_BYTES + style.vtable + 4 + 7 * 2;
     let offset = [payload[tracking_entry], payload[tracking_entry + 1]];
     payload[unknown_entry..unknown_entry + 2].copy_from_slice(&offset);
-    assert!(error(&payload).contains("unsupported Source Text field text style[7]"));
+    let decoded = decode(&payload).unwrap();
+    assert_eq!(decoded.document, expected);
+    assert_eq!(
+        decoded.omitted,
+        [OmittedTextFeature::RunStyleMetadata {
+            slot: 7,
+            subslot: None
+        }]
+    );
+    assert!(!decoded.omitted[0].to_string().contains("table["));
+}
+
+/// Public native point-text fixture with own-value opaque style21 metadata.
+fn modern_style_metadata_payload() -> Vec<u8> {
+    let source =
+        include_bytes!("../../../tests/fixtures/feature_text_point_style_metadata_derived.prproj");
+    let xml = std::io::read_to_string(flate2::read::GzDecoder::new(source.as_slice())).unwrap();
+    let native = roxmltree::Document::parse(&xml).unwrap();
+    let param = native
+        .descendants()
+        .find(|node| node.attribute("ObjectID") == Some("10176"))
+        .unwrap();
+    let value = param
+        .children()
+        .find(|node| node.has_tag_name("StartKeyframeValue"))
+        .unwrap()
+        .text()
+        .unwrap();
+    bytes(&value.split_whitespace().collect::<String>())
+}
+
+#[test]
+fn modern_run_style_metadata_preserves_native_wording_font_size_and_paint() {
+    let decoded = decode(&modern_style_metadata_payload()).unwrap();
+    assert_eq!(decoded.document.text, "py");
+    assert_eq!(decoded.document.font, "Arial-BoldMT");
+    assert_eq!(decoded.document.size, 160.0);
+    assert_eq!(decoded.document.fill, WHITE);
+    assert_eq!(decoded.document.stroke, None);
+    assert_eq!(decoded.document.tracking, 0.0);
+    assert!(!decoded.document.all_caps);
+    assert_eq!(
+        decoded.omitted,
+        [
+            OmittedTextFeature::RunStyleMetadata {
+                slot: 21,
+                subslot: Some(1)
+            },
+            OmittedTextFeature::RunStyleMetadata {
+                slot: 21,
+                subslot: Some(2)
+            },
+        ]
+    );
+    assert!(decoded.omitted[0]
+        .to_string()
+        .contains("style[21] table[1]"));
+}
+
+#[test]
+fn modern_style_extension_tables_share_the_same_local_recovery() {
+    let mut payload = modern_style_metadata_payload();
+    let expected = decode(&payload).unwrap().document;
+    let table = style_table(&payload);
+    let target = table.target(21).unwrap().unwrap();
+    let field = table.field(23, 4).unwrap().unwrap();
+    let relative = u32::try_from(target - field).unwrap();
+    payload[HEADER_BYTES + field..HEADER_BYTES + field + 4]
+        .copy_from_slice(&relative.to_le_bytes());
+    let decoded = decode(&payload).unwrap();
+    assert_eq!(decoded.document, expected);
+    // Report each real field, without assigning any of the values a meaning.
+    assert_eq!(
+        decoded.omitted,
+        [
+            OmittedTextFeature::RunStyleMetadata {
+                slot: 21,
+                subslot: Some(1)
+            },
+            OmittedTextFeature::RunStyleMetadata {
+                slot: 21,
+                subslot: Some(2)
+            },
+            OmittedTextFeature::RunStyleMetadata {
+                slot: 23,
+                subslot: Some(1)
+            },
+            OmittedTextFeature::RunStyleMetadata {
+                slot: 23,
+                subslot: Some(2)
+            },
+        ]
+    );
+}
+
+#[test]
+fn modern_run_marker_metadata_does_not_replace_known_style() {
+    let mut payload = bytes(BEFORE);
+    let expected = decode(&payload).unwrap().document;
+    let marker = HEADER_BYTES
+        + style_table(&payload)
+            .field(style::FIXED_VALUE.0, 4)
+            .unwrap()
+            .unwrap();
+    payload[marker..marker + 4].copy_from_slice(&99_u32.to_le_bytes());
+    let decoded = decode(&payload).unwrap();
+    assert_eq!(decoded.document, expected);
+    assert_eq!(
+        decoded.omitted,
+        [OmittedTextFeature::RunStyleMetadata {
+            slot: 24,
+            subslot: None
+        }]
+    );
+    assert!(!decoded.omitted[0].to_string().contains("table["));
+}
+
+#[test]
+fn modern_unmapped_style_metadata_offsets_are_diagnosed_locally() {
+    let mut payload = modern_style_metadata_payload();
+    let expected = decode(&payload).unwrap().document;
+    let metadata = HEADER_BYTES + style_table(&payload).field(21, 4).unwrap().unwrap();
+    payload[metadata..metadata + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+    let decoded = decode(&payload).unwrap();
+    assert_eq!(decoded.document, expected);
+    assert_eq!(
+        decoded.omitted,
+        [OmittedTextFeature::RunStyleMetadata {
+            slot: 21,
+            subslot: None
+        }]
+    );
+    assert!(!decoded.omitted[0].to_string().contains("table["));
+}
+
+#[test]
+fn modern_style_metadata_recovery_keeps_consumed_field_bounds() {
+    let mut payload = modern_style_metadata_payload();
+    let table = style_table(&payload);
+    let size_entry = HEADER_BYTES + table.vtable + 4 + style::SIZE * 2;
+    let outside = u16::try_from(table.inline_bytes).unwrap();
+    payload[size_entry..size_entry + 2].copy_from_slice(&outside.to_le_bytes());
+    assert!(error(&payload).contains("field is outside its table"));
+}
+
+/// The Source Text of the empty second Text of the Source Graphic in the
+/// Premiere 26.5.1 save `feature_source_graphic_26_5`
+/// (ArbVideoComponentParam 96): a document of the fixed graphic slots only,
+/// with no runs and no fonts.
+const EMPTY_TEXT: &str = concat!(
+    "mAAAAAAAAABEMyIRDAAAAAAABgAKAAQABgAAAGQAAAAAAF4AEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAA8ABwBeAAAA",
+    "AAAAAQgAAAAAAAEA9P////j////8////BAAEAAQAAAA=",
+);
+
+#[test]
+fn a_graphic_document_without_runs_or_fonts_is_an_empty_text() {
+    let payload = bytes(EMPTY_TEXT);
+    let slots = document_table(&payload).present().unwrap();
+    assert_eq!(slots, [26, 40, 43, 44]);
+    // Zero characters and no font. Its style is this reader's for omitted
+    // style slots: the document stores none.
+    let empty = decode(&payload).unwrap();
+    assert!(empty.omitted.is_empty());
+    let expected = PrTextDocument {
+        font: String::new(),
+        size: 100.0,
+        ..document("")
+    };
+    assert_eq!(empty.document, expected);
+    empty.document.validate().unwrap();
+    // Text needs a font: with characters, the same document is invalid.
+    let unnamed = PrTextDocument {
+        text: "py".into(),
+        ..expected.clone()
+    };
+    assert_eq!(
+        unnamed.validate().unwrap_err().to_string(),
+        "invalid Premiere project: text font must be a nonempty PostScript name"
+    );
+    assert!(expected.validate_font().is_err());
+
+    // A styled document without either slot is also empty; without only one
+    // it is malformed, and no caption block without runs has been seen.
+    let without = |slots: &[usize]| {
+        let mut payload = bytes(BEFORE);
+        for &slot in slots {
+            let entry = vtable_entry(&payload, slot);
+            payload[entry].fill(0);
+        }
+        payload
+    };
+    let stripped = decode(&without(&[document::RUNS, document::FONTS]))
+        .unwrap()
+        .document;
+    assert_eq!((stripped.text.as_str(), stripped.font.as_str()), ("", ""));
+    assert_eq!(
+        error(&without(&[document::RUNS])),
+        "unsupported conversion: Source Text has no text runs"
+    );
+    assert_eq!(
+        error(&without(&[document::FONTS])),
+        "unsupported conversion: text run references a missing font"
+    );
+    assert_eq!(
+        decode_caption(&with_caption_marker(payload))
+            .unwrap_err()
+            .to_string(),
+        "unsupported conversion: Source Text has no text runs"
+    );
 }
 
 #[test]
@@ -424,13 +677,30 @@ fn repeated_runs(text: &str, copies: usize) -> Vec<u8> {
 
 /// A small independent wire input with one font and a size per native run.
 fn text_runs_payload(source: &[(&str, f32)]) -> Vec<u8> {
+    text_runs_with_default(source, None)
+}
+
+// Supplemental reduced wire layout from saved pre-26 documents: slot 8 is
+// a run table, not a second text vector. No proprietary source bytes retained.
+fn text_runs_with_default(source: &[(&str, f32)], default: Option<(&str, f32)>) -> Vec<u8> {
+    text_runs_with_default_control(source, default, false)
+}
+
+fn text_runs_with_default_control(
+    source: &[(&str, f32)],
+    default: Option<(&str, f32)>,
+    unknown_insertion_control: bool,
+) -> Vec<u8> {
     let mut fbb = FlatBufferBuilder::new();
     let tables: Vec<_> = (0..3).map(|_| empty_table(&mut fbb)).collect();
     let mut runs = Vec::new();
-    for &(text, size) in source {
+    for (index, (text, size)) in source.iter().copied().chain(default).enumerate() {
         let style_table = {
             let table = fbb.start_table();
             fbb.push_slot_always(slot(1), size);
+            if unknown_insertion_control && index == source.len() {
+                fbb.push_slot_always(slot(7), 1_u32);
+            }
             fbb.push_slot_always(slot(21), tables[0]);
             fbb.push_slot_always(slot(23), tables[1]);
             fbb.push_slot_always(slot(24), 2_u32);
@@ -445,6 +715,7 @@ fn text_runs_payload(source: &[(&str, f32)]) -> Vec<u8> {
         };
         runs.push(run_table);
     }
+    let default_run = default.map(|_| runs.pop().unwrap());
     let runs = fbb.create_vector(&runs);
     let font = fbb.create_string("Arial-BoldMT");
     let fonts = fbb.create_vector(&[font]);
@@ -452,6 +723,9 @@ fn text_runs_payload(source: &[(&str, f32)]) -> Vec<u8> {
         let table = fbb.start_table();
         fbb.push_slot_always(slot(0), runs);
         fbb.push_slot_always(slot(1), fonts);
+        if let Some(default_run) = default_run {
+            fbb.push_slot_always(slot(8), default_run);
+        }
         fbb.push_slot_always(slot(26), 1_u8);
         fbb.push_slot_always(slot(40), tables[2]);
         fbb.push_slot_always(slot(43), 0_u8);
@@ -469,6 +743,54 @@ fn text_runs_payload(source: &[(&str, f32)]) -> Vec<u8> {
     payload.extend_from_slice(&MAGIC.to_le_bytes());
     payload.extend_from_slice(buffer);
     payload
+}
+
+#[test]
+fn empty_default_run_preserves_the_identically_styled_text() {
+    let source = [("Editable text", 80.0)];
+    let expected = decode(&text_runs_payload(&source)).unwrap();
+    let actual = decode(&text_runs_with_default(&source, Some(("", 80.0)))).unwrap();
+    assert_eq!(actual.document, expected.document);
+    assert_eq!(actual.omitted, expected.omitted);
+}
+
+#[test]
+fn empty_default_run_differing_style_preserves_actual_text_with_warning() {
+    let source = [("Editable text", 80.0)];
+    let expected = decode(&text_runs_payload(&source)).unwrap();
+    let actual = decode(&text_runs_with_default(&source, Some(("", 60.0)))).unwrap();
+    assert_eq!(actual.document, expected.document);
+    assert_eq!(actual.omitted.len(), 1);
+    assert!(actual.omitted[0]
+        .to_string()
+        .contains("insertion/default style"));
+}
+
+#[test]
+fn empty_default_run_unknown_insertion_control_does_not_discard_actual_text() {
+    let source = [("Editable text", 80.0)];
+    let expected = decode(&text_runs_payload(&source)).unwrap();
+    let actual = decode(&text_runs_with_default_control(
+        &source,
+        Some(("", 80.0)),
+        true,
+    ))
+    .unwrap();
+    assert_eq!(actual.document, expected.document);
+    assert_eq!(actual.omitted, [OmittedTextFeature::DefaultRunStyle]);
+}
+
+#[test]
+fn empty_default_run_rejects_content_and_invalid_offsets() {
+    assert!(decode(&text_runs_with_default(
+        &[("A", 80.0)],
+        Some(("Extra text", 80.0))
+    ))
+    .is_err());
+    let mut payload = text_runs_with_default(&[("A", 80.0)], Some(("", 80.0)));
+    let field = HEADER_BYTES + document_table(&payload).field(8, 4).unwrap().unwrap();
+    payload[field..field + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(decode(&payload).is_err());
 }
 
 #[test]
@@ -896,11 +1218,13 @@ fn caption_blocks_decode_with_their_own_document_markers() {
             ..shadowed
         }
     );
-    // Each layout rejects the other's marker slot instead of guessing, and
-    // names the release its markers were recorded from.
+    // Graphics retain the known document fields from the alternate profile
+    // with a diagnostic. Caption admission remains strict.
+    let graphic = decode(&corpus).unwrap();
+    assert_eq!(graphic.document, decoded.document);
     assert_eq!(
-        error(&corpus),
-        "unsupported conversion: unsupported Source Text field document[38]"
+        graphic.omitted,
+        [OmittedTextFeature::AlternateDocumentMarkers]
     );
     assert_eq!(
         decode_caption(&bytes(BEFORE)).unwrap_err().to_string(),
@@ -929,4 +1253,351 @@ fn caption_blocks_decode_with_their_own_document_markers() {
     assert!(generated.omitted.is_empty());
     assert_eq!(generated.box_alignment, PrVerticalAlign::Bottom);
     assert_eq!(generated.document, expected);
+}
+
+#[test]
+fn legacy_json_source_text_decodes_as_one_editable_point_text_document() {
+    use crate::tests::support::{legacy_run, legacy_source_text, legacy_source_text_payload};
+    use serde_json::json;
+    let uniform = |payload: &[u8]| {
+        let decoded = decode_graphic(payload).unwrap();
+        assert!(decoded.omitted.is_empty());
+        let TextDocuments::Uniform(document) = decoded.documents else {
+            panic!("one uniform document");
+        };
+        document
+    };
+    // Our own text: its CR paragraph break becomes LF, and the BMP and
+    // supplementary characters stay.
+    let centred = PrTextDocument {
+        text: "Night\nMarket \u{2713} \u{1f525}".into(),
+        font: "Inter-SemiBold".into(),
+        size: 64.5,
+        fill: Some(PrRgb([128, 128, 128])),
+        stroke: None,
+        shadow: None,
+        all_caps: false,
+        tracking: 25.0,
+        leading: 0.0,
+        justification: PrJustification::Center,
+        frame: PrTextFrame::Point {
+            vertical: PrVerticalAlign::Top,
+        },
+        background: None,
+    };
+    let payload = legacy_source_text_payload(&legacy_source_text().to_string());
+    assert_eq!(uniform(&payload), centred);
+    // The fields may come in another order, here `mVersion` first.
+    let reordered = format!(
+        "{{\"mVersion\":1,\"mTextParam\":{}}}",
+        legacy_source_text()["mTextParam"]
+    );
+    assert_eq!(uniform(&legacy_source_text_payload(&reordered)), centred);
+    // Left-aligned black text, and text whose fill is off, which stays
+    // invisible whatever its hidden color.
+    let mut left = legacy_source_text();
+    left["mTextParam"]["mAlignment"] = json!(0);
+    left["mTextParam"]["mStyleSheet"]["mFillColor"] = legacy_run(json!(0));
+    assert_eq!(
+        uniform(&legacy_source_text_payload(&left.to_string())),
+        PrTextDocument {
+            fill: Some(PrRgb([0, 0, 0])),
+            justification: PrJustification::Left,
+            ..centred.clone()
+        }
+    );
+    let mut unfilled = legacy_source_text();
+    unfilled["mTextParam"]["mStyleSheet"]["mFillVisible"] = legacy_run(json!(false));
+    unfilled["mTextParam"]["mStyleSheet"]["mFillColor"] = legacy_run(json!(0x00_ff_00));
+    assert_eq!(
+        uniform(&legacy_source_text_payload(&unfilled.to_string())),
+        PrTextDocument {
+            fill: None,
+            ..centred.clone()
+        }
+    );
+    // Source Text keys and caption blocks still read only Premiere 26 values.
+    let reason = "unsupported conversion: legacy UTF-16 JSON text from Premiere before 26 converts only as a static graphic Source Text value";
+    assert_eq!(error(&payload), reason);
+    assert_eq!(decode_caption(&payload).unwrap_err().to_string(), reason);
+}
+
+#[test]
+fn legacy_json_source_text_requires_paragraph_object() {
+    use crate::tests::support::{legacy_source_text, legacy_source_text_payload};
+    use serde_json::json;
+    let mut text = legacy_source_text();
+    let paragraph = &text["mTextParam"];
+    // The same valid fields in the struct's declaration order must not
+    // stand in for the required named object.
+    text["mTextParam"] = json!([
+        paragraph["mAlignment"],
+        paragraph["mDefaultRun"],
+        paragraph["mHeight"],
+        paragraph["mHindiDigits"],
+        paragraph["mIndic"],
+        paragraph["mIsVerticalText"],
+        paragraph["mLeading"],
+        paragraph["mLigatures"],
+        paragraph["mRTL"],
+        paragraph["mShadowAngle"],
+        paragraph["mShadowBlur"],
+        paragraph["mShadowColor"],
+        paragraph["mShadowOffset"],
+        paragraph["mShadowOpacity"],
+        paragraph["mShadowSize"],
+        paragraph["mShadowVisible"],
+        paragraph["mStyleSheet"],
+        paragraph["mTabWidth"],
+        paragraph["mWidth"]
+    ]);
+    let payload = legacy_source_text_payload(&text.to_string());
+    let error = decode_graphic(&payload).unwrap_err().to_string();
+    assert!(
+        error.contains("expected an object with named fields"),
+        "{error}"
+    );
+}
+
+#[test]
+fn legacy_json_source_text_requires_style_object() {
+    use crate::tests::support::{legacy_source_text, legacy_source_text_payload};
+    use serde_json::json;
+    let mut text = legacy_source_text();
+    let style = &text["mTextParam"]["mStyleSheet"];
+    text["mTextParam"]["mStyleSheet"] = json!([
+        style["mBaselineOption"],
+        style["mBaselineShift"],
+        style["mCapsOption"],
+        style["mFauxBold"],
+        style["mFauxItalic"],
+        style["mFillColor"],
+        style["mFillOverStroke"],
+        style["mFillVisible"],
+        style["mFontName"],
+        style["mFontSize"],
+        style["mKerning"],
+        style["mStrokeColor"],
+        style["mStrokeVisible"],
+        style["mStrokeWidth"],
+        style["mText"],
+        style["mTracking"],
+        style["mTsumi"]
+    ]);
+    let payload = legacy_source_text_payload(&text.to_string());
+    let error = decode_graphic(&payload).unwrap_err().to_string();
+    assert!(
+        error.contains("expected an object with named fields"),
+        "{error}"
+    );
+}
+
+#[test]
+fn legacy_json_source_text_requires_run_wrapper_object() {
+    use crate::tests::support::{legacy_source_text, legacy_source_text_payload};
+    use serde_json::json;
+    let mut text = legacy_source_text();
+    text["mTextParam"]["mStyleSheet"]["mFontSize"] = json!([[[0, 64.5]]]);
+    let payload = legacy_source_text_payload(&text.to_string());
+    let error = decode_graphic(&payload).unwrap_err().to_string();
+    assert!(
+        error.contains("expected an object with named fields"),
+        "{error}"
+    );
+}
+
+#[test]
+fn legacy_json_source_text_rejects_nested_duplicate_fields() {
+    use crate::tests::support::{legacy_source_text, legacy_source_text_payload};
+    let json = legacy_source_text().to_string();
+    for (field, value) in [
+        ("mAlignment", "2"),
+        ("mFontSize", r#"{"mParamValues":[[0,64.5]]}"#),
+        ("mParamValues", "[[0,64.5]]"),
+    ] {
+        let member = format!("\"{field}\":{value}");
+        assert!(json.contains(&member));
+        // Raw JSON retains duplicate members, unlike a Value object.
+        let duplicated = json.replacen(&member, &format!("{member},{member}"), 1);
+        let error = decode_graphic(&legacy_source_text_payload(&duplicated))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(&format!("duplicate field `{field}`")),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn legacy_json_source_text_keeps_framing_consumed_style_and_mask_checks() {
+    use crate::tests::support::{legacy_source_text, legacy_source_text_payload};
+    use serde_json::{json, Value};
+    let edited = |edit: fn(&mut Value)| {
+        let mut text = legacy_source_text();
+        edit(&mut text);
+        legacy_source_text_payload(&text.to_string())
+    };
+    let json = legacy_source_text().to_string();
+    let valid = legacy_source_text_payload(&json);
+    let mut miscounted = valid.clone();
+    miscounted[0] ^= 2;
+    let mut odd = valid.clone();
+    odd.push(0);
+    let odd_count = u64::try_from(odd.len() - 8).unwrap();
+    odd[..8].copy_from_slice(&odd_count.to_le_bytes());
+    let unpaired = {
+        let at = json[..json.find("Night").unwrap()].encode_utf16().count();
+        let mut units: Vec<u16> = json.encode_utf16().collect();
+        units.insert(at, 0xd800);
+        let text: Vec<u8> = units.into_iter().flat_map(u16::to_le_bytes).collect();
+        let mut payload = u64::try_from(text.len()).unwrap().to_le_bytes().to_vec();
+        payload.extend(text);
+        payload
+    };
+    let cases = [
+        (miscounted, "its byte count"),
+        (odd, "an odd byte count"),
+        (unpaired, "invalid UTF-16: unpaired surrogate"),
+        (
+            legacy_source_text_payload(&format!("{json}\0")),
+            "trailing characters",
+        ),
+        (edited(|text| text["mMask"] = json!(true)), "active mask"),
+        (
+            edited(|text| text["mTextParam"]["mAlignment"] = json!(2.0)),
+            "invalid type: floating point `2.0`, expected u32",
+        ),
+        (
+            edited(|text| {
+                text["mTextParam"]["mStyleSheet"]["mFontSize"] =
+                    json!({"mParamValues": [[0, 64.5], [6, 40]]})
+            }),
+            "mixed text styles are unsupported",
+        ),
+        (
+            edited(|text| {
+                text["mTextParam"]["mStyleSheet"]["mFillColor"] =
+                    json!({"mParamValues": [[3, 0x80_80_80]]})
+            }),
+            "its one style run starts at character 3, not 0",
+        ),
+        (
+            edited(|text| text["mTextParam"]["mWidth"] = json!(-1)),
+            "invalid text box dimensions",
+        ),
+    ];
+    for (payload, reason) in cases {
+        let error = decode_graphic(&payload).unwrap_err().to_string();
+        assert!(
+            error.starts_with("unsupported conversion: legacy UTF-16 JSON Source Text: ")
+                && error.contains(reason),
+            "{reason}: {error}"
+        );
+    }
+}
+
+#[test]
+fn mask_with_text_round_trips_on_graphic_text_and_fails_closed_elsewhere() {
+    use crate::schema::text::PrMaskSource;
+    for mask_source in [
+        None,
+        Some(PrMaskSource { inverted: false }),
+        Some(PrMaskSource { inverted: true }),
+    ] {
+        let payload = super::encode_graphic(&document("Mask"), mask_source).unwrap();
+        let decoded = decode(&payload).unwrap();
+        assert_eq!(decoded.mask_source, mask_source);
+        assert_eq!(decoded.document, document("Mask"));
+    }
+    // `payload` with document slot `slot` reading the inline u8 of slot
+    // `from`, as the native control stores the flags.
+    let alias = |payload: &[u8], slot: usize, from: usize| {
+        let mut payload = payload.to_vec();
+        let buffer = &mut payload[HEADER_BYTES..];
+        let word = |buffer: &[u8], at: usize| {
+            u32::from_le_bytes(buffer[at..at + 4].try_into().unwrap()) as usize
+        };
+        let vtable = |buffer: &[u8], table: usize| {
+            (table as i64
+                - i64::from(i32::from_le_bytes(
+                    buffer[table..table + 4].try_into().unwrap(),
+                ))) as usize
+        };
+        let entry = |buffer: &[u8], vtable: usize, slot: usize| {
+            u16::from_le_bytes(
+                buffer[vtable + 4 + 2 * slot..vtable + 6 + 2 * slot]
+                    .try_into()
+                    .unwrap(),
+            )
+        };
+        let root = word(buffer, 0);
+        let document = root + entry(buffer, vtable(buffer, root), 0) as usize;
+        let document = document + word(buffer, document);
+        let document_vtable = vtable(buffer, document);
+        let value = entry(buffer, document_vtable, from);
+        buffer[document_vtable + 4 + 2 * slot..document_vtable + 6 + 2 * slot]
+            .copy_from_slice(&value.to_le_bytes());
+        payload
+    };
+    let graphic = super::encode_graphic(&document("Mask"), None).unwrap();
+    assert_eq!(
+        decode(&alias(&graphic, 21, 26)).unwrap().mask_source,
+        Some(PrMaskSource { inverted: false })
+    );
+    let error = decode(&alias(&graphic, 22, 26)).unwrap_err().to_string();
+    assert!(
+        error.contains(
+            "Mask with Text (document slots 21 and 22) at None and Some(1) is unmeasured"
+        ),
+        "{error}"
+    );
+    // A caption keeps no mask.
+    let caption = alias(&bytes(CORPUS_CAPTION_TEMPLATE), 21, 38);
+    let error = decode_caption(&caption).unwrap_err().to_string();
+    assert!(
+        error.contains("Mask with Text on a caption is unsupported"),
+        "{error}"
+    );
+}
+
+#[test]
+fn graphic_root_extensions_are_diagnosed_and_never_replayed() {
+    let expected = document("Editable root document");
+    let original = encode(&expected).unwrap();
+    let old = Buffer::from_payload(&original, SOURCE_TEXT).unwrap();
+    let document_at = old
+        .table(old.offset(0).unwrap())
+        .unwrap()
+        .table(0)
+        .unwrap()
+        .unwrap()
+        .position;
+    // Wrap the existing document in a new root with an unidentified field.
+    // Its bits deliberately are not a usable pointer; they are not followed.
+    let mut buffer = vec![0_u8; 32];
+    buffer[0..4].copy_from_slice(&16_u32.to_le_bytes());
+    buffer[4..6].copy_from_slice(&8_u16.to_le_bytes());
+    buffer[6..8].copy_from_slice(&12_u16.to_le_bytes());
+    buffer[8..10].copy_from_slice(&4_u16.to_le_bytes());
+    buffer[10..12].copy_from_slice(&8_u16.to_le_bytes());
+    buffer[16..20].copy_from_slice(&12_i32.to_le_bytes());
+    buffer[20..24].copy_from_slice(&u32::try_from(document_at + 12).unwrap().to_le_bytes());
+    buffer[24..28].copy_from_slice(&u32::MAX.to_le_bytes());
+    buffer.extend_from_slice(old.bytes);
+    let payload = super::framed(&buffer, SOURCE_TEXT).unwrap();
+    let decoded = decode(&payload).unwrap();
+    assert_eq!(decoded.document, expected);
+    assert_eq!(decoded.omitted, [OmittedTextFeature::UnknownRootData(1)]);
+    assert!(decode_caption(&payload)
+        .unwrap_err()
+        .to_string()
+        .contains("root[1]"));
+    assert!(decode(&encode(&decoded.document).unwrap())
+        .unwrap()
+        .omitted
+        .is_empty());
+    // An invalid inline field location is still a malformed buffer.
+    buffer[10..12].copy_from_slice(&u16::MAX.to_le_bytes());
+    assert!(decode(&super::framed(&buffer, SOURCE_TEXT).unwrap()).is_err());
 }

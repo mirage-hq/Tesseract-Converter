@@ -1,4 +1,4 @@
-//! Effect-local lowering: an unsupported control never discards its owning layer.
+//! Effect-local lowering. Custom shaders are dropped, never mapped or approximated.
 
 use std::collections::BTreeSet;
 
@@ -10,6 +10,24 @@ use crate::{
     effects::{catalog, mapping, special},
     writer::{self, KeyframeEasing, NumericKeyframe, NumericTrack},
 };
+
+/// Recognize identified, disabled, and legacy shader records alike.
+pub(super) fn has_custom_shader(records: &[EffectRecord]) -> bool {
+    records.iter().any(|record| {
+        let payload = match record.data() {
+            EffectData::Identified { effect, .. } | EffectData::Legacy(effect) => effect,
+        };
+        matches!(
+            payload,
+            EffectPayload::Known(fx_schema::LayerEffect::CustomShader { .. })
+        )
+    })
+}
+
+/// Shader adjustments cannot be exported as effectless opaque solids.
+pub(super) fn omitted_shader_adjustment(records: &[EffectRecord]) -> bool {
+    has_custom_shader(records)
+}
 
 pub(super) struct LoweredEffects {
     pub effects: Vec<writer::effects::NativeEffect>,
@@ -28,6 +46,11 @@ pub(super) fn unmapped_warning(record: &EffectRecord) -> Option<String> {
             "Unknown FX effect payload omitted; owner and remaining effects retained".into(),
         );
     };
+    if let fx_schema::LayerEffect::CustomShader { name, .. } = effect {
+        return Some(format!(
+            "CustomShader {name:?} dropped; no native mapping or approximation"
+        ));
+    }
     let kind = catalog::effect_type(effect);
     if super::layer_styles::is_layer_style(effect) || mapping::by_fx(kind).is_some() {
         return None;
@@ -39,10 +62,75 @@ pub(super) fn unmapped_warning(record: &EffectRecord) -> Option<String> {
     ))
 }
 
+/// Validate clock-sensitive effect keys before report emission.
+pub(super) fn lower_at_rate(
+    records: &[EffectRecord],
+    dynamics: &[AnimationGraphEntry],
+    size: [f64; 2],
+    rate: crate::timing::FrameRate,
+) -> LoweredEffects {
+    lower_at_rate_with_mosaic_canvas(records, dynamics, size, rate, None)
+}
+
+pub(super) fn lower_at_rate_with_mosaic_canvas(
+    records: &[EffectRecord],
+    dynamics: &[AnimationGraphEntry],
+    size: [f64; 2],
+    rate: crate::timing::FrameRate,
+    mosaic_canvas: Option<&super::mosaic_domain::RootCanvas>,
+) -> LoweredEffects {
+    let mut result = lower_with_rate(records, dynamics, size, rate, mosaic_canvas);
+    validate_color_clocks(&mut result, rate);
+    result
+}
+
+fn validate_color_clocks(result: &mut LoweredEffects, rate: crate::timing::FrameRate) {
+    for effect in &mut result.effects {
+        for property in &mut effect.properties {
+            // Effect mapping represents COLOR as normalized RGBA, four slots.
+            if property.values.len() != 4 {
+                continue;
+            }
+            let Some(track) = &property.animation else {
+                continue;
+            };
+            let mut native = track.clone();
+            for key in &mut native.keys {
+                key.values.rotate_right(1);
+                key.values.iter_mut().for_each(|value| *value *= 255.0);
+            }
+            if let Err(error) = writer::validate_effect_color_at_rate(&native, rate) {
+                result.warnings.push(format!(
+                    "Effect {} / {}: final COLOR property clock: {error}; animation omitted, authored static property retained",
+                    effect.match_name, property.match_name
+                ));
+                property.animation = None;
+            }
+        }
+    }
+}
+
+/// Default-clock geometry probes/tests only; emitted owners use `lower_at_rate`.
 pub(super) fn lower(
     records: &[EffectRecord],
     dynamics: &[AnimationGraphEntry],
     size: [f64; 2],
+) -> LoweredEffects {
+    lower_with_rate(
+        records,
+        dynamics,
+        size,
+        crate::timing::FrameRate::new(24.0).expect("constant 24fps is a valid native frame rate"),
+        None,
+    )
+}
+
+fn lower_with_rate(
+    records: &[EffectRecord],
+    dynamics: &[AnimationGraphEntry],
+    size: [f64; 2],
+    rate: crate::timing::FrameRate,
+    mosaic_canvas: Option<&super::mosaic_domain::RootCanvas>,
 ) -> LoweredEffects {
     let mut result = LoweredEffects {
         effects: Vec::new(),
@@ -65,7 +153,27 @@ pub(super) fn lower(
             );
             continue;
         };
+        if matches!(effect, fx_schema::LayerEffect::CustomShader { .. }) {
+            if let Some(message) = unmapped_warning(record) {
+                result.warnings.push(message);
+            }
+            continue;
+        }
         let kind = catalog::effect_type(effect);
+        let frequency = match effect {
+            fx_schema::LayerEffect::Ripple { frequency, .. } => Some(frequency.unwrap_or(30.0)),
+            fx_schema::LayerEffect::WaveWarp { wave_width, .. } => Some(wave_width.unwrap_or(6.0)),
+            _ => None,
+        };
+        if matches!(
+            effect,
+            fx_schema::LayerEffect::Ripple { .. } | fx_schema::LayerEffect::WaveWarp { .. }
+        ) && (frequency.is_some_and(|v| !v.is_finite() || v <= 0.0)
+            || size.iter().any(|v| !v.is_finite() || *v <= 0.0))
+        {
+            result.warnings.push(format!("Effect {kind}: positive finite frequency and plane required; effect omitted, owner and siblings retained"));
+            continue;
+        }
         if super::layer_styles::is_layer_style(effect) {
             let key = super::layer_styles::style_key(effect);
             let duplicate = result.styles.iter().any(|style| {
@@ -123,200 +231,291 @@ pub(super) fn lower(
             result.warnings.extend(lowered.warnings);
             continue;
         }
-        let Some(mapping) = mapping::by_fx(kind) else {
+        let mappings = animated_saturation_mapping(effect, id, dynamics)
+            .map_or_else(|| mapping::export_mappings(kind), |mapping| vec![mapping]);
+        if mappings.is_empty() {
             result.warnings.push(format!(
                 "Effect {kind}: {}; omitted, owner retained",
                 catalog::unsupported_reason(effect)
                     .unwrap_or("no verified equivalent native effect/control representation")
             ));
             continue;
-        };
-        let mut native = match writer::effects::new_effect(mapping.native, enabled, size) {
-            Ok(effect) => effect,
-            Err(error) => {
-                result
-                    .warnings
-                    .push(format!("Effect {kind}: {error}; omitted, owner retained"));
-                continue;
-            }
-        };
-        let value = match serde_json::to_value(effect) {
-            Ok(value) => value,
-            Err(error) => {
-                result
-                    .warnings
-                    .push(format!("Effect {kind}: invalid payload: {error}; omitted"));
-                continue;
-            }
-        };
-        let defaults = mapping::default_effect(kind);
-        for property in &mut native.properties {
-            let fields: Vec<_> = mapping
-                .fields
-                .iter()
-                .filter(|field| field.native == property.match_name)
-                .collect();
-            if fields.is_empty() {
-                continue;
-            }
-            let mut tracks = vec![None; property.values.len()];
-            for field in fields {
-                let (Some(scale), Some(offset)) = (field.scale.factor(size), field.offset(size))
-                else {
-                    result.warnings.push(format!(
+        }
+        for mapping in &mappings {
+            let mut native = match writer::effects::new_effect(mapping.native, enabled, size) {
+                Ok(effect) => effect,
+                Err(error) => {
+                    result
+                        .warnings
+                        .push(format!("Effect {kind}: {error}; omitted, owner retained"));
+                    continue;
+                }
+            };
+            let value = match serde_json::to_value(effect) {
+                Ok(value) => value,
+                Err(error) => {
+                    result
+                        .warnings
+                        .push(format!("Effect {kind}: invalid payload: {error}; omitted"));
+                    continue;
+                }
+            };
+            let defaults = mapping::default_effect(kind);
+            for property in &mut native.properties {
+                let fields: Vec<_> = mapping
+                    .fields
+                    .iter()
+                    .filter(|field| field.native == property.match_name)
+                    .collect();
+                if fields.is_empty() {
+                    continue;
+                }
+                let mut tracks = vec![None; property.values.len()];
+                for field in fields {
+                    let (Some(scale), Some(offset)) =
+                        (field.scale.factor(size), field.offset(size))
+                    else {
+                        result.warnings.push(format!(
                         "Effect {kind} / {}: unknown source dimensions; native default retained",
                         field.param
                     ));
-                    continue;
-                };
-                let base = value
-                    .get(field.field)
-                    .filter(|v| !v.is_null())
-                    .or_else(|| defaults.get(field.field));
-                let base = base.and_then(|v| {
-                    v.as_f64()
-                        .or_else(|| v.as_bool().map(|b| f64::from(u8::from(b))))
-                });
-                if let (Some(base), Some(slot)) = (base, property.values.get_mut(field.component)) {
-                    let converted = (base - offset) / scale;
-                    let hue_master = mapping.native == "ADBE HUE SATURATION"
-                        && matches!(field.param, "hue" | "saturation" | "lightness");
-                    if hue_master && writer::effects::hue_master_fixed(converted.round()).is_err() {
-                        result.warnings.push(format!(
+                        continue;
+                    };
+                    let base = value
+                        .get(field.field)
+                        .filter(|v| !v.is_null())
+                        .or_else(|| defaults.get(field.field));
+                    let base = base.and_then(|v| {
+                        v.as_f64()
+                            .or_else(|| v.as_bool().map(|b| f64::from(u8::from(b))))
+                    });
+                    if let (Some(base), Some(slot)) =
+                        (base, property.values.get_mut(field.component))
+                    {
+                        let converted = (base - offset) / scale;
+                        let hue_master = mapping.native == "ADBE HUE SATURATION"
+                            && matches!(field.param, "hue" | "saturation" | "lightness");
+                        if hue_master
+                            && writer::effects::hue_master_fixed(converted.round()).is_err()
+                        {
+                            result.warnings.push(format!(
                             "Effect {kind} / {}: value exceeds native 16:16 range; native default retained",
                             field.param
                         ));
-                    } else if hue_master && converted.fract() != 0.0 {
-                        // The observed Channel Range state stores Master H/S/L
-                        // as signed integers, unlike the visible pard defaults.
-                        *slot = converted.round();
-                        result.warnings.push(format!(
+                        } else if hue_master && converted.fract() != 0.0 {
+                            // The observed Channel Range state stores Master H/S/L
+                            // as signed integers, unlike the visible pard defaults.
+                            *slot = converted.round();
+                            result.warnings.push(format!(
                             "Effect {kind} / {}: fractional Master value rounded to nearest integer for native Channel Range state",
                             field.param
                         ));
-                    } else {
-                        *slot = converted;
+                        } else {
+                            *slot = converted;
+                        }
                     }
-                }
-                let Some(id) = id else {
-                    continue;
-                };
-                if kind == "vignette"
-                    && dynamics.iter().any(|entry| {
-                        matches!(&entry.target, PropertyTarget::EffectProperty(target)
+                    let Some(id) = id else {
+                        continue;
+                    };
+                    if kind == "vignette"
+                        && dynamics.iter().any(|entry| {
+                            matches!(&entry.target, PropertyTarget::EffectProperty(target)
                             if target.effect_id() == id && target.param_name() == field.param)
-                    })
-                {
-                    result.warnings.push(format!(
+                        })
+                    {
+                        result.warnings.push(format!(
                         "Effect {kind} / {}: animated CC Vignette export unsupported: Adobe continuous rendering freezes keyed controls; animation omitted, authored base retained as a static native control",
                         field.param
                     ));
-                    continue;
-                }
-                match parameter_track(dynamics, id, field.param, scale, offset) {
-                    Ok(Some(_))
-                        if mapping.native == "ADBE HUE SATURATION"
-                            && matches!(
-                                field.param,
-                                "hue" | "saturation" | "lightness" | "colorize"
-                            ) =>
-                    {
-                        // AE 26.5 can key the composite Channel Range state, but
-                        // its Master color transfer differs from FX's HSV operation.
-                        // The Colorize toggle's composite-key semantics are not
-                        // established. Ordinary keys on these leaves are ignored;
-                        // preserve independently keyable numeric Colorize tracks.
-                        let reason = if field.param == "colorize" {
-                            "Colorize toggle is not independently keyable and composite Channel Range behavior is unverified"
-                        } else {
-                            "composite Channel Range is keyable but FX HSV Master transfer has no verified equivalent"
-                        };
-                        result.warnings.push(format!(
+                        continue;
+                    }
+                    match parameter_track_with_alias(
+                        dynamics,
+                        id,
+                        field.param,
+                        parameter_alias(kind, field.param),
+                        scale,
+                        offset,
+                    ) {
+                        Ok(Some(_))
+                            if mapping.native == "ADBE HUE SATURATION"
+                                && matches!(
+                                    field.param,
+                                    "hue" | "saturation" | "lightness" | "colorize"
+                                ) =>
+                        {
+                            // AE 26.5 can key the composite Channel Range state, but
+                            // its Master color transfer differs from FX's HSV operation.
+                            // The Colorize toggle's composite-key semantics are not
+                            // established. Ordinary keys on these leaves are ignored;
+                            // preserve independently keyable numeric Colorize tracks.
+                            let reason = if field.param == "colorize" {
+                                "Colorize toggle is not independently keyable and composite Channel Range behavior is unverified"
+                            } else {
+                                "composite Channel Range is keyable but FX HSV Master transfer has no verified equivalent"
+                            };
+                            result.warnings.push(format!(
                             "Effect {kind} / {}: {reason}; animation omitted, authored base retained as an editable native approximation",
                             field.param
                         ));
+                        }
+                        Ok(Some(track)) if field.animated && field.component < tracks.len() => {
+                            tracks[field.component] = Some(track);
+                        }
+                        Ok(Some(_)) => result.warnings.push(format!(
+                            "Effect {kind} / {}: static-only control animation omitted",
+                            field.param
+                        )),
+                        Ok(None) => {}
+                        Err(reason) => result.warnings.push(format!(
+                            "Effect {kind} / {}: {reason}; authored base retained",
+                            field.param
+                        )),
                     }
-                    Ok(Some(track)) if field.animated && field.component < tracks.len() => {
-                        tracks[field.component] = Some(track);
+                }
+                let cubic_color = property.values.len() == 4
+                    && tracks
+                        .iter()
+                        .flatten()
+                        .flat_map(|track| &track.keys)
+                        .flat_map(|key| &key.easing)
+                        .any(|ease| matches!(ease, KeyframeEasing::CubicBezier { .. }));
+                let merged = if cubic_color {
+                    aligned_color_tracks(&property.values, &tracks)
+                } else {
+                    merge_tracks(&property.values, &tracks)
+                };
+                match merged {
+                    Ok(Some(track))
+                        if property.values.len() == 2
+                            && crate::writer::effect_points::validate_animation(&track)
+                                .is_err() =>
+                    {
+                        result.warnings.push(format!(
+                        "Effect {kind} / {}: native Point uses shared temporal and spatial ease; unsupported cubic Point animation omitted, authored base retained",
+                        property.match_name
+                    ));
                     }
-                    Ok(Some(_)) => result.warnings.push(format!(
-                        "Effect {kind} / {}: static-only control animation omitted",
-                        field.param
-                    )),
+                    Ok(Some(track)) => {
+                        if kind == "hueSaturation"
+                            && mapping.native == "ADBE Vibrance"
+                            && let Err(error) = writer::validate_effect_float_at_rate(&track, rate)
+                        {
+                            result.warnings.push(format!(
+                                "Effect {kind} / saturation ({}): {error}; animation omitted, authored static property and owner retained",
+                                property.match_name
+                            ));
+                        } else {
+                            property.animation = Some(track);
+                        }
+                    }
                     Ok(None) => {}
                     Err(reason) => result.warnings.push(format!(
-                        "Effect {kind} / {}: {reason}; authored base retained",
-                        field.param
+                        "Effect {kind} / {}: {reason}; static property retained",
+                        property.match_name
                     )),
                 }
             }
-            match merge_tracks(&property.values, &tracks) {
-                Ok(Some(track))
-                    if property.values.len() == 2
-                        && track
-                            .keys
-                            .iter()
-                            .flat_map(|key| &key.easing)
-                            .any(|easing| matches!(easing, KeyframeEasing::CubicBezier { .. })) =>
-                {
-                    result.warnings.push(format!(
-                        "Effect {kind} / {}: native Point uses shared temporal and spatial ease; cubic Point animation omitted, authored base retained",
-                        property.match_name
-                    ));
-                }
-                Ok(Some(track))
-                    if property.values.len() == 4
-                        && track
-                            .keys
-                            .iter()
-                            .flat_map(|key| &key.easing)
-                            .any(|easing| matches!(easing, KeyframeEasing::CubicBezier { .. })) =>
-                {
-                    result.warnings.push(format!(
-                        "Effect {kind} / {}: native color uses a shared temporal ease; cubic color animation omitted, authored base retained",
-                        property.match_name
-                    ));
-                }
-                Ok(Some(track)) => property.animation = Some(track),
-                Ok(None) => {}
-                Err(reason) => result.warnings.push(format!(
-                    "Effect {kind} / {}: {reason}; static property retained",
-                    property.match_name
-                )),
+            result.warnings.extend(
+                special::export(effect, size, &mut native)
+                    .into_iter()
+                    .map(|warning| format!("Effect {kind}: {warning}")),
+            );
+            if let Some(warning) =
+                super::mosaic_domain::lower_checkbox(effect, &mut native, mosaic_canvas)
+            {
+                result.warnings.push(warning);
             }
-        }
-        result.warnings.extend(
-            special::export(effect, size, &mut native)
-                .into_iter()
-                .map(|warning| format!("Effect {kind}: {warning}")),
-        );
-        if let Some(id) = id {
-            for entry in dynamics {
-                if let PropertyTarget::EffectProperty(target) = &entry.target
-                    && target.effect_id() == id
-                    && !mapping
-                        .fields
-                        .iter()
-                        .any(|field| field.animated && field.param == target.param_name())
-                {
-                    result.warnings.push(format!(
-                        "Effect {kind} / {}: no native animated target; animator omitted",
-                        target.param_name()
-                    ));
+            if let Some(id) = id {
+                for entry in dynamics {
+                    if let PropertyTarget::EffectProperty(target) = &entry.target
+                        && target.effect_id() == id
+                        && !mappings.iter().any(|mapping| {
+                            mapping.fields.iter().any(|field| {
+                                field.animated
+                                    && (field.param == target.param_name()
+                                        || parameter_alias(kind, field.param)
+                                            == Some(target.param_name()))
+                            })
+                        })
+                    {
+                        result.warnings.push(format!(
+                            "Effect {kind} / {}: no native animated target; animator omitted",
+                            target.param_name()
+                        ));
+                    }
                 }
             }
+            let note = mapping.export_note();
+            if !note.is_empty() {
+                result.warnings.push(format!("Effect {kind}: {note}"));
+            }
+            result.effects.push(native);
         }
-        if !mapping.note.is_empty() {
-            result
-                .warnings
-                .push(format!("Effect {kind}: {}", mapping.note));
-        }
-        result.effects.push(native);
     }
     if !result.effects.is_empty() && !result.styles.is_empty() {
         result.warnings.push("FX Layer Effects were normalized to AE's separate Layer Styles phase; their relative ordering with Effect Parade plugins cannot be preserved exactly.".into());
     }
     result
+}
+
+/// Only the Lumetri-style saturation-only case changes native construction.
+/// Other H/S/L controls, static values and unsupported animators retain the old path.
+fn animated_saturation_mapping(
+    effect: &fx_schema::LayerEffect,
+    id: Option<EffectId>,
+    dynamics: &[AnimationGraphEntry],
+) -> Option<&'static mapping::Mapping> {
+    let fx_schema::LayerEffect::HueSaturation {
+        hue,
+        saturation,
+        lightness,
+        colorize,
+        ..
+    } = effect
+    else {
+        return None;
+    };
+    if *hue != 0.0 || *lightness != 0.0 || *colorize || !(-100.0..=100.0).contains(saturation) {
+        return None;
+    }
+    let id = id?;
+    let mut entries = dynamics.iter().filter(|entry| {
+        matches!(&entry.target,
+        PropertyTarget::EffectProperty(target) if target.effect_id() == id)
+    });
+    let entry = entries.next()?;
+    if entries.next().is_some()
+        || !matches!(&entry.target,
+        PropertyTarget::EffectProperty(target) if target.param_name() == "saturation")
+        || !matches!(
+            entry.animator.data(),
+            AnimatorData::Keyframes { enabled: true, .. }
+        )
+    {
+        return None;
+    }
+    // Admission failure does not consume the animator: the existing lowering
+    // below still reports its precise unsupported/duplicate/dependency reason.
+    let Ok(Some(track)) = parameter_track(dynamics, id, "saturation", 1.0, 0.0) else {
+        return None;
+    };
+    // Canonical Vibrance Saturation bounds. Reject rather than clamp an edit.
+    if track.keys.is_empty()
+        || track
+            .keys
+            .iter()
+            .any(|key| key.values.len() != 1 || !(-100.0..=100.0).contains(&key.values[0]))
+    {
+        return None;
+    }
+    Some(&mapping::ANIMATED_SATURATION)
+}
+
+// Premiere imports Grain strength under its persisted field name. Both names
+// address one native Add Grain control; never pick a winner between two tracks.
+fn parameter_alias(kind: &str, name: &str) -> Option<&'static str> {
+    (kind == "grain" && name == "intensity").then_some("amount")
 }
 
 pub(super) fn parameter_track(
@@ -326,12 +525,27 @@ pub(super) fn parameter_track(
     scale: f64,
     offset: f64,
 ) -> Result<Option<NumericTrack>, &'static str> {
-    let mut matches = entries.iter().filter(|entry| matches!(&entry.target, PropertyTarget::EffectProperty(target) if target.effect_id()==id && target.param_name()==name));
+    parameter_track_with_alias(entries, id, name, None, scale, offset)
+}
+
+fn parameter_track_with_alias(
+    entries: &[AnimationGraphEntry],
+    id: EffectId,
+    name: &str,
+    alias: Option<&str>,
+    scale: f64,
+    offset: f64,
+) -> Result<Option<NumericTrack>, &'static str> {
+    let mut matches = entries.iter().filter(|entry| matches!(&entry.target, PropertyTarget::EffectProperty(target) if target.effect_id()==id && (target.param_name()==name || alias == Some(target.param_name()))));
     let Some(entry) = matches.next() else {
         return Ok(None);
     };
     if matches.next().is_some() {
-        return Err("duplicate animator target");
+        return Err(if alias.is_some() {
+            "competing Grain amount/intensity animator targets"
+        } else {
+            "duplicate animator target"
+        });
     }
     if !entry.dependencies.is_empty()
         || !entry.layer_refs.is_empty()
@@ -367,6 +581,93 @@ pub(super) fn parameter_track(
         }
     }
     Ok(track)
+}
+
+/// Native COLOR has one curve: prove equality on original knots before merging.
+fn aligned_color_tracks(
+    base: &[f64],
+    tracks: &[Option<NumericTrack>],
+) -> Result<Option<NumericTrack>, &'static str> {
+    let invalid = "cubic color animation omitted: native color requires exact aligned RGB knots, common active-channel easing and constant alpha";
+    if base.len() != 4 || tracks.len() != 4 || base.iter().any(|v| !v.is_finite()) {
+        return Err(invalid);
+    }
+    if tracks[3].as_ref().is_some_and(|track| {
+        track
+            .keys
+            .iter()
+            .any(|key| key.values.as_slice() != [base[3]])
+    }) {
+        return Err(invalid);
+    }
+    let Some(template) = tracks[..3].iter().flatten().next() else {
+        return Err(invalid);
+    };
+    if template.keys.is_empty() || u16::try_from(template.keys.len()).is_err() {
+        return Err(invalid);
+    }
+    for track in tracks[..3].iter().flatten() {
+        if track.keys.len() != template.keys.len()
+            || track.keys.iter().zip(&template.keys).any(|(key, knot)| {
+                key.time_millis != knot.time_millis
+                    || key.values.len() != 1
+                    || key.easing.len() != 1
+                    || !key.values[0].is_finite()
+            })
+        {
+            return Err(invalid);
+        }
+    }
+    let mut keys: Vec<NumericKeyframe> = Vec::with_capacity(template.keys.len());
+    for (index, knot) in template.keys.iter().enumerate() {
+        let values: Vec<_> = base
+            .iter()
+            .enumerate()
+            .map(|(component, value)| {
+                if component < 3 {
+                    tracks[component]
+                        .as_ref()
+                        .map_or(*value, |track| track.keys[index].values[0])
+                } else {
+                    *value
+                }
+            })
+            .collect();
+        let mut shared = KeyframeEasing::Linear;
+        if let Some(previous) = keys.last() {
+            if previous.time_millis >= knot.time_millis {
+                return Err(invalid);
+            }
+            let mut selected = None;
+            for component in 0..3 {
+                if values[component] != previous.values[component] {
+                    let ease = tracks[component].as_ref().ok_or(invalid)?.keys[index].easing[0];
+                    if selected.is_some_and(|prior| prior != ease) {
+                        return Err(invalid);
+                    }
+                    selected = Some(ease);
+                }
+            }
+            shared = selected.unwrap_or(KeyframeEasing::Linear);
+        }
+        keys.push(NumericKeyframe {
+            time_millis: knot.time_millis,
+            values,
+            easing: vec![shared; 4],
+            spatial_in: Vec::new(),
+            spatial_out: Vec::new(),
+        });
+    }
+    // Validate handles, finite native vector speeds and tick representability before
+    // admitting animation, so best-effort export keeps the authored static control.
+    let track = NumericTrack { keys };
+    let mut native = track.clone();
+    for key in &mut native.keys {
+        key.values.rotate_right(1);
+        key.values.iter_mut().for_each(|value| *value *= 255.0);
+    }
+    writer::validate_effect_color(&native).map_err(|_| invalid)?;
+    Ok(Some(track))
 }
 
 /// Union authored knots, not sampled frames. Cubics are split analytically so
@@ -479,6 +780,12 @@ fn sample_interval(
     let x1 = ((from.unwrap_or(to).max(left.time_millis) - left.time_millis) as f64 / span)
         .clamp(0.0, 1.0);
     let x2 = ((to - left.time_millis) as f64 / span).clamp(0.0, 1.0);
+    // An untouched authored segment needs no inversion or reparameterization.
+    // Keep exact endpoint values and zero-speed handles; approximate inversion
+    // would turn those handles into small nonzero native speeds.
+    if from == Some(left.time_millis) && to == right.time_millis {
+        return Ok((right.values[0], right.easing[0]));
+    }
     let delta = right.values[0] - left.values[0];
     match right.easing[0] {
         KeyframeEasing::Hold => Ok((
@@ -518,14 +825,14 @@ fn sample_interval(
         }
     }
 }
-fn bezier(u: f64, a: f64, b: f64) -> f64 {
+pub(crate) fn bezier(u: f64, a: f64, b: f64) -> f64 {
     let v = 1.0 - u;
     3.0 * v * v * u * a + 3.0 * v * u * u * b + u * u * u
 }
 fn derivative(u: f64, a: f64, b: f64) -> f64 {
     3.0 * (1.0 - u).powi(2) * a + 6.0 * (1.0 - u) * u * (b - a) + 3.0 * u * u * (1.0 - b)
 }
-fn invert_bezier(x: f64, a: f64, b: f64) -> f64 {
+pub(crate) fn invert_bezier(x: f64, a: f64, b: f64) -> f64 {
     let (mut lo, mut hi) = (0.0, 1.0);
     for _ in 0..60 {
         let mid = (lo + hi) * 0.5;
@@ -540,7 +847,113 @@ fn invert_bezier(x: f64, a: f64, b: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn effect_color_final_clock_fallback_has_contextual_warning() {
+        let mut effect = writer::effects::new_effect("ADBE Tint", true, [32.0, 32.0]).unwrap();
+        let property = effect
+            .properties
+            .iter_mut()
+            .find(|p| p.values.len() == 4)
+            .unwrap();
+        let values = property.values.clone();
+        property.animation = Some(NumericTrack {
+            keys: [0, 50_000_000]
+                .into_iter()
+                .map(|time_millis| NumericKeyframe {
+                    time_millis,
+                    values: values.clone(),
+                    easing: vec![KeyframeEasing::Linear; 4],
+                    spatial_in: Vec::new(),
+                    spatial_out: Vec::new(),
+                })
+                .collect(),
+        });
+        let mut lowered = LoweredEffects {
+            effects: vec![effect],
+            styles: Vec::new(),
+            warnings: Vec::new(),
+        };
+        validate_color_clocks(&mut lowered, crate::timing::FrameRate::new(24.0).unwrap());
+        assert!(lowered.warnings.is_empty());
+        validate_color_clocks(&mut lowered, crate::timing::FrameRate::new(60.0).unwrap());
+        assert!(
+            lowered
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("ADBE Tint")
+                    && warning.contains("final COLOR property clock")
+                    && warning.contains("static property retained"))
+        );
+        let property = lowered.effects[0]
+            .properties
+            .iter()
+            .find(|p| p.values.len() == 4)
+            .unwrap();
+        assert!(property.animation.is_none());
+        assert_eq!(property.values, values);
+    }
+
     use super::*;
+    #[test]
+    fn aligned_color_cubic_profile_retains_partial_rgb_and_rejects_inexact_profiles() {
+        let curve = KeyframeEasing::CubicBezier {
+            x1: 0.25,
+            y1: 0.1,
+            x2: 0.75,
+            y2: 0.9,
+        };
+        let mut red = track(&[0, 1000], &[0.1, 0.8]);
+        red.keys[1].easing[0] = curve;
+        let mut green = track(&[0, 1000], &[0.2, 0.7]);
+        green.keys[1].easing[0] = curve;
+        let base = [0.1, 0.2, 0.3, 0.0];
+        let valid = vec![Some(red.clone()), Some(green.clone()), None, None];
+        let output = aligned_color_tracks(&base, &valid).unwrap().unwrap();
+        assert_eq!(output.keys[1].values, [0.8, 0.7, 0.3, 0.0]);
+        assert_eq!(output.keys[1].easing, vec![curve; 4]);
+        assert!(aligned_color_tracks(&base, &[Some(red.clone()), None, None, None]).is_ok());
+        let mut sparse = green.clone();
+        sparse.keys.insert(1, track(&[500], &[0.45]).keys.remove(0));
+        assert!(
+            aligned_color_tracks(&base, &[Some(red.clone()), Some(sparse), None, None]).is_err()
+        );
+        for ease in [
+            KeyframeEasing::Linear,
+            KeyframeEasing::Hold,
+            KeyframeEasing::CubicBezier {
+                x1: 0.3,
+                y1: 0.1,
+                x2: 0.75,
+                y2: 0.9,
+            },
+        ] {
+            let mut wrong = green.clone();
+            wrong.keys[1].easing[0] = ease;
+            assert!(
+                aligned_color_tracks(&base, &[Some(red.clone()), Some(wrong), None, None]).is_err()
+            );
+        }
+        assert!(
+            aligned_color_tracks(
+                &base,
+                &[
+                    Some(red.clone()),
+                    None,
+                    None,
+                    Some(track(&[0, 1000], &[0.0, 1.0]))
+                ]
+            )
+            .is_err()
+        );
+        red.keys[1].easing[0] = KeyframeEasing::CubicBezier {
+            x1: 0.0,
+            y1: 0.1,
+            x2: 0.75,
+            y2: 0.9,
+        };
+        assert!(aligned_color_tracks(&base, &[Some(red), None, None, None]).is_err());
+    }
+
     fn track(times: &[i64], values: &[f64]) -> NumericTrack {
         NumericTrack {
             keys: times
@@ -585,6 +998,24 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(result.keys.len(), times.len());
+    }
+
+    #[test]
+    fn point_zero_speed_unsplit_cubic_keeps_exact_endpoints_and_handles() {
+        let mut source = track(&[500, 1500], &[60.0, 72.0]);
+        let curve = KeyframeEasing::CubicBezier {
+            x1: 1.0 / 3.0,
+            y1: 0.0,
+            x2: 2.0 / 3.0,
+            y2: 1.0,
+        };
+        source.keys[1].easing[0] = curve;
+        let result = merge_tracks(&[37.0], &[Some(source)]).unwrap().unwrap();
+        assert_eq!(result.keys[0].time_millis, 500);
+        assert_eq!(result.keys[0].values, [60.0]);
+        assert_eq!(result.keys[1].time_millis, 1500);
+        assert_eq!(result.keys[1].values, [72.0]);
+        assert_eq!(result.keys[1].easing, [curve]);
     }
 
     #[test]

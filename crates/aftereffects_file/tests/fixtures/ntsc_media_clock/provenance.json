@@ -1,0 +1,117 @@
+{
+  "feature": "exact 30000/1001 QuickTime source metadata, export only",
+  "source": {
+    "movie_sha256": "264464691358ee2d43c7960d4630e9149e222d92398798de60ad6486a370c3f3",
+    "native_aep_sha256": "2a75cc845dea790f714d9e8098dfb9b4c541fc360e20ab5a9949ecf0e748058a",
+    "author_script_sha256": "d13f7a36bfa5ac86adfafe64d928a0c96b832b4a7d806a5c5bfce032b4f0f1af",
+    "native_job": "ee36e32ca6024043a5fe22a730ce5033",
+    "application_version": "26.5x89",
+    "targets": [
+      {
+        "duration": 1,
+        "fps": 30,
+        "id": 2,
+        "inPoint": 0,
+        "name": "NTSC original",
+        "outPoint": 1.001001001001,
+        "startTime": 0,
+        "stretch": 100
+      },
+      {
+        "duration": 0.5,
+        "fps": 30,
+        "id": 15,
+        "inPoint": 0,
+        "name": "NTSC rate edit",
+        "outPoint": 0.50048828125,
+        "startTime": 0,
+        "stretch": 50
+      }
+    ],
+    "footage": {
+      "conformFrameRate": 0,
+      "duration": 1.001001001001,
+      "frameRate": 29.9700012207031,
+      "height": 90,
+      "width": 160
+    },
+    "saved_source_clock": {
+      "sspc_length": 222,
+      "duration_numerator": 3000,
+      "duration_denominator": 2997,
+      "frame_rate_integer": 29,
+      "frame_rate_fractional": 63570
+    }
+  },
+  "generated_readback": {
+    "native_job": "fefd9cf2016d459fab943fc59ceec36c",
+    "application_version": "26.5x89",
+    "native_result": {
+      "controls": [
+        {
+          "composition": {
+            "duration": 1,
+            "fps": 30,
+            "height": 90,
+            "width": 160
+          },
+          "layer": {
+            "inPoint": 0,
+            "name": "NTSC original",
+            "outPoint": 1,
+            "startTime": 0,
+            "stretch": 100,
+            "timeRemapEnabled": false
+          },
+          "source": {
+            "conform": 0,
+            "duration": 1.001001001001,
+            "frameRate": 29.9700012207031,
+            "online": true
+          },
+          "target": "original"
+        },
+        {
+          "composition": {
+            "duration": 0.5,
+            "fps": 30,
+            "height": 90,
+            "width": 160
+          },
+          "layer": {
+            "inPoint": 0,
+            "name": "NTSC rate edit",
+            "outPoint": 0.5,
+            "startTime": 0,
+            "stretch": 50,
+            "timeRemapEnabled": false
+          },
+          "source": {
+            "conform": 0,
+            "duration": 1.001001001001,
+            "frameRate": 29.9700012207031,
+            "online": true
+          },
+          "target": "edited"
+        }
+      ]
+    },
+    "script_sha256": "074a5c23a1143b9a3cba8fa48c6b298e9435dd43005ed56bad89425791a1b861",
+    "input_aep_sha256": {
+      "original": "f2c1007cf6096c88ef6dd249bbd0aa8ef52962044a85f029667d4e30484a80b6",
+      "edited": "758fc5f836364e3c47d1e9fe3067e1684ac32517bb94eb651ce47473466fc15d"
+    },
+    "build_job": 1579,
+    "source_commit": "cd2becc8ece2635eb45a5cb50d5d2b3d01bb245f",
+    "build_binary_sha256": "5309f631c35211e1cd0a4e5536bbafbd29b072660c59e88c1d4bd858a188c15a",
+    "cleanup_and_fresh_ready": true
+  },
+  "limitations": [
+    "Native readback only; no rendered fidelity/alpha/audio or long-term Asset proof.",
+    "Export uses millisecond 1000ms source windows; independent native submillisecond outPoints are not restored exactly.",
+    "Native binary source commit is pinned separately from later lint/documentation commits.",
+    "Import and actual49 proof unchanged/unproved."
+  ],
+  "model_calls": 0,
+  "native_calls": 2
+}

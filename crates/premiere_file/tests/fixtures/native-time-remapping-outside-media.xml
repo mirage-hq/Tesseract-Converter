@@ -1,0 +1,26 @@
+<PremiereData Version="3">
+<TimeRemapping ObjectID="1" ClassID="ace5148e-9c9b-40ed-9f82-64cb67308464" Version="2">
+		<Keyframes ObjectRef="2" />
+	</TimeRemapping>
+	<TimeComponentParam ObjectID="2" ClassID="278ae1f9-ab7b-4dff-a53c-21029a399a9d" Version="9">
+		<Name>Speed</Name>
+		<UpperBound>5.041666666666667</UpperBound>
+		<LowerBound>0</LowerBound>
+		<StartKeyframe>-91445760000000000,0.000000000000000000000000,0,0,0,0,0,0</StartKeyframe>
+		<Keyframes>0,0.000000000000000000000000,6,0,0,0,0,0;41410782000,0.163024305555555554247960,7,0,0,0,0,0;45417619800,0.289215972222222228449340,8,0,0,0,0,0;73968224400,1.975169097227809311689839,7,0,0,0,0,0;92819593425,2.635667586808509543772061,8,0,0,0,0,0;418727271573,6.228124356595647448386899,6,0,0,0,0,0;</Keyframes>
+		<CurrentValue>0</CurrentValue>
+		<ParameterID>-1</ParameterID>
+	</TimeComponentParam>
+	<TimeRemapping ObjectID="3" ClassID="ace5148e-9c9b-40ed-9f82-64cb67308464" Version="2">
+		<Keyframes ObjectRef="4" />
+	</TimeRemapping>
+	<TimeComponentParam ObjectID="4" ClassID="278ae1f9-ab7b-4dff-a53c-21029a399a9d" Version="9">
+		<Name>Speed</Name>
+		<UpperBound>5.041666666666667</UpperBound>
+		<LowerBound>0</LowerBound>
+		<StartKeyframe>-91445760000000000,0.000000000000000000000000,0,0,0,0,0,0</StartKeyframe>
+		<Keyframes>0,0.000000000000000000000000,6,0,0,0,0,0;41410782000,0.163024305555555554247960,7,0,0,0,0,0;45417619800,0.289215972222222228449340,8,0,0,0,0,0;73968224400,1.975169097227809311689839,7,0,0,0,0,0;92819593425,2.635667586808509543772061,8,0,0,0,0,0;179928000000,3.278741561801468584746999,7,0,0,0,0,0;225416761903,3.487599262586992932000385,8,0,0,0,0,0;1747617471094,6.228124356595647448386899,6,0,0,0,0,0;</Keyframes>
+		<CurrentValue>0</CurrentValue>
+		<ParameterID>-1</ParameterID>
+	</TimeComponentParam>
+	</PremiereData>

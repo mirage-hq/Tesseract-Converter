@@ -1,0 +1,59 @@
+{
+  "source": "native-control.aep",
+  "source_sha256": "d4f1ec2351cf22e11ba7ec9de59631c08c73cce28e931c445097d92c7e55dd64",
+  "media": "movie.mov",
+  "media_sha256": "5f0894d6b46532e36052ad5ba230a615e002823e6e619fc12ad6eb5b59b7bd1a",
+  "author": "author.jsx",
+  "author_sha256": "d36aded505adffb08d4b16b56bc8b9d8a9f3c22b038c661263857fea036543fd",
+  "adobe_version": "26.5x89",
+  "request_id": "accuracy-w10-mov-bframe-independent-v1",
+  "native_job_id": "1b71059c835e49109a3d988705c7e151",
+  "targets": [
+    {
+      "id": "original",
+      "native_id": "2",
+      "name": "B-frame original"
+    },
+    {
+      "id": "edited",
+      "native_id": "15",
+      "name": "B-frame edited rate"
+    }
+  ],
+  "readback": {
+    "controls": [
+      {
+        "duration": 1,
+        "fps": 30,
+        "id": 2,
+        "inPoint": 0,
+        "name": "B-frame original",
+        "outPoint": 1,
+        "startTime": 0,
+        "stretch": 100,
+        "timeRemapEnabled": false
+      },
+      {
+        "duration": 0.5,
+        "fps": 30,
+        "id": 15,
+        "inPoint": 0,
+        "name": "B-frame edited rate",
+        "outPoint": 0.5,
+        "startTime": 0,
+        "stretch": 50,
+        "timeRemapEnabled": false
+      }
+    ],
+    "footage": {
+      "conformFrameRate": 0,
+      "duration": 1,
+      "frameRate": 24,
+      "height": 90,
+      "width": 160
+    }
+  },
+  "native_author_readback": "EXECUTED_READY_VERIFIED",
+  "rgb_reference": "UNMEASURED_UNPUBLISHED",
+  "alpha_audio": "UNVERIFIED"
+}

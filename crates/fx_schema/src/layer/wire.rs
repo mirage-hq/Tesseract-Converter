@@ -74,6 +74,22 @@ impl Layer {
         self.data().validate_timing_ranges()
     }
 
+    pub(crate) fn has_unknown_fields(&self) -> bool {
+        let skip: &[(usize, &'static str)] = if self.child_layers().is_some() {
+            &[(0, "layers"), (0, "effects")]
+        } else {
+            &[(0, "effects")]
+        };
+        self.0.has_unknown_fields(skip)
+            || self
+                .child_layers()
+                .is_some_and(|layers| layers.iter().any(Self::has_unknown_fields))
+            || self
+                .effects()
+                .iter()
+                .any(crate::effect::EffectRecord::has_unknown_fields)
+    }
+
     pub fn known_value(&self) -> Value {
         let mut value = serde_json::to_value(self.data()).expect("checked layer data serializes");
         if let Some(children) = self.child_layers() {

@@ -197,6 +197,55 @@ fn after_effects_link_writer_preserves_identity_alpha_and_placement() {
 }
 
 #[test]
+fn after_effects_link_state_matches_the_native_uuid_encoding() {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    let reference = include_str!("../../../../tests/fixtures/hybrid/native-link-state.xml");
+    let xml = project_xml(&linked_project()).unwrap();
+    let mut states = Vec::new();
+    for text in [reference, &xml] {
+        let document = roxmltree::Document::parse(text).unwrap();
+        let media = document
+            .descendants()
+            .find(|node| node.has_tag_name("Media"))
+            .unwrap();
+        let field = |name| {
+            media
+                .children()
+                .find(|node| node.has_tag_name(name))
+                .unwrap()
+        };
+        assert_eq!(
+            field("ImplementationID").text(),
+            Some(crate::schema::after_effects::IMPORTER_ID)
+        );
+        let prefs = STANDARD
+            .decode(field("ImporterPrefs").text().unwrap().trim())
+            .unwrap();
+        let guid = "00000001-0000-0000-0000-000000000000";
+        assert_eq!(
+            prefs,
+            guid.encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect::<Vec<_>>()
+        );
+        let state =
+            uuid::Uuid::parse_str(field("ContentAndMetadataState").text().unwrap()).unwrap();
+        let modification = field("ModificationState");
+        assert_eq!(modification.attribute("Encoding"), Some("base64"));
+        assert_eq!(
+            STANDARD
+                .decode(modification.text().unwrap().trim())
+                .unwrap(),
+            state.as_bytes()
+        );
+        states.push(state);
+    }
+    // Each export owns a fresh state; the native fixture is not a state donor.
+    assert_ne!(states[0], states[1]);
+}
+
+#[test]
 fn after_effects_link_writer_rejects_wrong_file_type() {
     for wrong_absolute_path in [false, true] {
         let mut project = linked_project();

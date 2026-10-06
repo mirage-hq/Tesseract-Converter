@@ -5,9 +5,7 @@
 //! that program preserves their editability; only the dashed Stroke moves into
 //! an isolated static Path group.
 
-use fx_schema::{
-    LayerId, PropType, RectLayer, ShapePath, ShapePathCommand, animator::AnimationGraphEntry,
-};
+use fx_schema::{LayerId, PropType, RectLayer, ShapePath, ShapePathCommand};
 
 use super::{ExportDiagnostic, NativeTrack};
 use crate::writer::{
@@ -34,7 +32,7 @@ pub(super) struct RectDashContourOutput {
 /// FX semantics are instead diagnosed and omit only the dashed Stroke.
 pub(super) fn isolate_static_dashed_stroke(
     layer: &RectLayer,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     mut program: VectorLayerSpec,
 ) -> Result<RectDashContourOutput, &'static str> {
     if !layer.rect.stroke_enabled || layer.rect.stroke_dashes.is_empty() {
@@ -70,7 +68,10 @@ enum ContourEligibility {
     Unsupported(&'static str),
 }
 
-fn contour_eligibility(layer: &RectLayer, dynamics: &[AnimationGraphEntry]) -> ContourEligibility {
+fn contour_eligibility(
+    layer: &RectLayer,
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+) -> ContourEligibility {
     if layer.rect.roundness != 0.0 {
         return ContourEligibility::Unsupported(
             "rounded Rectangle dash contour is not exported because exact FX rounded-corner semantics have not been established for native Path encoding",
@@ -99,7 +100,7 @@ fn contour_eligibility(layer: &RectLayer, dynamics: &[AnimationGraphEntry]) -> C
 }
 
 fn constant_geometry_value(
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     layer_id: LayerId,
     property: PropType,
     is_current: impl FnOnce(&fx_schema::PropertyValue) -> bool,
@@ -113,7 +114,7 @@ fn constant_geometry_value(
 
 fn rectangle_stroke_animations(
     layer_id: LayerId,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
 ) -> Result<VectorPaintAnimations, &'static str> {
     let stroke = super::stroke_animations(dynamics, layer_id)?;
     Ok(VectorPaintAnimations {

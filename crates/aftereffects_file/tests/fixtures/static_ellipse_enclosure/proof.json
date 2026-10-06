@@ -1,0 +1,303 @@
+{
+  "feature": "static ellipse finite precomposition enclosure",
+  "source": {
+    "path": "native.aep",
+    "sha256": "36f27708a9ba41a25fc9246828ffbea33395e5e4069d4e14f66eb6fb7d8553b2",
+    "composition_id": 1,
+    "width": 320,
+    "height": 240,
+    "fps": 30,
+    "duration_seconds": 1,
+    "native_version": "26.5x89",
+    "author_request_id": "w04-static-ellipse-oracle-v3",
+    "script_sha256": "2cb53fd3029311bc47fd08f64d9fa1b9fd688ca1081962d8b5b434e7d553715c",
+    "native_observed": {
+      "center": [
+        11,
+        -8
+      ],
+      "size": [
+        82,
+        54
+      ]
+    }
+  },
+  "export_proof": {
+    "request_id": "w04-static-ellipse-export-readback-v1",
+    "generated_build_receipt_job": 1347,
+    "generated_commit": "1f3a7f3b4bef44f4d2844c4d421767903774ad18",
+    "generated_binary_sha256": "e7034c0a2d02bae67ddaa4424082ea335cb890558e6a8fe18a2856a89e99f8e3",
+    "native_source_red": {"job": 1400, "commit": "84353b7cd", "result": "one native root layer instead of two; static ellipse enclosure omission", "isolation": "identical current source/test with only ellipse enclosure repair removed"},
+    "inputs": {
+      "baseline": {
+        "sha256": "4b2dc15a3c2577c90b5663a3691ecafb0685a3e8813be3fd3e91864b632e695a"
+      },
+      "edited": {
+        "sha256": "31b35ce6871f87e446c6831b14213c1ec8855b95bde2e913f26e3fa6357f5340"
+      }
+    },
+    "native_readback": {
+      "reports": [
+        {
+          "compositions": [
+            {
+              "height": 54,
+              "id": 14,
+              "layers": [
+                {
+                  "ellipses": [],
+                  "name": "Source content clock",
+                  "opacity": 100,
+                  "position": [
+                    30,
+                    35,
+                    0
+                  ],
+                  "sourceRect": null
+                }
+              ],
+              "name": "editable-ellipse",
+              "width": 82
+            },
+            {
+              "height": 240,
+              "id": 1,
+              "layers": [
+                {
+                  "ellipses": [],
+                  "name": "ellipse-enclosure-oracle",
+                  "opacity": 50,
+                  "position": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "sourceRect": null
+                },
+                {
+                  "ellipses": [
+                    {
+                      "center": [
+                        250,
+                        190
+                      ],
+                      "size": [
+                        12,
+                        12
+                      ]
+                    }
+                  ],
+                  "name": "independent-sibling",
+                  "opacity": 100,
+                  "position": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "sourceRect": {
+                    "height": 12,
+                    "left": 244,
+                    "top": 184,
+                    "width": 12
+                  }
+                }
+              ],
+              "name": "ellipse-enclosure-oracle",
+              "width": 320
+            },
+            {
+              "height": 54,
+              "id": 13,
+              "layers": [
+                {
+                  "ellipses": [],
+                  "name": "editable-ellipse",
+                  "opacity": 100,
+                  "position": [
+                    30,
+                    35,
+                    0
+                  ],
+                  "sourceRect": null
+                }
+              ],
+              "name": "ellipse-enclosure-oracle",
+              "width": 82
+            },
+            {
+              "height": 54,
+              "id": 15,
+              "layers": [
+                {
+                  "ellipses": [
+                    {
+                      "center": [
+                        11,
+                        -8
+                      ],
+                      "size": [
+                        82,
+                        54
+                      ]
+                    }
+                  ],
+                  "name": "editable-ellipse",
+                  "opacity": 100,
+                  "position": [
+                    30,
+                    35,
+                    0
+                  ],
+                  "sourceRect": {
+                    "height": 54,
+                    "left": -30,
+                    "top": -35,
+                    "width": 82
+                  }
+                }
+              ],
+              "name": "Source content clock",
+              "width": 82
+            }
+          ],
+          "input": "baseline"
+        },
+        {
+          "compositions": [
+            {
+              "height": 70,
+              "id": 14,
+              "layers": [
+                {
+                  "ellipses": [],
+                  "name": "Source content clock",
+                  "opacity": 100,
+                  "position": [
+                    52,
+                    43,
+                    0
+                  ],
+                  "sourceRect": null
+                }
+              ],
+              "name": "editable-ellipse",
+              "width": 126
+            },
+            {
+              "height": 240,
+              "id": 1,
+              "layers": [
+                {
+                  "ellipses": [],
+                  "name": "ellipse-enclosure-oracle",
+                  "opacity": 50,
+                  "position": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "sourceRect": null
+                },
+                {
+                  "ellipses": [
+                    {
+                      "center": [
+                        250,
+                        190
+                      ],
+                      "size": [
+                        12,
+                        12
+                      ]
+                    }
+                  ],
+                  "name": "independent-sibling",
+                  "opacity": 100,
+                  "position": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "sourceRect": {
+                    "height": 12,
+                    "left": 244,
+                    "top": 184,
+                    "width": 12
+                  }
+                }
+              ],
+              "name": "ellipse-enclosure-oracle",
+              "width": 320
+            },
+            {
+              "height": 70,
+              "id": 13,
+              "layers": [
+                {
+                  "ellipses": [],
+                  "name": "editable-ellipse",
+                  "opacity": 100,
+                  "position": [
+                    52,
+                    43,
+                    0
+                  ],
+                  "sourceRect": null
+                }
+              ],
+              "name": "ellipse-enclosure-oracle",
+              "width": 126
+            },
+            {
+              "height": 70,
+              "id": 15,
+              "layers": [
+                {
+                  "ellipses": [
+                    {
+                      "center": [
+                        11,
+                        -8
+                      ],
+                      "size": [
+                        126,
+                        70
+                      ]
+                    }
+                  ],
+                  "name": "editable-ellipse",
+                  "opacity": 100,
+                  "position": [
+                    52,
+                    43,
+                    0
+                  ],
+                  "sourceRect": {
+                    "height": 70,
+                    "left": -52,
+                    "top": -43,
+                    "width": 126
+                  }
+                }
+              ],
+              "name": "Source content clock",
+              "width": 126
+            }
+          ],
+          "input": "edited"
+        }
+      ]
+    }
+  },
+  "tests": [
+    "static_ellipse_native_source_import_and_edited_group_export",
+    "static_ellipse_precomposition_retains_edited_geometry_and_sibling",
+    "static_ellipse_bounds_follow_center_and_edited_extent",
+    "static_ellipse_bounds_keep_masks_ambiguous_geometry_and_overflow_guarded"
+  ],
+  "limitations": [
+    "Native readback is not human UI inspection or render fidelity.",
+    "Independent 30fps MP4, long-term Asset and pixel/alpha comparisons are unrun; no visual pass.",
+    "P019 unbounded JavaScript and old PR4807 prerequisites remain outside this root."
+  ]
+}

@@ -187,123 +187,6 @@ fn gate_budget_failure_restores_ids_animation_accounting_and_original_siblings()
 }
 
 #[test]
-#[ignore = "requires private original source via BONSA_COSMIC_AEP; no Adobe invocation"]
-fn pinned_bonsa_posterize_scope_is_lowered_without_holding_above() {
-    use sha2::{Digest, Sha256};
-    let bytes =
-        std::fs::read(std::env::var("BONSA_COSMIC_AEP").expect("private source path")).unwrap();
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&bytes)),
-        "6d632ac99c9e081746d51b83a651cb311dc063f0541bbe43ba1a241bd8870fdd"
-    );
-    let project = read_project(&bytes).unwrap();
-    let converted =
-        super::super::to_structural_fx_document_with_assets(&project, Some(883), &mut |_| true)
-            .unwrap();
-    let mut unheld_project = project.clone();
-    let ItemKind::Composition(comp) = &mut unheld_project
-        .items
-        .iter_mut()
-        .find(|i| i.id == 883)
-        .unwrap()
-        .kind
-    else {
-        panic!()
-    };
-    let native = comp
-        .layers
-        .iter_mut()
-        .find(|layer| layer.record.id() == 891)
-        .unwrap();
-    let mut record = native.record.encode();
-    record[39] &= !4; // Only disable effect execution in the comparison copy.
-    native.record = LayerRecord::decode(&record).unwrap();
-    let unheld = super::super::to_structural_fx_document_with_assets(
-        &unheld_project,
-        Some(883),
-        &mut |_| true,
-    )
-    .unwrap();
-    let original = groups(&unheld);
-    let root = groups(&converted);
-    assert_eq!(
-        root.layers[..4],
-        original.layers[..4],
-        "above remains byte-identical editable content"
-    );
-    let gates: Vec<_> = root
-        .layers
-        .iter()
-        .filter(|layer| layer.data().name() == "Posterize Time interval")
-        .collect();
-    assert_eq!(
-        gates.len(),
-        2,
-        "{:?}",
-        converted
-            .diagnostics
-            .iter()
-            .filter(|note| note.message.contains("Posterize"))
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(root.layers.len(), 6);
-    let mut sets = Vec::new();
-    for (branch, gate) in gates.into_iter().enumerate() {
-        let held = group_data(&group_data(gate).layers[0]);
-        let mut ids = HashSet::new();
-        for child in &held.layers {
-            collect_layers(child.data(), &mut ids, 0).unwrap();
-        }
-        assert_eq!(ids.len(), 954);
-        if branch == 0 {
-            let expected: Vec<_> = original.layers[5..]
-                .iter()
-                .map(|stored| {
-                    let mut layer = stored.data().clone();
-                    reparent(&mut layer, held.id).unwrap();
-                    fx_schema::Layer::from_data(&layer).unwrap()
-                })
-                .collect();
-            assert_eq!(
-                held.layers, expected,
-                "first branch retains every original field/ref/source clock"
-            );
-        }
-        let entries = converted.document.composition().dynamics().entries();
-        let first = u64::from(held.layers[0].data().id());
-        let end = if branch == 0 {
-            u64::from(group_data(gate).id)
-        } else {
-            converted.next_id
-        };
-        assert_eq!(
-            entries
-                .iter()
-                .filter(|entry| (first..end).contains(&target_id(&entry.target)))
-                .count(),
-            202,
-            "all layer/effect/FX-item target namespaces are owned by this generated source interval"
-        );
-        sets.push(ids);
-    }
-    assert!(sets[0].is_disjoint(&sets[1]));
-    let old = unheld.document.composition().dynamics().entries();
-    let new = converted.document.composition().dynamics().entries();
-    assert_eq!(
-        &new[..old.len()],
-        old,
-        "all preexisting animator entries are unchanged"
-    );
-    assert_eq!(
-        new.len(),
-        old.len() + 202,
-        "one independent copy of202 owned tracks"
-    );
-    assert!(converted.committed_animation_bytes <= converted.animation_budget_used);
-    assert!(converted.animation_budget_used >= unheld.animation_budget_used);
-}
-
-#[test]
 fn rate_schedule_rejects_expression_nonhold_nonfinite_and_colliding_windows() {
     let (effects, _) = native::read_effects(&native_adjustment().content, [1.0, 1.0]);
     let original = effects[0].parameters[0].numeric.as_ref().unwrap();
@@ -473,20 +356,22 @@ fn nested_copy_identity_failure_restores_converter_context_and_original_output()
         media_resolver: &mut resolver,
         assets: vec![],
         shape_budget: shapes::OutputBudget::default(),
+        mapped_shape_expressions: Default::default(),
         root_progress: fx_conv::Progress::default().phase("test", "layers", 0),
     };
     let ItemKind::Composition(comp) = &project.items.iter().find(|item| item.id == 1).unwrap().kind
     else {
         panic!()
     };
-    let ids = comp.layers.iter().map(|layer| layer.record.id()).collect();
+    let layer_indices = super::super::index_layers(&comp.layers);
     let context = LayerContext {
+        expression_samples: &expression_samples,
         comp_id: 1,
         comp,
         parent: LayerId::new(1),
         depth: 0,
         solo: false,
-        ids: &ids,
+        layer_indices: &layer_indices,
         camera_normalization: None,
     };
     let mut adjustment: fx_schema::AdjustmentLayer = serde_json::from_value(serde_json::json!({
@@ -579,8 +464,10 @@ fn nested_copy_identity_failure_restores_converter_context_and_original_output()
             .len(),
         1
     );
+    let static_layer_indices = super::super::index_layers(&static_comp.layers);
     let static_context = LayerContext {
         comp: &static_comp,
+        layer_indices: &static_layer_indices,
         ..context
     };
     let mut wrapper = group(

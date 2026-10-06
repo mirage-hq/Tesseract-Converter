@@ -56,10 +56,15 @@ fn shadowed_graphic(shadow: PrTextShadow) -> PrGraphic {
         end_ticks: TICKS,
         in_ticks: crate::format::FrameRate::Fps30.generator_in_ticks(),
         vector_motion: None,
+        clip_motion: crate::schema::PrStaticTransform::default(),
         opacity: 100.0,
         blend_mode: crate::schema::PrBlendMode::Normal,
         animations: Vec::new(),
+        opacity_mask: None,
+        effect_loss: None,
         objects: vec![PrGraphicObject::Text(PrText {
+            horizontal_scale: None,
+            mask_source: None,
             name: "Caption".into(),
             document: PrTextDocument {
                 text: "It's been".into(),
@@ -312,6 +317,7 @@ fn text_shadow_and_clip_effect_ids_stay_distinct_and_read_back() {
         panic!("the base track holds one video clip");
     };
     let blur = PrEffect {
+        mask: None,
         enabled: true,
         params: PrEffectParams::GaussianBlur(PrGaussianBlur {
             blurriness: 10.0,
@@ -440,7 +446,13 @@ fn one_static_drop_shadow_exports_as_the_premiere_shadow() {
         })),
         Value::Null,
     );
-    assert!(omissions.is_empty(), "{omissions:?}");
+    // The black-shadow opacity calibration cannot express a translucent
+    // colored shadow's linear-light blend; that is reported, not hidden.
+    assert_eq!(omissions.len(), 1, "{omissions:?}");
+    assert!(
+        omissions[0].1.contains("translucent non-black shadow"),
+        "{omissions:?}"
+    );
     let shadow = shadow.unwrap();
     // 0.5 lies halfway between two 8-bit steps, the 1/510 worst case of the
     // export color bound, and rounds up to 128.
@@ -485,6 +497,39 @@ fn exported_offsets_become_a_clockwise_angle_and_a_distance() {
 }
 
 #[test]
+fn a_disabled_sibling_does_not_discard_the_one_active_shadow() {
+    let shadow = |extra: Value| {
+        let mut effect = json!({"type": "dropShadow", "offset": [3, 0]});
+        effect
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        effect
+    };
+    for edit in [
+        json!({"effects": [
+            {"id": 5, "enabled": false, "effect": shadow(json!({}))},
+            {"id": 6, "effect": shadow(json!({}))}
+        ]}),
+        json!({"effects": [
+            {"id": 5, "effect": shadow(json!({"enabled": false}))},
+            {"id": 6, "effect": shadow(json!({}))}
+        ]}),
+    ] {
+        let (exported, omissions) = exported(edit, Value::Null);
+        let exported = exported.expect("the enabled shadow still exports");
+        assert!((exported.distance - 3.0).abs() < 1e-5, "{exported:?}");
+        assert_eq!(
+            omissions,
+            [(
+                OmissionScope::Feature,
+                "drop shadow 5 was not exported: unsupported conversion: it is disabled".to_owned()
+            )]
+        );
+    }
+}
+
+#[test]
 fn shadows_and_effects_premiere_text_cannot_express_are_reported() {
     let shadow = || json!({"type": "dropShadow", "offset": [3, 3]});
     let animated = json!([{
@@ -510,7 +555,7 @@ fn shadows_and_effects_premiere_text_cannot_express_are_reported() {
         (
             shadow_effect(shadow()),
             animated,
-            "drop shadow 5 was not exported: unsupported conversion: animated text shadows are unsupported (JRB-1990)",
+            "drop shadow 5 was not exported: unsupported conversion: animated text shadows are unsupported",
         ),
         (
             shadow_effect(json!({"type": "dropShadow", "blendMode": "multiply"})),
@@ -649,7 +694,7 @@ fn legacy_animation_addresses_and_non_finite_offsets_block_export() {
     let export = |instance: &EffectRecord, shadow: &DropShadow, dynamics: &AnimationGraph| {
         premiere_shadow(instance, shadow, LayerId::new(1), dynamics, &text, None)
     };
-    let animated = "unsupported conversion: animated text shadows are unsupported (JRB-1990)";
+    let animated = "unsupported conversion: animated text shadows are unsupported";
     for (instance, target, blocked) in [
         (
             &inline,
@@ -720,4 +765,32 @@ fn shadow_values_outside_premiere_ranges_are_invalid() {
         );
     }
     assert!(CUE_SHADOW.validate().is_ok());
+}
+
+#[test]
+fn legacy_luma_key_graphic_omission_warns_only_when_enabled() {
+    for enabled in [true, false] {
+        let effect: EffectRecord = serde_json::from_value(json!({
+            "id": 42, "enabled": enabled,
+            "effect": {"type": "lumaKey", "threshold": 0.4, "softness": 0.2, "invert": 0.0}
+        }))
+        .unwrap();
+        for owner in ["text", "shape"] {
+            let mut omissions = Vec::new();
+            assert!(
+                one_drop_shadow(std::slice::from_ref(&effect), owner, &mut omissions, RECORD)
+                    .is_none()
+            );
+            assert_eq!(omissions.len(), 1);
+            assert!(omissions[0]
+                .reason
+                .contains("lumaKey effect 42 was not exported"));
+            assert_eq!(
+                omissions[0]
+                    .reason
+                    .contains("may expose previously keyed pixels"),
+                enabled
+            );
+        }
+    }
 }

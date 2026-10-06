@@ -1,0 +1,663 @@
+{
+  "reviewer": "R02",
+  "native_operations": 2,
+  "model_calls": 0,
+  "existing_rgb_scores_unchanged": true,
+  "native_numeric_edit_response_pass": true,
+  "matched_full_video_pass": false,
+  "limits": [
+    "32bpc independent versus8bpc generated; no matched-depth rerender or complete causal pixel attribution",
+    "earliest lossy RGB half-response ratio still0.4819727409 outside0.49..0.51",
+    "alpha/audio/long-term Asset proof incomplete"
+  ],
+  "readback": {
+    "job": "119a6c7df16c4daeadfe429cbd391ab3",
+    "artifact_sha256": "2074e213ab975e4f5f507f96fa8c562a8a6f0d5cb33b0da35177d31bc2dd00b3",
+    "version": "26.5x89",
+    "status": "ok",
+    "request_id": "accuracy-r02-pr4919-numeric-edit-readback-v1",
+    "script_sha256": "aec2b1aa621319dfec5de53b34c3cf97aa3062192ed1f9b221b7a4aedf099c7b",
+    "result": {
+      "errors": [],
+      "versions": [
+        {
+          "horizontal": [
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 0,
+              "value": 54
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 2.5,
+              "value": 54
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 5.5,
+              "value": 320
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 16,
+              "value": 320
+            }
+          ],
+          "online": true,
+          "opacity": [
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 0,
+              "value": 0
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 0.04000651041667,
+              "value": 50
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 0.08001302083333,
+              "value": 100
+            }
+          ],
+          "remap": [
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 2.85,
+              "value": 0
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 7.75,
+              "value": 5.5
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 11.45,
+              "value": 8.2
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6614,
+              "time": 17.95,
+              "value": 14.958
+            },
+            {
+              "incoming": 6614,
+              "outgoing": 6612,
+              "time": 18,
+              "value": 14.958
+            }
+          ],
+          "root": {
+            "duration": 18,
+            "frameRate": 30,
+            "height": 180,
+            "layers": 1,
+            "width": 320
+          },
+          "samples": [
+            {
+              "opacity": 0,
+              "parentTime": 2.833333333333,
+              "sourceTime": 0
+            },
+            {
+              "opacity": 23.3930024410089,
+              "parentTime": 2.866666666667,
+              "sourceTime": 0.0187074829932
+            },
+            {
+              "opacity": 70.1383238405207,
+              "parentTime": 2.9,
+              "sourceTime": 0.05612244897959
+            },
+            {
+              "opacity": 100,
+              "parentTime": 2.933333333333,
+              "sourceTime": 0.09353741496599
+            },
+            {
+              "opacity": 100,
+              "parentTime": 3,
+              "sourceTime": 0.16836734693878
+            },
+            {
+              "opacity": 100,
+              "parentTime": 5,
+              "sourceTime": 2.41326530612245
+            },
+            {
+              "opacity": 100,
+              "parentTime": 7.75,
+              "sourceTime": 5.5
+            },
+            {
+              "opacity": 100,
+              "parentTime": 11.5,
+              "sourceTime": 8.25198461538461
+            },
+            {
+              "opacity": 100,
+              "parentTime": 17.9,
+              "sourceTime": 14.9060153846154
+            }
+          ],
+          "source": {
+            "duration": 16,
+            "layers": 1
+          },
+          "version": 0,
+          "vertical": [
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 0,
+              "value": 30
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 2.5,
+              "value": 30
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 5.5,
+              "value": 180
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 16,
+              "value": 180
+            }
+          ]
+        },
+        {
+          "horizontal": [
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 0,
+              "value": 54
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 2.5,
+              "value": 54
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 5.5,
+              "value": 320
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 16,
+              "value": 320
+            }
+          ],
+          "online": true,
+          "opacity": [
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 0,
+              "value": 0
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 0.04000651041667,
+              "value": 25
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 0.08001302083333,
+              "value": 50
+            }
+          ],
+          "remap": [
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 2.85,
+              "value": 0
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 7.75,
+              "value": 5.5
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 11.45,
+              "value": 8.2
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6614,
+              "time": 17.95,
+              "value": 14.958
+            },
+            {
+              "incoming": 6614,
+              "outgoing": 6612,
+              "time": 18,
+              "value": 14.958
+            }
+          ],
+          "root": {
+            "duration": 18,
+            "frameRate": 30,
+            "height": 180,
+            "layers": 1,
+            "width": 320
+          },
+          "samples": [
+            {
+              "opacity": 0,
+              "parentTime": 2.833333333333,
+              "sourceTime": 0
+            },
+            {
+              "opacity": 11.6965012205045,
+              "parentTime": 2.866666666667,
+              "sourceTime": 0.0187074829932
+            },
+            {
+              "opacity": 35.0691619202604,
+              "parentTime": 2.9,
+              "sourceTime": 0.05612244897959
+            },
+            {
+              "opacity": 50,
+              "parentTime": 2.933333333333,
+              "sourceTime": 0.09353741496599
+            },
+            {
+              "opacity": 50,
+              "parentTime": 3,
+              "sourceTime": 0.16836734693878
+            },
+            {
+              "opacity": 50,
+              "parentTime": 5,
+              "sourceTime": 2.41326530612245
+            },
+            {
+              "opacity": 50,
+              "parentTime": 7.75,
+              "sourceTime": 5.5
+            },
+            {
+              "opacity": 50,
+              "parentTime": 11.5,
+              "sourceTime": 8.25198461538461
+            },
+            {
+              "opacity": 50,
+              "parentTime": 17.9,
+              "sourceTime": 14.9060153846154
+            }
+          ],
+          "source": {
+            "duration": 16,
+            "layers": 1
+          },
+          "version": 1,
+          "vertical": [
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 0,
+              "value": 30
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 2.5,
+              "value": 30
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 5.5,
+              "value": 180
+            },
+            {
+              "incoming": 6612,
+              "outgoing": 6612,
+              "time": 16,
+              "value": 180
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "fixture_comparison": {
+    "job": "f13693a6c0f44b5d8188df429be816ff",
+    "artifact_sha256": "39408d5b43dfa332c6f92c1f974726893439510b412e473acd36cdbe20485645",
+    "version": "26.5x89",
+    "status": "ok",
+    "request_id": "accuracy-r02-pr4919-numeric-fixture-comparison-v1",
+    "script_sha256": "5cf42377ab36bd15f7962bd42e62f60434619507790aeedcd150266007744733",
+    "result": {
+      "errors": [],
+      "versions": [
+        {
+          "bits": 32,
+          "effects": [
+            {
+              "name": "ADBE Mosaic-0001",
+              "values": [
+                54,
+                54,
+                54,
+                187,
+                320,
+                320
+              ]
+            },
+            {
+              "name": "ADBE Mosaic-0002",
+              "values": [
+                30,
+                30,
+                30,
+                105,
+                180,
+                180
+              ]
+            },
+            {
+              "name": "ADBE Mosaic-0003",
+              "values": [
+                0,
+                0,
+                0,
+                0,
+                0,
+                0
+              ]
+            }
+          ],
+          "inner": {
+            "anchor": [
+              160,
+              90,
+              0
+            ],
+            "collapse": false,
+            "frameBlending": false,
+            "inPoint": 0,
+            "motionBlur": false,
+            "name": "Timecoded source-owned controls",
+            "outPoint": 16,
+            "position": [
+              160,
+              90,
+              0
+            ],
+            "quality": 4614,
+            "sampling": 4812,
+            "scale": [
+              100,
+              100,
+              100
+            ],
+            "start": 0,
+            "stretch": 100
+          },
+          "outer": {
+            "anchor": [
+              160,
+              90,
+              0
+            ],
+            "collapse": false,
+            "frameBlending": false,
+            "inPoint": 2.85,
+            "motionBlur": false,
+            "name": "Source-clock occurrence",
+            "outPoint": 18,
+            "position": [
+              160,
+              90,
+              0
+            ],
+            "quality": 4614,
+            "sampling": 4812,
+            "scale": [
+              100,
+              100,
+              100
+            ],
+            "start": 2.85,
+            "stretch": 100
+          },
+          "preserveNestedRate": false,
+          "rootMotionBlur": false,
+          "rootRate": 30,
+          "samples": [
+            {
+              "error": "",
+              "sourceTime": 0.01871744791667,
+              "time": 2.866666666667
+            },
+            {
+              "error": "",
+              "sourceTime": 0.05611979166667,
+              "time": 2.9
+            },
+            {
+              "error": "",
+              "sourceTime": 0.168359375,
+              "time": 3
+            },
+            {
+              "error": "",
+              "sourceTime": 2.41328125,
+              "time": 5
+            },
+            {
+              "error": "",
+              "sourceTime": 5.5,
+              "time": 7.75
+            },
+            {
+              "error": "",
+              "sourceTime": 6.41217447916667,
+              "time": 9
+            },
+            {
+              "error": "",
+              "sourceTime": 7.87161458333333,
+              "time": 11
+            },
+            {
+              "error": "",
+              "sourceTime": 10.8512044270833,
+              "time": 14
+            },
+            {
+              "error": "",
+              "sourceTime": 14.7500651041667,
+              "time": 17.75
+            }
+          ],
+          "sourceMotionBlur": false,
+          "sourceRate": 30,
+          "version": 0,
+          "workingSpace": "None"
+        },
+        {
+          "bits": 8,
+          "effects": [
+            {
+              "name": "ADBE Mosaic-0001",
+              "values": [
+                54,
+                54,
+                54,
+                187,
+                320,
+                320
+              ]
+            },
+            {
+              "name": "ADBE Mosaic-0002",
+              "values": [
+                30,
+                30,
+                30,
+                105,
+                180,
+                180
+              ]
+            },
+            {
+              "name": "ADBE Mosaic-0003",
+              "values": [
+                0,
+                0,
+                0,
+                0,
+                0,
+                0
+              ]
+            }
+          ],
+          "inner": {
+            "anchor": [
+              0,
+              0,
+              0
+            ],
+            "collapse": false,
+            "frameBlending": false,
+            "inPoint": 0,
+            "motionBlur": false,
+            "name": "video-8990 source controls",
+            "outPoint": 16,
+            "position": [
+              0,
+              0,
+              0
+            ],
+            "quality": 4614,
+            "sampling": 4812,
+            "scale": [
+              100,
+              100,
+              100
+            ],
+            "start": 0,
+            "stretch": 100
+          },
+          "outer": {
+            "anchor": [
+              0,
+              0,
+              0
+            ],
+            "collapse": false,
+            "frameBlending": false,
+            "inPoint": 2.85,
+            "motionBlur": false,
+            "name": "video-8990",
+            "outPoint": 18,
+            "position": [
+              0,
+              0,
+              0
+            ],
+            "quality": 4614,
+            "sampling": 4812,
+            "scale": [
+              100,
+              100,
+              100
+            ],
+            "start": 2.85,
+            "stretch": 100
+          },
+          "preserveNestedRate": false,
+          "rootMotionBlur": false,
+          "rootRate": 30,
+          "samples": [
+            {
+              "error": "",
+              "sourceTime": 0.01871744791667,
+              "time": 2.866666666667
+            },
+            {
+              "error": "",
+              "sourceTime": 0.05611979166667,
+              "time": 2.9
+            },
+            {
+              "error": "",
+              "sourceTime": 0.168359375,
+              "time": 3
+            },
+            {
+              "error": "",
+              "sourceTime": 2.41328125,
+              "time": 5
+            },
+            {
+              "error": "",
+              "sourceTime": 5.5,
+              "time": 7.75
+            },
+            {
+              "error": "",
+              "sourceTime": 6.41217447916667,
+              "time": 9
+            },
+            {
+              "error": "",
+              "sourceTime": 7.87161458333333,
+              "time": 11
+            },
+            {
+              "error": "",
+              "sourceTime": 10.8512044270833,
+              "time": 14
+            },
+            {
+              "error": "",
+              "sourceTime": 14.7500651041667,
+              "time": 17.75
+            }
+          ],
+          "sourceMotionBlur": false,
+          "sourceRate": 30,
+          "version": 1,
+          "workingSpace": "None"
+        }
+      ]
+    }
+  }
+}

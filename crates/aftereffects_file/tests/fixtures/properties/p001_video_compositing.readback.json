@@ -1,0 +1,217 @@
+{
+  "source_sha256": "653e0fcdbd8d580689481cbde1241b17f38fedc1baac227c1622fc34c6e0731b",
+  "job_id": "025a96b0d62e4948850a8bd5c533887d",
+  "movie_sha256": "a383d0058de7ce9723e263611acd35a438cf1154fbbfe8e0f1a1f78e74546292",
+  "composition_id": 2,
+  "result": {
+    "inverted": 5016,
+    "layers": [
+      {
+        "blend": 5212,
+        "enabled": false,
+        "inPoint": 0,
+        "index": 1,
+        "matte": 5012,
+        "name": "Luma matte",
+        "outPoint": 2,
+        "provider": null
+      },
+      {
+        "blend": 5212,
+        "enabled": true,
+        "inPoint": 0,
+        "index": 2,
+        "keys": [
+          [
+            0,
+            100
+          ],
+          [
+            1,
+            50
+          ]
+        ],
+        "matte": 5015,
+        "name": "Luma video",
+        "outPoint": 2,
+        "provider": "Luma matte",
+        "samples": [
+          100,
+          75,
+          50
+        ]
+      },
+      {
+        "blend": 5212,
+        "enabled": false,
+        "inPoint": 0,
+        "index": 3,
+        "matte": 5012,
+        "name": "Inverted matte",
+        "outPoint": 2,
+        "provider": null
+      },
+      {
+        "blend": 5212,
+        "enabled": true,
+        "inPoint": 0,
+        "index": 4,
+        "matte": 5016,
+        "name": "Inverted video",
+        "outPoint": 2,
+        "provider": "Inverted matte"
+      },
+      {
+        "blend": 5222,
+        "enabled": true,
+        "inPoint": 0,
+        "index": 5,
+        "matte": 5012,
+        "name": "Screen video",
+        "outPoint": 2,
+        "provider": null
+      }
+    ],
+    "luma": 5015,
+    "screen": 5222
+  },
+  "generated_acceptance": {
+    "job_id": "2c01802224b24895b669d39732fc45b1",
+    "original_sha256": "2e410a0a9a7d96449fa4deeeec6cbeb6c42a3c1211a1586fad3e00139279ff55",
+    "edited_sha256": "c2be0a585239f5616f42ae6242ff8215b768cc29e4e3cea352ad78a4aebee752",
+    "result": {
+      "cases": [
+        {
+          "layers": [
+            {
+              "blend": 5212,
+              "enabled": false,
+              "inPoint": 0,
+              "matte": 5012,
+              "name": "Luma matte",
+              "outPoint": 2,
+              "provider": null
+            },
+            {
+              "blend": 5212,
+              "enabled": true,
+              "inPoint": 0,
+              "keys": [
+                [
+                  0,
+                  100
+                ],
+                [
+                  1,
+                  50
+                ]
+              ],
+              "matte": 5015,
+              "name": "Luma video",
+              "outPoint": 2,
+              "provider": "Luma matte",
+              "samples": [
+                100,
+                75,
+                50
+              ]
+            },
+            {
+              "blend": 5212,
+              "enabled": false,
+              "inPoint": 0,
+              "matte": 5012,
+              "name": "Inverted matte",
+              "outPoint": 2,
+              "provider": null
+            },
+            {
+              "blend": 5212,
+              "enabled": true,
+              "inPoint": 0,
+              "matte": 5016,
+              "name": "Inverted video",
+              "outPoint": 2,
+              "provider": "Inverted matte"
+            },
+            {
+              "blend": 5222,
+              "enabled": true,
+              "inPoint": 0,
+              "matte": 5012,
+              "name": "Screen video",
+              "outPoint": 2,
+              "provider": null
+            }
+          ],
+          "phase": "original"
+        },
+        {
+          "layers": [
+            {
+              "blend": 5212,
+              "enabled": false,
+              "inPoint": 0,
+              "matte": 5012,
+              "name": "Luma matte",
+              "outPoint": 2,
+              "provider": null
+            },
+            {
+              "blend": 5212,
+              "enabled": true,
+              "inPoint": 0,
+              "keys": [
+                [
+                  0,
+                  100
+                ],
+                [
+                  1,
+                  20
+                ]
+              ],
+              "matte": 5015,
+              "name": "Luma video",
+              "outPoint": 2,
+              "provider": "Luma matte",
+              "samples": [
+                100,
+                60,
+                20
+              ]
+            },
+            {
+              "blend": 5212,
+              "enabled": false,
+              "inPoint": 0,
+              "matte": 5012,
+              "name": "Inverted matte",
+              "outPoint": 2,
+              "provider": null
+            },
+            {
+              "blend": 5212,
+              "enabled": true,
+              "inPoint": 0,
+              "matte": 5016,
+              "name": "Inverted video",
+              "outPoint": 2,
+              "provider": "Inverted matte"
+            },
+            {
+              "blend": 5222,
+              "enabled": true,
+              "inPoint": 0,
+              "matte": 5012,
+              "name": "Screen video",
+              "outPoint": 2,
+              "provider": null
+            }
+          ],
+          "phase": "edited"
+        }
+      ]
+    }
+  }
+}

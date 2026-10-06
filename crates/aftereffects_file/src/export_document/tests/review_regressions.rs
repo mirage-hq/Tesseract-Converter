@@ -346,7 +346,7 @@ fn review_single_axis_easing_exports_without_omitting_layer() {
     }
 }
 
-fn review_text_layer(
+pub(super) fn review_text_layer(
     value: &Value,
     id: u64,
     name: &str,
@@ -378,7 +378,7 @@ fn review_text_layer(
     layer
 }
 
-fn review_text_path_guide(value: &Value, id: u64) -> Value {
+pub(super) fn review_text_path_guide(value: &Value, id: u64) -> Value {
     let mut guide = rect(value, id);
     guide["type"] = json!("Shape");
     guide["name"] = json!("Review text path guide");

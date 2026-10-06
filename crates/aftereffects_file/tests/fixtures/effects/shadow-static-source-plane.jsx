@@ -1,0 +1,14 @@
+var c = app.project.items.addComp('W07-shadow-plane', 180, 160, 1, 1, 30);
+var l = c.layers.addSolid([1,0,0], 'Scaled rotated native shadow', 32, 24, 1, 1);
+l.property('ADBE Transform Group').property('ADBE Position').setValue([90,80]);
+l.property('ADBE Transform Group').property('ADBE Scale').setValue([200,200]);
+l.property('ADBE Transform Group').property('ADBE Rotate Z').setValue(90);
+var s = l.property('ADBE Effect Parade').addProperty('ADBE Drop Shadow');
+s.property('ADBE Drop Shadow-0001').setValue([0,0,0,1]);
+s.property('ADBE Drop Shadow-0002').setValue(255);
+s.property('ADBE Drop Shadow-0003').setValue(90);
+s.property('ADBE Drop Shadow-0004').setValue(20);
+s.property('ADBE Drop Shadow-0005').setValue(0);
+s.property('ADBE Drop Shadow-0006').setValue(0);
+app.project.save(new File(context.output_path));
+return {result:{direction:s.property('ADBE Drop Shadow-0003').value,distance:s.property('ADBE Drop Shadow-0004').value,scale:l.property('ADBE Transform Group').property('ADBE Scale').value,rotation:l.property('ADBE Transform Group').property('ADBE Rotate Z').value},targets:[{id:'main',name:c.name,native_id:String(c.id)}]};

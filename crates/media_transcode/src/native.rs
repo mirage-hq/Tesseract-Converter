@@ -61,6 +61,35 @@ fn check_cancel(cancelled: &AtomicBool) -> Result<()> {
     }
 }
 
+/// The next demuxed packet and its stream index, or `None` at end of input.
+///
+/// `Input::packets` silently retries every non-EOF read error, so a persistent
+/// demux or I/O failure would spin forever without observing cancellation.
+/// This propagates such errors; only `EAGAIN` is retried, and each attempt
+/// first checks cancellation.
+fn read_packet(
+    input: &mut format::context::Input,
+    cancelled: &AtomicBool,
+) -> Result<Option<(usize, Packet)>> {
+    loop {
+        check_cancel(cancelled)?;
+        let mut packet = Packet::empty();
+        match packet.read(input) {
+            Ok(()) => return Ok(Some((packet.stream(), packet))),
+            Err(ffmpeg::Error::Eof) => return Ok(None),
+            Err(ffmpeg::Error::Other {
+                errno: ffmpeg::util::error::EAGAIN,
+            }) => continue,
+            Err(source) => {
+                return Err(Error::Ffmpeg {
+                    context: "read demuxed packet",
+                    source,
+                })
+            }
+        }
+    }
+}
+
 fn public_result<T>(result: Result<T>) -> std::result::Result<T, super::TranscodeError> {
     result.map_err(|error| match error {
         Error::Cancelled => super::TranscodeError::Cancelled,
@@ -113,8 +142,49 @@ pub(super) fn capabilities(
 pub(super) fn probe(
     path: &Path,
     cancelled: &AtomicBool,
+    exact: bool,
 ) -> std::result::Result<MediaInfo, super::TranscodeError> {
-    public_result(probe_inner(path, cancelled))
+    // Initialization is operational even when probing an unsupported AE source.
+    public_result(check_cancel(cancelled))?;
+    public_result(init())?;
+    match probe_inner(path, cancelled, exact, false) {
+        Err(Error::Unsupported(reason)) if exact => Err(super::TranscodeError::Policy(reason)),
+        result => public_result(result),
+    }
+}
+
+pub(super) fn probe_ae_mp3(
+    path: &Path,
+    cancelled: &AtomicBool,
+) -> std::result::Result<MediaInfo, super::TranscodeError> {
+    public_result(check_cancel(cancelled))?;
+    public_result(init())?;
+    public_result(probe_inner(path, cancelled, false, true))
+}
+
+pub(super) fn direct_video_clock(
+    path: &Path,
+    video: &VideoInfo,
+    cancelled: &AtomicBool,
+) -> std::result::Result<bool, super::TranscodeError> {
+    public_result((|| {
+        check_cancel(cancelled)?;
+        init()?;
+        validate_input(path)?;
+        let mut input = open_local_input(path)?;
+        let index = input
+            .streams()
+            .find(|stream| stream.parameters().medium() == media::Type::Video)
+            .map(|stream| stream.index())
+            .ok_or_else(|| Error::Unsupported("video stream disappeared".into()))?;
+        let mut clock = crate::DirectVideoClock::new(video);
+        while let Some((stream, packet)) = read_packet(&mut input, cancelled)? {
+            if stream == index {
+                clock.observe(packet.pts(), packet.dts(), packet.duration());
+            }
+        }
+        Ok(clock.complete())
+    })())
 }
 
 pub(super) fn transcode(
@@ -335,9 +405,13 @@ fn channel_layout_name(layout: &ffi::AVChannelLayout) -> String {
     }
 }
 
-fn probe_inner(path: &Path, cancelled: &AtomicBool) -> Result<MediaInfo> {
+fn probe_inner(
+    path: &Path,
+    cancelled: &AtomicBool,
+    exact: bool,
+    ae_mp3: bool,
+) -> Result<MediaInfo> {
     check_cancel(cancelled)?;
-    init()?;
     validate_input(path)?;
     check_cancel(cancelled)?;
     let mut input = open_local_input(path)?;
@@ -358,7 +432,7 @@ fn probe_inner(path: &Path, cancelled: &AtomicBool) -> Result<MediaInfo> {
             _ => unsupported.push("unknown"),
         }
     }
-    if video_indices.len() > 1 || audio_indices.len() > 1 || data_indices.len() > 1 {
+    if video_indices.len() > 1 || audio_indices.len() > 1 {
         return Err(Error::Unsupported(format!(
             "unsupported stream layout: {} video, {} audio, and {} data streams",
             video_indices.len(),
@@ -372,31 +446,7 @@ fn probe_inner(path: &Path, cancelled: &AtomicBool) -> Result<MediaInfo> {
             unsupported.join(", ")
         )));
     }
-    let timecode = data_indices
-        .first()
-        .map(|index| {
-            let stream = input
-                .stream(*index)
-                .ok_or_else(|| Error::Unsupported("data stream disappeared".to_owned()))?;
-            // SAFETY: codec parameters belong to the live input stream.
-            let codec_tag = unsafe { (*stream.parameters().as_ptr()).codec_tag };
-            if !format_name.split(',').any(|name| name == "mov")
-                || codec_tag != u32::from_le_bytes(*b"tmcd")
-            {
-                return Err(Error::Unsupported(
-                    "only a MOV tmcd data stream is supported".to_owned(),
-                ));
-            }
-            stream
-                .metadata()
-                .get("timecode")
-                .filter(|value| !value.is_empty())
-                .map(str::to_owned)
-                .ok_or_else(|| {
-                    Error::Unsupported("MOV tmcd stream has no timecode label".to_owned())
-                })
-        })
-        .transpose()?;
+    let data = probe_data_streams(&input, &format_name)?;
     if video_indices.is_empty() && audio_indices.is_empty() {
         return Err(Error::Unsupported(
             "input has no video or audio stream".to_owned(),
@@ -405,25 +455,49 @@ fn probe_inner(path: &Path, cancelled: &AtomicBool) -> Result<MediaInfo> {
     let video = video_indices
         .first()
         .copied()
-        .map(|index| probe_video(&mut input, index, cancelled))
+        .map(|index| probe_video(&mut input, index, cancelled, exact))
         .transpose()?;
     let audio = audio_indices
         .first()
         .copied()
-        .map(|index| probe_audio(path, index, cancelled))
+        .map(|index| probe_audio(path, index, cancelled, ae_mp3))
         .transpose()?;
     let info = MediaInfo {
         version: version(),
         container,
         video,
         audio,
-        timecode,
+        timecode: data.timecode,
+        timecode_stream_index: data.timecode_stream_index,
+        camera_metadata: data.camera_metadata,
     };
-    validate_probe_timing(&info)?;
+    validate_probe_timing(&info, ae_mp3)?;
     Ok(info)
 }
 
-fn validate_probe_timing(info: &MediaInfo) -> Result<()> {
+fn probe_data_streams(
+    input: &format::context::common::Context,
+    format_name: &str,
+) -> Result<crate::model::DataStreams> {
+    let mut data = crate::model::DataStreams::default();
+    for stream in input
+        .streams()
+        .filter(|stream| stream.parameters().medium() == media::Type::Data)
+    {
+        // SAFETY: codec parameters belong to the live input stream.
+        let tag = unsafe { (*stream.parameters().as_ptr()).codec_tag }.to_le_bytes();
+        data.observe(
+            format_name,
+            stream.index(),
+            &tag,
+            stream.metadata().get("timecode"),
+        )
+        .map_err(|reason| Error::Unsupported(reason.into()))?;
+    }
+    Ok(data)
+}
+
+fn validate_probe_timing(info: &MediaInfo, ae_mp3: bool) -> Result<()> {
     if let Some(video) = &info.video {
         if video.start_seconds.abs() > 1e-6 {
             return Err(Error::Unsupported(format!(
@@ -451,12 +525,6 @@ fn validate_probe_timing(info: &MediaInfo) -> Result<()> {
                 "non-square video pixels are unsupported".to_owned(),
             ));
         }
-        if video.rotation_degrees.abs() > 1e-6 {
-            return Err(Error::Unsupported(format!(
-                "rotated video ({}) is unsupported",
-                video.rotation_degrees
-            )));
-        }
         if matches!(video.color.transfer.as_str(), "smpte2084" | "arib-std-b67")
             || video.color.primaries == "bt2020"
         {
@@ -464,7 +532,9 @@ fn validate_probe_timing(info: &MediaInfo) -> Result<()> {
         }
     }
     if let Some(audio) = &info.audio {
-        if audio.start_seconds.abs() > 1e-6 {
+        if audio.start_seconds.abs() > 1e-6
+            && !(ae_mp3 && crate::model::ae_mp3_priming_samples(audio).is_some())
+        {
             return Err(Error::Unsupported(format!(
                 "audio content starts at {} seconds; only zero-start media is supported",
                 audio.start_seconds
@@ -477,10 +547,12 @@ fn validate_probe_timing(info: &MediaInfo) -> Result<()> {
     Ok(())
 }
 
-const IDENTITY_DISPLAY_MATRIX: [i32; 9] = [1 << 16, 0, 0, 0, 1 << 16, 0, 0, 0, 1 << 30];
-
-fn validate_stream_side_data(stream: &format::stream::Stream<'_>) -> Result<Option<f64>> {
-    let mut rotation = None;
+fn validate_stream_side_data(
+    stream: &format::stream::Stream<'_>,
+    width: u32,
+    height: u32,
+) -> Result<[i32; 9]> {
+    let mut matrix = None;
     for side_data in stream.side_data() {
         match side_data.kind() {
             ffmpeg::codec::packet::side_data::Type::ICC_PROFILE => {
@@ -489,44 +561,37 @@ fn validate_stream_side_data(stream: &format::stream::Stream<'_>) -> Result<Opti
                 ));
             }
             ffmpeg::codec::packet::side_data::Type::DisplayMatrix => {
-                validate_display_matrix(side_data.data())?;
-                let matrix = side_data.data().as_ptr().cast();
-                // FFmpeg's helper reports counter-clockwise orientation; ffprobe's
-                // normalized rotation field is clockwise.
-                let degrees = unsafe { -ffi::av_display_rotation_get(matrix) };
-                if degrees.is_finite() {
-                    rotation = Some(degrees);
+                if matrix.is_some() {
+                    return Err(Error::Unsupported("duplicate display matrix".into()));
                 }
+                matrix = Some(validate_display_matrix(side_data.data(), width, height)?);
             }
             _ => {}
         }
     }
-    Ok(rotation)
+    Ok(matrix.unwrap_or_else(crate::model::identity_display_matrix))
 }
 
-fn validate_display_matrix(data: &[u8]) -> Result<()> {
-    let coefficients: Vec<i32> = data
-        .chunks_exact(std::mem::size_of::<i32>())
-        .take(9)
-        .map(|bytes| i32::from_ne_bytes(bytes.try_into().expect("i32-sized chunk")))
-        .collect();
-    if coefficients.len() != 9 {
+fn validate_display_matrix(data: &[u8], width: u32, height: u32) -> Result<[i32; 9]> {
+    if data.len() != 9 * std::mem::size_of::<i32>() {
         return Err(Error::Unsupported(
-            "display matrix coefficients are unavailable".to_owned(),
+            "display matrix coefficients are unavailable".into(),
         ));
     }
-    if coefficients.as_slice() != IDENTITY_DISPLAY_MATRIX {
-        return Err(Error::Unsupported(
-            "non-identity display matrix is not safely normalized".to_owned(),
-        ));
+    let mut matrix = [0; 9];
+    for (value, bytes) in matrix.iter_mut().zip(data.chunks_exact(4)) {
+        *value = i32::from_ne_bytes(bytes.try_into().expect("i32-sized chunk"));
     }
-    Ok(())
+    crate::model::display_matrix_rotation(&matrix, width, height)
+        .ok_or_else(|| Error::Unsupported("unsupported display matrix".into()))?;
+    Ok(matrix)
 }
 
 fn probe_video(
     input: &mut format::context::Input,
     index: usize,
     cancelled: &AtomicBool,
+    exact: bool,
 ) -> Result<VideoInfo> {
     check_cancel(cancelled)?;
     let stream = input
@@ -569,14 +634,20 @@ fn probe_video(
     let alpha = pixel_format.descriptor().is_some_and(|descriptor| unsafe {
         (*descriptor.as_ptr()).flags & ffi::AV_PIX_FMT_FLAG_ALPHA as u64 != 0
     });
-    let rotation_degrees = validate_stream_side_data(&stream)?
-        .or_else(|| {
-            stream
-                .metadata()
-                .get("rotate")
-                .and_then(|value| value.parse().ok())
-        })
-        .unwrap_or(0.0);
+    let display_matrix = validate_stream_side_data(&stream, decoder.width(), decoder.height())?;
+    let rotation_degrees =
+        crate::model::display_matrix_rotation(&display_matrix, decoder.width(), decoder.height())
+            .ok_or_else(|| Error::Unsupported("unsupported display matrix".into()))?;
+    if let Some(value) = stream.metadata().get("rotate") {
+        let tag: f64 = value
+            .parse()
+            .map_err(|_| Error::Unsupported("invalid rotation tag".into()))?;
+        if !tag.is_finite() || (tag - rotation_degrees).rem_euclid(360.0) != 0.0 {
+            return Err(Error::Unsupported(
+                "rotation tag disagrees with display matrix".into(),
+            ));
+        }
+    }
     let color = ColorInfo {
         range: enum_name(unsafe { ffi::av_color_range_name(color_range) }),
         space: enum_name(unsafe { ffi::av_color_space_name(color_space) }),
@@ -597,9 +668,8 @@ fn probe_video(
     let mut since_keyframe = 0_u64;
     let expected_ticks = (i128::from(time_base.1) * i128::from(rate.1)) as f64
         / (i128::from(time_base.0) * i128::from(rate.0)) as f64;
-    for (packet_stream, packet) in input.packets() {
-        check_cancel(cancelled)?;
-        if packet_stream.index() != index {
+    while let Some((packet_stream, packet)) = read_packet(input, cancelled)? {
+        if packet_stream != index {
             continue;
         }
         if packet.is_key() {
@@ -623,6 +693,8 @@ fn probe_video(
             &mut interlaced,
             &mut since_keyframe,
             cancelled,
+            exact.then_some((time_base, rate)),
+            &display_matrix,
         )?;
     }
     check_cancel(cancelled)?;
@@ -640,6 +712,8 @@ fn probe_video(
         &mut interlaced,
         &mut since_keyframe,
         cancelled,
+        exact.then_some((time_base, rate)),
+        &display_matrix,
     )?;
     max_keyframe_interval = max_keyframe_interval.max(since_keyframe);
     if frames == 0 {
@@ -667,6 +741,7 @@ fn probe_video(
         interlaced,
         sample_aspect_ratio: rational(sar),
         rotation_degrees,
+        display_matrix,
         color,
         first_keyframe,
         max_keyframe_interval,
@@ -685,6 +760,8 @@ fn drain_probe_frames(
     interlaced: &mut bool,
     since_keyframe: &mut u64,
     cancelled: &AtomicBool,
+    exact_clock: Option<(Rational, Rational)>,
+    display_matrix: &[i32; 9],
 ) -> Result<()> {
     loop {
         check_cancel(cancelled)?;
@@ -701,17 +778,36 @@ fn drain_probe_frames(
                 if let Some(matrix) =
                     decoded.side_data(ffmpeg::util::frame::side_data::Type::DisplayMatrix)
                 {
-                    validate_display_matrix(matrix.data())?;
+                    if validate_display_matrix(matrix.data(), decoder.width(), decoder.height())?
+                        != *display_matrix
+                    {
+                        return Err(Error::Unsupported(
+                            "frame display matrix differs from stream".into(),
+                        ));
+                    }
                 }
                 let pts = decoded.timestamp().or(decoded.pts()).ok_or_else(|| {
                     Error::Unsupported("decoded video frame has no timestamp".to_owned())
                 })?;
+                if let Some((time_base, rate)) = exact_clock {
+                    if !crate::exact_frame_time(
+                        Some(pts),
+                        *frames,
+                        &rational(time_base),
+                        &rational(rate),
+                    ) {
+                        return Err(Error::Unsupported(
+                            "AE preparation requires exact zero-origin decoded frame timestamps"
+                                .into(),
+                        ));
+                    }
+                }
                 if first_pts.is_none() {
                     *first_pts = Some(pts);
                 }
                 if let Some(previous) = *last_pts {
-                    let delta = (pts - previous) as f64;
-                    if (delta - expected_ticks).abs() > 1.01 {
+                    let delta = (i128::from(pts) - i128::from(previous)) as f64;
+                    if !crate::model::nominal_frame_delta(delta, expected_ticks) {
                         *cfr = false;
                     }
                 }
@@ -745,7 +841,12 @@ fn open_audio_decoder(stream: &format::stream::Stream<'_>) -> Result<codec::deco
     decoder.audio().map_err(ffmpeg_error("open audio decoder"))
 }
 
-fn probe_audio(path: &Path, index: usize, cancelled: &AtomicBool) -> Result<AudioInfo> {
+fn probe_audio(
+    path: &Path,
+    index: usize,
+    cancelled: &AtomicBool,
+    ae_mp3: bool,
+) -> Result<AudioInfo> {
     check_cancel(cancelled)?;
     let mut input = open_local_input(path)?;
     let stream = input
@@ -758,6 +859,7 @@ fn probe_audio(path: &Path, index: usize, cancelled: &AtomicBool) -> Result<Audi
     let channels = raw.ch_layout.nb_channels.max(0) as u32;
     let channel_layout = crate::model::canonical_audio_layout(
         input.format().name(),
+        &codec_name,
         &channel_layout_name(&raw.ch_layout),
         channels,
     );
@@ -774,10 +876,22 @@ fn probe_audio(path: &Path, index: usize, cancelled: &AtomicBool) -> Result<Audi
     }
     let mut decoded = frame::Audio::empty();
     let mut timing = AudioProbeTiming::default();
-    for (packet_stream, packet) in input.packets() {
-        check_cancel(cancelled)?;
-        if packet_stream.index() != index {
+    let mut first_audio_packet = true;
+    let mut priming_samples = None;
+    while let Some((packet_stream, packet)) = read_packet(&mut input, cancelled)? {
+        if packet_stream != index {
             continue;
+        }
+        if first_audio_packet && ae_mp3 && codec_name == "mp3" {
+            first_audio_packet = false;
+            priming_samples = packet.side_data().find_map(|side_data| {
+                if side_data.kind() != ffmpeg::codec::packet::side_data::Type::SkipSamples {
+                    return None;
+                }
+                let data = side_data.data();
+                (data.len() == 10)
+                    .then(|| u32::from_le_bytes(data[0..4].try_into().expect("4-byte skip field")))
+            });
         }
         decoder
             .send_packet(&packet)
@@ -808,6 +922,25 @@ fn probe_audio(path: &Path, index: usize, cancelled: &AtomicBool) -> Result<Audi
             "audio decoder produced no samples".to_owned(),
         ));
     }
+    let decoded_duration = timing.samples as f64 / f64::from(sample_rate);
+    let duration_seconds = if ae_mp3 && codec_name == "mp3" {
+        if priming_samples.map(i64::from) != timing.first_position || priming_samples == Some(0) {
+            return Err(Error::Unsupported(
+                "MP3 initial decoded timestamp does not match its first packet's skip-samples metadata".into(),
+            ));
+        }
+        if declared_duration.is_some_and(|declared| {
+            declared < decoded_duration
+                || declared - decoded_duration > 2.0 * 1_152.0 / f64::from(sample_rate)
+        }) {
+            return Err(Error::Unsupported(
+                "MP3 declared duration differs from decoded samples beyond priming and one frame of padding".into(),
+            ));
+        }
+        decoded_duration
+    } else {
+        declared_duration.unwrap_or(decoded_duration)
+    };
     Ok(AudioInfo {
         codec: codec_name,
         sample_format,
@@ -815,8 +948,7 @@ fn probe_audio(path: &Path, index: usize, cancelled: &AtomicBool) -> Result<Audi
         channels,
         channel_layout,
         start_seconds: timing.first_position.unwrap_or(0) as f64 / f64::from(sample_rate),
-        duration_seconds: declared_duration
-            .unwrap_or(timing.samples as f64 / f64::from(sample_rate)),
+        duration_seconds,
     })
 }
 
@@ -850,17 +982,20 @@ fn drain_probe_audio(
                 })?;
                 timing.first_position.get_or_insert(position);
                 if let Some(expected) = timing.expected_end {
-                    let tolerance = (i64::from(sample_rate) / 1000).max(1);
-                    if (position - expected).abs() > tolerance {
+                    let tolerance = (i128::from(sample_rate) / 1000).max(1);
+                    // Extreme hostile clocks must not overflow the validation itself.
+                    let discontinuity = i128::from(position) - i128::from(expected);
+                    if discontinuity.abs() > tolerance {
                         return Err(Error::Unsupported(format!(
-                            "audio timestamp discontinuity of {} samples",
-                            position - expected
+                            "audio timestamp discontinuity of {discontinuity} samples"
                         )));
                     }
                 }
                 let count = i64::try_from(decoded.samples())
                     .map_err(|_| Error::Unsupported("audio frame is too large".to_owned()))?;
-                timing.expected_end = Some(position + count);
+                timing.expected_end = Some(position.checked_add(count).ok_or_else(|| {
+                    Error::Unsupported("audio timestamp exceeds supported range".to_owned())
+                })?);
                 timing.samples += u64::try_from(count)
                     .map_err(|_| Error::Unsupported("negative audio sample count".to_owned()))?;
             }
@@ -903,6 +1038,27 @@ mod probe_tests {
     use super::*;
 
     #[test]
+    fn operational_unsupported_is_fatal_but_exact_source_policy_can_fall_back() {
+        for reason in ["initialize FFmpeg failed", "video stream disappeared"] {
+            let error = public_result::<()>(Err(Error::Unsupported(reason.into()))).unwrap_err();
+            assert!(matches!(
+                error,
+                super::super::TranscodeError::Backend { .. }
+            ));
+        }
+        let cancelled = AtomicBool::new(false);
+        let error = probe(Path::new("relative.mp4"), &cancelled, true).unwrap_err();
+        assert!(matches!(error, super::super::TranscodeError::Policy(_)));
+        let error = probe(Path::new("relative.mp4"), &cancelled, false).unwrap_err();
+        assert!(matches!(
+            error,
+            super::super::TranscodeError::Backend { .. }
+        ));
+        let error = probe(Path::new("missing.mp4"), &AtomicBool::new(true), true).unwrap_err();
+        assert!(matches!(error, super::super::TranscodeError::Cancelled));
+    }
+
+    #[test]
     fn profile_names_are_the_protocol_names() {
         assert_eq!(
             serde_json::to_string(&Profile::Prores4444).unwrap(),
@@ -923,8 +1079,43 @@ mod probe_tests {
     #[test]
     fn already_cancelled_probe_does_not_touch_input() {
         let cancelled = AtomicBool::new(true);
-        let error = probe(Path::new("definitely-missing.mp4"), &cancelled).unwrap_err();
+        let error = probe(Path::new("definitely-missing.mp4"), &cancelled, false).unwrap_err();
         assert!(matches!(error, super::super::TranscodeError::Cancelled));
+    }
+
+    #[test]
+    fn native_quarter_turn_matrices_are_accepted() {
+        for descriptor in crate::tests::native_quarter_turn_descriptors() {
+            let bytes: Vec<u8> = descriptor
+                .display_matrix
+                .iter()
+                .flat_map(|value| value.to_ne_bytes())
+                .collect();
+            assert_eq!(
+                validate_display_matrix(&bytes, descriptor.width, descriptor.height).unwrap(),
+                descriptor.display_matrix
+            );
+            assert_eq!(
+                crate::model::display_matrix_rotation(
+                    &descriptor.display_matrix,
+                    descriptor.width,
+                    descriptor.height
+                ),
+                Some(descriptor.rotation_degrees)
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_display_matrix_length_is_rejected() {
+        let bytes: Vec<u8> = crate::model::identity_display_matrix()
+            .iter()
+            .flat_map(|value| value.to_ne_bytes())
+            .collect();
+        assert!(validate_display_matrix(&bytes[..35], 1920, 1080).is_err());
+        let mut oversized = bytes;
+        oversized.push(0);
+        assert!(validate_display_matrix(&oversized, 1920, 1080).is_err());
     }
 
     #[test]
@@ -934,7 +1125,7 @@ mod probe_tests {
             .iter()
             .flat_map(|coefficient| i32::to_ne_bytes(*coefficient))
             .collect();
-        let error = validate_display_matrix(&bytes).unwrap_err();
-        assert!(error.to_string().contains("non-identity display matrix"));
+        let error = validate_display_matrix(&bytes, 1920, 1080).unwrap_err();
+        assert!(error.to_string().contains("unsupported display matrix"));
     }
 }

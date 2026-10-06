@@ -1,0 +1,23 @@
+{
+  "source": "human-inputs-20261004.prproj",
+  "source_sha256": "e74d088116570ddb7178b127129036755be2f8e553dea80f98aa59b601585b76",
+  "fixture_sha256": "8e8faba3678aea7c2cb31e6a24609d1bed7f30db01e93d8e8673e94ae106c074",
+  "sequence": "9266cdc4-92a3-447f-8383-ed600a3e7b8c",
+  "derivation": "Reachable native records only; media aliases changed to fixture-relative paths and cache paths sanitized. Control values and timing unchanged.",
+  "media": [
+    {
+      "path": "feature_two_tracks_gap_clip_a.mp4",
+      "sha256": "93a5070a3a4cbbf685440c5dc1033b133baf70a9264a3a05c924518d84fa891a"
+    },
+    {
+      "path": "feature_two_tracks_gap_clip_b.mp4",
+      "sha256": "f1b57467b0e7d38da8239b85c184b155bae035d98b56878c7289f1d74ecf067c"
+    },
+    {
+      "path": "nest_tone_stereo_8s.wav",
+      "sha256": "83cea43ac62f001ee5b99916315edad05d3b9ecfa5a5fc537f1ed452a60855ca"
+    }
+  ],
+  "native_validation": "Human-authored source. No export reopen or render comparison.",
+  "provenance": "Human-authored source supplied by the repository owner for this mapping. No customer media or personal recording retained; cameras and tone reuse existing test media."
+}

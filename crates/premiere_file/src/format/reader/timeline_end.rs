@@ -14,22 +14,14 @@
 //! forward, like an exported clip boundary. Whether AME renders such an end to
 //! the nearest or to the next frame is unverified.
 
-use crate::{
-    format::{graph::Element, Graph, Record},
-    schema::FrameRate,
-};
+use crate::format::{graph::Element, Graph, Record};
 
 /// The last track item end in the video track `group`, snapped to the sequence
 /// frame grid, or 0 when no item range can be read.
 ///
 /// Converted audio extends this end exactly in `PrSequence::end_ticks`; omitted
 /// audio does not extend it.
-pub(super) fn read_sequence_end(
-    graph: &Graph<'_>,
-    group: Record<'_>,
-    frame_rate: FrameRate,
-) -> i64 {
-    let frame = frame_rate.ticks_per_frame();
+pub(super) fn read_sequence_end(graph: &Graph<'_>, group: Record<'_>, frame: i64) -> i64 {
     group
         .track_references()
         .unwrap_or_default()

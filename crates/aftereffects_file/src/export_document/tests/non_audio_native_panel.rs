@@ -33,14 +33,15 @@ fn check_case(name: &str, input_json: &str, expected_json: &str) {
     assert_eq!(input["composition"]["name"], name);
     assert_eq!(expected["status"], "AUTHORED_UNRUN");
     assert!(!input_json.contains("jsScript"));
-    if let Some(dir) = std::env::var_os("AEP_EFFECTS_FX_PANEL_DIR") {
+    let dir = crate::adobe_test_support::artifact_directory();
+    {
         std::fs::create_dir_all(&dir).expect("panel artifact directory");
         let base = std::path::Path::new(&dir).join(name);
         std::fs::write(base.with_extension("fx.json"), input_json).expect("explicit FX artifact");
         // AEP is written below after the fresh export, not borrowed from the authoring source.
     }
     let output = export(input);
-    if let Some(dir) = std::env::var_os("AEP_EFFECTS_FX_PANEL_DIR") {
+    {
         let base = std::path::Path::new(&dir).join(name);
         std::fs::write(base.with_extension("aep"), &output.bytes).expect("fresh AEP artifact");
         std::fs::write(base.with_extension("expected.json"), expected_json)

@@ -11,17 +11,18 @@
 //! static axis-aligned Motion with no effect or full RGB Invert adds a
 //! nonpainting rectangle guide and PathMask: Motion changes effect coverage,
 //! not the underlying composite's coordinates. The adjustment itself stays at
-//! identity; FX ignores its geometry. Masked adjustment export remains omitted.
+//! identity; FX ignores its geometry. Export derives that bounded Motion from
+//! the current guide, never from cached imported placement values.
 
 use super::{
     background::{black_shape, identity_transform},
-    effects::{export_effects, import_effects, EffectHost},
+    effects::{export_effects, import_effects, invert_levels, report_source_effects, EffectHost},
     nested::{LayerExport, LayerScope},
     premiere_to_tesseract::{
         clip_transform, guide_layer, guide_mask, map_animation_graph_error, scalar_keys,
         set_tracks, tick_range, validate_time_range,
     },
-    tesseract_to_premiere::export_scalar_keys,
+    tesseract_to_premiere::{export_scalar_keys, layer_animations, Guide},
 };
 use crate::{
     approximate,
@@ -36,20 +37,24 @@ use crate::{
     Omission, OmissionScope,
 };
 use fx_schema::{
-    AdjustmentLayer, FxItemId, Layer, LayerData, LayerId, PercentageProperty, PropType, Property,
-    PropertyAnimator, Transform,
+    animator::AnimationGraph, AdjustmentLayer, BlendMode, EffectData, EffectPayload, FxItemId,
+    Layer, LayerData, LayerId, MaskMode, PercentageProperty, PropType, Property, PropertyAnimator,
+    Transform,
 };
 
 /// The FX adjustment layer of one adjustment occurrence, with its Opacity keys
 /// and keyed effect parameters set on `dynamics`. Its transform stays identity
 /// at the clip's Opacity. Admitted static Motion coverage is carried by a
-/// sibling rectangle guide; effects take the canvas as their frame.
+/// sibling rectangle guide; effects take the `canvas` of the clip's sequence
+/// as their frame, while FX draws them in the document's
+/// ([`LayerScope::document_canvas`]), so a Corner Pin converts only where the
+/// two are one size ([`import_effects`]).
 pub(super) fn import_adjustment(
     clip: &PrVideoOccurrence,
     layer_id: LayerId,
     index: usize,
     canvas: [u32; 2],
-    scope: &mut LayerScope<'_, '_, '_>,
+    scope: &mut LayerScope<'_, '_>,
     dynamics: &mut fx_schema::AnimationGraph,
     omissions: &mut Vec<Omission>,
 ) -> Result<Vec<Layer>> {
@@ -83,15 +88,36 @@ pub(super) fn import_adjustment(
             ),
         }
     }
+    // Premiere uses the sequence canvas; FX draws adjustment effects in
+    // the document canvas even inside a nest.
+    // Geometry2 acts on the lower picture, not on FX Adjustment geometry.
+    // Composite admission below owns its diagnostic and editable group.
+    let mut effect_clip = clip.clone();
+    for index in (0..effect_clip.effects.len()).rev() {
+        if matches!(
+            effect_clip.effects[index].params,
+            crate::schema::PrEffectParams::AdjustmentGeometry2(_)
+        ) {
+            effect_clip.remove_effect(index);
+        }
+    }
     let (effects, effect_tracks) = import_effects(
-        clip,
+        &effect_clip,
         layer_id,
+        false,
         MaskBoundary::Flat,
+        scope.parent.is_some(),
+        false,
+        crate::schema::PrMediaKind::Adjustment,
         canvas,
+        scope.document_canvas,
         canvas,
         scope.effect_ids,
         omissions,
     );
+    if !super::effects::retains_coverage(clip, &effects, omissions) {
+        return Ok(Vec::new());
+    }
     let mut layers = Vec::new();
     let mut masks = Vec::new();
     if clip.transform != PrStaticTransform::default() {
@@ -139,27 +165,130 @@ pub(super) fn import_adjustment(
     if let Some(warning) = clip.blend_mode.approximation() {
         approximate(omissions, record, warning);
     }
+    // Premiere's order for an adjustment's source effects is unmeasured.
+    report_source_effects(clip, false, omissions);
     layers.insert(0, layer);
     Ok(layers)
 }
 
-/// Why an FX adjustment layer has no adjustment clip, if it has none: FX
-/// gates a masked or matted adjustment's effect by that gate, and Premiere
-/// has no such gate on an adjustment clip. Its blend mode exports as the
-/// clip's ([`PrBlendMode::from_fx_mode`]).
-pub(super) fn unexported_reason(adjustment: &AdjustmentLayer) -> Option<&'static str> {
-    [
-        (
-            !adjustment.masks.is_empty(),
-            "masks on an adjustment layer are not exported",
-        ),
-        (
-            adjustment.track_matte.is_some(),
-            "a track matte on an adjustment layer is not exported",
-        ),
-    ]
-    .into_iter()
-    .find_map(|(unsupported, reason)| unsupported.then_some(reason))
+/// Shared admission for placement, media inventory and script ownership.
+pub(super) fn unexported_reason(
+    adjustment: &AdjustmentLayer,
+    layers: &[Layer],
+    dynamics: &AnimationGraph,
+    canvas: [u32; 2],
+) -> Option<String> {
+    coverage_transform(adjustment, layers, dynamics, canvas).err()
+}
+
+/// Native Motion changes the effect's coverage, not the picture beneath it.
+/// Keep the measured static uniform rectangle + no effect/full RGB Invert form.
+fn coverage_transform(
+    adjustment: &AdjustmentLayer,
+    layers: &[Layer],
+    dynamics: &AnimationGraph,
+    canvas: [u32; 2],
+) -> std::result::Result<PrStaticTransform, String> {
+    if adjustment.track_matte.is_some() {
+        return Err("a track matte on an adjustment layer is not exported".to_owned());
+    }
+    let mask = match adjustment.masks.as_slice() {
+        [] => return Ok(PrStaticTransform::default()),
+        [mask] => mask,
+        _ => return Err("masks on an adjustment layer are not exported".to_owned()),
+    };
+    if mask.mode != MaskMode::Add
+        || mask.inverted
+        || mask.opacity.value() != 1.0
+        || mask.expansion != 0.0
+        || mask.feather != [0.0; 2]
+        || mask.legacy_path.is_some()
+        || dynamics
+            .entries()
+            .iter()
+            .any(|entry| entry.target.fx_item_id() == Some(mask.id))
+    {
+        return Err("masks on an adjustment layer are not exported".to_owned());
+    }
+    let guide = mask
+        .layer
+        .and_then(|id| layers.iter().find(|layer| layer.id() == id))
+        .and_then(|layer| match layer.data() {
+            LayerData::Rect(rect) => Some(rect),
+            _ => None,
+        })
+        .ok_or_else(|| "masks on an adjustment layer are not exported".to_owned())?;
+    if let Some(reason) =
+        Guide::Rect(guide).unsupported("adjustment", adjustment.parent, adjustment.active_range)
+    {
+        return Err(reason);
+    }
+    let t = &guide.transform;
+    if guide.rect.roundness != 0.0
+        || t.position.z().is_some_and(|z| z != 0.0)
+        || t.rotation != 0.0
+        || t.skew != 0.0
+        || t.rotation_x != 0.0
+        || t.rotation_y != 0.0
+        || t.orientation != [0.0; 3]
+        || t.opacity.value() != 100.0
+        || layer_animations(dynamics, guide.id).next().is_some()
+    {
+        return Err("adjustment coverage requires a static, unrounded 2D rectangle without rotation, skew or opacity".to_owned());
+    }
+    if adjustment.blend_mode != BlendMode::Normal
+        || adjustment.transform.opacity.value() != 100.0
+        || layer_animations(dynamics, adjustment.id)
+            .any(|(property, _)| property == PropType::Opacity)
+        || adjustment.effects.iter().any(|effect| {
+            let (id, enabled, payload) = match effect.data() {
+                EffectData::Identified {
+                    id,
+                    enabled,
+                    effect,
+                } => (Some(*id), *enabled, effect),
+                EffectData::Legacy(effect) => (None, true, effect),
+            };
+            enabled
+                && (payload != &EffectPayload::Known(invert_levels(0.0))
+                    || id.is_some_and(|id| {
+                        dynamics
+                            .entries()
+                            .iter()
+                            .any(|entry| entry.target.effect_id() == Some(id))
+                    }))
+        })
+    {
+        return Err("adjustment coverage requires static Opacity 100, Normal blend, and only static full RGB Invert or no active effect".to_owned());
+    }
+    let frame = canvas.map(f64::from);
+    let scale = [0, 1].map(|axis| guide.rect.size[axis] * t.scale[axis] / frame[axis]);
+    if frame.contains(&0.0)
+        || guide.rect.size.iter().any(|size| *size <= 0.0)
+        || t.scale.iter().any(|scale| *scale <= 0.0)
+        || scale.iter().any(|scale| !scale.is_finite())
+        || (scale[0] - scale[1]).abs() > f64::EPSILON * 16.0 * scale[0].max(scale[1])
+    {
+        return Err(
+            "adjustment coverage requires positive uniform canvas-relative scale".to_owned(),
+        );
+    }
+    let position = t.position.xy_array();
+    let center = [0, 1].map(|axis| {
+        (position[axis]
+            + (guide.rect.position[axis] + guide.rect.size[axis] / 2.0 - t.anchor_point[axis])
+                * t.scale[axis]
+                / 100.0)
+            / frame[axis]
+    });
+    if center.iter().any(|value| !value.is_finite()) {
+        return Err("adjustment coverage has a nonfinite position".to_owned());
+    }
+    Ok(PrStaticTransform {
+        position: center,
+        scale: [scale[0]; 2],
+        ..PrStaticTransform::default()
+    })
 }
 
 /// Whether `transform` moves no pixel: FX ignores an adjustment layer's
@@ -181,24 +310,44 @@ fn moves_nothing(transform: &Transform) -> bool {
 /// clip; that layer is then omitted with the precise reason. The placement
 /// starts at the generator in-point of the sequence rate, as a Color Matte
 /// does. Effects export through the clip path with the identity as their host,
-/// because the written Motion is Premiere's default whatever the layer's
-/// geometric transform.
+/// because the layer's own geometry never moves the composite. A supported
+/// coverage guide supplies Motion independently of that geometry.
 pub(super) fn export_adjustment_layer(
     adjustment: &AdjustmentLayer,
+    layers: &[Layer],
     context: &mut LayerExport<'_, '_>,
     omissions: &mut dyn OmissionSink,
     record: &str,
 ) -> Result<Option<(PrVideoOccurrence, PrMedia)>> {
-    if let Some(reason) = unexported_reason(adjustment) {
-        omit(
-            omissions,
-            OmissionScope::Occurrence,
-            record,
-            format!("adjustment layer was not exported: {reason}"),
-        );
-        return Ok(None);
-    }
     let (width, height, frame_rate) = (context.width, context.height, context.frame_rate);
+    let transform = match coverage_transform(adjustment, layers, context.dynamics, [width, height])
+    {
+        Ok(transform) => transform,
+        Err(reason) => {
+            omit(
+                omissions,
+                OmissionScope::Occurrence,
+                record,
+                format!("adjustment layer was not exported: {reason}"),
+            );
+            return Ok(None);
+        }
+    };
+    if adjustment.parent.is_none()
+        && layers.windows(2).any(|pair| {
+            pair[0].id() == adjustment.id
+                && matches!(pair[1].data(), LayerData::Group(group)
+                    if super::adjustment_geometry::is_stage(group)
+                        && group.parent.is_none()
+                        && pair[1].active_range() == adjustment.active_range)
+        })
+    {
+        approximate(
+            omissions,
+            record,
+            super::adjustment_geometry::ROOT_ADJUSTMENT_APPROXIMATION,
+        );
+    }
     let media = MediaId("adjustment-layer".to_owned());
     if context.media_facts.contains_key(media.as_str()) {
         return Err(unsupported(format!(
@@ -219,7 +368,11 @@ pub(super) fn export_adjustment_layer(
             omissions,
             OmissionScope::Feature,
             record,
-            "adjustment layer Motion was not exported: FX ignores an adjustment layer's geometric transform, which has no Premiere counterpart; default Motion was written",
+            if adjustment.masks.is_empty() {
+                "adjustment layer Motion was not exported: FX ignores an adjustment layer's geometric transform, which has no Premiere counterpart; default Motion was written"
+            } else {
+                "adjustment layer Motion was not exported: FX ignores its geometric transform; the current coverage guide supplied native Motion"
+            },
         );
     }
     let active_end = adjustment
@@ -228,7 +381,7 @@ pub(super) fn export_adjustment_layer(
         .checked_add_duration(adjustment.active_range.duration)
         .ok_or_else(|| unsupported("activeRange end exceeds Premiere's tick range"))?;
     let start_ticks = context.frame_ticks(adjustment.active_range.start, "activeRange.start")?;
-    let end_ticks = context.frame_ticks(active_end, "activeRange.end")?;
+    let end_ticks = context.picture_end_ticks(active_end, None)?;
     ensure!(
         end_ticks > start_ticks,
         "activeRange {}..{} ms collapses to zero duration on the {frame_rate} sequence grid",
@@ -276,10 +429,14 @@ pub(super) fn export_adjustment_layer(
         context.dynamics,
         EffectHost {
             layer: adjustment.id,
+            still: false,
             staged: false,
             nested: context.in_moved_nest,
+            in_nest: context.depth > 0,
             transform: &host_transform,
             source_in: in_ticks,
+            video_keys: None,
+            static_parameters_reason: None,
             frame: [width, height],
             canvas: [width, height],
         },
@@ -287,8 +444,9 @@ pub(super) fn export_adjustment_layer(
         record,
         omissions,
     );
-    // Its Motion is Premiere's default whatever the layer's transform.
+    // Only the coverage guide supplies Motion; adjustment geometry is ignored.
     let occurrence = PrVideoOccurrence {
+        transform,
         opacity: adjustment.transform.opacity.value(),
         blend_mode: PrBlendMode::from_fx_mode(adjustment.blend_mode),
         animations,
@@ -302,6 +460,8 @@ pub(super) fn export_adjustment_layer(
         relative_paths: Vec::new(),
         absolute_paths: Vec::new(),
         video: Some(PrVideoStream {
+            pixel_aspect: Default::default(),
+            interpretation: Default::default(),
             orientation: crate::schema::VideoOrientation::Identity,
             intrinsic_ticks: STILL_INTRINSIC_TICKS,
             frame_rate: frame_rate.into(),
@@ -320,3 +480,7 @@ pub(super) fn export_adjustment_layer(
 #[cfg(test)]
 #[path = "tests/adjustment.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests/adjustment_geometry.rs"]
+mod geometry_tests;

@@ -249,7 +249,8 @@ fn validate_scalar_curve(curve: &NumericProperty) -> Result<(), PropertyError> {
     });
     let valid_interpolation_pairs = curve.keyframes.windows(2).all(|pair| {
         if pair[0].out_interpolation == 3 {
-            pair[1].in_interpolation == 3
+            // Hold is controlled by the outgoing endpoint; incoming ease is unused.
+            true
         } else {
             matches!(pair[0].out_interpolation, 1 | 2) && matches!(pair[1].in_interpolation, 1 | 2)
         }

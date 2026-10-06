@@ -2,10 +2,13 @@
 //!
 //! A Text component stores its document as a little-endian `u64` byte count,
 //! the `0x11223344` magic, then one FlatBuffer. Premiere 26.3 and 26.5 write
-//! the tables below. Older projects use UTF-16 JSON or an earlier FlatBuffer
-//! revision; neither is supported. Slot meanings come from Premiere 26
-//! projects and from renders of generated payloads in Premiere 26. Any other
-//! present slot fails closed, so unmodeled styling cannot disappear silently.
+//! the tables below. Some earlier graphics share this layout and additionally
+//! save an empty default run in document slot 8. Its insertion style is
+//! diagnosed separately when it cannot be kept. Other earlier revisions remain
+//! unsupported. UTF-16 JSON reads in a bounded profile ([`legacy`]).
+//! Slot meanings come from Premiere 26
+//! projects and from renders of generated payloads in Premiere 26. Unmapped
+//! run-style metadata is diagnosed without discarding known text and styling.
 //!
 //! Adobe publishes no schema for these tables, so the `flatbuffers` crate
 //! cannot generate a verifier, and its untyped `Table` access is `unsafe`.
@@ -15,11 +18,12 @@
 
 use crate::error::{ensure, unsupported, Result};
 use crate::schema::text::{
-    normalize_line_breaks, PrJustification, PrRgb, PrTextBackground, PrTextDocument, PrTextFrame,
-    PrTextStroke, PrVerticalAlign,
+    normalize_line_breaks, PrJustification, PrMaskSource, PrRgb, PrTextBackground, PrTextDocument,
+    PrTextFrame, PrTextStroke, PrVerticalAlign,
 };
 use flatbuffers::{FlatBufferBuilder, VOffsetT, WIPOffset};
 
+mod legacy;
 mod shadow;
 
 const MAGIC: u32 = 0x1122_3344;
@@ -34,6 +38,8 @@ mod document {
     pub(super) const JUSTIFICATION: usize = 4;
     pub(super) const BOX_ALIGNMENT: usize = 5;
     pub(super) const LEADING: usize = 6;
+    /// An empty insertion run is not part of the actual text run vector.
+    pub(super) const DEFAULT_RUN: usize = 8;
     pub(super) const SHADOW_COLOR: usize = 10;
     pub(super) const SHADOW_ENABLED: usize = 11;
     /// Shadow opacity, angle, distance, size, and blur.
@@ -41,6 +47,8 @@ mod document {
     pub(super) const BACKGROUND_COLOR: usize = 17;
     pub(super) const BACKGROUND_ENABLED: usize = 18;
     /// Background opacity, size, and corner radius.
+    pub(super) const MASK: usize = 21;
+    pub(super) const MASK_INVERTED: usize = 22;
     pub(super) const BACKGROUND_VALUES: [usize; 3] = [19, 20, 34];
     /// The table that moves a caption off its default position. AME renders
     /// of Premiere 26.5.1 caption payloads measured its sub-slots as linear
@@ -80,6 +88,8 @@ mod style {
     pub(super) const STROKE_WIDTH: usize = 6;
     pub(super) const TRACKING: usize = 8;
     pub(super) const CAPS: usize = 12;
+    /// The encoder writes these tables empty; native saves may store unmapped
+    /// run-style metadata here without replacing the known style fields.
     pub(super) const FIXED_EMPTY_TABLES: [usize; 2] = [21, 23];
     /// Unnamed slot that every Premiere 26 run writes as 2.
     pub(super) const FIXED_VALUE: (usize, u32) = (24, 2);
@@ -96,18 +106,36 @@ const COLOR_COMPONENT_DEFAULT: u8 = u8::MAX;
 /// Premiere omits a white fill; an absent fill color renders white.
 const DEFAULT_FILL: PrRgb = PrRgb([COLOR_COMPONENT_DEFAULT; 3]);
 
-/// Premiere text features that decode but that a Type-tool graphic does not
-/// retain: its background is calibrated for caption cues only.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Decoded text features that are omitted or whose semantics are unverified.
+/// A Type-tool background is calibrated for caption cues only.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OmittedTextFeature {
     Background,
+    MissingRunMarker,
+    UnknownRootData(usize),
+    RunStyleMetadata { slot: usize, subslot: Option<usize> },
+    AlternateDocumentMarkers,
+    DefaultRunStyle,
+    LegacyControl(String),
 }
 
 impl std::fmt::Display for OmittedTextFeature {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Background => "text background (JRB-1995)",
-        })
+        match self {
+            Self::Background => f.write_str("text background"),
+            Self::LegacyControl(reason) => f.write_str(reason),
+            Self::RunStyleMetadata { slot, subslot } => {
+                write!(f, "Source Text run style[{slot}]")?;
+                if let Some(subslot) = subslot {
+                    write!(f, " table[{subslot}]")?;
+                }
+                f.write_str(" metadata not retained; actual text and supported run styling are preserved")
+            },
+            Self::DefaultRunStyle => f.write_str("Source Text document[8] insertion/default style not retained; current text and its actual run styles are preserved, inserted text uses the editable document style"),
+            Self::MissingRunMarker => f.write_str("absent Source Text run marker (style slot 24; semantics unverified)"),
+            Self::AlternateDocumentMarkers => f.write_str("alternate Source Text document markers retained as ordinary editable text; export uses standard graphic markers"),
+            Self::UnknownRootData(slot) => write!(f, "unidentified Source Text root[{slot}] data: saved document retained as ordinary editable text, unknown behavior after edits"),
+        }
     }
 }
 
@@ -118,6 +146,7 @@ pub(crate) struct DecodedText {
     pub(crate) omitted: Vec<OmittedTextFeature>,
     /// The stored alignment, also used for a caption's default placement.
     pub(crate) box_alignment: PrVerticalAlign,
+    pub(crate) mask_source: Option<PrMaskSource>,
 }
 
 /// FX supports a uniform document or independent complete lines, not inline spans.
@@ -131,7 +160,10 @@ pub(crate) enum TextDocuments {
 pub(crate) struct DecodedGraphicText {
     pub(crate) documents: TextDocuments,
     pub(crate) omitted: Vec<OmittedTextFeature>,
+    /// Retains the validated encoding for the static legacy Text layout guards.
+    pub(crate) legacy_json: bool,
     box_alignment: PrVerticalAlign,
+    pub(crate) mask_source: Option<PrMaskSource>,
 }
 
 impl DecodedGraphicText {
@@ -145,23 +177,47 @@ impl DecodedGraphicText {
             document,
             omitted: self.omitted,
             box_alignment: self.box_alignment,
+            mask_source: self.mask_source,
         })
     }
 }
 
-/// Decode one Premiere 26 Source Text value. An enabled background is
-/// reported as omitted, not kept: no render calibrated a Type-tool text's box.
+/// Decode one Premiere 26 Source Text value, such as a Source Text key's
+/// document. An enabled background is reported as omitted, not kept: no
+/// render calibrated a Type-tool text's box.
 ///
 /// # Errors
-/// Rejects legacy encodings, malformed buffers, mixed run styles, and slots
-/// whose meaning is unknown. `PrText::validate` checks the value ranges.
+/// Rejects legacy encodings, malformed required data, mixed run styles, and
+/// unknown document slots. Unmapped run-style and graphic root data is diagnosed,
+/// not replayed.
+/// `PrText::validate` checks the value ranges. A document that stores neither runs
+/// nor fonts is an empty text
+/// (`RunlessDocument::EmptyText`).
 pub(crate) fn decode(payload: &[u8]) -> Result<DecodedText> {
-    decode_graphic(payload)?.uniform()
+    decode_premiere_26_graphic(payload)?.uniform()
 }
 
+/// Decode the static Source Text value of a graphic: a Premiere 26 value,
+/// whose styles may cover complete lines apart, or a legacy JSON value in
+/// the profile that [`legacy`] reads.
+///
+/// # Errors
+/// Rejects what [`decode`] rejects, except whole-line styles and legacy
+/// values in that profile.
 pub(crate) fn decode_graphic(payload: &[u8]) -> Result<DecodedGraphicText> {
-    let mut decoded =
-        decode_with_markers(payload, &document::FIXED_FLAGS, document::GRAPHIC_LAYOUT)?;
+    if legacy::holds_json(payload) {
+        return legacy::decode(payload);
+    }
+    decode_premiere_26_graphic(payload)
+}
+
+fn decode_premiere_26_graphic(payload: &[u8]) -> Result<DecodedGraphicText> {
+    let mut decoded = decode_with_markers(
+        payload,
+        &document::FIXED_FLAGS,
+        document::GRAPHIC_LAYOUT,
+        RunlessDocument::EmptyText,
+    )?;
     let documents = match &mut decoded.documents {
         TextDocuments::Uniform(document) => std::slice::from_mut(document),
         TextDocuments::Lines(lines) => lines.as_mut_slice(),
@@ -183,36 +239,92 @@ pub(crate) fn decode_graphic(payload: &[u8]) -> Result<DecodedGraphicText> {
 /// # Errors
 /// Rejects everything [`decode`] rejects.
 pub(crate) fn decode_caption(payload: &[u8]) -> Result<DecodedText> {
-    decode_with_markers(
+    let decoded = decode_with_markers(
         payload,
         &document::CAPTION_FIXED_FLAGS,
         document::CAPTION_LAYOUT,
+        RunlessDocument::Unsupported,
     )?
-    .uniform()
+    .uniform()?;
+    ensure!(
+        decoded.mask_source.is_none(),
+        "Mask with Text on a caption is unsupported"
+    );
+    Ok(decoded)
+}
+
+/// What a document that stores neither runs nor fonts holds.
+#[derive(Debug, Clone, Copy)]
+enum RunlessDocument {
+    /// An empty Text object: zero characters, with no style of its own. The
+    /// Premiere 26.5.1 save `feature_source_graphic_26_5` stores the empty
+    /// second Text of its Source Graphic so, with only the fixed graphic
+    /// document slots.
+    EmptyText,
+    /// No caption block without runs has been seen, so none converts.
+    Unsupported,
 }
 
 fn decode_with_markers(
     payload: &[u8],
     markers: &[(usize, u8)],
     layout: &str,
+    runless: RunlessDocument,
 ) -> Result<DecodedGraphicText> {
     ensure!(
-        payload.get(8..10) != Some(b"{\0".as_slice()),
-        "legacy UTF-16 JSON text from Premiere before 26 is unsupported"
+        !legacy::holds_json(payload),
+        "legacy UTF-16 JSON text from Premiere before 26 converts only as a static graphic Source Text value"
     );
     let buffer = Buffer::from_payload(payload, SOURCE_TEXT)?;
     let root = buffer.table(buffer.offset(0)?)?;
-    root.allow_only(&[0], "root")?;
+    let graphic = matches!(runless, RunlessDocument::EmptyText);
+    if !graphic {
+        root.allow_only(&[0], "root")?;
+    }
+    let unknown_root: Vec<_> = root
+        .present()?
+        .into_iter()
+        .filter(|slot| *slot != 0)
+        .collect();
+    // Retain only the independently decoded document at root[0]. Unknown root
+    // fields are never followed or replayed; validate their inline locations.
+    for &slot in &unknown_root {
+        root.field(slot, 1)?;
+    }
     let doc = root
         .table(0)?
         .ok_or_else(|| unsupported("Source Text has no document"))?;
-    decode_document(doc, markers, layout)
+    // Saved template Text can use the already decoded caption-style marker
+    // profile. The document fields still have to pass that profile's checks.
+    let alternate = graphic && doc.u8(26)?.is_none() && doc.u8(38)? == Some(1);
+    let mut decoded = if alternate {
+        decode_document(
+            doc,
+            &document::CAPTION_FIXED_FLAGS,
+            document::CAPTION_LAYOUT,
+            runless,
+        )?
+    } else {
+        decode_document(doc, markers, layout, runless)?
+    };
+    if alternate {
+        decoded
+            .omitted
+            .push(OmittedTextFeature::AlternateDocumentMarkers);
+    }
+    decoded.omitted.extend(
+        unknown_root
+            .into_iter()
+            .map(OmittedTextFeature::UnknownRootData),
+    );
+    Ok(decoded)
 }
 
 fn decode_document(
     doc: Table<'_>,
     markers: &[(usize, u8)],
     layout: &str,
+    runless: RunlessDocument,
 ) -> Result<DecodedGraphicText> {
     use document::*;
     let mut allowed = vec![
@@ -228,7 +340,12 @@ fn decode_document(
         BACKGROUND_COLOR,
         BACKGROUND_ENABLED,
         FIXED_EMPTY_TABLE,
+        MASK,
+        MASK_INVERTED,
     ];
+    if matches!(runless, RunlessDocument::EmptyText) {
+        allowed.push(DEFAULT_RUN);
+    }
     allowed.extend(SHADOW_VALUES);
     allowed.extend(BACKGROUND_VALUES);
     allowed.extend(markers.iter().map(|&(slot, _)| slot));
@@ -254,6 +371,16 @@ fn decode_document(
             color(table)?;
         }
     }
+    let mask_source = match (doc.u8(MASK)?, doc.u8(MASK_INVERTED)?) {
+        (None, None) => None,
+        (Some(1), None) => Some(PrMaskSource { inverted: false }),
+        (Some(1), Some(1)) => Some(PrMaskSource { inverted: true }),
+        (mask, inverted) => {
+            return Err(unsupported(format!(
+            "Mask with Text (document slots 21 and 22) at {mask:?} and {inverted:?} is unmeasured"
+        )))
+        }
+    };
     let shadow = shadow::decode(doc)?;
     let mut omitted = Vec::new();
     let background = match doc.u8(BACKGROUND_ENABLED)?.unwrap_or(0) {
@@ -286,7 +413,8 @@ fn decode_document(
 
     let fonts = doc.strings(FONTS)?;
     let runs = doc.tables(RUNS)?;
-    ensure!(!runs.is_empty(), "Source Text has no text runs");
+    let present = doc.present()?;
+    let runless_document = !present.contains(&RUNS) && !present.contains(&FONTS);
     // Payload sizes are untrusted, so an allocation failure is an error
     // rather than an abort.
     let allocation = |error: std::collections::TryReserveError| {
@@ -294,6 +422,13 @@ fn decode_document(
     };
     let mut styled_runs: Vec<(String, RunStyle<'_>)> = Vec::new();
     styled_runs.try_reserve(runs.len()).map_err(allocation)?;
+    match runless {
+        // An empty Text: one document without characters, unstyled.
+        RunlessDocument::EmptyText if runless_document => {
+            styled_runs.push((String::new(), RunStyle::UNSTYLED));
+        }
+        _ => ensure!(!runs.is_empty(), "Source Text has no text runs"),
+    }
     let mut previous_ended_cr = false;
     for run_table in runs {
         run_table.allow_only(&[run::TEXT, run::STYLE], "run")?;
@@ -314,6 +449,7 @@ fn decode_document(
                 .ok_or_else(|| unsupported("text run has no style"))?,
             &fonts,
             layout,
+            &mut omitted,
         )?;
         match styled_runs.last_mut() {
             Some((text, previous)) if *previous == style => {
@@ -326,6 +462,31 @@ fn decode_document(
                 text.push_str(run_text);
                 styled_runs.push((text, style));
             }
+        }
+    }
+
+    if let Some(default_run) = doc.table(DEFAULT_RUN)? {
+        default_run.allow_only(&[run::TEXT, run::STYLE], "default text run")?;
+        ensure!(
+            default_run.string(run::TEXT)?.is_some_and(str::is_empty),
+            "nonempty or missing default text run is unsupported"
+        );
+        // Bounds and actual runs have already been checked. Unmapped insertion
+        // styling cannot invalidate that current content or expose a mask.
+        let default_table = default_run.table(run::STYLE)?;
+        let mut default_notes = Vec::new();
+        let default_style = default_table
+            .map(|table| run_style(table, &fonts, layout, &mut default_notes))
+            .transpose();
+        let same_style = match default_style {
+            Ok(Some(style)) => {
+                default_notes.is_empty() && styled_runs.iter().all(|(_, actual)| *actual == style)
+            }
+            Ok(None) | Err(crate::error::BuildError::Unsupported(_)) => false,
+            Err(error) => return Err(error),
+        };
+        if !same_style {
+            omitted.push(OmittedTextFeature::DefaultRunStyle);
         }
     }
 
@@ -406,7 +567,9 @@ fn decode_document(
     Ok(DecodedGraphicText {
         documents,
         omitted,
+        legacy_json: false,
         box_alignment: vertical,
+        mask_source,
     })
 }
 
@@ -420,9 +583,28 @@ struct RunStyle<'a> {
     tracking: f32,
 }
 
-fn run_style<'a>(table: Table<'_>, fonts: &[&'a str], layout: &str) -> Result<RunStyle<'a>> {
+impl RunStyle<'_> {
+    /// The style of an empty text, which stores none: no font, and this
+    /// reader's values for the omitted slots of a run style. Premiere did
+    /// not save or resolve them for that text.
+    const UNSTYLED: Self = Self {
+        font: "",
+        size: style::DEFAULT_SIZE,
+        fill: Some(DEFAULT_FILL),
+        stroke: None,
+        all_caps: false,
+        tracking: 0.0,
+    };
+}
+
+fn run_style<'a>(
+    table: Table<'_>,
+    fonts: &[&'a str],
+    layout: &str,
+    omitted: &mut Vec<OmittedTextFeature>,
+) -> Result<RunStyle<'a>> {
     use style::*;
-    let mut allowed = vec![
+    let known = [
         FONT_INDEX,
         SIZE,
         FILL_COLOR,
@@ -433,16 +615,65 @@ fn run_style<'a>(table: Table<'_>, fonts: &[&'a str], layout: &str) -> Result<Ru
         TRACKING,
         CAPS,
         FIXED_VALUE.0,
+        FIXED_EMPTY_TABLES[0],
+        FIXED_EMPTY_TABLES[1],
     ];
-    allowed.extend(FIXED_EMPTY_TABLES);
-    table.allow_only(&allowed, "text style")?;
-    ensure!(
-        table.u32(FIXED_VALUE.0)? == Some(FIXED_VALUE.1),
-        "text style lacks the {layout} run marker"
-    );
+    let mut metadata: Vec<_> = table
+        .present()?
+        .into_iter()
+        .filter(|slot| !known.contains(slot))
+        .map(|slot| OmittedTextFeature::RunStyleMetadata {
+            slot,
+            subslot: None,
+        })
+        .collect();
+    match table.u32(FIXED_VALUE.0)? {
+        Some(value) => {
+            if value != FIXED_VALUE.1 {
+                metadata.push(OmittedTextFeature::RunStyleMetadata {
+                    slot: FIXED_VALUE.0,
+                    subslot: None,
+                });
+            }
+        }
+        None if layout == document::GRAPHIC_LAYOUT => {
+            // Native OUTLINE keys omit this field. Preserve known styling,
+            // without treating the absent marker as the supported value 2.
+            if !omitted.contains(&OmittedTextFeature::MissingRunMarker) {
+                omitted.push(OmittedTextFeature::MissingRunMarker);
+            }
+        }
+        None => {
+            return Err(unsupported(format!(
+                "text style lacks the {layout} run marker"
+            )))
+        }
+    }
     for slot in FIXED_EMPTY_TABLES {
-        if let Some(empty) = table.table(slot)? {
-            empty.allow_only(&[], "text style table")?;
+        // Do not interpret or replay these uncalibrated values. Even malformed
+        // optional metadata cannot invalidate the independently read style.
+        match table.table(slot) {
+            Ok(Some(extension)) => {
+                metadata.extend(extension.present()?.into_iter().map(|subslot| {
+                    OmittedTextFeature::RunStyleMetadata {
+                        slot,
+                        subslot: Some(subslot),
+                    }
+                }))
+            }
+            Ok(None) => {}
+            Err(crate::error::BuildError::Unsupported(_)) => {
+                metadata.push(OmittedTextFeature::RunStyleMetadata {
+                    slot,
+                    subslot: None,
+                });
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    for feature in metadata {
+        if !omitted.contains(&feature) {
+            omitted.push(feature);
         }
     }
     let font_index = usize::try_from(table.u32(FONT_INDEX)?.unwrap_or(0))
@@ -521,7 +752,16 @@ fn validate_text_buffer_lengths(text: usize, font: usize) -> crate::format::Resu
 }
 
 /// Encode a document using Premiere's Source Text framing.
+#[cfg(test)]
 pub(crate) fn encode(doc: &PrTextDocument) -> crate::format::Result<Vec<u8>> {
+    encode_graphic(doc, None)
+}
+
+/// Write the current graphic document and its object mask role, never a saved payload.
+pub(crate) fn encode_graphic(
+    doc: &PrTextDocument,
+    mask_source: Option<PrMaskSource>,
+) -> crate::format::Result<Vec<u8>> {
     validate_text_buffer_lengths(doc.text.len(), doc.font.len())?;
     let mut fbb = FlatBufferBuilder::with_capacity(512);
     let fill_color = doc
@@ -613,6 +853,12 @@ pub(crate) fn encode(doc: &PrTextDocument) -> crate::format::Result<Vec<u8>> {
                 fbb.push_slot_always(slot(index), value);
             }
         }
+        if let Some(mask) = mask_source {
+            fbb.push_slot_always(slot(document::MASK), 1_u8);
+            if mask.inverted {
+                fbb.push_slot_always(slot(document::MASK_INVERTED), 1_u8);
+            }
+        }
         for (index, value) in document::FIXED_FLAGS {
             fbb.push_slot_always(slot(index), value);
         }
@@ -675,6 +921,12 @@ pub(super) struct Buffer<'a> {
 }
 
 impl<'a> Buffer<'a> {
+    /// A raw FlatBuffer without the Source Text length/magic framing.
+    pub(super) fn raw_root(bytes: &'a [u8], name: &'a str) -> Result<Table<'a>> {
+        let buffer = Self { bytes, name };
+        buffer.table(buffer.offset(0)?)
+    }
+
     /// The FlatBuffer of the payload named `name`, after its byte count and
     /// magic.
     pub(super) fn from_payload(payload: &'a [u8], name: &'a str) -> Result<Self> {
@@ -760,7 +1012,7 @@ impl<'a> Buffer<'a> {
     }
 
     /// Positions of the `uoffset` elements in the vector at `position`.
-    fn vector(self, position: usize) -> Result<impl Iterator<Item = usize>> {
+    fn vector(self, position: usize) -> Result<impl ExactSizeIterator<Item = usize>> {
         let name = self.name;
         let count = usize::try_from(self.u32(position)?)
             .map_err(|_| unsupported(format!("{name} vector overflows")))?;
@@ -839,6 +1091,27 @@ impl<'a> Table<'a> {
             .transpose()
     }
 
+    pub(super) fn u64(self, slot: usize) -> Result<Option<u64>> {
+        self.field(slot, 8)?
+            .map(|at| self.buffer.bytes(at).map(u64::from_le_bytes))
+            .transpose()
+    }
+
+    /// Fixed-width inline structs, such as the raster index's crop and canvas.
+    pub(super) fn u32_array<const N: usize>(self, slot: usize) -> Result<Option<[u32; N]>> {
+        let width = N
+            .checked_mul(4)
+            .ok_or_else(|| unsupported("inline struct overflows"))?;
+        let Some(at) = self.field(slot, width)? else {
+            return Ok(None);
+        };
+        let mut values = [0; N];
+        for (index, value) in values.iter_mut().enumerate() {
+            *value = self.buffer.u32(at + index * 4)?;
+        }
+        Ok(Some(values))
+    }
+
     pub(super) fn f32(self, slot: usize) -> Result<Option<f32>> {
         Ok(self.u32(slot)?.map(f32::from_bits))
     }
@@ -855,18 +1128,28 @@ impl<'a> Table<'a> {
             .transpose()
     }
 
-    fn string(self, slot: usize) -> Result<Option<&'a str>> {
+    pub(super) fn string(self, slot: usize) -> Result<Option<&'a str>> {
         self.target(slot)?
             .map(|position| self.buffer.string(position))
             .transpose()
     }
 
     pub(super) fn tables(self, slot: usize) -> Result<Vec<Table<'a>>> {
+        self.tables_bounded(slot, usize::MAX)
+    }
+
+    /// Bound the element count before allocating the table list.
+    pub(super) fn tables_bounded(self, slot: usize, maximum: usize) -> Result<Vec<Table<'a>>> {
         let Some(vector) = self.target(slot)? else {
             return Ok(Vec::new());
         };
-        self.buffer
-            .vector(vector)?
+        let elements = self.buffer.vector(vector)?;
+        ensure!(
+            elements.len() <= maximum,
+            "{} table vector exceeds {maximum} elements",
+            self.buffer.name
+        );
+        elements
             .map(|element| self.buffer.table(self.buffer.offset(element)?))
             .collect()
     }

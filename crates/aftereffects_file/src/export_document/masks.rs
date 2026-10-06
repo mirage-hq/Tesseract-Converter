@@ -1,11 +1,16 @@
 //! Lower current FX masks and text-path guides to fresh native mask DTOs.
 
+mod held_rect;
+mod inverted_compound;
+mod positive_compound;
+mod source_affine;
+
 use std::collections::BTreeSet;
 
 use fx_schema::{
     Layer, LayerId, Position, PropertyTarget, PropertyValue, ShapePath, ShapePathCommand,
     TextPathOptions, Transform,
-    animator::{AnimationGraphEntry, AnimatorData, PropertyKeyframeTrack},
+    animator::{AnimatorData, PropertyKeyframeTrack},
     layer::{MaskMode, PathMask},
 };
 
@@ -17,7 +22,8 @@ use super::effective_constant;
 
 #[derive(Clone, Copy)]
 pub(crate) struct MaskOwner<'a> {
-    pub id: LayerId,
+    /// None only for a proven source-local guide copied before its Group occurrence transform.
+    pub coordinate_owner: Option<LayerId>,
     pub parent: Option<LayerId>,
     pub transform: &'a Transform,
     pub source_size: [u32; 2],
@@ -42,7 +48,7 @@ pub(crate) fn lower(
     text_path: Option<&TextPathOptions>,
     owner: MaskOwner<'_>,
     siblings: &[Layer],
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
 ) -> LoweredMasks {
     let mut output = LoweredMasks::default();
     if owner.source_size.contains(&0) {
@@ -66,22 +72,56 @@ pub(crate) fn lower(
                         .map(|message| format!("Mask {}: {message}", position + 1)),
                 );
             }
-            Err(message) => output
-                .diagnostics
-                .push(format!("Mask {} omitted: {message}", position + 1)),
+            Err(message) => {
+                if let Ok(specs) =
+                    inverted_compound::lower(mask, masks.len(), position + 1, owner, dynamics)
+                {
+                    output.masks.extend(specs);
+                    output.diagnostics.push(format!("Mask {}: approximate inverted compound union exported as two editable noninverted Subtract masks; independent per-contour expansion/feather differs from shared whole-union processing (native 40px/15px control: 34134/262144 pixels differ, maximum channel difference 2/255); alpha fidelity and edits outside the admitted profile are unverified", position + 1));
+                    continue;
+                }
+                match positive_compound::lower(
+                    mask,
+                    masks.len(),
+                    position + 1,
+                    owner,
+                    siblings,
+                    dynamics,
+                ) {
+                    Ok((specs, guide, diagnostic)) => {
+                        output.masks.extend(specs);
+                        output.consumed_guides.insert(guide);
+                        output
+                            .diagnostics
+                            .push(format!("Mask {}: {diagnostic}", position + 1));
+                    }
+                    Err(reason) => output.diagnostics.push(format!(
+                        "Mask {} omitted: {message}; positive compound fallback: {reason}",
+                        position + 1
+                    )),
+                }
+            }
         }
     }
     if let Some(options) = text_path {
-        match guide_path(options.path_layer, owner, siblings, dynamics) {
-            Ok(path) => {
+        match animated_guide_path(options.path_layer, owner, siblings, dynamics) {
+            Ok((path, path_track)) => {
                 let next = output.masks.len() + 1;
                 match u16::try_from(next) {
                     Ok(index) => {
+                        let geometry = if path_track.is_some() {
+                            "animated"
+                        } else {
+                            "static"
+                        };
                         output.masks.push(NativeMaskSpec {
                             name: "Text Path Guide".into(),
                             path,
-                            path_track: None,
-                            source_size: owner.source_size,
+                            path_track,
+                            // Native Text mask paths store layer-local pixels,
+                            // unlike footage-normalized masks. Keep an identity
+                            // divisor without changing FX coordinates or AV masks.
+                            source_size: [1, 1],
                             mode: NativeMaskMode::None,
                             inverted: false,
                             feather: [0.0; 2],
@@ -94,7 +134,7 @@ pub(crate) fn lower(
                         output.text_path_index = Some(index);
                         output.consumed_guides.insert(options.path_layer);
                         output.diagnostics.push(format!(
-                            "Text Path guide layer {} was copied as same-layer static native Mask {index}; the live cross-layer geometry link is not retained",
+                            "Text Path guide layer {} was copied as same-layer {geometry} native Mask {index}; the live cross-layer geometry link is not retained",
                             options.path_layer
                         ));
                     }
@@ -116,7 +156,7 @@ fn lower_mask(
     index: usize,
     owner: MaskOwner<'_>,
     siblings: &[Layer],
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
 ) -> Result<(NativeMaskSpec, Option<LayerId>, Vec<String>), &'static str> {
     let mut normalized_inline_loop = false;
     let (path, path_track, guide) = match (&mask.legacy_path, mask.layer) {
@@ -230,6 +270,108 @@ fn lower_mask(
     ))
 }
 
+/// Certify only the static hard-Rect mask that the existing native lowerer
+/// actually authors. Its path is copied into the same native layer and is a
+/// pointwise alpha gate: it cannot sample pixels beyond the consumer's inverse
+/// viewport. This is not a generic mask-bound or animated-guide certificate.
+pub(crate) fn static_rect_add_crop_certificate(
+    masks: &[PathMask],
+    owner: MaskOwner<'_>,
+    siblings: &[Layer],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+) -> bool {
+    let [mask] = masks else {
+        return false;
+    };
+    let Some(guide_id) = mask.layer else {
+        return false;
+    };
+    let Some(clock) = owner.clock else {
+        return false;
+    };
+    let Some(guide) = siblings.iter().find(|layer| layer.id() == guide_id) else {
+        return false;
+    };
+    if !rectangular_crop_guide(guide)
+        || guide.active_range() != clock
+        || mask.legacy_path.is_some()
+        || mask.mode != MaskMode::Add
+        || mask.inverted
+        || mask.feather != [0.0; 2]
+        || mask.opacity.value() != 1.0
+        || mask.expansion != 0.0
+        || dynamics
+            .iter()
+            .any(|entry| entry.target.fx_item_id() == Some(mask.id))
+    {
+        return false;
+    }
+    let lowered = lower(masks, None, owner, siblings, dynamics);
+    let [native] = lowered.masks.as_slice() else {
+        return false;
+    };
+    matches!(native.mode, NativeMaskMode::Add)
+        && native.path_track.is_none()
+        && native.feather_track.is_none()
+        && native.opacity_track.is_none()
+        && native.expansion_track.is_none()
+        && lowered.consumed_guides.contains(&guide_id)
+        && matches!(lowered.diagnostics.as_slice(), [message] if message.contains("was copied into same-layer native geometry"))
+}
+
+/// The crop certificate depends on exact contour geometry, not its FX layer tag.
+/// Keep general polygons, procedural modifiers and rounded paths outside it.
+fn rectangular_crop_guide(guide: &Layer) -> bool {
+    if let fx_schema::LayerData::Rect(rect) = guide.data() {
+        return rect.rect.roundness == 0.0;
+    }
+    let Ok((path, _)) = checked_shape_guide(guide) else {
+        return false;
+    };
+    if !path.is_finite() {
+        return false;
+    }
+    let [
+        ShapePathCommand::MoveTo {
+            x: left, y: top, ..
+        },
+        ShapePathCommand::LineTo {
+            x: right, y: top2, ..
+        },
+        ShapePathCommand::LineTo {
+            x: right2,
+            y: bottom,
+            ..
+        },
+        ShapePathCommand::LineTo {
+            x: left2,
+            y: bottom2,
+            ..
+        },
+        closure @ ..,
+    ] = path.commands.as_slice()
+    else {
+        return false;
+    };
+    let closed = match closure {
+        [ShapePathCommand::Close] => true,
+        [
+            ShapePathCommand::LineTo { x, y, .. },
+            ShapePathCommand::Close,
+        ] => x == left && y == top,
+        _ => false,
+    };
+    // The caller's existing lower() still rejects mirror/corner controls,
+    // coordinate animation, unsafe affine ownership and mask properties.
+    closed
+        && right > left
+        && bottom > top
+        && top2 == top
+        && right2 == right
+        && left2 == left
+        && bottom2 == bottom
+}
+
 #[derive(Clone, Copy)]
 enum TrackKind {
     Vector2,
@@ -241,7 +383,7 @@ fn mask_property(
     name: &str,
     base: PropertyValue,
     kind: TrackKind,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
 ) -> (PropertyValue, Option<NumericTrack>, Vec<String>) {
     let Some(entry) = dynamics.iter().find(|entry| {
         matches!(
@@ -372,11 +514,23 @@ fn animated_guide_path(
     id: LayerId,
     owner: MaskOwner<'_>,
     siblings: &[Layer],
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
 ) -> Result<(ShapePath, Option<crate::writer::PathTrack>), &'static str> {
     let path_source = super::track(dynamics, id, fx_schema::PropType::ShapePath)?;
     let Some(mut track) = super::path_animation::track(path_source)? else {
-        return guide_path(id, owner, siblings, dynamics).map(|path| (path, None));
+        return match guide_path(id, owner, siblings, dynamics) {
+            Ok(path) => Ok((path, None)),
+            Err(reason) if owner.coordinate_owner.is_some() => Err(reason),
+            Err(_) => held_rect::guide_path(id, owner, siblings, dynamics).or_else(|reason| {
+                if siblings.iter().any(|guide| {
+                    guide.id() == id && matches!(guide.data(), fx_schema::LayerData::Shape(_))
+                }) {
+                    source_affine::guide_path(id, owner, siblings, dynamics)
+                } else {
+                    Err(reason)
+                }
+            }),
+        };
     };
     let guide = checked_guide(id, owner, siblings, dynamics, true)?;
     let clock = owner
@@ -400,7 +554,7 @@ fn guide_path(
     id: LayerId,
     owner: MaskOwner<'_>,
     siblings: &[Layer],
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
 ) -> Result<ShapePath, &'static str> {
     guide_path_checked(id, owner, siblings, dynamics)
 }
@@ -409,7 +563,7 @@ fn guide_path_checked(
     id: LayerId,
     owner: MaskOwner<'_>,
     siblings: &[Layer],
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
 ) -> Result<ShapePath, &'static str> {
     let guide = checked_guide(id, owner, siblings, dynamics, false)?;
     match guide.data() {
@@ -437,7 +591,7 @@ fn checked_guide<'a>(
     id: LayerId,
     owner: MaskOwner<'_>,
     siblings: &'a [Layer],
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     allow_path_keys: bool,
 ) -> Result<&'a Layer, &'static str> {
     let guide = siblings
@@ -447,7 +601,9 @@ fn checked_guide<'a>(
     if guide.parent_id() != owner.parent {
         return Err("guide and owner do not share the same coordinate parent");
     }
-    if has_coordinate_animation(owner.id, dynamics)
+    if owner
+        .coordinate_owner
+        .is_some_and(|id| has_coordinate_animation(id, dynamics))
         || has_guide_geometry_animation(id, dynamics, allow_path_keys)
     {
         return Err(
@@ -472,8 +628,11 @@ fn checked_shape_guide(guide: &Layer) -> Result<(&ShapePath, &Transform), &'stat
     }
 }
 
-fn has_coordinate_animation(id: LayerId, dynamics: &[AnimationGraphEntry]) -> bool {
-    dynamics.iter().any(|entry| {
+fn has_coordinate_animation(
+    id: LayerId,
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+) -> bool {
+    dynamics.for_layer(id).any(|entry| {
         entry.target.as_property().is_some_and(|property| {
             property.layer_id() == id
                 && matches!(
@@ -500,11 +659,11 @@ fn has_coordinate_animation(id: LayerId, dynamics: &[AnimationGraphEntry]) -> bo
 
 fn has_guide_geometry_animation(
     id: LayerId,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     allow_path_keys: bool,
 ) -> bool {
     has_coordinate_animation(id, dynamics)
-        || dynamics.iter().any(|entry| {
+        || dynamics.for_layer(id).any(|entry| {
             entry.target.as_property().is_some_and(|property| {
                 property.layer_id() == id
                     && matches!(
@@ -743,6 +902,7 @@ fn transform_path(mut path: ShapePath, affine: Affine) -> ShapePath {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fx_schema::animator::AnimationGraphEntry;
     use fx_schema::{
         PropertyAnimator, PropertyKeyframeEasing, TimeOffset,
         animator::{KeyframeId, PropertyKeyframe},
@@ -820,7 +980,7 @@ mod tests {
                 min: 0.0,
                 max: 1.0,
             },
-            &entries,
+            &crate::export_document::AnimationIndex::new(&entries),
         );
         assert_eq!(opacity, PropertyValue::Float(0.25));
         assert!(opacity_track.is_none());
@@ -833,7 +993,7 @@ mod tests {
             "feather",
             PropertyValue::Vector2([4.0, 6.0]),
             TrackKind::Vector2,
-            &entries,
+            &crate::export_document::AnimationIndex::new(&entries),
         );
         assert_eq!(feather, PropertyValue::Vector2([9.0, 11.0]));
         assert!(feather_track.is_none());
@@ -887,7 +1047,7 @@ mod tests {
             opacity: fx_schema::PercentageProperty::new(100.0).unwrap(),
         };
         let owner = MaskOwner {
-            id: LayerId::new(1),
+            coordinate_owner: Some(LayerId::new(1)),
             parent: None,
             transform: &identity,
             source_size: [320, 180],
@@ -916,7 +1076,14 @@ mod tests {
         for (commands, normalized) in cases {
             let input = mask(commands);
             let original = input.legacy_path.as_ref().unwrap();
-            let (mut native, guide, diagnostics) = lower_mask(&input, 1, owner, &[], &[]).unwrap();
+            let (mut native, guide, diagnostics) = lower_mask(
+                &input,
+                1,
+                owner,
+                &[],
+                &crate::export_document::AnimationIndex::new(&[]),
+            )
+            .unwrap();
             assert_eq!(guide, None);
             assert_eq!(native.mode, NativeMaskMode::Add);
             assert_eq!(native.source_size, [320, 180]);
@@ -944,6 +1111,91 @@ mod tests {
             assert_eq!(native.path.commands[0].endpoint(), Some((5.0, 13.0)));
             assert_eq!(native.mode, NativeMaskMode::Add);
         }
+    }
+
+    #[test]
+    fn inverted_inline_compound_subtract_pair() {
+        let mut path = rectangle_path([40.0, 40.0], [200.0, 200.0]);
+        path.commands
+            .extend(rectangle_path([140.0, 140.0], [200.0, 200.0]).commands);
+        let mut mask: PathMask = serde_json::from_value(serde_json::json!({
+            "id":401,"mode":"add","inverted":true,"opacity":1.0,
+            "feather":[15.0,15.0],"expansion":40.0
+        }))
+        .unwrap();
+        mask.legacy_path = Some(path.clone());
+        let identity = Transform {
+            anchor_point: [0.0; 2],
+            position: Position::TwoD([0.0; 2]),
+            scale: [100.0; 2],
+            rotation: 0.0,
+            skew: 0.0,
+            skew_axis: 0.0,
+            rotation_x: 0.0,
+            rotation_y: 0.0,
+            orientation: [0.0; 3],
+            opacity: fx_schema::PercentageProperty::new(100.0).unwrap(),
+        };
+        let owner = MaskOwner {
+            coordinate_owner: Some(LayerId::new(1)),
+            parent: None,
+            transform: &identity,
+            source_size: [512, 512],
+            clock: None,
+        };
+        let dynamics = crate::export_document::AnimationIndex::new(&[]);
+        let output = lower(std::slice::from_ref(&mask), None, owner, &[], &dynamics);
+        assert_eq!(output.masks.len(), 2, "{:?}", output.diagnostics);
+        for spec in &output.masks {
+            assert_eq!(spec.mode, NativeMaskMode::Subtract);
+            assert!(!spec.inverted);
+            assert_eq!(spec.feather, [15.0; 2]);
+            assert_eq!(spec.expansion, 40.0);
+            assert_eq!(spec.opacity, 1.0);
+            assert_eq!(spec.source_size, [512, 512]);
+            assert!(spec.path_track.is_none());
+        }
+        assert_eq!(output.masks[0].path.commands, path.commands[..5]);
+        assert_eq!(output.masks[1].path.commands, path.commands[5..]);
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .any(|message| message.contains("approximate"))
+        );
+        for invalid in 0..7 {
+            let mut rejected = mask.clone();
+            match invalid {
+                0 => rejected.inverted = false,
+                1 => rejected.mode = MaskMode::Subtract,
+                2 => rejected.opacity = serde_json::from_value(serde_json::json!(0.5)).unwrap(),
+                3 => rejected.expansion = -1.0,
+                4 => rejected.feather = [-1.0, 0.0],
+                5 => rejected.legacy_path.as_mut().unwrap().commands.swap(6, 8),
+                _ => {
+                    rejected.legacy_path.as_mut().unwrap().commands.pop();
+                }
+            }
+            assert!(
+                lower(&[rejected], None, owner, &[], &dynamics)
+                    .masks
+                    .is_empty(),
+                "profile {invalid}"
+            );
+        }
+        assert!(
+            lower(&[mask.clone(), mask.clone()], None, owner, &[], &dynamics)
+                .masks
+                .is_empty()
+        );
+        let entries = [disabled_entry(
+            mask.id,
+            "opacity",
+            [PropertyValue::Float(1.0), PropertyValue::Float(1.0)],
+            PropertyValue::Float(1.0),
+        )];
+        let animated = crate::export_document::AnimationIndex::new(&entries);
+        assert!(lower(&[mask], None, owner, &[], &animated).masks.is_empty());
     }
 
     #[test]

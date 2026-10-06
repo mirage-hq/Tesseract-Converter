@@ -149,12 +149,46 @@ def test_reference_keeps_pinned_sequence_and_rejects_retired_status(ctx):
     with pytest.raises(fixtures.FixtureError, match="video source project differs"):
         check(ctx, [ctx.case])
     video["source_project_sha256"] = ctx.case["files"][0]["sha256"]
+    project_file = next(file for file in ctx.case["files"] if file["path"] == ctx.case["project"])
+    identity = {field: project_file.pop(field) for field in ("size_bytes", "sha256")}
+    with pytest.raises(fixtures.FixtureError, match="pinned project file"):
+        check(ctx, [ctx.case])
+    project_file.update(identity)
     video["review_status"] = "unreviewed"
     with pytest.raises(fixtures.FixtureError, match="expected keys"):
         check(ctx, [ctx.case])
     video.pop("review_status")
     ctx.case["candidate_video"] = video.copy()
     with pytest.raises(fixtures.FixtureError, match="expected keys"):
+        check(ctx, [ctx.case])
+
+
+def test_path_sanitization_keeps_original_reference_identity_and_checks_public_bytes(ctx):
+    ctx.case = copy.deepcopy(next(
+        case for case in ctx.original["cases"]
+        if any("path_sanitization" in file for file in case["files"])
+    ))
+    source = next(file for file in ctx.case["files"] if file["path"] == ctx.case["project"])
+    original = source["path_sanitization"]["original_sha256"]
+    assert ctx.case["reference_video"]["source_project_sha256"] == original
+    assert original != source["sha256"]
+    check(ctx, [ctx.case])
+
+    source["sha256"] = "0" * 64
+    with pytest.raises(fixtures.FixtureError, match="mismatch"):
+        check(ctx, [ctx.case])
+    source["sha256"] = next(
+        file["sha256"] for case in ctx.original["cases"] if case["id"] == ctx.case["id"]
+        for file in case["files"] if file["path"] == ctx.case["project"]
+    )
+    source["path_sanitization"]["original_sha256"] = source["sha256"]
+    with pytest.raises(fixtures.FixtureError, match="sanitization provenance"):
+        check(ctx, [ctx.case])
+    source["path_sanitization"]["original_sha256"] = "invalid"
+    with pytest.raises(fixtures.FixtureError, match="sanitization provenance"):
+        check(ctx, [ctx.case])
+    source["path_sanitization"]["original_sha256"] = "b" * 64
+    with pytest.raises(fixtures.FixtureError, match="video source project differs"):
         check(ctx, [ctx.case])
 
 

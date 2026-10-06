@@ -109,17 +109,6 @@ fn edited_quadrant_half_plane_exports_current_center_and_hold_angles() {
             }),
         "exported direct native Angle keys must remain editable on reimport"
     );
-    if let Ok(dir) = std::env::var("AEP_RADIAL_EXPORT_PROOF_DIR") {
-        let dir = std::path::Path::new(&dir);
-        std::fs::write(
-            dir.join("explicit-quadrants.json"),
-            serde_json::to_vec_pretty(&input).unwrap(),
-        )
-        .unwrap();
-        let path = dir.join("exported.aep");
-        assert!(!path.exists(), "use a fresh proof directory");
-        std::fs::write(path, output.bytes).unwrap();
-    }
 }
 
 #[test]
@@ -250,7 +239,9 @@ fn half_plane_shared_guide_is_not_consumed_into_an_effect() {
     assert!(
         super::recognize(
             group,
-            document.composition().dynamics().entries(),
+            &crate::export_document::AnimationIndex::new(
+                document.composition().dynamics().entries()
+            ),
             Time::from_millis(2000)
         )
         .is_err()

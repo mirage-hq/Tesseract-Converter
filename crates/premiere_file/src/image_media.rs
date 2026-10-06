@@ -119,6 +119,36 @@ pub(crate) fn inspect_image_media(reader: impl Read + Seek) -> Result<ValidatedI
     }
 }
 
+/// PNG pHYs stores pixels per unit, so pixel width/height is Y/X. The PNG
+/// specification defines square pixels when pHYs is absent, independently of
+/// the coded dimensions: https://www.w3.org/TR/png-3/#11pHYs .
+pub(crate) fn inspect_png_pixel_aspect(
+    reader: impl Read + Seek,
+) -> Result<(crate::schema::records::PixelAspectRatio, &'static str)> {
+    let decoder = png::Decoder::new(BufReader::new(reader));
+    let reader = decoder.read_info().map_err(|error| match error {
+        png::DecodingError::IoError(error) if error.kind() != ErrorKind::UnexpectedEof => {
+            BuildError::Io(error)
+        }
+        error => unsupported(format!(
+            "PNG pixel-aspect metadata cannot be decoded: {error}"
+        )),
+    })?;
+    match reader.info().pixel_dims {
+        Some(density) => Ok((
+            crate::schema::records::PixelAspectRatio::new(
+                u64::from(density.yppu),
+                u64::from(density.xppu),
+            )?,
+            "PNG pHYs metadata",
+        )),
+        None => Ok((
+            crate::schema::records::PixelAspectRatio::SQUARE,
+            "PNG-defined square-pixel default (no pHYs)",
+        )),
+    }
+}
+
 fn decoded_facts(format: ImageFormat, mut decoder: impl ImageDecoder) -> Result<ValidatedImage> {
     let orientation = decoder.orientation().map_err(undecodable)?;
     if orientation != Orientation::NoTransforms {
@@ -148,6 +178,50 @@ fn undecodable(error: ImageError) -> BuildError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn png_pixel_aspect_uses_density_or_the_format_default_not_dimensions() {
+        let png = |density: Option<png::PixelDimensions>| {
+            let mut bytes = Vec::new();
+            {
+                let mut encoder = png::Encoder::new(&mut bytes, 2, 1);
+                encoder.set_color(png::ColorType::Rgb);
+                encoder.set_depth(png::BitDepth::Eight);
+                encoder.set_pixel_dims(density);
+                encoder
+                    .write_header()
+                    .unwrap()
+                    .write_image_data(&[0; 6])
+                    .unwrap();
+            }
+            bytes
+        };
+        for unit in [png::Unit::Unspecified, png::Unit::Meter] {
+            let bytes = png(Some(png::PixelDimensions {
+                xppu: 1000,
+                yppu: 2000,
+                unit,
+            }));
+            let (aspect, origin) =
+                super::inspect_png_pixel_aspect(std::io::Cursor::new(bytes)).unwrap();
+            assert_eq!(aspect.terms(), (2000, 1000));
+            assert_eq!(origin, "PNG pHYs metadata");
+        }
+        let bytes = png(None);
+        let (aspect, origin) =
+            super::inspect_png_pixel_aspect(std::io::Cursor::new(&bytes)).unwrap();
+        assert!(aspect.is_square());
+        assert!(origin.contains("no pHYs"));
+        assert!(super::inspect_png_pixel_aspect(std::io::Cursor::new(&bytes[..16])).is_err());
+        for (xppu, yppu) in [(0, 1), (1, 0)] {
+            let bytes = png(Some(png::PixelDimensions {
+                xppu,
+                yppu,
+                unit: png::Unit::Unspecified,
+            }));
+            assert!(super::inspect_png_pixel_aspect(std::io::Cursor::new(bytes)).is_err());
+        }
+    }
+
     use super::{ImageFormat::*, *};
     use std::io::Cursor;
 

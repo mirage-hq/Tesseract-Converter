@@ -39,31 +39,42 @@
 //! pictures, so the reader rejects them; their tests set the flag in a
 //! captured record at the bit position that `trace_headers` reports.
 
+#[cfg(feature = "ffmpeg-library")]
 use crate::{
     format::FrameRate,
-    media::{inspect_video_media, VideoMedia},
     schema::{HdrProfile, VideoCodec},
+};
+use crate::{
+    media::{inspect_video_media, VideoMedia},
     video_format::validate_video_file_name,
 };
 use std::{io::Cursor, path::Path};
 
+#[cfg(feature = "ffmpeg-library")]
 const H264_MP4: &[u8] = include_bytes!("../../tests/fixtures/video-30fps.mp4");
+#[cfg(feature = "ffmpeg-library")]
 const H264_MOV: &[u8] = include_bytes!("../../tests/fixtures/video-30fps.mov");
 /// 8-bit H.264 whose VUI declares BT.2020 primaries, PQ and the BT.2020 matrix.
+#[cfg(feature = "ffmpeg-library")]
 const H264_HDR_TAGS: &[u8] = include_bytes!("../../tests/fixtures/video-hdr-tags.mp4");
 const HEVC: &[u8] = include_bytes!("../../tests/fixtures/feature_video_formats_hevc.mp4");
 /// The HDR pass-through fixture: VideoToolbox Main 10 HLG at 320x180 with a
 /// QuickTime timecode track (`-timecode 00:00:00:00 -f mov`).
+#[cfg(feature = "ffmpeg-library")]
 const HLG_MOV: &[u8] = include_bytes!("../../tests/fixtures/feature_hdr_hlg_hvc1.mov");
+#[cfg(feature = "ffmpeg-library")]
 const VP9: &[u8] = include_bytes!("../../tests/fixtures/video-vp9-64x64.mp4");
 const STSD: &[&[u8; 4]] = &[b"moov", b"trak", b"mdia", b"minf", b"stbl", b"stsd"];
+#[cfg(feature = "ffmpeg-library")]
 const SECOND: i64 = crate::schema::TICKS;
 
 /// `-pix_fmt yuv420p10le`: Main 10 profile, 10-bit luma and chroma, BT.709.
 const MAIN10: &str = "01022000000090000000000078f000fcfdfafa00000f03a00001001840010c01ffff022000000300900000030000030078959809a10001002f420101022000000300900000030000030078a003c08010e4d96566924caf016a02020208000003000800000300f040a2000100074401c172b46240";
 /// VideoToolbox Main 10 with BT.2020 primaries, HLG transfer and BT.2020nc matrix.
+#[cfg(feature = "ffmpeg-library")]
 const MAIN10_HLG: &str = "010220000000b0000000000078f000fcfdfafa00000f03a00001001840010c01ffff022000000300b000000300000300781b0240a10001002b420101022000000300b00000030000030078a003c0801107cad881bb916452ffcb9fc4feb016a122412010a2000100084401c072e1905324";
 /// The same encode with the PQ transfer.
+#[cfg(feature = "ffmpeg-library")]
 const MAIN10_PQ: &str = "010220000000b0000000000078f000fcfdfafa00000f03a00001001840010c01ffff022000000300b000000300000300781b0240a10001002b420101022000000300b00000030000030078a003c0801107cad881bb916452ffcb9fc4feb016a122012010a2000100084401c072e3414c90";
 /// `-pix_fmt yuv422p`: Range Extensions profile, 8-bit 4:2:2.
 const REXT_422: &str = "0104080000009d080000000078f000fcfef8f800000f03a00001001740010c01ffff0408000003009d08000003000078959809a10001002c4201010408000003009d08000003000078b003c08010e596566924caf016a020202080000003008000000f04a2000100074401c172b46240";
@@ -74,41 +85,55 @@ const PQ: &str = "01016000000090000000000078f000fcfdf8f800000f03a00001001840010c
 /// Without the `setparams` tags and the `scale` colour matrix: VUI signal
 /// type present (limited range) with no colour description, which declares
 /// nothing.
+#[cfg(feature = "ffmpeg-library")]
 const NO_COLOUR: &str = "01016000000090000000000078f000fcfdf8f800000f03a00001001840010c01ffff016000000300900000030000030078959809a10001002a420101016000000300900000030000030078a003c08010e596566924caf0168080000003008000000f04a2000100074401c172b46240";
 /// `setsar=2/1`: VUI aspect_ratio_idc 16.
+#[cfg(feature = "ffmpeg-library")]
 const SAR_2_1: &str = "01016000000090000000000078f000fcfdf8f800000f03a00001001840010c01ffff016000000300900000030000030078959809a10001002d420101016000000300900000030000030078a003c08010e596566924caf106a020202080000003008000000f04a2000100074401c172b46240";
 /// `min-cu-size=16`: coded 1920x1088 with a bottom conformance window.
+#[cfg(feature = "ffmpeg-library")]
 const CROPPED: &str = "01016000000090000000000078f000fcfdf8f800000f03a00001001840010c01ffff016000000300900000030000030078959809a10001002e420101016000000300900000030000030078a003c0801107cb965664e4caf016a020202080000003008000000f04a2000100074401c172b46240";
 /// `interlace=tff` with `field_mode=tff`: interlaced source, field-timed VUI.
+#[cfg(feature = "ffmpeg-library")]
 const INTERLACED: &str = "01016000000040000000000078f000fcfdf8f800000f04a00001001840010c01ffff016000000300400000030000030078959809a10001002d420101016000000300400000030000030078a003c08010e596566924caf016a020202680000003008000000f04a2000100074401c172b4624027000100064e0181010f80";
 /// `temporal-layers=3`: `sps_max_sub_layers_minus1` 2 with no sub-layer
 /// profile or level fields, and ordering information for each sub-layer.
 const SUB_LAYERS: &str = "01016000000090000000000078f000fcfdf8f800001b03a00001001e40010c04ffff01600000030090000003000003007800009594aca5650240a1000100334201040160000003009000000300000300780000a003c08010e5965652b295964932bc05a808080820000003002000000303c1a2000100074401c172b46240";
+#[cfg(feature = "ffmpeg-library")]
 const SUB_LAYERS_FULL_RANGE: &str = "01016000000090000000000078f000fcfdf8f800001b03a00001001e40010c04ffff01600000030090000003000003007800009594aca5650240a1000100334201040160000003009000000300000300780000a003c08010e5965652b295964932bc05b808080820000003002000000303c1a2000100074401c172b46240";
 /// `scaling-list=<file>`, an HM-style file whose INTRA matrices are the ramp
 /// 16, 17, ..., INTER matrices the ramp 17, 18, ..., chroma V matrices flat 16,
 /// and every DC 12: `scaling_list_data` codes default, copied, and DPCM
 /// matrices, with DC coefficients for 16x16 and 32x32.
+#[cfg(feature = "ffmpeg-library")]
 const SCALING_LISTS: &str = "01016000000090000000000078f000fcfdf8f800000f03a00001001840010c01ffff016000000300900000030000030078959809a1000101e0420101016000000300900000030000030078a003c08010e596566924f84041c71ce1439ce1439c71c413090838e39c28739c28738e3882610080f0f0f1e0b078f1e0e878f1e3c0903c78f1e3c0ac3c78f1e3c7819078f1e3c78f1e0641e3c78f1e3c0ac3c78f1e3c0903c78f1e0e878f1e0b078f0f0f081421fffffffffffffffe12080f0f0f1e0b078f1e0e878f1e3c0903c78f1e3c0ac3c78f1e3c7819078f1e3c78f1e0641e3c78f1e3c0ac3c78f1e3c0903c78f1e0e878f1e0b078f0f0f081091020203c3c3c782c1e3c783a1e3c78f0240f1e3c78f02b0f1e3c78f1e0641e3c78f1e3c7819078f1e3c78f02b0f1e3c78f0240f1e3c783a1e3c782c1e3c3c3c2051023fffffffffffffffc40a080f0f0f1e0b078f1e0e878f1e3c0903c78f1e3c0ac3c78f1e3c7819078f1e3c78f1e0641e3c78f1e3c0ac3c78f1e3c0903c78f1e0e878f1e0b078f0f0f081091020203c3c3c782c1e3c783a1e3c78f0240f1e3c78f02b0f1e3c78f1e0641e3c78f1e3c7819078f1e3c78f02b0f1e3c78f0240f1e3c783a1e3c782c1e3c3c3c211028203c3c3c782c1e3c783a1e3c78f0240f1e3c78f02b0f1e3c78f1e0641e3c78f1e3c7819078f1e3c78f02b0f1e3c78f0240f1e3c783a1e3c782c1e3c3c3c20af016a020202080000003008000000f04a2000100074401c172b46240";
+#[cfg(feature = "ffmpeg-library")]
 const SCALING_LISTS_FULL_RANGE: &str = "01016000000090000000000078f000fcfdf8f800000f03a00001001840010c01ffff016000000300900000030000030078959809a1000101e0420101016000000300900000030000030078a003c08010e596566924f84041c71ce1439ce1439c71c413090838e39c28739c28738e3882610080f0f0f1e0b078f1e0e878f1e3c0903c78f1e3c0ac3c78f1e3c7819078f1e3c78f1e0641e3c78f1e3c0ac3c78f1e3c0903c78f1e0e878f1e0b078f0f0f081421fffffffffffffffe12080f0f0f1e0b078f1e0e878f1e3c0903c78f1e3c0ac3c78f1e3c7819078f1e3c78f1e0641e3c78f1e3c0ac3c78f1e3c0903c78f1e0e878f1e0b078f0f0f081091020203c3c3c782c1e3c783a1e3c78f0240f1e3c78f02b0f1e3c78f1e0641e3c78f1e3c7819078f1e3c78f02b0f1e3c78f0240f1e3c783a1e3c782c1e3c3c3c2051023fffffffffffffffc40a080f0f0f1e0b078f1e0e878f1e3c0903c78f1e3c0ac3c78f1e3c7819078f1e3c78f1e0641e3c78f1e3c0ac3c78f1e3c0903c78f1e0e878f1e0b078f0f0f081091020203c3c3c782c1e3c783a1e3c78f0240f1e3c78f02b0f1e3c78f1e0641e3c78f1e3c7819078f1e3c78f02b0f1e3c78f0240f1e3c783a1e3c782c1e3c3c3c211028203c3c3c782c1e3c783a1e3c78f0240f1e3c78f02b0f1e3c78f1e0641e3c78f1e3c7819078f1e3c78f02b0f1e3c78f0240f1e3c783a1e3c782c1e3c3c3c20af016e020202080000003008000000f04a2000100074401c172b46240";
 /// VideoToolbox: four explicitly coded short-term reference picture sets,
 /// scaling lists enabled without data, ordering information for the highest
 /// sub-layer only, and a bottom conformance window on a coded 1920x1088 picture.
 const REFERENCE_SETS: &str = "010160000000b0000000000078f000fcfdf8f800000f03a00001001840010c01ffff016000000300b000000300000300781b0240a10001002a420101016000000300b00000030000030078a003c0801107cb881bb916452ffcb9fc4feb016a02020201a2000100074401c072f05324";
+#[cfg(feature = "ffmpeg-library")]
 const REFERENCE_SETS_FULL_RANGE: &str = "010160000000b0000000000078f000fcfdf8f800000f03a00001001840010c01ffff016000000300b000000300000300781b0240a10001002a420101016000000300b00000030000030078a003c0801107cb881bb916452ffcb9fc4feb016e02020201a2000100074401c072f05324";
 /// `display-window=0,0,0,8`: a VUI default display window.
+#[cfg(feature = "ffmpeg-library")]
 const DISPLAY_WINDOW: &str = "01016000000090000000000078f000fcfdf8f800000f03a00001001840010c01ffff016000000300900000030000030078959809a10001002f420101016000000300900000030000030078a003c08010e596566924caf016a0202021e260000003002000000303c1a2000100074401c172b46240";
-const ACCEPTED_CODECS: &str = "conversion accepts H.264 (avc1) or HEVC (hvc1)";
+#[cfg(feature = "ffmpeg-library")]
+const ACCEPTED_CODECS: &str = "conversion accepts H.264 (avc1), HEVC (hvc1) or Apple ProRes";
+const PRORES_4444_ALPHA: &[u8] = include_bytes!("../../tests/fixtures/video-prores4444-alpha.mov");
 const ACCEPTED_CONTAINERS: &str = "conversion accepts MP4 or QuickTime MOV video";
+#[cfg(feature = "ffmpeg-library")]
 const PQ_COLOUR: &str = "BT.2020/PQ/BT.2020nc";
+#[cfg(feature = "ffmpeg-library")]
 const HLG_COLOUR: &str = "BT.2020/HLG/BT.2020nc";
 
 fn inspect(bytes: &[u8]) -> crate::error::Result<VideoMedia> {
     inspect_video_media(Cursor::new(bytes), Cursor::new(bytes), bytes.len() as u64)
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn codec(sample_entry: &[u8; 4]) -> VideoCodec {
-    VideoCodec::from_sample_entry(*sample_entry).unwrap()
+    VideoCodec::from_sample_entry(*sample_entry, 24).unwrap()
 }
 fn read_u32(bytes: &[u8], offset: usize) -> u32 {
     u32::from_be_bytes(bytes[offset..offset + 4].try_into().unwrap())
@@ -159,6 +184,7 @@ fn sample_entry(bytes: &[u8]) -> usize {
     stsd + 16
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn with_sample_entry_type(bytes: &[u8], kind: &[u8; 4]) -> Vec<u8> {
     let mut patched = bytes.to_vec();
     let entry = sample_entry(bytes);
@@ -220,6 +246,7 @@ fn hevc_configuration() -> Vec<u8> {
 }
 
 /// The HLG fixture with its timecode track's `hdlr` handler type renamed.
+#[cfg(feature = "ffmpeg-library")]
 fn with_data_track_handler(bytes: &[u8], handler: &[u8; 4]) -> Vec<u8> {
     let hdlr = bytes
         .windows(4)
@@ -246,6 +273,7 @@ fn with_hevc_configuration(record: &[u8]) -> Vec<u8> {
     )
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn hevc_configuration_with_native_arrays_above_64_kib_is_accepted() {
     let mut record = hevc_configuration();
@@ -323,6 +351,7 @@ fn with_emulation_prevention(payload: &[u8]) -> Vec<u8> {
 }
 
 /// Returns the HEVC sample with its `colr` box declaring the given codes.
+#[cfg(feature = "ffmpeg-library")]
 fn with_colr(bytes: &[u8], primaries: u16, transfer: u16, matrix: u16) -> Vec<u8> {
     let (offset, size, kind) = entry_children(bytes)
         .into_iter()
@@ -348,6 +377,7 @@ fn with_full_range_colr(bytes: &[u8]) -> Vec<u8> {
     bytes
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn accepted_codecs_keep_their_sample_entry_and_exact_timing() {
     for (name, bytes, sample_entry, size, duration_ticks, colour) in [
@@ -433,11 +463,13 @@ fn accepted_codecs_keep_their_sample_entry_and_exact_timing() {
 
 /// The HEVC sample with `record` as its `hvcC` and an unspecified `colr` box,
 /// so the record's VUI is the file's only colour declaration.
+#[cfg(feature = "ffmpeg-library")]
 fn hevc_vui(record: &str) -> Vec<u8> {
     with_colr(&with_hevc_configuration(&hex(record)), 2, 2, 2)
 }
 
 /// The sequence parameter set NAL unit of a captured `hvcC` record.
+#[cfg(feature = "ffmpeg-library")]
 fn sequence_parameter_set(record: &[u8]) -> &[u8] {
     let vps = 23 + 3 + 2;
     let sps_array = vps + usize::from(u16::from_be_bytes([record[vps - 2], record[vps - 1]]));
@@ -452,6 +484,7 @@ fn sequence_parameter_set(record: &[u8]) -> &[u8] {
 /// `record` with `other`'s sequence parameter set appended to its SPS array,
 /// a stream whose two parameter sets share a format but may declare
 /// different colours.
+#[cfg(feature = "ffmpeg-library")]
 fn with_second_sps(record: &str, other: &str) -> Vec<u8> {
     let (record, other) = (hex(record), hex(other));
     let vps = 23 + 3 + 2;
@@ -475,6 +508,7 @@ fn with_second_sps(record: &str, other: &str) -> Vec<u8> {
     spliced
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn non_bt709_colour_passes_through_once_per_file_or_rejects() {
     use HdrProfile::{Hlg10Bit, Pq10Bit};
@@ -581,14 +615,9 @@ fn non_bt709_colour_passes_through_once_per_file_or_rejects() {
     };
     for (name, bytes, expected) in [
         (
-            "BT.601",
-            with_colr(HEVC, 5, 6, 6),
-            "explicit media colour metadata 5/6/6 is unsupported; conversion passes through BT.709, BT.2020 PQ/HLG and P3 declarations".to_owned(),
-        ),
-        (
-            "BT.2020 SDR transfer",
+            "BT.2020 colr with unmapped transfer over BT.709 VUI",
             with_colr(HEVC, 9, 14, 9),
-            "explicit media colour metadata 9/14/9 is unsupported; conversion passes through BT.709, BT.2020 PQ/HLG and P3 declarations".to_owned(),
+            conflict("BT.2020/unspecified/BT.2020nc", BT709),
         ),
         // Explicit BT.709 is a declaration, not a default: it conflicts with
         // HDR or P3 in the other place, in either order.
@@ -624,12 +653,22 @@ fn non_bt709_colour_passes_through_once_per_file_or_rejects() {
         ),
         (
             "HLG and PQ parameter sets",
-            with_colr(&with_hevc_configuration(&with_second_sps(MAIN10_HLG, MAIN10_PQ)), 2, 2, 2),
+            with_colr(
+                &with_hevc_configuration(&with_second_sps(MAIN10_HLG, MAIN10_PQ)),
+                2,
+                2,
+                2,
+            ),
             conflict(HLG_COLOUR, PQ_COLOUR),
         ),
         (
             "BT.709 and HLG parameter sets",
-            with_colr(&with_hevc_configuration(&with_second_sps(MAIN10, MAIN10_HLG)), 2, 2, 2),
+            with_colr(
+                &with_hevc_configuration(&with_second_sps(MAIN10, MAIN10_HLG)),
+                2,
+                2,
+                2,
+            ),
             conflict(BT709, HLG_COLOUR),
         ),
     ] {
@@ -641,8 +680,132 @@ fn non_bt709_colour_passes_through_once_per_file_or_rejects() {
     }
 }
 
+#[test]
+fn container_colour_recovery_keeps_known_fields_and_export_admission() {
+    use crate::media_metadata::{validate_color, validate_export_color, ColourDescription};
+
+    for declaration in [(0, 0, 1), (u16::MAX, u16::MAX, 1), (5, 6, 6)] {
+        let mut colour = validate_color(declaration.0, declaration.1, declaration.2).unwrap();
+        assert!(colour.unwrap().passes_through());
+        ColourDescription::merge(&mut colour, validate_color(1, 1, 1).unwrap()).unwrap();
+        assert_eq!(colour.unwrap().codes(), (1, 1, 1));
+        assert!(colour.unwrap().passthrough_warning().contains("unmapped"));
+        assert!(validate_export_color(declaration.0, declaration.1, declaration.2).is_err());
+    }
+    for declaration in [(1, 13, 1), (9, 13, 9)] {
+        assert!(validate_color(declaration.0, declaration.1, declaration.2).is_err());
+    }
+    assert!(validate_export_color(1, 13, 1).is_ok());
+    assert!(validate_export_color(9, 13, 9).is_err());
+    assert!(validate_color(2, 2, 2).unwrap().is_none());
+    let mut colour = validate_color(0, 0, 1).unwrap();
+    assert!(ColourDescription::merge(&mut colour, validate_color(9, 16, 9).unwrap()).is_err());
+    // Missing declarations alone do not invent a measured HDR profile.
+    assert_eq!(validate_color(0, 0, 0).unwrap().unwrap().codes(), (2, 2, 2));
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn container_colour_recovery_preserves_native_write_video_bytes_and_clocks() {
+    use tesseract_file::TesseractFile;
+
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let original = std::fs::read(fixtures.join("feature_linked_av_source.mp4")).unwrap();
+    let baseline = inspect(&original).unwrap();
+    for declaration in [(0, 0, 1), (u16::MAX, u16::MAX, 1)] {
+        // Supplementary container-tag edit only; the native source, samples,
+        // configuration and clocks remain the public linked A/V fixture's.
+        let bytes = with_colr(&original, declaration.0, declaration.1, declaration.2);
+        let inspected = inspect(&bytes).unwrap();
+        assert_eq!(inspected.codec, baseline.codec);
+        assert_eq!(inspected.bit_depth, 8);
+        assert_eq!(inspected.timing.sample_count, baseline.timing.sample_count);
+        assert_eq!(inspected.timing.timescale, baseline.timing.timescale);
+        assert!(inspected.hdr_profile().is_none());
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("feature_linked_av_source.mp4"), &bytes).unwrap();
+        let source = temp.path().join("linked.prproj");
+        std::fs::copy(fixtures.join("feature_linked_av_strict.prproj"), &source).unwrap();
+        let (native, _) = crate::format::PrProjectFile::load(&source).unwrap();
+        assert_eq!(native.sequences[0].frame_rate, FrameRate::Fps30);
+        let output = temp.path().join("converted");
+        let omissions = crate::premiere_to_tesseract(
+            &source,
+            &output,
+            Some("80acdd81-0a96-4677-b17f-b2ffe2dff738"),
+            false,
+        )
+        .unwrap();
+        let warnings: Vec<_> = omissions
+            .iter()
+            .filter(|note| note.reason.contains("unmapped video colour metadata"))
+            .collect();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].kind, crate::OmissionKind::Approximated);
+        assert!(warnings[0]
+            .reason
+            .contains("original bytes retained without a colour transform"));
+        let file = TesseractFile::open(output.join("project.tsrct")).unwrap();
+        let document = file.project_json().unwrap();
+        let layers = document["composition"]["layers"].as_array().unwrap();
+        assert_eq!(
+            layers
+                .iter()
+                .filter(|layer| matches!(layer["type"].as_str(), Some("Video" | "Audio")))
+                .count(),
+            2
+        );
+        for kind in ["Video", "Audio"] {
+            let layer = layers.iter().find(|layer| layer["type"] == kind).unwrap();
+            assert_eq!(
+                layer["sourceRange"],
+                serde_json::json!({"start": 0, "duration": 5000})
+            );
+            assert_eq!(
+                crate::test_support::layer_range(layer),
+                &serde_json::json!({"start": 0, "duration": 5000})
+            );
+            let id = layer["source"]["assetId"].as_str().unwrap();
+            assert_eq!(
+                file.asset(id)
+                    .unwrap()
+                    .read_verified_bytes(bytes.len() as u64)
+                    .unwrap(),
+                bytes
+            );
+        }
+        let picture = layers
+            .iter()
+            .find(|layer| layer["type"] == "Video")
+            .unwrap();
+        assert_eq!(picture["volume"], 0.0);
+    }
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn container_colour_recovery_keeps_required_format_and_range_bounds() {
+    let bytes = with_colr(HEVC, 0, 0, 1);
+    assert!(rejection(&with_full_range_colr(&bytes)).contains("full-range container requires"));
+    let mut dimensions = bytes.clone();
+    let entry = sample_entry(&dimensions);
+    dimensions[entry + 32..entry + 34].copy_from_slice(&1800_u16.to_be_bytes());
+    assert!(rejection(&dimensions).contains("HEVC picture size"));
+    let mut truncated = bytes;
+    truncated.pop();
+    assert!(inspect(&truncated).is_err());
+    let full = with_colr(
+        &with_full_range_colr(&with_hevc_configuration(&hex(FULL_RANGE))),
+        0,
+        0,
+        1,
+    );
+    assert!(inspect(&full).is_ok());
+}
+
 /// A `DolbyVisionConfigurationRecord` for the given profile, level 6, an RPU,
 /// no enhancement layer, a base layer and the given compatibility ID.
+#[cfg(feature = "ffmpeg-library")]
 fn dolby_vision(profile: u8, el_present: bool, compatibility_id: u8) -> [u8; 24] {
     let mut record = [0; 24];
     record[0] = 1;
@@ -654,6 +817,7 @@ fn dolby_vision(profile: u8, el_present: bool, compatibility_id: u8) -> [u8; 24]
 
 /// The HEVC sample renamed to `entry` with a Dolby Vision configuration box
 /// of type `kind` after its `hvcC`.
+#[cfg(feature = "ffmpeg-library")]
 fn with_dolby_vision(entry: &[u8; 4], kind: &[u8; 4], record: &[u8]) -> Vec<u8> {
     let (offset, size) = hevc_configuration_box();
     let length = u32::try_from(record.len() + 8).unwrap().to_be_bytes();
@@ -662,11 +826,12 @@ fn with_dolby_vision(entry: &[u8; 4], kind: &[u8; 4], record: &[u8]) -> Vec<u8> 
     with_sample_entry_type(&spliced, entry)
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn dolby_vision_records_on_hvc1_pass_through_and_dolby_entries_reject() {
     // Profile 8.4, the HLG-compatible form, and 8.1 (HDR10-compatible). An
     // iPhone writes profile 8.4 as `01 00 10 35 40 ...` in a `dvvC` box on a
-    // plain `hvc1` entry (`oracle/M2/hdr/IMG_2439.mov`), the record that
+    // plain `hvc1` entry, the record that
     // `dolby_vision(8, false, 4)` reproduces.
     assert_eq!(
         &dolby_vision(8, false, 4)[..5],
@@ -714,14 +879,19 @@ fn dolby_vision_records_on_hvc1_pass_through_and_dolby_entries_reject() {
             "invalid Dolby Vision configuration size 12",
         ),
     ] {
-        assert_eq!(
-            rejection(&bytes),
-            format!("unsupported conversion: {expected}"),
-            "{name}"
-        );
+        let error = inspect(&bytes).expect_err("unsupported Dolby Vision media");
+        assert_eq!(error.to_string(), format!("unsupported conversion: {expected}"), "{name}");
+        if matches!(name, "dvh1 entry" | "dvhe entry") {
+            assert!(matches!(error, crate::error::BuildError::UnsupportedVideoCodec(_)), "{name}: {error}");
+        } else {
+            // Profile, enhancement-layer and malformed configuration failures
+            // are not codec omissions and must retain strict admission.
+            assert!(matches!(error, crate::error::BuildError::Unsupported(_)), "{name}: {error}");
+        }
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn unsupported_sample_entries_reject_with_their_code() {
     for (bytes, code) in [
@@ -729,8 +899,8 @@ fn unsupported_sample_entries_reject_with_their_code() {
         (with_sample_entry_type(H264_MP4, b"avc3"), "avc3"),
         (with_sample_entry_type(HEVC, b"hev1"), "hev1"),
         (VP9.to_vec(), "vp09"),
-        // ProRes: the web editor and player (WebCodecs) have no ProRes decoder.
-        (with_sample_entry_type(H264_MOV, b"apcn"), "apcn"),
+        // ProRes RAW has no Premiere-saved record and no Adobe decode proof.
+        (with_sample_entry_type(H264_MOV, b"aprn"), "aprn"),
     ] {
         assert_eq!(
             rejection(&bytes),
@@ -739,6 +909,94 @@ fn unsupported_sample_entries_reject_with_their_code() {
             )
         );
     }
+}
+
+/// Apple ProRes passes through to the Adobe-bound package: inspection
+/// classifies the profile and, for a 32-bit 4444 entry, its alpha, from the
+/// sample entry alone. Import admits 4444 through the native decoder and
+/// retains the sibling-preserving codec rejection for other profiles.
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn prores_admits_4444_for_native_import_and_keeps_other_profiles_as_candidates() {
+    use crate::schema::{video_codec::ProResProfile, PrMediaKind};
+    let video = inspect(PRORES_4444_ALPHA).unwrap();
+    assert_eq!(
+        video.codec,
+        VideoCodec::ProRes {
+            profile: ProResProfile::P4444,
+            alpha: true
+        }
+    );
+    assert!(video.codec.has_alpha());
+    assert_eq!(video.bit_depth, 12);
+    assert_eq!((video.width, video.height), (32, 32));
+    assert_eq!(video.timing.sample_count, 3);
+    assert_eq!(video.codec.codec_type(), "1634743400");
+    // A 4:2:2 profile has no alpha whatever its entry says; the relabelled
+    // H.264 MOV has a 24-bit entry and no parameter sets to read.
+    let standard = inspect(&with_sample_entry_type(H264_MOV, b"apcn")).unwrap();
+    assert_eq!(
+        standard.codec,
+        VideoCodec::ProRes {
+            profile: ProResProfile::Standard,
+            alpha: false
+        }
+    );
+    assert_eq!(standard.bit_depth, 10);
+    crate::media::inspect_media(
+        PrMediaKind::Video {
+            codec: None,
+            hdr_profile: None,
+        },
+        Cursor::new(PRORES_4444_ALPHA),
+        Cursor::new(PRORES_4444_ALPHA),
+        PRORES_4444_ALPHA.len() as u64,
+        None,
+    )
+    .unwrap();
+    {
+        let bytes = with_sample_entry_type(H264_MOV, b"apcn");
+        let remedy = ", so prepare the source with tsrct-conv transcode";
+        let bytes = bytes.as_slice();
+        let error = crate::media::inspect_media(
+            PrMediaKind::Video {
+                codec: None,
+                hdr_profile: None,
+            },
+            Cursor::new(bytes),
+            Cursor::new(bytes),
+            bytes.len() as u64,
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, crate::error::BuildError::UnsupportedVideoCodec(_)),
+            "{error}"
+        );
+        let message = error.to_string();
+        assert!(
+            message.contains(
+                "is not decodable by the web player; import accepts H.264 (avc1) or HEVC (hvc1)"
+            ) && message.ends_with(remedy),
+            "{error}"
+        );
+    }
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn alpha_media_prores4444_rejects_unproved_full_range() {
+    let bytes = include_bytes!("../../tests/fixtures/alpha-media/prores4444.mov");
+    let entry = sample_entry(bytes);
+    let end = entry + read_u32(bytes, entry) as usize;
+    let colr = [
+        19_u32.to_be_bytes().as_slice(),
+        b"colrnclx",
+        &[0, 1, 0, 1, 0, 1, 0x80],
+    ]
+    .concat();
+    let bytes = splice_entry(bytes, end, end, &colr);
+    assert!(rejection(&bytes).contains("full-range ProRes"));
 }
 
 #[test]
@@ -819,10 +1077,11 @@ fn hevc_header_and_parameter_sets_must_declare_main_or_main_10_4_2_0() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn hevc_sequence_parameters_decide_range_color_aspect_scan_and_size() {
     for (record, expected) in [
-        (SAR_2_1, "HEVC pixel aspect ratio must be square"),
+        (SAR_2_1, "conflicting video pixel aspect ratio declarations"),
         (
             INTERLACED,
             "HEVC declares interlaced source pictures; interlaced video is unsupported",
@@ -837,6 +1096,17 @@ fn hevc_sequence_parameters_decide_range_color_aspect_scan_and_size() {
             format!("unsupported conversion: {expected}")
         );
     }
+    // Matching non-square container and codec declarations are now admitted.
+    let mut anamorphic = with_hevc_configuration(&hex(SAR_2_1));
+    let spacing = anamorphic
+        .windows(4)
+        .position(|value| value == b"pasp")
+        .unwrap()
+        + 4;
+    assert_eq!(&anamorphic[spacing..spacing + 8], &[0, 0, 0, 1, 0, 0, 0, 1]);
+    anamorphic[spacing..spacing + 4].copy_from_slice(&2_u32.to_be_bytes());
+    assert_eq!(inspect(&anamorphic).unwrap().codec, codec(b"hvc1"));
+
     // Declared progressive, the same pictures are still field-coded in the VUI.
     // The SPS NAL starts at 57; after `00 00 03` its tenth byte holds the
     // progressive and interlaced source flags.
@@ -854,6 +1124,7 @@ fn hevc_sequence_parameters_decide_range_color_aspect_scan_and_size() {
     assert_eq!((cropped.width, cropped.height), (1920, 1080));
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn captured_parameter_set_branches_keep_the_vui_read_aligned() {
     for (branch, record, full_range) in [
@@ -978,6 +1249,7 @@ fn layered_and_in_band_hevc_configurations_reject() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn an_interlaced_fiel_box_rejects_h264_and_hevc() {
     let fiel = |fields: u8| [&10_u32.to_be_bytes()[..], b"fiel", &[fields, 0]].concat();
@@ -1000,6 +1272,65 @@ fn an_interlaced_fiel_box_rejects_h264_and_hevc() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn only_an_identity_clean_aperture_is_admitted() {
+    // Aperture width and height, then horizontal and vertical offsets, each a
+    // numerator and a denominator.
+    let clap = |words: &[u32]| {
+        let payload: Vec<u8> = words.iter().flat_map(|word| word.to_be_bytes()).collect();
+        let size = u32::try_from(payload.len() + 8).unwrap().to_be_bytes();
+        [&size[..], b"clap", &payload].concat()
+    };
+    let whole = clap(&[1920, 1, 1080, 1, 0, 1, 0, 1]);
+    let cropping = "MP4 clean-aperture cropping unsupported";
+    let invalid = "invalid MP4 clean aperture";
+    // Both 1920x1080 samples gain the box after their last child box.
+    for (codec, bytes) in [("HEVC", HEVC), ("H.264 QuickTime", H264_MOV)] {
+        let (last, last_size, _) = *entry_children(bytes).last().unwrap();
+        let end = last + last_size;
+        let with = |children: &[u8]| splice_entry(bytes, end, end, children);
+        // iPhone captures declare the whole picture, then end the sample
+        // entry with QuickTime's four zero bytes.
+        for children in [
+            [&whole[..], &[0; 4]].concat(),
+            clap(&[3840, 2, 3240, 3, 0, 5, 0, 7]),
+        ] {
+            let media =
+                inspect(&with(&children)).unwrap_or_else(|error| panic!("{codec}: {error}"));
+            assert_eq!((media.width, media.height), (1920, 1080), "{codec}");
+        }
+        for (children, reason) in [
+            (clap(&[1904, 1, 1080, 1, 0, 1, 0, 1]), cropping),
+            (clap(&[1920, 1, 1072, 1, 0, 1, 0, 1]), cropping),
+            // Half a pixel wider, which a truncating division reads as 1920.
+            (clap(&[3841, 2, 1080, 1, 0, 1, 0, 1]), cropping),
+            (clap(&[1920, 1, 1080, 1, 1, 2, 0, 1]), cropping),
+            // A vertical offset of minus one pixel.
+            (clap(&[1920, 1, 1080, 1, 0, 1, u32::MAX, 1]), cropping),
+            // 1920 times 2236963 wraps around to 1664 in 32 bits.
+            (clap(&[1664, 2_236_963, 1080, 1, 0, 1, 0, 1]), cropping),
+            (clap(&[0, 0, 1080, 1, 0, 1, 0, 1]), invalid),
+            (clap(&[1920, 1, 1080, 1, 0, 0, 0, 1]), invalid),
+            (clap(&[1920, 1, 1080, 1, 0, 1, 0]), invalid),
+            (clap(&[1920, 1, 1080, 1, 0, 1, 0, 1, 0]), invalid),
+            (
+                [&whole[..], &whole].concat(),
+                "duplicate MP4 display metadata",
+            ),
+        ] {
+            assert_eq!(
+                inspect(&with(&children))
+                    .map(drop)
+                    .map_err(|error| error.to_string()),
+                Err(format!("unsupported conversion: {reason}")),
+                "{codec}: {children:?}"
+            );
+        }
+    }
+}
+
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn ambiguous_sample_descriptions_keep_the_h264_message() {
     // The MP4 parser reads the original bytes, while the metadata reader sees
@@ -1026,6 +1357,7 @@ fn ambiguous_sample_descriptions_keep_the_h264_message() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn full_range_eight_bit_sdr_hevc_keeps_its_original_configuration() {
     let bytes = with_full_range_colr(&with_hevc_configuration(&hex(FULL_RANGE)));
@@ -1069,6 +1401,7 @@ fn full_range_rejects_ambiguous_flags_and_unproved_depth_or_colour() {
     assert!(rejection(&reserved).contains("reserved MP4 color flags"));
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn full_range_h264_requires_the_bitstream_signal_even_when_nclx_declares_full() {
     // Six generated red64x64 frames at30fps, full-range8-bit4:2:0 BT.709.
@@ -1096,4 +1429,72 @@ fn full_range_h264_requires_the_bitstream_signal_even_when_nclx_declares_full() 
     .concat();
     let declared = splice_entry(H264_MOV, end, end, &colr);
     assert!(rejection(&declared).contains("explicit coherent full-range bitstream"));
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn bt709_10bit_source_profile_does_not_bypass_h264_transcode_preflight() {
+    use fx_conv::{MediaRemediation, MediaStatus};
+
+    // Supplementary synthetic SPS: the baseline fixture's dimensions/timing,
+    // changed to High 4:2:2 with chroma_format_idc=2 and both bit depths=10.
+    // The unchanged samples are not decodable with this header: preflight must
+    // reject its format before decoding, not treat this as native render proof.
+    let sps = with_emulation_prevention(&hex("677a0028b6cb403c0113f2e02200000002000000781e306540"));
+    let (offset, size, _) = entry_children(H264_MOV)
+        .into_iter()
+        .find(|(_, _, kind)| kind == b"avcC")
+        .unwrap();
+    let mut avcc = hex("017a0028ffe1");
+    avcc.extend_from_slice(&u16::try_from(sps.len()).unwrap().to_be_bytes());
+    avcc.extend_from_slice(&sps);
+    avcc.extend_from_slice(&hex("01000468ce0fc8"));
+    let mut boxed = u32::try_from(avcc.len() + 8)
+        .unwrap()
+        .to_be_bytes()
+        .to_vec();
+    boxed.extend_from_slice(b"avcC");
+    boxed.extend_from_slice(&avcc);
+    let media = splice_entry(H264_MOV, offset, offset + size, &boxed);
+    let reason = "H.264 must be progressive 8-bit 4:2:0 with matching dimensions";
+    assert!(inspect(&media).unwrap_err().to_string().contains(reason));
+
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("media")).unwrap();
+    std::fs::write(root.path().join("media/source.mp4"), &media).unwrap();
+    let records = roxmltree::Document::parse(include_str!(
+        "../../tests/fixtures/bt709-10bit-source-streams.xml"
+    ))
+    .unwrap();
+    for profile in records
+        .descendants()
+        .filter(|node| node.has_tag_name("OriginalColorSpace"))
+    {
+        let xml = include_str!("../../tests/fixtures/one-clip.xml").replace(
+            "<VideoStream ObjectID=\"8\">",
+            &format!(
+                "<VideoStream ObjectID=\"8\"><OriginalColorSpace>{}</OriginalColorSpace>",
+                profile.text().unwrap()
+            ),
+        );
+        let path = root.path().join("source.prproj");
+        crate::test_support::write_prproj(&path, &xml);
+        let report = crate::Premiere
+            .inspect_media(&path, &crate::PremiereImportOptions::default(), None)
+            .unwrap();
+        assert_eq!(report.media.len(), 1, "{report:?}");
+        assert_eq!(
+            report.media[0].status,
+            MediaStatus::RequiresTranscode,
+            "{report:?}"
+        );
+        assert_eq!(
+            report.media[0].remediation,
+            MediaRemediation::TranscodeCandidate
+        );
+        assert!(
+            report.media[0].reason.as_deref().unwrap().contains(reason),
+            "{report:?}"
+        );
+    }
 }

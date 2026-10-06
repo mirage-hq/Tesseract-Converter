@@ -1,0 +1,12 @@
+{
+  "source_sha256": "ef2e6046ce2b77d77607daa7aa614fa225dd721119b5a47dfcbc9d4814b6f715",
+  "application_version": "26.5x89",
+  "composition_id": 1,
+  "property": "ADBE Text Stroke Width",
+  "before": -4,
+  "edited": -2,
+  "has_min": true,
+  "has_max": true,
+  "min": -1000,
+  "max": 1000
+}

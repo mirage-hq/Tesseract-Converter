@@ -1,0 +1,100 @@
+{
+  "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
+  "backgroundColor": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "composition": {
+    "dynamics": {
+      "entries": []
+    },
+    "id": "main",
+    "layers": [
+      {
+        "activeRange": {
+          "duration": 1000,
+          "start": 0
+        },
+        "blendMode": "normal",
+        "effects": [
+          {
+            "id": 901,
+            "enabled": true,
+            "effect": {
+              "type": "directionalBlur",
+              "direction": 90,
+              "blurLength": 40
+            }
+          }
+        ],
+        "id": 900,
+        "name": "Editable directional solid",
+        "parent": null,
+        "rect": {
+          "fillColor": [
+            1,
+            0,
+            0,
+            1
+          ],
+          "fillEnabled": true,
+          "position": [
+            0,
+            0
+          ],
+          "roundness": 0,
+          "size": [
+            12,
+            12
+          ],
+          "strokeEnabled": false,
+          "strokeWidth": 0
+        },
+        "transform": {
+          "anchorPoint": [
+            6,
+            6
+          ],
+          "opacity": 100,
+          "orientation": [
+            0,
+            0,
+            0
+          ],
+          "position": [
+            90,
+            80
+          ],
+          "rotation": 90,
+          "rotationX": 0,
+          "rotationY": 0,
+          "scale": [
+            200,
+            200
+          ],
+          "skew": 0,
+          "skewAxis": 0
+        },
+        "type": "Rect",
+        "description": "Editable AE solid; explicit public export input"
+      }
+    ],
+    "motionBlur": {
+      "adaptiveSampleLimit": 128,
+      "enabled": false,
+      "samplesPerFrame": 16,
+      "shutterAngle": 180,
+      "shutterPhase": 0
+    },
+    "name": "W07 directional export base",
+    "segmentLayerIds": []
+  },
+  "dimensions": {
+    "width": 180,
+    "height": 160
+  },
+  "duration": 1.0,
+  "formatVersion": 1
+}

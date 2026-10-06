@@ -58,7 +58,7 @@ use crate::schema::{
         self, PrGraphicObject, PrJustification, PrTextDocument, PrTextFrame, PrTextTransform,
         PrVerticalAlign,
     },
-    PrBlendMode, PrGraphic, PrSequence, PrText, PrVideoItem, PrVideoTrack,
+    PrBlendMode, PrGraphic, PrSequence, PrStaticTransform, PrText, PrVideoItem, PrVideoTrack,
 };
 use crate::{approximate, omit, Omission, OmissionScope};
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -453,7 +453,7 @@ fn read_cue(
         sub_clip,
         &identity,
         end.checked_sub(start),
-        sequence.frame_rate,
+        sequence.native_frame_rate(),
         omissions,
     )?;
     let blocks = required(item.value.block_vector.as_ref(), &identity, "BlockVector")?;
@@ -470,16 +470,36 @@ fn read_cue(
         "{} not converted",
         unconverted.join(", ")
     );
-    // An unverified background is omitted alone: the text still converts.
-    let background_reason = match decoded.omitted.first() {
-        Some(OmittedTextFeature::Background) => Some(
-            "its payload stores no opacity or corner radius, and what Premiere draws then is unverified"
-                .to_owned(),
-        ),
-        None => decoded
-            .document
-            .background
-            .and_then(|background| background.unverified_reason(&decoded.document)),
+    // Run metadata is not a background and does not invalidate supported cues.
+    // Report it separately so it cannot hide an independent background warning.
+    let background_reason = {
+        for feature in &decoded.omitted {
+            if matches!(feature, OmittedTextFeature::RunStyleMetadata { .. }) {
+                approximate(omissions, &identity, feature.to_string());
+            }
+        }
+        match decoded
+            .omitted
+            .iter()
+            .find(|feature| !matches!(feature, OmittedTextFeature::RunStyleMetadata { .. }))
+        {
+            Some(OmittedTextFeature::UnknownRootData(_) | OmittedTextFeature::AlternateDocumentMarkers | OmittedTextFeature::DefaultRunStyle) => return Err(unsupported("unidentified caption Source Text root data")),
+            Some(OmittedTextFeature::Background) => Some(
+                "its payload stores no opacity or corner radius, and what Premiere draws then is unverified"
+                    .to_owned(),
+            ),
+            Some(OmittedTextFeature::MissingRunMarker) => {
+                return Err(unsupported("caption text requires an explicit run marker"));
+            }
+            // Caption decoding does not admit legacy graphic Source Text.
+            Some(OmittedTextFeature::LegacyControl(_)) => {
+                return Err(unsupported("legacy graphic text controls do not apply to captions"));
+            }
+            Some(OmittedTextFeature::RunStyleMetadata { .. }) | None => decoded
+                .document
+                .background
+                .and_then(|background| background.unverified_reason(&decoded.document)),
+        }
     };
     if let Some(reason) = background_reason {
         omit(
@@ -499,12 +519,17 @@ fn read_cue(
         id: Some(identity),
         start_ticks: start,
         end_ticks: end,
-        in_ticks: sequence.frame_rate.generator_in_ticks(),
+        in_ticks: sequence.native_frame_rate().generator_in_ticks(),
         vector_motion: None,
+        clip_motion: PrStaticTransform::default(),
         opacity: 100.0,
         blend_mode: PrBlendMode::Normal,
         animations: Vec::new(),
+        opacity_mask: None,
+        effect_loss: None,
         objects: vec![PrGraphicObject::Text(PrText {
+            horizontal_scale: None,
+            mask_source: None,
             name: label.to_owned(),
             document: PrTextDocument {
                 frame: region.frame,
@@ -516,7 +541,7 @@ fn read_cue(
         })],
         enabled: enabled && track.visible,
     };
-    graphic.validate(sequence.frame_rate)?;
+    graphic.validate(sequence.native_frame_rate())?;
     Ok(graphic)
 }
 

@@ -1,0 +1,17 @@
+app.newProject();
+var comp=app.project.items.addComp('W06 Animated Text Path',640,360,1,2,24);
+var text=comp.layers.addText('EDITABLE PATH'); text.name='Path text';
+var doc=text.property('ADBE Text Properties').property('ADBE Text Document').value;
+doc.font='ArialMT';doc.fontSize=32;doc.applyFill=true;doc.fillColor=[1,1,1];text.property('ADBE Text Properties').property('ADBE Text Document').setValue(doc);
+text.property('ADBE Transform Group').property('ADBE Position').setValue([0,0]);
+var mask=text.property('ADBE Mask Parade').addProperty('ADBE Mask Atom');mask.name='Animated guide';mask.maskMode=MaskMode.NONE;
+var path=mask.property('ADBE Mask Shape');
+var s=new Shape();s.vertices=[[80,160],[280,100],[540,160]];s.inTangents=[[0,0],[-80,0],[-60,-60]];s.outTangents=[[60,-60],[80,0],[0,0]];s.closed=false;
+path.setValueAtTime(0,s);
+var t=new Shape();t.vertices=[[80,240],[280,180],[540,240]];t.inTangents=s.inTangents;t.outTangents=s.outTangents;t.closed=false;
+path.setValueAtTime(1,t);
+path.setInterpolationTypeAtKey(1,KeyframeInterpolationType.LINEAR,KeyframeInterpolationType.LINEAR);path.setInterpolationTypeAtKey(2,KeyframeInterpolationType.LINEAR,KeyframeInterpolationType.LINEAR);
+var opts=text.property('ADBE Text Properties').property('ADBE Text Path Options');opts.property('ADBE Text Path').setValue(1);opts.property('ADBE Text First Margin').setValue(20);
+app.project.save(new File(context.output_path));var id=comp.id;app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES);app.open(new File(context.output_path));
+comp=app.project.item(1);text=comp.layer(1);path=text.property('ADBE Mask Parade').property(1).property('ADBE Mask Shape');
+return {result:{composition_id:comp.id,mask_keys:path.numKeys,key0:path.keyValue(1).vertices,key1:path.keyValue(2).vertices,closed:path.keyValue(1).closed,path_index:text.property('ADBE Text Properties').property('ADBE Text Path Options').property('ADBE Text Path').value},targets:[{id:'main',name:comp.name,native_id:String(comp.id)}]};

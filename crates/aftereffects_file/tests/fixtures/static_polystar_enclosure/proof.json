@@ -1,0 +1,100 @@
+{
+  "feature": "static integer zero-roundness PolyStar Group enclosure",
+  "source": "source.aep",
+  "source_sha256": "11acf3860e86278190cfd083ba51f58a622036ae810c6251c5781eb3d56045ae",
+  "composition_ids": [
+    1,
+    14
+  ],
+  "semantic_test": "static_polystar_native_opacity_group_retains_geometry_and_sibling",
+  "independent_render_comparison": "UNRUN",
+  "native_30fps_mp4_asset_publication": "UNRUN",
+  "alpha_audio_proof": "UNRUN",
+  "limitation": "Dedicated source independently Adobe-authored and same-host save/reopened. Historical generated-output native edit proof belongs to original source; targeted dedicated-source export tests are own-reader structural evidence. Independent render/Asset, alpha/audio and original49 fidelity unproved; import/export mapping unchanged.",
+  "historical_multi_feature_evidence": {
+    "red_job": 1426,
+    "green_jobs": [
+      1438,
+      1448
+    ],
+    "native_application_version": "26.5x89",
+    "native_ready": "verified 2026-10-03T20:00:53.937761Z",
+    "source": "../shapes/import_parametric_shape_controls.aep",
+    "source_sha256": "828179aee6c82b68c5a866c7dff28aca7a75ab17083a753242396192c243fd6d",
+    "composition_ids": [
+      92,
+      182
+    ],
+    "native_request_id": "w04-static-polystar-readback-v1",
+    "native_invocation_id": "36971319b6964c2cacdeed4ff653e439",
+    "native_readback": {
+      "source": {
+        "points": 5,
+        "outer_radius": 210,
+        "position": [
+          0,
+          0
+        ],
+        "star_type": 1,
+        "polygon_type": 2
+      },
+      "edited": {
+        "points": 5,
+        "outer_radius": 125,
+        "position": [
+          0,
+          0
+        ],
+        "group_opacity": 50,
+        "root_layer_count": 2,
+        "root_sibling_name": "Current solid 900182",
+        "primitive_canvas": [
+          250,
+          250
+        ]
+      },
+      "star_export_sha256": "c59d4ee6c63ab4cc1ca93cf064b950df1bdf1f638479f58ced10be63252ccf40",
+      "polygon_export_sha256": "ac90c940ad7129c8ba32717fba2e9bb7360cac16185c7498ef593c5ab2500978"
+    }
+  },
+  "dedicated_source_authoring": {
+    "request_id": "r06-dedicated-static-polystar-source-v5",
+    "invocation_id": "789bf156f0754223aebafa6320799082",
+    "application_version": "26.5x89",
+    "authoring_script": "author.jsx",
+    "authoring_script_sha256": "fcc078bc155f1e3db400dd92b72b3d5c8c69c2bb991940bd42dd9b251bd7decc",
+    "source_bytes": 136333,
+    "native_result": {
+      "compositions": [
+        {
+          "composition_id": 14,
+          "name": "Static Polygon",
+          "outer_radius": 210,
+          "outer_roundness": 0,
+          "points": 5,
+          "position": [
+            0,
+            0
+          ],
+          "type": 2
+        },
+        {
+          "composition_id": 1,
+          "name": "Static Star",
+          "outer_radius": 210,
+          "outer_roundness": 0,
+          "points": 5,
+          "position": [
+            0,
+            0
+          ],
+          "type": 1
+        }
+      ],
+      "same_host_save_reopen": true
+    },
+    "ready": "verified before artifact publication",
+    "receipt_sha256": "6d07b0203d129f10efc9155cc8084812ac39b75c3f6862f8537a34dbce3248ed",
+    "test_execution": "PASS: shared Rust queue2063, two targeted tests, zero failures/ignored"
+  }
+}

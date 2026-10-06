@@ -4,7 +4,7 @@ use crate::{
     hash::hash,
     publication::publish_file,
     tesseract_output::{
-        convert_premiere_sequence_with_links, convert_premiere_sequence_with_media_map,
+        convert_premiere_sequence_with_media_map, convert_premiere_sequence_with_progress,
         PendingTesseractFile,
     },
     Omission,
@@ -26,14 +26,15 @@ pub(crate) struct TesseractImport {
     original_hash: String,
     target: String,
     project: PendingTesseractFile,
+    media_relink: Option<crate::ValidatedMediaRelink>,
     pub(crate) omissions: Vec<Omission>,
 }
 
 impl TesseractImport {
-    /// [`Self::convert_with_links`] with the built-in linked-composition import.
+    /// Convert one selected sequence with the built-in linked-composition import.
     #[cfg(test)]
     pub(crate) fn convert(input: &Path, output: &Path, selection: Option<&str>) -> Result<Self> {
-        Self::convert_with_links(input, output, selection, None, Progress::default())
+        Self::convert_with_progress(input, output, selection, Progress::default())
     }
 
     pub(crate) fn convert_with_media_map(
@@ -43,25 +44,46 @@ impl TesseractImport {
         media_map: &ValidatedMediaMap,
         progress: Progress<'_>,
     ) -> Result<Self> {
-        Self::convert_with_options(input, output, selection, None, Some(media_map), progress)
+        Self::convert_with_options(input, output, selection, Some(media_map), None, progress)
     }
 
-    pub(crate) fn convert_with_links<'a>(
+    pub(crate) fn convert_with_progress(
         input: &Path,
         output: &Path,
         selection: Option<&str>,
-        resolver: Option<&'a mut crate::LinkedCompositionResolver<'a>>,
         progress: Progress<'_>,
     ) -> Result<Self> {
-        Self::convert_with_options(input, output, selection, resolver, None, progress)
+        Self::convert_with_options(input, output, selection, None, None, progress)
     }
 
-    fn convert_with_options<'a>(
+    #[cfg(test)]
+    pub(crate) fn convert_with_media_relink(
         input: &Path,
         output: &Path,
         selection: Option<&str>,
-        resolver: Option<&'a mut crate::LinkedCompositionResolver<'a>>,
+        relink: &crate::ValidatedMediaRelink,
+        progress: Progress<'_>,
+    ) -> Result<Self> {
+        Self::convert_with_media_relink_and_map(input, output, selection, relink, None, progress)
+    }
+
+    pub(crate) fn convert_with_media_relink_and_map(
+        input: &Path,
+        output: &Path,
+        selection: Option<&str>,
+        relink: &crate::ValidatedMediaRelink,
         media_map: Option<&ValidatedMediaMap>,
+        progress: Progress<'_>,
+    ) -> Result<Self> {
+        Self::convert_with_options(input, output, selection, media_map, Some(relink), progress)
+    }
+
+    fn convert_with_options(
+        input: &Path,
+        output: &Path,
+        selection: Option<&str>,
+        media_map: Option<&ValidatedMediaMap>,
+        media_relink: Option<&crate::ValidatedMediaRelink>,
         progress: Progress<'_>,
     ) -> Result<Self> {
         ensure!(
@@ -86,7 +108,8 @@ impl TesseractImport {
         // before publishing the staged archive.
         let original_hash = hash(&input)?;
         progress.stage("reading Premiere project");
-        let (project, mut omissions) = PrProjectFile::load_import(&input, selection)?;
+        let (project, mut omissions) =
+            PrProjectFile::load_import_with_media_relink(&input, selection, media_relink)?;
         let (mut sequences, media) = project.into_parts();
         let sequence = sequences
             .pop()
@@ -104,23 +127,17 @@ impl TesseractImport {
             );
             media_map.validate_for(&input, "premiere", &target)?;
         }
-        // Inspect the native inventory before conversion can omit unsupported FX.
-        // This keeps strict video admission source-bound and independent of
-        // whether the corresponding occurrence survives editable conversion.
-        let native_preflight = crate::tesseract_output::inspect_native_premiere_media_for_sequence(
-            &input, &sequence, media_map,
+        // Inspect native uses before editable conversion can omit them. Only
+        // safely omitted source content may bypass the video admission gate;
+        // path, identity, I/O and malformed-media failures remain fatal.
+        let native_preflight = crate::tesseract_output::inspect_native_premiere_media_for_import(
+            &input,
+            &sequence,
+            media_map,
+            media_relink,
         )?;
-        crate::tesseract_output::require_video_admission(&native_preflight)?;
-        let converted = if let Some(resolver) = resolver {
-            convert_premiere_sequence_with_links(
-                &input,
-                sequence,
-                Arc::new(media),
-                &mut omissions,
-                Some(resolver),
-                progress,
-            )
-        } else if let Some(media_map) = media_map {
+        crate::tesseract_output::require_import_video_admission(&native_preflight, &input)?;
+        let converted = if let Some(media_map) = media_map {
             convert_premiere_sequence_with_media_map(
                 &input,
                 sequence,
@@ -130,12 +147,11 @@ impl TesseractImport {
                 progress,
             )
         } else {
-            convert_premiere_sequence_with_links(
+            convert_premiere_sequence_with_progress(
                 &input,
                 sequence,
                 Arc::new(media),
                 &mut omissions,
-                None,
                 progress,
             )
         };
@@ -161,12 +177,16 @@ impl TesseractImport {
         if let Some(media_map) = media_map {
             media_map.validate_for(&input, "premiere", &target)?;
         }
+        if let Some(relink) = media_relink {
+            relink.validate_for(&input, &target)?;
+        }
         Ok(Self {
             input,
             destination,
             original_hash,
             target,
             project,
+            media_relink: media_relink.cloned(),
             omissions,
         })
     }
@@ -204,6 +224,9 @@ impl TesseractImport {
         );
         if let Some(media_map) = media_map {
             media_map.validate_for(&self.input, "premiere", &self.target)?;
+        }
+        if let Some(relink) = &self.media_relink {
+            relink.validate_for(&self.input, &self.target)?;
         }
         publish_project(&staged_project, &self.destination, |source, target| {
             fs::hard_link(source, target)

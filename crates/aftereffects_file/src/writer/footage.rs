@@ -14,14 +14,15 @@ use crate::{
 };
 
 use super::{
-    AepWriteError, NumericTrack,
+    AepWriteError, KeyframeEasing, NumericKeyframe, NumericTrack,
     keyframes::PropertyClock,
     solids::{self, SolidLayerSpec, TransformAnimations},
     source_clock::SourceClockPlan,
     views::{self, ValueKind},
 };
 
-const TICKS_PER_SECOND: i128 = 24_576;
+pub(crate) const SOURCE_TICKS_PER_SECOND: u64 = 24_576;
+const TICKS_PER_SECOND: i128 = SOURCE_TICKS_PER_SECOND as i128;
 const MILLIS_PER_SECOND: i128 = 1_000;
 
 /// A package-relative media path safe to resolve below the export directory.
@@ -60,18 +61,28 @@ impl RelativeMediaPath {
 pub(crate) enum NativeSourceFormat {
     /// OpenEXR still footage (`footage_not_missing.aep`).
     OpenExr,
+    /// Byte-preserved 8-bit RGB/RGBA PNG still footage (`png!`).
+    PngRgb,
+    PngRgba,
     /// RIFF/WAVE audio footage (`audioEnabled.aep`).
     Wave,
-    /// QuickTime movie footage (`MOoV` in the bounded reader corpus).
+    /// H.264 QuickTime movie footage (`MOoV`, `avc1`).
     QuickTime,
+    /// ProRes 4444 QuickTime movie footage (`MOoV`, `ap4h`).
+    QuickTimeProRes4444,
 }
 
 impl NativeSourceFormat {
+    pub(crate) const fn is_still(self) -> bool {
+        matches!(self, Self::OpenExr | Self::PngRgb | Self::PngRgba)
+    }
+
     const fn fourcc(self) -> [u8; 4] {
         match self {
             Self::OpenExr => *b"oEXR",
+            Self::PngRgb | Self::PngRgba => *b"png!",
             Self::Wave => *b"WAVE",
-            Self::QuickTime => *b"MOoV",
+            Self::QuickTime | Self::QuickTimeProRes4444 => *b"MOoV",
         }
     }
 }
@@ -122,12 +133,17 @@ pub(crate) struct NativeSource {
     pub(crate) dimensions: [u16; 2],
     /// Intrinsic source duration; still images use zero.
     pub(crate) duration_millis: u64,
+    /// Exact QuickTime duration in 24576 Hz source ticks, when representable.
+    pub(crate) duration_native_ticks: Option<u64>,
     /// Exact native frame rate. Stills and audio-only files use zero.
     pub(crate) frame_rate: NativeFrameRate,
     /// Audio sample rate. Silent visual sources use zero.
     pub(crate) audio_sample_rate: f64,
     /// Exact facts from a validated RIFF/WAVE file, if available.
     pub(crate) wave_metadata: Option<NativeWaveMetadata>,
+    /// Source-native rational duration established independently from rounded ms.
+    /// Present for the native-backed NTSC QuickTime and 50/60 fps AVC profiles.
+    pub(crate) native_duration: Option<crate::media::MediaDuration>,
 }
 
 /// Static source-to-layer geometry absorbed into editable native Transform.
@@ -195,7 +211,7 @@ pub(crate) struct FootageSpec {
     pub(crate) source_geometry: SourceGeometry,
     pub(crate) transform: SolidLayerSpec,
     pub(crate) clock: FootageClock,
-    /// Static source seconds for a non-animated `ADBE Time Remapping` leaf.
+    /// Constant source seconds, encoded as equal Time Remap endpoint keys.
     /// Dynamic remaps are owned by `clock`'s `SourceClockPlan`.
     pub(crate) static_source_time_secs: Option<f64>,
     /// A native Time Remap owns the source clock; keyed occurrence Transform
@@ -209,7 +225,7 @@ pub(crate) struct FootageSpec {
 }
 
 /// Validates the complete typed footage contract before IDs are published.
-pub(crate) fn validate(spec: &FootageSpec, duration: Duration24) -> Result<(), AepWriteError> {
+pub(crate) fn validate(spec: &FootageSpec) -> Result<(), AepWriteError> {
     solids::validate(&spec.transform)?;
     if spec.name != spec.transform.name {
         return Err(AepWriteError::Invalid(
@@ -230,11 +246,10 @@ pub(crate) fn validate(spec: &FootageSpec, duration: Duration24) -> Result<(), A
         }
         FootageClock::Source(plan) => plan.active_range.end().as_millis(),
     };
-    if ticks_from_millis_unsigned(composition_end)? > duration.signed_ticks() {
-        return Err(AepWriteError::Invalid(
-            "footage out-point exceeds composition duration",
-        ));
-    }
+    // Native AV layer outpoints may extend beyond composition duration. Keeping
+    // that authored endpoint avoids dropping the whole occurrence when the root
+    // duration rounds down to a native frame. The endpoint must still fit ldta.
+    ticks_from_millis_unsigned(composition_end)?;
     if spec.static_source_time_secs.is_some() && !matches!(&spec.clock, FootageClock::Source(_)) {
         return Err(AepWriteError::Invalid(
             "static Time Remap requires a finalized source clock",
@@ -252,11 +267,19 @@ pub(crate) fn validate(spec: &FootageSpec, duration: Duration24) -> Result<(), A
         return Err(AepWriteError::Invalid("invalid audio sample rate"));
     }
     if spec.source.format == NativeSourceFormat::Wave {
+        if spec.source.duration_native_ticks.is_some() {
+            return Err(AepWriteError::Invalid(
+                "exact QuickTime duration belongs only to QuickTime sources",
+            ));
+        }
         wave_sample_clock(&spec.source)?;
     } else if spec.source.wave_metadata.is_some() {
         return Err(AepWriteError::Invalid(
             "exact WAVE metadata belongs only to WAVE sources",
         ));
+    }
+    if spec.source.format != NativeSourceFormat::Wave {
+        source_duration_ticks(&spec.source)?;
     }
     if spec
         .source_geometry
@@ -269,7 +292,7 @@ pub(crate) fn validate(spec: &FootageSpec, duration: Duration24) -> Result<(), A
         return Err(AepWriteError::Invalid("invalid footage source geometry"));
     }
     let source_valid = match spec.source.format {
-        NativeSourceFormat::OpenExr => {
+        NativeSourceFormat::OpenExr | NativeSourceFormat::PngRgb | NativeSourceFormat::PngRgba => {
             !spec.source.dimensions.contains(&0)
                 && spec.source.duration_millis == 0
                 && spec.source.frame_rate.is_zero()
@@ -281,7 +304,7 @@ pub(crate) fn validate(spec: &FootageSpec, duration: Duration24) -> Result<(), A
                 && spec.source.frame_rate.is_zero()
                 && spec.source.audio_sample_rate > 0.0
         }
-        NativeSourceFormat::QuickTime => {
+        NativeSourceFormat::QuickTime | NativeSourceFormat::QuickTimeProRes4444 => {
             !spec.source.dimensions.contains(&0)
                 && spec.source.duration_millis > 0
                 && !spec.source.frame_rate.is_zero()
@@ -293,17 +316,19 @@ pub(crate) fn validate(spec: &FootageSpec, duration: Duration24) -> Result<(), A
         ));
     }
     let occurrence_valid = match spec.kind {
-        FootageKind::Image => {
-            spec.source.format == NativeSourceFormat::OpenExr && !spec.audio_enabled
-        }
+        FootageKind::Image => spec.source.format.is_still() && !spec.audio_enabled,
         FootageKind::Video => {
-            spec.source.format == NativeSourceFormat::QuickTime
-                && (!spec.audio_enabled || spec.source.audio_sample_rate > 0.0)
+            matches!(
+                spec.source.format,
+                NativeSourceFormat::QuickTime | NativeSourceFormat::QuickTimeProRes4444
+            ) && (!spec.audio_enabled || spec.source.audio_sample_rate > 0.0)
         }
         FootageKind::Audio => {
             matches!(
                 spec.source.format,
-                NativeSourceFormat::Wave | NativeSourceFormat::QuickTime
+                NativeSourceFormat::Wave
+                    | NativeSourceFormat::QuickTime
+                    | NativeSourceFormat::QuickTimeProRes4444
             ) && spec.source.audio_sample_rate > 0.0
         }
     };
@@ -364,24 +389,63 @@ fn wave_sample_clock(source: &NativeSource) -> Result<(u32, u32), AepWriteError>
     Ok((samples, sample_rate))
 }
 
+fn source_duration_ticks(source: &NativeSource) -> Result<u32, AepWriteError> {
+    let ticks = match source.duration_native_ticks {
+        Some(ticks) => {
+            if !matches!(
+                source.format,
+                NativeSourceFormat::QuickTime | NativeSourceFormat::QuickTimeProRes4444
+            ) || ticks == 0
+                || (u128::from(ticks) * 1_000).div_ceil(u128::from(SOURCE_TICKS_PER_SECOND))
+                    != u128::from(source.duration_millis)
+            {
+                return Err(AepWriteError::Invalid(
+                    "exact QuickTime duration disagrees with source interpretation",
+                ));
+            }
+            // Preserve the existing signed source-tick range for this precision repair.
+            i128::from(
+                i32::try_from(ticks)
+                    .map_err(|_| AepWriteError::Invalid("source duration exceeds native field"))?,
+            )
+        }
+        None => i128::from(ticks_from_millis_unsigned(source.duration_millis)?),
+    };
+    u32::try_from(ticks).map_err(|_| AepWriteError::Invalid("source duration exceeds native field"))
+}
+
 pub(crate) fn source_item(spec: &FootageSpec, id: u32) -> Result<Chunk, AepWriteError> {
     if spec.source.format != NativeSourceFormat::Wave && spec.source.wave_metadata.is_some() {
         return Err(AepWriteError::Invalid(
             "exact WAVE metadata belongs only to WAVE sources",
         ));
     }
+    if let Some(duration) = spec.source.native_duration
+        && (!matches!(
+            spec.source.format,
+            NativeSourceFormat::QuickTime | NativeSourceFormat::QuickTimeProRes4444
+        ) || duration.numerator == 0
+            || duration.denominator == 0)
+    {
+        return Err(AepWriteError::Invalid(
+            "exact movie duration requires a nonempty QuickTime source",
+        ));
+    }
     let mut settings = [0_u8; 222];
     settings[22..26].copy_from_slice(&spec.source.format.fourcc());
     settings[32..34].copy_from_slice(&spec.source.dimensions[0].to_be_bytes());
     settings[36..38].copy_from_slice(&spec.source.dimensions[1].to_be_bytes());
-    let (duration_units, duration_base) = if spec.source.format == NativeSourceFormat::Wave {
+    let (duration_units, duration_base) = if matches!(
+        spec.source.format,
+        NativeSourceFormat::PngRgb | NativeSourceFormat::PngRgba
+    ) {
+        (0, 1)
+    } else if spec.source.format == NativeSourceFormat::Wave {
         wave_sample_clock(&spec.source)?
+    } else if let Some(duration) = spec.source.native_duration {
+        (duration.numerator, duration.denominator)
     } else {
-        (
-            u32::try_from(ticks_from_millis_unsigned(spec.source.duration_millis)?)
-                .map_err(|_| AepWriteError::Invalid("source duration exceeds native field"))?,
-            24_576,
-        )
+        (source_duration_ticks(&spec.source)?, 24_576)
     };
     settings[38..42].copy_from_slice(&duration_units.to_be_bytes());
     settings[42..46].copy_from_slice(&duration_base.to_be_bytes());
@@ -400,6 +464,46 @@ pub(crate) fn source_item(spec: &FootageSpec, id: u32) -> Result<Chunk, AepWrite
     settings[154..156].copy_from_slice(&spec.source.frame_rate.fractional.to_be_bytes());
     settings[160..168].copy_from_slice(&spec.source.audio_sample_rate.to_be_bytes());
     settings[188..196].fill(255); // No Photoshop layer ID/index.
+    // File footage needs native file-source defaults, not a synthetic Solid
+    // header. A reader accepting a sparse sspc is not Adobe open evidence.
+    settings[64..66].copy_from_slice(&[1, 1]);
+    settings[79] = 1;
+    settings[124..126].copy_from_slice(&12_u16.to_be_bytes());
+    settings[128..130].copy_from_slice(&1_u16.to_be_bytes());
+    settings[196..200].copy_from_slice(&1_u32.to_be_bytes());
+    settings[200..202].copy_from_slice(&2_u16.to_be_bytes());
+    settings[212] = 1;
+    match spec.source.format {
+        NativeSourceFormat::QuickTime | NativeSourceFormat::QuickTimeProRes4444 => {
+            settings[52..54].copy_from_slice(&24_u16.to_be_bytes());
+            // Native alpha mode 3 discards alpha; mode 0 retains it as straight.
+            settings[73] = if spec.source.format == NativeSourceFormat::QuickTimeProRes4444 {
+                0
+            } else {
+                3
+            };
+            settings[112] = 8;
+            settings[158..160].copy_from_slice(&8_u16.to_be_bytes());
+        }
+        NativeSourceFormat::OpenExr => {
+            settings[52..54].copy_from_slice(&600_u16.to_be_bytes());
+            settings[73] = 1;
+            settings[77] = 1;
+            settings[113] = 1;
+        }
+        NativeSourceFormat::PngRgb | NativeSourceFormat::PngRgba => {
+            settings[52..54].copy_from_slice(&600_u16.to_be_bytes());
+            settings[63] = if spec.source.format == NativeSourceFormat::PngRgba {
+                32
+            } else {
+                24
+            };
+            // PNG samples have straight alpha; do not reinterpret encoded RGB
+            // as linear EXR or apply a project-wide color profile.
+            settings[73] = 0;
+        }
+        NativeSourceFormat::Wave => {}
+    }
     if spec.source.format == NativeSourceFormat::Wave {
         // Two independently Adobe-authored WAVE sources (audio_e2e/audio_cases
         // and media/audioEnabled) agree on these file-source defaults. The
@@ -419,43 +523,102 @@ pub(crate) fn source_item(spec: &FootageSpec, id: u32) -> Result<Chunk, AepWrite
         settings[212] = 1;
     }
 
-    let alias = if spec.source.format == NativeSourceFormat::Wave {
-        // AE's WAVE sources on macOS and Windows carry these alias metadata
-        // keys even though our best-effort reader only needs `fullpath`. Do
-        // not borrow an independent source's machine-specific path/server.
-        serde_json::json!({
-            "ascendcount_base": 1,
-            // AE rebuilds the relative location from this many trailing
-            // target components. One would discard `media/` and silently
-            // mark the staged WAVE missing unless copied beside the AEP.
-            "ascendcount_target": spec.source.path.as_str().split('/').count(),
-            // Without the explicit relative prefix, AE parses `media` as a
-            // macOS volume name (/Volumes/media), not a packaged directory.
-            "fullpath": format!("./{}", spec.source.path.as_str()),
-            "platform": 2,
-            "server_name": "",
-            "server_volume_name": "",
-            "target_is_folder": false,
-        })
-    } else {
-        serde_json::json!({
-            "fullpath": spec.source.path.as_str(),
-            "target_is_folder": false,
-        })
-    };
+    // All file-source aliases must retain the packaged `media/` component.
+    // Without `./`, AE can interpret `media` as a macOS volume name.
+    let alias = serde_json::json!({
+        "ascendcount_base": 1,
+        "ascendcount_target": spec.source.path.as_str().split('/').count(),
+        "fullpath": format!("./{}", spec.source.path.as_str()),
+        "platform": 2,
+        "server_name": "",
+        "server_volume_name": "",
+        "target_is_folder": false,
+    });
     let alias = serde_json::to_vec(&alias)
         .map_err(|_| AepWriteError::Invalid("media alias cannot be encoded"))?;
-    let pin_children = if spec.source.format == NativeSourceFormat::Wave {
-        // WAVE opti is an AE-owned 58-byte import-options descriptor, not an
-        // optional empty marker. Encode the fields shared by both native
-        // sources; omit file-specific hashes/stamps and profile bytes.
-        let mut options = [0_u8; 58];
-        options[..4].copy_from_slice(b"WAVE");
-        options[4..6].copy_from_slice(&5_u16.to_be_bytes());
-        options[6..10].copy_from_slice(&58_u32.to_be_bytes());
-        options[30..34].copy_from_slice(b"EVAW");
-        options[34..38].fill(255);
-        options[46] = 1;
+    let pin_children = {
+        // Import options are format-specific native records, never an empty
+        // marker. Only encode fields established by native source examples.
+        let options = match spec.source.format {
+            NativeSourceFormat::Wave => {
+                let mut options = vec![0_u8; 58];
+                options[..4].copy_from_slice(b"WAVE");
+                options[4..6].copy_from_slice(&5_u16.to_be_bytes());
+                options[6..10].copy_from_slice(&58_u32.to_be_bytes());
+                options[30..34].copy_from_slice(b"EVAW");
+                options[34..38].fill(255);
+                options[46] = 1;
+                options
+            }
+            NativeSourceFormat::QuickTime | NativeSourceFormat::QuickTimeProRes4444 => {
+                let mut options = vec![0_u8; 58];
+                options[..4].copy_from_slice(b"MOoV");
+                options[4..6].copy_from_slice(&5_u16.to_be_bytes());
+                options[6..10].copy_from_slice(&58_u32.to_be_bytes());
+                options[30..34].copy_from_slice(b"VooM");
+                options[34..38].fill(255);
+                options[38..42].copy_from_slice(match spec.source.format {
+                    NativeSourceFormat::QuickTime => b"avc1",
+                    _ => b"ap4h",
+                });
+                options[42] = 1;
+                options[46] = 1;
+                options
+            }
+            NativeSourceFormat::PngRgb | NativeSourceFormat::PngRgba => {
+                // Public native control established the PNG import grammar.
+                // Encode source fields, not donor filenames or opaque stamps.
+                let rgba = spec.source.format == NativeSourceFormat::PngRgba;
+                let channels = if rgba { 4_u32 } else { 3 };
+                let mut options = vec![0_u8; 322];
+                options[..4].copy_from_slice(b"png!");
+                options[4..6].copy_from_slice(&1_u16.to_be_bytes());
+                options[6..10].copy_from_slice(&322_u32.to_be_bytes());
+                options[10] = 1;
+                options[17] = 1;
+                options[18..22]
+                    .copy_from_slice(&u32::from(spec.source.dimensions[0]).to_be_bytes());
+                options[22..26]
+                    .copy_from_slice(&u32::from(spec.source.dimensions[1]).to_be_bytes());
+                options[26..30].copy_from_slice(&8_u32.to_be_bytes());
+                options[34..38].copy_from_slice(&(if rgba { 6_u32 } else { 2 }).to_be_bytes());
+                options[46..50].copy_from_slice(&channels.to_be_bytes());
+                options[50..54].copy_from_slice(
+                    &(u32::from(spec.source.dimensions[0]) * channels).to_be_bytes(),
+                );
+                let name = spec
+                    .source
+                    .path
+                    .as_str()
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("")
+                    .as_bytes();
+                if name.len() > 255 {
+                    return Err(AepWriteError::Invalid(
+                        "PNG source filename exceeds native field",
+                    ));
+                }
+                options[58..58 + name.len()].copy_from_slice(name);
+                options
+            }
+            NativeSourceFormat::OpenExr => {
+                // The native EXR descriptor is a fixed-size sparse record.
+                // Do not copy another file's source-specific opaque stamps.
+                let mut options = vec![0_u8; 9_750];
+                options[..4].copy_from_slice(b"oEXR");
+                options[4..6].copy_from_slice(&1_u16.to_be_bytes());
+                options[6..10].copy_from_slice(&9_750_u32.to_be_bytes());
+                options[10] = 1;
+                options[14] = 2;
+                options[16] = 1;
+                options[18] = 6;
+                options[46] = 6;
+                options[8_142] = 1;
+                options[8_144] = 1;
+                options
+            }
+        };
         vec![
             raw(*b"sspc", settings),
             raw(*b"Utf8", Vec::new()),
@@ -484,35 +647,30 @@ pub(crate) fn source_item(spec: &FootageSpec, id: u32) -> Result<Chunk, AepWrite
             ),
             raw(*b"Utf8", Vec::new()),
         ]
-    } else {
-        vec![
-            raw(*b"sspc", settings),
-            raw(*b"opti", Vec::new()),
-            Chunk::list(*b"Als2", vec![raw(*b"alas", alias)]),
-        ]
     };
     let mut item = vec![
         raw(*b"iide", id.to_le_bytes()),
         raw(*b"idpc", 0_u64.to_be_bytes()),
     ];
     let mut record = ItemRecord::solid_ae26(id)?.encode();
-    if spec.source.format == NativeSourceFormat::Wave {
-        // Native WAVE items use the real-footage identity (not Solid's
-        // synthetic-source identity) on both independent fixture revisions.
-        record[20..24].copy_from_slice(&4_u32.to_be_bytes());
-        // Both independent WAVE fixtures use the same file-item capability
-        // flags and report `hasAudio = true` in Adobe readback. The accepted
-        // v5 probe instead put 7 in the neighboring byte and rendered a
-        // composition with no output audio stream.
-        record[58] = 7;
-        record[60] = 0;
-    }
+    // Real footage uses format-specific native item identities and flags.
+    // The Solid identity is only valid for synthetic solid sources.
+    let (source_type, capability_flags) = match spec.source.format {
+        NativeSourceFormat::Wave => (4_u32, 7_u8),
+        NativeSourceFormat::QuickTime | NativeSourceFormat::QuickTimeProRes4444 => (0x20, 3),
+        NativeSourceFormat::OpenExr | NativeSourceFormat::PngRgb | NativeSourceFormat::PngRgba => {
+            (0x30, 5)
+        }
+    };
+    record[20..24].copy_from_slice(&source_type.to_be_bytes());
+    record[58] = capability_flags;
+    record[60] = 0;
     item.extend([
         raw(*b"idta", record),
         raw(*b"Utf8", spec.name.as_bytes().to_vec()),
         Chunk::list(*b"Pin ", pin_children),
     ]);
-    if spec.source.format == NativeSourceFormat::Wave {
+    {
         item.extend([
             raw(
                 *b"ftgi",
@@ -522,8 +680,8 @@ pub(crate) fn source_item(spec: &FootageSpec, id: u32) -> Result<Chunk, AepWrite
                     .collect::<Vec<_>>(),
             ),
             raw(*b"Utf8", Vec::new()),
-            // File-backed WAVE sources carry an empty per-item guide list in
-            // both independent native fixtures. The zero gdta status differs
+            // File-backed sources carry an empty per-item guide list. The
+            // zero gdta status differs
             // from view-layer guides, while the lhd3 type is shared.
             Chunk::list(
                 *b"Gide",
@@ -568,9 +726,10 @@ pub(super) fn timeline_layer_with_clock(
     transform_animations: Option<&TransformAnimations>,
     property_clock: PropertyClock,
 ) -> Result<Chunk, AepWriteError> {
-    validate(spec, duration)?;
+    validate(spec)?;
     let transformed_layer = transform_layer_geometry(&spec.transform, spec.source_geometry);
     solids::validate(&transformed_layer)?;
+    let mut opacity_units = None;
     let transformed_animations = transform_animations
         .map(|animations| {
             let mut animations = transform_source_geometry(animations, spec.source_geometry)?;
@@ -580,7 +739,40 @@ pub(super) fn timeline_layer_with_clock(
                 ));
             }
             if let FootageClock::Source(plan) = &spec.clock {
+                // Only non-remapped Video LINEAR scalar Opacity has independent
+                // native two-stage tick proof. All other clocks retain the
+                // exact-millisecond rebase guard.
+                let native_opacity = spec.kind == FootageKind::Video
+                    && !plan.has_time_remap()
+                    && spec.static_source_time_secs.is_none()
+                    && animations.opacity.as_ref().is_some_and(|track| {
+                        track.keys.iter().enumerate().all(|(index, key)| {
+                            key.values.len() == 1
+                                && key.spatial_in.is_empty()
+                                && key.spatial_out.is_empty()
+                                && key.easing.len() == 1
+                                && (index == 0
+                                    || matches!(key.easing[0], super::keyframes::Easing::Linear))
+                        })
+                    });
+                let opacity = if native_opacity {
+                    animations.opacity.take()
+                } else {
+                    None
+                };
                 rebase_transform_key_times(&mut animations, plan)?;
+                if let Some(track) = opacity {
+                    opacity_units = Some(
+                        track
+                            .keys
+                            .iter()
+                            .map(|key| {
+                                plan.affine_property_source_units(key.time_millis, property_clock)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
+                    );
+                    animations.opacity = Some(track);
+                }
             }
             Ok(animations)
         })
@@ -613,9 +805,8 @@ pub(super) fn timeline_layer_with_clock(
             ticks_from_millis_unsigned(*start_millis)?,
             ticks_from_millis_unsigned(*duration_millis)?,
         )?,
-        FootageClock::Source(plan) => {
-            LayerRecord::solid_ae26(id, source_id, duration)?.with_source_clock(plan.record)?
-        }
+        FootageClock::Source(plan) => LayerRecord::solid_ae26(id, source_id, duration)?
+            .with_source_clock(plan.native_record())?,
     };
     // Native WAVE layers retain the general AV switch and use the dedicated
     // audio switch for mute. Audio-only QuickTime occurrences instead clear
@@ -631,6 +822,7 @@ pub(super) fn timeline_layer_with_clock(
         &spec.audio_levels_db,
         audio_levels_animation.as_ref(),
         property_clock,
+        opacity_units.as_deref(),
     )?;
     let mut layer = Chunk::list(
         *b"Layr",
@@ -642,9 +834,15 @@ pub(super) fn timeline_layer_with_clock(
     );
     if let FootageClock::Source(plan) = &spec.clock {
         plan.append_time_remap_property_with_clock(&mut layer, property_clock)?;
-    }
-    if let Some(source_secs) = spec.static_source_time_secs {
-        append_static_time_remap(&mut layer, source_secs, property_clock)?;
+        if let Some(source_secs) = spec.static_source_time_secs {
+            append_static_time_remap(
+                &mut layer,
+                source_secs,
+                spec.source.duration_millis as f64 / 1_000.0,
+                plan.active_range.duration.as_millis(),
+                property_clock,
+            )?;
+        }
     }
     Ok(layer)
 }
@@ -673,8 +871,22 @@ fn footage_properties(
     audio_levels_db: &[f64; 2],
     audio_levels_animation: Option<&NumericTrack>,
     property_clock: PropertyClock,
+    opacity_units: Option<&[i32]>,
 ) -> Result<Chunk, AepWriteError> {
     let transform = &layer.transform;
+    // Like native solids, footage anchors use source-relative storage after
+    // source geometry and key clocks have been rebased. Position stays pixels.
+    let dimensions = [f64::from(layer.width), f64::from(layer.height)];
+    let mut anchor_animation = animations.and_then(|value| value.anchor.clone());
+    if let Some(track) = &mut anchor_animation {
+        for key in &mut track.keys {
+            for values in [&mut key.values, &mut key.spatial_in, &mut key.spatial_out] {
+                for (value, dimension) in values.iter_mut().zip(dimensions) {
+                    *value /= dimension;
+                }
+            }
+        }
+    }
     let transform_group = views::group(
         1,
         "-_0_/-",
@@ -683,9 +895,13 @@ fn footage_properties(
                 "ADBE Anchor Point",
                 views::property_with_clock(
                     ValueKind::Spatial,
-                    &[transform.anchor[0], transform.anchor[1], 0.0],
+                    &[
+                        transform.anchor[0] / dimensions[0],
+                        transform.anchor[1] / dimensions[1],
+                        0.0,
+                    ],
                     None,
-                    animations.and_then(|value| value.anchor.as_ref()),
+                    anchor_animation.as_ref(),
                     property_clock,
                 )?,
             ),
@@ -721,12 +937,13 @@ fn footage_properties(
             ),
             (
                 "ADBE Opacity",
-                views::property_with_clock(
+                views::property_with_scalar_units(
                     ValueKind::Scalar,
                     &[transform.opacity / 100.0],
                     Some((0.0, 100.0)),
                     animations.and_then(|value| value.opacity.as_ref()),
                     property_clock,
+                    opacity_units,
                 )?,
             ),
         ],
@@ -799,11 +1016,29 @@ fn audio_levels_property(
 fn append_static_time_remap(
     layer: &mut Chunk,
     source_secs: f64,
+    source_duration_secs: f64,
+    active_duration_millis: u64,
     property_clock: PropertyClock,
 ) -> Result<(), AepWriteError> {
-    if !source_secs.is_finite() || source_secs < 0.0 {
+    if !source_secs.is_finite() || !(0.0..=source_duration_secs).contains(&source_secs) {
         return Err(AepWriteError::Invalid("invalid static source Time Remap"));
     }
+    let end_millis = i64::try_from(active_duration_millis)
+        .map_err(|_| AepWriteError::Invalid("static Time Remap duration overflows"))?;
+    // Adobe-authored held footage uses an enabled track with equal endpoint
+    // keys. An unanimated scalar leaf leaves native Time Remap disabled.
+    let track = NumericTrack {
+        keys: [0, end_millis]
+            .into_iter()
+            .map(|time_millis| NumericKeyframe {
+                time_millis,
+                values: vec![source_secs],
+                easing: vec![KeyframeEasing::Linear],
+                spatial_in: Vec::new(),
+                spatial_out: Vec::new(),
+            })
+            .collect(),
+    };
     let children = layer.children_mut().ok_or(AepWriteError::Invalid(
         "static Time Remap target is not a fresh layer",
     ))?;
@@ -816,20 +1051,22 @@ fn append_static_time_remap(
     let properties = root.children_mut().ok_or(AepWriteError::Invalid(
         "static Time Remap property root is opaque",
     ))?;
+    // The static source clock has the same native root order as keyed Time
+    // Remap: before Transform and all ordinary layer properties.
     let index = properties
-        .len()
-        .checked_sub(1)
+        .iter()
+        .position(|child| child.id() == *b"tdmn")
         .ok_or(AepWriteError::Invalid(
-            "static Time Remap property root is empty",
+            "static Time Remap property root has no first property",
         ))?;
-    properties.insert(index, views::name_payload("ADBE Time Remapping")?);
+    properties.insert(index, views::name_record("ADBE Time Remapping")?);
     properties.insert(
         index + 1,
         views::property_with_clock(
-            ValueKind::Scalar,
-            &[source_secs],
-            None,
-            None,
+            ValueKind::TimeRemap,
+            &[],
+            Some((0.0, source_duration_secs)),
+            Some(&track),
             property_clock,
         )?,
     );
@@ -912,7 +1149,7 @@ fn ticks_from_millis_signed(millis: i64) -> Result<i32, AepWriteError> {
     i32::try_from(ticks).map_err(|_| AepWriteError::Invalid("native clock exceeds i32"))
 }
 
-fn ticks_from_millis_unsigned(millis: u64) -> Result<i32, AepWriteError> {
+pub(crate) fn ticks_from_millis_unsigned(millis: u64) -> Result<i32, AepWriteError> {
     let millis =
         i64::try_from(millis).map_err(|_| AepWriteError::Invalid("native clock exceeds i64"))?;
     ticks_from_millis_signed(millis)
@@ -924,6 +1161,8 @@ fn raw(tag: [u8; 4], bytes: impl Into<Vec<u8>>) -> Chunk {
 
 #[cfg(test)]
 mod tests {
+    mod anchor;
+
     use super::*;
     use crate::structure::read_project;
     use crate::writer::SolidTransform;
@@ -956,9 +1195,11 @@ mod tests {
                 format: NativeSourceFormat::QuickTime,
                 dimensions: [1920, 1080],
                 duration_millis: 1_000,
+                duration_native_ticks: None,
                 frame_rate: NativeFrameRate::integer(24),
                 audio_sample_rate: 48_000.0,
                 wave_metadata: None,
+                native_duration: None,
             },
             source_geometry: SourceGeometry::default(),
             transform: SolidLayerSpec {
@@ -992,6 +1233,202 @@ mod tests {
             audio_enabled,
             audio_levels_db: [0.0; 2],
             audio_levels_animation: None,
+        }
+    }
+
+    #[test]
+    fn pinned_native_footage_outpoints_extend_past_composition_duration() {
+        let source = read_project(include_bytes!(
+            "../../tests/fixtures/footage_outpoint/beyond_duration.aep"
+        ))
+        .unwrap();
+        let crate::structure::ItemKind::Composition(composition) = &source.item(1).unwrap().kind
+        else {
+            panic!("pinned native target is not a composition");
+        };
+        assert_eq!(composition.frame_rate, 30.0);
+        assert!((composition.duration_secs - 365.0 / 30.0).abs() < 1e-12);
+        assert_eq!(composition.layers.len(), 3);
+        for name in ["image", "movie", "audio"] {
+            let layer = composition
+                .layers
+                .iter()
+                .find(|layer| layer.name.as_ref() == name)
+                .unwrap();
+            assert_eq!(layer.record.in_point(), Some(0.0));
+            assert_eq!(layer.record.out_point(), Some(12.166_992_187_5));
+            assert!(layer.record.out_point().unwrap() > composition.duration_secs);
+        }
+    }
+
+    #[test]
+    fn generated_footage_outpoints_extend_past_composition_duration() {
+        let (_, duration) = crate::timing::FrameRate::new(30.0)
+            .unwrap()
+            .authored_duration(12.167)
+            .unwrap();
+        for kind in [FootageKind::Image, FootageKind::Video, FootageKind::Audio] {
+            let mut spec = quicktime_spec(kind, kind == FootageKind::Audio);
+            spec.source.duration_millis = 13_000;
+            spec.source.frame_rate = NativeFrameRate::integer(30);
+            spec.clock = FootageClock::Source(
+                SourceClockPlan::affine(
+                    fx_schema::TimeRangeProperty::new(
+                        fx_schema::Time::ZERO,
+                        fx_schema::Duration::from_millis(12_167),
+                    ),
+                    fx_schema::Time::ZERO,
+                    fx_schema::Time::from_millis(12_167),
+                    13_000,
+                )
+                .unwrap(),
+            );
+            if kind == FootageKind::Image {
+                spec.source.format = NativeSourceFormat::OpenExr;
+                spec.source.duration_millis = 0;
+                spec.source.frame_rate = NativeFrameRate::integer(0);
+                spec.source.audio_sample_rate = 0.0;
+                spec.clock = FootageClock::Still {
+                    start_millis: 0,
+                    duration_millis: 12_167,
+                };
+            } else if kind == FootageKind::Audio {
+                spec.source.format = NativeSourceFormat::Wave;
+                spec.source.dimensions = [0, 0];
+                spec.source.frame_rate = NativeFrameRate::integer(0);
+                spec.source.wave_metadata = Some(NativeWaveMetadata {
+                    sample_frames: 624_000,
+                    file_length: 1_248_044,
+                });
+            }
+            let layer = timeline_layer(&spec, 3, 2, duration, None)
+                .expect("native footage outpoints may extend beyond composition duration");
+            let record = layer
+                .children()
+                .unwrap()
+                .iter()
+                .find(|chunk| chunk.id() == *b"ldta")
+                .unwrap();
+            let record = LayerRecord::decode(record.data_payload().unwrap()).unwrap();
+            assert_eq!(record.source_id(), 2);
+            assert_eq!(record.in_point(), Some(0.0));
+            let expected = if kind == FootageKind::Image {
+                12.166_992_187_5
+            } else {
+                // Finalized source clocks retain their exact millisecond rational;
+                // still records use the established truncated 24,576-Hz clock.
+                12.167
+            };
+            assert_eq!(record.out_point(), Some(expected));
+            assert!((expected - 12.166_992_187_5).abs() < 1.0 / 24_576.0);
+            assert!(record.out_point().unwrap() > 365.0 / 30.0);
+            assert_eq!(record.flags().audio_enabled, kind == FootageKind::Audio);
+        }
+    }
+
+    #[test]
+    fn footage_outpoint_preserves_empty_overflow_and_source_guards() {
+        let mut spec = quicktime_spec(FootageKind::Image, false);
+        spec.source.format = NativeSourceFormat::OpenExr;
+        spec.source.duration_millis = 0;
+        spec.source.frame_rate = NativeFrameRate::integer(0);
+        spec.source.audio_sample_rate = 0.0;
+        spec.clock = FootageClock::Still {
+            start_millis: 0,
+            duration_millis: 12_167,
+        };
+        assert!(validate(&spec).is_ok());
+        for (start_millis, duration_millis) in [(0, 0), (u64::MAX, 1), (0, u64::MAX)] {
+            let mut invalid = spec.clone();
+            invalid.clock = FootageClock::Still {
+                start_millis,
+                duration_millis,
+            };
+            assert!(validate(&invalid).is_err());
+        }
+        let mut invalid = spec.clone();
+        invalid.clock = FootageClock::Still {
+            start_millis: 0,
+            duration_millis: u64::try_from(i32::MAX).unwrap(),
+        };
+        assert!(validate(&invalid).is_err());
+        let mut invalid = spec.clone();
+        invalid.audio_enabled = true;
+        assert!(validate(&invalid).is_err());
+        let mut invalid = spec;
+        invalid.source.dimensions = [0, 0];
+        assert!(validate(&invalid).is_err());
+        assert!(
+            SourceClockPlan::affine(
+                fx_schema::TimeRangeProperty::new(
+                    fx_schema::Time::ZERO,
+                    fx_schema::Duration::from_millis(12_167),
+                ),
+                fx_schema::Time::ZERO,
+                fx_schema::Time::from_millis(12_167),
+                1_000,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn native_png_source_envelope_matches_proved_rgb_rgba_grammar() {
+        for (format, channels, color_type) in [
+            (NativeSourceFormat::PngRgb, 3_u32, 2_u32),
+            (NativeSourceFormat::PngRgba, 4, 6),
+        ] {
+            let mut spec = quicktime_spec(FootageKind::Image, false);
+            spec.source.format = format;
+            spec.source.path = RelativeMediaPath::new("media/swatches.png").unwrap();
+            spec.source.dimensions = [32, 8];
+            spec.source.duration_millis = 0;
+            spec.source.frame_rate = NativeFrameRate::integer(0);
+            spec.source.audio_sample_rate = 0.0;
+            validate(&spec).unwrap();
+            let item = source_item(&spec, 42).unwrap();
+            let children = item.children().unwrap();
+            let idta = children
+                .iter()
+                .find(|chunk| chunk.id() == *b"idta")
+                .unwrap()
+                .data_payload()
+                .unwrap();
+            assert_eq!(&idta[20..24], &0x30_u32.to_be_bytes());
+            assert_eq!(idta[58], 5);
+            let pin = children
+                .iter()
+                .find(|chunk| chunk.list_kind() == Some(*b"Pin "))
+                .unwrap()
+                .children()
+                .unwrap();
+            let settings = pin
+                .iter()
+                .find(|chunk| chunk.id() == *b"sspc")
+                .unwrap()
+                .data_payload()
+                .unwrap();
+            assert_eq!(&settings[22..26], b"png!");
+            assert_eq!(settings[63], (channels * 8) as u8);
+            assert_eq!(settings[73], 0);
+            assert_eq!(&settings[38..46], &[0, 0, 0, 0, 0, 0, 0, 1]);
+            let options = pin
+                .iter()
+                .find(|chunk| chunk.id() == *b"opti")
+                .unwrap()
+                .data_payload()
+                .unwrap();
+            assert_eq!(options.len(), 322);
+            assert_eq!(&options[..10], &[112, 110, 103, 33, 0, 1, 0, 0, 1, 66]);
+            assert_eq!(&options[18..22], &32_u32.to_be_bytes());
+            assert_eq!(&options[22..26], &8_u32.to_be_bytes());
+            assert_eq!(&options[26..30], &8_u32.to_be_bytes());
+            assert_eq!(&options[34..38], &color_type.to_be_bytes());
+            assert_eq!(&options[46..50], &channels.to_be_bytes());
+            assert_eq!(&options[50..54], &(32 * channels).to_be_bytes());
+            assert_eq!(&options[58..71], b"swatches.png\0");
+            spec.audio_enabled = true;
+            assert!(validate(&spec).is_err());
         }
     }
 
@@ -1145,9 +1582,21 @@ mod tests {
     }
 
     #[test]
-    fn footage_properties_and_static_remap_use_composition_clock() {
-        let mut spec = quicktime_spec(FootageKind::Audio, true);
-        spec.static_source_time_secs = Some(0.5);
+    fn held_time_remap_is_enabled_with_equal_keys_on_composition_clock() {
+        let mut spec = quicktime_spec(FootageKind::Video, false);
+        spec.clock = FootageClock::Source(
+            SourceClockPlan::affine(
+                fx_schema::TimeRangeProperty::new(
+                    fx_schema::Time::from_millis(100),
+                    fx_schema::Duration::from_millis(903),
+                ),
+                fx_schema::Time::ZERO,
+                fx_schema::Time::from_millis(903),
+                1_000,
+            )
+            .unwrap(),
+        );
+        spec.static_source_time_secs = Some(0.750123);
         let clock = super::super::keyframes::PropertyClock::for_rate(
             crate::timing::FrameRate::new(30.0).unwrap(),
         )
@@ -1161,6 +1610,14 @@ mod tests {
             clock,
         )
         .unwrap();
+        let record = LayerRecord::decode(
+            crate::properties::data(layer.children().unwrap(), *b"ldta").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(record.start_time_fraction(), (1, 10));
+        assert_eq!(record.in_point_fraction(), (0, 1));
+        assert_eq!(record.out_point_fraction(), (903, 1_000));
+        assert_eq!(record.stretch_fraction(), (1, 1));
         fn collect_clocks(chunk: &Chunk, clocks: &mut Vec<u32>) {
             if chunk.id() == *b"tdb4" {
                 let bytes = chunk.data_payload().unwrap();
@@ -1180,6 +1637,190 @@ mod tests {
             clock.ticks(),
             super::super::keyframes::PropertyClock::DEFAULT.ticks()
         );
+        let properties =
+            crate::properties::unique_list(layer.children().unwrap(), *b"tdgp").unwrap();
+        let (_, remap) = crate::properties::runs(properties)
+            .unwrap()
+            .into_iter()
+            .find(|(name, _)| *name == "ADBE Time Remapping")
+            .unwrap();
+        let remap = crate::properties::unique_list(remap, *b"tdbs").unwrap();
+        // The independently Adobe-authored held movie has two equal keys,
+        // unlike ordinary footage's disabled, unanimated Time Remap leaf.
+        let native = read_project(include_bytes!(
+            "../../tests/fixtures/pr4442_native/sources/media_source_static_remap.aep"
+        ))
+        .unwrap();
+        let crate::structure::ItemKind::Composition(native_comp) = &native.item(1).unwrap().kind
+        else {
+            panic!("native held composition")
+        };
+        let native_properties =
+            crate::properties::unique_list(&native_comp.layers[0].content, *b"tdgp").unwrap();
+        let (_, native_remap) = crate::properties::runs(native_properties)
+            .unwrap()
+            .into_iter()
+            .find(|(name, _)| *name == "ADBE Time Remapping")
+            .unwrap();
+        let native_remap = crate::properties::unique_list(native_remap, *b"tdbs").unwrap();
+        assert_eq!(
+            crate::properties::data(remap, *b"tdsb").unwrap(),
+            crate::properties::data(native_remap, *b"tdsb").unwrap(),
+        );
+        let authored = crate::properties::read_numeric(native_remap).unwrap();
+        assert!(authored.animated);
+        assert_eq!(
+            authored
+                .keyframes
+                .iter()
+                .map(|key| key.values[0])
+                .collect::<Vec<_>>(),
+            [0.75, 0.75],
+        );
+        let held = crate::properties::read_numeric(remap).unwrap();
+        assert!(held.animated);
+        assert_eq!(
+            held.keyframes
+                .iter()
+                .map(|key| (key.time_secs, key.values[0]))
+                .collect::<Vec<_>>(),
+            [(0.0, 0.750123), (27_740.0 / 30_720.0, 0.750123)],
+        );
+        for (tag, value) in [(*b"tdum", 0.0_f64), (*b"tduM", 1.0_f64)] {
+            assert_eq!(
+                crate::properties::data(remap, tag).unwrap(),
+                value.to_be_bytes()
+            );
+        }
+        spec.static_source_time_secs = Some(1.001);
+        assert!(
+            timeline_layer_with_clock(
+                &spec,
+                3,
+                2,
+                Duration24::from_frames(48).unwrap(),
+                None,
+                clock,
+            )
+            .is_err(),
+            "a held frame outside the source domain is still rejected"
+        );
+    }
+
+    #[test]
+    fn p004_fractional_opacity_preserves_native_two_stage_ticks() {
+        use super::super::keyframes::{Easing, Keyframe};
+        let mut spec = quicktime_spec(FootageKind::Video, false);
+        let plan = SourceClockPlan::affine(
+            fx_schema::TimeRangeProperty::new(
+                fx_schema::Time::from_millis(1_667),
+                fx_schema::Duration::from_millis(300),
+            ),
+            fx_schema::Time::ZERO,
+            fx_schema::Time::from_millis(366),
+            1_000,
+        )
+        .unwrap();
+        assert!(plan.source_time_millis(33).is_err());
+        spec.clock = FootageClock::Source(plan);
+        let animations = TransformAnimations {
+            opacity: Some(NumericTrack {
+                keys: [0, 33, 266, 300]
+                    .into_iter()
+                    .map(|time_millis| Keyframe {
+                        time_millis,
+                        values: vec![
+                            100.0
+                                * (std::f64::consts::PI * time_millis as f64 / 300.0)
+                                    .sin()
+                                    .max(0.0)
+                                    .powf(0.75),
+                        ],
+                        easing: vec![if time_millis == 0 {
+                            Easing::Hold
+                        } else {
+                            Easing::Linear
+                        }],
+                        spatial_in: Vec::new(),
+                        spatial_out: Vec::new(),
+                    })
+                    .collect(),
+            }),
+            ..TransformAnimations::default()
+        };
+        let clock = PropertyClock::for_rate(crate::timing::FrameRate::new(30.0).unwrap()).unwrap();
+        let layer = timeline_layer_with_clock(
+            &spec,
+            3,
+            2,
+            Duration24::from_frames(48).unwrap(),
+            Some(&animations),
+            clock,
+        )
+        .unwrap();
+        fn collect(chunk: &Chunk, times: &mut Vec<i32>) {
+            if chunk.id() == *b"ldat" {
+                for bytes in chunk.data_payload().unwrap().chunks_exact(48) {
+                    times.push(i32::from_be_bytes(bytes[..4].try_into().unwrap()));
+                }
+            }
+            if let Some(children) = chunk.children() {
+                for child in children {
+                    collect(child, times);
+                }
+            }
+        }
+        let mut times = Vec::new();
+        collect(&layer, &mut times);
+        assert_eq!(times, vec![0, 1237, 9970, 11244]);
+
+        // Nonlinear/spatial/audio and unrelated Transform tracks still reach
+        // the strict fractional-millisecond guard, not this numeric profile.
+        let write = |spec: &FootageSpec, animation: &TransformAnimations| {
+            timeline_layer_with_clock(
+                spec,
+                3,
+                2,
+                Duration24::from_frames(48).unwrap(),
+                Some(animation),
+                clock,
+            )
+        };
+        let mut unsupported = animations.clone();
+        unsupported.opacity.as_mut().unwrap().keys[1].easing[0] = Easing::Hold;
+        assert!(write(&spec, &unsupported).is_err());
+        let mut unsupported = animations.clone();
+        unsupported.opacity.as_mut().unwrap().keys[1].spatial_in = vec![0.0];
+        assert!(write(&spec, &unsupported).is_err());
+        let mut audio = spec.clone();
+        audio.kind = FootageKind::Audio;
+        assert!(write(&audio, &animations).is_err());
+        let mut unsupported = animations.clone();
+        unsupported.rotation = unsupported.opacity.clone();
+        assert!(write(&spec, &unsupported).is_err());
+        let mut source_owned = spec.clone();
+        source_owned.time_remap_requires_source_owned_transform = true;
+        assert!(write(&source_owned, &animations).is_err());
+        let mut overflow = animations.clone();
+        overflow.opacity.as_mut().unwrap().keys[3].time_millis = i64::MAX;
+        assert!(write(&spec, &overflow).is_err());
+        let mut collision = animations.clone();
+        collision.opacity.as_mut().unwrap().keys.truncate(2);
+        collision.opacity.as_mut().unwrap().keys[1].time_millis = 1;
+        let mut slow = spec.clone();
+        slow.clock = FootageClock::Source(
+            SourceClockPlan::affine(
+                fx_schema::TimeRangeProperty::new(
+                    fx_schema::Time::ZERO,
+                    fx_schema::Duration::from_millis(300),
+                ),
+                fx_schema::Time::ZERO,
+                fx_schema::Time::from_millis(1),
+                1_000,
+            )
+            .unwrap(),
+        );
+        assert!(write(&slow, &collision).is_err());
     }
 
     #[test]
@@ -1234,6 +1875,24 @@ mod tests {
         assert!(!NativeFrameBlending::Disabled.requires_composition_master());
         assert!(NativeFrameBlending::FrameMix.requires_composition_master());
         assert_eq!(NativeFrameBlending::PixelMotion.layer_flags(), (true, true));
+    }
+
+    #[test]
+    fn exact_movie_duration_rejects_empty_and_non_movie_sources() {
+        let mut spec = quicktime_spec(FootageKind::Video, false);
+        for (numerator, denominator) in [(0, 2997), (3000, 0)] {
+            spec.source.native_duration = Some(crate::media::MediaDuration {
+                numerator,
+                denominator,
+            });
+            assert!(source_item(&spec, 2).is_err());
+        }
+        spec.source.native_duration = Some(crate::media::MediaDuration {
+            numerator: 3000,
+            denominator: 2997,
+        });
+        spec.source.format = NativeSourceFormat::OpenExr;
+        assert!(source_item(&spec, 2).is_err());
     }
 
     #[test]
@@ -1599,6 +2258,86 @@ mod tests {
         spec.source.wave_metadata.as_mut().unwrap().sample_frames = 262_094;
         spec.source.wave_metadata.as_mut().unwrap().file_length = 44;
         assert!(source_item(&spec, 12).is_err());
+    }
+
+    #[test]
+    fn file_sources_have_native_import_envelopes_and_relative_aliases() {
+        for (format, native_type, option_length, alpha_mode) in [
+            (NativeSourceFormat::QuickTime, 0x20_u32, 58_usize, 3_u8),
+            (NativeSourceFormat::QuickTimeProRes4444, 0x20, 58, 0),
+            (NativeSourceFormat::OpenExr, 0x30, 9_750, 1),
+        ] {
+            let mut spec = quicktime_spec(FootageKind::Video, false);
+            spec.source.format = format;
+            spec.source.path = RelativeMediaPath::new("media/clip.mov").unwrap();
+            let item = source_item(&spec, 42).unwrap();
+            let children = item.children().unwrap();
+            let record = children
+                .iter()
+                .find(|chunk| chunk.id() == *b"idta")
+                .unwrap()
+                .data_payload()
+                .unwrap();
+            assert_eq!(
+                u32::from_be_bytes(record[20..24].try_into().unwrap()),
+                native_type
+            );
+            assert_eq!(
+                record[58],
+                if format == NativeSourceFormat::OpenExr {
+                    5
+                } else {
+                    3
+                }
+            );
+            assert!(children.iter().any(|chunk| chunk.id() == *b"ftgi"));
+            assert!(
+                children
+                    .iter()
+                    .any(|chunk| chunk.list_kind() == Some(*b"Gide"))
+            );
+            let pin = children
+                .iter()
+                .find(|chunk| chunk.list_kind() == Some(*b"Pin "))
+                .unwrap()
+                .children()
+                .unwrap();
+            let settings = pin
+                .iter()
+                .find(|chunk| chunk.id() == *b"sspc")
+                .unwrap()
+                .data_payload()
+                .unwrap();
+            assert_eq!(settings[73], alpha_mode);
+            let options = pin
+                .iter()
+                .find(|chunk| chunk.id() == *b"opti")
+                .unwrap()
+                .data_payload()
+                .unwrap();
+            assert_eq!(options.len(), option_length);
+            assert_eq!(&options[..4], &format.fourcc());
+            if format == NativeSourceFormat::QuickTimeProRes4444 {
+                assert_eq!(&options[38..42], b"ap4h");
+            } else if format == NativeSourceFormat::QuickTime {
+                assert_eq!(&options[38..42], b"avc1");
+            }
+            let alias = pin
+                .iter()
+                .find(|chunk| chunk.list_kind() == Some(*b"Als2"))
+                .unwrap()
+                .children()
+                .unwrap()
+                .iter()
+                .find(|chunk| chunk.id() == *b"alas")
+                .unwrap()
+                .data_payload()
+                .unwrap();
+            let alias: serde_json::Value = serde_json::from_slice(alias).unwrap();
+            assert_eq!(alias["fullpath"], "./media/clip.mov");
+            assert_eq!(alias["ascendcount_target"], 2);
+            assert_eq!(alias["platform"], 2);
+        }
     }
 
     #[test]

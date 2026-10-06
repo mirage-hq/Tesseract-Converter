@@ -1,6 +1,6 @@
 //! Current-FX lowering for a freshly authored native 3D layer Transform.
 
-use fx_schema::animator::{AnimationGraphEntry, PropertyKeyframeTrack};
+use fx_schema::animator::PropertyKeyframeTrack;
 use fx_schema::{LayerId, Position, PropType, PropertyKeyframeEasing, Transform};
 
 use crate::writer::{
@@ -58,7 +58,7 @@ pub(super) struct LoweredTransform3d {
 /// `transform_owner_id` is deliberately separate from a content leaf ID: keys
 /// owned by a single-child wrapper must remain attached to that selected owner.
 pub(super) fn lower(
-    entries: &[AnimationGraphEntry],
+    entries: &crate::export_document::AnimationIndex<'_>,
     selected_transform: &Transform,
     transform_owner_id: LayerId,
     geometry: Native2dGeometry,
@@ -108,19 +108,7 @@ pub(super) fn lower(
     };
 
     let mut animations = Transform3dAnimations {
-        anchor: triple_track(
-            entries,
-            transform_owner_id,
-            [
-                Some(PropType::AnchorPointX),
-                Some(PropType::AnchorPointY),
-                None,
-            ],
-            transform.anchor,
-            [1.0; 3],
-            true,
-            true,
-        )?,
+        anchor: anchor_track(entries, transform_owner_id, transform.anchor)?,
         position: position_animation,
         position_separated,
         scale: triple_track(
@@ -184,7 +172,7 @@ pub(super) fn lower(
 }
 
 pub(super) fn requires_native_3d(
-    entries: &[AnimationGraphEntry],
+    entries: &crate::export_document::AnimationIndex<'_>,
     transform: &Transform,
     owner: LayerId,
 ) -> bool {
@@ -204,13 +192,14 @@ pub(super) fn requires_native_3d(
         .any(|property| has_target(entries, owner, property))
 }
 
-fn has_target(entries: &[AnimationGraphEntry], owner: LayerId, property: PropType) -> bool {
-    entries.iter().any(|entry| {
-        entry
-            .target
-            .as_property()
-            .is_some_and(|target| target.layer_id() == owner && target.property_type() == property)
-    })
+fn has_target(
+    entries: &crate::export_document::AnimationIndex<'_>,
+    owner: LayerId,
+    property: PropType,
+) -> bool {
+    entries
+        .first(fx_schema::property::Property::new(owner, property))
+        .is_some()
 }
 
 fn validate_geometry(value: Native2dGeometry) -> Result<(), &'static str> {
@@ -263,7 +252,7 @@ fn apply_geometry(
 type PositionTracks = (Option<NumericTrack>, Option<[Option<NumericTrack>; 3]>);
 
 fn position_tracks(
-    entries: &[AnimationGraphEntry],
+    entries: &crate::export_document::AnimationIndex<'_>,
     owner: LayerId,
     base: [f64; 3],
 ) -> Result<PositionTracks, &'static str> {
@@ -327,8 +316,67 @@ fn position_tracks(
     ))
 }
 
+fn anchor_track(
+    entries: &crate::export_document::AnimationIndex<'_>,
+    owner: LayerId,
+    base: [f64; 3],
+) -> Result<Option<NumericTrack>, &'static str> {
+    let properties = [
+        Some(PropType::AnchorPointX),
+        Some(PropType::AnchorPointY),
+        None,
+    ];
+    let sources = [
+        track(entries, owner, PropType::AnchorPointX)?,
+        track(entries, owner, PropType::AnchorPointY)?,
+        None,
+    ];
+    let keyed = sources.map(|source| match source {
+        Some(NativeTrack::Keyframes(track)) => Some(track),
+        _ => None,
+    });
+    let different_times = keyed[0]
+        .zip(keyed[1])
+        .is_some_and(|(x, y)| key_times(x).ne(key_times(y)));
+    let straight = keyed.iter().flatten().all(|track| {
+        track.keyframes().iter().all(|key| {
+            matches!(
+                key.easing(),
+                PropertyKeyframeEasing::Linear | PropertyKeyframeEasing::Hold
+            ) && key.spatial_in_tangent().is_none()
+                && key.spatial_out_tangent().is_none()
+        })
+    });
+    if !different_times || !straight {
+        return triple_track(entries, owner, properties, base, [1.0; 3], true, true);
+    }
+    // Subdivide only at authored knots. Independent piecewise Linear/Hold
+    // Anchor axes have an exact straight spatial union; curved paths and cubic
+    // temporal curves must keep the original equal-knot guard.
+    let values = sources
+        .iter()
+        .zip(base)
+        .map(|(&source, fallback)| component_value(source, 0, fallback))
+        .collect::<Result<Vec<_>, _>>()?;
+    let tracks = keyed
+        .iter()
+        .map(|&source| scalar_track(source.map(NativeTrack::Keyframes), 1.0))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut merged = super::effects::merge_tracks(&values, &tracks)?;
+    if let Some(track) = &mut merged {
+        for key in &mut track.keys {
+            // The merger rejects simultaneous changing Hold/continuous axes
+            // and normalizes the remaining straight segments to a shared curve.
+            key.easing.truncate(1);
+            key.spatial_in = vec![0.0; 3];
+            key.spatial_out = vec![0.0; 3];
+        }
+    }
+    Ok(merged)
+}
+
 fn triple_track(
-    entries: &[AnimationGraphEntry],
+    entries: &crate::export_document::AnimationIndex<'_>,
     owner: LayerId,
     properties: [Option<PropType>; 3],
     base: [f64; 3],
@@ -455,6 +503,8 @@ fn component_value(
 
 #[cfg(test)]
 mod tests {
+    mod p033_anchor;
+
     use fx_schema::{
         PropertyTarget, PropertyValue, TimeOffset,
         animator::{
@@ -509,6 +559,84 @@ mod tests {
             dependencies: Vec::new(),
             random_seed_target: None,
             layer_refs: Default::default(),
+        }
+    }
+
+    #[test]
+    fn p033_anchor_union_keeps_independent_knots_and_endpoint_edits() {
+        let owner = LayerId::new(100);
+        for end_x in [40.0, 60.0] {
+            let entries = vec![
+                keyed_entry(
+                    owner,
+                    PropType::PositionX,
+                    &[
+                        (0, 0.0, PropertyKeyframeEasing::Linear),
+                        (500, 40.0, PropertyKeyframeEasing::Linear),
+                    ],
+                ),
+                keyed_entry(
+                    owner,
+                    PropType::PositionY,
+                    &[
+                        (0, 0.0, PropertyKeyframeEasing::Linear),
+                        (1000, 20.0, PropertyKeyframeEasing::Linear),
+                    ],
+                ),
+                keyed_entry(
+                    owner,
+                    PropType::AnchorPointX,
+                    &[
+                        (0, 0.0, PropertyKeyframeEasing::Linear),
+                        (500, end_x, PropertyKeyframeEasing::Linear),
+                    ],
+                ),
+                keyed_entry(
+                    owner,
+                    PropType::AnchorPointY,
+                    &[
+                        (0, 0.0, PropertyKeyframeEasing::Linear),
+                        (1000, 20.0, PropertyKeyframeEasing::Linear),
+                    ],
+                ),
+            ];
+            let index = crate::export_document::AnimationIndex::new(&entries);
+            let lowered = lower(
+                &index,
+                &transform_2d([0.0, 0.0]),
+                owner,
+                Native2dGeometry::IDENTITY,
+            )
+            .unwrap()
+            .unwrap();
+            assert!(!lowered.transform.is_three_d);
+            assert!(lowered.animations.position_separated.is_some());
+            let anchor = lowered.animations.anchor.unwrap();
+            assert_eq!(
+                anchor
+                    .keys
+                    .iter()
+                    .map(|key| key.time_millis)
+                    .collect::<Vec<_>>(),
+                [0, 500, 1000]
+            );
+            assert_eq!(
+                anchor
+                    .keys
+                    .iter()
+                    .map(|key| key.values.clone())
+                    .collect::<Vec<_>>(),
+                [
+                    vec![0.0, 0.0, 0.0],
+                    vec![end_x, 10.0, 0.0],
+                    vec![end_x, 20.0, 0.0]
+                ]
+            );
+            for key in anchor.keys {
+                assert_eq!(key.easing, [KeyframeEasing::Linear]);
+                assert_eq!(key.spatial_in, [0.0; 3]);
+                assert_eq!(key.spatial_out, [0.0; 3]);
+            }
         }
     }
 
@@ -733,7 +861,7 @@ mod tests {
         ];
 
         let lowered = lower(
-            &entries,
+            &crate::export_document::AnimationIndex::new(&entries),
             &transform_2d([10.0, 30.0]),
             owner,
             Native2dGeometry::IDENTITY,
@@ -793,7 +921,13 @@ mod tests {
         let mut planar = transform_2d([10.0, 30.0]);
         planar.skew = 12.0;
         assert_eq!(
-            lower(&entries, &planar, owner, Native2dGeometry::IDENTITY).unwrap(),
+            lower(
+                &crate::export_document::AnimationIndex::new(&entries),
+                &planar,
+                owner,
+                Native2dGeometry::IDENTITY
+            )
+            .unwrap(),
             None
         );
 
@@ -809,7 +943,7 @@ mod tests {
             ),
         ];
         assert!(matches!(
-            lower(&incompatible, &planar, owner, Native2dGeometry::IDENTITY),
+            lower(&crate::export_document::AnimationIndex::new(&incompatible), &planar, owner, Native2dGeometry::IDENTITY),
             Err(message) if message.contains("no Skew/Skew Axis leaves")
         ));
     }
@@ -854,7 +988,7 @@ mod tests {
         ];
 
         let lowered = lower(
-            &entries,
+            &crate::export_document::AnimationIndex::new(&entries),
             &transform([10.0, 30.0, 60.0]),
             owner,
             Native2dGeometry::IDENTITY,
@@ -934,7 +1068,7 @@ mod tests {
             spatial_entry(owner, PropType::PositionY, 1_000, 22.0),
         ];
         let lowered = lower(
-            &aligned,
+            &crate::export_document::AnimationIndex::new(&aligned),
             &transform([0.0, 0.0, 42.0]),
             owner,
             Native2dGeometry::IDENTITY,
@@ -953,7 +1087,7 @@ mod tests {
         for transform in [transform([0.0, 0.0, 42.0]), transform_2d([0.0, 0.0])] {
             assert!(matches!(
                 lower(
-                    &mismatched,
+                    &crate::export_document::AnimationIndex::new(&mismatched),
                     &transform,
                     owner,
                     Native2dGeometry::IDENTITY,
@@ -987,7 +1121,7 @@ mod tests {
         ];
 
         let lowered = lower(
-            &entries,
+            &crate::export_document::AnimationIndex::new(&entries),
             &transform([10.0, 30.0, 42.0]),
             owner,
             Native2dGeometry::IDENTITY,

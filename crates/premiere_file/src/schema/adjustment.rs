@@ -26,12 +26,35 @@ pub(crate) const ADJUSTMENT_LAYER_NAME: &str = "Adjustment Layer";
 /// Premiere applies an adjustment's Opacity as a mix of the effected composite
 /// over the untouched one, which the FX adjustment layer's opacity gate also
 /// does, so Opacity and its keys convert. Bounded static Motion coverage is
-/// admitted separately by [`supports_motion_coverage`]. Crop, Linear Wipe,
-/// Motion keys and clock edits remain omitted.
+/// admitted separately by [`supports_motion_coverage`], and static Wipe by
+/// [`supports_wipe_coverage`]. Other Crop, Motion keys and clock edits remain
+/// omitted.
 /// Omitting them changes the picture: Premiere renders the cropped region of a
 /// Crop-only adjustment black (26.5.1 fixture, G4), not the composite beneath.
 pub(crate) fn retains_edit(edit: OccurrenceEdit) -> bool {
     matches!(edit, OccurrenceEdit::Opacity | OccurrenceEdit::OpacityKeys)
+}
+
+/// A static, hard-edge Wipe at unit coverage clips the effected lower
+/// composite. Keep that order with the original adjustment in a masked group.
+/// Feather would also soften the group's boundary outside the Wipe interval.
+pub(crate) fn supports_wipe_coverage(clip: &PrVideoOccurrence) -> bool {
+    clip.enabled
+        && clip.transform == PrStaticTransform::default()
+        && clip.opacity == 100.0
+        && clip.blend_mode == PrBlendMode::Normal
+        && clip.animations.is_empty()
+        && clip.playback_rate == 1.0
+        && clip.time_remap.is_none()
+        && clip.crop.is_default()
+        && clip
+            .linear_wipe
+            .as_ref()
+            .is_some_and(|wipe| wipe.completion.is_empty() && wipe.feather == 0.0)
+        && clip.opacity_mask.is_none()
+        && clip.track_matte.is_none()
+        && clip.active_transforms == 0
+        && clip.effects_above_mask == clip.effects.len()
 }
 
 /// The measured axis-aligned Motion coverage of A3: moving or uniformly

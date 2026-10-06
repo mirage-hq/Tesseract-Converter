@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from contextlib import redirect_stderr
 from io import StringIO
 from pathlib import Path
@@ -160,6 +161,50 @@ class UnifiedAdobeRunnerTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_cpu_command_clears_fixed_channel_and_retains_artifacts(self) -> None:
+        channel = self.harness.workspace / "target" / "adobe-test"
+        channel.mkdir(parents=True)
+        (channel / "stale.jsonl").write_text("stale")
+        run_dir = self.harness.root / "channel-run"
+        run_dir.mkdir()
+        records = run_dir / "adobe-test-records.jsonl"
+        script = (
+            "from pathlib import Path; import json; "
+            "p = Path('target/adobe-test'); "
+            "assert not (p / 'stale.jsonl').exists(); "
+            "assert json.loads((p / 'selected-case-ids.json').read_text()) == ['selected-case']; "
+            "a = p / 'fx_exports' / 'case.aep'; a.write_bytes(b'native'); "
+            "(p / 'adobe-test-records.jsonl').write_text("
+            "json.dumps({'path': str(a.resolve())}) + '\\n'); "
+            "(p / 'adobe-export-records.jsonl').write_text("
+            "json.dumps({'path': str(a.resolve())}) + '\\n')"
+        )
+        result = adobe_test.run_cpu_command(
+            self.harness.workspace, records, [sys.executable, "-c", script], 10, 1024, ['selected-case']
+        )
+        self.assertEqual(result.exit_code, 0)
+        artifact = run_dir / "fx_exports" / "case.aep"
+        self.assertEqual(artifact.read_bytes(), b"native")
+        self.assertEqual(json.loads(records.read_text())["path"], str(artifact.resolve()))
+        journal = json.loads((run_dir / "adobe-export-records.jsonl").read_text())
+        self.assertEqual(journal["path"], str(artifact.resolve()))
+        self.assertFalse((channel / "selected-case-ids.json").exists(), "selector must not outlive the run")
+
+    def test_cpu_command_removes_selector_when_launch_fails(self) -> None:
+        run_dir = self.harness.root / "failed-run"
+        run_dir.mkdir()
+        with self.assertRaises(OSError):
+            adobe_test.run_cpu_command(
+                self.harness.workspace,
+                run_dir / "adobe-test-records.jsonl",
+                [str(self.harness.root / "missing-binary")],
+                10,
+                1024,
+                ["selected-case"],
+            )
+        selector = self.harness.workspace / "target" / "adobe-test" / "selected-case-ids.json"
+        self.assertFalse(selector.exists())
 
     def test_cli_export_selector_routes_one_case_and_exact_cpu_symbol(self) -> None:
         import adobe_export_test
@@ -515,14 +560,14 @@ class UnifiedAdobeRunnerTests(unittest.TestCase):
         self.assertFalse(report["selection"]["full_coverage_claimed"])
         self.assertEqual(report["direction_scope"], ["import"])
 
-    def test_real_import_inventory_has_631_local_cases_and_full_frame_schedule(self) -> None:
+    def test_real_import_inventory_has_641_local_cases_and_full_frame_schedule(self) -> None:
         cases, targets, _ = adobe_test.aep_test.load_catalog(
             adobe_test.REPO,
             adobe_test.aep_test.DEFAULT_REGISTRY,
             adobe_test.aep_test.DEFAULT_REFERENCES,
         )
         selected = list(cases.values())
-        self.assertEqual(len(selected), 631)
+        self.assertEqual(len(selected), 641)
         self.assertEqual(
             {
                 case_id
@@ -543,11 +588,11 @@ class UnifiedAdobeRunnerTests(unittest.TestCase):
         )
         self.assertIn("aep-expression-samples-sampled-position-expression-c1", cases)
         self.assertIn("aep-effects-fill-isolated-c1", cases)
-        self.assertEqual(sum(target[1]["expected_frame_count"] for target in targets.values()), 51_300)
+        self.assertEqual(sum(target[1]["expected_frame_count"] for target in targets.values()), 51_900)
         # The nested support composition is exercised via its parent, not rendered separately.
         self.assertEqual(sum("reference" not in target[1] for target in targets.values()), 1)
         self.assertEqual(sum("path" in target[1].get("reference", {})
-                             for target in targets.values()), 668)
+                             for target in targets.values()), 678)
         self.assertEqual(adobe_test.required_max_samples(selected, targets), 301)
 
     def test_max_samples_must_cover_full_inclusive_duration(self) -> None:

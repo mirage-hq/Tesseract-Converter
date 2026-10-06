@@ -79,9 +79,14 @@ fn audio_package_check_write_and_reimport_preserve_edited_gain_and_wave_bytes() 
         .unwrap()
         .as_ref()
         .unwrap();
-    // WAVE aliases spell the packaged path with AE's explicit `./` prefix;
-    // package artifacts use the canonical path relative to the export directory.
-    let media_path = source.authored_path.strip_prefix("./").unwrap();
+    // Publication binds native aliases to the final package's absolute path;
+    // artifact paths remain relative to that package directory.
+    let package_root = fs::canonicalize(&output).unwrap();
+    let media_path = std::path::Path::new(&source.authored_path)
+        .strip_prefix(&package_root)
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert_eq!(
         written.artifacts,
         [

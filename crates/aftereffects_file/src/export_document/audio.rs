@@ -1,12 +1,12 @@
 //! Editable gain keys, with an explicit bounded approximation in native dB space.
 
 use super::{
-    AnimationGraphEntry, KeyframeEasing, LayerId, NativeTrack, NumericKeyframe, NumericTrack,
-    PropType, PropertyKeyframeEasing, constant_track, float_value, media, track,
+    KeyframeEasing, LayerId, NativeTrack, NumericKeyframe, NumericTrack, PropType,
+    PropertyKeyframeEasing, constant_track, float_value, media, track,
 };
 
 pub(super) fn exactly_silent(
-    entries: &[AnimationGraphEntry],
+    entries: &crate::export_document::AnimationIndex<'_>,
     id: LayerId,
     base_gain: f64,
 ) -> Result<bool, &'static str> {
@@ -29,7 +29,7 @@ pub(super) fn exactly_silent(
 }
 
 pub(super) fn levels_animation(
-    entries: &[AnimationGraphEntry],
+    entries: &crate::export_document::AnimationIndex<'_>,
     id: LayerId,
     allow_audio: bool,
 ) -> Result<Option<NumericTrack>, &'static str> {

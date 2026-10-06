@@ -74,6 +74,8 @@ pub fn write_solid_composition(
             .layers
             .push(timeline_layer(layer, layer_id, source_id, duration, None)?);
         timeline.layers.push(Chunk::list(*b"Ewst", Vec::new()));
+        timeline.layers.extend(root::item_envelope_tail());
+        timeline.layers.extend(root::item_envelope_tail());
     }
     let views = views::build_views(spec.width, spec.height, duration)?;
     let project = root::build_project_with_timeline(

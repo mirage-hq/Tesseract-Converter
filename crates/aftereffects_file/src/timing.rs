@@ -36,8 +36,30 @@ impl FrameRate {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn duration(self, millis: u64) -> Result<(u32, Duration24), RecordError> {
-        let frames = (millis as f64 * self.fps() / 1000.0).ceil();
+        self.duration_frames((millis as f64 * self.fps() / 1000.0).ceil())
+    }
+
+    /// Native composition authoring rounds the original seconds to the nearest
+    /// frame, with positive half-frame ties upward. Do not feed this method the
+    /// lossy FX millisecond projection or use it for child source coverage.
+    /// Positive sub-half-frame inputs have a native null-frame endpoint, not a
+    /// one-frame minimum. Source-duration constructors remain strictly positive.
+    pub(crate) fn authored_duration(self, seconds: f64) -> Result<(u32, Duration24), RecordError> {
+        if !seconds.is_finite() || seconds <= 0.0 {
+            return Err(RecordError::Invalid(
+                "composition duration must be finite and positive",
+            ));
+        }
+        let frames = (seconds * self.fps()).round();
+        if frames == 0.0 {
+            return Ok((0, Duration24(0)));
+        }
+        self.duration_frames(frames)
+    }
+
+    fn duration_frames(self, frames: f64) -> Result<(u32, Duration24), RecordError> {
         if !frames.is_finite() || frames < 1.0 || frames > u32::MAX as f64 {
             return Err(RecordError::Invalid("invalid composition frame count"));
         }
@@ -55,7 +77,8 @@ impl FrameRate {
     }
 }
 
-/// Positive duration in AE's 24,576-ticks-per-second timebase.
+/// Duration in AE's 24,576-ticks-per-second timebase. Source constructors require
+/// positive ticks; root authoring may produce a native null-frame endpoint.
 /// The historical name reflects the original 24fps-only writer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Duration24(u32);
@@ -99,6 +122,38 @@ impl Duration24 {
 #[cfg(test)]
 mod tests {
     use super::{Duration24, FrameRate};
+    #[test]
+    fn authored_duration_preserves_native_null_frame_endpoint() {
+        let rate = FrameRate::new(30.0).unwrap();
+        // AE 26.5 constructor/setter controls, saved and reopened independently.
+        for (seconds, frames) in [
+            (0.001, 0),
+            ((0.5 - 0.001) / 30.0, 0),
+            (0.5 / 30.0, 1),
+            ((0.5 + 0.001) / 30.0, 1),
+            ((1.5 - 0.001) / 30.0, 1),
+            (1.5 / 30.0, 2),
+            ((1.5 + 0.001) / 30.0, 2),
+        ] {
+            let (actual_frames, duration) = rate.authored_duration(seconds).unwrap();
+            assert_eq!(actual_frames, frames, "{seconds}s");
+            assert_eq!(duration.ticks(), frames * 24_576 / 30);
+        }
+        for invalid in [
+            0.0,
+            -0.001,
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::MAX,
+        ] {
+            assert!(rate.authored_duration(invalid).is_err(), "{invalid}");
+        }
+        // Native root null-frame support does not relax source-duration constructors.
+        assert!(Duration24::from_frames(0).is_err());
+        assert!(Duration24::from_ticks(0).is_err());
+    }
+
     #[test]
     fn duration_boundaries() {
         assert!(Duration24::from_frames(0).is_err());

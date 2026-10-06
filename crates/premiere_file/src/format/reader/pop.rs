@@ -5,7 +5,7 @@ use crate::{
     format::{Graph, Record},
 };
 
-// Native Bonsa component 1607. Identity and duration are not profile controls.
+// Native Film Impact component 1607. Identity and duration are not profile controls.
 const PROFILE: [ProfileParam; 43] = [
     film_impact::ERROR_OCCURRED,
     film_impact::TRANSITION_TIMING_8120,

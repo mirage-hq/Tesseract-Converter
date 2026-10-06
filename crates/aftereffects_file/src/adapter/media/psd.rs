@@ -381,8 +381,10 @@ fn pixels(
         .checked_mul(4)
         .ok_or(DecodeError::Bounds("RGBA allocation"))?;
     let source_len = dimensions(rect.width, rect.height)?;
-    let mut result = vec![0u8; output_len];
+    // Decode and validate every channel against its stored bytes before
+    // allocating the output, so a header alone cannot demand a huge image.
     let mut found = [false; 4];
+    let mut planes = Vec::with_capacity(channels.len());
     for channel in channels {
         let component = match channel.id {
             0..=2 => usize::try_from(channel.id).map_err(|_| DecodeError::Bounds("channel ID"))?,
@@ -393,7 +395,13 @@ fn pixels(
             return Err(DecodeError::Malformed("duplicate channel"));
         }
         found[component] = true;
-        let values = plane(channel.bytes, rect.width, rect.height)?;
+        planes.push((component, plane(channel.bytes, rect.width, rect.height)?));
+    }
+    if !found[0..3].iter().all(|present| *present) {
+        return Err(DecodeError::Unsupported("missing RGB channels"));
+    }
+    let mut result = vec![0u8; output_len];
+    for (component, values) in planes {
         let width = usize::try_from(rect.width).map_err(|_| DecodeError::Bounds("layer width"))?;
         let stride =
             usize::try_from(expected[0]).map_err(|_| DecodeError::Bounds("canvas width"))?;
@@ -411,9 +419,6 @@ fn pixels(
             let dst = ((y + i / width) * stride + x + i % width) * 4 + component;
             result[dst] = *value;
         }
-    }
-    if !found[0..3].iter().all(|present| *present) {
-        return Err(DecodeError::Unsupported("missing RGB channels"));
     }
     if !found[3] {
         if cropped {
@@ -502,10 +507,17 @@ pub(super) fn decode(
             }
             let compression = cursor.u16()?;
             let rows = usize::try_from(height).map_err(|_| DecodeError::Bounds("rows"))?;
+            let n = dimensions(width, height)?;
+            // Raw planes must be fully present before the image is allocated.
+            if compression == 0
+                && n.checked_mul(usize::from(channel_count))
+                    .is_none_or(|needed| cursor.remaining() < needed)
+            {
+                return Err(DecodeError::Malformed("truncated section"));
+            }
             let mut image = RgbaImage::new(width, height);
             match compression {
                 0 => {
-                    let n = dimensions(width, height)?;
                     for id in 0..usize::from(channel_count) {
                         for (pixel, value) in image.pixels_mut().zip(cursor.take(n)?.iter()) {
                             pixel[id] = *value;

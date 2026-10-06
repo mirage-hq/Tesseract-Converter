@@ -108,6 +108,7 @@ fn animator(properties: NumericProperties, selectors: Vec<SelectorSource>) -> An
         name: "Animator 1".into(),
         properties,
         selectors,
+        evaluated: Vec::new(),
     }
 }
 
@@ -330,6 +331,7 @@ fn expansion_keeps_other_animators_in_place() {
         name: name.into(),
         properties: vec![native("ADBE Text Opacity", &[0.0])],
         selectors: vec![range(Vec::new())],
+        evaluated: Vec::new(),
     };
     let animators = vec![
         plain("Animator 1"),

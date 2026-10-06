@@ -11,6 +11,7 @@ use serde_json::{Number, Value};
 
 mod capture;
 mod de;
+mod presence;
 
 #[derive(Debug)]
 pub(super) struct Wire {
@@ -28,6 +29,19 @@ impl Wire {
 
     pub(super) fn decode<T: DeserializeOwned>(&self) -> Result<T, serde_json::Error> {
         T::deserialize(&self.compact)
+    }
+
+    pub(super) fn has_unknown_fields<T: Serialize>(
+        &self,
+        data: &T,
+        skip: &[(usize, &'static str)],
+    ) -> bool {
+        data.serialize(presence::Presence {
+            raw: Some(&self.compact),
+            skip,
+            depth: 0,
+        })
+        .expect("checked stored data serializes")
     }
 
     pub(super) fn value(&self) -> &Value {

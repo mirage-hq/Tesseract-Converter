@@ -2,6 +2,105 @@ use super::*;
 use crate::schema::PrBlendMode;
 
 #[test]
+fn cross_dissolve_replacement_replays_unrelated_links_and_replaces_whole_owner() {
+    use crate::{
+        schema::{PrVideoTransition, PrVideoTransitionKind, TICKS},
+        tests::support::{clip_of, sequence_of, video_media},
+    };
+    for two_sided in [false, true] {
+        for replace_owner in [false, true] {
+            let mut outgoing = clip_of(
+                "source",
+                0..if two_sided { 2 * TICKS } else { 5 * TICKS },
+                0,
+            );
+            outgoing.id = Some("out".into());
+            let mut items = vec![PrVideoItem::Media(outgoing)];
+            if two_sided {
+                let mut incoming = clip_of("source", 2 * TICKS..5 * TICKS, 3 * TICKS);
+                incoming.id = Some("in".into());
+                items.push(PrVideoItem::Media(incoming));
+            }
+            let transition = PrVideoTransition {
+                id: "dissolve".into(),
+                kind: PrVideoTransitionKind::CrossDissolve,
+                start_ticks: if two_sided { 3 * TICKS / 2 } else { 0 },
+                cut_ticks: if two_sided { 2 * TICKS } else { 0 },
+                end_ticks: if two_sided { 5 * TICKS / 2 } else { TICKS },
+                outgoing_clip: two_sided.then(|| "out".into()),
+                incoming_clip: Some(if two_sided { "in" } else { "out" }.into()),
+            };
+            let mut sequence = sequence_of(
+                "dissolve",
+                vec![PrVideoTrack {
+                    items,
+                    transitions: vec![transition.clone()],
+                    nests: Vec::new(),
+                }],
+            );
+            let mut packer =
+                PicturePacker::new("dissolve", [1920, 1080], FrameRate::Fps30, 5 * TICKS);
+            let root = packer.root();
+            let unrelated = packer.begin_boundary(root, LayerId::new(10)).unwrap();
+            let owner = packer.begin_boundary(root, LayerId::new(20)).unwrap();
+            for _ in &sequence.video_tracks[0].items {
+                packer.record_item(root, owner, 0).unwrap();
+            }
+            packer
+                .finish_container(root, &mut sequence.video_tracks, 5 * TICKS)
+                .unwrap();
+            let recipe = packer.finish();
+            assert!(recipe.is_complete());
+            let request = replacement(
+                &recipe,
+                root,
+                vec![if replace_owner { owner } else { unrelated }],
+            );
+            let output = apply_replacements(
+                Some(PrProjectFile::from_sequences(vec![sequence], video_media())),
+                recipe,
+                &[request],
+                Path::new("/tmp/packing/project.prproj"),
+            )
+            .unwrap();
+            let sequence = output.project.single_sequence().unwrap();
+            let transitions: Vec<_> = sequence
+                .video_tracks
+                .iter()
+                .flat_map(|track| &track.transitions)
+                .collect();
+            if replace_owner {
+                assert!(transitions.is_empty());
+                assert_eq!(sequence.video_occurrences().count(), 1);
+            } else {
+                assert_eq!(transitions.len(), 1);
+                let actual = transitions[0];
+                assert_eq!(
+                    (actual.start_ticks, actual.cut_ticks, actual.end_ticks),
+                    (
+                        transition.start_ticks,
+                        transition.cut_ticks,
+                        transition.end_ticks
+                    )
+                );
+                let track = sequence
+                    .video_tracks
+                    .iter()
+                    .find(|track| !track.transitions.is_empty())
+                    .unwrap();
+                assert_eq!(track.items.len(), if two_sided { 2 } else { 1 });
+                assert_eq!(actual.outgoing_clip, transition.outgoing_clip);
+                assert_eq!(actual.incoming_clip, transition.incoming_clip);
+                assert_eq!(
+                    sequence.video_occurrences().count(),
+                    if two_sided { 3 } else { 2 }
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn omitted_source_boundary_can_receive_picture_without_native_actions() {
     let end = FrameRate::Fps30.ticks_per_frame() * 30;
     let mut packer = PicturePacker::new("omitted", [1920, 1080], FrameRate::Fps30, end);
@@ -191,7 +290,7 @@ fn matte_update_targets_second_disjoint_consumer_not_lane_head() {
     for start in [0, end] {
         request.picture.timeline_ticks = start..start + end;
         let mut item = foreign_item(
-            &request,
+            &request.picture,
             Path::new("/tmp/packing"),
             &mut BTreeSet::new(),
             &mut BTreeMap::new(),
@@ -249,7 +348,7 @@ fn omitted_middle_slot_and_empty_interval_start_preserve_native_order() {
             request.picture.relative_path =
                 format!("media/ae-{:04}/compositions.aep", id + 1).into();
             let item = foreign_item(
-                &request,
+                &request.picture,
                 Path::new("/tmp/packing"),
                 &mut used,
                 &mut media,
@@ -334,6 +433,9 @@ fn pending_nested_recipe() -> (
     let sequence = packer.recipe.containers[&child].empty_sequence();
     let nest = PrNestOccurrence {
         id: None,
+        reverse_source_duration: None,
+        playback_rate: 1.0,
+        time_remap: None,
         start_ticks: 0,
         end_ticks: end,
         in_ticks: 0,
@@ -344,8 +446,10 @@ fn pending_nested_recipe() -> (
         animations: vec![],
         crop: Default::default(),
         linear_wipe: None,
+        opacity_mask: None,
         track_matte: None,
         effects: vec![],
+        effects_above_mask: 0,
         enabled: true,
         sequence,
     };

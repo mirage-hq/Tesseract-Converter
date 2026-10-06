@@ -14,23 +14,40 @@
 //! Root slot 0 holds the Appearance table. Slot meanings come from AME renders
 //! of our own payloads, which Premiere 26.5.1 saved byte-identically
 //! (calibration runs 1 and 2), and of the gradient fills that Premiere
-//! 26.5.1 saved for fixture `premiere_isolated_gradient_fills_26_5` (Oracle
-//! run 23). The meaning of the other slots that those payloads wrote is
+//! 26.5.1 saved for fixture `premiere_isolated_gradient_fills_26_5`. The meaning of the other slots that those payloads wrote is
 //! unknown, so they convert only at the values that rendered like the base,
-//! and any other slot or value fails closed. Legacy UTF-16 JSON (Premiere
-//! 14.4 and older) is unsupported.
+//! and any other slot or value fails closed.
+//!
+//! A legacy Appearance is UTF-16 JSON instead: a little-endian `u32` byte
+//! count of the UTF-16LE text that follows, a zero `u32`, then one object
+//! `{"mStyle": {...}, "mVersion": 1}` without a byte order mark or
+//! terminator. Its style holds an integer color and a visibility switch for
+//! each of the fill, the stroke and the shadow, the stroke width, and the
+//! shadow angle, blur, offset and opacity. Only that framing and version 1
+//! read, with every style field and no other, so an unknown field, such as a
+//! mask flag, fails closed instead of being dropped.
+//! No render measured the legacy form. By inference from the field names,
+//! a visible gray fill (equal channels, which no channel order changes) and a
+//! fill switched off convert; any other fill color, a color beyond 24 bits
+//! and an enabled stroke or shadow do not. Export writes the FlatBuffer of
+//! the current paint.
 
 use super::text_payload::{color_table, framed, slot, Buffer, Table, TableOffset};
 use crate::error::{ensure, unsupported, BuildError, Result};
 use crate::schema::{
     text::{
         validate_stroke_width, PrAppearance, PrFill, PrGradient, PrGradientKind,
-        PrGradientOpacityStop, PrGradientStop, PrPathVertex, PrRgb, PrShapePath, PrShapeStroke,
-        DEFAULT_SHAPE_FILL, GRADIENT_Y_UNCONVERTED, SHAPE_SHADOW_ANGLE,
+        PrGradientOpacityStop, PrGradientStop, PrMaskSource, PrPathVertex, PrRgb, PrShapePath,
+        PrShapeStroke, DEFAULT_SHAPE_FILL, GRADIENT_Y_UNCONVERTED, SHAPE_SHADOW_ANGLE,
     },
     text_shadow::PrTextShadow,
 };
 use flatbuffers::{FlatBufferBuilder, ForwardsUOffset, Vector, WIPOffset};
+use serde::{
+    de::{value::MapAccessDeserializer, MapAccess, Visitor},
+    Deserialize, Deserializer,
+};
+use std::fmt;
 
 const PATH_VERSION: u32 = 2;
 const PATH_HEADER_BYTES: usize = 8;
@@ -39,6 +56,11 @@ const PATH_HEADER_BYTES: usize = 8;
 pub(crate) const VERTEX_BYTES: usize = 28;
 /// How messages name an Appearance payload.
 const APPEARANCE: &str = "Appearance";
+/// How messages name a legacy JSON Appearance payload.
+const LEGACY_APPEARANCE: &str = "legacy JSON Appearance";
+/// The first text unit of a legacy Appearance, `{` in UTF-16LE, where a
+/// FlatBuffer frame holds its magic.
+const LEGACY_JSON_START: &[u8] = b"{\0";
 
 /// Appearance table slots whose meaning calibration runs and the gradient
 /// fixture measured.
@@ -58,8 +80,12 @@ mod slots {
     pub(super) const SHADOW_DISTANCE: usize = 9;
     pub(super) const SHADOW_SIZE: usize = 10;
     pub(super) const SHADOW_BLUR: usize = 11;
-    /// `1` draws neither fill nor stroke.
-    pub(super) const HIDDEN: usize = 12;
+    /// `1` is Mask with Shape: the shape masks the objects below it instead
+    /// of drawing; native controls draw neither fill nor stroke.
+    pub(super) const MASK: usize = 12;
+    /// `1` inverts a Mask with Shape; without slot 12
+    /// it draws like the base at `1` or `2` ([`super::UNMEASURED_SLOTS`]).
+    pub(super) const MASK_INVERTED: usize = 13;
     /// `1` a linear and `2` a radial gradient fill; absent, a solid fill.
     pub(super) const FILL_TYPE: usize = 19;
     /// The gradient: [`super::gradient_slots`].
@@ -80,13 +106,13 @@ mod slots {
         SHADOW_DISTANCE,
         SHADOW_SIZE,
         SHADOW_BLUR,
-        HIDDEN,
+        MASK,
         FILL_TYPE,
         STROKE_POSITION,
     ];
 }
 
-/// Gradient table slots as Premiere 26.5.1 saved them (Oracle run 23): start
+/// Gradient table slots as Premiere 26.5.1 saved them: start
 /// and end in layer pixels, and the color and opacity stop vectors, whose
 /// tables hold a value (a color table or an opacity), a position and a
 /// midpoint. An absent number is 0.
@@ -141,7 +167,7 @@ const GRADIENT_STOPS: [&[(usize, Field)]; 2] = [
     ],
 ];
 /// Also the opacity stops of every opaque gradient that Premiere 26.5.1
-/// saved (Oracle run 23).
+/// saved.
 const GRADIENT_ALPHA_STOPS: [&[(usize, Field)]; 2] = [
     &[(2, Field::F32(0.5))],
     &[(1, Field::F32(1.0)), (2, Field::F32(0.5))],
@@ -288,19 +314,19 @@ pub(crate) fn encode_vertex(vertex: &PrPathVertex, payload: &mut Vec<u8>) {
     }
 }
 
-/// Decode one Appearance value.
+/// Decode one Appearance value: a FlatBuffer, or a legacy JSON one
+/// ([`decode_legacy_appearance`]).
 ///
 /// # Errors
-/// Rejects legacy encodings, malformed buffers, slots of unknown meaning at
-/// values that run 1 did not save and render, a gradient outside the form
-/// that the gradient fixture rendered, a hidden shape, a stroke that is not
-/// centred, and an enabled stroke or shadow that lacks a value.
+/// Rejects malformed buffers, slots of unknown meaning at values that run 1
+/// did not save and render, a gradient outside the form that the gradient
+/// fixture rendered, a hidden shape, a stroke that is not centred, and an
+/// enabled stroke or shadow that lacks a value.
 pub(crate) fn decode_appearance(payload: &[u8]) -> Result<PrAppearance> {
     use slots::*;
-    ensure!(
-        payload.get(8..10) != Some(b"{\0".as_slice()),
-        "legacy UTF-16 JSON Appearance from Premiere before 22.6 is unsupported"
-    );
+    if payload.get(8..10) == Some(LEGACY_JSON_START) {
+        return decode_legacy_appearance(payload);
+    }
     let buffer = Buffer::from_payload(payload, APPEARANCE)?;
     let root = buffer.table(buffer.offset(0)?)?;
     root.allow_only(&[0], "root")?;
@@ -329,19 +355,25 @@ pub(crate) fn decode_appearance(payload: &[u8]) -> Result<PrAppearance> {
     if let Some(slot) = unrendered_slot(table, gradient.is_some())? {
         return Err(unrendered(slot));
     }
-    match table.u8(HIDDEN)? {
-        None => {}
-        Some(1) => {
-            return Err(unsupported(
-                "a shape that Appearance slot 12 hides is unsupported",
-            ))
-        }
+    let mask_source = match table.u8(MASK)? {
+        None => None,
+        Some(1) => Some(PrMaskSource {
+            inverted: match table.u8(MASK_INVERTED)? {
+                None => false,
+                Some(1) => true,
+                Some(other) => {
+                    return Err(unsupported(format!(
+                        "Appearance slot 13 value {other} beside Mask with Shape is unmeasured"
+                    )))
+                }
+            },
+        }),
         Some(other) => {
             return Err(unsupported(format!(
                 "invalid Appearance slot 12 value {other}"
             )))
         }
-    }
+    };
     let fill_color = table
         .table(FILL_COLOR)?
         .map(color)
@@ -417,7 +449,156 @@ pub(crate) fn decode_appearance(payload: &[u8]) -> Result<PrAppearance> {
         fill,
         stroke,
         shadow,
+        mask_source,
     })
+}
+
+/// A legacy JSON Appearance: its style and version, and nothing else.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyAppearance {
+    #[serde(rename = "mStyle", deserialize_with = "legacy_style_object")]
+    style: LegacyStyle,
+    #[serde(rename = "mVersion")]
+    version: u32,
+}
+
+/// The version 1 style of a legacy JSON Appearance. Every field is required,
+/// so no switch reads as on or off by default, and no other is accepted. A
+/// disabled stroke or shadow draws nothing, so its values are read only for
+/// their types, as the FlatBuffer reader checks a disabled one's.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyStyle {
+    #[serde(rename = "mFillColor")]
+    fill_color: u32,
+    #[serde(rename = "mFillVisible")]
+    fill_visible: bool,
+    #[serde(rename = "mStrokeColor")]
+    stroke_color: u32,
+    #[serde(rename = "mStrokeVisible")]
+    stroke_visible: bool,
+    #[serde(rename = "mStrokeWidth")]
+    _stroke_width: f64,
+    #[serde(rename = "mShadowAngle")]
+    _shadow_angle: f64,
+    #[serde(rename = "mShadowBlur")]
+    _shadow_blur: f64,
+    #[serde(rename = "mShadowColor")]
+    shadow_color: u32,
+    #[serde(rename = "mShadowOffset")]
+    _shadow_offset: f64,
+    #[serde(rename = "mShadowOpacity")]
+    _shadow_opacity: f64,
+    #[serde(rename = "mShadowVisible")]
+    shadow_visible: bool,
+}
+
+/// Require named style fields rather than the positional sequence that a
+/// derived struct deserializer also accepts.
+fn legacy_style_object<'de, D>(deserializer: D) -> std::result::Result<LegacyStyle, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct StyleObject;
+    impl<'de> Visitor<'de> for StyleObject {
+        type Value = LegacyStyle;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("an object with named fields")
+        }
+
+        fn visit_map<M: MapAccess<'de>>(
+            self,
+            map: M,
+        ) -> std::result::Result<LegacyStyle, M::Error> {
+            LegacyStyle::deserialize(MapAccessDeserializer::new(map))
+        }
+    }
+    deserializer.deserialize_map(StyleObject)
+}
+
+/// Decode a legacy JSON Appearance in the one form seen (module docs): a
+/// visible gray fill or none, with the stroke and the shadow off.
+///
+/// # Errors
+/// Rejects other framing, invalid UTF-16, JSON other than one object of the
+/// version 1 fields with their types, other versions, a color beyond 24
+/// bits, an enabled stroke or shadow, and a visible fill that is not gray,
+/// whose channel order is unknown.
+fn decode_legacy_appearance(payload: &[u8]) -> Result<PrAppearance> {
+    let Some((frame, text)) = payload.split_first_chunk::<8>() else {
+        return Err(unsupported(format!("truncated {LEGACY_APPEARANCE}")));
+    };
+    let (count, upper) = frame.split_at(4);
+    let [count, upper] =
+        [count, upper].map(|word| u32::from_le_bytes(word.try_into().expect("four bytes")));
+    ensure!(
+        upper == 0,
+        "{LEGACY_APPEARANCE}: the word after its byte count is {upper}, not 0"
+    );
+    ensure!(
+        usize::try_from(count).is_ok_and(|count| count == text.len()),
+        "{LEGACY_APPEARANCE}: its byte count {count} does not match the {} bytes after it",
+        text.len()
+    );
+    ensure!(
+        text.len() % 2 == 0,
+        "{LEGACY_APPEARANCE}: an odd byte count {} is not UTF-16",
+        text.len()
+    );
+    let json: String = char::decode_utf16(
+        text.chunks_exact(2)
+            .map(|unit| u16::from_le_bytes([unit[0], unit[1]])),
+    )
+    .collect::<std::result::Result<_, _>>()
+    .map_err(|error| unsupported(format!("{LEGACY_APPEARANCE}: invalid UTF-16: {error}")))?;
+    let LegacyAppearance { style, version } = serde_json::from_str(&json)
+        .map_err(|error| unsupported(format!("{LEGACY_APPEARANCE}: {error}")))?;
+    ensure!(
+        version == 1,
+        "{LEGACY_APPEARANCE}: version {version} is unsupported; only version 1 converts"
+    );
+    let fill_color = legacy_color("mFillColor", style.fill_color)?;
+    legacy_color("mStrokeColor", style.stroke_color)?;
+    legacy_color("mShadowColor", style.shadow_color)?;
+    ensure!(
+        !style.stroke_visible,
+        "{LEGACY_APPEARANCE}: an enabled stroke is unsupported"
+    );
+    ensure!(
+        !style.shadow_visible,
+        "{LEGACY_APPEARANCE}: an enabled shadow is unsupported"
+    );
+    let fill = if style.fill_visible {
+        let [red, green, blue] = fill_color;
+        ensure!(
+            red == green && green == blue,
+            "{LEGACY_APPEARANCE}: mFillColor {:#08x} is not gray; only a gray fill converts, since the channel order is unknown",
+            style.fill_color
+        );
+        Some(PrFill::Solid(PrRgb(fill_color)))
+    } else {
+        None
+    };
+    Ok(PrAppearance {
+        fill,
+        stroke: None,
+        shadow: None,
+        mask_source: None,
+    })
+}
+
+/// The three low bytes of the legacy JSON color `value` of the field `name`,
+/// in an order that is unknown. The saved colors fit 24 bits; a higher byte
+/// has no known meaning.
+fn legacy_color(name: &str, value: u32) -> Result<[u8; 3]> {
+    let [high, low @ ..] = value.to_be_bytes();
+    ensure!(
+        high == 0,
+        "{LEGACY_APPEARANCE}: {name} {value:#08x} is outside the 24-bit color form"
+    );
+    Ok(low)
 }
 
 /// Why an Appearance fails closed at `slot`.
@@ -481,7 +662,7 @@ fn unrendered_slot(table: Table<'_>, gradient: bool) -> Result<Option<usize>> {
 }
 
 /// The `kind` gradient of an Appearance in the form Premiere 26.5.1 saved for
-/// the gradient fixture (Oracle run 23): start and end x, whose y are absent
+/// the gradient fixture: start and end x, whose y are absent
 /// (G1, G3), the color stops with a position kept as written (C's middle
 /// stop is 0.49922094, not 0.5; G2), and the opacity stops, whose absent
 /// value is full (G5); every stop with a midpoint. The ranges are left to
@@ -719,6 +900,12 @@ fn appearance_fields(appearance: &PrAppearance) -> crate::format::Result<Vec<(us
             (SHADOW_OPACITY, Field::F32(OFF_SHADOW_OPACITY)),
         ]),
     }
+    if let Some(mask) = appearance.mask_source {
+        fields.push((MASK, Field::U8(1)));
+        if mask.inverted {
+            fields.push((MASK_INVERTED, Field::U8(1)));
+        }
+    }
     if let Some(PrFill::Gradient(gradient)) = &appearance.fill {
         let fill_type = match gradient.kind {
             PrGradientKind::Linear => 1,
@@ -741,7 +928,7 @@ fn appearance_fields(appearance: &PrAppearance) -> crate::format::Result<Vec<(us
     Ok(fields)
 }
 
-/// The gradient table in the form Premiere 26.5.1 saved (Oracle run 23):
+/// The gradient table in the form Premiere 26.5.1 saved:
 /// start and end x without y, and the color and opacity stops at midpoint
 /// 50 %. As in its saves, an opacity stop omits a full opacity and a
 /// position of 0 (G5), so an opaque gradient's opacity stops are

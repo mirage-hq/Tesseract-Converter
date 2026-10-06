@@ -6,8 +6,8 @@ use super::{
     BoundMedia,
 };
 use crate::schema::{
-    native::*, records, AudioChannels, ColorSpace, PrAudioStream, PrMedia, PrMediaKind,
-    PrVideoOccurrence, TICKS,
+    native::*, records, AudioChannels, ColorSpace, PrAudioOccurrence, PrAudioStream, PrMedia,
+    PrMediaKind, PrVideoOccurrence, VideoCodec, TICKS,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 
@@ -35,7 +35,10 @@ fn clip<S>(
             markers: Some(Reference::object(ids.markers)),
         }),
         time_remapping: None,
+        maintain_audio_pitch: None,
         playback_speed: None,
+        is_multicam: None,
+        selected_track_index: None,
         play_backwards: None,
         source: Some(Reference::object(source)),
         out_point: range.as_ref().map(|range| range.end.to_string()),
@@ -78,12 +81,12 @@ pub(super) fn media_clip(
     clip
 }
 
-/// The source template clip (`range` absent) or one placed audio clip, with
+/// The source template clip (`occurrence` absent) or one placed audio clip, with
 /// its linear Clip Gain when that is not unity.
 pub(super) fn audio_clip(
     object_id: ObjectId<AudioClip>,
     ids: &MediaIds,
-    range: Option<std::ops::Range<i64>>,
+    occurrence: Option<&PrAudioOccurrence>,
     secondary: &[ObjectId<SecondaryContent>],
     channels: AudioChannels,
     gain: Option<f64>,
@@ -93,10 +96,29 @@ pub(super) fn audio_clip(
         object_id,
         class_id: Some(records::AUDIO_CLIP.class_id.into()),
         version: Some(records::AUDIO_CLIP.version.into()),
-        clip: clip(source.source, ids, range, super::graph::uuid()),
+        clip: Clip {
+            maintain_audio_pitch: occurrence
+                .filter(|sound| sound.preserve_audio_pitch)
+                .map(|_| "true".to_owned()),
+            playback_speed: occurrence
+                .filter(|sound| sound.playback_rate.abs() != 1.0)
+                .map(|sound| sound.playback_rate.abs().to_string()),
+            play_backwards: occurrence
+                .filter(|sound| sound.playback_rate < 0.0)
+                .map(|_| "true".to_owned()),
+            ..clip(
+                source.source,
+                ids,
+                occurrence.map(|sound| sound.in_ticks..sound.out_ticks),
+                super::graph::uuid(),
+            )
+        },
         secondary_contents: SecondaryContents::from_ids(secondary.iter().copied()),
         audio_channel_layout: channels.layout().into(),
         gain: gain.map(|gain| gain.to_string()),
+        audio_time_scaler_settings: occurrence
+            .filter(|sound| sound.preserve_audio_pitch)
+            .map(|_| AUDIO_PITCH_ON_SCALER_SETTINGS.to_owned()),
     })
 }
 
@@ -197,7 +219,9 @@ pub(super) fn records(media: &BoundMedia<'_>, ids: &MediaIds) -> Vec<Record> {
     let video = spec.video.as_ref();
     let mut records: Vec<_> = [video.map(|video| {
         Record::VideoStream(match video.kind {
-            PrMediaKind::Still { alpha } => still::video_stream(video, alpha, ids),
+            PrMediaKind::Still { alpha } | PrMediaKind::NumberedStills { alpha } => {
+                still::video_stream(video, alpha, ids)
+            }
             PrMediaKind::AfterEffectsComposition(_) => {
                 super::after_effects::video_stream(video, ids)
             }
@@ -209,6 +233,7 @@ pub(super) fn records(media: &BoundMedia<'_>, ids: &MediaIds) -> Vec<Record> {
                 ..still::video_stream(video, false, ids)
             },
             PrMediaKind::Video { codec, hdr_profile } => VideoStream {
+                is_numbered_stills: None,
                 is_still: None,
                 is_continuous_time: None,
                 alpha_info_is_uncertain: None,
@@ -220,9 +245,16 @@ pub(super) fn records(media: &BoundMedia<'_>, ids: &MediaIds) -> Vec<Record> {
                 is_frame_rate_overridden: None,
                 overidden_frame_rate: None,
                 duration: Some(video.intrinsic_ticks.to_string()),
-                ignore_alpha: Some("true".to_owned()),
+                // An alpha master (ProRes 4444 with a 32-bit entry) keeps its
+                // alpha readable, as the corpus `ap4h` masters are saved
+                // without `IgnoreAlpha` and with straight `AlphaType`.
+                ignore_alpha: (!codec.is_some_and(VideoCodec::has_alpha))
+                    .then(|| "true".to_owned()),
                 frame_rect: Some(format!("0,0,{},{}", video.width, video.height)),
                 pixel_aspect_ratio: None,
+                original_par: None,
+                is_par_overridden: Some("true".to_owned()),
+                overridden_par: Some(video.pixel_aspect.native()),
                 codec_type: codec.map(|codec| codec.codec_type().to_owned()),
                 original_color_space: Some(
                     serde_json::to_string(&match hdr_profile {
@@ -231,7 +263,14 @@ pub(super) fn records(media: &BoundMedia<'_>, ids: &MediaIds) -> Vec<Record> {
                     })
                     .expect("native source color fields serialize"),
                 ),
-                alpha_type: Some("3".to_owned()),
+                alpha_type: Some(
+                    if codec.is_some_and(VideoCodec::has_alpha) {
+                        records::VIDEO_STRAIGHT_ALPHA_TYPE
+                    } else {
+                        records::VIDEO_NO_ALPHA_TYPE
+                    }
+                    .to_owned(),
+                ),
                 field_type_is_uncertain: Some("true".to_owned()),
                 original_field_type: None,
                 original_image_orientation_type: Some(video.orientation.native().to_owned()),
@@ -298,7 +337,13 @@ fn file_source_records(
             modification_state: Some(ModificationState {
                 encoding: records::ENCODING.to_owned(),
                 binary_hash: ids.media_binary_hash.clone(),
-                value: utf16_base64(&ids.media_state),
+                value: if spec.after_effects_composition().is_some() {
+                    // Premiere stores this state as UUID bytes, unlike the
+                    // UTF-16 composition GUID in ImporterPrefs.
+                    STANDARD.encode(ids.media_state.as_bytes())
+                } else {
+                    utf16_base64(&ids.media_state.to_string())
+                },
             }),
             relative_paths: vec![relative_path.to_owned()],
             file_path: Some(absolute_path.to_owned()),
@@ -313,7 +358,7 @@ fn file_source_records(
             ),
             title: Some(spec.name.clone()),
             file_key: Some(ids.media_file_key.clone()),
-            content_and_metadata_state: Some(ids.media_state.clone()),
+            content_and_metadata_state: Some(ids.media_state.to_string()),
             actual_media_file_path: Some(absolute_path.to_owned()),
             conformed_audio_rate: None,
             audio_stream: ids
@@ -328,7 +373,7 @@ fn file_source_records(
             version: Some(records::MARKERS.version.to_owned()),
             by_guid: Some(records::BY_GUID.to_owned()),
             last_metadata_state: Some(records::ZERO_GUID.to_owned()),
-            last_content_state: Some(ids.media_state.clone()),
+            last_content_state: Some(ids.media_state.to_string()),
         })),
     ]
     .into_iter()
@@ -402,6 +447,7 @@ fn project_item_records(spec: &PrMedia, ids: &MediaIds, template_clip: Clip) -> 
                 .audio
                 .as_ref()
                 .map(|audio| AudioComponentChains::single(audio.components)),
+            video_component_chain: None,
             clips: Some(Clips::from_ids(
                 ids.audio.as_ref().map(|audio| audio.template_clip),
                 video.map(|_| ids.template_clip),

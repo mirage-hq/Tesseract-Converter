@@ -90,6 +90,8 @@ mod tests {
             animations: Vec::new(),
             warnings: Vec::new(),
             frame_fade_lowered: false,
+            evaluated_shapes: Default::default(),
+            mapped_expressions: Vec::new(),
         };
         let shape = collector
             .source_layer(

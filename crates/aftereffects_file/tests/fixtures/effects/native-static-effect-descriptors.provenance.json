@@ -1,0 +1,9 @@
+{
+  "source": "Independent AE-authored Mosaic48x27 sharp1, Posterize7, GaussianBlur6 repeat1 on public320x180 solid; only last three independent sspc records extracted from managed saved AEP. Generated controls excluded.",
+  "application": "After Effects26.5x89",
+  "request_id": "accuracy-W08-static-descriptor-v2",
+  "script_sha256": "f0e861c91fe860eac1be3cfc09f47274b47bb817434e9a5c5655e0bab8fc6651",
+  "native_artifact_sha256": "fe3d6c0c3160c057011d97bd416d3521737f7914e26819ab927d096c015d9286",
+  "fixture_sha256": "0e6c2f9d32b6fdb1734d04e20cec432e2275aff446fcae9d287abbf3fa6e3981",
+  "proof": "Native authoring and static editing rejection discriminator, not render fidelity or reopened proof."
+}

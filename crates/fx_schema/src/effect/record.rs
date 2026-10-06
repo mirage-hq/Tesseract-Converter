@@ -60,6 +60,10 @@ impl EffectRecord {
         Stored::from_data(data).map(Self)
     }
 
+    pub(crate) fn has_unknown_fields(&self) -> bool {
+        self.0.has_unknown_fields(&[])
+    }
+
     pub fn known_value(&self) -> Value {
         serde_json::to_value(self.data()).expect("checked effect data serializes")
     }
@@ -111,6 +115,7 @@ impl<'de> Deserialize<'de> for EffectPayload {
         let future_contract = match kind {
             "lookTransform" => crate::color::has_unsupported_color_semantics(&raw),
             "primaryGrade" => crate::color::has_unsupported_primary_grade_semantics(&raw),
+            "tonalColor" => crate::color::has_unsupported_tonal_color_semantics(&raw),
             "colorCurves" => crate::curves::has_unsupported_curves_semantics(&raw),
             _ => false,
         };

@@ -34,6 +34,10 @@ impl PropertyAnimator {
         }
     }
 
+    pub(crate) fn has_unknown_fields(&self) -> bool {
+        self.0.has_unknown_fields(&[])
+    }
+
     pub fn known_value(&self) -> Value {
         serde_json::to_value(self.data()).expect("checked animator data serializes")
     }

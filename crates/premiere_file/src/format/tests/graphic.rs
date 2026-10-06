@@ -1,6 +1,9 @@
 //! Type-tool graphic reading from native XML. Records follow a Premiere 26.5
 //! save; each case mutates one native field of that shape.
 
+#[path = "graphic_ramp.rs"]
+mod graphic_ramp;
+
 use crate::format::{
     inspect_project, inspect_project_with_omissions,
     shape_payload::tests::{CENTRED, FILL, GRADIENT_B, RECTANGLE},
@@ -363,6 +366,237 @@ fn native_whole_line_styles_import_as_two_editable_text_children() {
         .any(|text| text.document.text == "Fix in one tap 🔥"
             && text.document.font == "MonaSans-Black"
             && text.document.tracking == -29.0));
+}
+
+/// The opening title of `421.xml` again, with one static mask on its clip
+/// Opacity (`mask::mask`: Feather 30, at ObjectIDs 300 on): the edited lines
+/// and the edited mask export and read back as the unmasked title's lines do,
+/// and the title imports as the unmasked one, its line group owning the mask
+/// over a guide beside it at the identity.
+#[test]
+fn native_whole_line_styles_with_a_clip_opacity_mask_export_both_edited_lines_and_the_mask() {
+    use crate::schema::{
+        text::{PrPathVertex, PrShapePath},
+        PrMask, MASK_FEATHER_APPROXIMATION,
+    };
+    use serde_json::{json, Value};
+
+    /// Renames the line in BowlbyOneSC-Regular, at any depth of `layers`.
+    fn rename_first_line(layers: &mut [Value]) -> bool {
+        layers.iter_mut().any(|layer| {
+            if layer.pointer("/sourceText/fontFamily") == Some(&json!("BowlbyOneSC-Regular")) {
+                layer["sourceText"]["text"] = json!("Edited title");
+                true
+            } else {
+                layer
+                    .get_mut("layers")
+                    .and_then(Value::as_array_mut)
+                    .is_some_and(|layers| rename_first_line(layers))
+            }
+        })
+    }
+
+    let title = include_str!("../../../tests/fixtures/point_text_lines/421.xml");
+    let control = point_title_xml(title, r#"<Component Index="0" ObjectRef="1617"/>"#);
+    let masked = with_clip_opacity(
+        r#"<Component Index="0" ObjectRef="70"/><Component Index="1" ObjectRef="1617"/>"#,
+        "100.",
+        "",
+        (18, 0),
+    )
+    .replace("0,0,1920,1080", "0,0,1080,1920")
+    .replace(
+        "<MatchName>AE.ADBE Opacity</MatchName>",
+        r#"<SubComponents Version="1"><SubComponent Index="0" ObjectRef="300"/></SubComponents><MatchName>AE.ADBE Opacity</MatchName>"#,
+    )
+    .replace(
+        "</PremiereData>",
+        &format!("{title}{}</PremiereData>", super::mask::mask(300, true)),
+    );
+    let import = |xml: &str| {
+        let (project, mut omissions) = inspect_project_with_omissions(xml, None).unwrap();
+        assert!(omissions.is_empty(), "{omissions:?}");
+        let sequence = project.single_sequence().unwrap();
+        let document = crate::convert::premiere_to_tesseract(
+            sequence,
+            &project.media,
+            &crate::tesseract_output::asset_ids_in_order(sequence, &project.media),
+            &mut omissions,
+        )
+        .unwrap()
+        .to_json_value()
+        .unwrap();
+        (document, omissions)
+    };
+    let (control, control_omissions) = import(&control);
+    assert!(
+        control_omissions
+            .iter()
+            .all(|omission| omission.scope != OmissionScope::Occurrence),
+        "{control_omissions:?}"
+    );
+    let (mut masked, omissions) = import(&masked);
+    // Both titles report their unpackaged fonts; the mask adds only its
+    // Feather approximation.
+    let (feather, omissions): (Vec<_>, Vec<_>) = omissions
+        .into_iter()
+        .partition(|omission| omission.reason == MASK_FEATHER_APPROXIMATION);
+    assert_eq!(feather.len(), 1, "{feather:?}");
+    assert_eq!(omissions, control_omissions);
+    let layers = masked["composition"]["layers"].as_array().unwrap();
+    let owner = layers
+        .iter()
+        .find(|layer| {
+            layer
+                .get("masks")
+                .and_then(Value::as_array)
+                .is_some_and(|masks| !masks.is_empty())
+        })
+        .unwrap_or_else(|| panic!("the masked title: {layers:?}"))
+        .clone();
+    let guide = layers
+        .iter()
+        .find(|layer| layer["id"] == owner["masks"][0]["layer"])
+        .unwrap_or_else(|| panic!("the guide beside the title: {layers:?}"))
+        .clone();
+
+    // Edit the mask: a new outline in frame pixels, and Inverted.
+    for layer in masked["composition"]["layers"].as_array_mut().unwrap() {
+        if layer["id"] == guide["id"] {
+            layer["shape"]["path"] = json!({"commands": [
+                {"type": "moveTo", "x": 270.0, "y": 480.0},
+                {"type": "lineTo", "x": 810.0, "y": 480.0},
+                {"type": "lineTo", "x": 810.0, "y": 1440.0},
+                {"type": "lineTo", "x": 270.0, "y": 1440.0},
+                {"type": "close"}
+            ]});
+        } else if layer["id"] == owner["id"] {
+            layer["masks"][0]["inverted"] = json!(true);
+        }
+    }
+    // Edit the first line, then export the title, any guide and a canvas, and
+    // read the written project back.
+    let export = |mut document: Value, guide_id: Option<&Value>| {
+        let layers = document["composition"]["layers"].as_array_mut().unwrap();
+        assert!(rename_first_line(layers));
+        layers.retain(|layer| layer["type"] == "Group" || Some(&layer["id"]) == guide_id);
+        let mut canvas =
+            crate::test_support::editable_document()["composition"]["layers"][1].clone();
+        canvas["id"] = json!(900);
+        canvas["activeRange"]["duration"] = json!(3000);
+        canvas["rect"]["size"] = json!([1080, 1920]);
+        layers.push(canvas);
+        document["duration"] = json!(3.0);
+        let document = fx_schema::EditableFxCompositionDocument::from_json_value(document).unwrap();
+        let mut omissions = Vec::new();
+        let empty = std::collections::BTreeMap::new();
+        let project = crate::convert::tesseract_to_premiere(
+            &document,
+            &empty,
+            &std::collections::BTreeMap::new(),
+            &std::collections::BTreeMap::new(),
+            crate::format::FrameRate::Fps30,
+            &mut omissions,
+        )
+        .unwrap_or_else(|error| panic!("{error}: {omissions:?}"));
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("edited-lines.prproj");
+        crate::format::PremiereProjectXml::new(&project)
+            .unwrap()
+            .write_new(&path)
+            .unwrap();
+        let (read, read_omissions) = crate::schema::PrProjectFile::load(&path).unwrap();
+        assert!(read_omissions.is_empty(), "{read_omissions:?}");
+        (project, read, omissions)
+    };
+    let corner = |x: f32, y: f32| PrPathVertex {
+        smooth: false,
+        point: [x, y],
+        in_tangent: [x, y],
+        out_tangent: [x, y],
+    };
+    let edited = PrMask {
+        raster: None,
+        feather_keys: Vec::new(),
+        expansion: 0.0,
+        expansion_keys: Vec::new(),
+        opacity_keys: Vec::new(),
+        path: PrShapePath {
+            vertices: vec![
+                corner(0.25, 0.25),
+                corner(0.75, 0.25),
+                corner(0.75, 0.75),
+                corner(0.25, 0.75),
+            ],
+            closed: true,
+        },
+        path_keys: Vec::new(),
+        feather: 30.0,
+        opacity: 100.0,
+        inverted: true,
+    };
+    for (document, guide_id, mask) in [
+        (control.clone(), None, None),
+        (masked, Some(&guide["id"]), Some(&edited)),
+    ] {
+        let (exported, read, omissions) = export(document, guide_id);
+        // No occurrence is omitted; only the mask's Feather is approximated.
+        assert!(
+            omissions
+                .iter()
+                .all(|omission| omission.scope != OmissionScope::Occurrence
+                    && omission.reason == MASK_FEATHER_APPROXIMATION),
+            "{omissions:?}"
+        );
+        assert_eq!(omissions.is_empty(), mask.is_none(), "{omissions:?}");
+        for project in [&exported, &read] {
+            let graphics: Vec<_> = project.sequences[0]
+                .video_items()
+                .filter_map(PrVideoItem::graphic)
+                .collect();
+            let [graphic] = graphics.as_slice() else {
+                panic!("one title, its guide consumed: {graphics:?}");
+            };
+            let text: Vec<_> = graphic.texts().collect();
+            assert_eq!(text.len(), 2, "{graphic:?}");
+            assert!(text.iter().any(|text| text.document.text == "Edited title"));
+            assert!(text
+                .iter()
+                .any(|text| text.document.text == "Fix in one tap 🔥"
+                    && text.document.font == "MonaSans-Black"
+                    && text.document.tracking == -29.0));
+            assert_eq!(graphic.opacity_mask.as_ref(), mask);
+        }
+    }
+
+    // The masked title imports as the unmasked one: the same line group, ids,
+    // transforms, line positions and order, visibility, range and clock. The
+    // group owns the mask, whose guide is its sibling at the identity over
+    // its range, so the mask stays in the sequence frame after the title's
+    // transform, where Premiere applies a clip Opacity mask.
+    let without_masks = |layer: &Value| {
+        let mut layer = layer.clone();
+        layer.as_object_mut().unwrap().remove("masks");
+        layer
+    };
+    assert_eq!(
+        without_masks(&owner),
+        without_masks(&control["composition"]["layers"][0])
+    );
+    assert_eq!(
+        owner["masks"],
+        json!([{"id": owner["masks"][0]["id"], "mode": "add", "inverted": false, "layer": guide["id"], "feather": [30.0, 30.0], "expansion": 0.0, "opacity": 1.0}])
+    );
+    assert_eq!(guide["type"], "Shape");
+    assert_eq!(guide.get("parent"), owner.get("parent"));
+    assert_eq!(
+        crate::test_support::layer_range(&guide),
+        crate::test_support::layer_range(&owner)
+    );
+    assert_eq!(
+        serde_json::from_value::<fx_schema::Transform>(guide["transform"].clone()).unwrap(),
+        crate::convert::identity_transform()
+    );
 }
 
 #[test]
@@ -790,7 +1024,7 @@ fn keyed_vector_motion_stays_separate_from_the_text_it_moves() {
 }
 
 #[test]
-fn linear_and_hold_vector_motion_keys_import_with_their_spatial_tangents() {
+fn linear_and_hold_vector_motion_keys_import_with_straight_spatial_paths() {
     // A slide in, a hold at one value and a slide out, with Premiere's
     // automatic spatial tangents (spatial mode 5, flag 4). Linear and Hold
     // timing ignores the stored speeds: Scale 70 -> 0 stores a tenth of its
@@ -832,7 +1066,8 @@ fn linear_and_hold_vector_motion_keys_import_with_their_spatial_tangents() {
         assert_eq!(keys.len(), easings.len());
         assert_eq!(keys[0].spatial_out_tangent, Some([0.0, -0.03]));
         assert_eq!(keys[1].spatial_in_tangent, Some([0.0, 0.03]));
-        // The group tracks keep that timing and the tangents in pixels.
+        // The native model keeps resolved handles; the group tracks normalize
+        // these straight segments so only their temporal easing drives motion.
         let sequence = project.single_sequence().unwrap();
         let document = crate::tests::support::project_document_with_media(sequence, &project.media);
         let entries = document["composition"]["dynamics"]["entries"]
@@ -853,7 +1088,11 @@ fn linear_and_hold_vector_motion_keys_import_with_their_spatial_tangents() {
             .map(|key| key["easing"]["type"].as_str().unwrap())
             .collect();
         assert_eq!(easing_types, easings);
-        assert!((position_y[0]["spatialOutTangent"].as_f64().unwrap() + 32.4).abs() < 1e-9);
+        for property in ["positionX", "positionY"] {
+            assert!(track(property).iter().all(|key| {
+                key.get("spatialInTangent").is_none() && key.get("spatialOutTangent").is_none()
+            }));
+        }
         let scale_keys: Vec<_> = track("scaleX")
             .iter()
             .map(|key| {
@@ -939,7 +1178,7 @@ fn unprobed_bezier_graphic_keys_omit_the_graphic_until_their_speed_unit_is_verif
 }
 
 /// The placement `InPoint` (one hour into the generator) of the Bezier speed
-/// probe that Premiere 26.5.1 saved (JRB-1990).
+/// probe that Premiere 26.5.1 saved.
 const PROBE_IN: i64 = 914_457_600_000_000;
 
 /// The probe's key strings as Premiere saved them: one 1.2 s segment per
@@ -1287,7 +1526,7 @@ fn graphic_keys_spanning_the_whole_tick_range_read_as_the_motion_reader_reads_th
 /// The intrinsic clip Opacity of a graphic as Premiere 26.5.1 saved a keyed
 /// one (case B, `premiere_isolated_graphic_clip_opacity_keys_26_5`): component
 /// `ID` 2 in the 26.5 layout, renumbered to records 70 to 73.
-const CLIP_OPACITY: &str = r#"
+pub(super) const CLIP_OPACITY: &str = r#"
   <VideoFilterComponent ObjectID="70" ClassID="d10da199-beea-4dd1-b941-ed3a78766d50" Version="9"><Component Version="7"><Params Version="1"><Param Index="0" ObjectRef="71"/><Param Index="1" ObjectRef="72"/><Param Index="2" ObjectRef="73"/></Params><ID>2</ID><Intrinsic>true</Intrinsic><DisplayName>Opacity</DisplayName></Component><VideoFilterType>2</VideoFilterType><MatchName>AE.ADBE Opacity</MatchName></VideoFilterComponent>
   <VideoComponentParam ObjectID="71" ClassID="fe47129e-6c94-4fc0-95d5-c056a517aaf3" Version="10"><Name>Opacity</Name>KEYED<ParameterID>1</ParameterID><StartKeyframe>-91445760000000000,OPACITY,0,0,0,0,0,0</StartKeyframe>KEYS<LowerBound>0</LowerBound><UpperBound>100</UpperBound></VideoComponentParam>
   <VideoComponentParam ObjectID="72" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10"><Name>Blend Mode</Name><DiscontinuousInterpolate>true</DiscontinuousInterpolate><ParameterControlType>10</ParameterControlType><ParameterID>2</ParameterID><StartKeyframe>-91445760000000000,PRIMARY,0,0,0,0,0,0</StartKeyframe><LowerBound>0</LowerBound><UpperBound>27</UpperBound></VideoComponentParam>
@@ -1858,7 +2097,7 @@ fn enabled_text_shadow_is_read_and_background_is_a_reported_feature() {
         [(
             OmissionScope::Feature,
             "VideoClipTrackItem:20",
-            "text background (JRB-1995) not converted"
+            "text background not converted"
         )]
     );
 }
@@ -1887,10 +2126,7 @@ fn shadow_values_outside_premiere_ranges_keep_the_graphic() {
         .collect();
     assert_eq!(
         reasons,
-        [(
-            OmissionScope::Feature,
-            "text background (JRB-1995) not converted"
-        )]
+        [(OmissionScope::Feature, "text background not converted")]
     );
     assert_eq!(graphic(&xml).text().document.shadow.unwrap().opacity, 150.0);
 }
@@ -1904,6 +2140,7 @@ fn graphic_objects_read_in_chain_order_and_one_object_composes_a_static_vector_m
             .map(|object| match object {
                 PrGraphicObject::Text(_) | PrGraphicObject::TextLines(_) => "text",
                 PrGraphicObject::Shape(_) => "shape",
+                PrGraphicObject::Group(_) => "group",
             })
             .collect()
     };
@@ -1932,7 +2169,9 @@ fn graphic_objects_read_in_chain_order_and_one_object_composes_a_static_vector_m
             .iter()
             .find_map(|object| match object {
                 PrGraphicObject::Shape(shape) => Some(shape),
-                PrGraphicObject::Text(_) | PrGraphicObject::TextLines(_) => None,
+                PrGraphicObject::Text(_)
+                | PrGraphicObject::TextLines(_)
+                | PrGraphicObject::Group(_) => None,
             })
             .unwrap();
         assert_eq!(shape.name, "Box");
@@ -1940,6 +2179,7 @@ fn graphic_objects_read_in_chain_order_and_one_object_composes_a_static_vector_m
         assert_eq!(
             shape.appearance,
             PrAppearance {
+                mask_source: None,
                 fill: Some(PrFill::Solid(PrRgb([0, 96, 255]))),
                 stroke: None,
                 shadow: None,
@@ -2083,6 +2323,126 @@ fn a_gradient_shape_reads_under_any_transform_and_with_its_shadow() {
 }
 
 #[test]
+fn legacy_json_appearance_shape_reads_and_an_enabled_shadow_omits_only_its_graphic() {
+    use crate::tests::support::{legacy_appearance, legacy_json};
+    // The native Shape with our own legacy Appearance in place of its own.
+    let xml = |changes: &[(&str, Option<&str>)]| {
+        shape_xml(
+            r#"<Component Index="0" ObjectRef="80"/>"#,
+            &STANDARD.encode(legacy_appearance(&legacy_json(changes))),
+        )
+    };
+    let gray = xml(&[]);
+    let (_, omissions) = inspect_project_with_omissions(&gray, None).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let read = graphic(&gray);
+    let [PrGraphicObject::Shape(shape)] = read.objects.as_slice() else {
+        panic!("one shape, not {:?}", read.objects);
+    };
+    assert_eq!(
+        shape.appearance,
+        PrAppearance {
+            mask_source: None,
+            fill: Some(PrFill::Solid(PrRgb([128; 3]))),
+            stroke: None,
+            shadow: None,
+        }
+    );
+    assert_eq!(
+        (
+            shape.name.as_str(),
+            shape.path.vertices.len(),
+            shape.transform.position
+        ),
+        ("Box", 4, [960.0, 540.0])
+    );
+    // An enabled legacy shadow omits only its graphic; the video stays.
+    let (project, omissions) =
+        inspect_project_with_omissions(&xml(&[("mShadowVisible", Some("true"))]), None).unwrap();
+    let sequence = project.single_sequence().unwrap();
+    assert_eq!(
+        (
+            sequence.video_items().count(),
+            sequence.video_occurrences().count()
+        ),
+        (1, 1)
+    );
+    let omitted: Vec<_> = omissions
+        .iter()
+        .map(|omission| {
+            (
+                omission.scope,
+                omission.record.as_str(),
+                omission.reason.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        omitted,
+        [(
+            OmissionScope::Occurrence,
+            "20",
+            "unsupported conversion: ArbVideoComponentParam:82: legacy JSON Appearance: an enabled shadow is unsupported"
+        )]
+    );
+}
+
+#[test]
+fn static_graphic_source_span_is_not_its_placement_duration() {
+    let original = graphic_xml(BEFORE);
+    let expected = graphic(&original);
+    for out in [914415264000000_i64, 914923296000000] {
+        let xml = original.replace(
+            "<OutPoint>914669280000000</OutPoint>",
+            &format!("<OutPoint>{out}</OutPoint>"),
+        );
+        let actual = graphic(&xml);
+        assert_eq!(actual.timeline_ticks(), expected.timeline_ticks());
+        assert_eq!(actual.in_ticks, expected.in_ticks);
+        assert_eq!(actual.objects, expected.objects);
+        assert_eq!(actual.opacity, expected.opacity);
+        assert_eq!(actual.vector_motion, expected.vector_motion);
+    }
+}
+
+#[test]
+fn unequal_graphic_spans_reject_each_animation_clock() {
+    let xml = graphic_xml(BEFORE);
+    let source_text = xml.replace(
+        "</StartKeyframeValue>",
+        &format!("</StartKeyframeValue><Keyframes>0,{BEFORE};</Keyframes>"),
+    );
+    let opacity = with_clip_opacity(
+        r#"<Component Index="0" ObjectRef="70"/><Component Index="1" ObjectRef="40"/>"#,
+        "100.",
+        &case_b_opacity_keys(0),
+        (18, 0),
+    );
+    for keyed in [
+        keyed(&xml, 32, TWO_SCALAR_KEYS),
+        keyed(&xml, 44, TWO_SCALAR_KEYS),
+        source_text,
+        opacity,
+    ] {
+        // The controls are accepted at a one-to-one clock before mutation.
+        graphic(&keyed);
+        let changed = keyed.replace(
+            "<OutPoint>914669280000000</OutPoint>",
+            "<OutPoint>914923296000000</OutPoint>",
+        );
+        let (project, omissions) = inspect_project_with_omissions(&changed, None).unwrap();
+        assert_eq!(project.single_sequence().unwrap().video_items().count(), 1);
+        assert!(
+            omissions.iter().any(|omission| {
+                omission.scope == OmissionScope::Occurrence
+                    && omission.reason.contains("graphic retiming is unsupported")
+            }),
+            "{omissions:?}"
+        );
+    }
+}
+
+#[test]
 fn unsupported_graphics_are_omitted_without_losing_other_occurrences() {
     let legacy = "AgAAAAAAAAB7AH0A";
     // Leading below -0.4 em spaces lines closer than the FX renderer can render.
@@ -2143,7 +2503,7 @@ fn unsupported_graphics_are_omitted_without_losing_other_occurrences() {
             "legacy UTF-16 JSON",
         ),
         (
-            // Shape Path keys (JRB-1991) omit the graphic.
+            // Shape Path keys omit the graphic.
             graphic_xml(BEFORE)
                 .replace(
                     "<Intrinsic>true</Intrinsic><DisplayName>Vector Motion</DisplayName></Component><VideoFilterType>2</VideoFilterType><MatchName>AE.ADBE Graphic Group</MatchName>",
@@ -2158,9 +2518,9 @@ fn unsupported_graphics_are_omitted_without_losing_other_occurrences() {
         (
             graphic_xml(BEFORE).replace(
                 "<Name>Parent Width</Name><ParameterID>19</ParameterID><StartKeyframe>-91445760000000000,0.,",
-                "<Name>Parent Width</Name><ParameterID>19</ParameterID><StartKeyframe>-91445760000000000,500.,",
+                "<Name>Parent Width</Name><ParameterID>19</ParameterID><StartKeyframe>-91445760000000000,20001.,",
             ),
-            "nondefault graphic parameter",
+            "graphic controller value outside native bounds",
         ),
         (
             // A Vector Motion comes first.
@@ -2187,7 +2547,7 @@ fn unsupported_graphics_are_omitted_without_losing_other_occurrences() {
         (
             graphic_xml(BEFORE).replace(
                 "<OutPoint>914669280000000</OutPoint>",
-                "<OutPoint>914923296000000</OutPoint>",
+                "<OutPoint>914161248000000</OutPoint>",
             ),
             "graphic retiming",
         ),
@@ -2241,7 +2601,7 @@ fn unsupported_graphics_are_omitted_without_losing_other_occurrences() {
                 "<Name>Horizontal Scale</Name><ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,100.,",
                 "<Name>Horizontal Scale</Name><ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,80.,",
             ),
-            "nondefault graphic parameter",
+            "Horizontal Scale under Uniform Scale is unverified",
         ),
         (
             graphic_xml(BEFORE).replace(
@@ -2279,7 +2639,7 @@ fn unsupported_graphics_are_omitted_without_losing_other_occurrences() {
                 "<MatchName>AE.ADBE Shape</MatchName>",
                 "<MatchName>AE.ADBE Graphic SubGroup</MatchName>",
             ),
-            "graphic SubGroups are unsupported",
+            "unsupported graphic SubGroup component",
         ),
         (
             shape_xml(
@@ -2313,31 +2673,26 @@ fn unsupported_graphics_are_omitted_without_losing_other_occurrences() {
             shape_xml(TEXT_THEN_SHAPE, FILL).replace(RECTANGLE, &format!("Aw{}", &RECTANGLE[2..])),
             "ArbVideoComponentParam:81: Path version 3 is unsupported",
         ),
-        // Graphic masks (JRB-2083): a `SubComponents` mask reference on a Text
-        // or Shape object, on the Vector Motion or on the clip Opacity omits the
-        // graphic before the mask is read (`visualizer_slideshow` masks its
-        // ten Texts), so the reference need only resolve. Before JRB-2028 the
-        // native shape rejected the element.
+        // Graphic masks: a `SubComponents` mask reference on a Text
+        // object or on the Vector Motion omits the graphic before the
+        // mask is read (`visualizer_slideshow` masks its ten Texts), so the
+        // reference need only resolve. The earlier native shape model
+        // rejected the element. The clip Opacity's mask is read as a media
+        // clip's, and one outside the converted form omits the graphic
+        // rather than show it unmasked.
         (
             graphic_xml(BEFORE).replace(
                 "<VideoFilterType>2</VideoFilterType><MatchName>AE.ADBE Text</MatchName>",
                 "<SubComponents Version=\"1\"><SubComponent Index=\"0\" ObjectRef=\"23\"/></SubComponents><VideoFilterType>2</VideoFilterType><MatchName>AE.ADBE Text</MatchName>",
             ),
-            "VideoFilterComponent:40: a mask on a graphic object is not converted (JRB-2083)",
-        ),
-        (
-            shape_xml(TEXT_THEN_SHAPE, FILL).replace(
-                "<MatchName>AE.ADBE Shape</MatchName>",
-                "<SubComponents Version=\"1\"><SubComponent Index=\"0\" ObjectRef=\"23\"/></SubComponents><MatchName>AE.ADBE Shape</MatchName>",
-            ),
-            "VideoFilterComponent:80: a mask on a graphic object is not converted (JRB-2083)",
+            "VideoFilterComponent:40: a mask on a graphic object is not converted",
         ),
         (
             graphic_xml(BEFORE).replace(
                 "<DisplayName>Vector Motion</DisplayName></Component><VideoFilterType>2</VideoFilterType><MatchName>AE.ADBE Graphic Group</MatchName>",
                 "<DisplayName>Vector Motion</DisplayName></Component><SubComponents Version=\"1\"><SubComponent Index=\"0\" ObjectRef=\"23\"/></SubComponents><VideoFilterType>2</VideoFilterType><MatchName>AE.ADBE Graphic Group</MatchName>",
             ),
-            "VideoFilterComponent:30: a mask on a graphic Vector Motion is not converted (JRB-2083)",
+            "VideoFilterComponent:30: a mask on a graphic Vector Motion is not converted",
         ),
         (
             with_clip_opacity(OPACITY_AND_TEXT, "100.", "", (18, 0))
@@ -2347,9 +2702,15 @@ fn unsupported_graphics_are_omitted_without_losing_other_occurrences() {
                 )
                 .replace(
                     "</PremiereData>",
-                    &format!("{}</PremiereData>", super::mask::mask(300, true)),
+                    &format!(
+                        "{}</PremiereData>",
+                        super::mask::mask(300, true).replace(
+                            "<Name>Mask Expansion</Name><IsTimeVarying>false</IsTimeVarying><ParameterControlType>8</ParameterControlType><StartKeyframe>-91445760000000000,0.,",
+                            "<Name>Mask Expansion</Name><IsTimeVarying>false</IsTimeVarying><ParameterControlType>8</ParameterControlType><StartKeyframe>-91445760000000000,1001.,",
+                        )
+                    ),
                 ),
-            "VideoComponentChain:21: a mask on a graphic clip Opacity is not converted (JRB-2083)",
+            "VideoComponentParam:309: Mask Expansion must be finite and within -1000..=1000",
         ),
     ];
     for (xml, reason) in cases {
@@ -2366,6 +2727,58 @@ fn unsupported_graphics_are_omitted_without_losing_other_occurrences() {
             "{reason}: {omissions:?}"
         );
     }
+}
+
+#[test]
+fn a_graphic_with_mask_path_keys_is_omitted_beside_its_sibling_without_a_guide() {
+    // A graphic's clip Opacity converts a static mask only, so Mask Path keys
+    // omit the graphic rather than freeze its outline, and the clip below it
+    // converts with no guide left behind.
+    let xml = with_clip_opacity(OPACITY_AND_TEXT, "100.", "", (18, 0))
+        .replace(
+            "<MatchName>AE.ADBE Opacity</MatchName>",
+            "<SubComponents Version=\"1\"><SubComponent Index=\"0\" ObjectRef=\"300\"/></SubComponents><MatchName>AE.ADBE Opacity</MatchName>",
+        )
+        .replace(
+            "</PremiereData>",
+            &format!(
+                "{}</PremiereData>",
+                super::mask::keyed_mask(300, &super::mask::two_path_keys())
+            ),
+        );
+    let (project, mut omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+    let sequence = project.single_sequence().unwrap();
+    assert_eq!(sequence.video_items().count(), 1);
+    assert_eq!(sequence.video_occurrences().count(), 1);
+    let occurrences: Vec<_> = omissions
+        .iter()
+        .filter(|omission| omission.scope == OmissionScope::Occurrence)
+        .collect();
+    let [omission] = occurrences.as_slice() else {
+        panic!("{omissions:?}");
+    };
+    assert_eq!(omission.record, "20");
+    assert!(
+        omission.reason.contains("VideoComponentChain:21: Mask Path keys on a graphic clip Opacity are not converted; only a video clip's Opacity mask converts keyed"),
+        "{}",
+        omission.reason
+    );
+    let document = crate::convert::premiere_to_tesseract(
+        sequence,
+        &project.media,
+        &crate::tesseract_output::asset_ids_in_order(sequence, &project.media),
+        &mut omissions,
+    )
+    .unwrap()
+    .to_json_value()
+    .unwrap();
+    let types: Vec<_> = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|layer| layer["type"].as_str().unwrap())
+        .collect();
+    assert_eq!(types, ["Video", "Rect"]);
 }
 
 #[test]
@@ -2601,10 +3014,7 @@ fn source_text_keys_read_as_held_documents_on_the_generator_clock() {
         .collect();
     assert_eq!(
         reasons,
-        [(
-            OmissionScope::Feature,
-            "text background (JRB-1995) not converted"
-        )]
+        [(OmissionScope::Feature, "text background not converted")]
     );
 }
 
@@ -2640,14 +3050,13 @@ fn source_text_key_forms_that_do_not_convert_omit_the_graphic() {
     };
     let stroke = |color| stroked(color, 3.0);
     let unstroked = payload(&before_with(|document| document.stroke = None));
-    let stroke_change =
-        "Source Text keys change the stroke color or width, which no FX text track animates";
+    let stroke_change = "Source Text keys change the stroke color, which no FX text track animates";
     let corpus_legacy = "AgAAAAAAAAB7AH0A";
     let cases = [
         (
             // The Premiere 14 corpus form keys legacy UTF-16 JSON documents.
             with_source_text_keys(None, &format!("{IN},{corpus_legacy};")),
-            "legacy UTF-16 JSON text from Premiere before 26 is unsupported",
+            "legacy UTF-16 JSON text from Premiere before 26 converts only as a static graphic Source Text value",
         ),
         (
             with_source_text_keys(Some("true"), ""),
@@ -2689,8 +3098,7 @@ fn source_text_key_forms_that_do_not_convert_omit_the_graphic() {
             ),
             stroke_change,
         ),
-        // The enabled strokes must agree wherever the first key has none:
-        // a color change, then a width change, after an unstroked key.
+        // Enabled stroke colors must agree even after an unstroked key.
         (
             with_source_text_keys(
                 None,
@@ -2700,19 +3108,6 @@ fn source_text_key_forms_that_do_not_convert_omit_the_graphic() {
                     stroke(PrRgb([0, 0, 0])),
                     IN + 2 * TICKS,
                     stroke(PrRgb([0, 0, 255]))
-                ),
-            ),
-            stroke_change,
-        ),
-        (
-            with_source_text_keys(
-                None,
-                &format!(
-                    "{IN},{unstroked};{},{};{},{};",
-                    IN + TICKS,
-                    stroke(PrRgb([0, 0, 0])),
-                    IN + 2 * TICKS,
-                    stroked(PrRgb([0, 0, 0]), 1.5)
                 ),
             ),
             stroke_change,
@@ -2734,4 +3129,1239 @@ fn source_text_key_forms_that_do_not_convert_omit_the_graphic() {
             "{reason}: {omissions:?}"
         );
     }
+}
+
+/// Our own legacy Source Text, independently chosen, as a Premiere 26
+/// document would hold it once read: centred point text in two paragraphs.
+fn legacy_document() -> crate::schema::text::PrTextDocument {
+    crate::schema::text::PrTextDocument {
+        text: "Night\nMarket \u{2713} \u{1f525}".into(),
+        font: "Inter-SemiBold".into(),
+        size: 64.5,
+        fill: Some(PrRgb([128, 128, 128])),
+        stroke: None,
+        shadow: None,
+        all_caps: false,
+        tracking: 25.0,
+        leading: 0.0,
+        justification: PrJustification::Center,
+        frame: PrTextFrame::Point {
+            vertical: PrVerticalAlign::Top,
+        },
+        background: None,
+    }
+}
+
+/// Independently authored static legacy Text: the complete IDs 1–21 layout,
+/// with no later ID 22 switch, and equal Scale/Horizontal Scale under Uniform.
+fn legacy_static_text_xml() -> String {
+    use crate::tests::support::{legacy_source_text, legacy_source_text_payload};
+    legacy_static_text_layout(
+        &graphic_xml(&STANDARD.encode(legacy_source_text_payload(
+            &legacy_source_text().to_string(),
+        )))
+        .replace(TWO_COMPONENTS, r#"<Component Index="0" ObjectRef="40"/>"#),
+    )
+}
+
+fn legacy_static_text_layout(xml: &str) -> String {
+    xml.replace(r#"<Param Index="21" ObjectRef="62"/>"#, "")
+        .replace(
+            "<ParameterID>4</ParameterID><StartKeyframe>-91445760000000000,100.,",
+            "<ParameterID>4</ParameterID><StartKeyframe>-91445760000000000,37.5,",
+        )
+        .replace(
+            "<ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,100.,",
+            "<ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,37.5,",
+        )
+}
+
+fn with_graphic_ramp(xml: &str, attached: &str) -> String {
+    let parsed = roxmltree::Document::parse(xml).unwrap();
+    let components = parsed
+        .root_element()
+        .children()
+        .find(|node| node.attribute("ObjectID") == Some("21"))
+        .unwrap()
+        .descendants()
+        .find(|node| node.has_tag_name("Components"))
+        .unwrap();
+    let mut references = Vec::new();
+    for component in components.children().filter(|node| node.is_element()) {
+        let reference = component.attribute("ObjectRef").unwrap();
+        if reference == "40" {
+            references.push("100");
+        }
+        references.push(reference);
+    }
+    let references: String = references
+        .iter()
+        .enumerate()
+        .map(|(index, reference)| {
+            format!(r#"<Component Index="{index}" ObjectRef="{reference}"/>"#)
+        })
+        .collect();
+    let mut xml = xml.to_owned();
+    xml.replace_range(
+        components.range(),
+        &format!(r#"<Components Version="1">{references}</Components>"#),
+    );
+    xml.replace(
+        "</PremiereData>",
+        &format!(r#"<VideoFilterComponent ObjectID="100" ClassID="d10da199-beea-4dd1-b941-ed3a78766d50" Version="8"><Component Version="5"><ID>10</ID><DisplayName>Ramp</DisplayName><Bypass>false</Bypass><Intrinsic>false</Intrinsic></Component>{attached}<MatchName>AE.ADBE Ramp</MatchName><VideoFilterType>2</VideoFilterType></VideoFilterComponent></PremiereData>"#),
+    )
+}
+
+#[test]
+fn active_graphic_ramp_omits_only_the_effect_and_keeps_editable_text() {
+    let xml = keyed(&text_only_xml(), 44, TWO_SCALAR_KEYS);
+    let input = with_graphic_ramp(&xml, "");
+    let (project, omissions) = inspect_project_with_omissions(&input, None).unwrap();
+    let actual = graphic(&input);
+    let expected = graphic(&xml);
+    assert_eq!(actual.text(), expected.text());
+    assert_eq!(
+        (
+            actual.start_ticks,
+            actual.end_ticks,
+            actual.in_ticks,
+            actual.opacity
+        ),
+        (
+            expected.start_ticks,
+            expected.end_ticks,
+            expected.in_ticks,
+            expected.opacity
+        )
+    );
+    assert_eq!(project.single_sequence().unwrap().video_items().count(), 2);
+    let losses: Vec<_> = omissions
+        .iter()
+        .filter(|omission| omission.reason.contains("VideoFilterComponent:100"))
+        .collect();
+    assert_eq!(losses.len(), 1, "{omissions:?}");
+    assert_eq!(losses[0].scope, OmissionScope::Feature);
+    assert!(losses[0].reason.contains("Ramp"));
+    assert!(losses[0].reason.contains("saved base paints"));
+    assert!(graphic(&input)
+        .text()
+        .animations
+        .iter()
+        .any(|animation| animation.property() == crate::schema::PrAnimatedProperty::UniformScale));
+}
+
+#[test]
+fn graphic_ramp_keeps_shape_values_and_the_vector_motion_order_guard() {
+    let xml = shape_xml(TEXT_THEN_SHAPE, FILL);
+    let actual = graphic(&with_graphic_ramp(&xml, ""));
+    assert_eq!(actual.objects, graphic(&xml).objects);
+    assert!(actual.effect_loss.is_some());
+    // A Ramp outside Vector Motion's admitted position must not reorder that
+    // transform merely to recover the objects.
+    let ordered = with_graphic_ramp(&graphic_xml(BEFORE), "");
+    assert_eq!(
+        graphic(&ordered).text(),
+        graphic(&graphic_xml(BEFORE)).text()
+    );
+    let reordered = ordered.replace(
+        r#"<Component Index="0" ObjectRef="30"/><Component Index="1" ObjectRef="100"/>"#,
+        r#"<Component Index="0" ObjectRef="100"/><Component Index="1" ObjectRef="30"/>"#,
+    );
+    assert_ne!(ordered, reordered);
+    let (project, omissions) = inspect_project_with_omissions(&reordered, None).unwrap();
+    assert_eq!(project.single_sequence().unwrap().video_items().count(), 1);
+    assert!(
+        omissions
+            .iter()
+            .any(|omission| omission.scope == OmissionScope::Occurrence
+                && omission.reason.contains("unsupported graphic component")),
+        "{omissions:?}"
+    );
+}
+
+#[test]
+fn graphic_ramp_loss_rejects_only_dependent_track_matte_consumers() {
+    use super::{
+        animation::animation_fixture::track_matte_key_xml,
+        effects::{with_chain, with_second_clip, DEFAULT_FLAGS},
+    };
+    let source = with_second_clip(&with_graphic_ramp(&text_only_xml(), "").replace(
+        "<Start>254016000000</Start><End>762048000000</End>",
+        "<Start>0</Start><End>1270080000000</End>",
+    ))
+    .replace(
+        r#"<TrackItem ObjectRef="20"/>"#,
+        r#"<TrackItem ObjectRef="20"/><TrackItem ObjectRef="220"/>"#,
+    )
+    .replace(
+        "</PremiereData>",
+        &format!("{}</PremiereData>", graphic_item_record(220, 5 * TICKS)),
+    );
+    // Active, missing and invalid bypass flags are never evidence of unchanged
+    // alpha. Only an explicitly bypassed effect can remain an alpha/luma source.
+    for flag in ["false", "true", "missing", "invalid"] {
+        for (channel, inverted) in [(0, false), (0, true), (1, false)] {
+            let source = if flag == "missing" {
+                source.replace("<Bypass>false</Bypass>", "")
+            } else {
+                source.replace(
+                    "<Bypass>false</Bypass>",
+                    &format!("<Bypass>{flag}</Bypass>"),
+                )
+            };
+            let xml = with_chain(
+                &source,
+                DEFAULT_FLAGS,
+                &[(200, track_matte_key_xml(200, 2, channel, inverted))],
+            );
+            let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+            let sequence = project.single_sequence().unwrap();
+            let media: Vec<_> = sequence
+                .video_items()
+                .filter_map(PrVideoItem::media)
+                .map(|clip| clip.id())
+                .collect();
+            let expected = if flag == "true" {
+                vec![Some("VideoClipTrackItem:3"), Some("VideoClipTrackItem:9")]
+            } else {
+                vec![Some("VideoClipTrackItem:9")]
+            };
+            assert_eq!(
+                media, expected,
+                "{flag}/{channel}/{inverted}: {omissions:?}"
+            );
+            let graphics: Vec<_> = sequence
+                .video_items()
+                .filter_map(PrVideoItem::graphic)
+                .collect();
+            let ordinary = graphics
+                .iter()
+                .find(|graphic| graphic.id() == Some("VideoClipTrackItem:220"))
+                .unwrap();
+            assert_eq!(
+                ordinary.text().document,
+                graphic(&text_only_xml()).text().document
+            );
+            assert_eq!(ordinary.effect_loss.is_none(), flag == "true");
+            assert_eq!(
+                graphics
+                    .iter()
+                    .any(|graphic| graphic.id() == Some("VideoClipTrackItem:20")),
+                flag == "true",
+                "the rejected consumer's originally concealed matte must not become visible"
+            );
+            if flag != "true" {
+                assert!(
+                    omissions
+                        .iter()
+                        .any(|omission| omission.scope == OmissionScope::Occurrence
+                            && omission.record == "VideoClipTrackItem:3"
+                            && omission
+                                .reason
+                                .contains("omitted Ramp (VideoFilterComponent:100)")
+                            && omission.reason.contains("alpha coverage is unverified")),
+                    "{omissions:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn graphic_ramp_loss_keeps_siblings_above_native_mask_sources() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/feature_graphic_masks_b_26_5.prproj");
+    let xml = crate::format::read_xml(&path).unwrap();
+    let parsed = roxmltree::Document::parse(&xml).unwrap();
+    let baseline = inspect_project(&xml, None).unwrap();
+    let native_graphic = baseline
+        .video_items()
+        .filter_map(PrVideoItem::graphic)
+        .find(|graphic| graphic.id() == Some("VideoClipTrackItem:65"))
+        .unwrap();
+    let native_group = native_graphic
+        .objects
+        .iter()
+        .find_map(|object| match object {
+            PrGraphicObject::Group(group) => Some(group),
+            _ => None,
+        })
+        .unwrap();
+    let mask_index = native_group
+        .objects
+        .iter()
+        .position(|object| object.mask_source().is_some())
+        .unwrap();
+    let unaffected_members = &native_group.objects[..mask_index];
+    let unaffected_siblings: Vec<_> = native_graphic
+        .objects
+        .iter()
+        .filter_map(|object| match object {
+            PrGraphicObject::Group(_) if unaffected_members.is_empty() => None,
+            PrGraphicObject::Group(group) => Some(PrGraphicObject::Group(
+                crate::schema::text::PrGraphicGroup {
+                    objects: unaffected_members.to_vec(),
+                    ..group.clone()
+                },
+            )),
+            object => {
+                assert!(object.mask_source().is_none());
+                Some(object.clone())
+            }
+        })
+        .collect();
+    // A native ordinary Shape above the mask's lower composite, flat and in
+    // a SubGroup. Copy Shape120 with fresh IDs only for the group case, whose
+    // members already use that component ID. Ramp comes after the mask.
+    let sibling = parsed
+        .root_element()
+        .children()
+        .find(|node| node.attribute("ObjectID") == Some("120"))
+        .unwrap();
+    let sibling = xml[sibling.range()]
+        .replace(r#"ObjectID="120""#, r#"ObjectID="901""#)
+        .replace("<ID>22</ID>", "<ID>98</ID>");
+    for (chain_id, item_id, refs, expected_name) in [
+        (
+            "93",
+            "VideoClipTrackItem:68",
+            vec!["120", "129", "130", "900"],
+            "T1",
+        ),
+        (
+            "87",
+            "VideoClipTrackItem:65",
+            vec!["901", "118", "119", "120", "121", "900"],
+            "T1",
+        ),
+    ] {
+        let chain = parsed
+            .root_element()
+            .children()
+            .find(|node| node.attribute("ObjectID") == Some(chain_id))
+            .unwrap();
+        let components = chain
+            .descendants()
+            .find(|node| node.has_tag_name("Components"))
+            .unwrap();
+        let refs: String = refs
+            .iter()
+            .enumerate()
+            .map(|(index, reference)| {
+                format!(r#"<Component Index="{index}" ObjectRef="{reference}"/>"#)
+            })
+            .collect();
+        let mut changed = xml.clone();
+        changed.replace_range(
+            components.range(),
+            &format!(r#"<Components Version="1">{refs}</Components>"#),
+        );
+        let end = changed.rfind("</").unwrap();
+        changed.insert_str(end, &format!(r#"{sibling}<VideoFilterComponent ObjectID="900"><Component><ID>99</ID><DisplayName>Ramp</DisplayName><Bypass>false</Bypass><Intrinsic>false</Intrinsic></Component><MatchName>AE.ADBE Ramp</MatchName><VideoFilterType>2</VideoFilterType></VideoFilterComponent>"#));
+        let (project, omissions) = inspect_project_with_omissions(&changed, None).unwrap();
+        let recovered = project
+            .single_sequence()
+            .unwrap()
+            .video_items()
+            .filter_map(PrVideoItem::graphic)
+            .find(|graphic| graphic.id() == Some(item_id))
+            .unwrap();
+        assert!(
+            matches!(recovered.objects.first(), Some(PrGraphicObject::Shape(shape)) if shape.name == expected_name),
+            "{chain_id}: {omissions:?}"
+        );
+        if chain_id == "93" {
+            assert_eq!(recovered.objects.len(), 1, "{chain_id}: {omissions:?}");
+        } else {
+            assert_eq!(&recovered.objects[1..], unaffected_siblings, "only the mask and its lower composite may be dropped, not unrelated native siblings");
+        }
+        assert!(
+            omissions
+                .iter()
+                .any(|omission| omission.scope == OmissionScope::Feature
+                    && omission
+                        .reason
+                        .contains("unverified alpha coverage for Mask with Shape/Text")
+                    && omission.reason.contains("below")),
+            "{chain_id}: {omissions:?}"
+        );
+    }
+}
+
+#[test]
+fn graphic_ramp_loss_does_not_keep_attached_or_clip_mask_coverage() {
+    let records = super::mask::mask(300, false);
+    let shape = shape_xml(TEXT_THEN_SHAPE, FILL)
+        .replace("<MatchName>AE.ADBE Shape</MatchName>", "<SubComponents Version=\"1\"><SubComponent Index=\"0\" ObjectRef=\"300\"/></SubComponents><MatchName>AE.ADBE Shape</MatchName>")
+        .replace("</PremiereData>", &format!("{records}</PremiereData>"));
+    assert!(
+        matches!(graphic(&shape).objects.as_slice(), [_, PrGraphicObject::Shape(shape)] if shape.mask.is_some())
+    );
+    let (project, omissions) =
+        inspect_project_with_omissions(&with_graphic_ramp(&shape, ""), None).unwrap();
+    let recovered = project
+        .single_sequence()
+        .unwrap()
+        .video_items()
+        .find_map(PrVideoItem::graphic)
+        .unwrap();
+    assert!(
+        matches!(recovered.objects.as_slice(), [PrGraphicObject::Text(_)]),
+        "{omissions:?}"
+    );
+    let clip = with_clip_opacity(OPACITY_AND_TEXT, "100.", "", (18, 0))
+        .replace("<MatchName>AE.ADBE Opacity</MatchName>", "<SubComponents Version=\"1\"><SubComponent Index=\"0\" ObjectRef=\"300\"/></SubComponents><MatchName>AE.ADBE Opacity</MatchName>")
+        .replace("</PremiereData>", &format!("{records}</PremiereData>"));
+    assert!(graphic(&clip).opacity_mask.is_some());
+    let (project, omissions) =
+        inspect_project_with_omissions(&with_graphic_ramp(&clip, ""), None).unwrap();
+    assert_eq!(project.single_sequence().unwrap().video_items().count(), 1);
+    assert!(
+        omissions
+            .iter()
+            .any(|omission| omission.scope == OmissionScope::Occurrence
+                && omission
+                    .reason
+                    .contains("omitted graphic Ramp beside a clip Opacity mask")),
+        "{omissions:?}"
+    );
+}
+
+#[test]
+fn graphic_ramp_with_unconverted_attached_mask_keeps_the_mask_guard() {
+    let input = with_graphic_ramp(
+        &text_only_xml(),
+        r#"<SubComponents Version="1"><SubComponent Index="0" ObjectRef="100"/></SubComponents>"#,
+    );
+    let (project, omissions) = inspect_project_with_omissions(&input, None).unwrap();
+    assert_eq!(
+        project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .count(),
+        1
+    );
+    assert!(
+        omissions
+            .iter()
+            .any(|omission| omission.scope == OmissionScope::Occurrence
+                && omission.reason.contains("graphic Ramp")
+                && omission.reason.contains("mask")),
+        "{omissions:?}"
+    );
+}
+
+#[test]
+fn legacy_static_text_layout_and_redundant_uniform_scale_read_editable_values() {
+    let xml = legacy_static_text_xml();
+    // Each adjacent gate alone, and both together. The existing complete
+    // modern layout and default width remain covered by the other tests.
+    for (input, expected_scale) in [
+        (xml.replace("00000,37.5,", "00000,100.,"), 100.0),
+        (xml.clone(), 37.5),
+    ] {
+        let (project, omissions) = inspect_project_with_omissions(&input, None).unwrap();
+        assert!(omissions.is_empty(), "{omissions:?}");
+        assert_eq!(
+            project
+                .single_sequence()
+                .unwrap()
+                .video_occurrences()
+                .count(),
+            1
+        );
+        let text = graphic(&input).text().clone();
+        assert_eq!(text.document, legacy_document());
+        assert_eq!(text.transform.position, [1440.0, 540.0]);
+        assert_eq!(text.transform.anchor, [19.2, 21.6]);
+        assert_eq!(text.transform.scale, expected_scale);
+        assert_eq!(
+            (text.transform.rotation, text.transform.opacity),
+            (0.0, 60.0)
+        );
+        assert!(text.animations.is_empty() && text.source_text_keys.is_empty());
+    }
+}
+
+#[test]
+fn legacy_static_text_redundant_uniform_scale_reads_editable_values() {
+    // The complete current layout isolates the width gate from the absent tail.
+    let xml = legacy_static_text_xml().replace(
+        "</Params><ID>4</ID>",
+        r#"<Param Index="21" ObjectRef="62"/></Params><ID>4</ID>"#,
+    );
+    let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    assert_eq!(
+        project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .count(),
+        1
+    );
+    let text = graphic(&xml).text().clone();
+    assert_eq!(text.document, legacy_document());
+    assert_eq!(text.transform.scale, 37.5);
+    assert!(text.animations.is_empty() && text.source_text_keys.is_empty());
+}
+
+#[test]
+fn legacy_static_text_inactive_width_keeps_uniform_scale() {
+    // Saved legacy Text controls: Scale 23.854166030884, Width 10.416666030884,
+    // Uniform true. The public native-record scaffold supplies the graph and
+    // a single-style document; this is not a new Adobe-rendered fixture.
+    let scale = 23.854166030884;
+    let xml = legacy_static_text_xml().replace(
+        "<ParameterID>4</ParameterID><StartKeyframe>-91445760000000000,37.5,",
+        &format!("<ParameterID>4</ParameterID><StartKeyframe>-91445760000000000,{scale},"),
+    );
+    for width in [0.0, 10.416666030884, 37.5, 100.0, 4000.0] {
+        let xml = xml.replace(
+            "<ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,37.5,",
+            &format!("<ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,{width},"),
+        );
+        for complete in [false, true] {
+            let input = if complete {
+                xml.replace(
+                    "</Params><ID>4</ID>",
+                    r#"<Param Index="21" ObjectRef="62"/></Params><ID>4</ID>"#,
+                )
+            } else {
+                xml.clone()
+            };
+            let (project, mut omissions) = inspect_project_with_omissions(&input, None).unwrap();
+            assert!(omissions.is_empty(), "{omissions:?}");
+            let sequence = project.single_sequence().unwrap();
+            let text = sequence
+                .video_items()
+                .find_map(PrVideoItem::graphic)
+                .unwrap()
+                .text();
+            assert_eq!(text.horizontal_scale, None);
+            assert_eq!(text.transform.scale, scale);
+            assert_eq!(text.document, legacy_document());
+            let document = crate::convert::premiere_to_tesseract(
+                sequence,
+                &project.media,
+                &crate::tesseract_output::asset_ids_in_order(sequence, &project.media),
+                &mut omissions,
+            )
+            .unwrap()
+            .to_json_value()
+            .unwrap();
+            let text = document["composition"]["layers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|layer| layer["type"] == "Text")
+                .unwrap();
+            assert_eq!(
+                text["transform"]["scale"],
+                serde_json::json!([scale, scale])
+            );
+            assert_eq!(
+                text["transform"]["position"],
+                serde_json::json!([1440.0, 540.0])
+            );
+            assert_eq!(text["transform"]["opacity"], 60.0);
+        }
+    }
+}
+
+#[test]
+fn legacy_static_text_admission_keeps_layout_scale_animation_and_fixed_guards() {
+    let xml = legacy_static_text_xml();
+    let mut rejected = vec![
+        (
+            "missing parent rotation",
+            xml.replace(r#"<Param Index="20" ObjectRef="61"/>"#, ""),
+        ),
+        (
+            "wrong ID",
+            xml.replace(
+                "<ParameterID>21</ParameterID>",
+                "<ParameterID>22</ParameterID>",
+            ),
+        ),
+        (
+            "wrong name",
+            xml.replace(
+                "<Name>Parent Rotation</Name>",
+                "<Name>Unknown Rotation</Name>",
+            ),
+        ),
+        (
+            "wrong record kind",
+            xml.replace(r#"Index="2" ObjectRef="43""#, r#"Index="2" ObjectRef="44""#),
+        ),
+        (
+            "wrong parameter class",
+            xml.replace(
+                r#"ObjectID="45" ClassID="fe47129e-6c94-4fc0-95d5-c056a517aaf3""#,
+                r#"ObjectID="45" ClassID="cc12343e-f113-4d3b-ae05-b287db77d461""#,
+            ),
+        ),
+        (
+            "out-of-range inactive width",
+            xml.replace(
+                "<ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,37.5,",
+                "<ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,4000.5,",
+            ),
+        ),
+        (
+            "negative inactive width",
+            xml.replace(
+                "<ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,37.5,",
+                "<ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,-1,",
+            ),
+        ),
+        (
+            "uniform off",
+            xml.replace(
+                "<ParameterID>6</ParameterID><StartKeyframe>-91445760000000000,true,",
+                "<ParameterID>6</ParameterID><StartKeyframe>-91445760000000000,false,",
+            ),
+        ),
+        (
+            "unknown uniform",
+            xml.replace(
+                "<ParameterID>6</ParameterID><StartKeyframe>-91445760000000000,true,",
+                "<ParameterID>6</ParameterID><StartKeyframe>-91445760000000000,1,",
+            ),
+        ),
+        (
+            "nonfinite width",
+            xml.replace(
+                "<ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,37.5,",
+                "<ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,NaN,",
+            ),
+        ),
+        ("negative scales", xml.replace("00000,37.5,", "00000,-1,")),
+        (
+            "modern short layout",
+            text_only_xml().replace(r#"<Param Index="21" ObjectRef="62"/>"#, ""),
+        ),
+        (
+            "modern nondefault width",
+            text_only_xml().replace(
+                "<ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,100.,",
+                "<ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,37.5,",
+            ),
+        ),
+    ];
+    for id in [2, 10, 11, 12, 15, 16, 17, 18, 19, 20, 21] {
+        let old = format!("<ParameterID>{id}</ParameterID><StartKeyframe>-91445760000000000,");
+        let start = xml.find(&old).unwrap() + old.len();
+        let end = start + xml[start..].find(',').unwrap();
+        let active = if xml[start..end].contains("false") {
+            "true"
+        } else {
+            "1."
+        };
+        let changed = format!("{}{active}{}", &xml[..start], &xml[end..]);
+        if matches!(id, 11 | 12 | 19 | 20 | 21) {
+            let (project, omissions) = inspect_project_with_omissions(&changed, None).unwrap();
+            assert_eq!(project.single_sequence().unwrap().video_items().count(), 2);
+            assert!(
+                omissions
+                    .iter()
+                    .any(|o| o.kind == OmissionKind::Approximated
+                        && o.reason.contains(&format!("parameter {id} "))),
+                "{omissions:?}"
+            );
+        } else {
+            rejected.push(("active fixed control", changed));
+        }
+    }
+    rejected.push((
+        "active current tail",
+        xml.replace(
+            "</Params><ID>4</ID>",
+            r#"<Param Index="21" ObjectRef="62"/></Params><ID>4</ID>"#,
+        )
+        .replace(
+            "<ParameterID>22</ParameterID><StartKeyframe>-91445760000000000,false,",
+            "<ParameterID>22</ParameterID><StartKeyframe>-91445760000000000,true,",
+        ),
+    ));
+    for object in [43, 44, 45, 46, 47, 48] {
+        rejected.push((
+            "legacy transform keys",
+            keyed(
+                &xml,
+                object,
+                if object == 43 {
+                    TWO_POINT_KEYS
+                } else {
+                    TWO_SCALAR_KEYS
+                },
+            ),
+        ));
+    }
+    for (case, input) in rejected {
+        let (project, omissions) = inspect_project_with_omissions(&input, None).unwrap();
+        let sequence = project.single_sequence().unwrap();
+        assert_eq!(
+            (
+                sequence.video_items().count(),
+                sequence.video_occurrences().count()
+            ),
+            (1, 1),
+            "{case}: {omissions:?}"
+        );
+        assert!(
+            omissions
+                .iter()
+                .any(|omission| omission.scope == OmissionScope::Occurrence
+                    && omission.record == "20"),
+            "{case}: {omissions:?}"
+        );
+    }
+}
+
+#[test]
+fn legacy_json_source_text_reads_as_editable_text_and_an_unsupported_form_omits_only_its_graphic() {
+    use crate::tests::support::{legacy_source_text, legacy_source_text_payload};
+    // The native Text component, alone in its chain, with our own legacy
+    // Source Text in place of its Premiere 26 one.
+    let legacy_xml = |text: &serde_json::Value| {
+        graphic_xml(&STANDARD.encode(legacy_source_text_payload(&text.to_string())))
+            .replace(TWO_COMPONENTS, r#"<Component Index="0" ObjectRef="40"/>"#)
+    };
+    let xml = legacy_xml(&legacy_source_text());
+    let (_, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let read = graphic(&xml);
+    let text = read.text();
+    assert_eq!(
+        (text.name.as_str(), &text.document),
+        ("Before label", &legacy_document())
+    );
+    assert!(text.source_text_keys.is_empty() && text.animations.is_empty());
+    // The component's transform reads as beside a Premiere 26 document.
+    assert_eq!(text.transform, graphic(&text_only_xml()).text().transform);
+    // An unconverted legacy mask, and the same legacy document as a Source
+    // Text key, omit only their graphic; the video stays.
+    let mut masked = legacy_source_text();
+    masked["mTextParam"]["mIsMask"] = serde_json::json!(true);
+    let legacy_key = STANDARD.encode(legacy_source_text_payload(
+        &legacy_source_text().to_string(),
+    ));
+    for (xml, reason) in [
+        (
+            legacy_xml(&masked),
+            "unsupported conversion: ArbVideoComponentParam:41: legacy UTF-16 JSON Source Text: active mask is unsupported",
+        ),
+        (
+            with_source_text_keys(None, &format!("{IN},{legacy_key};")),
+            "unsupported conversion: ArbVideoComponentParam:41: legacy UTF-16 JSON text from Premiere before 26 converts only as a static graphic Source Text value",
+        ),
+    ] {
+        let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+        let sequence = project.single_sequence().unwrap();
+        assert_eq!(
+            (
+                sequence.video_items().count(),
+                sequence.video_occurrences().count()
+            ),
+            (1, 1),
+            "{reason}"
+        );
+        let omitted: Vec<_> = omissions
+            .iter()
+            .map(|omission| {
+                (
+                    omission.scope,
+                    omission.record.as_str(),
+                    omission.reason.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(omitted, [(OmissionScope::Occurrence, "20", reason)]);
+    }
+}
+
+#[test]
+fn legacy_layout_and_unmapped_styles_keep_editable_text_paint_and_video_sibling() {
+    use crate::tests::support::{legacy_run, legacy_source_text, legacy_source_text_payload};
+    use serde_json::json;
+
+    // Supplementary authored payload in the public native-record scaffold,
+    // not an independent Adobe-native legacy layout/fidelity case.
+    let mut text = legacy_source_text();
+    text["mTextParam"]["mWidth"] = json!(56);
+    text["mTextParam"]["mHeight"] = json!(10);
+    text["mTextParam"]["mLeading"] = json!(7.5);
+    text["mTextParam"]["mBackFillVisible"] = json!(false);
+    let style = &mut text["mTextParam"]["mStyleSheet"];
+    style["mStrokeVisible"] = legacy_run(json!(true));
+    style["mStrokeColor"] = legacy_run(json!(0xff_ffff));
+    style["mStrokeWidth"] = legacy_run(json!(3));
+    style["mFillOverStroke"] = legacy_run(json!(true));
+    style["mFauxBold"] = legacy_run(json!(true));
+    style["mUnderline"] = legacy_run(json!(true));
+    let xml = graphic_xml(&STANDARD.encode(legacy_source_text_payload(&text.to_string())))
+        .replace(TWO_COMPONENTS, r#"<Component Index="0" ObjectRef="40"/>"#);
+    let (project, mut omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+    for field in ["mFauxBold", "mUnderline"] {
+        assert!(
+            omissions
+                .iter()
+                .any(|omission| omission.reason.contains(field)),
+            "{field}"
+        );
+    }
+    assert!(omissions
+        .iter()
+        .all(|omission| omission.scope == OmissionScope::Feature));
+    let sequence = project.single_sequence().unwrap();
+    let document = crate::convert::premiere_to_tesseract(
+        sequence,
+        &project.media,
+        &crate::tesseract_output::asset_ids_in_order(sequence, &project.media),
+        &mut omissions,
+    )
+    .unwrap();
+    let mut value = document.to_json_value().unwrap();
+    let layers = value["composition"]["layers"].as_array_mut().unwrap();
+    let video = layers
+        .iter()
+        .find(|layer| layer["type"] == "Video")
+        .unwrap()
+        .clone();
+    let layer = layers
+        .iter_mut()
+        .find(|layer| layer["type"] == "Text")
+        .unwrap();
+    assert_eq!(
+        layer["sourceText"]["text"],
+        "Night\nMarket \u{2713} \u{1f525}"
+    );
+    assert_eq!(layer["sourceText"]["fontFamily"], "Inter-SemiBold");
+    assert_eq!(layer["sourceText"]["fontSize"], 64.5);
+    assert_eq!(layer["sourceText"]["boxSize"], json!([56.0, 10.0]));
+    assert_eq!(
+        layer["sourceText"]["strokeColor"],
+        json!([1.0, 1.0, 1.0, 1.0])
+    );
+    assert_eq!(layer["sourceText"]["strokeWidth"], 6.0);
+    let leading = layer["sourceText"]["leading"].as_f64().unwrap();
+    assert_eq!(leading, f64::from(1.2_f32 * 64.5_f32) + 7.5);
+    assert_eq!(
+        layer["activeRange"],
+        json!({"start": 1000, "duration": 2000})
+    );
+    layer["sourceText"]["text"] = json!("Editable recovered title");
+    assert_eq!(
+        layers
+            .iter()
+            .find(|layer| layer["type"] == "Video")
+            .unwrap(),
+        &video
+    );
+    let edited = fx_schema::EditableFxCompositionDocument::from_json_value(value).unwrap();
+    assert!(!edited
+        .to_json_value()
+        .unwrap()
+        .to_string()
+        .contains("JsScript"));
+}
+
+#[test]
+fn legacy_json_source_text_placements_edit_apart_and_export_their_current_modern_text() {
+    use crate::schema::PrProjectFile;
+    use crate::tests::support::{legacy_source_text, legacy_source_text_payload};
+    use serde_json::json;
+    use std::io::Read;
+    // Two placements, from 0 s and 3 s, share one stored legacy Source Text.
+    let legacy = legacy_source_text_payload(&legacy_source_text().to_string());
+    let records = legacy_static_text_layout(
+        &graphic_source_records(&STANDARD.encode(&legacy))
+            .replace(TWO_COMPONENTS, r#"<Component Index="0" ObjectRef="40"/>"#),
+    );
+    let track = r#"<VideoClipTrack ObjectUID="track-2"><ClipTrack><Track><ID>2</ID><Index>1</Index></Track><ClipItems><TrackItems><TrackItem ObjectRef="20"/><TrackItem ObjectRef="27"/></TrackItems><Index>1</Index></ClipItems></ClipTrack></VideoClipTrack>"#;
+    let xml = SOURCE
+        .replace(
+            r#"<Track ObjectURef="track-1"/>"#,
+            r#"<Track ObjectURef="track-1"/><Track ObjectURef="track-2" Index="1"/>"#,
+        )
+        .replace(
+            "</PremiereData>",
+            &format!(
+                "{track}\n{}{}{records}</PremiereData>",
+                graphic_item_record(20, 0),
+                graphic_item_record(27, 3 * TICKS)
+            ),
+        );
+    let mut document = point_title_document(&xml);
+    // A graphic-only export: drop the video layer.
+    let layers = document["composition"]["layers"].as_array_mut().unwrap();
+    layers.retain(|layer| layer["type"] != "Video");
+    let text_from = |layers: &[serde_json::Value], start: u64| {
+        layers
+            .iter()
+            .position(|layer| layer["type"] == "Text" && layer["activeRange"]["start"] == start)
+            .unwrap_or_else(|| panic!("no text layer from {start} ms: {layers:?}"))
+    };
+    let (a, b) = (text_from(layers, 0), text_from(layers, 3000));
+    assert_ne!(layers[a]["id"], layers[b]["id"]);
+    for layer in [a, b] {
+        assert_eq!(
+            layers[layer]["sourceText"]["text"],
+            "Night\nMarket \u{2713} \u{1f525}"
+        );
+    }
+    // Edit only A: its text, fill, tracking and position.
+    let b_before = layers[b].clone();
+    layers[a]["sourceText"]["text"] = json!("Edited \u{2713}");
+    layers[a]["sourceText"]["fillColor"] = json!([1.0, 0.4, 0.0, 1.0]);
+    layers[a]["sourceText"]["tracking"] = json!(-10.0);
+    layers[a]["transform"]["position"] = json!([480.0, 270.0]);
+    layers[a]["transform"]["scale"] = json!([62.5, 62.5]);
+    assert_eq!(layers[b], b_before);
+    let document = fx_schema::EditableFxCompositionDocument::from_json_value(document).unwrap();
+    let mut omissions = Vec::new();
+    let project = crate::convert::tesseract_to_premiere(
+        &document,
+        &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
+        crate::format::FrameRate::Fps30,
+        &mut omissions,
+    )
+    .unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    // Write the current content and read it back.
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("legacy-source-text.prproj");
+    crate::format::PremiereProjectXml::new(&project)
+        .unwrap()
+        .write_new(&path)
+        .unwrap();
+    let mut written = String::new();
+    flate2::read::GzDecoder::new(std::fs::File::open(&path).unwrap())
+        .read_to_string(&mut written)
+        .unwrap();
+    let (reopened, reopen_omissions) = PrProjectFile::load(&path).unwrap();
+    assert!(reopen_omissions.is_empty(), "{reopen_omissions:?}");
+    // Each placement keeps its own range, position and document.
+    let original = legacy_document();
+    let edited = crate::schema::text::PrTextDocument {
+        text: "Edited \u{2713}".into(),
+        fill: Some(PrRgb([255, 102, 0])),
+        tracking: -10.0,
+        ..original.clone()
+    };
+    let texts = |project: &PrProjectFile| {
+        let mut texts: Vec<_> = project
+            .single_sequence()
+            .unwrap()
+            .video_items()
+            .filter_map(PrVideoItem::graphic)
+            .map(|graphic| {
+                (
+                    graphic.start_ticks,
+                    graphic.end_ticks,
+                    graphic.text().transform.position,
+                    graphic.text().transform.scale,
+                    graphic.text().document.clone(),
+                )
+            })
+            .collect();
+        texts.sort_by_key(|text| text.0);
+        texts
+    };
+    let expected = vec![
+        (0, 2 * TICKS, [480.0, 270.0], 62.5, edited.clone()),
+        (
+            3 * TICKS,
+            5 * TICKS,
+            [1440.0, 540.0],
+            37.5,
+            original.clone(),
+        ),
+    ];
+    assert_eq!(texts(&project), expected);
+    assert_eq!(texts(&reopened), expected);
+    // The written Source Text values are the Premiere 26 payloads of the
+    // current documents; the legacy JSON is never replayed.
+    let mut stored: Vec<Vec<u8>> = written
+        .split("<Name>Source Text</Name>")
+        .skip(1)
+        .map(|record| {
+            let value = &record[record.find("<StartKeyframeValue").unwrap()..];
+            let start = value.find('>').unwrap() + 1;
+            let end = value.find("</StartKeyframeValue>").unwrap();
+            STANDARD.decode(&value[start..end]).unwrap()
+        })
+        .collect();
+    stored.sort();
+    let mut current = vec![encode(&edited).unwrap(), encode(&original).unwrap()];
+    current.sort();
+    assert_eq!(stored, current);
+    assert!(stored.iter().all(|payload| payload != &legacy
+        && decode(payload).is_ok_and(|decoded| decoded.omitted.is_empty())));
+}
+
+#[test]
+fn a_media_chain_still_reports_a_subgroup_map() {
+    let (_, omissions) = inspect_project_with_omissions(
+        &SOURCE.replacen(
+            "<DefaultMotion>",
+            "<ComponentGroupMap ObjectRef=\"1\"/><DefaultMotion>",
+            1,
+        ),
+        None,
+    )
+    .unwrap();
+    assert!(
+        omissions
+            .iter()
+            .any(|report| report.reason == "ComponentGroupMap not converted"),
+        "{omissions:?}"
+    );
+}
+
+#[test]
+fn adobe_subgroup_map_rejects_a_missing_parent_without_exposing_its_members() {
+    use std::io::Read;
+    let bytes = include_bytes!("../../../tests/fixtures/feature_graphic_masks_b_26_5.prproj");
+    let mut xml = String::new();
+    flate2::read::GzDecoder::new(bytes.as_slice())
+        .read_to_string(&mut xml)
+        .unwrap();
+    let start = xml.find("<ParentPinID>").unwrap() + "<ParentPinID>".len();
+    let end = start + xml[start..].find("</ParentPinID>").unwrap();
+    xml.replace_range(start..end, "999999");
+    let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+    assert!(
+        omissions
+            .iter()
+            .any(|report| report.reason.contains("pinned to SubGroup 999999")),
+        "{omissions:?}"
+    );
+    assert!(!project
+        .single_sequence()
+        .unwrap()
+        .video_items()
+        .filter_map(PrVideoItem::graphic)
+        .any(|graphic| graphic.id() == Some("VideoClipTrackItem:65")));
+}
+
+#[test]
+fn an_unsupported_shape_attachment_omits_only_its_owner_not_other_objects() {
+    let xml = shape_xml(TEXT_THEN_SHAPE, FILL).replace(
+        "<MatchName>AE.ADBE Shape</MatchName>",
+        "<SubComponents Version=\"1\"><SubComponent Index=\"0\" ObjectRef=\"23\"/></SubComponents><MatchName>AE.ADBE Shape</MatchName>",
+    );
+    let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+    let sequence = project.single_sequence().unwrap();
+    assert_eq!(sequence.video_items().count(), 2);
+    let graphic = sequence
+        .video_items()
+        .find_map(PrVideoItem::graphic)
+        .unwrap();
+    assert!(matches!(
+        graphic.objects.as_slice(),
+        [PrGraphicObject::Text(_)]
+    ));
+    assert!(
+        omissions
+            .iter()
+            .any(|report| report.reason.contains("its attached mask cannot convert")),
+        "{omissions:?}"
+    );
+}
+
+#[test]
+fn attached_numeric_keys_reader_keeps_owner_and_healthy_text() {
+    for name in ["Mask Feather", "Mask Expansion", "Mask Opacity"] {
+        let records = super::mask::numeric_mask_record_keys(
+            super::mask::mask(300, false),
+            name,
+            "914457600000000,100.,0,0,0,0,0,0;914457854016000,100.,0,0,0,0,0,0;",
+        );
+        let xml = shape_xml(TEXT_THEN_SHAPE, FILL)
+            .replace("<MatchName>AE.ADBE Shape</MatchName>", "<SubComponents Version=\"1\"><SubComponent Index=\"0\" ObjectRef=\"300\"/></SubComponents><MatchName>AE.ADBE Shape</MatchName>")
+            .replace("</PremiereData>", &format!("{records}</PremiereData>"));
+        let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+        let graphic = project
+            .single_sequence()
+            .unwrap()
+            .video_items()
+            .find_map(PrVideoItem::graphic)
+            .unwrap();
+        let [PrGraphicObject::Text(_), PrGraphicObject::Shape(shape)] = graphic.objects.as_slice()
+        else {
+            panic!("{name}: {omissions:?}");
+        };
+        let mask = shape.mask.as_ref().unwrap();
+        let keyed: Vec<_> = mask
+            .numeric_keys()
+            .into_iter()
+            .filter(|(_, keys)| !keys.is_empty())
+            .collect();
+        assert_eq!(keyed.len(), 1);
+        assert_eq!(keyed[0].1.len(), 2);
+        assert_eq!(keyed[0].1[1].source_ticks, 914457854016000);
+        assert_eq!(keyed[0].1[1].value, 100.0);
+    }
+}
+
+#[test]
+fn unequal_graphic_spans_reject_numeric_clip_mask_keys() {
+    for name in ["Mask Feather", "Mask Expansion", "Mask Opacity"] {
+        let records = super::mask::numeric_mask_record_keys(
+            super::mask::mask(300, false),
+            name,
+            "0,20.,0,0,0,0,0,0;254016000000,40.,0,0,0,0,0,0;",
+        );
+        let xml = with_clip_opacity(OPACITY_AND_TEXT, "100.", "", (18, 0))
+            .replace(
+                "<MatchName>AE.ADBE Opacity</MatchName>",
+                "<SubComponents Version=\"1\"><SubComponent Index=\"0\" ObjectRef=\"300\"/></SubComponents><MatchName>AE.ADBE Opacity</MatchName>",
+            )
+            .replace("</PremiereData>", &format!("{records}</PremiereData>"));
+        let accepted = graphic(&xml);
+        assert!(accepted.opacity_mask.unwrap().has_numeric_keys(), "{name}");
+        let changed = xml.replace(
+            "<OutPoint>914669280000000</OutPoint>",
+            "<OutPoint>914923296000000</OutPoint>",
+        );
+        let (project, omissions) = inspect_project_with_omissions(&changed, None).unwrap();
+        assert_eq!(project.single_sequence().unwrap().video_items().count(), 1);
+        assert!(
+            omissions.iter().any(|omission| {
+                omission.scope == OmissionScope::Occurrence
+                    && omission.reason.contains("graphic retiming is unsupported")
+            }),
+            "{name}: {omissions:?}"
+        );
+    }
+}
+
+#[test]
+fn unequal_graphic_spans_check_native_mask_sources_and_subgroups() {
+    use std::io::Read;
+    let bytes = include_bytes!("../../../tests/fixtures/feature_graphic_masks_b_26_5.prproj");
+    let mut xml = String::new();
+    flate2::read::GzDecoder::new(bytes.as_slice())
+        .read_to_string(&mut xml)
+        .unwrap();
+    let find = |xml: &str, id: &str| {
+        let (project, _) = inspect_project_with_omissions(xml, None).unwrap();
+        let graphic = project
+            .single_sequence()
+            .unwrap()
+            .video_items()
+            .filter_map(PrVideoItem::graphic)
+            .find(|graphic| graphic.id() == Some(id))
+            .cloned();
+        graphic
+    };
+    let mask = find(&xml, "VideoClipTrackItem:68").unwrap();
+    assert!(mask
+        .objects
+        .iter()
+        .any(|object| object.mask_source().is_some()));
+    let group = find(&xml, "VideoClipTrackItem:65").unwrap();
+    assert!(group
+        .objects
+        .iter()
+        .any(|object| matches!(object, PrGraphicObject::Group(_))));
+    // Native static SubGroup and mask-source records remain accepted. Only
+    // their placed source span is changed; the saved object content is intact.
+    let unequal = |xml: &str, clip: &str| {
+        let mut xml = xml.to_owned();
+        let start = xml
+            .find(&format!("<VideoClip ObjectID=\"{clip}\""))
+            .unwrap();
+        let end = start + xml[start..].find("</VideoClip>").unwrap();
+        let changed = xml[start..end].replace(
+            "<OutPoint>254016000000</OutPoint>",
+            "<OutPoint>508032000000</OutPoint>",
+        );
+        assert_ne!(changed, xml[start..end]);
+        xml.replace_range(start..end, &changed);
+        xml
+    };
+    assert_eq!(
+        find(&unequal(&xml, "122"), "VideoClipTrackItem:65")
+            .unwrap()
+            .objects,
+        group.objects
+    );
+    assert_eq!(
+        find(&unequal(&xml, "131"), "VideoClipTrackItem:68")
+            .unwrap()
+            .objects,
+        mask.objects
+    );
+    // Synthetic keys on the native mask-source Text exercise the same reader,
+    // not a claim of native-authored animation or a new interpolation proof.
+    let keyed = keyed(&xml, 293, TWO_SCALAR_KEYS);
+    let accepted = find(&keyed, "VideoClipTrackItem:68").unwrap();
+    assert!(accepted.objects.iter().any(|object| matches!(object,
+        PrGraphicObject::Text(text) if text.mask_source.is_some() && !text.animations.is_empty()
+    )));
+    let changed = unequal(&keyed, "131");
+    assert!(find(&changed, "VideoClipTrackItem:68").is_none());
+    let (_, omissions) = inspect_project_with_omissions(&changed, None).unwrap();
+    assert!(
+        omissions.iter().any(|omission| omission
+            .reason
+            .contains("VideoClip:131: graphic retiming is unsupported")),
+        "{omissions:?}"
+    );
+}
+
+#[test]
+fn object_mask_sampling_keeps_co_resident_native_clock_graphic() {
+    let step = crate::format::object_mask::SAVED_SEQUENCE_FRAME_TICKS;
+    let mask = include_str!("../../../tests/fixtures/object_mask/opacity.xml");
+    let xml=graphic_xml(BEFORE)
+        .replace("<FrameRate>8467200000</FrameRate>",&format!("<FrameRate>{step}</FrameRate>"))
+        .replace("<VideoComponentChain ObjectID=\"4\"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>",
+            "<VideoComponentChain ObjectID=\"4\"><DefaultMotion>true</DefaultMotion><ComponentChain><Components><Component Index=\"0\" ObjectRef=\"665\"/></Components></ComponentChain></VideoComponentChain>")
+        .replace("<End>1270080000000</End>",&format!("<End>{}</End>",150*step))
+        .replace("<OutPoint>1270080000000</OutPoint>",&format!("<OutPoint>{}</OutPoint>",150*step))
+        .replace("<Start>254016000000</Start><End>762048000000</End>",&format!("<Start>{}</Start><End>{}</End>",30*step,90*step))
+        .replace("<OutPoint>914669280000000</OutPoint>",&format!("<OutPoint>{}</OutPoint>",914161248000000_i64+60*step))
+        .replace("</PremiereData>",&format!("{mask}</PremiereData>"));
+    let (project, notes) = inspect_project_with_omissions(&xml, None).unwrap();
+    let sequence = project.single_sequence().unwrap();
+    assert_eq!(sequence.frame_rate, crate::schema::FrameRate::Fps30);
+    assert_eq!(sequence.native_frame_ticks, Some(step));
+    assert_eq!(
+        sequence
+            .video_tracks
+            .iter()
+            .flat_map(|t| &t.items)
+            .filter(|i| matches!(i, PrVideoItem::Graphic(_)))
+            .count(),
+        1,
+        "{notes:?}"
+    );
+    assert!(!notes
+        .iter()
+        .any(|n| n.reason.contains("graphic frame size or rate")));
+    let editable = crate::tests::support::project_document_with_media(sequence, &project.media);
+    assert!(editable.to_string().contains("\"type\":\"Text\""));
+    let graphic_owned = xml.replace("<VideoComponentChain ObjectID=\"4\"><DefaultMotion>true</DefaultMotion><ComponentChain><Components><Component Index=\"0\" ObjectRef=\"665\"/></Components></ComponentChain></VideoComponentChain>",
+        "<VideoComponentChain ObjectID=\"4\"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>")
+        .replace("<Component Index=\"1\" ObjectRef=\"40\"/>","<Component Index=\"1\" ObjectRef=\"40\"/><Component Index=\"2\" ObjectRef=\"665\"/>");
+    let (project, notes) = inspect_project_with_omissions(&graphic_owned, None).unwrap();
+    assert_eq!(
+        project
+            .single_sequence()
+            .unwrap()
+            .frame_rate
+            .ticks_per_frame(),
+        step
+    );
+    assert!(!notes
+        .iter()
+        .any(|n| n.reason.contains("Object Mask sequence cadence")));
 }

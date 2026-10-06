@@ -1,10 +1,51 @@
+#[cfg(feature = "ffmpeg-library")]
+use crate::format::inspect_project;
 use crate::{
     error::{ensure, unsupported, Result},
-    format::{inspect_project, MediaId, PrMedia, PrProjectFile, PrSequence, PrVideoOccurrence},
+    format::{MediaId, PrMedia, PrProjectFile, PrSequence, PrVideoOccurrence},
     schema::{PrGraphic, PrMask, PrStaticCrop, PrVideoItem, PrVideoStream, PrVideoTrack},
 };
 use serde_json::Value;
 use std::{collections::BTreeMap, path::Path, sync::Arc};
+
+/// Point every `<tag>` path hint naming `file`'s basename at `file`.
+///
+/// Adobe-authored fixtures retain absolute author-host media hints. Tests relink
+/// only their temporary copy so source selection never depends on whether the
+/// author's machine layout happens to exist on the test host.
+#[cfg(feature = "ffmpeg-library")]
+pub(crate) fn relink(xml: &mut String, tag: &str, file: &Path) -> usize {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let replacement = quick_xml::escape::escape(file.to_str().unwrap()).into_owned();
+    let mut count = 0;
+    let mut offset = 0;
+    while let Some(start) = xml[offset..]
+        .find(&open)
+        .map(|index| offset + index + open.len())
+    {
+        let end = start + xml[start..].find(&close).unwrap();
+        if Path::new(&xml[start..end]).file_name() == file.file_name() {
+            xml.replace_range(start..end, &replacement);
+            offset = start + replacement.len() + close.len();
+            count += 1;
+        } else {
+            offset = end + close.len();
+        }
+    }
+    count
+}
+
+/// Decompress a gzip `.prproj` fixture to its XML text.
+pub(crate) fn prproj_xml(path: &Path) -> String {
+    let mut xml = String::new();
+    std::io::Read::read_to_string(
+        &mut flate2::read::GzDecoder::new(std::fs::File::open(path).unwrap()),
+        &mut xml,
+    )
+    .unwrap();
+    xml
+}
 
 /// The current Gaussian Blur that export writes for an FX `blurriness`.
 pub(crate) fn exported_blur(
@@ -13,6 +54,7 @@ pub(crate) fn exported_blur(
     repeat_edge_pixels: bool,
 ) -> crate::schema::PrEffect {
     crate::schema::PrEffect {
+        mask: None,
         enabled,
         params: crate::schema::PrEffectParams::FilmImpactBlur(crate::schema::PrFilmImpactBlur {
             amount: amount(blurriness),
@@ -107,6 +149,8 @@ pub(crate) fn video_media() -> BTreeMap<MediaId, PrMedia> {
             relative_paths: Vec::new(),
             absolute_paths: Vec::new(),
             video: Some(PrVideoStream {
+                pixel_aspect: Default::default(),
+                interpretation: Default::default(),
                 orientation: crate::schema::VideoOrientation::Identity,
                 kind: crate::schema::PrMediaKind::Video {
                     codec: None,
@@ -151,6 +195,9 @@ pub(crate) fn nest_of(
 ) -> crate::schema::PrNestOccurrence {
     crate::schema::PrNestOccurrence {
         id: None,
+        reverse_source_duration: None,
+        playback_rate: 1.0,
+        time_remap: None,
         in_ticks: source_in,
         out_ticks: source_in + timeline.end - timeline.start,
         start_ticks: timeline.start,
@@ -161,8 +208,10 @@ pub(crate) fn nest_of(
         animations: Vec::new(),
         crop: Default::default(),
         linear_wipe: None,
+        opacity_mask: None,
         track_matte: None,
         effects: Vec::new(),
+        effects_above_mask: 0,
         enabled: true,
         sequence,
     }
@@ -215,6 +264,7 @@ pub(crate) fn nested_sequence() -> (PrSequence, BTreeMap<MediaId, PrMedia>) {
 pub(crate) fn video_sequence() -> PrSequence {
     use crate::{format::FrameRate, schema::TICKS};
     PrSequence {
+        native_frame_ticks: None,
         id: None,
         name: "Main".into(),
         top_level: Some(true),
@@ -246,6 +296,7 @@ pub(crate) fn video_sequence() -> PrSequence {
                 effects_above_mask: 0,
                 stroke: None,
                 active_transforms: 0,
+                source_effects: None,
             })],
             transitions: Vec::new(),
             nests: Vec::new(),
@@ -283,6 +334,11 @@ pub(crate) fn opacity_mask() -> PrMask {
         out_tangent: [x, y],
     };
     PrMask {
+        raster: None,
+        feather_keys: Vec::new(),
+        expansion: 0.0,
+        expansion_keys: Vec::new(),
+        opacity_keys: Vec::new(),
         path: PrShapePath {
             vertices: vec![
                 corner(0.25, 0.25),
@@ -292,10 +348,40 @@ pub(crate) fn opacity_mask() -> PrMask {
             ],
             closed: true,
         },
+        path_keys: Vec::new(),
         feather: 12.0,
         opacity: 50.0,
         inverted: false,
     }
+}
+
+/// [`opacity_mask`] keyed at source 0.5 s and 1.5 s: its rectangle, then the
+/// rectangle moved right by a quarter of the frame, between which Premiere
+/// moves each vertex linearly.
+pub(crate) fn keyed_opacity_mask() -> PrMask {
+    use crate::schema::{PrMaskPathKey, TICKS};
+    let mut mask = opacity_mask();
+    let mut moved = mask.path.clone();
+    for vertex in &mut moved.vertices {
+        for point in [
+            &mut vertex.point,
+            &mut vertex.in_tangent,
+            &mut vertex.out_tangent,
+        ] {
+            point[0] += 0.25;
+        }
+    }
+    mask.path_keys = vec![
+        PrMaskPathKey {
+            source_ticks: TICKS / 2,
+            path: mask.path.clone(),
+        },
+        PrMaskPathKey {
+            source_ticks: 3 * TICKS / 2,
+            path: moved,
+        },
+    ];
+    mask
 }
 
 /// A graphic from 1 s to 3 s that sets every modeled text field.
@@ -313,10 +399,15 @@ pub(crate) fn text_graphic() -> PrGraphic {
         end_ticks: 3 * TICKS,
         in_ticks: crate::format::FrameRate::Fps30.generator_in_ticks(),
         vector_motion: None,
+        clip_motion: crate::schema::PrStaticTransform::default(),
         opacity: 100.0,
         blend_mode: crate::schema::PrBlendMode::Normal,
         animations: Vec::new(),
+        opacity_mask: None,
+        effect_loss: None,
         objects: vec![PrGraphicObject::Text(PrText {
+            horizontal_scale: None,
+            mask_source: None,
             name: "Title".into(),
             document: PrTextDocument {
                 text: "Line one\nLine two".into(),
@@ -353,6 +444,72 @@ pub(crate) fn text_graphic() -> PrGraphic {
     }
 }
 
+/// One legacy Source Text style that every character shares: a single run
+/// from character 0.
+pub(crate) fn legacy_run(value: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({ "mParamValues": [[0, value]] })
+}
+
+/// Our own version 1 legacy Source Text, with values of our choosing rather
+/// than a saved project's: centred point text of two paragraphs in
+/// `Inter-SemiBold` at 64.5 px with tracking 25 and a visible gray fill, and
+/// a stroke and a shadow that are off with values of their own.
+pub(crate) fn legacy_source_text() -> serde_json::Value {
+    use serde_json::json;
+    json!({
+        "mVersion": 1,
+        "mTextParam": {
+            "mAlignment": 2,
+            "mDefaultRun": [],
+            "mHeight": 0,
+            "mHindiDigits": false,
+            "mIndic": false,
+            "mIsVerticalText": false,
+            "mLeading": 0,
+            "mLigatures": false,
+            "mRTL": false,
+            "mShadowAngle": 90,
+            "mShadowBlur": 5.5,
+            "mShadowColor": 0x10_20_30,
+            "mShadowOffset": 3,
+            "mShadowOpacity": 50,
+            "mShadowSize": 2,
+            "mShadowVisible": false,
+            "mStyleSheet": {
+                "mBaselineOption": legacy_run(json!(0)),
+                "mBaselineShift": legacy_run(json!(0)),
+                "mCapsOption": legacy_run(json!(0)),
+                "mFauxBold": legacy_run(json!(false)),
+                "mFauxItalic": legacy_run(json!(false)),
+                "mFillColor": legacy_run(json!(0x80_80_80)),
+                "mFillOverStroke": legacy_run(json!(false)),
+                "mFillVisible": legacy_run(json!(true)),
+                "mFontName": legacy_run(json!("Inter-SemiBold")),
+                "mFontSize": legacy_run(json!(64.5)),
+                "mKerning": legacy_run(json!(0)),
+                "mStrokeColor": legacy_run(json!(0x00_c0_ff)),
+                "mStrokeVisible": legacy_run(json!(false)),
+                "mStrokeWidth": legacy_run(json!(6.5)),
+                "mText": "Night\rMarket \u{2713} \u{1f525}",
+                "mTracking": legacy_run(json!(25)),
+                "mTsumi": legacy_run(json!(0))
+            },
+            "mTabWidth": 250,
+            "mWidth": 0
+        }
+    })
+}
+
+/// The legacy Source Text payload of `json`: the little-endian `u64` byte
+/// count of its UTF-16LE text, then the text.
+pub(crate) fn legacy_source_text_payload(json: &str) -> Vec<u8> {
+    let text: Vec<u8> = json.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let count = u64::try_from(text.len()).expect("a test text fits a u64 byte count");
+    let mut payload = count.to_le_bytes().to_vec();
+    payload.extend(text);
+    payload
+}
+
 /// [`text_graphic`] with one Shape instead of its text: a filled 200 × 180
 /// px rectangle of corners at the frame centre.
 pub(crate) fn shape_graphic() -> PrGraphic {
@@ -379,6 +536,7 @@ pub(crate) fn shape_graphic() -> PrGraphic {
                 closed: true,
             },
             appearance: PrAppearance {
+                mask_source: None,
                 fill: Some(PrFill::Solid(PrRgb([0, 96, 255]))),
                 stroke: None,
                 shadow: None,
@@ -391,11 +549,57 @@ pub(crate) fn shape_graphic() -> PrGraphic {
                 opacity: 100.0,
             },
             horizontal_scale: None,
+            mask: None,
         })],
         ..text_graphic()
     }
 }
 
+/// The style fields of our own version 1 legacy JSON Appearance, with values
+/// of our choosing rather than a saved template's: a visible grey fill, and a
+/// stroke and a shadow that are off with values of their own.
+const LEGACY_STYLE: [(&str, &str); 11] = [
+    ("mFillColor", "8421504"),
+    ("mFillVisible", "true"),
+    ("mStrokeColor", "49407"),
+    ("mStrokeVisible", "false"),
+    ("mStrokeWidth", "3.5"),
+    ("mShadowAngle", "45"),
+    ("mShadowBlur", "0"),
+    ("mShadowColor", "1056816"),
+    ("mShadowOffset", "12.5"),
+    ("mShadowOpacity", "40"),
+    ("mShadowVisible", "false"),
+];
+
+/// A version 1 legacy JSON Appearance, `mVersion` first, of [`LEGACY_STYLE`]
+/// after `changes`: each names a field and replaces or adds its JSON value, or
+/// with `None` removes it.
+pub(crate) fn legacy_json(changes: &[(&str, Option<&str>)]) -> String {
+    let mut fields = LEGACY_STYLE.to_vec();
+    for &(name, value) in changes {
+        fields.retain(|&(field, _)| field != name);
+        fields.extend(value.map(|value| (name, value)));
+    }
+    let style: Vec<String> = fields
+        .iter()
+        .map(|(name, value)| format!("\"{name}\":{value}"))
+        .collect();
+    format!("{{\"mVersion\":1,\"mStyle\":{{{}}}}}", style.join(","))
+}
+
+/// The legacy Appearance payload of `json`: the byte count of its UTF-16LE
+/// text as a little-endian `u32`, a zero `u32`, then the text.
+pub(crate) fn legacy_appearance(json: &str) -> Vec<u8> {
+    let text: Vec<u8> = json.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let count = u32::try_from(text.len()).expect("a test style fits a u32 byte count");
+    let mut payload = count.to_le_bytes().to_vec();
+    payload.extend([0; 4]);
+    payload.extend(text);
+    payload
+}
+
+#[cfg(feature = "ffmpeg-library")]
 pub(super) fn inspect(xml: &str, sequence_id: Option<&str>) -> Result<PrVideoOccurrence> {
     let mut project = inspect_project(xml, sequence_id)?;
     ensure!(
@@ -447,6 +651,7 @@ pub(super) fn build_tesseract_file(
 }
 
 /// Build a Premiere package through the same conversion used by public calls.
+#[cfg(feature = "ffmpeg-library")]
 pub(super) fn tesseract_to_premiere(source: &Path, output: &Path) -> Result<()> {
     crate::premiere_package::save_tesseract_as_premiere(
         source,
@@ -481,6 +686,7 @@ pub(crate) fn directional_blur(
 ) -> crate::schema::PrEffect {
     use crate::schema::{PrDirectionalBlur, PrEffect, PrEffectParams};
     PrEffect {
+        mask: None,
         enabled,
         params: PrEffectParams::DirectionalBlur(PrDirectionalBlur {
             direction,
@@ -520,7 +726,7 @@ pub(crate) fn keyed_directional(
     effect
 }
 
-/// A Transform at Premiere's defaults (Oracle run E11, `A-static.xml` but
+/// A Transform at Premiere's defaults (`A-static.xml` but
 /// for its Position and Opacity): both points centred, Uniform Scale off at
 /// 100/100, no skew or rotation, the composition's shutter angle.
 pub(crate) const DEFAULT_PR_TRANSFORM: crate::schema::PrTransform = crate::schema::PrTransform {
@@ -545,6 +751,7 @@ pub(crate) fn transform_effect(
     animations: Vec<crate::schema::PrEffectParamAnimation>,
 ) -> crate::schema::PrEffect {
     crate::schema::PrEffect {
+        mask: None,
         enabled: true,
         params: crate::schema::PrEffectParams::Transform(transform),
         animations,
@@ -595,7 +802,7 @@ pub(crate) fn playback_keys(layer: &serde_json::Value) -> Vec<serde_json::Value>
     }
 }
 
-/// Native transition 1009/component 1610 and controls from Bonsa SHA
+/// Native transition 1009/component 1610 and controls from source SHA
 /// ace57eb53250a0c41b6aeff89474753fc5c68fe4c41157e4daf89a703b7bbe55.
 /// Only the parent-clock range is relocated onto the one-clip fixture.
 pub(crate) fn film_impact_tail_xml() -> String {
@@ -611,7 +818,7 @@ pub(crate) fn film_impact_tail_xml() -> String {
         .replace("</PremiereData>", &format!("{native}</PremiereData>"))
 }
 
-/// Opposite one-sided topology of native Bonsa End Card transition 1001;
+/// Opposite one-sided topology of native End Card transition 1001;
 /// its controls equal the pinned tail profile. Relocated to source range 0..1 s.
 pub(crate) fn film_impact_head_xml() -> String {
     film_impact_tail_xml()
@@ -651,7 +858,7 @@ pub(crate) fn film_impact_curve_ui_xml() -> String {
     source
 }
 
-/// Native Bonsa Pop1006 controls; only range moves to the30fps one-clip fixture.
+/// Native Pop1006 controls; only the range moves to the 30fps one-clip fixture.
 pub(crate) fn film_impact_pop_xml() -> String {
     let native = include_str!("../../tests/fixtures/film-impact-pop-profile.xml")
         .replace("<?xml version='1.0' encoding='utf-8'?>", "")
@@ -663,4 +870,43 @@ pub(crate) fn film_impact_pop_xml() -> String {
         .replace("</ClipItems></ClipTrack>", "</ClipItems><TransitionItems><TrackItems><TrackItem ObjectRef=\"1006\"/></TrackItems></TransitionItems></ClipTrack>")
         .replace("<SubClip ObjectRef=\"5\"/></ClipTrackItem>", "<SubClip ObjectRef=\"5\"/><HeadTransition ObjectRef=\"1006\"/></ClipTrackItem>")
         .replace("</PremiereData>", &format!("{native}</PremiereData>"))
+}
+
+/// Valid empty-leading AAC edit for preparation tests. Original packets stay intact.
+#[cfg(feature = "ffmpeg-library")]
+pub(crate) fn delayed_aac_bytes() -> Vec<u8> {
+    fn rewrite(bytes: &[u8]) -> Vec<u8> {
+        let mut output = Vec::new();
+        let mut offset = 0;
+        while offset < bytes.len() {
+            let size = u32::from_be_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+            let kind = &bytes[offset + 4..offset + 8];
+            let body = &bytes[offset + 8..offset + size];
+            let payload = match kind {
+                b"moov" | b"trak" | b"edts" => rewrite(body),
+                b"elst" => {
+                    let mut edit = vec![0; 4];
+                    edit.extend_from_slice(&2_u32.to_be_bytes());
+                    // Movie clock is 48 kHz: 50 ms silence, 150 ms raw playback.
+                    for (duration, time) in [(2400_u32, -1_i32), (7200, 0)] {
+                        edit.extend_from_slice(&duration.to_be_bytes());
+                        edit.extend_from_slice(&time.to_be_bytes());
+                        edit.extend_from_slice(&1_u16.to_be_bytes());
+                        edit.extend_from_slice(&0_u16.to_be_bytes());
+                    }
+                    edit
+                }
+                _ => body.to_vec(),
+            };
+            output.extend_from_slice(&u32::try_from(payload.len() + 8).unwrap().to_be_bytes());
+            output.extend_from_slice(kind);
+            output.extend(payload);
+            offset += size;
+        }
+        output
+    }
+    const M4A: &[u8] = include_bytes!("../../tests/fixtures/audio-stereo.m4a");
+    // moov follows mdat in this fixture, so changing its size cannot move AAC packets.
+    assert!(M4A.windows(4).position(|x| x == b"mdat") < M4A.windows(4).position(|x| x == b"moov"));
+    rewrite(M4A)
 }

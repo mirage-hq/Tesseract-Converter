@@ -11,7 +11,7 @@
   "properties": {
     "version": {
       "description": "FX composition schema version.",
-      "const": 67
+      "const": 69
     },
     "backgroundColor": {
       "description": "Composition-level render background color.",
@@ -2487,6 +2487,9 @@
           "$ref": "#/$defs/layerEffectPrimaryGrade"
         },
         {
+          "$ref": "#/$defs/layerEffectTonalColor"
+        },
+        {
           "$ref": "#/$defs/layerEffectBrightnessContrast"
         },
         {
@@ -2577,6 +2580,28 @@
           "$ref": "#/$defs/layerEffectColorCurves"
         }
       ]
+    },
+    "layerEffectTonalColor": {
+      "type": "object",
+      "description": "Jerboa SDR tonal color v1: signed scalar RGB offsets, luma projection and one gamut-fit scale. Not vendor LGG/Offset.",
+      "required": ["type", "semanticVersion", "globalRed", "globalGreen", "globalBlue", "shadowsRed", "shadowsGreen", "shadowsBlue", "midtonesRed", "midtonesGreen", "midtonesBlue", "highlightsRed", "highlightsGreen", "highlightsBlue"],
+      "properties": {
+        "type": {"const": "tonalColor"},
+        "semanticVersion": {"const": 1},
+        "globalRed": {"type": "number", "minimum": -1, "maximum": 1},
+        "globalGreen": {"type": "number", "minimum": -1, "maximum": 1},
+        "globalBlue": {"type": "number", "minimum": -1, "maximum": 1},
+        "shadowsRed": {"type": "number", "minimum": -1, "maximum": 1},
+        "shadowsGreen": {"type": "number", "minimum": -1, "maximum": 1},
+        "shadowsBlue": {"type": "number", "minimum": -1, "maximum": 1},
+        "midtonesRed": {"type": "number", "minimum": -1, "maximum": 1},
+        "midtonesGreen": {"type": "number", "minimum": -1, "maximum": 1},
+        "midtonesBlue": {"type": "number", "minimum": -1, "maximum": 1},
+        "highlightsRed": {"type": "number", "minimum": -1, "maximum": 1},
+        "highlightsGreen": {"type": "number", "minimum": -1, "maximum": 1},
+        "highlightsBlue": {"type": "number", "minimum": -1, "maximum": 1}
+      },
+      "additionalProperties": false
     },
     "layerEffectPersonMatte": {
       "type": "object",
@@ -5193,6 +5218,11 @@
             "source",
             "black"
           ]
+        },
+        "serverEmojis": {
+          "description": "Generated emoji values keyed by caption word id. Absent denotes legacy provenance not retained; an empty map is complete.",
+          "type": "object",
+          "additionalProperties": { "type": "string" }
         },
         "stickers": {
           "description": "Shot-owned stickers rendered with caption and emoji timing semantics.",

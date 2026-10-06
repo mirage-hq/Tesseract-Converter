@@ -6,6 +6,36 @@ use std::collections::BTreeSet;
 const TEMPLATE: &str = include_str!("../../../tests/fixtures/effects_coverage/template.fx.json");
 const CASES: &str = include_str!("../../../tests/fixtures/effects_coverage/cases.json");
 
+#[test]
+fn aligned_color_cubic_full_export_retains_keys_and_endpoint_edit() {
+    for (input_json, red) in [
+        (
+            include_str!(
+                "../../../tests/fixtures/effects_coverage/aligned_color_cubic_original.fx.json"
+            ),
+            0.8,
+        ),
+        (
+            include_str!(
+                "../../../tests/fixtures/effects_coverage/aligned_color_cubic_edited.fx.json"
+            ),
+            0.9,
+        ),
+    ] {
+        let input: Value = serde_json::from_str(input_json).unwrap();
+        let oracle = json!({"effect":"ADBE Tint", "enabled":true, "controls":[
+            {"name":"ADBE Tint-0001", "keys":[[0,0.1,0.2,0.3,0],[1,red,0.7,0.6,0]], "segments":["cubic"]},
+            {"name":"ADBE Tint-0002", "value":[0.52,1,0.7,0]},
+            {"name":"ADBE Tint-0003", "value":[73]}
+        ]});
+        super::effects_native_panel::check_case(
+            input["composition"]["name"].as_str().unwrap(),
+            input_json,
+            &oracle.to_string(),
+        );
+    }
+}
+
 fn cases() -> Vec<Value> {
     serde_json::from_str::<Value>(CASES).unwrap()["cases"]
         .as_array()
@@ -98,9 +128,10 @@ fn check_case_inner(kind: &str, animated: bool) {
     let name = input["composition"]["name"].as_str().unwrap();
     let input_json = serde_json::to_string_pretty(&input).unwrap() + "\n";
     let oracle_json = serde_json::to_string_pretty(&oracle).unwrap() + "\n";
-    // Optional scratch artifacts never belong in the committed fixture directory. The
+    // Scratch artifacts never belong in the committed fixture directory. The
     // .tsrct is built from exactly this explicit FX input, not a re-imported AEP.
-    if let Some(directory) = std::env::var_os("AEP_EFFECTS_COVERAGE_DIR") {
+    {
+        let directory = crate::adobe_test_support::artifact_directory();
         let path = std::path::Path::new(&directory).join(name);
         std::fs::create_dir_all(&directory).unwrap();
         std::fs::write(path.with_extension("fx.json"), &input_json).unwrap();
@@ -306,12 +337,6 @@ fn explicit_hue_master_static_exports_editable_aep() {
         let input: Value = serde_json::from_str(INPUT).unwrap();
         let document = EditableFxCompositionDocument::from_json_value(input).unwrap();
         let output = to_aep(&document).unwrap();
-        if let Some(dir) = std::env::var_os("AEP_HUE_MASTER_DIR") {
-            let dir = std::path::Path::new(&dir);
-            std::fs::create_dir_all(dir).unwrap();
-            std::fs::write(dir.join("hueMasterStatic.fx.json"), INPUT).unwrap();
-            std::fs::write(dir.join("hueMasterStatic.aep"), &output.bytes).unwrap();
-        }
         let native = read_project(&output.bytes).unwrap();
         let [layer] = layers(&native) else {
             panic!("fresh output must retain one editable owner");

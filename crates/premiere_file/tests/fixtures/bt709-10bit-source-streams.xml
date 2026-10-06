@@ -1,0 +1,27 @@
+<!-- Native source project SHA-256:
+dff8bc0a167fb5882413a1190d819f9e530cc038334d04f9676a749b11806721.
+Only VideoStream records 1400 (short profile) and 962 (profile data) extracted;
+record values unchanged. No media, paths, names or other project records.
+Tests attach each record to the generic one-clip.xml scaffold. Structural-only:
+this fixture does not prove decoding, Adobe acceptance or render fidelity. -->
+<SourceStreams>
+<VideoStream ObjectID="1400" ClassID="a36e4719-3ec6-4a0c-ab11-8b4aab377aa5" Version="22">
+		<CodecType>1634755443</CodecType>
+		<OriginalColorSpace>{"baseColorProfile":{"colorProfileName":"BT.709,10-bit,Display-Referred"},"baseProfileType":1}</OriginalColorSpace>
+		<OriginalImageOrientationType>1</OriginalImageOrientationType>
+		<FrameRate>8475667200</FrameRate>
+		<Duration>245794348800</Duration>
+		<FrameRect>0,0,2160,3840</FrameRect>
+	</VideoStream>
+<VideoStream ObjectID="962" ClassID="a36e4719-3ec6-4a0c-ab11-8b4aab377aa5" Version="22">
+		<CodecType>1635148593</CodecType>
+		<OriginalColorSpace>{"baseColorProfile":{"colorProfileData":"AQAAAP////8=","colorProfileName":"BT.709,10-bit,Display-Referred"},"baseProfileType":1}</OriginalColorSpace>
+		<FieldTypeIsUncertain>true</FieldTypeIsUncertain>
+		<OriginalImageOrientationType>6</OriginalImageOrientationType>
+		<FrameRate>8475667200</FrameRate>
+		<Duration>1398485088000</Duration>
+		<FrameRect>0,0,3840,2160</FrameRect>
+		<AlphaType>3</AlphaType>
+		<IgnoreAlpha>true</IgnoreAlpha>
+	</VideoStream>
+</SourceStreams>

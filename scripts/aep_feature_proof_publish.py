@@ -46,6 +46,9 @@ PROHIBITED_JSX_RE = re.compile(
 )
 
 
+import adobe_native
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
@@ -404,34 +407,16 @@ def render_reference(
         shutil.copyfile(source_path, scratch)
     if scratch.is_symlink() or sha256_file(scratch) != source["source_sha256"]:
         raise ProofError("scratch AEP does not match immutable source")
-    aerender = _tool(args.aerender, "aerender")
+    if getattr(args, "aerender", None):
+        raise ProofError("--aerender is retired; configure the central worker with HEADLESS_ADOBE_COMMAND")
     ffprobe = _tool(None, "ffprobe")
     ffmpeg = _tool(None, "ffmpeg")
-    command = [
-        aerender,
-        "-project",
-        str(scratch),
-        "-comp",
-        composition["composition_name"],
-        "-s",
-        "0",
-        "-e",
-        str(composition["frame_count"] - 1),
-        "-renderSettings",
-        RENDER_SETTINGS,
-        "-OMtemplate",
-        OUTPUT_MODULE,
-        "-output",
-        str(video),
-        "-mem_usage",
-        "20",
-        "40",
-        "-mfr",
-        "OFF",
-        "50",
-        "-v",
-        "ERRORS_AND_PROGRESS",
-    ]
+    dependencies = {
+        str(index): {"path": str(Path(item["authored_path"]).expanduser()),
+                     "sha256": item["sha256"], "source_path": item["authored_path"]}
+        for index, item in enumerate(source.get("media_dependencies", []))
+    }
+    native_work = folder / "native-worker"
     journal = {
         "schema_version": 1,
         "case_id": case["case_id"],
@@ -442,8 +427,19 @@ def render_reference(
     }
     _write_journal(paths, case, journal)
     try:
+        artifact = adobe_native.execute(
+            "render_aep", {"source": adobe_native.source_ref(scratch, dependencies),
+                           "composition_id": str(composition["composition_id"]),
+                           "settings": {"format": "mp4", "fps": 30, "start_frame": 0,
+                                        "end_frame": composition["frame_count"] - 1,
+                                        "audio": "native"}},
+            native_work, timeout=args.timeout)
+        adobe_native.copy_artifact(artifact, video)
+        if sha256_file(scratch) != source["source_sha256"] or sha256_file(source_path) != source["source_sha256"]:
+            raise ProofError("source AEP changed during native render")
+        # Preserve the actual hash-bound aerender log, not CLI JSON/empty glob output.
         with log.open("xb") as stream:
-            _run_owned(command, args.timeout, output=stream)
+            stream.write(adobe_native.read_render_log(artifact))
         log_text = log.read_text(encoding="utf-8", errors="replace")
         if ERROR_RE.search(log_text):
             raise ProofError("Adobe render log reports missing/error content; inspect local log")
@@ -451,6 +447,7 @@ def render_reference(
             raise ProofError("Adobe did not produce a regular nonempty output")
         reference = _validate_video(video, composition, ffprobe, ffmpeg)
         reference["render_log_sha256"] = sha256_file(log)
+        reference["native_artifact"] = artifact
         sheet = folder / "samples.png"
         middle = reference["frame_count"] // 2
         _run_owned(

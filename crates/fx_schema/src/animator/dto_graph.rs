@@ -123,6 +123,16 @@ impl AnimationGraph {
         Ok(())
     }
 
+    pub(crate) fn has_unknown_fields(&self) -> bool {
+        // Match known_value's replacement of entries[*].animator, retaining
+        // checks for unknown graph/entry fields and omitted optional fields.
+        self.0.has_unknown_fields(&[(2, "animator")])
+            || self
+                .entries()
+                .iter()
+                .any(|entry| entry.animator.has_unknown_fields())
+    }
+
     pub fn known_value(&self) -> Value {
         let mut value = serde_json::to_value(self.0.data()).expect("checked graph data serializes");
         for (index, entry) in self.entries().iter().enumerate() {

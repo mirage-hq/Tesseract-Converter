@@ -12,6 +12,7 @@ use crate::{
 mod coverage;
 mod keylight;
 mod native_controls;
+mod warp;
 
 const CATALOG: &[u8] = include_bytes!("../../tests/fixtures/effects/catalog.aep");
 const ANIMATED: &[u8] = include_bytes!("../../tests/fixtures/effects/animated_catalog.aep");
@@ -357,11 +358,6 @@ const STATIC_EDITABLE_CASES: &[(u32, &str, &str)] = &[
     ),
     (212, "posterize", r#"{"levels":7}"#),
     (226, "posterizeTime", r#"{"frameRate":24}"#),
-    (
-        240,
-        "vignette",
-        r#"{"amount":1,"radius":0.75,"feather":0.35}"#,
-    ),
     (254, "findEdges", r#"{"invert":0}"#),
     (
         268,
@@ -505,7 +501,7 @@ fn adobe_catalog_imports_concrete_editable_controls_without_scripts() {
                 let source = read_project(CATALOG).expect("Adobe-authored static catalog");
                 assert_eq!(
                     STATIC_EDITABLE_CASES.len(),
-                    31,
+                    30,
                     "all mapped native occurrences"
                 );
                 let (document, diagnostics) = imported_case(&source, id);
@@ -548,6 +544,7 @@ fn adobe_catalog_imports_concrete_editable_controls_without_scripts() {
                     // These have no current FX equivalent. Their absence must be diagnosed,
                     // while the real composition/layer envelope remains editable.
                     let native = match id {
+                        240 => "CS Vignette",
                         394 => "ADBE Optics Compensation",
                         _ => panic!("{id}: target has no static effect contract"),
                     };
@@ -623,8 +620,6 @@ const ANIMATED_EDITABLE_KEYS: &[(u32, &str, &str, f64, f64)] = &[
     (170, "cornerPin", "upperLeftX", 0.0, 12.0 / 120.0),
     (184, "motionTile", "tileWidth", 100.0, 80.0),
     (212, "posterize", "levels", 7.0, 8.4),
-    (240, "vignette", "amount", 1.0, 1.2),
-    (240, "vignette", "radius", 0.75, 0.9),
     (254, "findEdges", "invert", 0.0, 1.0),
     (268, "exposure", "gammaCorrection", 1.0, 1.2),
     (282, "vibrance", "vibrance", 0.0, 0.1),
@@ -803,8 +798,6 @@ fn assert_animated_import_target(id: u32) {
         (198, "ADBE Drop Shadow", "-0004"),
         (198, "ADBE Drop Shadow", "-0006"),
         (226, "ADBE Posterize Time", "ADBE Posterize Time-0001"),
-        (240, "CS Vignette", "-0003"),
-        (240, "CS Vignette", "-0005"),
         (310, "ADBE Ripple", "-0005"),
         (380, "ADBE Wave Warp", "-0003"),
         (436, "ADBE AIF Perlin Noise 3D", "-0001"),
@@ -829,7 +822,7 @@ fn assert_animated_import_target(id: u32) {
         }
         assert!(!document.to_string().contains("JsScript"));
     }
-    for (_, name) in [(394, "ADBE Optics Compensation")]
+    for (_, name) in [(240, "CS Vignette"), (394, "ADBE Optics Compensation")]
         .into_iter()
         .filter(|(case_id, _)| *case_id == id)
     {
@@ -866,127 +859,115 @@ fn adobe_animated_import_retains_editable_effect_keys_and_identity() {
     batch.finish();
 }
 
-#[test]
-fn adobe_isolated_vignette_import_preserves_editable_amount_and_radius_keys() {
-    let source =
-        read_project(VIGNETTE_ISOLATED).expect("independently Adobe-authored CC Vignette AEP");
-    let (document, warnings) = imported_case(&source, 1);
-    assert_eq!(document["dimensions"]["width"], 320);
-    assert_eq!(document["dimensions"]["height"], 180);
-    let effect = effect_payload(&document, "vignette")
-        .unwrap_or_else(|| panic!("comp 1: missing editable Vignette: {warnings:?}"));
-    assert_eq!(effect["enabled"], true);
-    close(
-        &[effect["effect"]["amount"].as_f64().unwrap()],
-        &[0.6],
-        "initial Amount",
-    );
-    close(
-        &[effect["effect"]["radius"].as_f64().unwrap()],
-        &[35.0 / 60.0],
-        "initial Angle of View",
-    );
-    let effect_id = effect["id"].as_u64().expect("persistent effect identity");
-    for (field, expected) in [
-        ("amount", [0.6, 1.2]),
-        ("radius", [35.0 / 60.0, 55.0 / 60.0]),
-    ] {
-        let tracks: Vec<_> = document["composition"]["dynamics"]["entries"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|entry| {
-                entry["target"]["kind"] == "effectProperty"
-                    && entry["target"]["effectId"] == effect_id
-                    && entry["target"]["paramName"] == field
-            })
-            .collect();
-        assert_eq!(
-            tracks.len(),
-            1,
-            "comp 1/{field}: exactly one editable track"
-        );
-        let keys = tracks[0]["animator"]["keyframes"].as_array().unwrap();
-        assert_eq!(keys.len(), 2, "comp 1/{field}: two authored keys");
-        for (index, expected_value) in expected.into_iter().enumerate() {
-            assert_eq!(keys[index]["layerTime"], (index * 1000) as u64);
-            assert_eq!(keys[index]["value"]["type"], "float");
-            close(
-                &[keys[index]["value"]["value"].as_f64().unwrap()],
-                &[expected_value],
-                &format!("comp 1/{field} key {index}"),
-            );
-        }
+fn remove_vignette_from_parade(chunks: &mut [crate::rifx::Chunk]) -> usize {
+    let Some(parade) = named_group_mut(chunks, "ADBE Effect Parade") else {
+        return 0;
+    };
+    let starts: Vec<_> = parade
+        .iter()
+        .enumerate()
+        .filter(|(_, chunk)| chunk.id() == *b"tdmn")
+        .map(|(index, _)| index)
+        .collect();
+    let ranges: Vec<_> = starts
+        .iter()
+        .enumerate()
+        .filter(|(_, start)| chunk_match_name(&parade[**start]) == Some("CS Vignette"))
+        .map(|(index, start)| *start..starts.get(index + 1).copied().unwrap_or(parade.len()))
+        .collect();
+    let removed = ranges.len();
+    for range in ranges.into_iter().rev() {
+        parade.drain(range);
     }
-    assert!(!document.to_string().contains("JsScript"));
+    removed
 }
 
-fn check_coverage_vignette_keys(document: &Value, effect_id: u64, field: &str, expected: [f64; 2]) {
-    let tracks: Vec<_> = document["composition"]["dynamics"]["entries"]
+fn assert_vignette_omission(source: &StructuralProject, composition_id: u32) -> Value {
+    let (document, warnings) = imported_case(source, composition_id);
+    assert!(
+        effect_payload(&document, "vignette").is_none(),
+        "CC Vignette must not become a different FX kernel"
+    );
+    assert!(
+        warnings.iter().any(|warning| {
+            warning.contains("CS Vignette")
+                && warning.contains("unsupported")
+                && warning.contains("omitted")
+        }),
+        "CC Vignette needs an explicit unsupported diagnostic: {warnings:?}"
+    );
+    let mut baseline = source.clone();
+    // Remove only complete occurrence runs from an in-memory source copy.
+    // Renaming the plugin can invalidate its descriptor and swallow siblings.
+    let mut removed = 0;
+    for item in &mut baseline.items {
+        if let crate::structure::ItemKind::Composition(composition) = &mut item.kind {
+            for layer in &mut composition.layers {
+                removed += remove_vignette_from_parade(&mut layer.content);
+            }
+        }
+    }
+    assert!(removed > 0, "independent source must contain CC Vignette");
+    let (expected, _) = imported_case(&baseline, composition_id);
+    assert_eq!(
+        document, expected,
+        "only the unsupported effect may be omitted"
+    );
+    assert!(!document.to_string().contains("JsScript"));
+    document
+}
+
+#[test]
+fn adobe_cc_vignette_is_unsupported_and_preserves_other_content() {
+    for bytes in [
+        VIGNETTE_ISOLATED,
+        VIGNETTE_STATIC_COVERAGE,
+        VIGNETTE_ANIMATED_COVERAGE,
+    ] {
+        let source = read_project(bytes).expect("independent Adobe-native CC Vignette fixture");
+        assert_vignette_omission(&source, 1);
+    }
+}
+
+#[test]
+fn animated_saturation_vibrance_leaf_is_native_and_independently_keyed() {
+    let project = read_project(ANIMATED).unwrap();
+    let case = cases(ANIMATED_RECEIPT)
+        .into_iter()
+        .find(|case| case["matchName"] == "ADBE Vibrance")
+        .unwrap();
+    assert_eq!(case["compositionId"], 282);
+    let (effects, warnings) = native::read_effects(&layer(&project, &case).content, [120.0, 80.0]);
+    let effect = effects
+        .iter()
+        .find(|effect| effect.match_name == "ADBE Vibrance")
+        .unwrap();
+    let property = effect
+        .parameters
+        .iter()
+        .find(|p| p.match_name == "ADBE Vibrance-0002")
+        .unwrap();
+    let numeric = property.numeric.as_ref().unwrap();
+    assert!(numeric.animated, "{warnings:?}");
+    assert_eq!(numeric.keyframes.len(), 2);
+    for (key, time, value) in [
+        (&numeric.keyframes[0], 0.0, 0.0),
+        (&numeric.keyframes[1], 1.0, 0.10000000149012),
+    ] {
+        assert!((key.time_secs - time).abs() < 1e-9);
+        assert!((key.values[0] - value).abs() < 1e-9);
+    }
+    let receipt = cases(STATIC_RECEIPT)
+        .into_iter()
+        .find(|case| case["matchName"] == "ADBE Vibrance")
+        .unwrap();
+    let saturation = receipt["properties"]
         .as_array()
         .unwrap()
         .iter()
-        .filter(|entry| {
-            entry["target"]["kind"] == "effectProperty"
-                && entry["target"]["effectId"] == effect_id
-                && entry["target"]["paramName"] == field
-        })
-        .collect();
-    assert_eq!(
-        tracks.len(),
-        1,
-        "native coverage/{field}: exactly one keyed target"
-    );
-    let keys = tracks[0]["animator"]["keyframes"].as_array().unwrap();
-    assert_eq!(keys.len(), 2);
-    for (index, value) in expected.into_iter().enumerate() {
-        assert_eq!(keys[index]["layerTime"], (index * 1000) as u64);
-        close(
-            &[keys[index]["value"]["value"].as_f64().unwrap()],
-            &[value],
-            &format!("native coverage/{field} key {index}"),
-        );
-    }
-}
-
-#[test]
-fn adobe_isolated_vignette_static_coverage_imports_editable_controls() {
-    let source =
-        read_project(VIGNETTE_STATIC_COVERAGE).expect("Adobe-authored constant-key Vignette shape");
-    let (document, warnings) = imported_case(&source, 1);
-    let effect = effect_payload(&document, "vignette")
-        .unwrap_or_else(|| panic!("static Vignette missing: {warnings:?}"));
-    assert_eq!(effect["enabled"], true);
-    close(
-        &[effect["effect"]["amount"].as_f64().unwrap()],
-        &[0.8],
-        "static Amount 80",
-    );
-    close(
-        &[effect["effect"]["radius"].as_f64().unwrap()],
-        &[0.65],
-        "static Angle 39",
-    );
-    let effect_id = effect["id"]
-        .as_u64()
-        .expect("editable Vignette occurrence identity");
-    check_coverage_vignette_keys(&document, effect_id, "amount", [0.8, 0.8]);
-    check_coverage_vignette_keys(&document, effect_id, "radius", [0.65, 0.65]);
-    assert!(!document.to_string().contains("JsScript"));
-}
-
-#[test]
-fn adobe_isolated_vignette_animated_coverage_imports_editable_keys() {
-    let source =
-        read_project(VIGNETTE_ANIMATED_COVERAGE).expect("Adobe-authored animated Vignette shape");
-    let (document, warnings) = imported_case(&source, 1);
-    let effect = effect_payload(&document, "vignette")
-        .unwrap_or_else(|| panic!("animated Vignette missing: {warnings:?}"));
-    assert_eq!(effect["enabled"], true);
-    let effect_id = effect["id"]
-        .as_u64()
-        .expect("editable Vignette occurrence identity");
-    check_coverage_vignette_keys(&document, effect_id, "amount", [0.8, 1.2]);
-    check_coverage_vignette_keys(&document, effect_id, "radius", [0.65, 0.9]);
-    assert!(!document.to_string().contains("JsScript"));
+        .find(|p| p["matchName"] == "ADBE Vibrance-0002")
+        .unwrap();
+    assert_eq!(saturation["canVaryOverTime"], true);
+    assert_eq!(saturation["min"], -100);
+    assert_eq!(saturation["max"], 100);
 }

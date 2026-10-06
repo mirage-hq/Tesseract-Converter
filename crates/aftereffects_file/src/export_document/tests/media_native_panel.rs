@@ -19,6 +19,278 @@ const FIXTURE_ROOT: &str = concat!(
     "/tests/fixtures/media_native_panel"
 );
 
+#[test]
+fn native_movie_clock_input_edit_retention() {
+    let bytes = include_bytes!(
+        "../../../tests/fixtures/media_native_panel/native/fx-export-media-video-stretch.aep"
+    );
+    use sha2::{Digest, Sha256};
+    assert_eq!(
+        format!("{:x}", Sha256::digest(bytes)),
+        "3efbed60e483041379013d5d2df9c7b328a835bb7d91151813a108baebff0879"
+    );
+    let native = read_project(bytes).unwrap();
+    let ItemKind::Composition(comp) = &native.item(1).unwrap().kind else {
+        panic!("pinned independent composition");
+    };
+    let native_layer = &comp.layers[0];
+    assert_eq!(native_layer.name.as_ref(), "Double Speed Movie");
+    assert_eq!(native_layer.record.start_time(), Some(-0.125));
+    assert_eq!(native_layer.record.in_point(), Some(0.25));
+    assert_eq!(native_layer.record.out_point(), Some(4.25));
+    assert_eq!(native_layer.record.stretch(), Some(0.5));
+    let imported = crate::structure_document::to_structural_fx_document_with_assets(
+        &native,
+        Some(1),
+        &mut |_| true,
+    )
+    .unwrap();
+    let mut value = imported.document.to_json_value().unwrap();
+    let occurrence = &mut value["composition"]["layers"][0]["layers"][0];
+    let source_clock = occurrence["layers"][0]["playback"].clone();
+    occurrence["playback"]["inputRange"] = serde_json::json!({"start": 250, "duration": 1000});
+    occurrence["playback"]["mapping"]["input"] =
+        serde_json::json!({"start": 250, "duration": 1000});
+    occurrence["playback"]["mapping"]["output"] =
+        serde_json::json!({"start": 500, "duration": 1000});
+    assert_eq!(occurrence["layers"][0]["playback"], source_clock);
+    let document = EditableFxCompositionDocument::from_json_value(value).unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let input = root.path().join("edited.tsrct");
+    drop(
+        TesseractFileBuilder::try_new(document)
+            .unwrap()
+            .add_asset(
+                "aep-local-item-13",
+                Path::new(FIXTURE_ROOT).join("media/movie.mov"),
+                AssetKind::Video,
+            )
+            .unwrap()
+            .write(&input)
+            .unwrap(),
+    );
+    let output = root.path().join("fresh");
+    let report = AfterEffects
+        .export_from_tesseract(&input, &output, &Default::default(), ConversionMode::Write)
+        .unwrap();
+    let fresh = read_project(&fs::read(output.join("project.aep")).unwrap()).unwrap();
+    let mut fields = Vec::new();
+    for item in &fresh.items {
+        if let ItemKind::Composition(comp) = &item.kind {
+            for layer in &comp.layers {
+                fields.push((
+                    layer.name.to_string(),
+                    layer.record.start_time(),
+                    layer.record.in_point(),
+                    layer.record.out_point(),
+                    layer.record.stretch(),
+                ));
+            }
+        }
+    }
+    assert!(
+        fields.iter().any(
+            |(name, start, input, output, stretch)| name == "Source content clock"
+                && *start == Some(-0.125)
+                && *input == Some(0.25)
+                && *output == Some(4.25)
+                && *stretch == Some(0.5)
+        ),
+        "source clock changed: {fields:?}; {:?}",
+        report.diagnostics
+    );
+    assert!(
+        fields.iter().any(
+            |(name, start, input, output, stretch)| name == "Double Speed Movie"
+                && *start == Some(-0.25)
+                && *input == Some(0.5)
+                && *output == Some(1.5)
+                && *stretch == Some(1.0)
+        ),
+        "occurrence edit lost: {fields:?}"
+    );
+}
+
+#[test]
+fn native_movie_remap_input_edit_retention() {
+    use sha2::{Digest, Sha256};
+    let bytes = include_bytes!(
+        "../../../tests/fixtures/media_native_panel/native/fx-export-media-static-remap.aep"
+    );
+    assert_eq!(
+        format!("{:x}", Sha256::digest(bytes)),
+        "e795d41e2265565f5da6104dfc52893270cb619fac571576eb46c8317c9cb706"
+    );
+    let native = read_project(bytes).unwrap();
+    let ItemKind::Composition(comp) = &native.item(1).unwrap().kind else {
+        panic!("pinned remap composition");
+    };
+    let remap = |layer: &crate::structure::Layer| {
+        properties::root_runs(&layer.content)
+            .unwrap()
+            .into_iter()
+            .find(|(name, _)| *name == "ADBE Time Remapping")
+            .map(|(_, chunks)| {
+                properties::read_numeric(properties::unique_list(chunks, *b"tdbs").unwrap())
+                    .unwrap()
+            })
+    };
+    let original = remap(&comp.layers[0]).unwrap();
+    let curve = |property: &properties::NumericProperty| {
+        property
+            .keyframes
+            .iter()
+            .map(|key| {
+                (
+                    key.time_secs,
+                    key.values.clone(),
+                    key.in_interpolation,
+                    key.out_interpolation,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let original_curve = curve(&original);
+    assert_eq!(
+        original_curve,
+        vec![
+            (0.0, vec![0.75], 1, 1),
+            (2.0, vec![0.75], 1, 1),
+            (8.0, vec![8.0], 1, 1),
+        ]
+    );
+    let imported = crate::structure_document::to_structural_fx_document_with_assets(
+        &native,
+        Some(1),
+        &mut |_| true,
+    )
+    .unwrap();
+    let mut value = imported.document.to_json_value().unwrap();
+    let occurrence = &mut value["composition"]["layers"][0]["layers"][0];
+    let source_clock = occurrence["layers"][0]["playback"].clone();
+    occurrence["playback"]["inputRange"] = serde_json::json!({"start": 250, "duration": 1000});
+    occurrence["playback"]["mapping"]["input"] =
+        serde_json::json!({"start": 250, "duration": 1000});
+    occurrence["playback"]["mapping"]["output"] =
+        serde_json::json!({"start": 500, "duration": 1000});
+    assert_eq!(occurrence["layers"][0]["playback"], source_clock);
+    let document = EditableFxCompositionDocument::from_json_value(value).unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let input = root.path().join("edited.tsrct");
+    drop(
+        TesseractFileBuilder::try_new(document)
+            .unwrap()
+            .add_asset(
+                "aep-local-item-13",
+                Path::new(FIXTURE_ROOT).join("media/movie.mov"),
+                AssetKind::Video,
+            )
+            .unwrap()
+            .write(&input)
+            .unwrap(),
+    );
+    let output = root.path().join("fresh");
+    let report = AfterEffects
+        .export_from_tesseract(&input, &output, &Default::default(), ConversionMode::Write)
+        .unwrap();
+    let fresh = read_project(&fs::read(output.join("project.aep")).unwrap()).unwrap();
+    assert!(
+        fresh.items.iter().any(|item| {
+            let ItemKind::Composition(comp) = &item.kind else {
+                return false;
+            };
+            comp.layers.iter().any(|layer| {
+                layer.name.as_ref() == "Held Blue Frame"
+                    && layer.record.start_time() == Some(-0.25)
+                    && layer.record.in_point() == Some(0.5)
+                    && layer.record.out_point() == Some(1.5)
+                    && layer.record.stretch() == Some(1.0)
+            })
+        }),
+        "edited outer occurrence clock lost"
+    );
+
+    let remaps = fresh
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ItemKind::Composition(comp) => Some(&comp.layers),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(remap)
+        .map(|remap| curve(&remap))
+        .collect::<Vec<_>>();
+    assert!(
+        remaps.contains(&original_curve),
+        "unmodified native Time Remap changed: {original_curve:?} vs {remaps:?}; {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn native_movie_remap_finite_domain_certificate_guards() {
+    let native = read_project(include_bytes!(
+        "../../../tests/fixtures/media_native_panel/native/fx-export-media-static-remap.aep"
+    ))
+    .unwrap();
+    let imported = crate::structure_document::to_structural_fx_document_with_assets(
+        &native,
+        Some(1),
+        &mut |_| true,
+    )
+    .unwrap();
+    let value = imported.document.to_json_value().unwrap();
+    let carrier = value["composition"]["layers"][0]["layers"][0]["layers"][0]["layers"][0].clone();
+    assert_eq!(carrier["name"], "Authored source remap");
+    let group: GroupLayer = serde_json::from_value(carrier.clone()).unwrap();
+    let (view, domains) =
+        hierarchy_clock::finite_media_remap_view(&group, Time::from_millis(2000)).unwrap();
+    assert_eq!(view.playback.input_range().duration.as_millis(), 2000);
+    assert_eq!(view.playback.mapping(), group.playback.mapping());
+    assert_eq!(view.layers, group.layers);
+    assert_eq!(domains.default_domain.duration.as_millis(), 8000);
+    let (_, long_domains) =
+        hierarchy_clock::finite_media_remap_view(&group, Time::from_millis(12000)).unwrap();
+    assert_eq!(
+        long_domains, domains,
+        "enclosing lifetime is not source duration"
+    );
+    assert!(hierarchy_clock::finite_media_remap_view(&group, Time::ZERO).is_none());
+    let mut invalid_duration = carrier.clone();
+    invalid_duration["layers"][0]["sourceIntrinsicDuration"] = serde_json::json!(0);
+    assert!(serde_json::from_value::<GroupLayer>(invalid_duration).is_err());
+    for (pointer, replacement) in [
+        ("/layers/0/sourceIntrinsicDuration", serde_json::json!(9000)),
+        ("/layers/0", carrier.clone()),
+        ("/layers/0/sourceRange/start", serde_json::json!(1)),
+        ("/layers/0/playback/inputOffsetMs", serde_json::json!(1)),
+        (
+            "/layers/0/playback/mapping",
+            serde_json::json!({"type": "linear", "input": {"start": 1, "duration": 8000}, "output": {"start": 1, "duration": 8000}}),
+        ),
+        (
+            "/layers/0/playback/mapping/output/start",
+            serde_json::json!(1),
+        ),
+        ("/layers/0/parent", serde_json::json!(999)),
+        (
+            "/layers/1/source/assetId",
+            serde_json::json!("different-source"),
+        ),
+        ("/playback/inputOffsetMs", serde_json::json!(1)),
+        ("/layers", serde_json::json!([])),
+    ] {
+        let mut edited = carrier.clone();
+        *edited.pointer_mut(pointer).unwrap() = replacement;
+        let edited: GroupLayer = serde_json::from_value(edited).unwrap();
+        assert!(
+            hierarchy_clock::finite_media_remap_view(&edited, Time::from_millis(2000)).is_none(),
+            "{pointer}"
+        );
+    }
+}
+
 fn close(actual: f64, expected: f64, label: &str) {
     assert!(
         (actual - expected).abs() < 1e-6,
@@ -139,7 +411,8 @@ fn check_case(name: &str, input_json: &str, expected_json: &str) {
     }
 
     let bytes = fs::read(output_path.join("project.aep")).expect("fresh native project");
-    if let Some(dir) = std::env::var_os("AEP_EFFECTS_FX_PANEL_DIR") {
+    {
+        let dir = crate::adobe_test_support::artifact_directory();
         fs::create_dir_all(&dir).expect("panel artifact directory");
         let base = Path::new(&dir).join(name);
         fs::write(base.with_extension("fx.json"), input_json).expect("explicit FX input artifact");
@@ -168,7 +441,11 @@ fn check_case(name: &str, input_json: &str, expected_json: &str) {
         panic!("{name}: root is not a composition");
     };
     assert_eq!((comp.width, comp.height), (320, 180));
-    close(comp.duration_secs, 2.0, "composition duration");
+    close(
+        comp.duration_secs,
+        expected["duration"].as_f64().unwrap_or(2.0),
+        "composition duration",
+    );
     close(
         comp.frame_rate,
         24.0,
@@ -220,10 +497,15 @@ fn check_case(name: &str, input_json: &str, expected_json: &str) {
     }
     for descriptor in &descriptors {
         assert!(
-            report
-                .artifacts
-                .iter()
-                .any(|artifact| artifact.path == Path::new(descriptor.authored_path.as_str())),
+            report.artifacts.iter().any(|artifact| {
+                let authored = Path::new(descriptor.authored_path.as_str());
+                let canonical_output = output_path.canonicalize().unwrap();
+                let reported = authored
+                    .strip_prefix(&output_path)
+                    .or_else(|_| authored.strip_prefix(&canonical_output))
+                    .unwrap_or(authored);
+                artifact.path == reported
+            }),
             "emitted media is missing from the report: {}",
             descriptor.authored_path
         );
@@ -399,6 +681,42 @@ fn check_case(name: &str, input_json: &str, expected_json: &str) {
             0,
             "composition blending master"
         );
+    }
+}
+
+#[test]
+fn media_video_fractional_affine_window_full_export_and_input_edit() {
+    for (name, start) in [
+        ("media-video-fractional-affine", 1_000),
+        ("media-video-fractional-affine-edited", 1_250),
+    ] {
+        let mut input: Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/media_native_panel/media-video-stretch.fx.json"
+        ))
+        .unwrap();
+        input["composition"]["name"] = json!(name);
+        input["duration"] = json!(3);
+        let layer = &mut input["composition"]["layers"][0];
+        layer.as_object_mut().unwrap().remove("activeRange");
+        layer["playback"] = json!({
+            "type":"windowed",
+            "inputRange":{"start":start,"duration":1000},
+            "mapping":{"type":"linear", "input":{"start":0,"duration":3000},
+                "output":{"start":250,"duration":4000}},
+            "inputOffsetMs":250
+        });
+        let expected = json!({
+            "status":"AUTHORING_REQUEST_UNRUN_UNMEASURED",
+            "caseId":format!("fx-export-{name}"),
+            "assets":["movie"], "layers":["Double Speed Movie"], "duration":3,
+            "diagnostic":"rounded-millisecond visibility uses a half-millisecond parent-boundary correction",
+            "clock":{
+                "stretch":0.75, "start":-0.4375,
+                "in":(start as f64 / 1000.0 + 0.4375 - 0.0005) / 0.75,
+                "out":(start as f64 / 1000.0 + 1.4375 - 0.0005) / 0.75
+            }
+        });
+        check_case(name, &input.to_string(), &expected.to_string());
     }
 }
 

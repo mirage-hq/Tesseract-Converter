@@ -1,9 +1,83 @@
 use super::super::tests::{data, list, name, numeric};
 use super::*;
+
+#[test]
+fn native_hold_endpoint_flags_are_admitted_without_weakening_curve_guards() {
+    let curve = super::super::tests::native_hold_endpoint_curve("control-0");
+    assert_eq!(
+        curve
+            .keyframes
+            .iter()
+            .map(|key| (
+                key.time_secs,
+                key.values[0],
+                key.in_interpolation,
+                key.out_interpolation
+            ))
+            .collect::<Vec<_>>(),
+        vec![(-0.5, 0.0, 1, 3), (0.5, 1.0, 1, 3), (1.5, 0.4, 1, 1)]
+    );
+    validate_scalar_curve(&curve).unwrap();
+    let mut invalid = curve.clone();
+    invalid.keyframes[1].in_interpolation = 0;
+    assert!(validate_scalar_curve(&invalid).is_err());
+    invalid = curve.clone();
+    invalid.keyframes[0].out_interpolation = 1;
+    invalid.keyframes[1].in_interpolation = 3;
+    assert!(validate_scalar_curve(&invalid).is_err());
+    invalid = curve;
+    invalid.keyframes[0].out_interpolation = 2;
+    invalid.keyframes[1].in_interpolation = 3;
+    assert!(validate_scalar_curve(&invalid).is_err());
+}
 use crate::{
     schema::layer_records::LayerRecord,
     structure::{ItemKind, read_project},
 };
+
+#[test]
+fn native_hold_endpoint_flags_public_render_alias_lowers_saved_native_expression() {
+    let project = read_project(include_bytes!(
+        "../../../../tests/fixtures/properties/hold_endpoint_render.aep"
+    ))
+    .unwrap();
+    let composition = project
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            ItemKind::Composition(composition) => Some(composition.as_ref()),
+            _ => None,
+        })
+        .unwrap();
+    let alias = composition
+        .layers
+        .iter()
+        .find(|layer| layer.name.as_ref() == "rotation-alias")
+        .unwrap();
+    let base = property(alias, "ADBE Rotate Z");
+    assert_eq!(
+        property_expression(alias, ScalarProperty::Rotation).unwrap(),
+        "thisComp.layer(\"driver\").transform.rotation"
+    );
+    let lowered = lower(alias, composition, "ADBE Rotate Z", &base)
+        .unwrap()
+        .unwrap();
+    assert!(!lowered.expression_enabled);
+    assert!(!lowered.expression_present);
+    assert_eq!(
+        lowered
+            .keyframes
+            .iter()
+            .map(|key| (
+                key.time_secs,
+                key.values[0],
+                key.in_interpolation,
+                key.out_interpolation
+            ))
+            .collect::<Vec<_>>(),
+        vec![(-0.5, 0.0, 1, 3), (0.5, 90.0, 1, 3), (1.5, 180.0, 1, 1)]
+    );
+}
 
 fn template() -> (Layer, Composition) {
     let project = read_project(include_bytes!(
@@ -527,280 +601,4 @@ fn alias_resolution_rejects_cycles_ambiguous_names_and_unsafe_clocks() {
         .unwrap()
         .is_err()
     );
-}
-
-fn native_layer(composition: &Composition, id: u32) -> &Layer {
-    composition
-        .layers
-        .iter()
-        .find(|layer| layer.record.id() == id)
-        .unwrap_or_else(|| panic!("native layer {id}"))
-}
-
-fn assert_native_curve(curve: &NumericProperty, samples: &[(f64, f64, f64, f64, f64, f64)]) {
-    assert!(curve.animated);
-    assert_eq!(curve.keyframes.len(), samples.len());
-    for (key, &(time, value, in_speed, in_influence, out_speed, out_influence)) in
-        curve.keyframes.iter().zip(samples)
-    {
-        assert!((key.time_secs - time).abs() < 1e-9);
-        assert!((key.values[0] - value).abs() < 1e-9);
-        assert_eq!((key.in_interpolation, key.out_interpolation), (2, 2));
-        assert!((key.in_speed[0] - in_speed).abs() < 1e-9);
-        assert!((key.in_influence[0] - in_influence).abs() < 1e-9);
-        assert!((key.out_speed[0] - out_speed).abs() < 1e-9);
-        assert!((key.out_influence[0] - out_influence).abs() < 1e-9);
-    }
-}
-
-fn assert_lowered_curve(
-    lowered: &NumericProperty,
-    source: &NumericProperty,
-    resolved_sign: f64,
-    expected_times: &[f64],
-    expected_values: &[f64],
-) {
-    assert!(!lowered.expression_enabled);
-    assert!(!lowered.expression_present);
-    assert_eq!(lowered.keyframes.len(), expected_times.len());
-    for (((key, source_key), &time), &value) in lowered
-        .keyframes
-        .iter()
-        .zip(&source.keyframes)
-        .zip(expected_times)
-        .zip(expected_values)
-    {
-        assert!((key.time_secs - time).abs() < 1e-9);
-        assert!((key.values[0] - value).abs() < 1e-9);
-        assert_eq!(key.in_interpolation, source_key.in_interpolation);
-        assert_eq!(key.out_interpolation, source_key.out_interpolation);
-        assert_eq!(key.in_influence, source_key.in_influence);
-        assert_eq!(key.out_influence, source_key.out_influence);
-        assert!((key.in_speed[0] - source_key.in_speed[0] * resolved_sign).abs() < 1e-9);
-        assert!((key.out_speed[0] - source_key.out_speed[0] * resolved_sign).abs() < 1e-9);
-    }
-}
-
-#[test]
-#[ignore = "requires local licensed AEP_PROPERTY_ALIAS_SOURCE, which cannot be redistributed"]
-fn local_external_source_resolves_the_comp3_property_alias_chains() {
-    use sha2::{Digest, Sha256};
-    let bytes = std::fs::read(
-        std::env::var_os("AEP_PROPERTY_ALIAS_SOURCE").expect("local licensed source path"),
-    )
-    .unwrap();
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&bytes)),
-        "28bbce1b8c9f9625105d632504a97c598394a4753d6b0d923fb19942e302bb5d"
-    );
-    let project = read_project(&bytes).unwrap();
-    let ItemKind::Composition(composition) = &project.item(3).unwrap().kind else {
-        panic!("composition 3")
-    };
-
-    let position_source_layer = native_layer(composition, 2154);
-    assert_eq!(position_source_layer.name.as_ref(), "M_01");
-    assert_eq!(
-        property_expression(position_source_layer, ScalarProperty::PositionY).unwrap(),
-        "transform.yPosition"
-    );
-    let position_source = property(position_source_layer, "ADBE Position_1");
-    assert_native_curve(
-        &position_source,
-        &[
-            (2.3333333333333335, -574.604309082031, 0.0, 0.0, 0.0, 100.0),
-            (
-                3.0416666666666665,
-                0.0,
-                7166.0122377904545,
-                7.07012919795334,
-                -0.46516567257674835,
-                52.25704121700727,
-            ),
-        ],
-    );
-
-    let rotation_source_layer = native_layer(composition, 2166);
-    assert_eq!(rotation_source_layer.name.as_ref(), "Rotater_Btm");
-    let rotation_source = property(rotation_source_layer, "ADBE Rotate Z");
-    assert!(!rotation_source.expression_present);
-    assert_native_curve(
-        &rotation_source,
-        &[
-            (6.75, 0.0, 0.0, 0.1, 0.0, 85.09142136079325),
-            (
-                7.083333333333333,
-                -2.0,
-                -31.081188058582654,
-                12.8424540371805,
-                -12.060082434751765,
-                97.86691421528401,
-            ),
-            (
-                7.416666666666667,
-                -29.316517045817264,
-                -224.631008864964,
-                16.470618197560892,
-                -224.6310088649633,
-                36.91731086397312,
-            ),
-            (
-                7.458333333333333,
-                -90.0,
-                -597.5095674977694,
-                29.718210548356126,
-                -597.5095674977346,
-                40.02266290974665,
-            ),
-            (
-                7.5,
-                -90.0,
-                -1858.0109702571951,
-                26.567928774774675,
-                -1858.0109702571965,
-                3.111551060591848,
-            ),
-        ],
-    );
-
-    let position_times = [2.3333333333333335, 3.0416666666666665];
-    let position_values = [-574.604309082031, 0.0];
-    let negated_position_values = [574.604309082031, 0.0];
-    let local_rotation_times = [
-        2.3333333333333335,
-        2.666666666666666,
-        3.0,
-        3.041666666666666,
-        3.083333333333333,
-    ];
-    let source_rotation_times = [
-        6.75,
-        7.083333333333333,
-        7.416666666666667,
-        7.458333333333333,
-        7.5,
-    ];
-    let negated_rotation_values = [0.0, 2.0, 29.316517045817264, 90.0, 90.0];
-    let source_rotation_values = [0.0, -2.0, -29.316517045817264, -90.0, -90.0];
-
-    for (id, name, direct_link, source, resolved_sign, times, values) in [
-        (
-            2131,
-            "ADBE Position_1",
-            Link {
-                layer: "M_01",
-                property: ScalarProperty::PositionY,
-                sign: 1.0,
-            },
-            &position_source,
-            1.0,
-            &position_times[..],
-            &position_values[..],
-        ),
-        (
-            2131,
-            "ADBE Rotate Z",
-            Link {
-                layer: "C_03",
-                property: ScalarProperty::Rotation,
-                sign: 1.0,
-            },
-            &rotation_source,
-            -1.0,
-            &local_rotation_times[..],
-            &negated_rotation_values[..],
-        ),
-        (
-            2130,
-            "ADBE Position_1",
-            Link {
-                layer: "M_01",
-                property: ScalarProperty::PositionY,
-                sign: -1.0,
-            },
-            &position_source,
-            -1.0,
-            &position_times[..],
-            &negated_position_values[..],
-        ),
-        (
-            2130,
-            "ADBE Rotate Z",
-            Link {
-                layer: "C_03",
-                property: ScalarProperty::Rotation,
-                sign: 1.0,
-            },
-            &rotation_source,
-            -1.0,
-            &local_rotation_times[..],
-            &negated_rotation_values[..],
-        ),
-        (
-            2126,
-            "ADBE Rotate Z",
-            Link {
-                layer: "Rotater_Btm",
-                property: ScalarProperty::Rotation,
-                sign: -1.0,
-            },
-            &rotation_source,
-            -1.0,
-            &local_rotation_times[..],
-            &negated_rotation_values[..],
-        ),
-        (
-            2127,
-            "ADBE Position_1",
-            Link {
-                layer: "M_01",
-                property: ScalarProperty::PositionY,
-                sign: 1.0,
-            },
-            &position_source,
-            1.0,
-            &position_times[..],
-            &position_values[..],
-        ),
-        (
-            2127,
-            "ADBE Rotate Z",
-            Link {
-                layer: "C_03",
-                property: ScalarProperty::Rotation,
-                sign: 1.0,
-            },
-            &rotation_source,
-            -1.0,
-            &local_rotation_times[..],
-            &negated_rotation_values[..],
-        ),
-        (
-            2162,
-            "ADBE Rotate Z",
-            Link {
-                layer: "Rotater_Btm",
-                property: ScalarProperty::Rotation,
-                sign: 1.0,
-            },
-            &rotation_source,
-            1.0,
-            &source_rotation_times[..],
-            &source_rotation_values[..],
-        ),
-    ] {
-        let layer = native_layer(composition, id);
-        let member = ScalarProperty::from_match_name(name).unwrap();
-        assert_eq!(
-            parse(property_expression(layer, member).unwrap()).unwrap(),
-            direct_link
-        );
-        let raw = property(layer, name);
-        let lowered = lower(layer, composition, name, &raw)
-            .unwrap_or_else(|| panic!("unrecognized native alias on layer {id} {name}"))
-            .unwrap_or_else(|error| {
-                panic!("unresolved native alias on layer {id} {name}: {error}")
-            });
-        assert_lowered_curve(&lowered, source, resolved_sign, times, values);
-    }
 }

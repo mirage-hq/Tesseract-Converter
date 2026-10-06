@@ -1,10 +1,11 @@
-//! Reader rules for nested-sequence placements (JRB-1979).
+//! Reader rules for nested-sequence placements.
 
 use crate::{
     format::inspect_project_with_omissions,
     schema::{
-        MediaId, PrAnimatedProperty, PrAudioOccurrence, PrBlendMode, PrKeyframeEasing,
-        PrNestOccurrence, PrSequence, PrVideoItem, MAX_NEST_DEPTH, MOTION_PARAMS_26_5, TICKS,
+        FrameRate, MediaId, PrAnimatedProperty, PrAudioOccurrence, PrBlendMode, PrKeyframeEasing,
+        PrNestOccurrence, PrSequence, PrStaticTransform, PrVideoItem, MAX_NEST_DEPTH,
+        MOTION_PARAMS_26_5, TICKS,
     },
     tests::support::{clip_of, nest_of, nested_sequence, project_document_with_media, sequence_of},
 };
@@ -472,22 +473,6 @@ fn a_placement_past_the_end_of_its_nested_sequence_is_omitted() {
 }
 
 #[test]
-fn a_nest_with_another_canvas_is_invalid_in_the_model() {
-    // The model rule that the reader and export share: a nest keeps no
-    // viewport of its own, so its canvas must be the outer one.
-    let (mut outer, media) = nested_sequence();
-    let inner = &mut outer.video_tracks[1].nests[0].sequence;
-    (inner.width, inner.height) = (1080, 1920);
-    let error = outer.validate_timeline(&media).unwrap_err().to_string();
-    assert!(
-        error.ends_with(
-            "nested sequence \"Inner\" canvas 1080x1920 differs from the outer 1920x1080 canvas"
-        ),
-        "{error}"
-    );
-}
-
-#[test]
 fn nesting_deeper_than_the_limit_is_rejected_at_the_first_excess_level() {
     let levels = MAX_NEST_DEPTH as u32 + 1;
     let mut records = String::new();
@@ -583,7 +568,178 @@ fn a_nest_of_its_custom_canvas_size_reads_at_that_size() {
 }
 
 #[test]
-fn nests_with_another_canvas_or_an_unsupported_clock_are_rejected() {
+fn a_nest_of_another_canvas_is_framed_by_its_default_motion() {
+    // Outer (1920x1080) shows Main, portrait like its clip, at 0-2 s from In
+    // 1 s with default Motion, which centres the portrait frame.
+    let xml = one_placement()
+        .replacen(
+            r#"</TrackGroup><FrameRect>0,0,1920,1080</FrameRect><ComponentOwner><Components ObjectRef="2"/>"#,
+            r#"</TrackGroup><FrameRect>0,0,1080,1920</FrameRect><ComponentOwner><Components ObjectRef="2"/>"#,
+            1,
+        )
+        .replacen(
+            r#"<SubClip ObjectRef="5"/></ClipTrackItem><FrameRect>0,0,1920,1080</FrameRect>"#,
+            r#"<SubClip ObjectRef="5"/></ClipTrackItem><FrameRect>0,0,1080,1920</FrameRect>"#,
+            1,
+        );
+    let (project, omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let outer = project.single_sequence().unwrap();
+    let document = project_document_with_media(outer, &project.media);
+    let group = &document["composition"]["layers"][0];
+    assert_eq!(group["type"], "Group");
+    // Anchor Point counts the inner canvas, Position the outer one.
+    let transform = &group["transform"];
+    assert_eq!(
+        [
+            &transform["anchorPoint"],
+            &transform["position"],
+            &transform["scale"]
+        ],
+        [
+            &serde_json::json!([540.0, 960.0]),
+            &serde_json::json!([960.0, 540.0]),
+            &serde_json::json!([100.0, 100.0])
+        ]
+    );
+    // Premiere draws the inner canvas only: the frame guide is its size.
+    let [mask] = group["masks"].as_array().unwrap().as_slice() else {
+        panic!("one mask: {group}");
+    };
+    let layers = group["layers"].as_array().unwrap();
+    let guide = layers
+        .iter()
+        .find(|layer| layer["id"] == mask["layer"])
+        .unwrap();
+    assert_eq!(guide["rect"]["size"], serde_json::json!([1080.0, 1920.0]));
+    // At the outer rate and normal speed the clip moves onto the group
+    // clock, trimmed to the window.
+    let video = layers
+        .iter()
+        .find(|layer| layer["type"] == "Video")
+        .unwrap();
+    assert_eq!(
+        video["sourceRange"],
+        serde_json::json!({"start": 1000, "duration": 2000})
+    );
+}
+
+#[test]
+fn retimed_nest_source_span_residue_keeps_the_saved_window_and_rate() {
+    // The former five-tick negative is deliberately admitted by the policy;
+    // 254 is the last whole source tick inside one nanosecond. Neither saved
+    // window is rewritten to match the speed or either sequence's frame grid.
+    for residue in [5, 254] {
+        let out = 101_204_800_000 + residue;
+        let xml = retimed_nest_at(
+            FrameRate::Fps30,
+            FrameRate::Fps30000Over1001,
+            RETIMED_PLACEMENT,
+            out,
+            "0.5",
+        );
+        let (project, omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+        assert!(omissions.is_empty(), "{omissions:?}");
+        let nests: Vec<_> = project
+            .single_sequence()
+            .unwrap()
+            .nest_occurrences()
+            .collect();
+        assert_eq!(nests.len(), 1);
+        assert_eq!(nests[0].timeline_ticks(), 508_032_000_000..660_441_600_000);
+        assert_eq!(nests[0].in_ticks..nests[0].out_ticks, 25_000_000_000..out);
+        assert_eq!(nests[0].playback_rate, 0.5);
+    }
+}
+
+fn reverse_nest_xml() -> String {
+    one_placement()
+        .replace(
+            r#"<Clip><Source ObjectRef="102"/>"#,
+            r#"<Clip><PlayBackwards>true</PlayBackwards><Source ObjectRef="102"/>"#,
+        )
+        .replace(
+            &format!("<OriginalDuration>{}</OriginalDuration>", 5 * TICKS),
+            &format!("<OriginalDuration>{}</OriginalDuration>", 7 * TICKS),
+        )
+        .replace(
+            &format!(
+                "<InPoint>{}</InPoint><OutPoint>{}</OutPoint>",
+                TICKS,
+                3 * TICKS
+            ),
+            &format!(
+                "<InPoint>{}</InPoint><OutPoint>{}</OutPoint>",
+                4 * TICKS,
+                6 * TICKS
+            ),
+        )
+}
+
+#[test]
+fn reverse_nest_reflects_saved_original_duration_without_rewriting_input_bounds() {
+    // Supplemental native-wire scaffold: OriginalDuration can predate a
+    // shortened inner timeline. Never reflect about the current sequence end.
+    let xml = reverse_nest_xml();
+    let (project, omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let nest = project
+        .single_sequence()
+        .unwrap()
+        .nest_occurrences()
+        .next()
+        .unwrap();
+    assert_eq!(nest.playback_rate, -1.0);
+    assert_eq!(nest.in_ticks..nest.out_ticks, 4 * TICKS..6 * TICKS);
+    assert!(nest.plays_inner_clock(FrameRate::Fps30));
+    let (sequences, media) = project.into_parts();
+    let document = project_document_with_media(&sequences[0], &media);
+    let group = &document["composition"]["layers"][0];
+    let picture = &group["layers"][0];
+    assert_eq!(
+        crate::tests::support::playback_keys(picture)[0]["value"],
+        3000
+    );
+    assert_eq!(
+        crate::tests::support::playback_keys(picture)[1]["value"],
+        1000
+    );
+}
+
+#[test]
+fn reverse_nest_rejects_unbounded_and_unestablished_source_clocks() {
+    for (duration, reason) in [
+        (0, "input window exceeds saved OriginalDuration"),
+        (-1, "input window exceeds saved OriginalDuration"),
+        (5 * TICKS, "input window exceeds saved OriginalDuration"),
+        (10 * TICKS, "window exceeds the current inner timeline"),
+        (7 * TICKS + 1, "must align to inner frame boundaries"),
+        (i64::MAX, "window exceeds the current inner timeline"),
+    ] {
+        let xml = reverse_nest_xml().replace(
+            &format!("<OriginalDuration>{}</OriginalDuration>", 7 * TICKS),
+            &format!("<OriginalDuration>{duration}</OriginalDuration>"),
+        );
+        assert!(
+            rejection(&xml).contains(reason),
+            "{duration}: {}",
+            rejection(&xml)
+        );
+    }
+    let xml = reverse_nest_xml().replace(
+        "<PlayBackwards>true</PlayBackwards>",
+        "<PlayBackwards>true</PlayBackwards><PlaybackSpeed>0.5</PlaybackSpeed>",
+    );
+    assert!(rejection(&xml).contains("unit reverse playback"));
+    let xml = reverse_nest_xml().replace(
+        "<PlayBackwards>true</PlayBackwards>",
+        "<PlayBackwards>true</PlayBackwards><PlaybackSpeed>NaN</PlaybackSpeed>",
+    );
+    assert!(rejection(&xml).contains("PlaybackSpeed must be finite and positive"));
+}
+
+#[test]
+fn nests_with_an_unsupported_clock_are_rejected() {
     // Main's 1-3 s at normal speed ends at Out 3 s; Out 5 s is twice as long.
     let long_window = one_placement().replace(
         &format!("<OutPoint>{}</OutPoint></Clip></VideoClip>\n", 3 * TICKS),
@@ -597,29 +753,6 @@ fn nests_with_another_canvas_or_an_unsupported_clock_are_rejected() {
     };
     for (xml, reason) in [
         (
-            // The inner sequence and its clip on a portrait canvas.
-            one_placement()
-                .replacen(
-                    r#"</TrackGroup><FrameRect>0,0,1920,1080</FrameRect><ComponentOwner><Components ObjectRef="2"/>"#,
-                    r#"</TrackGroup><FrameRect>0,0,1080,1920</FrameRect><ComponentOwner><Components ObjectRef="2"/>"#,
-                    1,
-                )
-                .replacen(
-                    r#"<SubClip ObjectRef="5"/></ClipTrackItem><FrameRect>0,0,1920,1080</FrameRect>"#,
-                    r#"<SubClip ObjectRef="5"/></ClipTrackItem><FrameRect>0,0,1080,1920</FrameRect>"#,
-                    1,
-                ),
-            "nested sequence \"Main\" canvas 1080x1920 differs from the outer 1920x1080 canvas",
-        ),
-        (
-            one_placement().replacen(
-                "</Tracks><FrameRate>8467200000</FrameRate>",
-                "</Tracks><FrameRate>10160640000</FrameRate>",
-                1,
-            ),
-            "over a window as long as its placement; such a mixed-rate nest is not supported",
-        ),
-        (
             long_window.clone(),
             "VideoClip:113: In 254016000000 to Out 1270080000000 does not match PlaybackSpeed 1 over the 508032000000-tick placement",
         ),
@@ -628,8 +761,32 @@ fn nests_with_another_canvas_or_an_unsupported_clock_are_rejected() {
             "VideoClip:113: In 254016000000 to Out 762048000000 does not match PlaybackSpeed 2 over the 508032000000-tick placement",
         ),
         (
-            speed(&one_placement(), "<PlayBackwards>true</PlayBackwards>"),
-            "VideoClip:113: reverse playback of a nested sequence occurrence is not converted",
+            // The half-length window at 0.5 x 1000/1001, which read a
+            // speed as inner frames per outer frame: not what it plays.
+            retimed_nest_at(
+                FrameRate::Fps30,
+                FrameRate::Fps30000Over1001,
+                RETIMED_PLACEMENT,
+                101_204_800_000,
+                "0.4995004995004995",
+            ),
+            "VideoClip:113: In 25000000000 to Out 101204800000 does not match PlaybackSpeed 0.4995004995004995 over the 152409600000-tick placement",
+        ),
+        (
+            // 255 source ticks exceed the converter's one-nanosecond
+            // consistency precision (254.016 ticks plus arithmetic error).
+            retimed_nest_at(
+                FrameRate::Fps30,
+                FrameRate::Fps30000Over1001,
+                RETIMED_PLACEMENT,
+                101_204_800_255,
+                "0.5",
+            ),
+            "VideoClip:113: In 25000000000 to Out 101204800255 does not match PlaybackSpeed 0.5 over the 152409600000-tick placement",
+        ),
+        (
+            speed(&one_placement(), "<PlayBackwards>true</PlayBackwards><PlaybackSpeed>0.5</PlaybackSpeed>"),
+            "reverse nested sequence requires unit reverse playback and matching frame clocks",
         ),
         (
             with_records(
@@ -639,7 +796,7 @@ fn nests_with_another_canvas_or_an_unsupported_clock_are_rejected() {
                 ),
                 &variable_speed_ramp(),
             ),
-            "VideoClip:113: TimeRemapping on a nested sequence occurrence is not converted",
+            "invalid, uncovered or out-of-bounds nested TimeRemapping curve",
         ),
     ] {
         let error = rejection(&xml);
@@ -668,40 +825,1472 @@ fn nests_with_another_canvas_or_an_unsupported_clock_are_rejected() {
     assert!(nest.is_retimed());
 }
 
+/// A corpus-layout intrinsic Motion component `id` and its seven parameters
+/// `id + 1..=id + 7`, at Premiere's defaults but for the start values in
+/// `values` and the `<Keyframes>` elements in `keys`, by parameter name.
+pub(in crate::format) fn corpus_motion_component(
+    id: u32,
+    values: &[(&str, &str)],
+    keys: &[(&str, &str)],
+) -> String {
+    let mut params = String::new();
+    for (offset, name, default, point) in [
+        (1, "Position", "0.5:0.5", true),
+        (2, "Scale", "100.", false),
+        (3, "Scale Width", "100.", false),
+        (4, " ", "true", false),
+        (5, "Rotation", "0.", false),
+        (6, "Anchor Point", "0.5:0.5", true),
+        (7, "Anti-flicker Filter", "0.", false),
+    ] {
+        let lookup = |pairs: &[(&str, &str)]| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.to_string())
+        };
+        let value = lookup(values).unwrap_or_else(|| default.to_owned());
+        let (tag, initial) = if point {
+            (
+                "PointComponentParam",
+                format!("-91445760000000000,{value},0,0,0,0,0,0,5,4,0,0,0,0"),
+            )
+        } else {
+            (
+                "VideoComponentParam",
+                format!("-91445760000000000,{value},0,0,0,0,0,0"),
+            )
+        };
+        let keys = lookup(keys).unwrap_or_default();
+        params.push_str(&format!("<{tag} ObjectID=\"{}\"><Name>{name}</Name><ParameterID>{offset}</ParameterID><StartKeyframe>{initial}</StartKeyframe>{keys}</{tag}>", id + offset));
+    }
+    let references: String = (1..=7)
+        .map(|offset| {
+            format!(
+                r#"<Param Index="{}" ObjectRef="{}"/>"#,
+                offset - 1,
+                id + offset
+            )
+        })
+        .collect();
+    format!(
+        r#"<VideoFilterComponent ObjectID="{id}"><Component><Params>{references}</Params><DisplayName>Motion</DisplayName><Bypass>false</Bypass><Intrinsic>true</Intrinsic></Component><MatchName>AE.ADBE Motion</MatchName></VideoFilterComponent>{params}"#
+    )
+}
+
+/// An intrinsic Opacity component `id` and its three parameters `id + 1..=id
+/// + 3` in Normal (the blend pair (18, 0)): Opacity `value` with `keys`, a
+/// `<Keyframes>` element or nothing.
+fn opacity_component(id: u32, value: &str, keys: &str) -> String {
+    let [level, primary, legacy] = [1, 2, 3].map(|offset| id + offset);
+    format!(
+        r#"<VideoFilterComponent ObjectID="{id}"><Component><Params><Param Index="0" ObjectRef="{level}"/><Param Index="1" ObjectRef="{primary}"/><Param Index="2" ObjectRef="{legacy}"/></Params><DisplayName>Opacity</DisplayName><Bypass>false</Bypass><Intrinsic>true</Intrinsic></Component><MatchName>AE.ADBE Opacity</MatchName></VideoFilterComponent><VideoComponentParam ObjectID="{level}" ClassID="fe47129e-6c94-4fc0-95d5-c056a517aaf3"><Name>Opacity</Name><ParameterID>1</ParameterID><ParameterControlType>2</ParameterControlType><LowerBound>0</LowerBound><UpperBound>100</UpperBound><StartKeyframe>-91445760000000000,{value},0,0,0,0,0,0</StartKeyframe>{keys}</VideoComponentParam><VideoComponentParam ObjectID="{primary}" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8"><Name>Blend Mode</Name><ParameterID>2</ParameterID><ParameterControlType>10</ParameterControlType><LowerBound>0</LowerBound><UpperBound>26</UpperBound><StartKeyframe>-91445760000000000,18.,0,0,0,0,0,0</StartKeyframe></VideoComponentParam><VideoComponentParam ObjectID="{legacy}" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8"><Name>Blend Mode</Name><ParameterID>3</ParameterID><ParameterControlType>7</ParameterControlType><LowerBound>0</LowerBound><UpperBound>31</UpperBound><StartKeyframe>-91445760000000000,0.,0,0,0,0,0,0</StartKeyframe></VideoComponentParam>"#
+    )
+}
+
+/// The component chain `chain` of a placement: `flags`, then `components` (the
+/// ObjectID of each component record and all of its records) at the `Index`
+/// of their order.
+pub(in crate::format) fn placement_chain(
+    chain: u32,
+    flags: &str,
+    components: &[(u32, String)],
+) -> String {
+    let references: String = components
+        .iter()
+        .enumerate()
+        .map(|(index, (id, _))| format!(r#"<Component Index="{index}" ObjectRef="{id}"/>"#))
+        .collect();
+    let records: String = components
+        .iter()
+        .map(|(_, records)| records.as_str())
+        .collect();
+    format!(
+        r#"<VideoComponentChain ObjectID="{chain}">{flags}<ComponentChain><Components>{references}</Components></ComponentChain></VideoComponentChain>{records}"#
+    )
+}
+
+const DEFAULT_OPACITY: &str = "<DefaultOpacity>true</DefaultOpacity>";
+
+/// The static Motion of the moved nests of these tests, by parameter name.
+pub(in crate::format) const MOTION: &[(&str, &str)] = &[
+    ("Position", "0.25:0.5"),
+    ("Scale", "80."),
+    ("Rotation", "15."),
+];
+
+/// [`MOTION`] as the reader reads it: Premiere's Scale is uniform.
+pub(in crate::format) fn read_motion() -> PrStaticTransform {
+    PrStaticTransform {
+        position: [0.25, 0.5],
+        anchor_point: [0.5, 0.5],
+        scale: [80.0, 80.0],
+        rotation: 15.0,
+    }
+}
+
 #[test]
-fn nest_placement_motion_reads_and_its_effects_are_rejected() {
+fn inner_time_remapping_from_another_in_or_speed_omits_the_nest() {
+    // Main's 5 s clip plays the pinned 0-2 s ramp from In 0.4 s at speed 0.32.
+    let xml = with_records(
+        &one_placement().replace(
+            r#"<Source ObjectRef="7"/><InPoint>0</InPoint><OutPoint>1270080000000</OutPoint>"#,
+            r#"<Source ObjectRef="7"/><TimeRemapping ObjectRef="146"/><PlaybackSpeed>0.32</PlaybackSpeed><InPoint>101606400000</InPoint><OutPoint>508032000000</OutPoint>"#,
+        ),
+        &variable_speed_ramp(),
+    );
+    // As the selected sequence, Main converts the clip's curve.
+    let (project, omissions) = inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let main = project.single_sequence().unwrap();
+    let clip = main.video_occurrences().next().unwrap();
+    assert!(clip.time_remap.is_some());
+    // Placed by Outer, the same clip's clock is not converted.
+    let reason = "VideoClipTrackItem:3: TimeRemapping from a source In or at another speed inside a nested sequence is not converted";
+    let error = rejection(&xml);
+    assert!(error.contains(reason), "{error}");
+}
+
+/// Bypass belongs to the native effect, not to the serialized component count.
+/// Coverage effects and unrepresentable Transform still omit the occurrence;
+/// an unknown noncoverage effect is reported without dropping its picture.
+#[test]
+fn nest_bypassed_effects_keep_content_windows_and_siblings() {
+    let base = outer_xml(&[
+        Placement {
+            start: 2 * TICKS,
+            end: 4 * TICKS,
+            source_in: TICKS,
+        },
+        Placement {
+            start: 5 * TICKS,
+            end: 7 * TICKS,
+            source_in: 0,
+        },
+    ]);
+    let chain = r#"<VideoComponentChain ObjectID="111"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>"#;
+    for name in [
+        "AE.ADBE Legacy Key Track Matte",
+        "AE.ADBE Geometry2",
+        "unknown-effect",
+    ] {
+        for bypass in [Some("true"), Some("false"), Some("invalid"), None] {
+            let flag = bypass.map_or_else(String::new, |value| format!("<Bypass>{value}</Bypass>"));
+            let replacement = format!(
+                r#"<VideoComponentChain ObjectID="111"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain><Components><Component Index="0" ObjectRef="300"/></Components></ComponentChain></VideoComponentChain><VideoFilterComponent ObjectID="300"><Component><Intrinsic>false</Intrinsic>{flag}</Component><MatchName>{name}</MatchName></VideoFilterComponent>"#
+            );
+            let (project, omissions) =
+                inspect_project_with_omissions(&base.replace(chain, &replacement), Some("outer"))
+                    .unwrap();
+            let outer = project.single_sequence().unwrap();
+            let nests: Vec<_> = outer.nest_occurrences().collect();
+            let bypassed = bypass == Some("true");
+            assert_eq!(
+                nests.len(),
+                if bypassed || name == "unknown-effect" {
+                    2
+                } else {
+                    1
+                },
+                "{name} {bypass:?}: {omissions:?}"
+            );
+            let sibling = nests.last().unwrap();
+            assert_eq!(
+                (
+                    sibling.timeline_ticks(),
+                    sibling.in_ticks..sibling.out_ticks
+                ),
+                (5 * TICKS..7 * TICKS, 0..2 * TICKS)
+            );
+            assert_eq!(sibling.sequence.video_occurrences().count(), 1);
+            if bypassed {
+                assert!(omissions.is_empty(), "{omissions:?}");
+                assert_eq!(
+                    (
+                        nests[0].timeline_ticks(),
+                        nests[0].in_ticks..nests[0].out_ticks
+                    ),
+                    (2 * TICKS..4 * TICKS, TICKS..3 * TICKS)
+                );
+                let document = project_document_with_media(outer, &project.media);
+                let group = &document["composition"]["layers"][0];
+                assert_eq!(group["type"], "Group");
+                assert_eq!(group["layers"][0]["type"], "Video");
+                assert_eq!(
+                    group["layers"][0]["sourceRange"],
+                    serde_json::json!({"start": 1000, "duration": 2000})
+                );
+            } else {
+                assert!(
+                    omissions.iter().any(|omission| omission.record == "110"
+                        || omission.record == "VideoFilterComponent:300"),
+                    "{omissions:?}"
+                );
+            }
+        }
+    }
+}
+
+/// Supplementary effect stacks on one placement, beside a healthy plain nest.
+fn nest_with_occurrence_effects(components: &[(u32, String)]) -> String {
+    let base = outer_xml(&[
+        Placement {
+            start: 0,
+            end: 2 * TICKS,
+            source_in: TICKS,
+        },
+        Placement {
+            start: 3 * TICKS,
+            end: 5 * TICKS,
+            source_in: 0,
+        },
+    ]);
+    let original = r#"<VideoComponentChain ObjectID="111"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>"#;
+    base.replace(
+        original,
+        &placement_chain(111, super::effects::DEFAULT_FLAGS, components),
+    )
+}
+
+/// Native images/nests plus unchanged saved J5 Wipe controls and a Blur
+/// record. The combined stack is XML-edited, not a native-render oracle.
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn native_nested_wipe_and_blur_keep_distinct_guides_and_mask_order() {
+    use sha2::{Digest, Sha256};
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    for (name, hash) in [
+        (
+            "feature_images_nests_26_5.prproj",
+            "093811df1cf0a706be972955580eb6859813dedf2a2ba93ce85a1cd0fad6c57e",
+        ),
+        (
+            "feature_adjustment_motion_wipe_26_5_strict.prproj",
+            "a215535f7e21efac7fca84edc572f7b1d2814b5858f90c49a97044b1bc600a2e",
+        ),
+    ] {
+        assert_eq!(
+            format!(
+                "{:x}",
+                Sha256::digest(std::fs::read(fixtures.join(name)).unwrap())
+            ),
+            hash
+        );
+    }
+    let base = images_nests_with_sound(str::to_owned);
+    let (baseline, mut baseline_notes) =
+        inspect_project_with_omissions(&base, Some(IMAGES_NESTS_SEQUENCE)).unwrap();
+    let read_notes = baseline_notes.clone();
+    let baseline_sequence = baseline.single_sequence().unwrap();
+    let ids = crate::tesseract_output::asset_ids_in_order(baseline_sequence, &baseline.media);
+    crate::convert::premiere_to_tesseract(
+        baseline_sequence,
+        &baseline.media,
+        &ids,
+        &mut baseline_notes,
+    )
+    .unwrap();
+    let donor = crate::format::read_xml(
+        &fixtures.join("feature_adjustment_motion_wipe_26_5_strict.prproj"),
+    )
+    .unwrap();
+    let dom = roxmltree::Document::parse(&donor).unwrap();
+    let mut wipe = String::new();
+    for id in ["126", "178", "179", "180"] {
+        let record = dom
+            .root_element()
+            .children()
+            .find(|node| node.attribute("ObjectID") == Some(id))
+            .unwrap();
+        wipe.push_str(&donor[record.range()]);
+    }
+    for (old, new) in [(126, 600), (178, 601), (179, 602), (180, 603)] {
+        wipe = wipe
+            .replace(
+                &format!("ObjectID=\"{old}\""),
+                &format!("ObjectID=\"{new}\""),
+            )
+            .replace(
+                &format!("ObjectRef=\"{old}\""),
+                &format!("ObjectRef=\"{new}\""),
+            );
+    }
+    fn unique_ids(layers: &serde_json::Value, ids: &mut std::collections::BTreeSet<u64>) {
+        for layer in layers.as_array().unwrap() {
+            assert!(
+                ids.insert(layer["id"].as_u64().unwrap()),
+                "duplicate layer: {layer}"
+            );
+            if layer["layers"].is_array() {
+                unique_ids(&layer["layers"], ids);
+            }
+        }
+    }
+    for blur_before_wipe in [false, true] {
+        // Native component Index is the reverse of render order.
+        let order = if blur_before_wipe {
+            [600, 400]
+        } else {
+            [400, 600]
+        };
+        let components = format!(
+            r#"<Components Version="1"><Component Index="0" ObjectRef="{}"/><Component Index="1" ObjectRef="{}"/></Components>"#,
+            order[0], order[1]
+        );
+        let xml = edit_record(
+            with_records(&base, &format!("{wipe}{}", super::effects::blur(400))),
+            r#"<VideoComponentChain ObjectID="137""#,
+            "</VideoComponentChain>",
+            |record| {
+                record.replace(
+                    "</ComponentChain>",
+                    &format!("{components}</ComponentChain>"),
+                )
+            },
+        );
+        let (project, mut omissions) =
+            inspect_project_with_omissions(&xml, Some(IMAGES_NESTS_SEQUENCE)).unwrap();
+        assert_eq!(omissions, read_notes);
+        let sequence = project.single_sequence().unwrap();
+        let nest = sequence
+            .nest_occurrences()
+            .find(|nest| nest.id.as_deref() == Some("VideoClipTrackItem:116"))
+            .unwrap();
+        assert_eq!(nest.effects.len(), 1, "{omissions:?}");
+        assert_eq!(nest.linear_wipe.as_ref().unwrap().initial_completion, 50.0);
+        let ids = crate::tesseract_output::asset_ids_in_order(sequence, &project.media);
+        let converted =
+            crate::convert::premiere_to_tesseract(sequence, &project.media, &ids, &mut omissions);
+        assert!(
+            converted.is_ok(),
+            "Wipe/Blur collision: {:?}",
+            converted.as_ref().err()
+        );
+        assert_eq!(omissions, baseline_notes);
+        let document = converted.unwrap().to_json_value().unwrap();
+        unique_ids(
+            &document["composition"]["layers"],
+            &mut std::collections::BTreeSet::new(),
+        );
+        let group = document["composition"]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["name"] == nest.sequence.name)
+            .unwrap();
+        let picture = group["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["name"] == "Nested sequence effects")
+            .unwrap();
+        assert_eq!(picture["effects"][0]["effect"]["type"], "gaussianBlur");
+        assert_eq!(picture["effects"][0]["effect"]["blurriness"], 25.0);
+        assert_eq!(
+            group["playback"]["inputRange"],
+            serde_json::json!({"start": 10000, "duration": 4000})
+        );
+        assert_eq!(
+            picture["playback"]["mapping"]["output"],
+            serde_json::json!({"start": 0, "duration": 4000})
+        );
+        let (owner, unmasked) = if blur_before_wipe {
+            (group, picture)
+        } else {
+            (picture, group)
+        };
+        assert!(unmasked["masks"].as_array().is_none_or(Vec::is_empty));
+        let guide_id = &owner["masks"][0]["layer"];
+        assert_ne!(guide_id, &picture["id"]);
+        let guide = owner["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| &layer["id"] == guide_id)
+            .unwrap();
+        assert_eq!(guide["parent"], owner["id"]);
+        assert_eq!(
+            guide["transform"]["scale"],
+            serde_json::json!([50.0, 100.0])
+        );
+        let entry = document["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| &entry["target"]["layerId"] == guide_id)
+            .unwrap();
+        assert_eq!(entry["animator"]["keyframes"][0]["layerTime"], 0);
+        assert_eq!(entry["animator"]["keyframes"][0]["value"]["value"], 50.0);
+        // Native writing requires inspected codec facts, not just saved XML.
+        let nest_name = nest.sequence.name.clone();
+        let mut inspected = project;
+        for medium in inspected.media.values_mut() {
+            let relative = format!("./media/{}", medium.name);
+            medium.relative_path = Some(relative.clone());
+            medium.relative_paths = vec![relative];
+            medium.absolute_paths = vec![(
+                crate::schema::records::MediaPathField::FilePath,
+                fixtures.join(&medium.name),
+            )];
+            let Some(stream) = &mut medium.video else {
+                continue;
+            };
+            let crate::schema::PrMediaKind::Video { codec, .. } = &mut stream.kind else {
+                continue;
+            };
+            let path = fixtures.join(&medium.name);
+            let source = std::fs::File::open(&path).unwrap();
+            let size = source.metadata().unwrap().len();
+            let facts =
+                crate::media::inspect_video_media(source, std::fs::File::open(path).unwrap(), size)
+                    .unwrap();
+            *codec = Some(facts.codec);
+        }
+        // Native writing must keep the same side, not reset the nest count.
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("nested-wipe.prproj");
+        crate::format::PremiereProjectXml::new(&inspected)
+            .unwrap()
+            .write_new(&path)
+            .unwrap();
+        let written = crate::format::read_xml(&path).unwrap();
+        let dom = roxmltree::Document::parse(&written).unwrap();
+        let root_name = &inspected.single_sequence().unwrap().name;
+        let root_id = dom
+            .descendants()
+            .find(|node| {
+                node.has_tag_name("Sequence")
+                    && node.children().any(|child| {
+                        child.has_tag_name("Name") && child.text() == Some(root_name.as_str())
+                    })
+            })
+            .unwrap()
+            .attribute("ObjectUID")
+            .unwrap();
+        let (again, _) = inspect_project_with_omissions(&written, Some(root_id)).unwrap();
+        let written_nest = again
+            .single_sequence()
+            .unwrap()
+            .nest_occurrences()
+            .find(|candidate| candidate.sequence.name == nest_name)
+            .unwrap();
+        assert_eq!(
+            written_nest.effects_above_mask,
+            usize::from(blur_before_wipe)
+        );
+        assert_eq!(written_nest.effects.len(), 1);
+        assert_eq!(
+            written_nest
+                .linear_wipe
+                .as_ref()
+                .unwrap()
+                .initial_completion,
+            50.0
+        );
+    }
+    // Retain Wipe coverage when mapped effects straddle the single mask boundary,
+    // using the same contextual omission rule as ordinary clips.
+    let xml = edit_record(
+        with_records(
+            &base,
+            &format!(
+                "{wipe}{}{}",
+                super::effects::blur(400),
+                super::effects::blur(500)
+            ),
+        ),
+        r#"<VideoComponentChain ObjectID="137""#,
+        "</VideoComponentChain>",
+        |record| {
+            record.replace("</ComponentChain>", r#"<Components Version="1"><Component Index="0" ObjectRef="400"/><Component Index="1" ObjectRef="600"/><Component Index="2" ObjectRef="500"/></Components></ComponentChain>"#)
+        },
+    );
+    let (project, notes) =
+        inspect_project_with_omissions(&xml, Some(IMAGES_NESTS_SEQUENCE)).unwrap();
+    let nest = project
+        .single_sequence()
+        .unwrap()
+        .nest_occurrences()
+        .find(|nest| nest.id.as_deref() == Some("VideoClipTrackItem:116"))
+        .unwrap();
+    assert!(nest.effects.is_empty());
+    assert_eq!(nest.linear_wipe.as_ref().unwrap().initial_completion, 50.0);
+    let local: Vec<_> = notes
+        .iter()
+        .filter(|note| {
+            ["VideoFilterComponent:400", "VideoFilterComponent:500"].contains(&note.record.as_str())
+        })
+        .collect();
+    assert_eq!(local.len(), 2, "{notes:?}");
+    assert!(local
+        .iter()
+        .all(|note| note.scope == crate::OmissionScope::Feature
+            && note
+                .reason
+                .contains(crate::schema::MASK_EFFECT_ORDER_REASON)));
+}
+
+#[test]
+fn nested_occurrence_stroke_is_reported_once_and_keeps_sibling_blur() {
+    let stroke = r#"<VideoFilterComponent ObjectID="300"><Component><DisplayName>Stroke</DisplayName><Bypass>false</Bypass><Intrinsic>false</Intrinsic></Component><MatchName>AE.Impact_Stroke_FX</MatchName></VideoFilterComponent>"#;
+    let xml =
+        nest_with_occurrence_effects(&[(300, stroke.into()), (400, super::effects::blur(400))]);
+    let (project, mut omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+    assert_eq!(omissions.len(), 1, "{omissions:?}");
+    let note = &omissions[0];
+    assert_eq!(note.record, "VideoFilterComponent:300");
+    assert_eq!(note.scope, crate::OmissionScope::Feature);
+    assert!(note.reason.contains("Film Impact Stroke was not imported"));
+    assert!(note.reason.contains("VideoClipTrackItem:110"));
+    assert!(note.reason.contains("not an opaque physical video"));
+    let outer = project.single_sequence().unwrap();
+    assert_eq!(outer.nest_occurrences().count(), 2);
+    assert_eq!(outer.nest_occurrences().next().unwrap().effects.len(), 1);
+    let ids = crate::tesseract_output::asset_ids_in_order(outer, &project.media);
+    let document =
+        crate::convert::premiere_to_tesseract(outer, &project.media, &ids, &mut omissions)
+            .unwrap()
+            .to_json_value()
+            .unwrap();
+    assert_eq!(omissions.len(), 1, "{omissions:?}");
+    let picture = &document["composition"]["layers"][0]["layers"][0];
+    assert_eq!(picture["effects"][0]["effect"]["type"], "gaussianBlur");
+    assert_eq!(picture["effects"][0]["effect"]["blurriness"], 25.0);
+    assert_eq!(picture["layers"][0]["type"], "Video");
+}
+
+#[test]
+fn nested_occurrence_rejection_discards_local_effect_diagnostics() {
+    let native = include_str!("../../../tests/fixtures/human_lumetri_contrast.xml");
+    let dom = roxmltree::Document::parse(native).unwrap();
+    let records: String = dom
+        .root_element()
+        .children()
+        .filter(|node| {
+            matches!(
+                node.tag_name().name(),
+                "VideoFilterComponent" | "VideoComponentParam" | "ArbVideoComponentParam"
+            )
+        })
+        .map(|node| &native[node.range()])
+        .collect();
+    let unknown = r#"<VideoFilterComponent ObjectID="500"><Component><DisplayName>Unknown</DisplayName><Bypass>false</Bypass><Intrinsic>false</Intrinsic></Component><MatchName>Vendor.Unknown</MatchName></VideoFilterComponent>"#;
+    let accepted = nest_with_occurrence_effects(&[(557, records), (500, unknown.into())]);
+    let (_, accepted_notes) = inspect_project_with_omissions(&accepted, Some("outer")).unwrap();
+    assert!(
+        accepted_notes
+            .iter()
+            .any(|note| note.record == "VideoFilterComponent:557"
+                && note.kind == crate::OmissionKind::Approximated),
+        "{accepted_notes:?}"
+    );
+    assert!(
+        accepted_notes
+            .iter()
+            .any(|note| note.record == "VideoFilterComponent:500"
+                && note.kind == crate::OmissionKind::Omitted),
+        "{accepted_notes:?}"
+    );
+    let original = format!("<OutPoint>{}</OutPoint></Clip></VideoClip>", 3 * TICKS);
+    let rejected = accepted.replace(
+        &original,
+        &format!(
+            "<OutPoint>{}</OutPoint><PlaybackSpeed>2</PlaybackSpeed></Clip></VideoClip>",
+            3 * TICKS
+        ),
+    );
+    assert_ne!(accepted, rejected);
+    let (project, notes) = inspect_project_with_omissions(&rejected, Some("outer")).unwrap();
+    assert_eq!(
+        project
+            .single_sequence()
+            .unwrap()
+            .nest_occurrences()
+            .count(),
+        1
+    );
+    let owner_notes: Vec<_> = notes
+        .iter()
+        .filter(|note| {
+            matches!(
+                note.record.as_str(),
+                "110" | "VideoFilterComponent:557" | "VideoFilterComponent:500"
+            )
+        })
+        .collect();
+    assert_eq!(owner_notes.len(), 1, "{notes:?}");
+    assert_eq!(owner_notes[0].scope, crate::OmissionScope::Occurrence);
+    assert_eq!(owner_notes[0].kind, crate::OmissionKind::Omitted);
+    assert!(owner_notes[0]
+        .reason
+        .contains("does not match PlaybackSpeed"));
+}
+
+#[test]
+fn nested_occurrence_active_corner_pin_omits_owner_but_bypass_keeps_blur() {
+    for bypass in [Some("true"), Some("false"), Some("invalid"), None] {
+        let flag = bypass.map_or_else(String::new, |value| format!("<Bypass>{value}</Bypass>"));
+        let pin = super::effects::corner_pin(
+            300,
+            [
+                ("0.2:0.2", ""),
+                ("0.8:0.2", ""),
+                ("0.2:0.8", ""),
+                ("0.8:0.8", ""),
+            ],
+        )
+        .replace(
+            "<DisplayName>Corner Pin</DisplayName>",
+            &format!("<DisplayName>Corner Pin</DisplayName>{flag}"),
+        );
+        let xml = nest_with_occurrence_effects(&[(300, pin), (400, super::effects::blur(400))]);
+        let (project, mut notes) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+        let outer = project.single_sequence().unwrap();
+        if bypass == Some("true") {
+            assert_eq!(outer.nest_occurrences().count(), 2);
+            assert!(notes.is_empty(), "{notes:?}");
+            let ids = crate::tesseract_output::asset_ids_in_order(outer, &project.media);
+            let document =
+                crate::convert::premiere_to_tesseract(outer, &project.media, &ids, &mut notes)
+                    .unwrap()
+                    .to_json_value()
+                    .unwrap();
+            assert_eq!(notes.len(), 1, "{notes:?}");
+            assert_eq!(notes[0].scope, crate::OmissionScope::Feature);
+            assert!(notes[0].reason.contains("Corner Pin"));
+            let picture = &document["composition"]["layers"][0]["layers"][0];
+            assert_eq!(picture["effects"].as_array().unwrap().len(), 1);
+            assert_eq!(picture["effects"][0]["effect"]["type"], "gaussianBlur");
+        } else {
+            assert_eq!(outer.nest_occurrences().count(), 1);
+            assert_eq!(notes.len(), 1, "{notes:?}");
+            assert_eq!(notes[0].scope, crate::OmissionScope::Occurrence);
+            assert!(notes[0].reason.contains("active Corner Pin"));
+            assert!(notes[0].reason.contains("preserve coverage"));
+        }
+    }
+}
+
+/// Supplementary saved-effect records on an XML-edited nest, not a newly
+/// Adobe-authored stack. Protects reader order, key origin and omission scope.
+#[test]
+fn nested_occurrence_effect_stack_keeps_order_keys_motion_and_healthy_siblings() {
+    let original = r#"<VideoComponentChain ObjectID="111"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>"#;
+    let blur = super::effects::blur(400).replace(
+        "<IsTimeVarying>false</IsTimeVarying><ParameterControlType>8</ParameterControlType><StartKeyframe>-91445760000000000,25.,0,0,0,0,0,0</StartKeyframe>",
+        &format!("<IsTimeVarying>true</IsTimeVarying><ParameterControlType>8</ParameterControlType><StartKeyframe>-91445760000000000,25.,0,0,0,0,0,0</StartKeyframe><Keyframes>{TICKS},25.,0,0,0,0,0,0;{},50.,0,0,0,0,0,0;</Keyframes>", 2 * TICKS),
+    );
+    let components = [
+        (300, corpus_motion_component(300, &[("Position", "0.25:0.5")], &[])),
+        (400, blur),
+        (500, r#"<VideoFilterComponent ObjectID="500"><Component><DisplayName>Unknown</DisplayName><Bypass>false</Bypass><Intrinsic>false</Intrinsic></Component><MatchName>Vendor.Unknown</MatchName></VideoFilterComponent>"#.into()),
+        (600, super::effects::tint(600)),
+    ];
+    let xml = one_placement().replace(
+        original,
+        &placement_chain(111, DEFAULT_OPACITY, &components),
+    );
+    let (project, omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+    assert_eq!(omissions.len(), 1, "{omissions:?}");
+    assert_eq!(omissions[0].record, "VideoFilterComponent:500");
+    let outer = project.single_sequence().unwrap();
+    let nest = outer.nest_occurrences().next().unwrap();
+    assert!(matches!(
+        nest.effects[0].params,
+        crate::schema::PrEffectParams::Tint(_)
+    ));
+    assert!(matches!(
+        nest.effects[1].params,
+        crate::schema::PrEffectParams::GaussianBlur(_)
+    ));
+    let document = project_document_with_media(outer, &project.media);
+    let group = &document["composition"]["layers"][0];
+    let picture = &group["layers"][0];
+    assert_eq!(picture["effects"][0]["effect"]["type"], "tintTritone");
+    assert_eq!(picture["effects"][1]["effect"]["type"], "gaussianBlur");
+    assert_eq!(
+        picture["layers"][0]["sourceRange"],
+        serde_json::json!({"start":1000,"duration":2000})
+    );
+    let effect_id = &picture["effects"][1]["id"];
+    let entry = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| &entry["target"]["effectId"] == effect_id)
+        .unwrap();
+    assert_eq!(entry["animator"]["keyframes"][0]["layerTime"], 0);
+    assert_eq!(entry["animator"]["keyframes"][1]["layerTime"], 1000);
+}
+
+/// Supplementary native-record regression, not an Adobe Geometry2 oracle.
+/// Equal canvases avoid point-frame normalization but do not prove effect order.
+#[test]
+fn equal_canvas_nest_keeps_transform_keys_separate_from_motion() {
+    use crate::schema::{PrEffectParams, TRANSFORM_ROTATION};
+
+    let native = include_str!("../../../tests/fixtures/nested-transform-geometry2.xml");
+    let dom = roxmltree::Document::parse(native).unwrap();
+    let records: String = dom
+        .root_element()
+        .children()
+        .filter(|node| node.is_element())
+        .map(|node| &native[node.range()])
+        .collect();
+    let motion_keys = format!(
+        "<Keyframes>{TICKS},200.,0,0,0,0,0,0;{},100.,0,0,0,0,0,0;</Keyframes>",
+        3 * TICKS
+    );
+    let chain = placement_chain(
+        111,
+        DEFAULT_OPACITY,
+        &[
+            (
+                300,
+                corpus_motion_component(300, &[], &[("Scale", &motion_keys)]),
+            ),
+            (407, records),
+        ],
+    );
+    let base = outer_xml(&[
+        Placement {
+            start: 2 * TICKS,
+            end: 4 * TICKS,
+            source_in: TICKS,
+        },
+        Placement {
+            start: 5 * TICKS,
+            end: 7 * TICKS,
+            source_in: 0,
+        },
+    ]);
+    let default_chain = r#"<VideoComponentChain ObjectID="111"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>"#;
+    let equal = base.replace(default_chain, &chain);
+    assert_ne!(equal, base);
+    let extra = placement_records(
+        210,
+        7,
+        &Placement {
+            start: 7 * TICKS,
+            end: 8 * TICKS,
+            source_in: 0,
+        },
+    );
+    let sampled = with_records(
+        &equal.replace(
+            "<TrackItem ObjectRef=\"110\"/>",
+            "<TrackItem ObjectRef=\"110\"/><TrackItem ObjectRef=\"210\"/>",
+        ),
+        &extra,
+    );
+    let sampled = object_mask_native_clock(&sampled, 211);
+    let (project, notes) = inspect_project_with_omissions(&sampled, Some("outer")).unwrap();
+    let outer = project.single_sequence().unwrap();
+    assert_eq!(outer.frame_rate, FrameRate::Fps30);
+    let nest = outer
+        .nest_occurrences()
+        .next()
+        .expect("native Transform nest retained");
+    assert_eq!(nest.effects.len(), 1, "{notes:?}");
+    assert_eq!(
+        nest.start_ticks,
+        60 * crate::format::object_mask::SAVED_SEQUENCE_FRAME_TICKS
+    );
+    let editable = project_document_with_media(outer, &project.media);
+    assert!(editable.to_string().contains("\"type\":\"Video\""));
+
+    let dom = roxmltree::Document::parse(&equal).unwrap();
+    let outer_group = dom
+        .root_element()
+        .children()
+        .find(|node| node.attribute("ObjectID") == Some("100"))
+        .unwrap();
+    let outer_group = &equal[outer_group.range()];
+    let mut different = equal.replace(
+        outer_group,
+        &outer_group.replace("0,0,1920,1080", "0,0,1280,720"),
+    );
+    for item in dom
+        .root_element()
+        .children()
+        .filter(|node| matches!(node.attribute("ObjectID"), Some("110" | "120")))
+    {
+        let record = &equal[item.range()];
+        different = different.replace(record, &record.replace("0,0,1920,1080", "0,0,1280,720"));
+    }
+    let unknown = equal.replace(
+        &chain,
+        &chain.replace(
+            "</Components>",
+            r#"<Component Index="2" ObjectRef="900"/></Components>"#,
+        ),
+    );
+    let unknown = with_records(
+        &unknown,
+        r#"<VideoFilterComponent ObjectID="900"><Component><Bypass>false</Bypass><Intrinsic>false</Intrinsic></Component><MatchName>unknown-effect</MatchName></VideoFilterComponent>"#,
+    );
+    let second = with_records(
+        &equal.replace(
+            &chain,
+            &chain.replace(
+                "</Components>",
+                r#"<Component Index="2" ObjectRef="999"/></Components>"#,
+            ),
+        ),
+        &equal[dom
+            .root_element()
+            .children()
+            .find(|node| node.attribute("ObjectID") == Some("407"))
+            .unwrap()
+            .range()]
+        .replace("ObjectID=\"407\"", "ObjectID=\"999\""),
+    );
+    let masked = with_records(
+        &equal.replace(
+            &chain,
+            &chain.replace(DEFAULT_OPACITY, "").replace(
+                "</Components>",
+                r#"<Component Index="2" ObjectRef="500"/></Components>"#,
+            ),
+        ),
+        &(super::mask::masked_opacity(500, 600) + &super::mask::mask(600, true)),
+    );
+    let retimed = equal.replace(
+        &format!("<OutPoint>{}</OutPoint></Clip></VideoClip>", 3 * TICKS),
+        &format!(
+            "<OutPoint>{}</OutPoint><PlaybackSpeed>2</PlaybackSpeed></Clip></VideoClip>",
+            5 * TICKS
+        ),
+    );
+    let source_chain = with_records(
+        &equal.replace(
+            r#"<SubClip ObjectID="112"><Clip ObjectRef="113"/>"#,
+            r#"<SubClip ObjectID="112"><Clip ObjectRef="113"/><MasterClip ObjectURef="master"/>"#,
+        ),
+        r#"<MasterClip ObjectUID="master"><VideoComponentChain ObjectRef="904"/><Clips><Clip Index="0" ObjectRef="902"/></Clips><Name>Main</Name></MasterClip><VideoClip ObjectID="902"><Clip><Source ObjectRef="102"/></Clip></VideoClip><VideoComponentChain ObjectID="904"><ComponentChain><Components><Component Index="0" ObjectRef="905"/></Components></ComponentChain></VideoComponentChain><VideoFilterComponent ObjectID="905"><Component><ID>1</ID></Component><MatchName>AE.ADBE AECrop</MatchName></VideoFilterComponent>"#,
+    );
+    for (name, xml, reason) in [
+        ("equal canvas", equal, None),
+        (
+            "different canvas",
+            different,
+            Some("differing-canvas nested Transform requires static"),
+        ),
+        (
+            "unknown active sibling effect",
+            unknown,
+            Some("nested Transform requires exactly one active unmasked Transform"),
+        ),
+        (
+            "second Transform",
+            second,
+            Some("nested Transform requires exactly one active unmasked Transform"),
+        ),
+        (
+            "masked Transform",
+            masked,
+            Some("nested Transform with Track Matte Key or Opacity mask"),
+        ),
+        (
+            "retimed Transform",
+            retimed,
+            Some("nested Transform requires unit-forward matching clocks"),
+        ),
+        (
+            "source mask",
+            source_chain,
+            Some("source component VideoFilterComponent:905"),
+        ),
+    ] {
+        let admitted = reason.is_none();
+        let (project, omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+        let sequence = project.single_sequence().unwrap();
+        let nests: Vec<_> = sequence.nest_occurrences().collect();
+        assert_eq!(
+            nests.len(),
+            if admitted { 2 } else { 1 },
+            "{name}: {omissions:?}"
+        );
+        let sibling = nests.last().unwrap();
+        assert_eq!(sibling.timeline_ticks(), 5 * TICKS..7 * TICKS);
+        assert_eq!(sibling.in_ticks..sibling.out_ticks, 0..2 * TICKS);
+        assert_eq!(sibling.sequence.video_occurrences().count(), 1);
+        if !admitted {
+            assert!(
+                omissions.iter().any(|omission| omission.record == "110"
+                    && omission.reason.contains(reason.unwrap())),
+                "{name}: {omissions:?}"
+            );
+            continue;
+        }
+        let nest = nests[0];
+        assert_eq!(nest.timeline_ticks(), 2 * TICKS..4 * TICKS);
+        assert_eq!(nest.in_ticks..nest.out_ticks, TICKS..3 * TICKS);
+        assert_eq!(nest.sequence.dimensions(), [1920, 1080]);
+        assert_eq!(nest.sequence.video_occurrences().count(), 1);
+        assert_eq!(nest.animations.len(), 1);
+        assert_eq!(
+            nest.animations[0].property(),
+            PrAnimatedProperty::UniformScale
+        );
+        assert_eq!(nest.transform.scale, [200.0; 2]);
+        let motion_keys: Vec<_> = nest.animations[0]
+            .keys()
+            .iter()
+            .map(|key| (key.source_ticks, key.value))
+            .collect();
+        assert_eq!(motion_keys, [(TICKS, 200.0), (3 * TICKS, 100.0)]);
+        let [effect] = nest.effects.as_slice() else {
+            panic!("one retained Transform: {name}: {omissions:?}");
+        };
+        assert!(effect.enabled);
+        assert!(matches!(effect.params, PrEffectParams::Transform(_)));
+        let [animation] = effect.animations.as_slice() else {
+            panic!("one Rotation track, separate from intrinsic Motion");
+        };
+        assert_eq!(animation.param.id, TRANSFORM_ROTATION.id);
+        let keys: Vec<_> = animation
+            .keys
+            .scalar()
+            .unwrap()
+            .iter()
+            .map(|key| (key.source_ticks, key.value))
+            .collect();
+        assert_eq!(keys, [(TICKS, 0.0), (3 * TICKS, -90.0)]);
+        let mut document = project_document_with_media(sequence, &project.media);
+        let outer = &document["composition"]["layers"][0];
+        let [inner] = outer["layers"].as_array().unwrap().as_slice() else {
+            panic!("Motion owns exactly the Transform group");
+        };
+        assert_eq!(inner["type"], "Group");
+        // The effect's off-canvas pivot stays separate from intrinsic Motion.
+        let pivot = serde_json::json!([700.0000190734863, 1799.9999570846558]);
+        assert_eq!(inner["transform"]["anchorPoint"], pivot);
+        assert_eq!(inner["transform"]["position"], pivot);
+        assert_eq!(
+            outer["transform"]["anchorPoint"],
+            serde_json::json!([960.0, 540.0])
+        );
+        assert!(outer["masks"].as_array().is_none_or(Vec::is_empty));
+        assert_eq!(
+            outer["playback"]["mapping"]["output"],
+            serde_json::json!({"start": 0, "duration": 2000})
+        );
+        assert_eq!(
+            inner["playback"]["inputRange"],
+            serde_json::json!({"start": 0, "duration": 2000})
+        );
+        let [mask] = inner["masks"].as_array().unwrap().as_slice() else {
+            panic!("one source-canvas guide");
+        };
+        assert_eq!(mask["mode"], "add");
+        let guide = inner["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["id"] == mask["layer"])
+            .unwrap();
+        assert_eq!(guide["parent"], inner["id"]);
+        assert_eq!(guide["rect"]["size"], serde_json::json!([1920.0, 1080.0]));
+        let video = inner["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["type"] == "Video")
+            .unwrap();
+        assert_eq!(
+            video["sourceRange"],
+            serde_json::json!({"start": 1000, "duration": 2000})
+        );
+        let (outer_id, inner_id) = (outer["id"].clone(), inner["id"].clone());
+        let entries = document["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap();
+        for (owner, property, values) in [
+            (&outer_id, "scaleX", [200.0, 100.0]),
+            (&outer_id, "scaleY", [200.0, 100.0]),
+            (&inner_id, "rotation", [0.0, -90.0]),
+        ] {
+            let entry = entries
+                .iter()
+                .find(|entry| {
+                    entry["target"]["layerId"] == *owner
+                        && entry["target"]["propertyType"] == property
+                })
+                .unwrap();
+            let keys: Vec<_> = entry["animator"]["keyframes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|key| {
+                    (
+                        key["layerTime"].as_i64().unwrap(),
+                        key["value"]["value"].as_f64().unwrap(),
+                    )
+                })
+                .collect();
+            assert_eq!(keys, [(0, values[0]), (2000, values[1])]);
+        }
+        // Edit the actual effect owner and its last key, not retained native bytes.
+        let entries = document["composition"]["dynamics"]["entries"]
+            .as_array_mut()
+            .unwrap();
+        let rotation = entries
+            .iter_mut()
+            .find(|entry| {
+                entry["target"]["layerId"] == inner_id
+                    && entry["target"]["propertyType"] == "rotation"
+            })
+            .unwrap();
+        rotation["animator"]["keyframes"][1]["value"]["value"] = serde_json::json!(-45.0);
+        assert_nested_transform_edit_round_trips(document);
+    }
+}
+
+/// Fresh export of edited FX, then select its outer sequence, not the nested
+/// source that would survive even if its Transform placement were rejected.
+fn assert_nested_transform_edit_round_trips(wire: serde_json::Value) {
+    use crate::{
+        format::PremiereProjectXml,
+        media::{MediaFacts, VideoMedia, VideoTiming},
+        schema::{records::MediaPathField, PrEffectParams, VideoCodec},
+    };
+    use std::collections::BTreeMap;
+    let mut changed_guide = wire.clone();
+    let inner = &mut changed_guide["composition"]["layers"][0]["layers"][0];
+    let guide_id = inner["masks"][0]["layer"].clone();
+    let guide = inner["layers"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|layer| layer["id"] == guide_id)
+        .unwrap();
+    // A whole-guide size edit now selects the source canvas. This non-16:9
+    // edit must still be refused, with the explicit stage and canvas reason.
+    guide["rect"]["size"] = serde_json::json!([1800.0, 1080.0]);
+    let document = fx_schema::EditableFxCompositionDocument::from_json_value(wire).unwrap();
+    let facts = BTreeMap::from([(
+        "premiere-video-1".to_owned(),
+        MediaFacts::Video(VideoMedia {
+            pixel_aspect: Default::default(),
+            orientation: crate::schema::VideoOrientation::Identity,
+            codec: VideoCodec::H264,
+            bit_depth: 8,
+            colour: None,
+            width: 1920,
+            height: 1080,
+            timing: VideoTiming::for_test(FrameRate::Fps30, 10 * TICKS),
+        }),
+    )]);
+    let invalid = fx_schema::EditableFxCompositionDocument::from_json_value(changed_guide).unwrap();
+    let mut reports = Vec::new();
+    let rejected = crate::convert::tesseract_to_premiere(
+        &invalid,
+        &facts,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        FrameRate::Fps30,
+        &mut reports,
+    )
+    .unwrap();
+    assert_eq!(
+        rejected
+            .single_sequence()
+            .unwrap()
+            .nest_occurrences()
+            .count(),
+        1
+    );
+    assert!(
+        reports
+            .iter()
+            .any(|report| report.reason.contains("nested Transform stage")
+                && report
+                    .reason
+                    .contains("requires proportional 16:9 canvases")),
+        "{reports:?}"
+    );
+    let mut losses = crate::export_loss::LossCollector::default();
+    let mut project = crate::convert::lower_document(
+        &document,
+        &facts,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        FrameRate::Fps30,
+        &mut losses,
+    )
+    .unwrap()
+    .project
+    .expect("native nested Transform");
+    let report = losses.finish(true);
+    assert!(
+        report.losses.is_empty(),
+        "the retained native stage must not trigger linked-AEP routing: {:?}",
+        report.losses
+    );
+    let omissions = report.diagnostics;
+    let outer = project.single_sequence().unwrap();
+    let nests: Vec<_> = outer.nest_occurrences().collect();
+    assert_eq!(nests.len(), 2, "{omissions:?}");
+    let transformed = nests.iter().find(|nest| !nest.effects.is_empty()).unwrap();
+    assert_eq!(transformed.sequence.dimensions(), [1920, 1080]);
+    assert_eq!(
+        transformed.sequence.nest_occurrences().count(),
+        0,
+        "no intermediate native sequence around the transformed picture"
+    );
+    assert_eq!(transformed.sequence.video_occurrences().count(), 1);
+    assert!(transformed.crop.is_default());
+    for media in project.media.values_mut() {
+        media.name = "source.mp4".into();
+        media.relative_path = Some("./media/source.mp4".into());
+        media.relative_paths = vec!["./media/source.mp4".into()];
+        media.absolute_paths = vec![(MediaPathField::FilePath, "/media/source.mp4".into())];
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("edited.prproj");
+    PremiereProjectXml::new(&project)
+        .unwrap()
+        .write_new(&path)
+        .unwrap();
+    let xml = crate::format::read_xml(&path).unwrap();
+    let dom = roxmltree::Document::parse(&xml).unwrap();
+    let outer_id = dom
+        .root_element()
+        .children()
+        .find(|node| {
+            node.has_tag_name("Sequence")
+                && node
+                    .children()
+                    .any(|child| child.has_tag_name("Name") && child.text() == Some("Outer"))
+        })
+        .unwrap()
+        .attribute("ObjectUID")
+        .unwrap();
+    let (read, reports) = inspect_project_with_omissions(&xml, Some(outer_id)).unwrap();
+    let outer = read.single_sequence().unwrap();
+    let nests: Vec<_> = outer.nest_occurrences().collect();
+    assert_eq!(nests.len(), 2, "{reports:?}");
+    let transformed = nests.iter().find(|nest| !nest.effects.is_empty()).unwrap();
+    assert_eq!(transformed.sequence.dimensions(), [1920, 1080]);
+    let [effect] = transformed.effects.as_slice() else {
+        panic!("one current Transform");
+    };
+    assert!(matches!(effect.params, PrEffectParams::Transform(_)));
+    let keys = effect.animations[0].keys.scalar().unwrap();
+    assert_eq!(
+        keys.iter()
+            .map(|key| (key.source_ticks, key.value))
+            .collect::<Vec<_>>(),
+        [(0, 0.0), (2 * TICKS, -45.0)]
+    );
+    assert_eq!(
+        transformed.animations[0]
+            .keys()
+            .iter()
+            .map(|key| (key.source_ticks, key.value))
+            .collect::<Vec<_>>(),
+        [(0, 200.0), (2 * TICKS, 100.0)]
+    );
+}
+
+/// Native 26.5.1 Opacity/mask A records on an independently editable nest
+/// placement. Host transfer is supplementary, not native nested-mask proof.
+fn native_nested_opacity_mask_xml() -> String {
+    let xml = outer_xml(&[
+        Placement {
+            start: 0,
+            end: 2 * TICKS,
+            source_in: TICKS,
+        },
+        Placement {
+            start: 3 * TICKS,
+            end: 5 * TICKS,
+            source_in: 0,
+        },
+    ]);
+    let old = r#"<VideoComponentChain ObjectID="111"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>"#;
+    xml.replace(
+        old,
+        &placement_chain(
+            111,
+            "<DefaultMotion>true</DefaultMotion>",
+            &[(
+                900,
+                super::mask::masked_opacity(900, 157) + &super::mask::fixture_mask_26_5(157),
+            )],
+        ),
+    )
+}
+
+#[test]
+fn native_nested_opacity_mask_preserves_coverage_and_exports_current_owner() {
+    use crate::media::{MediaFacts, VideoMedia, VideoTiming};
+    use std::collections::BTreeMap;
+    let (project, reports) =
+        inspect_project_with_omissions(&native_nested_opacity_mask_xml(), Some("outer")).unwrap();
+    let outer = project.single_sequence().unwrap();
+    assert_eq!(outer.nest_occurrences().count(), 2, "{reports:?}");
+    let mut reports = Vec::new();
+    let document = crate::convert::premiere_to_tesseract(
+        outer,
+        &project.media,
+        &crate::tesseract_output::asset_ids_in_order(outer, &project.media),
+        &mut reports,
+    )
+    .unwrap();
+    let mut wire = document.to_json_value().unwrap();
+    let group = wire["composition"]["layers"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|layer| {
+            layer["masks"]
+                .as_array()
+                .is_some_and(|masks| !masks.is_empty())
+        })
+        .unwrap();
+    assert_eq!(group["masks"][0]["opacity"], 0.5);
+    let guide_id = group["masks"][0]["layer"].clone();
+    let guide = group["layers"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|layer| layer["id"] == guide_id)
+        .unwrap();
+    assert_eq!(guide["type"], "Shape");
+    assert_eq!(
+        guide["transform"]["position"],
+        serde_json::json!([0.0, 0.0])
+    );
+    assert!(guide["shape"].get("fills").is_none());
+    assert!(guide["shape"].get("strokes").is_none());
+    assert_eq!(
+        guide["shape"]["path"]["commands"][0],
+        serde_json::json!({"type": "moveTo", "x": 480.0, "y": 270.0})
+    );
+    group["masks"][0]["opacity"] = serde_json::json!(0.3);
+    let document = fx_schema::EditableFxCompositionDocument::from_json_value(wire).unwrap();
+    let facts = BTreeMap::from([(
+        "premiere-video-1".to_owned(),
+        MediaFacts::Video(VideoMedia {
+            pixel_aspect: Default::default(),
+            orientation: crate::schema::VideoOrientation::Identity,
+            codec: crate::schema::VideoCodec::H264,
+            bit_depth: 8,
+            colour: None,
+            width: 1920,
+            height: 1080,
+            timing: VideoTiming::for_test(FrameRate::Fps30, 10 * TICKS),
+        }),
+    )]);
+    let mut reports = Vec::new();
+    let mut exported = crate::convert::tesseract_to_premiere(
+        &document,
+        &facts,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        FrameRate::Fps30,
+        &mut reports,
+    )
+    .unwrap();
+    assert_eq!(
+        exported
+            .single_sequence()
+            .unwrap()
+            .nest_occurrences()
+            .count(),
+        2,
+        "{reports:?}"
+    );
+    for media in exported.media.values_mut() {
+        media.name = "source.mp4".into();
+        media.relative_path = Some("./media/source.mp4".into());
+        media.relative_paths = vec!["./media/source.mp4".into()];
+        media.absolute_paths = vec![(
+            crate::schema::records::MediaPathField::FilePath,
+            "/media/source.mp4".into(),
+        )];
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("edited.prproj");
+    crate::format::PremiereProjectXml::new(&exported)
+        .unwrap()
+        .write_new(&path)
+        .unwrap();
+    let xml = crate::format::read_xml(&path).unwrap();
+    let dom = roxmltree::Document::parse(&xml).unwrap();
+    let outer_id = dom
+        .root_element()
+        .children()
+        .find(|node| {
+            node.has_tag_name("Sequence")
+                && node
+                    .children()
+                    .any(|child| child.has_tag_name("Name") && child.text() == Some("Outer"))
+        })
+        .unwrap()
+        .attribute("ObjectUID")
+        .unwrap();
+    let (read, reports) = inspect_project_with_omissions(&xml, Some(outer_id)).unwrap();
+    assert_eq!(
+        read.single_sequence().unwrap().nest_occurrences().count(),
+        2,
+        "{reports:?}"
+    );
+    let masked = read
+        .single_sequence()
+        .unwrap()
+        .nest_occurrences()
+        .find(|nest| nest.opacity_mask.is_some())
+        .unwrap();
+    assert_eq!(
+        masked
+            .sequence
+            .video_items()
+            .filter_map(PrVideoItem::graphic)
+            .count(),
+        0,
+        "the re-read nest contains no Graphic mask guide"
+    );
+    let mut reports = Vec::new();
+    let roundtrip = crate::convert::premiere_to_tesseract(
+        read.single_sequence().unwrap(),
+        &read.media,
+        &crate::tesseract_output::asset_ids_in_order(read.single_sequence().unwrap(), &read.media),
+        &mut reports,
+    )
+    .unwrap()
+    .to_json_value()
+    .unwrap();
+    let group = roundtrip["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| {
+            layer["masks"]
+                .as_array()
+                .is_some_and(|masks| masks.iter().any(|mask| mask["opacity"] == 0.3))
+        })
+        .unwrap();
+    assert_eq!(group["masks"][0]["opacity"], 0.3);
+}
+
+#[test]
+fn nested_crop_keeps_its_guide_and_rejects_unsafe_combinations() {
+    let original = r#"<VideoComponentChain ObjectID="111"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>"#;
+    let crop = super::effects::top_crop(300);
+    let xml = |components: &[(u32, String)]| {
+        one_placement().replace(
+            original,
+            &placement_chain(
+                111,
+                "<DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity>",
+                components,
+            ),
+        )
+    };
+    let (project, omissions) =
+        inspect_project_with_omissions(&xml(&[(300, crop.clone())]), Some("outer")).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let outer = project.single_sequence().unwrap();
+    assert_eq!(outer.nest_occurrences().next().unwrap().crop.top, 15.0);
+    let document = project_document_with_media(outer, &project.media);
+    let group = &document["composition"]["layers"][0];
+    let guide = group["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["id"] == group["masks"][0]["layer"])
+        .unwrap();
+    assert_eq!(guide["rect"]["position"], serde_json::json!([0.0, 162.0]));
+    assert_eq!(guide["rect"]["size"], serde_json::json!([1920.0, 918.0]));
+    let feathered = crop.replace(
+        "<Name>Edge Feather</Name><IsTimeVarying>false</IsTimeVarying><ParameterControlType>1</ParameterControlType><StartKeyframe>-91445760000000000,0,",
+        "<Name>Edge Feather</Name><IsTimeVarying>false</IsTimeVarying><ParameterControlType>1</ParameterControlType><StartKeyframe>-91445760000000000,5,",
+    );
+    assert_ne!(feathered, crop);
+    let matte = super::animation::animation_fixture::track_matte_key_xml(400, 1, 0, false);
+    for (components, reason) in [
+        (vec![(300, feathered)], "feathered Crop"),
+        (
+            vec![(300, crop.clone()), (400, matte)],
+            "Crop with a Track Matte Key",
+        ),
+    ] {
+        let reason_found = rejection(&xml(&components));
+        assert!(reason_found.contains(reason), "{reason_found}");
+    }
+    let unknown = r#"<VideoFilterComponent ObjectID="500"><Component><DisplayName>Unknown</DisplayName><Bypass>false</Bypass><Intrinsic>false</Intrinsic></Component><MatchName>Own.Unsupported.Detail</MatchName></VideoFilterComponent>"#;
+    for effects in [
+        vec![(500, unknown.to_owned())],
+        vec![(400, super::effects::blur(400)), (500, unknown.to_owned())],
+    ] {
+        let mut components = vec![(300, crop.clone())];
+        components.extend(effects);
+        let (project, omissions) =
+            inspect_project_with_omissions(&xml(&components), Some("outer")).unwrap();
+        let outer = project.single_sequence().unwrap();
+        let nest = outer.nest_occurrences().next().unwrap();
+        assert_eq!(nest.crop.top, 15.0);
+        assert_eq!(nest.sequence.video_occurrences().count(), 1);
+        assert!(
+            omissions
+                .iter()
+                .all(|note| note.scope != crate::OmissionScope::Occurrence),
+            "{omissions:?}"
+        );
+        assert!(
+            omissions
+                .iter()
+                .any(|note| note.reason.contains("Own.Unsupported.Detail")),
+            "{omissions:?}"
+        );
+        let document = project_document_with_media(outer, &project.media);
+        let group = &document["composition"]["layers"][0];
+        let picture = if nest.effects.is_empty() {
+            group
+        } else {
+            &group["layers"][0]
+        };
+        let guide = group["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["id"] == group["masks"][0]["layer"])
+            .unwrap();
+        assert_eq!(guide["rect"]["position"], serde_json::json!([0.0, 162.0]));
+        assert_eq!(guide["rect"]["size"], serde_json::json!([1920.0, 918.0]));
+        assert!(picture["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|layer| layer["type"] == "Video"));
+        if !nest.effects.is_empty() {
+            assert_eq!(guide["parent"], group["id"]);
+            assert!(picture["masks"].as_array().is_none_or(Vec::is_empty));
+            assert_eq!(picture["effects"][0]["effect"]["type"], "gaussianBlur");
+            assert_eq!(picture["effects"][0]["effect"]["blurriness"], 25.0);
+        }
+    }
+}
+
+#[test]
+fn nest_placement_motion_reads_and_malformed_effect_keeps_picture() {
     let nest_chain = r#"<VideoComponentChain ObjectID="111"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>"#;
     // An intrinsic Motion component with `position` and optional Rotation keys.
     let motion = |position: &str, rotation_keys: &str| {
-        let mut params = String::new();
-        for (id, name, value, point) in [
-            (1, "Position", position, true),
-            (2, "Scale", "100.", false),
-            (3, "Scale Width", "100.", false),
-            (4, " ", "true", false),
-            (5, "Rotation", "0.", false),
-            (6, "Anchor Point", "0.5:0.5", true),
-            (7, "Anti-flicker Filter", "0.", false),
-        ] {
-            let (tag, initial) = if point {
-                (
-                    "PointComponentParam",
-                    format!("-91445760000000000,{value},0,0,0,0,0,0,5,4,0,0,0,0"),
-                )
-            } else {
-                (
-                    "VideoComponentParam",
-                    format!("-91445760000000000,{value},0,0,0,0,0,0"),
-                )
-            };
-            let keys = if id == 5 { rotation_keys } else { "" };
-            params.push_str(&format!("<{tag} ObjectID=\"{}\"><Name>{name}</Name><ParameterID>{id}</ParameterID><StartKeyframe>{initial}</StartKeyframe>{keys}</{tag}>", 300 + id));
-        }
-        let references: String = (1..=7)
-            .map(|id| format!(r#"<Param Index="{}" ObjectRef="{}"/>"#, id - 1, 300 + id))
-            .collect();
-        format!(
-            r#"<VideoComponentChain ObjectID="111"><DefaultOpacity>true</DefaultOpacity><ComponentChain><Components><Component Index="0" ObjectRef="300"/></Components></ComponentChain></VideoComponentChain><VideoFilterComponent ObjectID="300"><Component><Params>{references}</Params><DisplayName>Motion</DisplayName><Bypass>false</Bypass><Intrinsic>true</Intrinsic></Component><MatchName>AE.ADBE Motion</MatchName></VideoFilterComponent>{params}"#
+        placement_chain(
+            111,
+            DEFAULT_OPACITY,
+            &[(
+                300,
+                corpus_motion_component(
+                    300,
+                    &[("Position", position)],
+                    &[("Rotation", rotation_keys)],
+                ),
+            )],
         )
     };
     let rotation_keys = format!("<Keyframes>0,0.,0,0,0,0,0,0;{TICKS},90.,0,0,0,0,0,0;</Keyframes>");
@@ -729,11 +2318,25 @@ fn nest_placement_motion_reads_and_its_effects_are_rejected() {
             }
         );
     }
+    let (project, omissions) =
+        inspect_project_with_omissions(&one_placement().replace(nest_chain, blur), Some("outer"))
+            .unwrap();
+    assert_eq!(
+        project
+            .single_sequence()
+            .unwrap()
+            .nest_occurrences()
+            .count(),
+        1
+    );
+    assert!(
+        omissions
+            .iter()
+            .any(|omission| omission.reason.contains("Gaussian Blur")
+                && omission.reason.contains("VideoFilterType")),
+        "{omissions:?}"
+    );
     for (xml, reason) in [
-        (
-            one_placement().replace(nest_chain, blur),
-            "VideoClipTrackItem:110: effects on a nested sequence occurrence are not converted",
-        ),
         (
             one_placement().replace(
                 &format!("<OutPoint>{}</OutPoint></Clip></VideoClip>", 3 * TICKS),
@@ -752,8 +2355,11 @@ fn nest_placement_motion_reads_and_its_effects_are_rejected() {
                     super::mask::masked_opacity(200, 300),
                     super::mask::mask(300, true)
                 ),
+            ).replace(
+                &format!("<OutPoint>{}</OutPoint></Clip></VideoClip>", 3 * TICKS),
+                &format!("<OutPoint>{}</OutPoint><PlaybackSpeed>2</PlaybackSpeed></Clip></VideoClip>", 5 * TICKS),
             ),
-            "VideoClipTrackItem:110: an Opacity mask on a nested sequence occurrence is not converted",
+            "VideoClipTrackItem:110: nested Opacity mask requires a static vector outline, unit-forward playback and no other masks",
         ),
         (
             one_placement().replace(
@@ -770,17 +2376,50 @@ fn nest_placement_motion_reads_and_its_effects_are_rejected() {
         let error = rejection(&xml);
         assert!(error.ends_with(reason), "{reason}: {error}");
     }
-    // Chain `chain` with an intrinsic Opacity component (records from
-    // `component`) with the Normal pair (18, 0), whose keys fade from 100% to 0%
-    // over the first second.
-    let opacity = |chain: u32, component: u32| {
-        let [level, primary, legacy] = [1, 2, 3].map(|offset| component + offset);
-        format!(
-            r#"<VideoComponentChain ObjectID="{chain}"><DefaultMotion>true</DefaultMotion><ComponentChain><Components><Component Index="0" ObjectRef="{component}"/></Components></ComponentChain></VideoComponentChain><VideoFilterComponent ObjectID="{component}"><Component><Params><Param Index="0" ObjectRef="{level}"/><Param Index="1" ObjectRef="{primary}"/><Param Index="2" ObjectRef="{legacy}"/></Params><DisplayName>Opacity</DisplayName><Bypass>false</Bypass><Intrinsic>true</Intrinsic></Component><MatchName>AE.ADBE Opacity</MatchName></VideoFilterComponent><VideoComponentParam ObjectID="{level}" ClassID="fe47129e-6c94-4fc0-95d5-c056a517aaf3"><Name>Opacity</Name><ParameterID>1</ParameterID><ParameterControlType>2</ParameterControlType><LowerBound>0</LowerBound><UpperBound>100</UpperBound><StartKeyframe>-91445760000000000,100.,0,0,0,0,0,0</StartKeyframe><Keyframes>0,100.,0,0,0,0,0,0;{TICKS},0.,0,0,0,0,0,0;</Keyframes></VideoComponentParam><VideoComponentParam ObjectID="{primary}" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8"><Name>Blend Mode</Name><ParameterID>2</ParameterID><ParameterControlType>10</ParameterControlType><LowerBound>0</LowerBound><UpperBound>26</UpperBound><StartKeyframe>-91445760000000000,18.,0,0,0,0,0,0</StartKeyframe></VideoComponentParam><VideoComponentParam ObjectID="{legacy}" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8"><Name>Blend Mode</Name><ParameterID>3</ParameterID><ParameterControlType>7</ParameterControlType><LowerBound>0</LowerBound><UpperBound>31</UpperBound><StartKeyframe>-91445760000000000,0.,0,0,0,0,0,0</StartKeyframe></VideoComponentParam>"#
-        )
-    };
-    // Opacity keys omit only their own placement: a sibling placement of the
-    // same inner sequence, whose clip has Opacity keys, still reads.
+}
+
+/// The placement chain `chain` with an intrinsic Opacity component (records
+/// from `component`) at Opacity `value`, with the `<Keyframes>` `keys` (empty
+/// for none) and the Normal pair (18, 0).
+pub(in crate::format) fn opacity_chain(
+    chain: u32,
+    component: u32,
+    value: f64,
+    keys: &str,
+) -> String {
+    placement_chain(
+        chain,
+        "<DefaultMotion>true</DefaultMotion>",
+        &[(
+            component,
+            opacity_component(component, &format!("{value:?}"), keys),
+        )],
+    )
+}
+
+#[test]
+fn a_nest_placement_reads_its_static_and_keyed_opacity() {
+    let nest_chain = r#"<VideoComponentChain ObjectID="111"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>"#;
+    // Outer's placement 110 of Main 1-3 s keeps a static Opacity, zero too,
+    // which its group carries.
+    for value in [60.0, 0.0] {
+        let xml = one_placement().replace(nest_chain, &opacity_chain(111, 410, value, ""));
+        let (project, omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+        assert!(omissions.is_empty(), "{value}: {omissions:?}");
+        let nests: Vec<_> = project
+            .single_sequence()
+            .unwrap()
+            .nest_occurrences()
+            .map(|nest| (nest.timeline_ticks(), nest.opacity, nest.animations.len()))
+            .collect();
+        assert_eq!(nests, [(0..2 * TICKS, value, 0)], "{value}");
+    }
+    // Opacity keys that fade from 80% to 0% over the first source second, on
+    // a placement and on the inner clip that it copies, both read on their
+    // source clocks. As for Motion, the placement's static Opacity is its
+    // first key's, which Premiere shows before that key, not its
+    // StartKeyframe. The sibling placement of the same sequence stays plain.
+    let fade = format!("<Keyframes>0,80.,0,0,0,0,0,0;{TICKS},0.,0,0,0,0,0,0;</Keyframes>");
     let inner_chain = r#"<VideoComponentChain ObjectID="4"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>"#;
     let xml = outer_xml(&[
         Placement {
@@ -794,32 +2433,73 @@ fn nest_placement_motion_reads_and_its_effects_are_rejected() {
             source_in: 0,
         },
     ])
-    .replace(inner_chain, &opacity(4, 400))
-    .replace(nest_chain, &opacity(111, 410));
+    .replace(inner_chain, &opacity_chain(4, 400, 100.0, &fade))
+    .replace(nest_chain, &opacity_chain(111, 410, 100.0, &fade));
     let (project, omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
-    assert!(
-        omissions.len() == 1 && omissions[0].record == "110"
-            && omissions[0].reason == "unsupported conversion: VideoClipTrackItem:110: Opacity keyframes on a nested sequence occurrence are not converted",
-        "{omissions:?}"
-    );
-    let nests: Vec<&PrNestOccurrence> = project
+    assert!(omissions.is_empty(), "{omissions:?}");
+    // The Opacity keys of `animations` as (source ticks, value).
+    let keys = |animations: &[crate::schema::PrPropertyAnimation]| -> Vec<_> {
+        let mut keys = Vec::new();
+        for animation in animations {
+            let crate::schema::PrPropertyAnimation::Opacity(opacity) = animation else {
+                panic!("{animation:?}");
+            };
+            keys.extend(opacity.iter().map(|key| (key.source_ticks, key.value)));
+        }
+        keys
+    };
+    let nests: Vec<_> = project
         .single_sequence()
         .unwrap()
         .nest_occurrences()
+        .map(|nest| {
+            let clip = nest.sequence.video_occurrences().next().unwrap();
+            (
+                nest.timeline_ticks(),
+                nest.opacity,
+                keys(&nest.animations),
+                keys(&clip.animations),
+            )
+        })
         .collect();
-    assert_eq!(nests.len(), 1);
-    assert_eq!(nests[0].timeline_ticks(), 3 * TICKS..8 * TICKS);
-    let clip = nests[0].sequence.video_occurrences().next().unwrap();
-    let [animation] = clip.animations.as_slice() else {
-        panic!("{:?}", clip.animations);
+    let faded = vec![(0, 80.0), (TICKS, 0.0)];
+    assert_eq!(
+        nests,
+        [
+            (0..2 * TICKS, 80.0, faded.clone(), faded.clone()),
+            (3 * TICKS..8 * TICKS, 100.0, Vec::new(), faded),
+        ]
+    );
+    // At twice the speed (Main 1-5 s over 0-2 s) the nest's keys are not
+    // converted: its group would keep their static value, so Opacity keys
+    // omit it, while a static Opacity reads.
+    let retimed = |chain: &str| {
+        one_placement()
+            .replace(
+                &format!("<OutPoint>{}</OutPoint></Clip></VideoClip>\n", 3 * TICKS),
+                &format!("<OutPoint>{}</OutPoint></Clip></VideoClip>\n", 5 * TICKS),
+            )
+            .replace(
+                r#"<Clip><Source ObjectRef="102"/>"#,
+                r#"<Clip><PlaybackSpeed>2</PlaybackSpeed><Source ObjectRef="102"/>"#,
+            )
+            .replace(nest_chain, chain)
     };
-    assert_eq!(animation.property(), PrAnimatedProperty::Opacity);
-    let keys: Vec<_> = animation
-        .keys()
-        .iter()
-        .map(|key| (key.source_ticks, key.value))
-        .collect();
-    assert_eq!(keys, [(0, 100.0), (TICKS, 0.0)]);
+    let reason = "VideoClipTrackItem:110: Opacity keyframes on a retimed nested sequence occurrence are not converted";
+    let error = rejection(&retimed(&opacity_chain(111, 410, 100.0, &fade)));
+    assert!(error.contains(reason), "{error}");
+    let xml = retimed(&opacity_chain(111, 410, 60.0, ""));
+    let (project, omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let [nest] = project
+        .single_sequence()
+        .unwrap()
+        .nest_occurrences()
+        .collect::<Vec<_>>()[..]
+    else {
+        panic!("one nest");
+    };
+    assert_eq!((nest.is_retimed(), nest.opacity), (true, 60.0));
 }
 
 #[test]
@@ -858,7 +2538,7 @@ fn a_nest_placement_keeps_its_blend_pair() {
 
 #[test]
 fn a_disabled_nest_or_one_on_an_output_off_track_reads_as_disabled() {
-    // Clip Enable and track output hide a nest as they hide media (JRB-1966).
+    // Clip Enable and track output hide a nest as they hide media.
     let disabled = one_placement().replace(
         r#"<SubClip ObjectRef="112"/></ClipTrackItem>"#,
         r#"<SubClip ObjectRef="112"/><IsMuted>true</IsMuted></ClipTrackItem>"#,
@@ -883,6 +2563,104 @@ fn a_disabled_nest_or_one_on_an_output_off_track_reads_as_disabled() {
         assert_eq!(
             (nest.enabled, nest.sequence.video_occurrences().count()),
             (enabled, 1)
+        );
+    }
+}
+
+#[test]
+fn a_nest_master_clips_source_chain_is_reported_or_omits_the_nest() {
+    // Supplementary: a nest placement carries no source effects. Its master
+    // clip's admitted chain is reported as not converted, and a chain that
+    // hides part of the picture omits it, as for a media placement.
+    let with_chain = |component: &str| {
+        with_records(
+            &one_placement().replace(
+                r#"<SubClip ObjectID="112"><Clip ObjectRef="113"/>"#,
+                r#"<SubClip ObjectID="112"><Clip ObjectRef="113"/><MasterClip ObjectURef="master"/>"#,
+            ),
+            &format!(
+                r#"<MasterClip ObjectUID="master"><VideoComponentChain ObjectRef="404"/><Clips><Clip Index="0" ObjectRef="402"/></Clips><Name>Main</Name></MasterClip>
+<VideoClip ObjectID="402"><Clip><Source ObjectRef="102"/></Clip></VideoClip>
+<VideoComponentChain ObjectID="404"><ComponentChain><Components><Component Index="0" ObjectRef="405"/></Components></ComponentChain></VideoComponentChain>
+<VideoFilterComponent ObjectID="405"><Component><ID>1</ID></Component><MatchName>{component}</MatchName></VideoFilterComponent>
+"#
+            ),
+        )
+    };
+    let (project, omissions) =
+        inspect_project_with_omissions(&with_chain("AE.ADBE Gaussian Blur 2"), Some("outer"))
+            .unwrap();
+    assert_eq!(
+        project
+            .single_sequence()
+            .unwrap()
+            .nest_occurrences()
+            .count(),
+        1
+    );
+    let reported: Vec<_> = omissions
+        .iter()
+        .map(|item| (item.record.as_str(), item.reason.as_str()))
+        .collect();
+    assert_eq!(
+        reported,
+        [("MasterClip:master", "VideoComponentChain not converted")]
+    );
+    let error = rejection(&with_chain("AE.ADBE AECrop"));
+    assert!(
+        error.contains(
+            "source component VideoFilterComponent:405 (AE.ADBE AECrop) of MasterClip:master is not converted"
+        ),
+        "{error}"
+    );
+}
+
+#[test]
+fn legacy_luma_key_nest_without_effect_carrier_omits_only_its_placement() {
+    let native = super::effects::fixture_records("legacy-luma-key.xml", &["543", "719", "720"]);
+    for source in [false, true] {
+        let mut xml = outer_xml(&[
+            Placement {
+                start: 0,
+                end: 2 * TICKS,
+                source_in: 0,
+            },
+            Placement {
+                start: 2 * TICKS,
+                end: 4 * TICKS,
+                source_in: 0,
+            },
+        ]);
+        if source {
+            xml = xml.replace(r#"<SubClip ObjectID="112"><Clip ObjectRef="113"/>"#, r#"<SubClip ObjectID="112"><Clip ObjectRef="113"/><MasterClip ObjectURef="keyed-master"/>"#);
+            xml = with_records(
+                &xml,
+                r#"<MasterClip ObjectUID="keyed-master"><VideoComponentChain ObjectRef="404"/><Clips><Clip Index="0" ObjectRef="402"/></Clips><Name>Main</Name></MasterClip>
+<VideoClip ObjectID="402"><Clip><Source ObjectRef="102"/></Clip></VideoClip>
+<VideoComponentChain ObjectID="404"><ComponentChain><Components><Component Index="0" ObjectRef="543"/></Components></ComponentChain></VideoComponentChain>"#,
+            );
+        } else {
+            xml = xml.replace(r#"<VideoComponentChain ObjectID="111"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>"#, r#"<VideoComponentChain ObjectID="111"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain><Components><Component Index="0" ObjectRef="543"/></Components></ComponentChain></VideoComponentChain>"#);
+        }
+        xml = with_records(&xml, &native);
+        let (project, notes) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+        let nests: Vec<_> = project
+            .single_sequence()
+            .unwrap()
+            .nest_occurrences()
+            .collect();
+        assert_eq!(nests.len(), 1);
+        assert_eq!(nests[0].start_ticks, 2 * TICKS);
+        let owner = if source { "source" } else { "placement" };
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.scope == crate::OmissionScope::Occurrence
+                    && n.reason.contains("AE.ADBE Legacy Key Luma")
+                    && n.reason.contains(&format!("{owner} stack position 1"))
+                    && n.reason
+                        .contains("coverage would change, so the occurrence is omitted")),
+            "{notes:?}"
         );
     }
 }
@@ -915,7 +2693,7 @@ fn a_nest_master_clip_must_play_the_same_sequence_source() {
             .count(),
         1
     );
-    // Master marks annotate the source, as for media (JRB-1953): the placement
+    // Master marks annotate the source, as for media: the placement
     // keeps its own range. Adobe-saved sequence masters mostly mark only Out.
     let marked = sequence_master.replace(
         r#"<Source ObjectRef="102"/><InUse>"#,
@@ -1107,7 +2885,7 @@ fn inline_copies_past_1024_expanded_layers_validate() {
 }
 
 #[test]
-fn nested_placements_share_their_track_order_and_frame_grid() {
+fn nested_placements_keep_track_order_without_requiring_a_frame_grid() {
     let (outer, media) = nested_sequence();
     outer.validate_timeline(&media).unwrap();
     let mut overlapping = outer.clone();
@@ -1124,11 +2902,9 @@ fn nested_placements_share_their_track_order_and_frame_grid() {
     let mut off_frame = outer;
     off_frame.video_tracks[1].nests[0].in_ticks += 1;
     off_frame.video_tracks[1].nests[0].out_ticks += 1;
-    let error = off_frame.validate_timeline(&media).unwrap_err().to_string();
-    assert!(
-        error.contains("nested sequence in point must align"),
-        "{error}"
-    );
+    off_frame.validate_timeline(&media).unwrap();
+    assert_eq!(off_frame.video_tracks[1].nests[0].in_ticks, TICKS + 1);
+    assert_eq!(off_frame.video_tracks[1].nests[0].out_ticks, 4 * TICKS + 1);
 }
 
 #[test]
@@ -1195,13 +2971,13 @@ fn linked_transitions_on_a_nest_are_reported_without_track_membership() {
 }
 
 #[test]
-fn writer_rejects_transitions_inside_nested_sequences() {
+fn writer_rejects_unmapped_transitions_inside_nested_sequences() {
     let (mut outer, mut media) = nested_sequence();
     outer.video_tracks[1].nests[0].sequence.video_tracks[0]
         .transitions
         .push(crate::schema::PrVideoTransition {
             id: "nested-transition".into(),
-            kind: crate::schema::PrVideoTransitionKind::CrossDissolve,
+            kind: crate::schema::PrVideoTransitionKind::FilmImpactDissolve,
             start_ticks: 0,
             cut_ticks: 0,
             end_ticks: TICKS,
@@ -1220,7 +2996,7 @@ fn writer_rejects_transitions_inside_nested_sequences() {
     assert!(
         error
             .to_string()
-            .contains("writer cannot encode native video transitions without flattening them"),
+            .contains("writer supports only native Cross Dissolve New video transitions"),
         "{error}"
     );
 }
@@ -1350,11 +3126,14 @@ fn without_sound_item(xml: String) -> String {
     xml.replacen(item, "", 1)
 }
 
-/// Without its video I1 (Inner's V1 item 111), N holds only I4's sound.
+/// Without its video I1 and its still I2 (Inner's V1 item 111 and V2 item
+/// 123), N holds only I4's sound.
 fn without_inner_picture(xml: String) -> String {
-    let item = "<TrackItems Version=\"1\">\n\t\t\t\t\t<TrackItem Index=\"0\" ObjectRef=\"111\"/>\n\t\t\t\t</TrackItems>";
-    assert_eq!(xml.matches(item).count(), 1);
-    xml.replacen(item, "", 1)
+    ["111", "123"].into_iter().fold(xml, |xml, id| {
+        let item = format!("<TrackItems Version=\"1\">\n\t\t\t\t\t<TrackItem Index=\"0\" ObjectRef=\"{id}\"/>\n\t\t\t\t</TrackItems>");
+        assert_eq!(xml.matches(&item).count(), 1);
+        xml.replacen(&item, "", 1)
+    })
 }
 
 /// N's video item 116 with an explicit Opacity that names two masks, as the
@@ -1434,8 +3213,8 @@ fn assert_nest_and_alone(
     let groups: Vec<_> = sequence
         .nest_occurrences()
         .map(|nest| {
-            // A kept N shows its video I1.
-            assert_eq!(nest.sequence.video_occurrences().count(), 1, "{name}");
+            // A kept N shows its video I1 and its still I2.
+            assert_eq!(nest.sequence.video_occurrences().count(), 2, "{name}");
             (nest.enabled, nest.sequence.audio.len())
         })
         .collect();
@@ -1688,8 +3467,8 @@ fn each_audio_item_of_a_nest_with_several_plays_alone() {
 }
 
 /// Without its video item, N's audio item 115 and 250 copies of it, 4 s
-/// apart after it, each play Inner alone. With the root's six video items
-/// that is 257 timed items; no count limit omits any of them, so each item's
+/// apart after it, each play Inner alone. With the root's seven video items
+/// that is 258 timed items; no count limit omits any of them, so each item's
 /// sound is kept, in start order.
 #[test]
 fn every_sound_that_plays_alone_is_kept() {
@@ -1732,7 +3511,7 @@ fn every_sound_that_plays_alone_is_kept() {
     let (project, omissions) =
         inspect_project_with_omissions(&xml, Some(IMAGES_NESTS_SEQUENCE)).unwrap();
     let sequence = project.single_sequence().unwrap();
-    assert_eq!(sequence.video_items().count(), 6);
+    assert_eq!(sequence.video_items().count(), 7);
     let starts: Vec<_> = sequence.audio.iter().map(|clip| clip.start_ticks).collect();
     let expected: Vec<_> = (0..=250_i64).map(|copy| (10 + 4 * copy) * TICKS).collect();
     assert_eq!(starts, expected);
@@ -1744,9 +3523,9 @@ fn every_sound_that_plays_alone_is_kept() {
     );
 }
 
-/// Without its video I1, N holds only I4's sound: it is kept with that sound
-/// at 0.501187 (a group of it on import), and without an audio item that
-/// plays it, nothing is left and N is omitted with the reason.
+/// Without its video I1 and still I2, N holds only I4's sound: it is kept
+/// with that sound at 0.501187 (a group of it on import), and without an
+/// audio item that plays it, nothing is left and N is omitted with the reason.
 #[test]
 fn a_nest_of_only_sound_plays_it_through_its_item_or_is_omitted_with_its_reason() {
     let xml = without_inner_picture(images_nests_with_sound(str::to_owned));
@@ -1857,8 +3636,8 @@ fn assert_silent_nest(project: &crate::format::PrProjectFile, name: &str) {
 fn a_nest_sound_with_unreadable_volume_keyed_mute_or_one_channel_is_not_read() {
     // A Volume that the shared reader cannot read (Bezier keys, a missing
     // parameter record, parameters of no known layout) would play the nest's
-    // sound at unity, and a keyed Mute at its static value; a mono item would
-    // fold the stereo mix. None is read, so N plays no inner sound. The
+    // sound at unity, and a keyed Mute at its static value; mono selection of
+    // the stereo leaf is not yet mapped. None is read, so N plays no inner sound. The
     // edited items share I4's Volume 159 (chain 121, Mute 210, Level 211),
     // with `from` replaced by `to`. Linear and Hold Level keys are read
     // (`an_audio_item_with_level_keys_plays_alone_with_them_on_each_sounds_clock`).
@@ -1910,7 +3689,7 @@ fn a_nest_sound_with_unreadable_volume_keyed_mute_or_one_channel_is_not_read() {
             Some(("AudioFilterComponent:159", "unknown clip Volume parameters")),
         ),
         (
-            "mono",
+            "mono selection of a stereo leaf",
             images_nests_with_sound(str::to_owned).replacen(
                 r#"<SecondaryContentItem Index="1" ObjectRef="259"/>
 		</SecondaryContents>
@@ -1919,7 +3698,7 @@ fn a_nest_sound_with_unreadable_volume_keyed_mute_or_one_channel_is_not_read() {
 		<AudioChannelLayout>[{"channellabel":0}]</AudioChannelLayout>"#,
                 1,
             ),
-            "only a stereo audio item of a nested sequence is supported",
+            "nested mono selection of a stereo leaf is not yet mapped (converter follow-up)",
             None,
         ),
     ];
@@ -2151,6 +3930,221 @@ fn assert_sound(
     }
 }
 
+/// I4 (item 112 at Inner 0-4 s) with one-sided Constant Gain fades in the
+/// form Premiere 26.5.1 saves them (`feature_audio_transitions_strict`): a
+/// fade-in over its first `fade_in` ticks (`AudioTransitionTrackItem:9301`)
+/// and a fade-out over its last `fade_out` ticks (9302), listed on I4's
+/// track and linked from I4. An XML edit of this fixture.
+fn with_inner_fades(xml: String, fade_in: Option<i64>, fade_out: Option<i64>) -> String {
+    let end = 4 * TICKS;
+    let fades: Vec<_> = [
+        fade_in.map(|ticks| (9301, 0, ticks, true)),
+        fade_out.map(|ticks| (9302, end - ticks, end, false)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let mut records = String::new();
+    let mut listed = String::new();
+    let mut links = String::new();
+    for (index, &(id, start, end, fade_in)) in fades.iter().enumerate() {
+        let start_element = if start == 0 {
+            String::new()
+        } else {
+            format!("<Start>{start}</Start>")
+        };
+        records.push_str(&format!(
+            r#"<AudioTransitionTrackItem ObjectID="{id}" ClassID="23f687b6-9c5a-42f4-bea1-e7b3e28e7082" Version="4"><TransitionTrackItem Version="3"><TrackItem Version="4">{start_element}<End>{end}</End></TrackItem><HasOutgoingClip>{outgoing}</HasOutgoingClip><HasIncomingClip>{fade_in}</HasIncomingClip><DisplayName>Constant Gain</DisplayName><MatchName>Constant Gain</MatchName><Alignment>{alignment}</Alignment></TransitionTrackItem><AudioChannelLayout>[{{"channellabel":100}},{{"channellabel":101}}]</AudioChannelLayout><FadeShapeType>0</FadeShapeType><FadeShapeValue>0</FadeShapeValue></AudioTransitionTrackItem>"#,
+            outgoing = !fade_in,
+            alignment = if fade_in { 0 } else { end - start },
+        ));
+        listed.push_str(&format!(r#"<TrackItem Index="{index}" ObjectRef="{id}"/>"#));
+        let link = if fade_in {
+            "HeadTransition"
+        } else {
+            "TailTransition"
+        };
+        links.push_str(&format!(r#"<{link} ObjectRef="{id}"/>"#));
+    }
+    let xml = edit_record(
+        xml,
+        r#"<AudioClipTrackItem ObjectID="112""#,
+        "</AudioClipTrackItem>",
+        |record| {
+            let subclip = r#"<SubClip ObjectRef="122"/>"#;
+            assert_eq!(record.matches(subclip).count(), 1);
+            record.replacen(subclip, &format!("{subclip}{links}"), 1)
+        },
+    );
+    let track = r#"<AudioClipTrack ObjectUID="8b61cbe4-fc6e-4c08-b093-8bee21b8a648""#;
+    let xml = edit_record(xml, track, "</AudioClipTrack>", |record| {
+        record.replacen(
+            r#"<TransitionItems Version="3">"#,
+            &format!(
+                r#"<TransitionItems Version="3"><TrackItems Version="1">{listed}</TrackItems>"#
+            ),
+            1,
+        )
+    });
+    with_records(&xml, &records)
+}
+
+/// A sound as its [start, end, in, out], its media's name and its static
+/// volume.
+type PlayedSound = ([i64; 4], String, f64);
+/// A sound's fade-in and fade-out as (curve, ticks).
+type PlayedFades = [Option<(crate::schema::PrFadeCurve, i64)>; 2];
+/// Reports as (scope, record, reason).
+type Reports = Vec<(crate::OmissionScope, String, String)>;
+
+/// The root's one sound and its fades; and the reports that omit item 115's
+/// sound or one of I4's fades.
+fn alone_sound_and_fade_reports(xml: &str) -> (PlayedSound, PlayedFades, Reports) {
+    let (project, omissions) =
+        inspect_project_with_omissions(xml, Some(IMAGES_NESTS_SEQUENCE)).unwrap();
+    let sequence = project.single_sequence().unwrap();
+    let [sound] = sequence.audio.as_slice() else {
+        panic!("{:?} {omissions:?}", sequence.audio);
+    };
+    let fade = |fade: &Option<crate::schema::PrAudioFade>| {
+        fade.as_ref().map(|fade| (fade.curve, fade.duration_ticks))
+    };
+    let reports = omissions
+        .iter()
+        .filter(|item| {
+            (item.scope == crate::OmissionScope::Occurrence && item.record.ends_with("115"))
+                || item.record.starts_with("AudioTransitionTrackItem:")
+        })
+        .map(|item| (item.scope, item.record.clone(), item.reason.clone()))
+        .collect();
+    (
+        (
+            [
+                sound.start_ticks,
+                sound.end_ticks,
+                sound.in_ticks,
+                sound.out_ticks,
+            ],
+            project.media[&sound.media].name().to_owned(),
+            sound.volume.as_f64(),
+        ),
+        [fade(&sound.fade_in), fade(&sound.fade_out)],
+        reports,
+    )
+}
+
+/// Item 115 plays alone, from the far edge of a 1.5 s fade of I4
+/// ([`with_inner_fades`]), only part of it: Inner 0-1 s at 10-11 s (its End
+/// moved earlier) ends inside the fade-in, and Inner 3-4 s at 13-14 s (In
+/// 3 s) starts inside the fade-out. Each plays I4 over its own ranges at its
+/// level without the fade, which is reported as a feature, not as a lost
+/// sound.
+#[test]
+fn an_audio_item_that_plays_part_of_an_inner_fade_plays_its_sound_without_it() {
+    let i4 = 10f64.powf(-6.0 / 20.0);
+    let fade = 3 * TICKS / 2;
+    let ending_at_11 = |xml: String| {
+        edit_record(xml, SOUND_ITEM, "</AudioClipTrackItem>", |record| {
+            record.replacen("<End>3556224000000</End>", "<End>2794176000000</End>", 1)
+        })
+    };
+    let from_13 = |xml: String| {
+        let xml = edit_record(xml, SOUND_ITEM, "</AudioClipTrackItem>", |record| {
+            record.replacen(
+                "<Start>2540160000000</Start>",
+                "<Start>3302208000000</Start>",
+                1,
+            )
+        });
+        edit_record(xml, SOUND_CLIP, "</AudioClip>", |record| {
+            record.replacen("<InPoint>0</InPoint>", "<InPoint>762048000000</InPoint>", 1)
+        })
+    };
+    let base = || images_nests_with_sound(str::to_owned);
+    for (name, xml, seconds, transition) in [
+        (
+            "fade-in",
+            ending_at_11(with_inner_fades(base(), Some(fade), None)),
+            [10, 11, 0, 1],
+            "AudioTransitionTrackItem:9301",
+        ),
+        (
+            "fade-out",
+            from_13(with_inner_fades(base(), None, Some(fade))),
+            [13, 14, 3, 4],
+            "AudioTransitionTrackItem:9302",
+        ),
+    ] {
+        let ((ticks, media, volume), fades, reports) = alone_sound_and_fade_reports(&xml);
+        assert_eq!(
+            (ticks, media.as_str()),
+            (
+                seconds.map(|second| second * TICKS),
+                "feature_linked_av_source.mp4"
+            ),
+            "{name}"
+        );
+        assert!((volume - i4).abs() < 1e-7, "{name}: {volume}");
+        assert_eq!(fades, [None, None], "{name}");
+        assert_eq!(
+            reports,
+            [(
+                crate::OmissionScope::Feature,
+                transition.to_owned(),
+                crate::schema::PrAudioFade::PARTLY_PLAYED.to_owned()
+            )],
+            "{name}"
+        );
+    }
+}
+
+/// Item 115 with [`ITEM_LEVEL_KEYS`] plays I4 alone under them; I4 has a
+/// 0.25 s fade-in, over which the keys hold their first 0 dB (their first
+/// key is at 0.5 s), and a 0.5 s fade-out at 3.5-4 s, while they fall Linear
+/// from 0 dB at 3 s to -6 dB at 5 s ([`with_inner_fades`]). The fade-out
+/// alone is reported and dropped: I4 keeps its placement, source range,
+/// static level, the item's keys and its fade-in.
+#[test]
+fn a_fade_over_which_an_audio_item_s_level_keys_change_is_dropped_alone() {
+    use crate::schema::PrFadeCurve::ConstantGain;
+    let i4 = 10f64.powf(-6.0 / 20.0);
+    let xml = with_item_level_keys(
+        with_inner_fades(
+            images_nests_with_sound(str::to_owned),
+            Some(TICKS / 4),
+            Some(TICKS / 2),
+        ),
+        ITEM_LEVEL_KEYS,
+    );
+    let ((ticks, media, volume), fades, reports) = alone_sound_and_fade_reports(&xml);
+    assert_eq!(
+        (ticks, media.as_str()),
+        (
+            [10, 14, 0, 4].map(|second| second * TICKS),
+            "feature_linked_av_source.mp4"
+        )
+    );
+    assert!((volume - i4).abs() < 1e-7, "{volume}");
+    assert_eq!(fades, [Some((ConstantGain, TICKS / 4)), None]);
+    assert_eq!(
+        reports,
+        [(
+            crate::OmissionScope::Feature,
+            "AudioTransitionTrackItem:9302".to_owned(),
+            "audio fade not converted: the Level keys of the nested sequence's audio item change during it"
+                .to_owned()
+        )]
+    );
+    // The sound keeps the item's five keys, on its own source clock.
+    let (project, _) = inspect_project_with_omissions(&xml, Some(IMAGES_NESTS_SEQUENCE)).unwrap();
+    let keys = project.single_sequence().unwrap().audio[0]
+        .volume_keys
+        .as_ref()
+        .unwrap();
+    assert_eq!(keys.keys.len(), 5);
+    assert!((keys.gain - i4).abs() < 1e-7, "{}", keys.gain);
+}
+
 /// Each row gives item 115 [`ITEM_LEVEL_KEYS`] and I4 its 0.5 s source
 /// offset, edits the fixture as a row of
 /// `an_audio_item_that_no_group_carries_plays_its_sound_alone` does, and
@@ -2259,7 +4253,8 @@ fn an_audio_item_with_level_keys_plays_alone_with_them_on_each_sounds_clock() {
         let groups: Vec<_> = sequence
             .nest_occurrences()
             .map(|nest| {
-                assert_eq!(nest.sequence.video_occurrences().count(), 1, "{name}");
+                // N shows its video I1 and its still I2.
+                assert_eq!(nest.sequence.video_occurrences().count(), 2, "{name}");
                 (nest.enabled, nest.sequence.audio.len())
             })
             .collect();
@@ -3054,8 +5049,10 @@ fn moved_nests_keep_motion_crop_and_disabled_time_varying_rejections() {
         )
     });
     assert_ne!(crop, moved_nest(str::to_owned));
+    // A static Motion Crop is the placement's Crop, which a nest does not
+    // convert; a clip converts it (`format::tests::animation`).
     assert!(
-        rejection(&crop).contains("Motion Crop Left"),
+        rejection(&crop).contains("Motion Crop on a nested sequence occurrence is not converted"),
         "{}",
         rejection(&crop)
     );
@@ -3074,24 +5071,32 @@ fn moved_nests_keep_motion_crop_and_disabled_time_varying_rejections() {
     );
 }
 
-/// Synthetic mixed-rate retimed nest: Outer (30 fps) places Main, at 29.97
-/// fps, over 2 s plus 18 frames with In and Out on neither frame grid, at the
-/// speed that its saved window confirms, with Optical Flow. Main's clip
-/// plays 30 inner frames from source 5 s.
-fn retimed_nest() -> String {
-    const INNER_FRAME: i64 = 8_475_667_200;
-    let placement = Placement {
-        start: 2 * TICKS,
-        end: 2 * TICKS + 18 * 8_467_200_000,
-        source_in: 25_000_000_000,
-    };
-    let unit_out = placement.source_in + placement.end - placement.start;
+/// Synthetic retimed nest: Outer, at `outer` frames, places Main, at `inner`
+/// frames, over `placement` with the saved window from its In to `out` and
+/// the native PlaybackSpeed `speed`. Main's clip plays 30 inner frames from
+/// source 5 s.
+fn retimed_nest_at(
+    outer: FrameRate,
+    inner: FrameRate,
+    placement: Placement,
+    out: i64,
+    speed: &str,
+) -> String {
+    let inner_frame = inner.ticks_per_frame();
+    let source_in = placement.source_in;
+    let unit_out = source_in + placement.end - placement.start;
     [
         (
-            format!("<InPoint>25000000000</InPoint><OutPoint>{unit_out}</OutPoint></Clip>"),
-            // Out - In is half the placement's span: 500/1001 inner frames
-            // per outer frame.
-            "<InPoint>25000000000</InPoint><OutPoint>101204800000</OutPoint><PlaybackSpeed>0.4995004995004995</PlaybackSpeed></Clip><TimeInterpolationType>2</TimeInterpolationType>".to_owned(),
+            format!("<InPoint>{source_in}</InPoint><OutPoint>{unit_out}</OutPoint></Clip>"),
+            format!("<InPoint>{source_in}</InPoint><OutPoint>{out}</OutPoint><PlaybackSpeed>{speed}</PlaybackSpeed></Clip>"),
+        ),
+        (
+            r#"<Track ObjectURef="outer-track"/></Tracks><FrameRate>8467200000</FrameRate>"#
+                .to_owned(),
+            format!(
+                r#"<Track ObjectURef="outer-track"/></Tracks><FrameRate>{}</FrameRate>"#,
+                outer.ticks_per_frame()
+            ),
         ),
         (
             format!(
@@ -3100,26 +5105,26 @@ fn retimed_nest() -> String {
             ),
             format!(
                 "<OriginalDuration>{}</OriginalDuration></VideoSequenceSource>",
-                30 * INNER_FRAME
+                30 * inner_frame
             ),
         ),
         (
             r#"<FrameRate>8467200000</FrameRate></TrackGroup><FrameRect>0,0,1920,1080</FrameRect><ComponentOwner><Components ObjectRef="2"/>"#
                 .to_owned(),
             format!(
-                r#"<FrameRate>{INNER_FRAME}</FrameRate></TrackGroup><FrameRect>0,0,1920,1080</FrameRect><ComponentOwner><Components ObjectRef="2"/>"#
+                r#"<FrameRate>{inner_frame}</FrameRate></TrackGroup><FrameRect>0,0,1920,1080</FrameRect><ComponentOwner><Components ObjectRef="2"/>"#
             ),
         ),
         (
             "<TrackItem><End>1270080000000</End></TrackItem>".to_owned(),
-            format!("<TrackItem><End>{}</End></TrackItem>", 30 * INNER_FRAME),
+            format!("<TrackItem><End>{}</End></TrackItem>", 30 * inner_frame),
         ),
         (
             "<InPoint>0</InPoint><OutPoint>1270080000000</OutPoint>".to_owned(),
             format!(
                 "<InPoint>{}</InPoint><OutPoint>{}</OutPoint>",
                 5 * TICKS,
-                5 * TICKS + 30 * INNER_FRAME
+                5 * TICKS + 30 * inner_frame
             ),
         ),
         (
@@ -3129,7 +5134,7 @@ fn retimed_nest() -> String {
         (
             "<Duration>2540160000000</Duration><FrameRate>8467200000</FrameRate>".to_owned(),
             format!(
-                "<Duration>{}</Duration><FrameRate>{INNER_FRAME}</FrameRate>",
+                "<Duration>{}</Duration><FrameRate>{inner_frame}</FrameRate>",
                 60 * TICKS
             ),
         ),
@@ -3139,6 +5144,33 @@ fn retimed_nest() -> String {
         assert_eq!(xml.matches(&from).count(), 1, "{from}");
         xml.replace(&from, &to)
     })
+}
+
+/// The placement of [`retimed_nest`]: 2 s plus 18 frames of Outer at 30 fps,
+/// from inner 25 000 000 000 ticks, on neither frame grid.
+const RETIMED_PLACEMENT: Placement = Placement {
+    start: 2 * TICKS,
+    end: 2 * TICKS + 18 * 8_467_200_000,
+    source_in: 25_000_000_000,
+};
+
+/// Synthetic mixed-rate retimed nest: Outer (30 fps) places Main, at 29.97
+/// fps, over [`RETIMED_PLACEMENT`] with Optical Flow. Its window from In to
+/// Out spans half of its placement, which its native PlaybackSpeed 0.5 plays:
+/// a speed is source time over placement time, whatever the inner frame rate.
+fn retimed_nest() -> String {
+    retimed_nest_at(
+        FrameRate::Fps30,
+        FrameRate::Fps30000Over1001,
+        RETIMED_PLACEMENT,
+        101_204_800_000,
+        "0.5",
+    )
+    .replacen(
+        "<PlaybackSpeed>0.5</PlaybackSpeed></Clip>",
+        "<PlaybackSpeed>0.5</PlaybackSpeed></Clip><TimeInterpolationType>2</TimeInterpolationType>",
+        1,
+    )
 }
 
 #[test]
@@ -3232,4 +5264,405 @@ fn mixed_rate_retimed_nest_maps_its_placement_onto_its_inner_window() {
         })
     );
     assert_eq!(video["sourceRange"], range(5_000, 1001));
+}
+
+#[test]
+fn a_nest_speed_is_source_time_over_placement_time_at_any_frame_rates() {
+    const OUTER_24: i64 = FrameRate::Fps24.ticks_per_frame();
+    const OUTER_50: i64 = FrameRate::Fps50.ticks_per_frame();
+    // Outer and inner rates, the placement, its saved Out and native speed,
+    // and the group's mapping from the placement onto the window, as start
+    // and duration in milliseconds, each end rounded once.
+    let rows = [
+        // A 30 fps nest, whose frames are shorter than its 24 fps sequence's,
+        // at 2/3 speed from five outer frames in: In and Out lie a quarter
+        // and three quarters into inner frames.
+        (
+            FrameRate::Fps24,
+            FrameRate::Fps30,
+            Placement {
+                start: 2 * TICKS,
+                end: 2 * TICKS + 9 * OUTER_24,
+                source_in: 5 * OUTER_24,
+            },
+            11 * OUTER_24,
+            "0.66666666666666663",
+            [(2_000, 375), (208, 250)],
+        ),
+        // A 25 fps nest in a 50 fps sequence at twice its speed from three
+        // outer frames in, half an inner frame.
+        (
+            FrameRate::Fps50,
+            FrameRate::Fps25,
+            Placement {
+                start: 2 * TICKS,
+                end: 2 * TICKS + 6 * OUTER_50,
+                source_in: 3 * OUTER_50,
+            },
+            15 * OUTER_50,
+            "2",
+            [(2_000, 120), (60, 240)],
+        ),
+    ];
+    for (outer, inner, placement, out, speed, mapping) in rows {
+        let ranges = (placement.start..placement.end, placement.source_in..out);
+        let xml = retimed_nest_at(outer, inner, placement, out, speed);
+        let (project, omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+        assert!(omissions.is_empty(), "{speed}: {omissions:?}");
+        let sequence = project.single_sequence().unwrap();
+        let [nest] = sequence.nest_occurrences().collect::<Vec<_>>()[..] else {
+            panic!("{speed}: one nest");
+        };
+        // The saved window stays exact, off the inner frame grid.
+        assert_eq!(
+            (nest.timeline_ticks(), nest.in_ticks..nest.out_ticks),
+            ranges,
+            "{speed}"
+        );
+        assert_eq!(nest.sequence.frame_rate, inner, "{speed}");
+        let document = project_document_with_media(sequence, &project.media);
+        let group = document["composition"]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["type"] == "Group")
+            .unwrap();
+        let [input, output] = mapping
+            .map(|(start, duration)| serde_json::json!({"start": start, "duration": duration}));
+        assert_eq!(
+            group["playback"]["mapping"],
+            serde_json::json!({"type": "linear", "input": input, "output": output}),
+            "{speed}"
+        );
+    }
+}
+
+#[test]
+fn a_mixed_rate_nest_at_normal_speed_plays_on_its_inner_clock_from_its_in() {
+    // Outer (30 fps) shows Main at 25 fps at 2-3 s from one outer frame in,
+    // five sixths of an inner frame, with the Scale keys of `keyed_motion`
+    // at source frames 5 and 20 of 30 fps.
+    const FRAME: i64 = FrameRate::Fps30.ticks_per_frame();
+    let xml = [
+        (
+            r#"<FrameRate>8467200000</FrameRate></TrackGroup><FrameRect>0,0,1920,1080</FrameRect><ComponentOwner><Components ObjectRef="2"/>"#.to_owned(),
+            format!(
+                r#"<FrameRate>{}</FrameRate></TrackGroup><FrameRect>0,0,1920,1080</FrameRect><ComponentOwner><Components ObjectRef="2"/>"#,
+                FrameRate::Fps25.ticks_per_frame()
+            ),
+        ),
+        (
+            format!("<InPoint>0</InPoint><OutPoint>{TICKS}</OutPoint></Clip>"),
+            format!(
+                "<InPoint>{FRAME}</InPoint><OutPoint>{}</OutPoint></Clip>",
+                FRAME + TICKS
+            ),
+        ),
+    ]
+    .into_iter()
+    .fold(moved_nest(str::to_owned), |xml, (from, to)| {
+        assert_eq!(xml.matches(&from).count(), 1, "{from}");
+        xml.replace(&from, &to)
+    });
+    let (project, omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let outer = project.single_sequence().unwrap();
+    let [nest] = outer.nest_occurrences().collect::<Vec<_>>()[..] else {
+        panic!("one nest");
+    };
+    assert_eq!(
+        (nest.timeline_ticks(), nest.in_ticks..nest.out_ticks),
+        (2 * TICKS..3 * TICKS, FRAME..FRAME + TICKS)
+    );
+    assert_eq!(nest.sequence.frame_rate, FrameRate::Fps25);
+    let document = project_document_with_media(outer, &project.media);
+    let group = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Group")
+        .unwrap();
+    let range =
+        |start: u64, duration: u64| serde_json::json!({"start": start, "duration": duration});
+    // The placement maps at unit rate onto the inner clock from In, rounded
+    // once to 33 ms.
+    assert_eq!(
+        group["playback"]["mapping"],
+        serde_json::json!({"type": "linear", "input": range(2_000, 1_000), "output": range(33, 1_000)})
+    );
+    // Main's clip keeps its inner place, untrimmed, so no cut falls between
+    // its frames.
+    let video = group["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Video")
+        .unwrap();
+    assert_eq!(
+        (&video["playback"]["inputRange"], &video["sourceRange"]),
+        (&range(0, 5_000), &range(0, 5_000))
+    );
+    // The Scale keys count on the source clock, which the inner clock is:
+    // frames 5 and 20 of 30 fps, not their distances from In.
+    let entries = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    for axis in ["scaleX", "scaleY"] {
+        let entry = entries
+            .iter()
+            .find(|entry| {
+                entry["target"]["layerId"] == group["id"] && entry["target"]["propertyType"] == axis
+            })
+            .unwrap_or_else(|| panic!("{axis}: {entries:#?}"));
+        let keys: Vec<_> = entry["animator"]["keyframes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|key| key["layerTime"].as_i64().unwrap())
+            .collect();
+        assert_eq!(keys, [167, 667], "{axis}");
+    }
+}
+
+#[test]
+fn a_mixed_rate_nest_at_normal_speed_carries_its_audio_items_sound() {
+    // The pinned images/nests fixture with Inner at 25 fps under its 30 fps
+    // root: nest N still pairs its audio item 115, which plays at normal
+    // speed over N's own ranges.
+    let xml = edit_record(
+        images_nests_with_sound(str::to_owned),
+        r#"<VideoTrackGroup ObjectID="98""#,
+        "</VideoTrackGroup>",
+        |record| {
+            record.replacen(
+                "<FrameRate>8467200000</FrameRate>",
+                &format!(
+                    "<FrameRate>{}</FrameRate>",
+                    FrameRate::Fps25.ticks_per_frame()
+                ),
+                1,
+            )
+        },
+    );
+    assert_nest_and_alone("Inner at 25 fps", &xml, Some((true, 1)), &[], None);
+    let (project, _) = inspect_project_with_omissions(&xml, Some(IMAGES_NESTS_SEQUENCE)).unwrap();
+    let sequence = project.single_sequence().unwrap();
+    let document = project_document_with_media(sequence, &project.media);
+    let group = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Group" && layer["name"] == "Inner")
+        .unwrap();
+    let range =
+        |start: u64, duration: u64| serde_json::json!({"start": start, "duration": duration});
+    // N's group plays Inner's clock from In 0 at unit rate and carries I4's
+    // sound there beside its picture.
+    assert_eq!(
+        group["playback"]["mapping"],
+        serde_json::json!({"type": "linear", "input": range(10_000, 4_000), "output": range(0, 4_000)})
+    );
+    let sounds: Vec<_> = group["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|layer| layer["type"] == "Audio")
+        .map(|layer| crate::test_support::layer_range(layer).clone())
+        .collect();
+    assert_eq!(sounds, [range(0, 4_000)]);
+}
+
+#[test]
+fn audio_filters_fill_right_keeps_a_native_stereo_nest_audible() {
+    let baseline = images_nests_with_sound(str::to_owned);
+    let excerpts = include_str!("../../../tests/fixtures/feature_audio_filters_native.xml");
+    let document = roxmltree::Document::parse(excerpts).unwrap();
+    let records: String = document
+        .root_element()
+        .children()
+        .filter(|node| node.is_element())
+        .map(|node| &excerpts[node.range()])
+        .collect();
+    let filtered = with_records(&baseline, &records);
+    let filtered = edit_record(
+        filtered,
+        r#"<AudioComponentChain ObjectID="135""#,
+        "</AudioComponentChain>",
+        |record| {
+            record.replace("</ComponentChain>", r#"<Components Version="1"><Component Index="0" ObjectRef="1111"/></Components></ComponentChain>"#)
+        },
+    );
+    let (before, _) =
+        inspect_project_with_omissions(&baseline, Some(IMAGES_NESTS_SEQUENCE)).unwrap();
+    let (after, omissions) =
+        inspect_project_with_omissions(&filtered, Some(IMAGES_NESTS_SEQUENCE)).unwrap();
+    let sounds = |project: &crate::PrProjectFile| {
+        project
+            .single_sequence()
+            .unwrap()
+            .nest_occurrences()
+            .map(|nest| {
+                nest.sequence
+                    .audio
+                    .iter()
+                    .map(|clip| {
+                        (
+                            clip.media.clone(),
+                            clip.start_ticks,
+                            clip.end_ticks,
+                            clip.in_ticks,
+                            clip.out_ticks,
+                            clip.volume.as_f64(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+    };
+    let expected = sounds(&before);
+    assert!(expected.iter().any(|sounds| !sounds.is_empty()));
+    assert_eq!(sounds(&after), expected, "{omissions:?}");
+    assert!(!omissions
+        .iter()
+        .any(|item| item.scope == crate::OmissionScope::Occurrence
+            && ["115", "AudioClipTrackItem:115"].contains(&item.record.as_str())));
+    let reports: Vec<_> = omissions
+        .iter()
+        .filter(|item| item.record == "AudioFilterComponent:1111")
+        .collect();
+    assert_eq!(reports.len(), 1, "{omissions:?}");
+    assert_eq!(reports[0].scope, crate::OmissionScope::Feature);
+    assert!(reports[0]
+        .reason
+        .contains("nested stereo mix plays unchanged"));
+}
+
+/// Supplementary native-grid XML, sharing existing sources rather than adding media.
+pub(in crate::format) fn object_mask_native_clock(xml: &str, chain: u32) -> String {
+    let step = crate::format::object_mask::SAVED_SEQUENCE_FRAME_TICKS;
+    let dom = roxmltree::Document::parse(xml).unwrap();
+    let mut edits = Vec::new();
+    for node in dom.descendants().filter(|n| n.is_element()) {
+        let tag = node.tag_name().name();
+        if !matches!(
+            tag,
+            "FrameRate"
+                | "Start"
+                | "End"
+                | "InPoint"
+                | "OutPoint"
+                | "Duration"
+                | "OriginalDuration"
+        ) {
+            continue;
+        }
+        let Some(value) = node.text().and_then(|s| s.parse::<i64>().ok()) else {
+            continue;
+        };
+        if value % (TICKS / 30) == 0
+            && (value <= 10 * TICKS || matches!(tag, "InPoint" | "OutPoint"))
+        {
+            edits.push((
+                node.range(),
+                format!("<{tag}>{}</{tag}>", value / (TICKS / 30) * step),
+            ));
+        }
+    }
+    let mut native = xml.to_owned();
+    for (range, value) in edits.into_iter().rev() {
+        native.replace_range(range, &value);
+    }
+    let before=format!("<VideoComponentChain ObjectID=\"{chain}\"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>");
+    let after=format!("<VideoComponentChain ObjectID=\"{chain}\"><DefaultMotion>true</DefaultMotion><ComponentChain><Components><Component Index=\"0\" ObjectRef=\"665\"/></Components></ComponentChain></VideoComponentChain>");
+    assert!(native.contains(&before));
+    with_records(
+        &native.replace(&before, &after),
+        include_str!("../../../tests/fixtures/object_mask/opacity.xml"),
+    )
+}
+
+#[test]
+fn object_mask_sampling_preserves_native_nest_and_multicam_clocks() {
+    let step = crate::format::object_mask::SAVED_SEQUENCE_FRAME_TICKS;
+    let extra = placement_records(
+        210,
+        7,
+        &Placement {
+            start: 7 * TICKS,
+            end: 8 * TICKS,
+            source_in: 0,
+        },
+    );
+    let xml = with_records(
+        &one_placement().replace(
+            "<TrackItem ObjectRef=\"110\"/>",
+            "<TrackItem ObjectRef=\"110\"/><TrackItem ObjectRef=\"210\"/>",
+        ),
+        &extra,
+    );
+    let xml = object_mask_native_clock(&xml, 211);
+    for multicam in [false, true] {
+        let variant = if multicam {
+            xml.replace("<Source ObjectRef=\"102\"/>","<Source ObjectRef=\"102\"/><IsMulticam>true</IsMulticam><SelectedTrackIndex>0</SelectedTrackIndex>")
+        } else {
+            xml.clone()
+        };
+        let (project, notes) = inspect_project_with_omissions(&variant, Some("outer")).unwrap();
+        let outer = project.single_sequence().unwrap();
+        assert_eq!(outer.frame_rate, FrameRate::Fps30);
+        assert_eq!(outer.native_frame_ticks, Some(step));
+        if multicam {
+            assert_eq!(outer.video_occurrences().count(), 2, "{notes:?}");
+            let camera = outer
+                .video_occurrences()
+                .find(|c| c.start_ticks == 0)
+                .unwrap();
+            assert_eq!(camera.in_ticks, 30 * step);
+            assert_eq!(camera.end_ticks, 60 * step);
+        } else {
+            let nest = outer
+                .nest_occurrences()
+                .next()
+                .expect("native nest retained");
+            assert_eq!(nest.in_ticks..nest.out_ticks, 30 * step..90 * step);
+            assert_eq!(nest.sequence.frame_rate.ticks_per_frame(), step);
+            assert_eq!(nest.sequence.native_frame_ticks, None);
+        }
+        let editable = project_document_with_media(outer, &project.media);
+        assert!(
+            editable.to_string().contains("\"type\":\"Video\""),
+            "{notes:?}"
+        );
+    }
+}
+
+#[test]
+fn object_mask_inner_timeline_does_not_override_native_grid() {
+    let extra = placement_records(
+        20,
+        7,
+        &Placement {
+            start: 5 * TICKS,
+            end: 7 * TICKS,
+            source_in: 0,
+        },
+    );
+    let xml = with_records(
+        &one_placement().replace(
+            "<TrackItem ObjectRef=\"3\"/>",
+            "<TrackItem ObjectRef=\"3\"/><TrackItem ObjectRef=\"20\"/>",
+        ),
+        &extra,
+    );
+    let xml = object_mask_native_clock(&xml, 4);
+    let (project, notes) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+    let outer = project.single_sequence().unwrap();
+    let inner = &outer.nest_occurrences().next().unwrap().sequence;
+    let step = crate::format::object_mask::SAVED_SEQUENCE_FRAME_TICKS;
+    assert_eq!(outer.frame_rate.ticks_per_frame(), step);
+    assert_eq!(inner.frame_rate.ticks_per_frame(), step);
+    assert_eq!(inner.native_frame_ticks, None);
+    assert!(!notes
+        .iter()
+        .any(|n| n.reason.contains("Object Mask sequence cadence")));
 }

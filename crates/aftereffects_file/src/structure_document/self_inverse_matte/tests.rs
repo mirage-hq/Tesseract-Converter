@@ -79,7 +79,10 @@ fn native_self_inverse_mask_keeps_source_clock_and_effect_order() {
     assert_eq!(owner.effects.len(), 2);
     let content = group(&masked.layers[0]);
     assert_eq!(content.playback.input_range().start.as_millis(), 333);
-    assert!(content.playback.time_remap().is_some());
+    assert!(
+        content.playback.time_remap().is_none(),
+        "constant Solid content retains its lifetime without a sampled source clock"
+    );
 }
 
 fn list_mut(chunks: &mut [crate::rifx::Chunk], kind: [u8; 4]) -> &mut Vec<crate::rifx::Chunk> {
@@ -497,7 +500,10 @@ fn native_equivalent_foreign_mask_post_wipe_transform_preserves_stages_and_sourc
     assert_eq!(rotation.layers[1].id(), rotation.masks[0].layer.unwrap());
     let content = group(&masked.layers[0]);
     assert_eq!(content.playback.input_range().start.as_millis(), 750);
-    assert!(content.playback.time_remap().is_some());
+    assert!(
+        content.playback.time_remap().is_none(),
+        "constant Solid content retains its lifetime without a sampled source clock"
+    );
     assert!(
         !conversion
             .document

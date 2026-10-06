@@ -337,9 +337,12 @@ independent export verification was not performed by this harness-only change.
 Generate the historical panel's explicit export inputs/oracles/AEPs/FX archives:
 
 ```sh
-AEP_EFFECTS_COVERAGE_DIR="$PWD/tmp/aep-effects-panel" \
-  make test-aftereffects-feature-proof filter=effects_native_coverage
+make test-aftereffects-feature-proof filter=effects_native_coverage
 ```
+
+Scratch artifacts are written to `target/adobe-test/fx_exports/` in the
+converter workspace. The unified runner clears this fixed channel before each
+CPU command and retains its journals and exports in the run directory.
 
 For After Effects readback, `scripts/aep-effects-native.jsx` accepts a host
 configuration JSON (see the script's environment-variable contract) with

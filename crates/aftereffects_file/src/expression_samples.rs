@@ -9,8 +9,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-/// Current expression-sample sidecar format version.
+/// Sidecar format version for ordinary Transform/Effect captures.
 pub const EXPRESSION_SAMPLES_VERSION: u32 = 2;
+/// Path-qualified numeric Shape identities require this explicit version.
+pub const SHAPE_EXPRESSION_SAMPLES_VERSION: u32 = 3;
 const LEGACY_EXPRESSION_SAMPLES_VERSION: u32 = 1;
 /// Required spacing between consecutive samples.
 pub const EXPRESSION_SAMPLE_INTERVAL_MS: u32 = 1;
@@ -38,6 +40,11 @@ pub enum PropertyIdentity {
         /// Native AE property match name.
         match_name: String,
     },
+    /// A numeric Shape leaf qualified from the layer's native Contents root.
+    Shape {
+        /// Ordered native property indices and match names, including root and leaf.
+        path: Vec<ShapePathSegment>,
+    },
     /// A parameter on an ordinary Effect occurrence.
     Effect {
         /// One-based native AE occurrence index in the layer's ordinary-effect list.
@@ -45,6 +52,35 @@ pub enum PropertyIdentity {
         /// Native AE parameter match name.
         match_name: String,
     },
+    /// A numeric property of one Mask Atom. Converter-evaluated only: Adobe
+    /// expression sidecars never carry this identity and reject it.
+    Mask {
+        /// One-based native Mask Atom index in the layer's Mask Parade.
+        index: u32,
+        /// Native AE mask property match name.
+        match_name: String,
+    },
+    /// A layer's Source Text. Converter-evaluated only; Adobe expression
+    /// sidecars never carry this identity and reject it.
+    SourceText {},
+    /// A numeric property of one Text Animator (not a selector). Converter-evaluated
+    /// only: Adobe expression sidecars never carry this identity and reject it.
+    TextAnimator {
+        /// One-based native Text Animator index.
+        animator: u32,
+        /// Native AE animator property match name.
+        match_name: String,
+    },
+}
+
+/// One segment of a root-anchored native Shape property path.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShapePathSegment {
+    /// One-based native property index within this segment's parent.
+    pub index: u32,
+    /// Native AE match name, not the editable display name.
+    pub match_name: String,
 }
 
 /// Values for one successfully evaluated expression-enabled property.
@@ -64,6 +100,9 @@ pub struct EvaluatedProperty {
     pub(crate) sample_times_seconds: Vec<f64>,
     /// One value for each requested integral millisecond, including both endpoints.
     pub(crate) values: Vec<Vec<f64>>,
+    /// Internal converter observations are not Adobe sidecars and use a frame grid.
+    #[serde(skip)]
+    pub(crate) frame_sampled: bool,
 }
 
 impl EvaluatedProperty {
@@ -102,6 +141,14 @@ impl EvaluatedProperty {
     /// In v2 the aligned actual native timestamp is available through
     /// [`Self::sample_times_seconds`].
     pub fn value_at_ms(&self, time_ms: i64) -> Option<&[f64]> {
+        if self.frame_sampled {
+            let time = time_ms as f64 / 1_000.0;
+            let index = self
+                .sample_times_seconds
+                .binary_search_by(|sample| sample.total_cmp(&time))
+                .ok()?;
+            return self.values.get(index).map(Vec::as_slice);
+        }
         let offset = time_ms.checked_sub(self.start_ms)?;
         let index = usize::try_from(offset).ok()?;
         self.values.get(index).map(Vec::as_slice)
@@ -155,6 +202,18 @@ pub struct ExpressionSamples {
     capture_scope: Option<CaptureScope>,
     pub(crate) properties: Vec<EvaluatedProperty>,
     pub(crate) errors: Vec<ExpressionEvaluationError>,
+    /// Converter-evaluated Source Text strings; never part of Adobe sidecars.
+    #[serde(skip)]
+    pub(crate) texts: Vec<EvaluatedText>,
+}
+
+/// Source Text strings evaluated by the converter at composition-clock times.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct EvaluatedText {
+    pub(crate) composition_id: u32,
+    pub(crate) layer_id: u32,
+    pub(crate) sample_times_seconds: Vec<f64>,
+    pub(crate) texts: Vec<String>,
 }
 
 impl Default for ExpressionSamples {
@@ -166,6 +225,7 @@ impl Default for ExpressionSamples {
             capture_scope: None,
             properties: Vec::new(),
             errors: Vec::new(),
+            texts: Vec::new(),
         }
     }
 }
@@ -176,7 +236,34 @@ impl ExpressionSamples {
         bytes: &[u8],
         source: &[u8],
     ) -> Result<Self, ExpressionSamplesError> {
+        if bytes.len() > 128 * 1024 * 1024 {
+            // Inspect only the version without allocating property/sample vectors.
+            // Legacy sidecars deliberately retain their existing quota behavior.
+            #[derive(Deserialize)]
+            struct Version {
+                version: u32,
+            }
+            let header: Version = serde_json::from_slice(bytes)?;
+            if header.version == SHAPE_EXPRESSION_SAMPLES_VERSION {
+                return Err(ExpressionSamplesError::CaptureResourceLimit);
+            }
+        }
         let samples: Self = serde_json::from_slice(bytes)?;
+        if samples.version == SHAPE_EXPRESSION_SAMPLES_VERSION
+            && (samples.properties.len() + samples.errors.len() > 4096
+                || samples
+                    .properties
+                    .iter()
+                    .any(|property| property.values.len() > 60001)
+                || samples
+                    .properties
+                    .iter()
+                    .map(|property| property.values.len())
+                    .sum::<usize>()
+                    > 250000)
+        {
+            return Err(ExpressionSamplesError::CaptureResourceLimit);
+        }
         samples.validate_for_source(source)?;
         Ok(samples)
     }
@@ -191,18 +278,21 @@ impl ExpressionSamples {
             return Ok(());
         }
         match (&self.capture_scope, self.version) {
-            (Some(CaptureScope::AllCompositions), EXPRESSION_SAMPLES_VERSION) => Ok(()),
+            (
+                Some(CaptureScope::AllCompositions),
+                EXPRESSION_SAMPLES_VERSION | SHAPE_EXPRESSION_SAMPLES_VERSION,
+            ) => Ok(()),
             (
                 Some(CaptureScope::SelectedComposition {
                     root_composition_id,
                 }),
-                EXPRESSION_SAMPLES_VERSION,
+                EXPRESSION_SAMPLES_VERSION | SHAPE_EXPRESSION_SAMPLES_VERSION,
             ) if *root_composition_id == selected_composition_id => Ok(()),
             (
                 Some(CaptureScope::SelectedComposition {
                     root_composition_id,
                 }),
-                EXPRESSION_SAMPLES_VERSION,
+                EXPRESSION_SAMPLES_VERSION | SHAPE_EXPRESSION_SAMPLES_VERSION,
             ) => Err(ExpressionSamplesError::CaptureRootMismatch {
                 captured: *root_composition_id,
                 selected: selected_composition_id,
@@ -251,12 +341,15 @@ impl ExpressionSamples {
     fn validate_for_source(&self, source: &[u8]) -> Result<(), ExpressionSamplesError> {
         if !matches!(
             self.version,
-            LEGACY_EXPRESSION_SAMPLES_VERSION | EXPRESSION_SAMPLES_VERSION
+            LEGACY_EXPRESSION_SAMPLES_VERSION
+                | EXPRESSION_SAMPLES_VERSION
+                | SHAPE_EXPRESSION_SAMPLES_VERSION
         ) {
             return Err(ExpressionSamplesError::UnsupportedVersion(self.version));
         }
         match (&self.capture_scope, self.version) {
-            (None, LEGACY_EXPRESSION_SAMPLES_VERSION) | (Some(_), EXPRESSION_SAMPLES_VERSION) => {}
+            (None, LEGACY_EXPRESSION_SAMPLES_VERSION)
+            | (Some(_), EXPRESSION_SAMPLES_VERSION | SHAPE_EXPRESSION_SAMPLES_VERSION) => {}
             _ => return Err(ExpressionSamplesError::InvalidCaptureScope),
         }
         if self.sample_interval_ms != EXPRESSION_SAMPLE_INTERVAL_MS {
@@ -273,7 +366,7 @@ impl ExpressionSamples {
         }
         let mut identities = HashSet::new();
         for (record, sample) in self.properties.iter().enumerate() {
-            validate_identity(&sample.property, record)?;
+            validate_identity(&sample.property, record, self.version)?;
             insert_identity(
                 &mut identities,
                 sample.composition_id,
@@ -283,7 +376,11 @@ impl ExpressionSamples {
             validate_values(record, sample, self.version)?;
         }
         for (record, error) in self.errors.iter().enumerate() {
-            validate_identity(&error.property, self.properties.len() + record)?;
+            validate_identity(
+                &error.property,
+                self.properties.len() + record,
+                self.version,
+            )?;
             insert_identity(
                 &mut identities,
                 error.composition_id,
@@ -298,9 +395,32 @@ impl ExpressionSamples {
 fn validate_identity(
     property: &PropertyIdentity,
     record: usize,
+    version: u32,
 ) -> Result<(), ExpressionSamplesError> {
+    if let PropertyIdentity::Shape { path } = property
+        && (version != SHAPE_EXPRESSION_SAMPLES_VERSION
+            || !(2..=64).contains(&path.len())
+            || path
+                .first()
+                .is_none_or(|segment| segment.match_name != "ADBE Root Vectors Group")
+            || path.iter().any(|segment| {
+                segment.index == 0
+                    || segment.match_name.is_empty()
+                    || segment.match_name.len() > 1024
+            }))
+    {
+        return Err(ExpressionSamplesError::InvalidShapeIdentity { record });
+    }
     if matches!(property, PropertyIdentity::Effect { index: 0, .. }) {
         return Err(ExpressionSamplesError::InvalidEffectIndex { record });
+    }
+    if matches!(
+        property,
+        PropertyIdentity::Mask { .. }
+            | PropertyIdentity::TextAnimator { .. }
+            | PropertyIdentity::SourceText {}
+    ) {
+        return Err(ExpressionSamplesError::ConverterOnlyIdentity { record });
     }
     Ok(())
 }
@@ -425,9 +545,20 @@ pub enum ExpressionSamplesError {
     /// Sidecar belongs to different source bytes.
     #[error("expression samples source SHA-256 mismatch: expected {expected}, got {actual}")]
     SourceHashMismatch { expected: String, actual: String },
+    /// A version-3 capture exceeds the fixed native capture resource limits.
+    #[error("version 3 expression samples exceed the fixed capture resource limits")]
+    CaptureResourceLimit,
+    /// Shape identity is malformed or appears before its explicit format version.
+    #[error(
+        "expression sample record {record} requires version 3 and a bounded root-anchored Shape path"
+    )]
+    InvalidShapeIdentity { record: usize },
     /// An Effect identity uses zero instead of AE's one-based occurrence index.
     #[error("expression sample record {record} effect index must be at least 1")]
     InvalidEffectIndex { record: usize },
+    /// A converter-evaluated identity appeared in an Adobe sidecar.
+    #[error("expression sample record {record} uses a converter-only Mask/Text Animator identity")]
+    ConverterOnlyIdentity { record: usize },
     /// More than one record names the same native property.
     #[error(
         "duplicate expression sample identity for composition {composition_id}, layer {layer_id}, property {property:?}"
@@ -523,6 +654,116 @@ mod tests {
             "errors": errors,
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn shape_paths_require_version_three_and_preserve_repeated_groups() {
+        let identity = json!({"kind": "shape", "path": [
+            {"index": 2, "match_name": "ADBE Root Vectors Group"},
+            {"index": 1, "match_name": "ADBE Vector Group"},
+            {"index": 2, "match_name": "ADBE Vector Transform Group"},
+            {"index": 3, "match_name": "ADBE Vector Scale"},
+        ]});
+        let mut first = property("unused", 0, json!([[100.0, 100.0], [101.0, 100.0]]));
+        first["property"] = identity;
+        first["sample_times_seconds"] = json!([0.0, 0.001]);
+        let mut second = first.clone();
+        second["property"]["path"][1]["index"] = json!(2);
+        let mut document: Value =
+            serde_json::from_slice(&sidecar(vec![first, second], vec![])).unwrap();
+        document["version"] = json!(3);
+        document["capture_scope"] =
+            json!({"mode": "selected_composition", "root_composition_id": 1});
+        let parse = |value: &Value| {
+            ExpressionSamples::from_json_for_source(&serde_json::to_vec(value).unwrap(), SOURCE)
+        };
+        let parsed = parse(&document).unwrap();
+        assert_eq!(parsed.properties().len(), 2);
+        assert_ne!(
+            parsed.properties()[0].property(),
+            parsed.properties()[1].property()
+        );
+        parsed.validate_conversion_scope(1, 2).unwrap();
+        assert!(parsed.validate_conversion_scope(2, 2).is_err());
+        document["version"] = json!(2);
+        assert!(matches!(
+            parse(&document),
+            Err(ExpressionSamplesError::InvalidShapeIdentity { .. })
+        ));
+        document["version"] = json!(3);
+        for path in [
+            json!([]),
+            json!([{"index": 2, "match_name": "ADBE Mask Parade"}, {"index": 1, "match_name": "ADBE Vector Scale"}]),
+            json!([{"index": 0, "match_name": "ADBE Root Vectors Group"}, {"index": 1, "match_name": "ADBE Vector Scale"}]),
+            json!([{"index": 2, "match_name": "ADBE Root Vectors Group"}, {"index": 1, "match_name": ""}]),
+            json!([{"index": 2, "match_name": "ADBE Root Vectors Group", "name": "Contents"}, {"index": 1, "match_name": "ADBE Vector Scale"}]),
+        ] {
+            let mut malformed = document.clone();
+            malformed["properties"][0]["property"]["path"] = path;
+            assert!(parse(&malformed).is_err());
+        }
+        document["properties"][1] = document["properties"][0].clone();
+        assert!(matches!(
+            parse(&document),
+            Err(ExpressionSamplesError::DuplicateIdentity { .. })
+        ));
+    }
+
+    #[test]
+    fn oversized_version_three_is_rejected_before_property_deserialization() {
+        // This is valid JSON, but a property cannot deserialize from a number.
+        // The byte limit must win before the full property schema is visited.
+        let mut bytes = br#"{"version":3,"properties":[0]}"#.to_vec();
+        bytes.resize(128 * 1024 * 1024 + 1, b' ');
+        assert!(matches!(
+            ExpressionSamples::from_json_for_source(&bytes, SOURCE),
+            Err(ExpressionSamplesError::CaptureResourceLimit)
+        ));
+    }
+
+    #[test]
+    fn oversized_legacy_sidecar_keeps_existing_quota_behavior() {
+        let mut bytes = sidecar(Vec::new(), Vec::new());
+        bytes.resize(128 * 1024 * 1024 + 1, b' ');
+        assert!(ExpressionSamples::from_json_for_source(&bytes, SOURCE).is_ok());
+    }
+
+    #[test]
+    fn version_three_retains_fixed_capture_resource_bounds() {
+        let mut document: Value = serde_json::from_slice(&sidecar(vec![], vec![])).unwrap();
+        document["version"] = json!(3);
+        document["capture_scope"] = json!({"mode": "all_compositions"});
+        let parse = |value: &Value| {
+            ExpressionSamples::from_json_for_source(&serde_json::to_vec(value).unwrap(), SOURCE)
+        };
+        document["errors"] = json!((0..4097).map(|index| json!({
+            "composition_id": index, "layer_id": 1,
+            "property": {"kind": "transform", "match_name": "ADBE Opacity"}, "message": "failed"
+        })).collect::<Vec<_>>());
+        assert!(matches!(
+            parse(&document),
+            Err(ExpressionSamplesError::CaptureResourceLimit)
+        ));
+        document["errors"] = json!([]);
+        document["properties"] =
+            json!([property("ADBE Opacity", 0, json!(vec![vec![0.0]; 60002]))]);
+        assert!(matches!(
+            parse(&document),
+            Err(ExpressionSamplesError::CaptureResourceLimit)
+        ));
+        document["properties"] = json!(
+            (0..5)
+                .map(|index| property(
+                    &format!("ADBE Control-{index}"),
+                    0,
+                    json!(vec![vec![0.0]; 50001])
+                ))
+                .collect::<Vec<_>>()
+        );
+        assert!(matches!(
+            parse(&document),
+            Err(ExpressionSamplesError::CaptureResourceLimit)
+        ));
     }
 
     #[test]

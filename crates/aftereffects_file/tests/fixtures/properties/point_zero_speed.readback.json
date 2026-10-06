@@ -1,0 +1,321 @@
+{
+  "native_version": "26.5x89",
+  "source_sha256": "340f2fd47d09d9452ae1c511847d511ca222787b8611735e7f99f4b49ab81ef6",
+  "author_job": "3ff0735957534a60a6c9e69758f0669b",
+  "native_source": {
+    "keys": [
+      {
+        "inInfluence": 33.3333333333333,
+        "inSpeed": 0,
+        "incoming": 6613,
+        "outInfluence": 33.3333333333333,
+        "outSpeed": 0,
+        "outgoing": 6613,
+        "spatialIn": [
+          0,
+          0
+        ],
+        "spatialOut": [
+          0,
+          0
+        ],
+        "time": 0.5,
+        "value": [
+          60,
+          40
+        ]
+      },
+      {
+        "inInfluence": 33.3333333333333,
+        "inSpeed": 0,
+        "incoming": 6613,
+        "outInfluence": 33.3333333333333,
+        "outSpeed": 0,
+        "outgoing": 6613,
+        "spatialIn": [
+          0,
+          0
+        ],
+        "spatialOut": [
+          0,
+          0
+        ],
+        "time": 1.5,
+        "value": [
+          72,
+          33
+        ]
+      }
+    ],
+    "ownerHeight": 80,
+    "ownerWidth": 120,
+    "samples": [
+      {
+        "time": 0,
+        "value": [
+          60,
+          40
+        ]
+      },
+      {
+        "time": 0.5,
+        "value": [
+          60,
+          40
+        ]
+      },
+      {
+        "time": 0.75,
+        "value": [
+          61.8750201311365,
+          38.906238256837
+        ]
+      },
+      {
+        "time": 1,
+        "value": [
+          66.0000932824578,
+          36.4999455852329
+        ]
+      },
+      {
+        "time": 1.25,
+        "value": [
+          70.1250018808083,
+          34.0937489028618
+        ]
+      },
+      {
+        "time": 1.5,
+        "value": [
+          72,
+          33
+        ]
+      },
+      {
+        "time": 1.75,
+        "value": [
+          72,
+          33
+        ]
+      }
+    ]
+  },
+  "acceptance_job": "bfc8cc763ef5403987f1bed1b6484cfa",
+  "generated_sha256": {
+    "original": "75993b3c7d5314543bdd8b54478758e7e86f19a5ca0045757b488a2456e615a4",
+    "edited": "a437f62bfc7c43fc0e9da6ab752cae9281d6b708f327c4105563015d860ea69f"
+  },
+  "generated_readback": {
+    "cases": [
+      {
+        "caseName": "original",
+        "compositionId": 13,
+        "keys": [
+          {
+            "inInfluence": 16.666666667,
+            "inSpeed": 0,
+            "incoming": 6612,
+            "outInfluence": 33.3333333333333,
+            "outSpeed": 0,
+            "outgoing": 6613,
+            "spatialIn": [
+              0,
+              0
+            ],
+            "spatialOut": [
+              0,
+              0
+            ],
+            "time": 0.5,
+            "value": [
+              60,
+              40
+            ]
+          },
+          {
+            "inInfluence": 33.3333333333333,
+            "inSpeed": 0,
+            "incoming": 6613,
+            "outInfluence": 16.666666667,
+            "outSpeed": 0,
+            "outgoing": 6612,
+            "spatialIn": [
+              0,
+              0
+            ],
+            "spatialOut": [
+              0,
+              0
+            ],
+            "time": 1.5,
+            "value": [
+              72,
+              33
+            ]
+          }
+        ],
+        "ownerHeight": 80,
+        "ownerWidth": 120,
+        "samples": [
+          {
+            "time": 0,
+            "value": [
+              60,
+              40
+            ]
+          },
+          {
+            "time": 0.5,
+            "value": [
+              60,
+              40
+            ]
+          },
+          {
+            "time": 0.75,
+            "value": [
+              61.8750201311365,
+              38.906238256837
+            ]
+          },
+          {
+            "time": 1,
+            "value": [
+              66.0000932824579,
+              36.4999455852329
+            ]
+          },
+          {
+            "time": 1.25,
+            "value": [
+              70.1250018808083,
+              34.0937489028619
+            ]
+          },
+          {
+            "time": 1.5,
+            "value": [
+              72,
+              33
+            ]
+          },
+          {
+            "time": 1.75,
+            "value": [
+              72,
+              33
+            ]
+          }
+        ]
+      },
+      {
+        "caseName": "edited",
+        "compositionId": 13,
+        "keys": [
+          {
+            "inInfluence": 16.666666667,
+            "inSpeed": 0,
+            "incoming": 6612,
+            "outInfluence": 33.3333333333333,
+            "outSpeed": 0,
+            "outgoing": 6613,
+            "spatialIn": [
+              0,
+              0
+            ],
+            "spatialOut": [
+              0,
+              0
+            ],
+            "time": 0.5,
+            "value": [
+              60,
+              40
+            ]
+          },
+          {
+            "inInfluence": 33.3333333333333,
+            "inSpeed": 0,
+            "incoming": 6613,
+            "outInfluence": 16.666666667,
+            "outSpeed": 0,
+            "outgoing": 6612,
+            "spatialIn": [
+              0,
+              0
+            ],
+            "spatialOut": [
+              0,
+              0
+            ],
+            "time": 1.5,
+            "value": [
+              96,
+              56
+            ]
+          }
+        ],
+        "ownerHeight": 80,
+        "ownerWidth": 120,
+        "samples": [
+          {
+            "time": 0,
+            "value": [
+              60,
+              40
+            ]
+          },
+          {
+            "time": 0.5,
+            "value": [
+              60,
+              40
+            ]
+          },
+          {
+            "time": 0.75,
+            "value": [
+              65.6249943575753,
+              42.4999974922557
+            ]
+          },
+          {
+            "time": 1,
+            "value": [
+              78.0000746750209,
+              48.0000331888982
+            ]
+          },
+          {
+            "time": 1.25,
+            "value": [
+              90.3749396065904,
+              53.4999731584846
+            ]
+          },
+          {
+            "time": 1.5,
+            "value": [
+              96,
+              56
+            ]
+          },
+          {
+            "time": 1.75,
+            "value": [
+              96,
+              56
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "proof_limitations": [
+    "No native 30fps reference or long-term Asset",
+    "RGB/alpha/audio/original49 fidelity unmeasured",
+    "Radial Blur appearance/mode remains approximate",
+    "Unused boundary key flags normalized"
+  ]
+}

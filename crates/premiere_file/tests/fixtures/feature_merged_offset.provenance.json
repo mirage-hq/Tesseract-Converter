@@ -1,0 +1,20 @@
+{
+  "source": "Human-authored Premiere project supplied for this mapping",
+  "source_sha256": "e74d088116570ddb7178b127129036755be2f8e553dea80f98aa59b601585b76",
+  "fixture_sha256": "04054d19594e889b22af2b0ea344f56556a1b69d949c037dc177401b4ee20438",
+  "sequence": "b532b029-e1d0-4a6c-ae91-f429e5e1b771",
+  "derivation": "Reachable native records only; media aliases made fixture-relative and cache paths sanitized. Controls and timing unchanged.",
+  "provenance": "Human-authored source supplied by the repository owner for this mapping. Picture and sound reuse existing test media.",
+  "saved_timing": "Full picture source 0..10 s starts at timeline 34/30 s. Two mono selections of stereo WAV channels 0 and 1 start there with source In 1 s, Out 8 s. This is a shifted, not head-trimmed, picture use.",
+  "media": [
+    {
+      "path": "feature_two_tracks_gap_clip_a.mp4",
+      "sha256": "93a5070a3a4cbbf685440c5dc1033b133baf70a9264a3a05c924518d84fa891a"
+    },
+    {
+      "path": "nest_tone_stereo_8s.wav",
+      "sha256": "83cea43ac62f001ee5b99916315edad05d3b9ecfa5a5fc537f1ed452a60855ca"
+    }
+  ],
+  "native_validation": "No generated-project reopening or render/audio comparison."
+}

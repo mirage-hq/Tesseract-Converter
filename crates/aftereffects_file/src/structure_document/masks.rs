@@ -8,15 +8,19 @@ use fx_schema::{
 };
 
 use crate::{
+    expression_samples::{EvaluatedProperty, ExpressionSamples, PropertyIdentity},
     properties::{
-        NumericProperty, PropertyError, data, read_numeric, root_runs, runs, unique_list,
+        NumericProperty, PropertyError, data, read_effect_point, read_numeric, root_runs, runs,
+        unique_list,
     },
     rifx::Chunk,
     structure::Layer,
 };
 
 use super::{
-    animation::{NumericAnimationClock, NumericAnimationTarget, numeric_entries},
+    animation::{
+        NumericAnimationClock, NumericAnimationTarget, evaluated_numeric_entries, numeric_entries,
+    },
     animation_budget::AnimationBudget,
     shapes::path,
 };
@@ -30,6 +34,7 @@ pub(super) struct MaskImport {
 
 pub(super) fn apply(
     layer: &Layer,
+    evaluations: (u32, &ExpressionSamples),
     occurrence: &mut fx_schema::GroupLayer,
     source_size: [u32; 2],
     next_id: &mut u64,
@@ -75,7 +80,7 @@ pub(super) fn apply(
             .into_iter()
             .filter(|(name, _)| *name == "ADBE Mask Atom")
             .collect();
-        if !atoms.is_empty() && source_size.contains(&0) {
+        if !atoms.is_empty() && source_size.contains(&0) && layer.record.layer_type() != 4 {
             result.warnings.push("native masks are normalized to their owning layer's source bounds, but those dimensions are zero; mask guides were omitted (composition-bounds fallback must be selected and diagnosed by the parent)".into());
             return result;
         }
@@ -89,6 +94,7 @@ pub(super) fn apply(
                     occurrence,
                     next_id,
                     budget,
+                    evaluations,
                 },
                 &mut result,
             );
@@ -101,6 +107,8 @@ struct MaskImportDestination<'a> {
     occurrence: &'a mut fx_schema::GroupLayer,
     next_id: &'a mut u64,
     budget: &'a mut AnimationBudget,
+    /// Expression samples of this occurrence, keyed by native Mask identity.
+    evaluations: (u32, &'a ExpressionSamples),
 }
 
 fn import_mask(
@@ -115,6 +123,7 @@ fn import_mask(
         occurrence,
         next_id,
         budget,
+        evaluations,
     } = destination;
     let MaskImport {
         animations,
@@ -164,10 +173,14 @@ fn import_mask(
             "Mask {index} RotoBezier metadata is malformed; the static path is retained as an ordinary Bezier path: {error}"
         )),
     }
-    let (outline, _) = match path::decode_first(
-        path_run,
-        [f64::from(source_size[0]), f64::from(source_size[1])],
-    ) {
+    // Shape owners have no footage dimensions: their native mask bounds are
+    // already in layer-local pixels, unlike source-normalized AV mask bounds.
+    let path_scale = if layer.record.layer_type() == 4 {
+        [1.0; 2]
+    } else {
+        source_size.map(f64::from)
+    };
+    let (outline, _) = match path::decode_first(path_run, path_scale) {
         Ok(value) => value,
         Err(error) => {
             warnings.push(format!("Mask {index} path ignored: {error}"));
@@ -299,7 +312,7 @@ fn import_mask(
     if let Some(clock) = clock {
         let (entries, path_warnings) = path::entries(
             path_run,
-            [f64::from(source_size[0]), f64::from(source_size[1])],
+            path_scale,
             PropertyTarget::layer(guide_id, fx_schema::PropType::ShapePath),
             clock,
             budget,
@@ -314,6 +327,11 @@ fn import_mask(
             animations,
             warnings,
             budget,
+            evaluated: MaskEvaluations {
+                samples: evaluations,
+                layer_id: layer.record.id(),
+                index,
+            },
         };
         add_mask_entries(
             index,
@@ -368,7 +386,15 @@ fn read_property(
             return None;
         }
     };
-    let value = match read_numeric(list) {
+    // Native Feather uses the same continuous two-double layout as plugin
+    // Point controls, including their integer type flag. Keep ordinary numeric
+    // layouts supported without admitting that flag on other mask properties.
+    let numeric = if name == "ADBE Mask Feather" {
+        read_effect_point(list).or_else(|_| read_numeric(list))
+    } else {
+        read_numeric(list)
+    };
+    let value = match numeric {
         Ok(value) => value,
         Err(error) => {
             warnings.push(format!("Mask {index} {name} defaulted: {error}"));
@@ -382,6 +408,27 @@ struct MaskAnimationOutput<'a> {
     animations: &'a mut Vec<AnimationGraphEntry>,
     warnings: &'a mut Vec<String>,
     budget: &'a mut AnimationBudget,
+    evaluated: MaskEvaluations<'a>,
+}
+
+struct MaskEvaluations<'a> {
+    samples: (u32, &'a ExpressionSamples),
+    layer_id: u32,
+    index: usize,
+}
+
+impl MaskEvaluations<'_> {
+    fn lookup(&self, name: &str) -> Option<&EvaluatedProperty> {
+        let (comp_id, samples) = self.samples;
+        samples.lookup(
+            comp_id,
+            self.layer_id,
+            &PropertyIdentity::Mask {
+                index: u32::try_from(self.index).ok()?,
+                match_name: name.to_owned(),
+            },
+        )
+    }
 }
 
 fn add_mask_entries(
@@ -395,6 +442,34 @@ fn add_mask_entries(
     let Some(numeric) = numeric else {
         return;
     };
+    // Mask targets use the parent-identity clock, the same clock as samples.
+    if numeric.expression_enabled
+        && let Some(samples) = output.evaluated.lookup(name)
+    {
+        // Native Mask Opacity stores a fraction; the expression API uses percent.
+        let factor = if name == "ADBE Mask Opacity" {
+            0.01
+        } else {
+            1.0
+        };
+        let scaled: Vec<_> = targets.iter().map(|target| target.scaled(factor)).collect();
+        let (mut entries, property_warnings) =
+            evaluated_numeric_entries(name, samples, &scaled, &[], output.budget);
+        if entries.len() == targets.len() {
+            output.animations.append(&mut entries);
+            output.warnings.extend(
+                property_warnings
+                    .into_iter()
+                    .map(|warning| format!("Mask {index} {warning}")),
+            );
+            return;
+        }
+        output.warnings.extend(
+            property_warnings
+                .into_iter()
+                .map(|warning| format!("Mask {index} {warning}")),
+        );
+    }
     let (mut entries, property_warnings) =
         numeric_entries(name, numeric, targets, clock, output.budget);
     output.animations.append(&mut entries);
@@ -479,7 +554,7 @@ fn static_values<'a>(
 ) -> Option<&'a [f64]> {
     if property.expression_enabled {
         warnings.push(format!(
-            "Mask {index} {name}: enabled AE expression cannot be evaluated; destination static default {default} used and animation omitted"
+            "Mask {index} {name}: enabled AE expression; destination static default {default} used, animated only if converter expression evaluation is admitted (diagnosed separately)"
         ));
         return None;
     }
@@ -528,6 +603,8 @@ fn identity_transform() -> Transform {
 #[cfg(test)]
 mod tests {
     use super::*;
+    static EMPTY_SAMPLES: std::sync::LazyLock<ExpressionSamples> =
+        std::sync::LazyLock::new(ExpressionSamples::default);
     use crate::{
         properties::{NumericKeyframe, NumericValueKind},
         structure::{ItemKind, Layer, read_project},
@@ -651,6 +728,7 @@ mod tests {
                 occurrence: &mut occurrence,
                 next_id: &mut next_id,
                 budget: &mut budget,
+                evaluations: (1, &EMPTY_SAMPLES),
             },
             &mut result,
         );
@@ -843,6 +921,7 @@ mod tests {
             let mut next_id = start;
             let imported = apply(
                 layer,
+                (1, &ExpressionSamples::default()),
                 &mut occurrence,
                 [u32::from(composition.width), u32::from(composition.height)],
                 &mut next_id,
@@ -898,6 +977,7 @@ mod tests {
                         occurrence: &mut occurrence,
                         next_id: &mut next_id,
                         budget: &mut budget,
+                        evaluations: (1, &EMPTY_SAMPLES),
                     },
                     &mut result,
                 );
@@ -911,49 +991,96 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires licensed local Intro source via AEP_MASK_SOURCE"]
-    fn local_external_source_leading_subtract_keeps_outside_the_native_mask() {
-        use sha2::{Digest, Sha256};
+    fn source_dimension_mask_warning_excludes_shape_owners() {
+        for (layer_type, expected_warning) in [(3, true), (4, false)] {
+            let mut project =
+                read_project(include_bytes!("../../tests/fixtures/masks/mask.aep")).unwrap();
+            let (composition_id, composition) = project
+                .items
+                .iter_mut()
+                .find_map(|item| match &mut item.kind {
+                    ItemKind::Composition(composition) if !composition.layers.is_empty() => {
+                        Some((item.id, composition))
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            let layer = &mut composition.layers[0];
+            let mut record = layer.record.encode();
+            record[131] = layer_type;
+            layer.record = crate::schema::layer_records::LayerRecord::decode(&record).unwrap();
+            let converted =
+                super::super::to_structural_fx_document(&project, Some(composition_id)).unwrap();
+            assert_eq!(
+                converted.diagnostics.iter().any(|warning| warning
+                    .message
+                    .contains("mask normalization uses composition dimensions")),
+                expected_warning,
+                "layer type {layer_type}: {:?}",
+                converted.diagnostics
+            );
+        }
+    }
 
-        let bytes =
-            std::fs::read(std::env::var_os("AEP_MASK_SOURCE").expect("licensed source path"))
-                .expect("licensed source is readable");
-        assert_eq!(
-            format!("{:x}", Sha256::digest(&bytes)),
-            "28bbce1b8c9f9625105d632504a97c598394a4753d6b0d923fb19942e302bb5d"
-        );
-        let project = read_project(&bytes).expect("pinned native source parses");
-        let ItemKind::Composition(composition) = &project.item(1197).expect("SH06 exists").kind
-        else {
-            panic!("source target must be a composition")
-        };
-        let layer = composition
-            .layers
-            .iter()
-            .find(|layer| layer.record.id() == 1205)
-            .expect("native subtract-mask occurrence exists");
-        let mut occurrence = super::super::group(
-            LayerId::new(1),
-            layer.name.to_string(),
-            None,
-            TimeRangeProperty::new(Time::ZERO, Duration::from_secs(10.0)),
-        );
-        let imported = apply(
-            layer,
-            &mut occurrence,
-            [3840, 1600],
-            &mut 2,
-            &mut AnimationBudget::default(),
-        );
-        assert_eq!(occurrence.masks.len(), 1, "{:?}", imported.warnings);
-        assert_eq!(occurrence.masks[0].mode, MaskMode::Add);
-        assert!(occurrence.masks[0].inverted);
-        assert_eq!(occurrence.masks[0].opacity.value(), 1.0);
-        assert_eq!(
-            occurrence.layers.len(),
-            1,
-            "native editable mask guide retained"
-        );
+    #[test]
+    fn shape_mask_pixel_bounds_do_not_inherit_composition_dimensions() {
+        fn pixel_bounds(chunks: &mut [Chunk], size: [u32; 2]) {
+            for chunk in chunks {
+                if chunk.id() == *b"shph" {
+                    let mut bytes = chunk.data_payload().unwrap().to_vec();
+                    for (offset, axis) in [(4, 0), (8, 1), (12, 0), (16, 1)] {
+                        let value =
+                            f32::from_be_bytes(bytes[offset..offset + 4].try_into().unwrap());
+                        let value = value * size[axis] as f32;
+                        bytes[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
+                    }
+                    *chunk = Chunk::data(*b"shph", bytes).unwrap();
+                } else if let Some(children) = chunk.children_mut() {
+                    pixel_bounds(children, size);
+                }
+            }
+        }
+
+        // The public AV oracle has 10..50 pixel vertices stored source-normalized.
+        // Adapt only its numeric storage to a Shape owner's pixel-space layout;
+        // this is a synthetic regression, not new Adobe-authored feature proof.
+        let (mut layer, size, _) = native_mask_case();
+        pixel_bounds(&mut layer.content, size);
+        let mut record = layer.record.encode();
+        record[131] = 4;
+        layer.record = crate::schema::layer_records::LayerRecord::decode(&record).unwrap();
+        for canvas in [[3840, 2160], [1920, 1080], [0, 0]] {
+            let mut occurrence = super::super::group(
+                LayerId::new(1),
+                layer.name.to_string(),
+                None,
+                TimeRangeProperty::new(Time::ZERO, Duration::from_secs(10.0)),
+            );
+            let mut next_id = 2;
+            let mut budget = AnimationBudget::default();
+            let imported = apply(
+                &layer,
+                (1, &EMPTY_SAMPLES),
+                &mut occurrence,
+                canvas,
+                &mut next_id,
+                &mut budget,
+            );
+            assert!(!imported.guide_ids.is_empty(), "{:?}", imported.warnings);
+            let FxLayer::Shape(guide) = occurrence.layers[0].data() else {
+                panic!("mask guide must remain editable")
+            };
+            assert!(
+                matches!(
+                    guide.shape.path.commands.first(),
+                    Some(fx_schema::ShapePathCommand::MoveTo { x, y, .. })
+                        if (*x - 10.0).abs() < 1e-5 && (*y - 10.0).abs() < 1e-5
+                ),
+                "pixel mask was rescaled by {canvas:?}: {:?}",
+                guide.shape.path
+            );
+            assert_eq!(occurrence.masks[0].layer, Some(guide.id));
+        }
     }
 
     #[test]
@@ -981,6 +1108,7 @@ mod tests {
         let mut budget = AnimationBudget::default();
         let imported = apply(
             layer,
+            (1, &ExpressionSamples::default()),
             &mut occurrence,
             [u32::from(composition.width), u32::from(composition.height)],
             &mut next_id,
@@ -1009,8 +1137,48 @@ mod tests {
         assert!(matches!(
             guide.shape.path.commands.first(),
             Some(fx_schema::ShapePathCommand::MoveTo { x, y, .. })
-                if x.is_finite() && y.is_finite()
+                if (*x - 10.0).abs() < 1e-5 && (*y - 10.0).abs() < 1e-5
         ));
+    }
+
+    #[test]
+    fn native_mask_feather_integer_tag_retains_continuous_vector() {
+        let project = read_project(include_bytes!(
+            "../../tests/fixtures/masks/import_mask_controls.aep"
+        ))
+        .expect("pinned independently Adobe-authored mask controls parse");
+        let ItemKind::Composition(composition) = &project.item(130).unwrap().kind else {
+            panic!("MASK_FEATHER composition")
+        };
+        let layer = composition
+            .layers
+            .iter()
+            .find(|layer| layer.name.as_ref() == "target")
+            .expect("native feather target layer");
+        let mut occurrence = super::super::group(
+            LayerId::new(1),
+            layer.name.to_string(),
+            None,
+            TimeRangeProperty::new(Time::ZERO, Duration::from_secs(10.0)),
+        );
+        let mut next_id = 2;
+        let imported = apply(
+            layer,
+            (1, &ExpressionSamples::default()),
+            &mut occurrence,
+            [u32::from(composition.width), u32::from(composition.height)],
+            &mut next_id,
+            &mut AnimationBudget::default(),
+        );
+        assert_eq!(occurrence.masks.len(), 1);
+        assert_eq!(occurrence.masks[0].feather, [24.0, 12.0]);
+        assert!(
+            !imported.warnings.iter().any(|warning| {
+                warning.contains("ADBE Mask Feather") && warning.contains("defaulted")
+            }),
+            "warnings: {:?}",
+            imported.warnings
+        );
     }
 
     #[test]
@@ -1044,6 +1212,7 @@ mod tests {
 
         let imported = apply(
             &layer,
+            (1, &ExpressionSamples::default()),
             &mut occurrence,
             [u32::from(composition.width), u32::from(composition.height)],
             &mut next_id,
@@ -1085,7 +1254,14 @@ mod tests {
             TimeRangeProperty::new(Time::ZERO, Duration::from_secs(10.0)),
         );
         let mut budget = AnimationBudget::default();
-        let imported = apply(layer, &mut occurrence, [0, 0], &mut 2, &mut budget);
+        let imported = apply(
+            layer,
+            (1, &EMPTY_SAMPLES),
+            &mut occurrence,
+            [0, 0],
+            &mut 2,
+            &mut budget,
+        );
         assert!(occurrence.masks.is_empty());
         assert!(
             imported

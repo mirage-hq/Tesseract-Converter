@@ -18,9 +18,15 @@ impl GraphDependencies {
         let mut graph = Self {
             neighbors: vec![BTreeSet::new(); roots.len()],
         };
+        let mut backdrop_component_started = false;
         for (root, layer) in roots.iter().enumerate() {
             graph.references(layer, root, owners)?;
-            if needs_backdrop(layer) {
+            let needs_backdrop = needs_backdrop(layer);
+            debug_assert!(
+                !matches!(layer.data(), LayerData::Audio(_)) || !needs_backdrop,
+                "standalone audio cannot require a picture backdrop"
+            );
+            if needs_backdrop && !backdrop_component_started {
                 for (below, backdrop) in roots.iter().enumerate().skip(root + 1) {
                     // Standalone audio contributes no backdrop pixels and stays
                     // on Premiere's independently exported sound tracks.
@@ -28,6 +34,10 @@ impl GraphDependencies {
                         graph.connect(root, below);
                     }
                 }
+                // Every later backdrop-dependent visual root is one of the
+                // lower roots just connected, so repeating its lower edges
+                // cannot change connected components.
+                backdrop_component_started = true;
             }
         }
         let entries = document.composition().dynamics().entries();
@@ -200,26 +210,27 @@ mod tests {
         })
     }
 
-    fn closure(roots: Vec<Value>, dynamics: Vec<Value>) -> BTreeSet<usize> {
+    fn document(roots: Vec<Value>, dynamics: Vec<Value>) -> EditableFxCompositionDocument {
         let mut value: Value = serde_json::from_str(include_str!(
             "../../../../crates/aftereffects_file/tests/fixtures/hybrid/rect-identity.fx.json"
         ))
         .unwrap();
         value["composition"]["layers"] = json!(roots);
         value["composition"]["dynamics"]["entries"] = json!(dynamics);
-        let document = EditableFxCompositionDocument::from_json_value(value).unwrap();
+        EditableFxCompositionDocument::from_json_value(value).unwrap()
+    }
+
+    fn closure(roots: Vec<Value>, dynamics: Vec<Value>) -> BTreeSet<usize> {
+        let document = document(roots, dynamics);
         let owners = Owners::new(document.composition().layers()).unwrap();
         GraphDependencies::new(&document, &owners)
             .unwrap()
             .connected(0)
     }
 
-    #[test]
-    fn normal_group_child_screen_needs_external_picture_backdrop_not_audio() {
-        let mut child = rect(2, "screen");
-        child["parent"] = json!(1);
-        let audio = json!({
-            "type": "Audio", "id": 3, "name": "Sound", "parent": null,
+    fn audio(id: u64) -> Value {
+        json!({
+            "type": "Audio", "id": id, "name": "Sound", "parent": null,
             "playback": {
                 "type": "windowed", "inputRange": {"start": 0, "duration": 2000},
                 "mapping": {"type": "linear", "input": {"start": 0, "duration": 2000},
@@ -229,10 +240,16 @@ mod tests {
             "sourceRange": {"start": 0, "duration": 2000},
             "sourceIntrinsicDuration": 2000, "volume": 0.5,
             "source": {"assetId": "music"}
-        });
+        })
+    }
+
+    #[test]
+    fn normal_group_child_screen_needs_external_picture_backdrop_not_audio() {
+        let mut child = rect(2, "screen");
+        child["parent"] = json!(1);
         assert_eq!(
             closure(
-                vec![group(1, vec![child]), audio, rect(4, "normal")],
+                vec![group(1, vec![child]), audio(3), rect(4, "normal")],
                 vec![]
             ),
             BTreeSet::from([0, 2])
@@ -298,6 +315,85 @@ mod tests {
         assert_eq!(
             closure(vec![group(1, vec![child]), rect(3, "normal")], vec![]),
             BTreeSet::from([0])
+        );
+    }
+
+    #[test]
+    fn sparse_backdrop_edges_match_dense_components_for_bounded_root_combinations() {
+        const ROOTS: usize = 5;
+        for states in 0..3usize.pow(ROOTS as u32) {
+            let mut encoded = states;
+            let mut roots = Vec::with_capacity(ROOTS);
+            for index in 0..ROOTS {
+                roots.push(match encoded % 3 {
+                    0 => rect(index as u64 + 1, "normal"),
+                    1 => rect(index as u64 + 1, "screen"),
+                    _ => audio(index as u64 + 1),
+                });
+                encoded /= 3;
+            }
+
+            let visual: Vec<_> = roots
+                .iter()
+                .enumerate()
+                .filter_map(|(index, layer)| (layer["type"] != "Audio").then_some(index))
+                .collect();
+            if visual.len() >= 2 {
+                let consumer = visual[0];
+                let source = visual[visual.len() - 1];
+                roots[consumer]["trackMatte"] =
+                    json!({"mode": "alpha", "layer": source as u64 + 1});
+                roots[consumer]["masks"] = json!([{
+                    "id": 10_000 + states as u64,
+                    "mode": "add", "inverted": false, "layer": source as u64 + 1,
+                    "feather": [0, 0], "expansion": 0, "opacity": 1
+                }]);
+            }
+
+            let document = document(roots, vec![]);
+            let owners = Owners::new(document.composition().layers()).unwrap();
+            let sparse = GraphDependencies::new(&document, &owners).unwrap();
+            let mut dense = GraphDependencies {
+                neighbors: vec![BTreeSet::new(); ROOTS],
+            };
+            for (root, layer) in document.composition().layers().iter().enumerate() {
+                dense.references(layer, root, &owners).unwrap();
+                if needs_backdrop(layer) {
+                    for (below, backdrop) in document
+                        .composition()
+                        .layers()
+                        .iter()
+                        .enumerate()
+                        .skip(root + 1)
+                    {
+                        if !matches!(backdrop.data(), LayerData::Audio(_)) {
+                            dense.connect(root, below);
+                        }
+                    }
+                }
+            }
+            for seed in 0..ROOTS {
+                assert_eq!(
+                    sparse.connected(seed),
+                    dense.connected(seed),
+                    "states={states}, seed={seed}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sparse_backdrop_stack_retains_only_linear_neighbor_count() {
+        let count = 512;
+        let roots = (0..count)
+            .map(|index| rect(index as u64 + 1, "screen"))
+            .collect();
+        let document = document(roots, vec![]);
+        let owners = Owners::new(document.composition().layers()).unwrap();
+        let graph = GraphDependencies::new(&document, &owners).unwrap();
+        assert_eq!(
+            graph.neighbors.iter().map(BTreeSet::len).sum::<usize>(),
+            2 * (count - 1)
         );
     }
 

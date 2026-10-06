@@ -1,3 +1,5 @@
+#![cfg(feature = "ffmpeg-library")]
+
 //! Still-image clips: the derived `premiere_isolated_still_image` fixture through
 //! both public conversion directions, plus file-level still rejections.
 use super::support::*;
@@ -617,39 +619,23 @@ fn still_motion_opacity_and_keys_export_as_a_videos_do() {
     );
 }
 
-/// `premiere_isolated_images_nests_26_5` (Premiere 26.5.1, Oracle IN) over the
+/// `premiere_isolated_images_nests_26_5` (Premiere 26.5.1) over the
 /// timecoded video: stills A 960x540, B 3840x2160 and C 1080x1350 at default
 /// Motion, D (B's image) with Scale to Frame Size and E (C's image) with
 /// Position and Scale keys, 2 s each from 0 s. F, A's image with static
-/// Motion, keeps a 5 s source span on its 2 s placement (the Oracle's
-/// duration fallback), which the shared timeline rules reject.
+/// Motion on the track above A, keeps a 5 s source span on its 2 s placement
+/// (the fixture's duration fallback); a still has no media clock, so that span
+/// shows the same picture.
 const IMAGES_NESTS: &str = "feature_images_nests_26_5.prproj";
 const IMAGES_NESTS_SEQUENCE: &str = "f3c651e6-0302-4499-b6f5-814b7b22c207";
 
 /// Each image layer, by start: its start, source frame, transform and keys
 /// as `[layer time, value, easing]` by property.
 fn image_rows(document: &Value) -> Vec<Value> {
-    let entries = document["composition"]["dynamics"]["entries"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
     let mut rows: Vec<_> = layers_of(document, "Image")
         .into_iter()
         .map(|layer| {
-            let keys: serde_json::Map<_, _> = entries
-                .iter()
-                .filter(|entry| entry["target"]["layerId"] == layer["id"])
-                .map(|entry| {
-                    let keys = entry["animator"]["keyframes"].as_array().unwrap().iter();
-                    (
-                        entry["target"]["propertyType"].as_str().unwrap().to_owned(),
-                        keys.map(|key| {
-                            json!([key["layerTime"], key["value"]["value"], key["easing"]])
-                        })
-                        .collect(),
-                    )
-                })
-                .collect();
+            let keys = layer_keys(document, &layer);
             json!({
                 "start": (*crate::test_support::layer_range(&layer))["start"],
                 "sourceRect": layer["source"]["sourceRect"],
@@ -660,6 +646,27 @@ fn image_rows(document: &Value) -> Vec<Value> {
         .collect();
     rows.sort_by_key(|row| row["start"].as_i64());
     rows
+}
+
+/// The keys of `layer` in `document` as `[layer time, value, easing]` by
+/// property.
+fn layer_keys(document: &Value, layer: &Value) -> serde_json::Map<String, Value> {
+    let entries = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    entries
+        .iter()
+        .filter(|entry| entry["target"]["layerId"] == layer["id"])
+        .map(|entry| {
+            let keys = entry["animator"]["keyframes"].as_array().unwrap().iter();
+            (
+                entry["target"]["propertyType"].as_str().unwrap().to_owned(),
+                keys.map(|key| json!([key["layerTime"], key["value"]["value"], key["easing"]]))
+                    .collect(),
+            )
+        })
+        .collect()
 }
 
 #[test]
@@ -686,15 +693,35 @@ fn adobe_stills_of_three_sizes_import_at_their_native_size_and_export_their_moti
         omitted("144"),
         Some("unsupported conversion: VideoClip:265: Scale to Frame Size on a still is not converted")
     );
-    assert_eq!(
-        omitted("146"),
-        Some("invalid Premiere project: source span does not match the constant playback rate")
-    );
+    assert_eq!(omitted("146"), None);
     let document = TesseractFile::open(&project_files(&imported)[0])
         .unwrap()
         .project_json()
         .unwrap();
-    let rows = image_rows(&document);
+    let all_rows = image_rows(&document);
+    // G3: F at its static Motion, Position 0.3:0.4, Scale 50 and Rotation 15,
+    // over its 2 s placement.
+    let (moved, rows): (Vec<_>, Vec<_>) = all_rows
+        .iter()
+        .partition(|row| row["transform"]["rotation"] != 0.0);
+    let [f] = moved.as_slice() else {
+        panic!("{moved:#?}");
+    };
+    assert_eq!(f["start"], 0);
+    assert_eq!(
+        f["sourceRect"],
+        json!({"x": 0.0, "y": 0.0, "width": 960.0, "height": 540.0})
+    );
+    for (field, value) in [
+        ("anchorPoint", json!([480.0, 270.0])),
+        ("position", json!([576.0, 432.0])),
+        ("scale", json!([50.0, 50.0])),
+        ("rotation", json!(15.0)),
+        ("opacity", json!(100.0)),
+    ] {
+        assert_eq!(f["transform"][field], value, "{field}");
+    }
+    assert_eq!(f["keys"], json!({}));
     // G1: default Motion centres each still at its pixel size, B although
     // its master clip (shared with D) carries Scale to Frame Size.
     let sizes = [
@@ -763,7 +790,559 @@ fn adobe_stills_of_three_sizes_import_at_their_native_size_and_export_their_moti
         .unwrap()
         .project_json()
         .unwrap();
-    assert_eq!(image_rows(&document), rows);
+    assert_eq!(image_rows(&document), all_rows);
+}
+
+/// The images/nests fixture with its media in `root`, where each
+/// `(record, from, to)` edit replaces the first `from` inside the native
+/// record that starts `record`: derived edits.
+fn staged_images_nests(root: &Path, edits: &[(&str, &str, &str)]) -> PathBuf {
+    let mut xml = read_xml(&fixtures().join(IMAGES_NESTS));
+    for (record, from, to) in edits {
+        let start = xml.find(record).unwrap();
+        let offset = start + xml[start..].find(from).unwrap();
+        assert!(
+            !xml[start + record.len()..offset].contains("ObjectID="),
+            "{from} is not in {record}"
+        );
+        xml.replace_range(offset..offset + from.len(), to);
+    }
+    let source = root.join(IMAGES_NESTS);
+    write_prproj(&source, &xml);
+    for name in [
+        "feature_linked_av_source.mp4",
+        "feature_timecoded_source.mp4",
+        "in_small.png",
+        "in_large.png",
+        "in_portrait.png",
+    ] {
+        fs::copy(fixtures().join(name), root.join(name)).unwrap();
+    }
+    source
+}
+
+/// The text of the first `tag` element under `node`, if there is one.
+fn descendant_text(node: roxmltree::Node<'_, '_>, tag: &str) -> Option<String> {
+    node.descendants()
+        .find(|child| child.has_tag_name(tag))
+        .and_then(|child| child.text())
+        .map(str::to_owned)
+}
+
+/// The native component records of the clip that starts at `start` ticks in
+/// the Premiere project `document`, in the order they apply: the chain lists
+/// them reversed, the one that applies last at `Index` 0.
+fn clip_components<'d, 'x>(
+    document: &'d roxmltree::Document<'x>,
+    start: i64,
+) -> Vec<roxmltree::Node<'d, 'x>> {
+    let record = |id: &str| {
+        document
+            .root_element()
+            .children()
+            .find(|node| node.attribute("ObjectID") == Some(id))
+            .unwrap()
+    };
+    let items: Vec<_> = document
+        .root_element()
+        .children()
+        .filter(|node| node.has_tag_name("VideoClipTrackItem"))
+        .filter(|item| {
+            descendant_text(*item, "Start").map_or(0, |start| start.parse().unwrap()) == start
+        })
+        .collect();
+    let [item] = items.as_slice() else {
+        panic!("{} clips start at {start}", items.len());
+    };
+    let chain = record(
+        item.descendants()
+            .find(|node| node.has_tag_name("Components"))
+            .and_then(|node| node.attribute("ObjectRef"))
+            .unwrap(),
+    );
+    let mut components: Vec<(usize, _)> = chain
+        .descendants()
+        .filter(|node| node.has_tag_name("Component"))
+        .map(|node| {
+            let index = node.attribute("Index").unwrap().parse().unwrap();
+            (index, record(node.attribute("ObjectRef").unwrap()))
+        })
+        .collect();
+    components.sort_unstable_by_key(|(index, _)| *index);
+    components.into_iter().rev().map(|(_, node)| node).collect()
+}
+
+/// The match names of the native components of the clip that starts at
+/// `start` ticks in the Premiere project `xml`, in the order they apply
+/// ([`clip_components`]).
+fn applied_components(xml: &str, start: i64) -> Vec<String> {
+    let document = roxmltree::Document::parse(xml).unwrap();
+    clip_components(&document, start)
+        .into_iter()
+        .map(|component| descendant_text(component, "MatchName").unwrap())
+        .collect()
+}
+
+/// The static value of each parameter record in `params`, by its name.
+fn static_values(params: &[String]) -> Vec<(String, String)> {
+    params
+        .iter()
+        .map(|param| {
+            let field = |tag: &str| {
+                let open = format!("<{tag}>");
+                let from = param.find(&open).unwrap() + open.len();
+                param[from..from + param[from..].find('<').unwrap()].to_owned()
+            };
+            let start = field("StartKeyframe");
+            (field("Name"), start.split(',').nth(1).unwrap().to_owned())
+        })
+        .collect()
+}
+
+#[test]
+fn a_still_motion_crop_imports_as_its_crop_guide_and_its_edit_round_trips_as_a_crop_effect() {
+    // E with Motion Crop Left 12.5, Top 20, Right 7.5 and Bottom 10 (its
+    // `VideoComponentParam` 287-290): the Crop guide keeps that part of E's
+    // own 1080x1350 frame and moves with E.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let zero = "<StartKeyframe>-91445760000000000,0.,0,0,0,0,0,0</StartKeyframe>";
+    let edges = [("287", "12.5"), ("288", "20."), ("289", "7.5"), ("290", "10.")].map(
+        |(id, value)| {
+            (
+                format!("<VideoComponentParam ObjectID=\"{id}\""),
+                format!("<StartKeyframe>-91445760000000000,{value},0,0,0,0,0,0</StartKeyframe><CurrentValue>{value}</CurrentValue>"),
+            )
+        },
+    );
+    let edits: Vec<_> = edges
+        .iter()
+        .map(|(record, to)| (record.as_str(), zero, to.as_str()))
+        .collect();
+    let source = staged_images_nests(root, &edits);
+    let imported = root.join("imported");
+    let omissions =
+        premiere_to_tesseract(&source, &imported, Some(IMAGES_NESTS_SEQUENCE), false).unwrap();
+    assert!(
+        !omissions.iter().any(|omission| {
+            omission.scope == OmissionScope::Occurrence && omission.record.ends_with("145")
+        }),
+        "{omissions:?}"
+    );
+    let document = TesseractFile::open(&project_files(&imported)[0])
+        .unwrap()
+        .project_json()
+        .unwrap();
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    let index = layers
+        .iter()
+        .position(|layer| layer["type"] == "Image" && layer["activeRange"]["start"] == 8000)
+        .unwrap();
+    let (image, guide) = (&layers[index], &layers[index + 1]);
+    assert_eq!(image["masks"].as_array().unwrap().len(), 1);
+    assert_eq!(image["masks"][0]["layer"], guide["id"]);
+    assert_eq!(guide["rect"]["position"], json!([135.0, 270.0]));
+    assert_eq!(guide["rect"]["size"], json!([864.0, 945.0]));
+    assert_eq!(guide["transform"], image["transform"]);
+    assert_eq!(guide["activeRange"], image["activeRange"]);
+
+    // The guide, edited to keep Left 25, Top 6.25, Right 12.5 and Bottom 37.5
+    // of E's frame, exports as E's Crop: the video clip's Crop effect (26.3
+    // layout) with those four edges, which applies to E's frame before its
+    // Motion. Motion and every other record are those of the unedited
+    // fixture's export.
+    let (position, size) = (json!([270.0, 84.375]), json!([675.0, 759.375]));
+    let mut edited = document.clone();
+    let rect = &mut edited["composition"]["layers"][index + 1]["rect"];
+    rect["position"] = position.clone();
+    rect["size"] = size.clone();
+    let (xml, reimported) = round_trip(root, &imported, &edited);
+    let [crop] = component_params(&xml, "AE.ADBE AECrop")
+        .try_into()
+        .expect("one Crop effect");
+    assert_eq!(
+        static_values(&crop),
+        [
+            ("Left", "25"),
+            ("Top", "6.25"),
+            ("Right", "12.5"),
+            ("Bottom", "37.5"),
+            (" ", "false"),
+            ("Edge Feather", "0"),
+        ]
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
+    );
+    assert!(!xml.contains("<Name>Crop Left</Name>"));
+    let e_start = 8 * 254_016_000_000;
+    assert_eq!(
+        applied_components(&xml, e_start),
+        ["AE.ADBE AECrop", "AE.ADBE Motion"]
+    );
+    let unedited = root.join("unedited");
+    premiere_to_tesseract(
+        fixtures().join(IMAGES_NESTS),
+        &unedited,
+        Some(IMAGES_NESTS_SEQUENCE),
+        false,
+    )
+    .unwrap();
+    let plain = root.join("plain");
+    tesseract_to_premiere(&project_files(&unedited)[0], &plain, false).unwrap();
+    let plain = read_xml(&plain.join("project.prproj"));
+    assert_eq!(applied_components(&plain, e_start), ["AE.ADBE Motion"]);
+    for component in ["AE.ADBE Motion", "AE.ADBE Opacity"] {
+        assert_eq!(
+            component_params(&xml, component),
+            component_params(&plain, component),
+            "{component}"
+        );
+    }
+
+    // Import reads that Crop effect as E's Crop, and neither direction reports
+    // anything (`round_trip`): every still reimports with its frame, transform
+    // and keys, and E's guide keeps the edited part of E's frame, beside E with
+    // its transform, range and Motion keys.
+    let reread = TesseractFile::open(&project_files(&reimported)[0])
+        .unwrap()
+        .project_json()
+        .unwrap();
+    assert_eq!(image_rows(&reread), image_rows(&document));
+    let layers = reread["composition"]["layers"].as_array().unwrap();
+    let index = layers
+        .iter()
+        .position(|layer| layer["type"] == "Image" && layer["activeRange"]["start"] == 8000)
+        .unwrap();
+    let (image, guide) = (&layers[index], &layers[index + 1]);
+    assert_eq!(image["masks"].as_array().unwrap().len(), 1);
+    assert_eq!(image["masks"][0]["layer"], guide["id"]);
+    assert_eq!(guide["rect"]["position"], position);
+    assert_eq!(guide["rect"]["size"], size);
+    assert_eq!(guide["transform"], image["transform"]);
+    assert_eq!(guide["activeRange"], image["activeRange"]);
+    assert_eq!(layer_keys(&reread, guide), layer_keys(&reread, image));
+}
+
+/// `premiere_isolated_opacity_masks_26_5` (Premiere 26.5.1):
+/// clip A's Opacity (`VideoFilterComponent:133`) holds mask A, the middle
+/// half of the frame at Mask Opacity 50, not inverted, without feather.
+const OPACITY_MASKS: &str = "feature_opacity_masks_26_5_strict.prproj";
+
+/// The images/nests fixture whose still with the component chain `chain`
+/// takes clip A's Opacity of [`OPACITY_MASKS`], at `Index` 0 before its
+/// Motion record `motion`, if it has one: that record and the 39 that it
+/// names, verbatim but for their ObjectIDs, which move past the fixture's. A
+/// derived masked still, not a Premiere save.
+fn images_nests_with_mask_a(chain: &str, motion: Option<&str>) -> String {
+    let masks = read_xml(&fixtures().join(OPACITY_MASKS));
+    let native = roxmltree::Document::parse(&masks).unwrap();
+    let records: Vec<_> = native
+        .root_element()
+        .children()
+        .filter(|node| node.attribute("ObjectID").is_some())
+        .collect();
+    let mut ids = std::collections::BTreeSet::from(["133"]);
+    loop {
+        let referenced: Vec<&str> = records
+            .iter()
+            .filter(|node| ids.contains(node.attribute("ObjectID").unwrap()))
+            .flat_map(|node| node.descendants())
+            .filter_map(|node| node.attribute("ObjectRef"))
+            .filter(|id| !ids.contains(id))
+            .collect();
+        if referenced.is_empty() {
+            break;
+        }
+        ids.extend(referenced);
+    }
+    let closure: String = records
+        .iter()
+        .filter(|node| ids.contains(node.attribute("ObjectID").unwrap()))
+        .map(|node| &masks[node.range()])
+        .collect();
+    let moved = ["ObjectID=\"", "ObjectRef=\""]
+        .into_iter()
+        .fold(closure, |text, marker| {
+            let mut parts = text.split(marker);
+            let mut moved = parts.next().unwrap().to_owned();
+            for part in parts {
+                let (id, rest) = part.split_once('"').unwrap();
+                let id: u32 = id.parse().unwrap();
+                moved.push_str(&format!("{marker}{}\"{rest}", id + 1000));
+            }
+            moved
+        });
+    let components: String = ["1133"]
+        .into_iter()
+        .chain(motion)
+        .enumerate()
+        .map(|(index, id)| format!("<Component Index=\"{index}\" ObjectRef=\"{id}\"/>"))
+        .collect();
+    let mut xml = read_xml(&fixtures().join(IMAGES_NESTS));
+    edit_record(
+        &mut xml,
+        &format!("<VideoComponentChain ObjectID=\"{chain}\""),
+        "</VideoComponentChain>",
+        |record| {
+            let node = record.find("</Node>").unwrap() + "</Node>".len();
+            let end = record.find("</ComponentChain>").unwrap();
+            format!(
+                "{}<Components Version=\"1\">{components}</Components>{}",
+                &record[..node],
+                &record[end..]
+            )
+            .replace("<DefaultOpacity>true</DefaultOpacity>", "")
+            .replace(
+                "<DefaultOpacityComponentID>2</DefaultOpacityComponentID>",
+                "",
+            )
+        },
+    );
+    xml.replace("</PremiereData>", &format!("{moved}</PremiereData>"))
+}
+
+/// The mask record on the Opacity of the clip that starts at `start` ticks in
+/// the Premiere project `xml`, read from the XML: its match name with its
+/// record and component versions, and each parameter's static value by
+/// `ParameterID`, a path's encoded value included.
+fn clip_mask_record(xml: &str, start: i64) -> (String, std::collections::BTreeMap<u32, String>) {
+    let document = roxmltree::Document::parse(xml).unwrap();
+    let record = |id: &str| {
+        document
+            .root_element()
+            .children()
+            .find(|node| node.attribute("ObjectID") == Some(id))
+            .unwrap()
+    };
+    let opacity = clip_components(&document, start)
+        .into_iter()
+        .find(|component| {
+            descendant_text(*component, "MatchName").as_deref() == Some("AE.ADBE Opacity")
+        })
+        .expect("the clip has an Opacity");
+    let masks: Vec<_> = opacity
+        .descendants()
+        .filter(|node| node.has_tag_name("SubComponent"))
+        .map(|node| record(node.attribute("ObjectRef").unwrap()))
+        .collect();
+    let [mask] = masks.as_slice() else {
+        panic!("{} masks on the Opacity", masks.len());
+    };
+    let body = mask
+        .children()
+        .find(|node| node.has_tag_name("Component"))
+        .unwrap();
+    let name = format!(
+        "{} {}/{}",
+        descendant_text(*mask, "MatchName").unwrap(),
+        mask.attribute("Version").unwrap(),
+        body.attribute("Version").unwrap()
+    );
+    let values = mask
+        .descendants()
+        .filter(|node| node.has_tag_name("Param"))
+        .map(|param| record(param.attribute("ObjectRef").unwrap()))
+        .map(|param| {
+            let id = descendant_text(param, "ParameterID").unwrap();
+            let value = descendant_text(param, "StartKeyframe")
+                .or_else(|| descendant_text(param, "StartKeyframeValue"))
+                .unwrap();
+            (id.parse().unwrap(), value)
+        })
+        .collect();
+    (name, values)
+}
+
+/// The vertices of an encoded v7 Mask Path: `2cin`, version 2, `z` 0 and the
+/// count, then for each vertex its smooth flag, its point, in and out
+/// tangents in fractions of the clip's frame, and a final 1.
+fn mask_path_vertices(encoded: &str) -> Vec<(u32, [f32; 6])> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let payload = STANDARD.decode(encoded.trim()).unwrap();
+    let word = |at: usize| u32::from_le_bytes(payload[at..at + 4].try_into().unwrap());
+    assert_eq!((&payload[..4], word(4), word(8)), (&b"2cin"[..], 2, 0));
+    let count = word(12) as usize;
+    assert_eq!(payload.len(), 16 + 32 * count);
+    (0..count)
+        .map(|vertex| {
+            let at = 16 + 32 * vertex;
+            assert_eq!(word(at + 28), 1, "vertex {vertex}");
+            let value = |index: usize| f32::from_bits(word(at + 4 + 4 * index));
+            (word(at), std::array::from_fn(value))
+        })
+        .collect()
+}
+
+#[test]
+fn a_still_opacity_mask_imports_as_its_shape_guide_and_its_edit_round_trips_as_a_native_mask() {
+    // Mask A on E (from 8 s), the portrait 1080x1350 still with Position and
+    // Scale keys, whose chain 192 holds its Motion 266, and on B (from 2 s),
+    // the landscape 3840x2160 still at default Motion, chain 186: each in its
+    // own derived project on the 1920x1080 sequence. Each edit draws the
+    // pentagon at its Mask Opacity and Inverted, and turns the still and its
+    // guide to Rotation 12.5; E's last Position Y key moves to 270 on both.
+    let dir = tempfile::tempdir().unwrap();
+    // A closed outline through `points`, fractions of a `width` by `height`
+    // frame, in that frame's pixels.
+    let outline = |points: &[[f64; 2]], [width, height]: [f64; 2]| {
+        let mut commands: Vec<Value> = points
+            .iter()
+            .enumerate()
+            .map(|(index, [x, y])| {
+                let kind = if index == 0 { "moveTo" } else { "lineTo" };
+                json!({"type": kind, "x": x * width, "y": y * height})
+            })
+            .collect();
+        commands.push(json!({"type": "close"}));
+        json!({ "commands": commands })
+    };
+    let middle_half = [[0.25, 0.25], [0.75, 0.25], [0.75, 0.75], [0.25, 0.75]];
+    let pentagon = [
+        [0.125, 0.25],
+        [0.75, 0.125],
+        [0.875, 0.625],
+        [0.5, 0.875],
+        [0.125, 0.75],
+    ];
+    for (start, frame, chain, motion, (opacity, inverted)) in [
+        (8000, [1080.0, 1350.0], "192", Some("266"), (0.75, false)),
+        (2000, [3840.0, 2160.0], "186", None, (1.0, true)),
+    ] {
+        let root = dir.path().join(start.to_string());
+        let (imported, _) = import_images_nests(&root, &images_nests_with_mask_a(chain, motion));
+        let document = TesseractFile::open(&project_files(&imported)[0])
+            .unwrap()
+            .project_json()
+            .unwrap();
+        let layers = document["composition"]["layers"].as_array().unwrap();
+        let index = layers
+            .iter()
+            .position(|layer| layer["type"] == "Image" && layer["activeRange"]["start"] == start)
+            .unwrap();
+        // Mask A imports as the still's mask, its outline in the still's own
+        // pixels on a shape guide beside it with its transform, range and keys.
+        let (image, guide) = (&layers[index], &layers[index + 1]);
+        let mask = &image["masks"][0];
+        assert_eq!(image["masks"].as_array().unwrap().len(), 1, "{start}");
+        assert_eq!(mask["layer"], guide["id"], "{start}");
+        assert_eq!(mask["opacity"], json!(0.5), "{start}");
+        assert_eq!(mask["inverted"], json!(false), "{start}");
+        assert_eq!(mask["feather"], json!([0.0, 0.0]), "{start}");
+        assert_eq!(guide["type"], "Shape", "{start}");
+        assert_eq!(
+            guide["shape"]["path"],
+            outline(&middle_half, frame),
+            "{start}"
+        );
+        for field in ["transform", "activeRange"] {
+            assert_eq!(guide[field], image[field], "{start} {field}");
+        }
+        assert_eq!(
+            layer_keys(&document, guide),
+            layer_keys(&document, image),
+            "{start}"
+        );
+
+        let mut edited = document.clone();
+        let layers = edited["composition"]["layers"].as_array_mut().unwrap();
+        layers[index + 1]["shape"]["path"] = outline(&pentagon, frame);
+        layers[index]["masks"][0]["opacity"] = json!(opacity);
+        layers[index]["masks"][0]["inverted"] = json!(inverted);
+        let edited_mask = layers[index]["masks"][0].clone();
+        let mut ids = Vec::new();
+        for layer in &mut layers[index..index + 2] {
+            layer["transform"]["rotation"] = json!(12.5);
+            ids.push(layer["id"].clone());
+        }
+        for entry in edited["composition"]["dynamics"]["entries"]
+            .as_array_mut()
+            .unwrap()
+        {
+            if ids.contains(&entry["target"]["layerId"])
+                && entry["target"]["propertyType"] == "positionY"
+            {
+                let keys = entry["animator"]["keyframes"].as_array_mut().unwrap();
+                keys.last_mut().unwrap()["value"]["value"] = json!(270.0);
+            }
+        }
+        let (xml, reimported) = round_trip(&root, &imported, &edited);
+
+        // The XML alone: one v7 mask, on the still's Opacity after its
+        // Motion, holds the pentagon in fractions of the still's own frame
+        // and the edited controls; the still's keys stay on its own clock,
+        // from its one-hour in-point.
+        let ticks = start * 254_016_000;
+        assert_eq!(
+            applied_components(&xml, ticks),
+            ["AE.ADBE Motion", "AE.ADBE Opacity"],
+            "{start}"
+        );
+        assert_eq!(
+            xml.matches("<MatchName>AE.ADBE AEMask</MatchName>").count(),
+            1,
+            "{start}"
+        );
+        let (name, values) = clip_mask_record(&xml, ticks);
+        assert_eq!(name, "AE.ADBE AEMask 7/5", "{start}");
+        assert_eq!(values.len(), 13, "{start}");
+        let control = |id: u32| values[&id].split(',').nth(1).unwrap().to_owned();
+        assert_eq!(
+            [7, 8, 9, 10].map(control),
+            [
+                "0".to_owned(),
+                (opacity * 100.0).to_string(),
+                "0".to_owned(),
+                inverted.to_string(),
+            ],
+            "{start}: Feather, Mask Opacity, Expansion and Inverted"
+        );
+        let vertices: Vec<_> = pentagon
+            .iter()
+            .map(|&[x, y]| {
+                let [x, y] = [x as f32, y as f32];
+                (0, [x, y, x, y, x, y])
+            })
+            .collect();
+        assert_eq!(mask_path_vertices(&values[&6]), vertices, "{start}");
+        for keys in layer_keys(&edited, &edited["composition"]["layers"][index]).values() {
+            let first = keys[0][0].as_i64().unwrap();
+            let native = 914_457_600_000_000 + first * 254_016_000;
+            assert!(xml.contains(&format!("<Keyframes>{native},")), "{start}");
+        }
+
+        // Import reads the native mask back: every still keeps its frame,
+        // transform and keys, and the edited mask its guide beside the still
+        // with its transform, range and keys.
+        let reread = TesseractFile::open(&project_files(&reimported)[0])
+            .unwrap()
+            .project_json()
+            .unwrap();
+        assert_eq!(image_rows(&reread), image_rows(&edited), "{start}");
+        let layers = reread["composition"]["layers"].as_array().unwrap();
+        let index = layers
+            .iter()
+            .position(|layer| layer["type"] == "Image" && layer["activeRange"]["start"] == start)
+            .unwrap();
+        let (image, guide) = (&layers[index], &layers[index + 1]);
+        let mask = &image["masks"][0];
+        assert_eq!(image["masks"].as_array().unwrap().len(), 1, "{start}");
+        assert_eq!(mask["layer"], guide["id"], "{start}");
+        for field in ["mode", "opacity", "inverted", "feather", "expansion"] {
+            assert_eq!(mask[field], edited_mask[field], "{start} {field}");
+        }
+        assert_eq!(
+            guide["shape"]["path"],
+            outline(&pentagon, frame),
+            "{start}: edited path"
+        );
+        for field in ["transform", "activeRange"] {
+            assert_eq!(guide[field], image[field], "{start} {field}");
+        }
+        assert_eq!(
+            layer_keys(&reread, guide),
+            layer_keys(&reread, image),
+            "{start}"
+        );
+    }
 }
 
 /// The nest "Inner" of the images/nests fixture and its one audio layer.
@@ -795,7 +1374,7 @@ fn adobe_nest_sound_imports_through_its_audio_item_and_exports_linked() {
     )
     .unwrap();
     // G6: audio item 115 pairs with nest 116 over 10-14 s; nothing of N is
-    // omitted but I2 (source span).
+    // omitted, its still I2 with its 5 s source span included.
     for record in ["115", "116"] {
         assert!(
             !omissions.iter().any(|omission| omission.record == record),
@@ -868,10 +1447,9 @@ fn adobe_nest_sound_imports_through_its_audio_item_and_exports_linked() {
         assert_eq!(sound_back[field], sound[field], "{field}");
     }
 
-    // Without its video, N holds only sound, which Premiere draws as opaque
-    // black (IN2 export gate, Part A): it is not exported, and nothing of its
-    // sound reaches the export. Without the root's linked-A/V video too, the
-    // sound's media belongs to N alone and is not packaged.
+    // Without its picture, retain N's sound as an editable native audio clip,
+    // not a video nest that would cover siblings with opaque black. The source
+    // stays packaged even when no root picture references it.
     let mut edited = document.clone();
     let layers = edited["composition"]["layers"].as_array_mut().unwrap();
     layers.retain(|layer| {
@@ -883,7 +1461,7 @@ fn adobe_nest_sound_imports_through_its_audio_item_and_exports_linked() {
         .unwrap()["layers"]
         .as_array_mut()
         .unwrap()
-        .retain(|layer| layer["type"] != "Video");
+        .retain(|layer| !matches!(layer["type"].as_str(), Some("Video" | "Image")));
     let file = TesseractFile::open(&project_files(&imported)[0]).unwrap();
     let assets: Vec<_> = file
         .metadata()
@@ -906,11 +1484,26 @@ fn adobe_nest_sound_imports_through_its_audio_item_and_exports_linked() {
             .collect::<Vec<_>>(),
         [(
             nest.as_str(),
-            "a group with sound but no picture is not exported: Premiere draws a nested sequence without video as opaque black"
+            "sound-only group exported as individually editable native audio clips; grouping and the original Dynamic Link relationship are not retained, and no opaque nest picture is added"
         )]
     );
-    assert_eq!(written(&exported.join("project.prproj")), [1, 0, 0]);
-    assert!(!exported.join("media/feature_linked_av_source.mp4").exists());
+    let project = exported.join("project.prproj");
+    assert_eq!(written(&project), [1, 1, 0]);
+    assert!(exported.join("media/feature_linked_av_source.mp4").exists());
+    let output = root.join("sound-only-reimport");
+    premiere_to_tesseract(&project, &output, None, false).unwrap();
+    let reread = TesseractFile::open(&project_files(&output)[0])
+        .unwrap()
+        .project_json()
+        .unwrap();
+    let sounds = layers_of(&reread, "Audio");
+    assert_eq!(sounds.len(), 1);
+    assert_eq!(
+        *crate::test_support::layer_range(&sounds[0]),
+        json!({"start":10000,"duration":4000})
+    );
+    assert_eq!(sounds[0]["sourceRange"], sound["sourceRange"]);
+    assert!((sounds[0]["volume"].as_f64().unwrap() - volume).abs() < 1e-7);
 }
 
 /// N of the images/nests fixture with its video item 116 disabled, as
@@ -965,7 +1558,7 @@ fn a_nest_sound_under_a_hidden_picture_plays_alone_and_round_trips() {
             .iter()
             .map(|layer| layer["type"].clone())
             .collect();
-        assert_eq!(children, [json!("Video")]);
+        assert_eq!(children, [json!("Image"), json!("Video")]);
         let [sound] = layers_of(&document, "Audio").try_into().unwrap();
         assert_eq!(
             sound["source"]["assetId"],
@@ -1217,6 +1810,70 @@ fn round_trip(root: &Path, imported: &Path, document: &Value) -> (String, PathBu
     (read_xml(&project), reimported)
 }
 
+/// Supplementary XML edit of the native images/nests fixture: a bypassed
+/// Track Matte Key on N must not erase its Image, video, sound or siblings.
+#[test]
+fn bypassed_nest_effect_keeps_image_bytes_and_exports_current_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut xml = read_xml(&fixtures().join(IMAGES_NESTS));
+    let (control, control_omissions) = import_images_nests(&root.join("control"), &xml);
+    edit_record(
+        &mut xml,
+        r#"<VideoComponentChain ObjectID="137""#,
+        "</VideoComponentChain>",
+        |record| {
+            record.replace("</ComponentChain>", r#"<Components><Component Index="0" ObjectRef="9900"/></Components></ComponentChain>"#)
+        },
+    );
+    xml = xml.replace("</PremiereData>", r#"<VideoFilterComponent ObjectID="9900"><Component><Intrinsic>false</Intrinsic><Bypass>true</Bypass></Component><MatchName>AE.ADBE Legacy Key Track Matte</MatchName></VideoFilterComponent></PremiereData>"#);
+    let (imported, omissions) = import_images_nests(&root.join("bypassed"), &xml);
+    assert_eq!(format!("{omissions:?}"), format!("{control_omissions:?}"));
+    let file = TesseractFile::open(&project_files(&imported)[0]).unwrap();
+    let mut document = file.project_json().unwrap();
+    let control = TesseractFile::open(&project_files(&control)[0]).unwrap();
+    assert_eq!(document, control.project_json().unwrap());
+    let group = inner_group(&document);
+    assert_eq!(
+        crate::test_support::layer_range(&group),
+        &json!({"start": 10000, "duration": 4000})
+    );
+    let image = group["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Image")
+        .unwrap();
+    let image_id = image["source"]["assetId"].as_str().unwrap();
+    let bytes = fs::read(fixtures().join("in_small.png")).unwrap();
+    assert_eq!(asset_bytes(&file, image_id), bytes);
+    let edited_group = document["composition"]["layers"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|layer| layer["id"] == group["id"])
+        .unwrap();
+    edited_group["transform"]["opacity"] = json!(75.0);
+    let (_, again) = round_trip(root, &imported, &document);
+    let again = TesseractFile::open(&project_files(&again)[0]).unwrap();
+    let group = inner_group(&again.project_json().unwrap());
+    assert_eq!(group["transform"]["opacity"], 75.0);
+    assert_eq!(
+        crate::test_support::layer_range(&group),
+        &json!({"start": 10000, "duration": 4000})
+    );
+    let image = group["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Image")
+        .unwrap();
+    assert_eq!(
+        asset_bytes(&again, image["source"]["assetId"].as_str().unwrap()),
+        bytes
+    );
+}
+
 /// Item 115's Level keys on Inner's clock: 0 dB at 0.5 s, Linear to -12 dB
 /// at 2 s, held until it falls silent at 2.5 s, held silent until 0 dB at
 /// 3 s, then Linear to -6 dB at 5 s, after its Out.
@@ -1268,7 +1925,8 @@ fn a_nest_audio_items_level_keys_import_editable_on_its_sound_and_round_trip() {
     );
     let i4 = 10f64.powf(-6.0 / 20.0);
     let db = |db: f64| 10f64.powf(db / 20.0);
-    // N's visible picture without sound, and I4's one sound with the keys.
+    // N's visible pictures (I2's still and I1's video) without sound, and
+    // I4's one sound with the keys.
     let picture_and_sound = |imported: &Path| {
         let file = TesseractFile::open(&project_files(imported)[0]).unwrap();
         let document = file.project_json().unwrap();
@@ -1278,7 +1936,7 @@ fn a_nest_audio_items_level_keys_import_editable_on_its_sound_and_round_trip() {
             .iter()
             .map(|layer| layer["type"].clone())
             .collect();
-        assert_eq!(children, [json!("Video")]);
+        assert_eq!(children, [json!("Image"), json!("Video")]);
         let [sound] = layers_of(&document, "Audio").try_into().unwrap();
         assert_eq!(
             sound["source"]["assetId"],
@@ -1434,7 +2092,8 @@ fn a_nest_audio_items_hold_levels_multiply_into_each_keyed_sound_and_round_trip(
         (3000, 1.0, "hold"),
         (5000, db(-6.0), "hold"),
     ];
-    // N shows only its picture; each root sound's volume and keys.
+    // N shows only its pictures (I2's still and I1's video); each root
+    // sound's volume and keys.
     let sounds_of = |imported: &Path| {
         let file = TesseractFile::open(&project_files(imported)[0]).unwrap();
         let document = file.project_json().unwrap();
@@ -1444,7 +2103,7 @@ fn a_nest_audio_items_hold_levels_multiply_into_each_keyed_sound_and_round_trip(
             .iter()
             .map(|layer| layer["type"].clone())
             .collect();
-        assert_eq!(children, [json!("Video")]);
+        assert_eq!(children, [json!("Image"), json!("Video")]);
         let sounds: Vec<_> = layers_of(&document, "Audio")
             .iter()
             .map(|sound| {
@@ -1635,9 +2294,10 @@ fn nested_sounds_whose_level_keys_cannot_import_are_kept_silent() {
         let document = file.project_json().unwrap();
         let group = inner_group(&document);
         let children = group["layers"].as_array().unwrap();
-        // A sound in N's group is on the group's clock.
+        // A sound in N's group is on the group's clock, beside N's pictures
+        // (I2's still and I1's video).
         let (sounds, start): (Vec<_>, _) = if in_group {
-            assert_eq!(children.len(), 2, "{name}");
+            assert_eq!(children.len(), 3, "{name}");
             let sounds = children
                 .iter()
                 .filter(|layer| layer["type"] == "Audio")
@@ -1645,7 +2305,7 @@ fn nested_sounds_whose_level_keys_cannot_import_are_kept_silent() {
                 .collect();
             (sounds, 0)
         } else {
-            assert_eq!(children.len(), 1, "{name}");
+            assert_eq!(children.len(), 2, "{name}");
             (layers_of(&document, "Audio"), 10000)
         };
         assert_eq!(sounds.len(), expected.len(), "{name}");
@@ -1875,10 +2535,10 @@ fn a_nest_sound_that_cannot_take_its_items_level_keys_is_omitted_alone() {
             let (imported, omissions) = import_images_nests(&dir.path().join(name).join(root), xml);
             let file = TesseractFile::open(&project_files(&imported)[0]).unwrap();
             let document = file.project_json().unwrap();
-            // N's group keeps its picture only.
+            // N's group keeps its pictures only: I2's still and I1's video.
             assert_eq!(
                 inner_group(&document)["layers"].as_array().unwrap().len(),
-                1,
+                2,
                 "{name}"
             );
             let sounds: Vec<_> = layers_of(&document, "Audio")

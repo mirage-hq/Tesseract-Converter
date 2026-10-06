@@ -14,6 +14,7 @@ pub(crate) struct AliasMetadata {
     pub(crate) fullpath: Option<String>,
     pub(crate) target_is_folder: bool,
     pub(crate) relative_location: Option<RelativeLocation>,
+    pub(crate) relative_hint_malformed: bool,
 }
 
 /// AE's hint for relinking a moved project, from its alias `ascendcount_base`
@@ -58,32 +59,37 @@ struct RawAlias {
     #[serde(default)]
     target_is_folder: bool,
     #[serde(default)]
-    ascendcount_base: Option<RawCount>,
+    ascendcount_base: RawCount,
     #[serde(default)]
-    ascendcount_target: Option<RawCount>,
+    ascendcount_target: RawCount,
 }
 
-/// AE writes each count as a JSON integer. Any other value carries no relink
-/// hint rather than failing an otherwise readable alias.
-#[derive(Deserialize)]
+/// Keep malformed counts distinct from absent hints without rejecting the alias.
+#[derive(Default, Deserialize)]
 #[serde(untagged)]
 enum RawCount {
+    #[default]
+    #[serde(skip)]
+    Absent,
     Count(u32),
     Other(serde::de::IgnoredAny),
 }
 
 pub(crate) fn decode(bytes: &[u8]) -> Result<AliasMetadata, AliasDecodeError> {
     let alias: RawAlias = serde_json::from_slice(bytes)?;
-    let relative_location = match (alias.ascendcount_base, alias.ascendcount_target) {
-        (Some(RawCount::Count(ascend)), Some(RawCount::Count(components))) => {
-            RelativeLocation::new(ascend, components)
-        }
-        _ => None,
-    };
+    let (relative_location, relative_hint_malformed) =
+        match (alias.ascendcount_base, alias.ascendcount_target) {
+            (RawCount::Count(ascend), RawCount::Count(components)) => {
+                (RelativeLocation::new(ascend, components), false)
+            }
+            (RawCount::Absent, RawCount::Absent) => (None, false),
+            _ => (None, true),
+        };
     Ok(AliasMetadata {
         fullpath: alias.fullpath,
         target_is_folder: alias.target_is_folder,
         relative_location,
+        relative_hint_malformed,
     })
 }
 
@@ -97,19 +103,32 @@ mod tests {
         let alias = decode(native).unwrap();
         assert_eq!(alias.fullpath.as_deref(), Some("/Volumes/a/b/c.mp4"));
         assert_eq!(alias.relative_location, RelativeLocation::new(1, 3));
+        assert!(!alias.relative_hint_malformed);
         for counts in [
-            r#""ascendcount_base":0,"ascendcount_target":3"#,
-            r#""ascendcount_base":1,"ascendcount_target":0"#,
+            "",
+            r#""ascendcount_base":0,"ascendcount_target":0,"#,
+            r#""ascendcount_base":0,"ascendcount_target":2,"#,
+            r#""ascendcount_base":1,"ascendcount_target":0,"#,
+        ] {
+            let alias = decode(format!(r#"{{{counts}"fullpath":"/a/b.mp4"}}"#).as_bytes()).unwrap();
+            assert_eq!(alias.relative_location, None, "{counts}");
+            assert!(!alias.relative_hint_malformed, "{counts}");
+        }
+        for counts in [
             r#""ascendcount_base":-1,"ascendcount_target":3"#,
             r#""ascendcount_base":"1","ascendcount_target":3"#,
             r#""ascendcount_base":1.5,"ascendcount_target":3"#,
             r#""ascendcount_base":4294967296,"ascendcount_target":3"#,
             r#""ascendcount_target":3"#,
+            r#""ascendcount_base":1"#,
+            r#""ascendcount_base":1,"ascendcount_target":null"#,
+            r#""ascendcount_base":null,"ascendcount_target":null"#,
         ] {
             let alias =
                 decode(format!(r#"{{{counts},"fullpath":"/a/b.mp4"}}"#).as_bytes()).unwrap();
             assert_eq!(alias.fullpath.as_deref(), Some("/a/b.mp4"), "{counts}");
             assert_eq!(alias.relative_location, None, "{counts}");
+            assert!(alias.relative_hint_malformed, "{counts}");
         }
         let folder = RelativeLocation::new(2, 2)
             .unwrap()

@@ -4,7 +4,6 @@ use crate::{
     image_media::{inspect_image_media, ImageFormat, ValidatedImage},
     media_metadata::ColourDescription,
     schema::{HdrProfile, PrMediaKind, PrVideoStream, VideoCodec},
-    video_format::VideoFormat,
 };
 use std::{
     io::{Read, Seek},
@@ -12,6 +11,9 @@ use std::{
     path::Path,
 };
 use tesseract_file::AssetKind;
+
+mod export;
+pub(crate) use export::inspect_export_video_media;
 
 /// A media file container that conversion packages, named by its file
 /// extension in any letter case. Each media kind admits its own containers
@@ -57,7 +59,9 @@ impl MediaContainer {
     fn admits(self, kind: Option<PrMediaKind>) -> bool {
         match kind {
             Some(PrMediaKind::Video { .. }) => self.holds_video(),
-            Some(PrMediaKind::Still { .. }) => matches!(self, Self::Image(_)),
+            Some(PrMediaKind::Still { .. } | PrMediaKind::NumberedStills { .. }) => {
+                matches!(self, Self::Image(_))
+            }
             // Generators have no file; linked AEPs are not renderable FX assets.
             Some(
                 PrMediaKind::ColorMatte(_)
@@ -101,8 +105,8 @@ pub(crate) fn admitted_container(media: &PrMedia, file: &Path) -> Option<MediaCo
 }
 
 impl PrMedia {
-    /// Whether this is generator media (a Color Matte or an adjustment layer's
-    /// Black Video), which has no file to package.
+    /// Whether this is generator media (Color Matte or Black Video, ordinary
+    /// or adjustment-layer), which has no file to package.
     pub(crate) fn is_generator(&self) -> bool {
         self.video.as_ref().is_some_and(|video| {
             matches!(
@@ -120,6 +124,17 @@ impl PrMedia {
 pub(crate) enum MediaFacts {
     Video(VideoMedia),
     Still(ValidatedImage),
+    /// Physical picture validated for export, but never admitted to the native
+    /// writer. Its layer-owned loss can select the existing editable AE route.
+    UnsupportedVideo(UnsupportedVideoMedia),
+}
+
+#[derive(Debug)]
+pub(crate) struct UnsupportedVideoMedia {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) timing: VideoTiming,
+    pub(crate) reason: String,
 }
 
 impl MediaFacts {
@@ -127,6 +142,7 @@ impl MediaFacts {
         match self {
             Self::Video(video) => (video.width, video.height),
             Self::Still(image) => (image.width, image.height),
+            Self::UnsupportedVideo(video) => (video.width, video.height),
         }
     }
 
@@ -137,6 +153,7 @@ impl MediaFacts {
         match self {
             Self::Video(video) => video.validate_source(source),
             Self::Still(_) => Ok(()),
+            Self::UnsupportedVideo(video) => Err(unsupported(&video.reason)),
         }
     }
 }
@@ -155,9 +172,10 @@ pub(crate) fn unsupported_media_reason(error: BuildError) -> Result<String> {
         {
             Err(error.into())
         }
-        error @ (BuildError::Unsupported(_) | BuildError::Mp4(_) | BuildError::Audio(_)) => {
-            Ok(error.to_string())
-        }
+        error @ (BuildError::Unsupported(_)
+        | BuildError::UnsupportedVideoCodec(_)
+        | BuildError::Mp4(_)
+        | BuildError::Audio(_)) => Ok(error.to_string()),
         error => Err(error),
     }
 }
@@ -179,9 +197,17 @@ pub(crate) fn inspect_media(
 ) -> Result<MediaFacts> {
     match kind {
         PrMediaKind::Video { .. } => {
-            inspect_video_for_use(reader, metadata_reader, size, usage).map(MediaFacts::Video)
+            let video = inspect_video_for_use(reader, metadata_reader, size, usage)?;
+            // A Tesseract document plays through the web player, which the
+            // Adobe-bound export does not; a codec it cannot decode is a
+            // transcode candidate here, with the sibling-preserving omission
+            // that the codec error class selects.
+            if let Some(reason) = video.codec.tesseract_player_rejection() {
+                return Err(BuildError::UnsupportedVideoCodec(reason));
+            }
+            Ok(MediaFacts::Video(video))
         }
-        PrMediaKind::Still { .. } => inspect_image_media(reader).map(MediaFacts::Still),
+        PrMediaKind::Still { .. } | PrMediaKind::NumberedStills { .. } => inspect_image_media(reader).map(MediaFacts::Still),
         PrMediaKind::AfterEffectsComposition(_) => Err(unsupported(
             "linked After Effects composition requires editable AEP resolution; it is not a decoded video asset",
         )),
@@ -295,19 +321,34 @@ pub(crate) fn inspect_video_for_use(
         description,
         &mut metadata_reader,
     )?;
-    validate_media_timing(
+    let timing = validate_media_timing(
         stream,
         &inspection.packets,
         track,
         metadata.timescale,
         size,
-        format,
         usage,
-    )
+    )?;
+    if let Some(origin) = timing.presentation_origin() {
+        metadata_reader.seek(std::io::SeekFrom::Start(0))?;
+        let displayed = media_transcode::inspect::inspect_presentation(&mut metadata_reader, size)?;
+        origin.validate_packets(&inspection, &displayed, stream, track.timescale)?;
+    }
+    Ok(VideoMedia {
+        pixel_aspect: format.pixel_aspect,
+        codec: format.codec,
+        bit_depth: format.bit_depth,
+        colour: format.colour,
+        width: stream.width,
+        height: stream.height,
+        orientation: format.orientation,
+        timing,
+    })
 }
 
 #[derive(Debug)]
 pub(crate) struct VideoMedia {
+    pub(crate) pixel_aspect: crate::schema::records::PixelAspectRatio,
     pub(crate) codec: VideoCodec,
     /// Luma and chroma bit depth, 8 or 10.
     pub(crate) bit_depth: u8,
@@ -320,12 +361,13 @@ pub(crate) struct VideoMedia {
     pub(crate) orientation: crate::schema::VideoOrientation,
 }
 
-/// The source interval that a selected unit use may consume: from the first
-/// physical presentation time, which the first playback edit starts at, to
-/// the start of the last sample, whose duration is uncertain, and within that
-/// first edit.
+/// Selected displayed-clock intervals stay inside the first unit edit and
+/// before the uncertain final sample. A proved positive-origin translation
+/// additionally bounds the rounded playback on the decoder's physical clock.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct VideoWindow {
+    /// A proved displayed-zero to decoder-source translation, never rewritten packets.
+    presentation_origin: Option<PresentationOrigin>,
     /// The last sample's presentation start after the first, in `timescale`
     /// units.
     last_start: i128,
@@ -359,8 +401,91 @@ impl VideoWindow {
                     && source_end <= self.last_start * ticks_per_second,
                 "selected picture interval is outside the proved physical presentation window (uncertain final sample excluded)"
             );
+            if let Some(origin) = self.presentation_origin {
+                let end = round_duration_millis(i128::from(range.end) * 1000, ticks_per_second)?
+                    + i128::from(origin.offset_millis);
+                ensure!(
+                    end <= i128::from(origin.limit_millis),
+                    "rounded presentation-origin mapping exceeds proved physical sample coverage"
+                );
+            }
         }
         Ok(())
+    }
+}
+
+/// A positive CTTS origin whose displayed clock is a proved packet translation.
+/// Integer-ms playback rounds forward; `limit_millis` excludes unsupported tails.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PresentationOrigin {
+    pub(crate) units: u64,
+    pub(crate) offset_millis: u64,
+    limit_millis: u64,
+}
+
+impl PresentationOrigin {
+    pub(crate) fn validate_packets(
+        self,
+        raw: &media_transcode::inspect::MediaInspection,
+        displayed: &media_transcode::inspect::MediaInspection,
+        stream: &media_transcode::inspect::StreamInfo,
+        timescale: u32,
+    ) -> Result<()> {
+        let shown_stream = displayed
+            .streams
+            .iter()
+            .find(|shown| shown.index == stream.index)
+            .ok_or_else(|| unsupported("displayed video stream is missing"))?;
+        ensure!(
+            shown_stream == stream,
+            "displayed video stream changes the source descriptor"
+        );
+        let raw_packets: Vec<_> = raw
+            .packets
+            .iter()
+            .filter(|packet| packet.stream_index == stream.index)
+            .collect();
+        let shown_packets: Vec<_> = displayed
+            .packets
+            .iter()
+            .filter(|packet| packet.stream_index == stream.index)
+            .collect();
+        ensure!(
+            raw_packets.len() == shown_packets.len(),
+            "displayed video clock changes the sample count"
+        );
+        for (raw, shown) in raw_packets.iter().zip(shown_packets) {
+            ensure!(
+                raw.position == shown.position && raw.size == shown.size,
+                "displayed video clock changes sample identity or order"
+            );
+            for (physical, displayed) in [(raw.dts, shown.dts), (raw.pts, shown.pts)] {
+                let physical = physical
+                    .ok_or_else(|| unsupported("physical video sample has no timestamp"))?;
+                let displayed = displayed
+                    .ok_or_else(|| unsupported("displayed video sample has no timestamp"))?;
+                ensure!(
+                    packet_time_in_track_units(physical, stream, timescale)?
+                        - i128::from(self.units)
+                        == packet_time_in_track_units(displayed, shown_stream, timescale)?,
+                    "displayed video clock is not the proved affine origin translation"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn shifted_start(self, start_millis: u64, duration_millis: u64) -> Result<u64> {
+        let start = start_millis
+            .checked_add(self.offset_millis)
+            .ok_or_else(|| unsupported("presentation-origin source start overflows"))?;
+        ensure!(
+            start
+                .checked_add(duration_millis)
+                .is_some_and(|end| end <= self.limit_millis),
+            "rounded presentation-origin mapping exceeds proved physical sample coverage"
+        );
+        Ok(start)
     }
 }
 
@@ -377,6 +502,9 @@ pub(crate) struct VideoTiming {
     /// Whether the edit list keeps only part of the source presentation, so
     /// only proved selected intervals import.
     pub(crate) partial_timeline: bool,
+    /// Original MDHD endpoint when it declares an unsupported terminal tail.
+    /// The sample clock remains authoritative; only proved interior uses import.
+    pub(crate) declared_media_end: Option<u64>,
     /// Whether version 0 composition offsets are read as signed values.
     pub(crate) legacy_signed_ctts: bool,
 }
@@ -416,7 +544,12 @@ impl SampleClock {
 }
 
 impl VideoTiming {
-    /// Export remains restricted to exact constant clocks at listed rates.
+    pub(crate) fn presentation_origin(&self) -> Option<PresentationOrigin> {
+        self.window.presentation_origin
+    }
+
+    /// Exact listed CFR descriptor for consumers that require one (including
+    /// audio padding). Irregular native export uses `source_clock` instead.
     pub(crate) fn supported(&self) -> Result<(FrameRate, i64)> {
         let SampleClock::Constant { sample_duration } = self.clock else {
             return Err(unsupported(match self.clock {
@@ -440,9 +573,70 @@ impl VideoTiming {
         Ok((rate, duration))
     }
 
+    /// Native media descriptor, never a rewritten packet clock. A whole-source
+    /// irregular clock uses its mean period rounded to the nearest Adobe tick;
+    /// callers report nominal/VFR sampling and source-time/grid rounding deviations.
+    pub(crate) fn source_clock(&self) -> Result<(crate::schema::SourceFrameRate, i64)> {
+        ensure!(
+            !self.partial_timeline,
+            "partial video timelines are unsupported for export"
+        );
+        if let SampleClock::Irregular { media_end } = self.clock {
+            ensure!(
+                self.timescale > 0 && self.sample_count > 0 && media_end > 0,
+                "physical source clock must be positive"
+            );
+            let numerator = i128::from(crate::schema::TICKS) * i128::from(media_end);
+            let divisor = i128::from(self.timescale) * i128::from(self.sample_count);
+            let period = i64::try_from((numerator + divisor / 2) / divisor)
+                .map_err(|_| unsupported("nominal source period exceeds Premiere's tick range"))?;
+            let rate = crate::schema::SourceFrameRate::from_ticks_per_frame(period)?;
+            ensure!(rate.supported().is_none(), "irregular source average coincides with a listed native rate; its interpretation is ambiguous");
+            let duration = period
+                .checked_mul(i64::from(self.sample_count))
+                .ok_or_else(|| {
+                    unsupported("nominal source duration exceeds Premiere's tick range")
+                })?;
+            ensure!(
+                round_duration_millis(
+                    i128::from(duration) * 1000,
+                    i128::from(crate::schema::TICKS)
+                )? == self.duration_millis()?,
+                "nominal source descriptor rounding changes the physical duration in milliseconds"
+            );
+            return Ok((rate, duration));
+        }
+        let SampleClock::Constant { sample_duration } = self.clock else {
+            return Err(unsupported(
+                "quantized video sample clocks are unsupported for export",
+            ));
+        };
+        ensure!(
+            self.timescale > 0 && sample_duration > 0 && self.sample_count > 0,
+            "physical source clock must be positive"
+        );
+        let numerator = i128::from(crate::schema::TICKS) * i128::from(sample_duration);
+        let divisor = i128::from(self.timescale);
+        ensure!(
+            numerator % divisor == 0,
+            "physical source period is not an integral Premiere tick"
+        );
+        let period = i64::try_from(numerator / divisor)
+            .map_err(|_| unsupported("physical source period exceeds Premiere's tick range"))?;
+        let duration = period
+            .checked_mul(i64::from(self.sample_count))
+            .ok_or_else(|| unsupported("physical source duration exceeds Premiere's tick range"))?;
+        Ok((
+            crate::schema::SourceFrameRate::from_ticks_per_frame(period)?,
+            duration,
+        ))
+    }
+
     #[cfg(test)]
     pub(crate) fn for_test(rate: FrameRate, duration_ticks: i64) -> Self {
         let (timescale, sample_duration) = rate.frames_per_second();
+        let timescale = u32::try_from(timescale).unwrap();
+        let sample_duration = u32::try_from(sample_duration).unwrap();
         assert_eq!(duration_ticks % rate.ticks_per_frame(), 0);
         let sample_count = u32::try_from(duration_ticks / rate.ticks_per_frame()).unwrap();
         Self {
@@ -450,12 +644,14 @@ impl VideoTiming {
             timescale,
             sample_count,
             window: VideoWindow {
+                presentation_origin: None,
                 last_start: i128::from(sample_count.saturating_sub(1))
                     * i128::from(sample_duration),
                 timescale,
                 edit_duration: None,
             },
             partial_timeline: false,
+            declared_media_end: None,
             legacy_signed_ctts: false,
         }
     }
@@ -541,20 +737,33 @@ fn validate_media_timing(
     track: &crate::media_metadata::TrackMetadata,
     movie_timescale: u32,
     file_size: u64,
-    format: VideoFormat,
     usage: Option<&VideoUse>,
-) -> Result<VideoMedia> {
+) -> Result<VideoTiming> {
     ensure!(
         stream.time_base_num > 0 && stream.time_base_den > 0 && track.timescale > 0,
         "packaged MP4 has an invalid video time base"
     );
     let timing = track
         .sample_timing
+        .as_ref()
         .ok_or_else(|| unsupported("missing video sample timing"))?;
-    ensure!(
-        timing.sample_count > 0 && timing.media_end == track.duration,
-        "packaged MP4 declared duration differs from its exact sample timeline"
-    );
+    ensure!(timing.sample_count > 0, "empty video sample timeline");
+    let declared_media_end = (timing.media_end != track.duration).then_some(track.duration);
+    if declared_media_end.is_some() {
+        // STTS defines sample times and their extent (QuickTime Time-to-Sample);
+        // FFmpeg mov_read_stts caps the stream duration at that extent. A longer
+        // MDHD cannot create samples. Recover only selected picture interiors,
+        // with excess strictly smaller than the final decoded sample interval.
+        // This is a sample-bound policy, not a tick/epsilon rounding allowance.
+        ensure!(
+            usage.is_some_and(|usage| !usage.uses_audio)
+                && track.duration > timing.media_end
+                && track.duration - timing.media_end < u64::from(timing.final_duration)
+                && stream.duration > 0
+                && stream.frame_count == i64::from(timing.sample_count),
+            "packaged MP4 declared duration differs from its exact sample timeline"
+        );
+    }
     let packets: Vec<_> = packets
         .iter()
         .filter(|packet| packet.stream_index == stream.index)
@@ -569,7 +778,12 @@ fn validate_media_timing(
         .map_err(|_| unsupported("video sample timeline exceeds host address space"))?;
     let mut dts_origin = None;
     let mut previous_dts = None;
-    for packet in &packets {
+    let mut expected_dts = 0_i128;
+    let sample_durations = timing
+        .decode_runs
+        .iter()
+        .flat_map(|&(count, duration)| (0..count).map(move |_| duration));
+    for (packet, duration) in packets.iter().zip(sample_durations) {
         let dts = packet
             .dts
             .ok_or_else(|| unsupported("packaged MP4 sample timeline has no decode timestamp"))?;
@@ -585,12 +799,11 @@ fn validate_media_timing(
             previous_dts.map_or(dts == 0, |previous| previous < dts),
             "packaged MP4 sample timeline is empty or discontinuous"
         );
-        if let (Some(previous), Some(expected)) = (previous_dts, timing.constant_duration) {
-            ensure!(
-                dts - previous == i128::from(expected),
-                "packaged MP4 packet duration differs from its sample timing table"
-            );
-        }
+        ensure!(
+            dts == expected_dts,
+            "packaged MP4 packet decode timestamp differs from its sample timing table"
+        );
+        expected_dts += i128::from(duration);
         previous_dts = Some(dts);
         ensure!(
             packet.position >= 0 && packet.size > 0,
@@ -612,10 +825,8 @@ fn validate_media_timing(
     }
     let final_dts = previous_dts.expect("nonempty packet timeline");
     ensure!(
-        final_dts < i128::from(timing.media_end)
-            && timing.constant_duration.is_none_or(|duration| {
-                final_dts + i128::from(duration) == i128::from(timing.media_end)
-            })
+        final_dts + i128::from(timing.final_duration) == i128::from(timing.media_end)
+            && expected_dts == i128::from(timing.media_end)
             && (stream.duration <= 0
                 || packet_time_in_track_units(stream.duration, stream, track.timescale)?
                     == i128::from(timing.media_end))
@@ -694,10 +905,6 @@ fn validate_media_timing(
             first_presentation >= 0 && unique_presentation && last_start < i128::from(media_end),
             "legacy signed CTTSv0 requires unique physical PTS inside the exact decode endpoint"
         );
-        ensure!(
-            matches!(clock, SampleClock::Constant { .. }) || usage.is_some(),
-            "irregular legacy signed CTTSv0 requires selected unit interior picture intervals"
-        );
     }
     let final_presentation_interval = if matches!(clock, SampleClock::Irregular { .. }) {
         u64::try_from(i128::from(media_end) - last_start)
@@ -743,10 +950,11 @@ fn validate_media_timing(
 
         Ok(())
     })();
-    let partial_timeline = full_edit.is_err();
+    let partial_timeline = full_edit.is_err() || declared_media_end.is_some();
     if usage.is_none() {
         full_edit?;
     }
+    let mut presentation_origin = None;
     let edit_duration = if let Some(edit) = edit {
         ensure!(
             movie_timescale > 0,
@@ -762,10 +970,37 @@ fn validate_media_timing(
                 && first.segment_duration > 0,
             "first MP4 edit list segment must be positive unit playback; empty, negative or retimed edits are unsupported"
         );
-        ensure!(
-            i128::from(first.media_time) == first_presentation,
-            "first MP4 edit list origin must match the first physical presentation timestamp"
-        );
+        if i128::from(first.media_time) != first_presentation {
+            ensure!(
+                first.media_time == 0
+                    && first_presentation > 0
+                    && edit.len() == 1
+                    && usage.is_some_and(|usage| !usage.uses_audio),
+                "first MP4 edit list origin must match the first physical presentation timestamp"
+            );
+            // FFmpeg's displayed clock translates positive CTTS origins to zero.
+            // Our decoder keeps raw PTS minus media_time. Bind that translation
+            // to the unchanged packets, then round forward to editable ms so
+            // playback cannot request nonexistent pre-origin coverage.
+            let units = u64::try_from(first_presentation)
+                .map_err(|_| unsupported("presentation origin exceeds the media clock range"))?;
+            let offset_millis = u64::try_from(
+                (i128::from(units) * 1000 + i128::from(timescale) - 1) / i128::from(timescale),
+            )
+            .map_err(|_| unsupported("presentation origin exceeds the millisecond range"))?;
+            let limit = (first_presentation + last_start).min(i128::from(media_end));
+            let limit_millis = u64::try_from(limit * 1000 / i128::from(timescale))
+                .map_err(|_| unsupported("presentation window exceeds the millisecond range"))?;
+            ensure!(
+                offset_millis < limit_millis,
+                "presentation origin leaves no usable picture interval"
+            );
+            presentation_origin = Some(PresentationOrigin {
+                units,
+                offset_millis,
+                limit_millis,
+            });
+        }
         Some((first.segment_duration, movie_timescale))
     } else {
         ensure!(
@@ -774,36 +1009,28 @@ fn validate_media_timing(
         );
         None
     };
-    // The presentation origin is the first edit's media time, so the window
-    // starts at zero on the source clock.
+    // Selected ranges address displayed zero. An admitted positive CTTS origin
+    // additionally bounds the edited translation into the decoder's raw clock.
     let window = VideoWindow {
+        presentation_origin,
         last_start,
         timescale,
         edit_duration,
     };
     if let Some(usage) = usage {
-        if partial_timeline
-            || (matches!(clock, SampleClock::Irregular { .. }) && (legacy_signed_ctts || constant))
-        {
+        if partial_timeline || (matches!(clock, SampleClock::Irregular { .. }) && constant) {
             window.validate(&usage.ranges)?;
         }
     }
 
-    Ok(VideoMedia {
-        codec: format.codec,
-        bit_depth: format.bit_depth,
-        colour: format.colour,
-        width: stream.width,
-        height: stream.height,
-        orientation: format.orientation,
-        timing: VideoTiming {
-            clock,
-            timescale,
-            sample_count,
-            window,
-            partial_timeline,
-            legacy_signed_ctts,
-        },
+    Ok(VideoTiming {
+        clock,
+        timescale,
+        sample_count,
+        window,
+        partial_timeline,
+        declared_media_end,
+        legacy_signed_ctts,
     })
 }
 
@@ -825,6 +1052,33 @@ impl VideoMedia {
         source: &PrVideoStream,
         usage: Option<&VideoUse>,
     ) -> Result<bool> {
+        if let Some(declared_end) = self.timing.declared_media_end {
+            // A nominal native descriptor is not an inferred physical grid. It
+            // must match the original header and count; playback uses the exact
+            // retained PTS only inside the proved first-edit/sample window.
+            ensure!(
+                self.orientation == source.orientation
+                    && i64::from(self.timing.sample_count)
+                        .checked_mul(source.frame_rate.ticks_per_frame())
+                        == Some(source.intrinsic_ticks)
+                    && i128::from(source.intrinsic_ticks) * i128::from(self.timing.timescale)
+                        == i128::from(declared_end) * i128::from(crate::schema::TICKS),
+                "native VideoStream count, orientation or duration disagrees with the declared media header"
+            );
+            let usage = usage.filter(|usage| !usage.uses_audio).ok_or_else(|| {
+                unsupported("declared media-header tail requires selected picture-only intervals")
+            })?;
+            self.timing.window.validate(&usage.ranges)?;
+            return Ok(true);
+        }
+        if self.timing.presentation_origin().is_some() {
+            self.validate_source_descriptor(source)?;
+            let usage = usage.filter(|usage| !usage.uses_audio).ok_or_else(|| {
+                unsupported("presentation origin requires selected picture-only intervals")
+            })?;
+            self.timing.window.validate(&usage.ranges)?;
+            return Ok(true);
+        }
         let Err(error) = self.validate_source(source) else {
             return Ok(self.timing.partial_timeline);
         };
@@ -848,6 +1102,18 @@ impl VideoMedia {
     /// Compare the orientation, frame rate and duration of a native video
     /// stream with the file.
     pub(crate) fn validate_source(&self, source: &PrVideoStream) -> Result<()> {
+        ensure!(
+            self.timing.declared_media_end.is_none(),
+            "declared media-header tail is unsupported for whole-source admission"
+        );
+        ensure!(
+            self.timing.presentation_origin().is_none(),
+            "shifted presentation origin is unsupported for whole-source admission"
+        );
+        self.validate_source_descriptor(source)
+    }
+
+    fn validate_source_descriptor(&self, source: &PrVideoStream) -> Result<()> {
         ensure!(
             self.orientation == source.orientation,
             "native source orientation disagrees with the MP4 quarter-turn display matrix"
@@ -894,6 +1160,28 @@ impl VideoMedia {
                 native_duration == source.intrinsic_ticks,
                 "native VideoStream Duration does not match its constant frame duration and file sample count"
             );
+            if let SampleClock::Irregular { media_end } = self.timing.clock {
+                if !self.timing.partial_timeline {
+                    // Premiere records count × a rounded average period, not
+                    // the exact VFR endpoint. Allow one native period in either
+                    // direction, without rounding either duration to milliseconds.
+                    // A complete edit may end inside the last physical sample.
+                    let (duration, timescale) = self
+                        .timing
+                        .window
+                        .edit_duration
+                        .unwrap_or((media_end, self.timing.timescale));
+                    let native = i128::from(native_duration) * i128::from(timescale);
+                    let measured = i128::from(duration) * i128::from(crate::schema::TICKS);
+                    let tolerance =
+                        i128::from(source.frame_rate.ticks_per_frame()) * i128::from(timescale);
+                    ensure!(
+                        native.abs_diff(measured) <= tolerance.unsigned_abs(),
+                        "native VideoStream duration differs from the presentation endpoint by more than one native frame period"
+                    );
+                    return Ok(());
+                }
+            }
             let native_millis = round_duration_millis(
                 i128::from(native_duration)
                     .checked_mul(1000)
@@ -936,5 +1224,76 @@ mod quantized_tests {
             .unwrap_err()
             .to_string()
             .contains("ambiguous"));
+    }
+}
+
+/// One saved interpretation bound to the inspected whole physical CFR file.
+/// Its reduced slope must never be reconstructed from rounded source duration.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct InterpretedPictureClock {
+    numerator: i128,
+    denominator: i128,
+    duration_millis: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum PictureClock {
+    Interpreted(InterpretedPictureClock),
+    PresentationOrigin(PresentationOrigin),
+}
+
+pub(crate) type PictureClocks =
+    std::collections::BTreeMap<crate::schema::MediaId, Result<PictureClock>>;
+
+impl InterpretedPictureClock {
+    pub(crate) fn bind(source: &PrVideoStream, video: &VideoMedia) -> Result<Self> {
+        let crate::schema::SourceInterpretation::Rate(rate) = source.interpretation else {
+            return Err(unsupported(
+                "source has no valid active picture interpretation",
+            ));
+        };
+        source.interpreted_duration()?;
+        // Keep existing native-vs-file integrity checks, but never its partial
+        // selected-window escape hatch: native ranges here are interpreted.
+        video.validate_source(source)?;
+        let timing = &video.timing;
+        ensure!(
+            !timing.partial_timeline,
+            "interpreted picture requires a whole physical timeline"
+        );
+        let SampleClock::Constant { sample_duration } = timing.clock else {
+            return Err(unsupported(
+                "interpreted picture requires a measured whole constant sample clock",
+            ));
+        };
+        ensure!(
+            timing.timescale > 0 && sample_duration > 0 && timing.sample_count > 0,
+            "interpreted picture clock must be positive"
+        );
+        let numerator = i128::from(sample_duration) * i128::from(crate::schema::TICKS);
+        let denominator = i128::from(timing.timescale) * i128::from(rate.ticks_per_frame());
+        let mut a = numerator;
+        let mut b = denominator;
+        while b != 0 {
+            (a, b) = (b, a % b);
+        }
+        let duration_millis = u64::try_from(timing.duration_millis()?)
+            .map_err(|_| unsupported("physical source duration exceeds the millisecond range"))?;
+        ensure!(
+            duration_millis > 0,
+            "interpreted physical source duration rounds to zero milliseconds"
+        );
+        Ok(Self {
+            numerator: numerator / a,
+            denominator: denominator / a,
+            duration_millis,
+        })
+    }
+
+    pub(crate) fn ratio(self) -> (i128, i128) {
+        (self.numerator, self.denominator)
+    }
+    pub(crate) fn duration_millis(self) -> u64 {
+        self.duration_millis
     }
 }

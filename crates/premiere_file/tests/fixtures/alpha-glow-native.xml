@@ -1,0 +1,167 @@
+<!-- Native records from human-inputs-20261004.prproj (Premiere Pro 2026).
+Source SHA-256: e74d088116570ddb7178b127129036755be2f8e553dea80f98aa59b601585b76.
+Sequence effects: b3aecac7-c452-48ba-a5e1-737807cb32ee; subject.mov
+VideoClipTrackItem 328 owns chain 392: Alpha Glow 553 at Index 0,
+Crop 554 at Index 1 (Crop applies first). Records unchanged; external
+placement references intentionally excluded. No render reference.
+-->
+<PremiereData>
+<VideoClipTrackItem ObjectID="328" ClassID="368b0406-29e3-4923-9fcd-094fbf9a1089" Version="8">
+		<ClipTrackItem Version="8">
+			<ComponentOwner Version="1">
+				<Components ObjectRef="392"/>
+			</ComponentOwner>
+			<TrackItem Version="4">
+				<Start>8681462665140</Start>
+				<End>10417755198168</End>
+			</TrackItem>
+			<SubClip ObjectRef="393"/>
+		</ClipTrackItem>
+		<ToneMapSettings>{"peak":-1,"version":3}</ToneMapSettings>
+		<FrameRect>0,0,1280,720</FrameRect>
+		<PixelAspectRatio>1,1</PixelAspectRatio>
+	</VideoClipTrackItem>
+<VideoComponentChain ObjectID="392" ClassID="0970e08a-f58f-4108-b29a-1a717b8e12e2" Version="3">
+		<DefaultMotion>true</DefaultMotion>
+		<DefaultOpacity>true</DefaultOpacity>
+		<DefaultMotionComponentID>1</DefaultMotionComponentID>
+		<DefaultOpacityComponentID>2</DefaultOpacityComponentID>
+		<ComponentChain Version="3">
+			<Node Version="1">
+				<Properties Version="1">
+					<MZ.ComponentChain.ActiveComponentID>2</MZ.ComponentChain.ActiveComponentID>
+					<MZ.ComponentChain.ActiveComponentParamIndex>4294967295</MZ.ComponentChain.ActiveComponentParamIndex>
+				</Properties>
+			</Node>
+			<Components Version="1">
+				<Component Index="0" ObjectRef="553"/>
+				<Component Index="1" ObjectRef="554"/>
+			</Components>
+		</ComponentChain>
+	</VideoComponentChain>
+<VideoFilterComponent ObjectID="553" ClassID="d10da199-beea-4dd1-b941-ed3a78766d50" Version="9">
+		<Component Version="7">
+			<Params Version="1">
+				<Param Index="0" ObjectRef="759"/>
+				<Param Index="1" ObjectRef="760"/>
+				<Param Index="2" ObjectRef="761"/>
+				<Param Index="3" ObjectRef="762"/>
+				<Param Index="4" ObjectRef="763"/>
+				<Param Index="5" ObjectRef="764"/>
+			</Params>
+			<ID>4</ID>
+			<DisplayName>Alpha Glow</DisplayName>
+		</Component>
+		<VideoFilterType>2</VideoFilterType>
+		<MatchName>AE.ADBE Alpha Glow</MatchName>
+	</VideoFilterComponent>
+<VideoFilterComponent ObjectID="554" ClassID="d10da199-beea-4dd1-b941-ed3a78766d50" Version="9">
+		<Component Version="7">
+			<Node Version="1">
+				<Properties Version="1">
+					<ECP.Filter.Expanded>false</ECP.Filter.Expanded>
+				</Properties>
+			</Node>
+			<Params Version="1">
+				<Param Index="0" ObjectRef="765"/>
+				<Param Index="1" ObjectRef="766"/>
+				<Param Index="2" ObjectRef="767"/>
+				<Param Index="3" ObjectRef="768"/>
+				<Param Index="4" ObjectRef="769"/>
+				<Param Index="5" ObjectRef="770"/>
+			</Params>
+			<ID>5</ID>
+			<DisplayName>Crop</DisplayName>
+		</Component>
+		<VideoFilterType>2</VideoFilterType>
+		<MatchName>AE.ADBE AECrop</MatchName>
+	</VideoFilterComponent>
+<VideoComponentParam ObjectID="759" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Node Version="1">
+			<Properties Version="1">
+				<ECP.Slider.Expanded>true</ECP.Slider.Expanded>
+			</Properties>
+		</Node>
+		<Name>Glow</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<IsTimeVarying>true</IsTimeVarying>
+		<ParameterID>1</ParameterID>
+		<StartKeyframe>-91445760000000000,30,0,0,0,0,0,0</StartKeyframe>
+		<Keyframes>0,30,0,0,0,0.16666666666666666,24.578051905560901,0.16666666666666666;723455222095,100,0,0,24.578051905560901,0.16666666666666666,0,0.16666666666666666;</Keyframes>
+		<LowerBound>0</LowerBound>
+		<UpperBound>100</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="760" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>Brightness</Name>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>2</ParameterID>
+		<StartKeyframe>-91445760000000000,150,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>0</LowerBound>
+		<UpperBound>255</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="761" ClassID="0fde4e9f-f895-4ba3-b0fe-9a6feafda583" Version="10">
+		<Name>Start Color</Name>
+		<ParameterID>3</ParameterID>
+		<StartKeyframe>-91445760000000000,18374897589125431296,0,0,0,0,0,0</StartKeyframe>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="762" ClassID="0fde4e9f-f895-4ba3-b0fe-9a6feafda583" Version="10">
+		<Name>End Color</Name>
+		<ParameterID>4</ParameterID>
+		<StartKeyframe>-91445760000000000,18374897589125431296,0,0,0,0,0,0</StartKeyframe>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="763" ClassID="cc12343e-f113-4d3b-ae05-b287db77d461" Version="10">
+		<Name>Use End Color</Name>
+		<ParameterID>5</ParameterID>
+		<StartKeyframe>-91445760000000000,false,0,0,0,0,0,0</StartKeyframe>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="764" ClassID="cc12343e-f113-4d3b-ae05-b287db77d461" Version="10">
+		<Name>Fade Out</Name>
+		<ParameterID>6</ParameterID>
+		<StartKeyframe>-91445760000000000,true,0,0,0,0,0,0</StartKeyframe>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="765" ClassID="fe47129e-6c94-4fc0-95d5-c056a517aaf3" Version="10">
+		<Name>Left</Name>
+		<ParameterID>1</ParameterID>
+		<StartKeyframe>-91445760000000000,25.,0,0,0,0,0,0</StartKeyframe>
+		<CurrentValue>25</CurrentValue>
+		<LowerBound>0</LowerBound>
+		<UpperBound>100</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="766" ClassID="fe47129e-6c94-4fc0-95d5-c056a517aaf3" Version="10">
+		<Name>Top</Name>
+		<ParameterID>2</ParameterID>
+		<StartKeyframe>-91445760000000000,25.,0,0,0,0,0,0</StartKeyframe>
+		<CurrentValue>25</CurrentValue>
+		<LowerBound>0</LowerBound>
+		<UpperBound>100</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="767" ClassID="fe47129e-6c94-4fc0-95d5-c056a517aaf3" Version="10">
+		<Name>Right</Name>
+		<ParameterID>3</ParameterID>
+		<StartKeyframe>-91445760000000000,0.,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>0</LowerBound>
+		<UpperBound>100</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="768" ClassID="fe47129e-6c94-4fc0-95d5-c056a517aaf3" Version="10">
+		<Name>Bottom</Name>
+		<ParameterID>4</ParameterID>
+		<StartKeyframe>-91445760000000000,0.,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>0</LowerBound>
+		<UpperBound>100</UpperBound>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="769" ClassID="cc12343e-f113-4d3b-ae05-b287db77d461" Version="10">
+		<Name> </Name>
+		<ParameterID>5</ParameterID>
+		<StartKeyframe>-91445760000000000,false,0,0,0,0,0,0</StartKeyframe>
+	</VideoComponentParam>
+<VideoComponentParam ObjectID="770" ClassID="6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8" Version="10">
+		<Name>Edge Feather</Name>
+		<LowerUIBound>-100</LowerUIBound>
+		<ParameterControlType>1</ParameterControlType>
+		<ParameterID>6</ParameterID>
+		<UpperUIBound>100</UpperUIBound>
+		<StartKeyframe>-91445760000000000,0,0,0,0,0,0,0</StartKeyframe>
+		<LowerBound>-30000</LowerBound>
+		<UpperBound>30000</UpperBound>
+	</VideoComponentParam>
+</PremiereData>

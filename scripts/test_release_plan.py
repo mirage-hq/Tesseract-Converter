@@ -55,22 +55,22 @@ class ReleasePlanTests(unittest.TestCase):
             self.assertEqual(release_plan.release_identity("v0.2.0", SHA, "0.2.0"), "new")
 
     def test_repository_api_url_has_no_trailing_slash(self):
-        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "mirage-hq/conv-test", "GH_TOKEN": "token"}):
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "bungeeapp/jerboa"}):
             with patch.object(release_plan, "urlopen", return_value=io.BytesIO(b'{"default_branch":"main"}')) as request:
-                self.assertEqual(release_plan.api("")["default_branch"], "main")
+                self.assertEqual(release_plan.api("", token="")["default_branch"], "main")
                 self.assertEqual(request.call_args.args[0].full_url,
-                                 "https://api.github.com/repos/mirage-hq/conv-test")
+                                 "https://api.github.com/repos/bungeeapp/jerboa")
 
     def test_api_distinguishes_absence_from_permission_failure(self):
         def error(code):
             return HTTPError("https://api.github.test", code, "failure", {}, None)
 
-        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "token"}):
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/repo"}):
             with patch.object(release_plan, "urlopen", side_effect=error(404)):
-                self.assertIsNone(release_plan.api("releases/tags/v1.0.0"))
+                self.assertIsNone(release_plan.api("releases/tags/v1.0.0", token=""))
             with patch.object(release_plan, "urlopen", side_effect=error(403)):
                 with self.assertRaises(HTTPError):
-                    release_plan.api("releases/tags/v1.0.0")
+                    release_plan.api("releases/tags/v1.0.0", token="")
 
 
 class ReleasePlanIntegrationTests(unittest.TestCase):
@@ -101,7 +101,7 @@ class ReleasePlanIntegrationTests(unittest.TestCase):
         output = self.repo / "output"
         environment = {"GITHUB_SHA": sha, "GITHUB_EVENT_NAME": event, "GITHUB_REF": ref,
                        "GITHUB_EVENT_PATH": str(event_file), "GITHUB_OUTPUT": str(output),
-                       "GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "token"}
+                       "GITHUB_REPOSITORY": "owner/repo"}
         api_mock = api or (lambda path: {"default_branch": default_branch} if path == "" else None)
         os.chdir(self.repo)
         with patch.dict(os.environ, environment, clear=False), patch.object(sys, "argv", ["release_plan.py", "--phase", "validate"]), patch.object(release_plan, "api", side_effect=api_mock):

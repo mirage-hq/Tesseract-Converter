@@ -1,7 +1,7 @@
 //! The mask record of a clip's Opacity mask, in the v7 form that the written
 //! Opacity owner pairs with (`schema::mask`).
 
-use super::scalar_start_keyframe;
+use super::{animation::scalar_keyframes, scalar_start_keyframe};
 use crate::format::{writer::graph::MaskIds, Result};
 use crate::schema::{
     encode_mask_path,
@@ -16,8 +16,12 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 
 /// The mask component and its 13 parameters, as `abstract_slideshow` and
 /// `vhs_slideshow` save them: the tracking controls off, the path in unit
-/// frame fractions, Expansion 0, and the corpus constants.
+/// frame fractions, editable numeric controls, and the corpus constants. A keyed path is
+/// written as Premiere 26.5.1 saves one: `ticks,base64;` per
+/// key, `IsTimeVarying` true and the first key as the stored value. The v7
+/// form is unobserved with keys, and Premiere's reopen of it is unverified.
 pub(super) fn records(mask: &PrMask, ids: &MaskIds) -> Result<Vec<Record>> {
+    mask.validate()?;
     let form = &MASK_FORM_V7;
     let mut output = vec![Record::VideoFilterComponent(VideoFilterComponent {
         object_id: ids.component,
@@ -47,13 +51,21 @@ pub(super) fn records(mask: &PrMask, ids: &MaskIds) -> Result<Vec<Record>> {
     for (&object_id, spec) in ids.params.iter().zip(form.params()) {
         let control = match spec.role {
             MaskParamRole::Path => {
+                let keys = mask
+                    .path_keys
+                    .iter()
+                    .map(|key| {
+                        let payload = STANDARD.encode(encode_mask_path(&key.path)?);
+                        Ok(format!("{},{payload};", key.source_ticks))
+                    })
+                    .collect::<Result<String>>()?;
                 output.push(Record::ArbVideoComponentParam(ArbVideoComponentParam {
                     object_id,
                     class_id: Some(spec.class_id.to_owned()),
                     version: Some(MASK_PATH_RECORD_VERSION.to_owned()),
                     node: RetainedOrSkipped::Skipped,
                     name: spec.name.map(str::to_owned),
-                    is_time_varying: Some("false".to_owned()),
+                    is_time_varying: Some((!keys.is_empty()).to_string()),
                     parameter_control_type: spec.control.map(str::to_owned),
                     parameter_id: spec.id.to_string(),
                     start_keyframe_position: Some(records::STATIC_KEYFRAME_TIME.to_owned()),
@@ -62,11 +74,11 @@ pub(super) fn records(mask: &PrMask, ids: &MaskIds) -> Result<Vec<Record>> {
                         binary_hash: Some(ids.path_hash.clone()),
                         value: STANDARD.encode(encode_mask_path(&mask.path)?),
                     }),
-                    keyframes: None,
+                    keyframes: (!keys.is_empty()).then_some(keys),
                 }));
                 continue;
             }
-            MaskParamRole::Binary(_) => {
+            MaskParamRole::Binary(_) | MaskParamRole::TrackerState(_) => {
                 return Err(crate::format::invalid(
                     "the written mask form has no tracker values",
                 ))
@@ -76,7 +88,7 @@ pub(super) fn records(mask: &PrMask, ids: &MaskIds) -> Result<Vec<Record>> {
         let value = match control {
             MaskControl::Feather => mask.feather.to_string(),
             MaskControl::Opacity => mask.opacity.to_string(),
-            MaskControl::Expansion => "0".to_owned(),
+            MaskControl::Expansion => mask.expansion.to_string(),
             MaskControl::Inverted => mask.inverted.to_string(),
             MaskControl::Default(value) => value.to_owned(),
             MaskControl::Centre => {
@@ -85,18 +97,27 @@ pub(super) fn records(mask: &PrMask, ids: &MaskIds) -> Result<Vec<Record>> {
                 ))
             }
         };
+        let keys = match control {
+            MaskControl::Feather => mask.feather_keys.as_slice(),
+            MaskControl::Opacity => mask.opacity_keys.as_slice(),
+            MaskControl::Expansion => mask.expansion_keys.as_slice(),
+            _ => &[],
+        };
+        let value = keys.first().map_or(value, |key| key.value.to_string());
         let (lower_bound, upper_bound) = spec.bounds(form);
         output.push(Record::VideoComponentParam(VideoComponentParam {
             object_id,
             class_id: Some(spec.class_id.to_owned()),
             version: Some(records::VIDEO_COMPONENT_PARAM.version.to_owned()),
             name: spec.name.map(str::to_owned),
-            is_time_varying: Some("false".to_owned()),
+            is_time_varying: Some((!keys.is_empty()).to_string()),
             discontinuous_interpolate: None,
             parameter_control_type: spec.control.map(str::to_owned),
             start_keyframe: scalar_start_keyframe(&value),
             current_value: None,
-            keyframes: None,
+            keyframes: (!keys.is_empty())
+                .then(|| scalar_keyframes(keys))
+                .transpose()?,
             lower_bound,
             upper_bound,
             parameter_id: spec.id.to_string(),

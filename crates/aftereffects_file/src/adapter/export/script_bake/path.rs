@@ -2,7 +2,7 @@
 //! scripts or inferred particle identities. Topology changes remain held.
 
 use super::*;
-use fx_keyframe_bake::value_curve::{ValueCurveError, ValueKey, fit_value_curve};
+use fx_keyframe_bake::value_curve::{ValueCurveError, ValueKey, fit_sampled_value_curve};
 use fx_schema::{ShapePath, ShapePathCommand};
 
 // Geometry-space coordinate error, before ancestor transforms. This is not a
@@ -13,13 +13,14 @@ pub(super) fn bake(
     entry: &AnimationGraphEntry,
     code: &str,
     owner: Owner,
-    used_ids: &mut BTreeSet<String>,
+    builder: &mut keys::Builder,
     budget: &mut Budget,
-) -> Result<PropertyAnimator, BakeError> {
+    sampling: Sampling,
+) -> Result<Vec<keys::Key>, BakeError> {
     let seed = seed::prefix(entry.random_seed_target.as_ref().unwrap_or(&entry.target));
-    let mut runtime = ScriptRuntime::new()?;
-    let keys = fit_value_curve(
-        owner.duration_ms,
+    let mut runtime = execution::runtime()?;
+    let keys = fit_sampled_value_curve(
+        owner.times(sampling),
         TOLERANCE,
         usize::from(u16::MAX),
         |time| evaluate(&mut runtime, code, seed, time, budget),
@@ -31,15 +32,14 @@ pub(super) fn bake(
             BakeError::Unsupported("Path keys exceed the native u16 key field")
         }
     })?;
-    validate_fresh(code, seed, owner.duration_ms, &keys, budget)?;
-    let identity = conversion_identity_seed(&serde_json::to_vec(&entry.target)?, code.as_bytes());
+    validate_fresh(code, seed, owner, &keys, budget, sampling)?;
+    builder.identify(entry, code)?;
     let keys = keys
         .into_iter()
         .map(|key| {
             let time = i64::try_from(key.offset_ms).map_err(|_| BakeError::Budget("key time"))?;
-            Ok(PropertyKeyframe::new(
-                fx_schema::KeyframeId::new(converted_keyframe_id(identity, time, used_ids)),
-                TimeOffset::from_millis(time),
+            Ok(builder.record(
+                time,
                 PropertyValue::Path(key.value),
                 if key.linear {
                     PropertyKeyframeEasing::Linear
@@ -49,13 +49,7 @@ pub(super) fn bake(
             ))
         })
         .collect::<Result<Vec<_>, BakeError>>()?;
-    let track = PropertyKeyframeTrack::new(keys)?;
-    track.validate_for_target(&entry.target)?;
-    budget.keys = budget
-        .keys
-        .checked_add(track.keyframes().len())
-        .ok_or(BakeError::Budget("key counter overflow"))?;
-    Ok(PropertyAnimator::keyframes(track))
+    Ok(keys)
 }
 
 fn evaluate(
@@ -150,14 +144,18 @@ fn interpolation_error(
 fn validate_fresh(
     code: &str,
     seed: u64,
-    duration: u64,
+    owner: Owner,
     keys: &[ValueKey<ShapePath>],
     budget: &mut Budget,
+    sampling: Sampling,
 ) -> Result<(), BakeError> {
-    let mut runtime = ScriptRuntime::new()?;
+    let mut runtime = execution::runtime()?;
     // Probe out of playback order before the ascending pass, so a global
     // counter cannot masquerade as owner-local time by observing call order.
-    for time in [duration, 0].into_iter().chain(0..=duration) {
+    for time in [owner.end_ms(), owner.start_ms]
+        .into_iter()
+        .chain(owner.times(sampling))
+    {
         let index = keys
             .partition_point(|key| key.offset_ms <= time)
             .saturating_sub(1);

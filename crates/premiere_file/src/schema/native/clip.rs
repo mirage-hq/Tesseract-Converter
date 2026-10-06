@@ -107,6 +107,15 @@ pub(crate) struct MasterClip {
     pub(crate) logging_info: Option<RetainedOrSkipped<Ref<ClipLoggingInfo>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) audio_component_chains: Option<AudioComponentChains>,
+    /// The master clip's own `VideoComponentChain` (source effects, or a
+    /// Source Graphic's shared content), separate from each placement's
+    /// `ComponentOwner` chain; follow it with `Graph::follow`. A repeated
+    /// child is ambiguous and fails to decode. The graphic reader reads a
+    /// Source Graphic's objects from it; `read_placement` admits a media
+    /// master's chain as each placement's source effects, which import
+    /// converts or reports, and the writer never writes it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) video_component_chain: Option<Reference>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) clips: Option<Clips>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -134,8 +143,7 @@ pub(crate) struct MasterNode {
     /// writes a file-media master clip's `Node` with this ID alone.
     #[serde(rename = "ID", skip_serializing)]
     pub(crate) _id: Option<IgnoredAny>,
-    /// Source Monitor state of the item; not conversion data, and absent on a
-    /// master clip that has never been opened in the monitor.
+    /// Source Monitor state and supported rendered-to-original metadata.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) properties: Option<MonitorProperties>,
 }
@@ -147,6 +155,23 @@ pub(crate) struct MonitorProperties {
     pub(crate) version: Option<String>,
     #[serde(rename = "AMM.CurrentSolo", skip_serializing)]
     pub(crate) _current_solo: Option<EmptySolo>,
+    #[serde(rename = "BE.MasterClip.Rendered.OffsetToOriginal", skip_serializing)]
+    pub(crate) _rendered_offset_to_original: Option<ZeroRenderedOffset>,
+    // Source Monitor viewing mode; timeline cuts select their own camera.
+    #[serde(rename = "Source.Monitor.Multicam.Enabled", skip_serializing)]
+    pub(crate) _multicam_enabled: Option<bool>,
+    // Merged master provenance. Actual playback uses the placed Source,
+    // SecondaryContent channel and OrigChGrp references, not these labels.
+    #[serde(
+        rename = "MZ.MergeClipUtils.ComponentMasterClipOriginalName",
+        skip_serializing
+    )]
+    pub(crate) _merged_original_name: Option<String>,
+    #[serde(
+        rename = "MZ.MergeClipUtils.AudioTrackNumberFromOriginalMergedClip",
+        skip_serializing
+    )]
+    pub(crate) _merged_original_track: Option<usize>,
     #[serde(rename = "monitor.edit.time", skip_serializing_if = "Option::is_none")]
     pub(crate) edit_time: Option<RetainedOrSkipped<String>>,
     #[serde(rename = "monitor.looping", skip_serializing_if = "Option::is_none")]
@@ -198,6 +223,25 @@ impl<'de> Deserialize<'de> for EmptySolo {
         } else {
             Err(serde::de::Error::custom(format!(
                 "unsupported AMM.CurrentSolo {value:?}: only an empty solo list is read"
+            )))
+        }
+    }
+}
+
+/// Literal zero, observed on sequence and legacy-title masters in the corpus.
+/// It needs no source-time translation. Nonzero render-and-replace offsets
+/// require semantics that this reader does not implement.
+#[derive(Debug)]
+pub(crate) struct ZeroRenderedOffset;
+
+impl<'de> Deserialize<'de> for ZeroRenderedOffset {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        if value == "0" {
+            Ok(Self)
+        } else {
+            Err(serde::de::Error::custom(format!(
+                "unsupported BE.MasterClip.Rendered.OffsetToOriginal {value:?}: only a zero offset is read"
             )))
         }
     }
@@ -280,7 +324,13 @@ pub(crate) struct Clip {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) time_remapping: Option<Reference>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) maintain_audio_pitch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) playback_speed: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) is_multicam: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) selected_track_index: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) play_backwards: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -341,7 +391,13 @@ pub(crate) struct AudioClip {
     /// Clip gain, linear; it multiplies the clip Volume.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) gain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) audio_time_scaler_settings: Option<String>,
 }
+
+/// Native 26.5.2 ON encoding, identical at forward 2x/1.5x and reverse 0.5x.
+/// The settings are opaque; no scaler member is interpreted as a speed/enum.
+pub(crate) const AUDIO_PITCH_ON_SCALER_SETTINGS: &str = r#"{"m":2,"mp":true,"p":0,"v":1}"#;
 
 #[derive(Debug)]
 pub(crate) enum VideoClipId {}
@@ -402,6 +458,10 @@ pub(crate) struct VideoClip {
 }
 
 impl VideoClip {
+    /// The only measured `FrameHold` mode: an explicit hold on the source tick
+    /// in `FrameHoldStart`.
+    pub(crate) const EXPLICIT_FRAME_HOLD: &'static str = "4";
+
     /// Whether the clip declares a frame hold. Premiere CS6 to CC 2015 save
     /// `FrameHold` mode `0` (no hold) on every clip, usually with a placeholder
     /// `FrameHoldStart`; modern saves omit both fields when the hold is off.
@@ -456,6 +516,29 @@ mod tests {
     }
 
     #[test]
+    fn native_zero_rendered_offset_reads_but_does_not_serialize() {
+        // Byte-exact Mixkit 541 master Node; see native-input-compatibility.md.
+        let node = include_str!("../../../tests/fixtures/native-zero-rendered-offset.xml");
+        let master: MasterNode = quick_xml::de::from_str(node).unwrap();
+        assert!(!quick_xml::se::to_string(&master)
+            .unwrap()
+            .contains("BE.MasterClip.Rendered.OffsetToOriginal"));
+        for value in ["1", "-1", "0.0", "bad", "9223372036854775808", ""] {
+            let error = quick_xml::de::from_str::<MasterNode>(&node.replace(
+                ">0</BE.MasterClip.Rendered.OffsetToOriginal>",
+                &format!(">{value}</BE.MasterClip.Rendered.OffsetToOriginal>"),
+            ))
+            .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("unsupported BE.MasterClip.Rendered.OffsetToOriginal"),
+                "{value}: {error}"
+            );
+        }
+    }
+
+    #[test]
     fn source_monitor_ui_keys_do_not_reject_a_master_clip() {
         // The master clip Node of the corpus prepared/adobe-improve-audio/native-26.5.1
         // project (Premiere 26.5.1); 76 of the 164 corpus projects write
@@ -502,7 +585,7 @@ mod tests {
             (
                 "AMM.CurrentSolo>[]</AMM.CurrentSolo",
                 "BE.MasterClip.Rendered.OffsetToOriginal>-805188384000</BE.MasterClip.Rendered.OffsetToOriginal",
-                "unknown field `BE.MasterClip.Rendered.OffsetToOriginal`",
+                "unsupported BE.MasterClip.Rendered.OffsetToOriginal",
             ),
         ] {
             let error = quick_xml::de::from_str::<MasterNode>(&music.replace(from, to)).unwrap_err();

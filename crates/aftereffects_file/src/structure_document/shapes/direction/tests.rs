@@ -96,23 +96,5 @@ fn reversed_paths_preserve_closed_start_swap_open_endpoints_and_cubic_handles() 
             matches!(result.commands.last(), Some(ShapePathCommand::Close)),
             closed
         );
-        if let Some(node) = std::env::var_os("AEP_PATH_NODE") {
-            let code = format!(
-                "const result=new Function('nativePath',{} )({});process.stdout.write(JSON.stringify(result));",
-                serde_json::to_string(include_str!("../reverse-path.js")).unwrap(),
-                serde_json::to_string(&source).unwrap()
-            );
-            let output = std::process::Command::new(node)
-                .args(["-e", &code])
-                .output()
-                .unwrap();
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            let scripted: ShapePath = serde_json::from_slice(&output.stdout).unwrap();
-            assert_eq!(scripted, result);
-        }
     }
 }

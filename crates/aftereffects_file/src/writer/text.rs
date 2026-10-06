@@ -11,7 +11,9 @@ use fx_schema::{AnchorPointGrouping, RangeSelector, TextAnimator, WigglySelector
 
 use crate::{rifx::Chunk, schema::layer_records::LayerRecord, timing::Duration24};
 
-pub(crate) use super::text_document::{TextDocumentKey, TextDocumentSpec, TextDocumentTimeline};
+pub(crate) use super::text_document::{
+    FontFormat, TextDocumentKey, TextDocumentSpec, TextDocumentTimeline,
+};
 
 use super::{
     AepWriteError, NumericTrack, SolidTransform, TransformAnimations, text_document,
@@ -90,6 +92,36 @@ pub(crate) struct TextSpec {
     pub path_options: Option<TextPathOptionsSpec>,
 }
 
+/// Native semantic defaults selected by the writer and its owner-local diagnostics.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NativeTextProfile {
+    Point,
+    Box,
+}
+
+impl TextSpec {
+    pub(crate) fn native_profile(&self) -> Option<NativeTextProfile> {
+        self.documents.keys.first()?;
+        if self
+            .documents
+            .keys
+            .iter()
+            .all(|key| key.document.box_size.is_none())
+        {
+            Some(NativeTextProfile::Point)
+        } else if self
+            .documents
+            .keys
+            .iter()
+            .all(|key| key.document.box_size.is_some())
+        {
+            Some(NativeTextProfile::Box)
+        } else {
+            None
+        }
+    }
+}
+
 pub(super) fn validate(text: &TextSpec) -> Result<(), AepWriteError> {
     if text.name.is_empty() || text.name.len() > 255 || text.name.contains('\0') {
         return Err(AepWriteError::Invalid(
@@ -149,7 +181,7 @@ pub(super) fn timeline_layer_with_clock(
             ),
             (
                 "ADBE Text Properties",
-                text_properties_with_clock(text, clock)?,
+                text_properties_with_clock(text, id, clock)?,
             ),
         ],
     )?;
@@ -173,26 +205,92 @@ pub(super) fn timeline_layer_with_clock(
 
 #[expect(dead_code, reason = "default-clock wrapper; callers pass a clock")]
 fn text_properties(text: &TextSpec) -> Result<Chunk, AepWriteError> {
-    text_properties_with_clock(text, super::keyframes::PropertyClock::DEFAULT)
+    text_properties_with_clock(text, 0, super::keyframes::PropertyClock::DEFAULT)
 }
 
 fn text_properties_with_clock(
     text: &TextSpec,
+    id: u32,
     clock: super::keyframes::PropertyClock,
 ) -> Result<Chunk, AepWriteError> {
+    let native = match text.native_profile() {
+        Some(NativeTextProfile::Point) => Some(super::native_text::point_properties(
+            &text.documents,
+            id,
+            clock,
+        )?),
+        Some(NativeTextProfile::Box) => Some(super::native_text::boxed_properties(
+            &text.documents,
+            id,
+            clock,
+        )?),
+        None => None,
+    };
+    if let Some(mut group) = native {
+        // Keep the complete native Source Text envelope and owner metadata.
+        // Editable siblings must not switch its COS document to the legacy profile.
+        let children = group.children_mut().ok_or(AepWriteError::Invalid(
+            "native Text reference group changed",
+        ))?;
+        let mut replacements = Vec::new();
+        if let Some(path) = &text.path_options {
+            replacements.push(("ADBE Text Path Options", path_options(path, clock)?));
+        }
+        if let Some(anchor) = &text.anchor_options
+            && (anchor.grouping != AnchorPointGrouping::Character
+                || anchor.alignment != [0.0; 2]
+                || !anchor.animations.tracks.is_empty())
+        {
+            replacements.push(("ADBE Text More Options", more_options(Some(anchor), clock)?));
+        }
+        if !text.animators.is_empty() {
+            replacements.push(("ADBE Text Animators", animators(&text.animators, clock)?));
+        }
+        for (name, replacement) in replacements {
+            if let Some(index) = children.windows(2).position(|pair| {
+                pair[0].id() == *b"tdmn"
+                    && pair[0]
+                        .data_payload()
+                        .is_some_and(|data| data.starts_with(name.as_bytes()))
+            }) {
+                children[index + 1] = replacement;
+            } else {
+                let entry = views::group(1, "", vec![(name, replacement)])?;
+                let entry = entry
+                    .children()
+                    .ok_or(AepWriteError::Invalid("native Text entry group changed"))?;
+                let end = children
+                    .iter()
+                    .position(|child| {
+                        child.id() == *b"tdmn"
+                            && child
+                                .data_payload()
+                                .is_some_and(|data| data.starts_with(b"ADBE Group End"))
+                    })
+                    .unwrap_or(children.len());
+                children.splice(end..end, entry[2..4].iter().cloned());
+            }
+        }
+        super::native_text_controls::normalize(&mut group, clock)?;
+        return Ok(group);
+    }
     let mut entries = vec![(
         "ADBE Text Document",
         text_document::source_property_with_clock(&text.documents, clock)?,
     )];
-    if let Some(path) = &text.path_options {
-        entries.push(("ADBE Text Path Options", path_options(path, clock)?));
-    }
+    let path = match &text.path_options {
+        Some(path) => path_options(path, clock)?,
+        None => views::group(1, "-_0_/-", vec![])?,
+    };
+    entries.push(("ADBE Text Path Options", path));
     entries.push((
         "ADBE Text More Options",
         more_options(text.anchor_options.as_ref(), clock)?,
     ));
     entries.push(("ADBE Text Animators", animators(&text.animators, clock)?));
-    Ok(views::group(1, "Text", entries)?)
+    let mut group = views::group(1, "Text", entries)?;
+    super::native_text_controls::normalize(&mut group, clock)?;
+    Ok(group)
 }
 
 fn animators(
@@ -373,7 +471,9 @@ fn animator_properties_with_clock(
         "strokeWidth",
         tracks,
         ValueKind::Scalar,
-        Some((0.0, 100000.0)),
+        // Animator Stroke Width is a signed additive delta, unlike the
+        // nonnegative width in Source Text. AE 26.5 reports this control range.
+        Some((-1000.0, 1000.0)),
     )?;
     if let Some(current) = animator.blur {
         entries.push((
@@ -467,7 +567,7 @@ fn range_selector(
             kind, values, bounds, track, clock,
         )?)
     };
-    let scalar = |value, bounds| property(ValueKind::Scalar, &[value], bounds, None);
+    let native_enum = |value| property(ValueKind::VectorEnum, &[value], None, None);
     let selector = &value.value;
     let percentage = selector.units == SelectorUnits::Percentage;
     let scale = if percentage { 100.0 } else { 1.0 };
@@ -491,20 +591,25 @@ fn range_selector(
         vec![
             (
                 "ADBE Text Range Units",
-                scalar(enum_units(selector.units), None)?,
+                native_enum(enum_units(selector.units))?,
             ),
             (
                 "ADBE Text Range Type2",
-                scalar(enum_basis(selector.based_on), None)?,
+                native_enum(enum_basis(selector.based_on))?,
             ),
             (
                 "ADBE Text Selector Mode",
-                scalar(enum_mode(selector.mode), None)?,
+                property(
+                    ValueKind::TextSelectorMode,
+                    &[enum_mode(selector.mode)],
+                    None,
+                    None,
+                )?,
             ),
             (
                 "ADBE Text Selector Max Amount",
                 property(
-                    ValueKind::Scalar,
+                    ValueKind::EffectFloat,
                     &[selector.amount * 100.0],
                     None,
                     tracks.get("amount"),
@@ -512,7 +617,7 @@ fn range_selector(
             ),
             (
                 "ADBE Text Range Shape",
-                scalar(enum_shape(selector.shape), None)?,
+                native_enum(enum_shape(selector.shape))?,
             ),
             (
                 "ADBE Text Levels Max Ease",
@@ -560,7 +665,7 @@ fn range_selector(
             (
                 start,
                 property(
-                    ValueKind::Scalar,
+                    ValueKind::EffectFloat,
                     &[selector.start * scale],
                     None,
                     tracks.get("start"),
@@ -569,7 +674,7 @@ fn range_selector(
             (
                 end,
                 property(
-                    ValueKind::Scalar,
+                    ValueKind::EffectFloat,
                     &[selector.end * scale],
                     None,
                     tracks.get("end"),
@@ -578,7 +683,7 @@ fn range_selector(
             (
                 offset,
                 property(
-                    ValueKind::Scalar,
+                    ValueKind::EffectFloat,
                     &[selector.offset * scale],
                     None,
                     tracks.get("offset"),
@@ -606,6 +711,18 @@ fn wiggly_selector(
     let scalar = |value, bounds| property(ValueKind::Scalar, &[value], bounds, None);
     let selector = &value.value;
     let tracks = &value.animations;
+    // FX has one symmetric amount; keep native Min Amount the negated Max
+    // Amount at every key so an animated amount (e.g. fading to 0) stays symmetric.
+    let min_amount = tracks.get("amount").map(|track| NumericTrack {
+        keys: track
+            .keys
+            .iter()
+            .map(|key| super::NumericKeyframe {
+                values: key.values.iter().map(|value| -value).collect(),
+                ..key.clone()
+            })
+            .collect(),
+    });
     Ok(views::group(
         1,
         &format!("Wiggly Selector {index}"),
@@ -625,7 +742,12 @@ fn wiggly_selector(
             ),
             (
                 "ADBE Text Wiggly Min Amount",
-                scalar(-selector.amount, None)?,
+                property(
+                    ValueKind::Scalar,
+                    &[-selector.amount],
+                    None,
+                    min_amount.as_ref(),
+                )?,
             ),
             (
                 "ADBE Text Temporal Freq",
@@ -676,7 +798,7 @@ fn more_options(
         vec![
             (
                 "ADBE Text Anchor Point Option",
-                scalar(grouping, Some((1.0, 4.0)))?,
+                property(ValueKind::VectorEnum, &[grouping], Some((1.0, 4.0)), None)?,
             ),
             (
                 "ADBE Text Anchor Point Align",
@@ -885,6 +1007,545 @@ mod tests {
     use super::*;
 
     #[test]
+    fn native_signed_stroke_delta_preserves_adobe_range() {
+        use crate::properties::{data, runs, unique_list};
+        use crate::structure::ItemKind;
+        use sha2::{Digest, Sha256};
+
+        fn stroke_property(chunks: &[Chunk]) -> Option<&[Chunk]> {
+            if let Ok(properties) = runs(chunks)
+                && let Some((_, property)) = properties
+                    .into_iter()
+                    .find(|(name, _)| *name == "ADBE Text Stroke Width")
+            {
+                return Some(property);
+            }
+            chunks
+                .iter()
+                .find_map(|chunk| chunk.children().and_then(stroke_property))
+        }
+
+        let source = include_bytes!("../../tests/fixtures/text/stroke-delta/native.aep");
+        let readback: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/text/stroke-delta/readback.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            format!("{:x}", Sha256::digest(source)),
+            readback["source_sha256"].as_str().unwrap()
+        );
+        let project = crate::structure::read_project(source).unwrap();
+        let ItemKind::Composition(comp) = &project.item(1).unwrap().kind else {
+            panic!("native stroke-delta composition")
+        };
+        let native = comp
+            .layers
+            .iter()
+            .find_map(|layer| stroke_property(&layer.content))
+            .unwrap();
+        let native = unique_list(native, *b"tdbs").unwrap();
+        let edited = readback["edited"].as_f64().unwrap();
+        assert_eq!(
+            crate::properties::read_numeric(native).unwrap().values,
+            [edited]
+        );
+        let animator = TextAnimatorSpec {
+            value: fx_schema::TextAnimator {
+                stroke_width: Some(edited),
+                ..Default::default()
+            },
+            animations: PropertyTracks::default(),
+            selectors: Vec::new(),
+            wiggly_selectors: Vec::new(),
+        };
+        let fresh = animator_properties(&animator).unwrap();
+        let actual = stroke_property(fresh.children().unwrap()).unwrap();
+        let actual = unique_list(actual, *b"tdbs").unwrap();
+        assert_eq!(
+            crate::properties::read_numeric(actual).unwrap().values,
+            [edited]
+        );
+        // Native UI bounds are implicit in saved AEPs. Independent Adobe getter
+        // readback, not our reader, establishes the signed additive range.
+        for (tag, field) in [(*b"tdum", "min"), (*b"tduM", "max")] {
+            let value = f64::from_be_bytes(data(actual, tag).unwrap().try_into().unwrap());
+            assert_eq!(value, readback[field].as_f64().unwrap(), "{field}");
+        }
+    }
+
+    #[test]
+    fn native_range_selector_enums_match_adobe_source() {
+        use crate::properties::{data, runs, unique_list};
+        use crate::structure::ItemKind;
+        use sha2::{Digest, Sha256};
+
+        fn selector_property<'a>(chunks: &'a [Chunk], name: &str) -> Option<&'a [Chunk]> {
+            if let Ok(properties) = runs(chunks)
+                && let Some((_, property)) = properties.into_iter().find(|(key, _)| *key == name)
+            {
+                return Some(property);
+            }
+            chunks.iter().find_map(|chunk| {
+                chunk
+                    .children()
+                    .and_then(|children| selector_property(children, name))
+            })
+        }
+
+        let source = include_bytes!("../../tests/fixtures/text/selector-enums/source.aep");
+        assert_eq!(
+            format!("{:x}", Sha256::digest(source)),
+            "af930a26ff398e33be705b2677bc977612a4887fd474976ef59513dd6188fa6d"
+        );
+        let project = crate::structure::read_project(source).unwrap();
+        let ItemKind::Composition(comp) = &project.item(1).unwrap().kind else {
+            panic!("native selector composition")
+        };
+        let native_layer = &comp.layers[0];
+        let spec = RangeSelectorSpec {
+            value: RangeSelector {
+                units: SelectorUnits::Index,
+                based_on: SelectorBasis::Lines,
+                mode: SelectorMode::Subtract,
+                shape: SelectorShape::Triangle,
+                ..RangeSelector::default()
+            },
+            animations: PropertyTracks::default(),
+        };
+        let thirty_fps = super::super::keyframes::PropertyClock::for_rate(
+            crate::timing::FrameRate::new(30.0).unwrap(),
+        )
+        .unwrap();
+        for clock in [super::super::keyframes::PropertyClock::DEFAULT, thirty_fps] {
+            let fresh = range_selector(&spec, 1, clock).unwrap();
+            for (name, ordinal) in [
+                ("ADBE Text Range Units", 2.0),
+                ("ADBE Text Range Type2", 4.0),
+                ("ADBE Text Selector Mode", 2.0),
+                ("ADBE Text Range Shape", 4.0),
+            ] {
+                let native = selector_property(&native_layer.content, name).unwrap();
+                let native = unique_list(native, *b"tdbs").unwrap();
+                let actual = selector_property(fresh.children().unwrap(), name).unwrap();
+                let actual = unique_list(actual, *b"tdbs").unwrap();
+                let mut descriptor = data(native, *b"tdb4").unwrap().to_vec();
+                descriptor[12..16].copy_from_slice(&clock.ticks().to_be_bytes());
+                assert_eq!(data(actual, *b"tdb4").unwrap(), descriptor, "{name}");
+                for tag in [*b"tdsb", *b"cdat"] {
+                    assert_eq!(
+                        data(actual, tag).unwrap(),
+                        data(native, tag).unwrap(),
+                        "{name} {tag:?}"
+                    );
+                }
+                assert_eq!(
+                    crate::properties::read_numeric(actual).unwrap().values,
+                    [ordinal]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn native_anchor_grouping_descriptor_matches_adobe_source() {
+        use crate::properties::{data, runs, unique_list};
+        use crate::structure::ItemKind;
+        use sha2::{Digest, Sha256};
+
+        fn anchor_property(chunks: &[Chunk]) -> Option<&[Chunk]> {
+            if let Ok(properties) = runs(chunks)
+                && let Some((_, property)) = properties
+                    .into_iter()
+                    .find(|(name, _)| *name == "ADBE Text Anchor Point Option")
+            {
+                return Some(property);
+            }
+            chunks
+                .iter()
+                .find_map(|chunk| chunk.children().and_then(anchor_property))
+        }
+
+        // Independently Adobe-authored source pinned in import_sources.json;
+        // descriptor equality is storage evidence, not Adobe export acceptance.
+        let source = include_bytes!("../../tests/fixtures/text/import_text_path_options.aep");
+        assert_eq!(
+            format!("{:x}", Sha256::digest(source)),
+            "019db8c748e3b306591bdbade1cbb83ed466481abf860c3488db10a0a6d485ec"
+        );
+        let project = crate::structure::read_project(source).unwrap();
+        let thirty_fps = super::super::keyframes::PropertyClock::for_rate(
+            crate::timing::FrameRate::new(30.0).unwrap(),
+        )
+        .unwrap();
+        // Character is the native default: composition92 has no stored option.
+        // Compare the three explicitly authored enum values, not an absent record.
+        for (composition_id, grouping, ordinal) in [
+            (107, AnchorPointGrouping::Word, 2.0),
+            (122, AnchorPointGrouping::Line, 3.0),
+            (137, AnchorPointGrouping::All, 4.0),
+        ] {
+            let ItemKind::Composition(comp) = &project.item(composition_id).unwrap().kind else {
+                panic!("native anchor-grouping composition")
+            };
+            let native = comp
+                .layers
+                .iter()
+                .find_map(|layer| anchor_property(&layer.content))
+                .unwrap();
+            let native = unique_list(native, *b"tdbs").unwrap();
+            let descriptor = data(native, *b"tdb4").unwrap();
+            assert_eq!(descriptor.len(), 124);
+            let options = TextAnchorOptionsSpec {
+                grouping,
+                alignment: [0.0, 0.0],
+                animations: PropertyTracks::default(),
+            };
+            for clock in [super::super::keyframes::PropertyClock::DEFAULT, thirty_fps] {
+                let fresh = more_options(Some(&options), clock).unwrap();
+                let actual = anchor_property(fresh.children().unwrap()).unwrap();
+                let actual = unique_list(actual, *b"tdbs").unwrap();
+                let mut expected = descriptor.to_vec();
+                // Only the owning composition's property clock may differ.
+                expected[12..16].copy_from_slice(&clock.ticks().to_be_bytes());
+                assert_eq!(
+                    data(actual, *b"tdb4").unwrap(),
+                    expected,
+                    "composition {composition_id}"
+                );
+                // Native enum bounds are implicit; compare stored selection/value,
+                // not optional min/max records absent from the native source.
+                for tag in [*b"tdsb", *b"cdat"] {
+                    assert_eq!(
+                        data(actual, tag).unwrap(),
+                        data(native, tag).unwrap(),
+                        "{tag:?}"
+                    );
+                }
+                assert_eq!(
+                    crate::properties::read_numeric(actual).unwrap().values,
+                    [ordinal]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn native_point_empty_path_group_matches_source() {
+        use crate::properties::runs;
+        use crate::structure::ItemKind;
+        use sha2::{Digest, Sha256};
+
+        fn path_group(chunks: &[Chunk]) -> Option<&Chunk> {
+            if let Ok(properties) = runs(chunks)
+                && let Some((_, property)) = properties
+                    .into_iter()
+                    .find(|(name, _)| *name == "ADBE Text Path Options")
+            {
+                return property
+                    .iter()
+                    .find(|chunk| chunk.list_kind() == Some(*b"tdgp"));
+            }
+            chunks
+                .iter()
+                .find_map(|chunk| chunk.children().and_then(path_group))
+        }
+
+        // Full native group equality is storage evidence, not Adobe acceptance.
+        let source = include_bytes!("../../tests/fixtures/point_text_envelope/native_point_n.aep");
+        assert_eq!(
+            format!("{:x}", Sha256::digest(source)),
+            "5e67c21a5c0b3ce9c7f08f33a27189ef1d5078858e4d22f4716f842afffe2d3e"
+        );
+        let project = crate::structure::read_project(source).unwrap();
+        let native = project
+            .items
+            .iter()
+            .find_map(|item| {
+                let ItemKind::Composition(comp) = &item.kind else {
+                    return None;
+                };
+                comp.layers
+                    .iter()
+                    .find_map(|layer| path_group(&layer.content))
+            })
+            .unwrap();
+        let text = TextSpec {
+            name: "Point".into(),
+            transform: SolidTransform {
+                anchor: [0.0; 2],
+                position: [0.0; 2],
+                scale: [100.0; 2],
+                rotation: 0.0,
+                opacity: 100.0,
+            },
+            transform_animations: TransformAnimations::default(),
+            documents: TextDocumentTimeline {
+                keyed: false,
+                keys: vec![TextDocumentKey {
+                    time_millis: 0,
+                    document: TextDocumentSpec {
+                        text: "N".into(),
+                        font_postscript: "Inter-Regular".into(),
+                        font_format: None,
+                        font_size: 24.0,
+                        apply_fill: true,
+                        fill_color: [1.0; 4],
+                        apply_stroke: false,
+                        stroke_color: None,
+                        stroke_width: 0.0,
+                        stroke_over_fill: true,
+                        justification: Justification::Left,
+                        tracking: 0.0,
+                        leading: None,
+                        baseline_shift: 0.0,
+                        box_size: None,
+                        box_position: None,
+                        vertical_align: None,
+                        all_caps: false,
+                    },
+                }],
+            },
+            animators: vec![],
+            anchor_options: None,
+            path_options: None,
+        };
+        let thirty_fps = super::super::keyframes::PropertyClock::for_rate(
+            crate::timing::FrameRate::new(30.0).unwrap(),
+        )
+        .unwrap();
+        for clock in [super::super::keyframes::PropertyClock::DEFAULT, thirty_fps] {
+            let fresh = text_properties_with_clock(&text, 0, clock).unwrap();
+            let mut explicit_default = text.clone();
+            explicit_default.anchor_options = Some(TextAnchorOptionsSpec {
+                grouping: AnchorPointGrouping::Character,
+                alignment: [0.0; 2],
+                animations: PropertyTracks::default(),
+            });
+            assert_eq!(
+                text_properties_with_clock(&explicit_default, 0, clock).unwrap(),
+                fresh
+            );
+            let children = fresh.children().unwrap();
+            assert_eq!(
+                path_group(children).expect("empty Path Options group"),
+                native
+            );
+            assert_eq!(
+                runs(children)
+                    .unwrap()
+                    .iter()
+                    .map(|(name, _)| *name)
+                    .collect::<Vec<_>>(),
+                [
+                    "ADBE Text Document",
+                    "ADBE Text Path Options",
+                    "ADBE Text More Options"
+                ]
+            );
+            let native_rifx =
+                crate::rifx::Rifx::parse_with(source, |kind| kind == *b"btdk").unwrap();
+            fn more_group(chunk: &Chunk) -> Option<&Chunk> {
+                let children = chunk.children()?;
+                if let Some(group) = children.windows(2).find_map(|pair| {
+                    (pair[0]
+                        .data_payload()?
+                        .starts_with(b"ADBE Text More Options")
+                        && pair[1].list_kind() == Some(*b"tdgp"))
+                    .then_some(&pair[1])
+                }) {
+                    return Some(group);
+                }
+                children.iter().find_map(more_group)
+            }
+            let native_more = native_rifx.chunks().iter().find_map(more_group).unwrap();
+            assert_eq!(more_group(&fresh).unwrap(), native_more);
+
+            for boxed in [false, true] {
+                let mut richer = text.clone();
+                if boxed {
+                    richer.documents.keys[0].document.box_size = Some([200.0, 100.0]);
+                    richer.documents.keys[0].document.box_position = Some([0.0; 2]);
+                }
+                let baseline = text_properties_with_clock(&richer, 0, clock).unwrap();
+                richer.animators.push(TextAnimatorSpec {
+                    value: TextAnimator {
+                        opacity: Some(50.0),
+                        ..TextAnimator::default()
+                    },
+                    animations: PropertyTracks::default(),
+                    selectors: vec![],
+                    wiggly_selectors: vec![],
+                });
+                richer.anchor_options = Some(TextAnchorOptionsSpec {
+                    grouping: AnchorPointGrouping::Word,
+                    alignment: [10.0, 20.0],
+                    animations: PropertyTracks::default(),
+                });
+                richer.path_options = Some(TextPathOptionsSpec {
+                    path_index: 1,
+                    first_margin: 12.0,
+                    last_margin: 24.0,
+                    perpendicular_to_path: true,
+                    reverse_path: false,
+                    force_alignment: false,
+                    animations: PropertyTracks::default(),
+                });
+                let generated = text_properties_with_clock(&richer, 0, clock).unwrap();
+                let before = runs(baseline.children().unwrap()).unwrap();
+                let after = runs(generated.children().unwrap()).unwrap();
+                assert_eq!(
+                    before[0], after[0],
+                    "richer controls must retain native Source Text"
+                );
+                for (name, expected) in [
+                    (
+                        "ADBE Text Path Options",
+                        path_options(richer.path_options.as_ref().unwrap(), clock).unwrap(),
+                    ),
+                    (
+                        "ADBE Text More Options",
+                        more_options(richer.anchor_options.as_ref(), clock).unwrap(),
+                    ),
+                    (
+                        "ADBE Text Animators",
+                        animators(&richer.animators, clock).unwrap(),
+                    ),
+                ] {
+                    let mut expected = expected;
+                    super::super::native_text_controls::normalize(&mut expected, clock).unwrap();
+                    let (_, property) = after
+                        .iter()
+                        .find(|(candidate, _)| *candidate == name)
+                        .unwrap();
+                    assert!(property.contains(&expected), "missing editable {name}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn native_point_font_changes_follow_semantic_indices() {
+        use crate::structure_document::text::cos;
+
+        let first = TextDocumentSpec {
+            text: "A😀".into(),
+            font_postscript: "ArialMT".into(),
+            font_format: None,
+            font_size: 48.0,
+            apply_fill: true,
+            fill_color: [1.0; 4],
+            apply_stroke: false,
+            stroke_color: None,
+            stroke_width: 1.0,
+            stroke_over_fill: true,
+            justification: Justification::Left,
+            tracking: 0.0,
+            leading: None,
+            baseline_shift: 0.0,
+            box_size: None,
+            box_position: None,
+            vertical_align: None,
+            all_caps: false,
+        };
+        let mut second = first.clone();
+        second.text = "B".into();
+        second.font_postscript = "TimesNewRomanPSMT".into();
+        let text = TextSpec {
+            name: "Font holds".into(),
+            transform: SolidTransform {
+                anchor: [0.0; 2],
+                position: [40.0, 90.0],
+                scale: [100.0; 2],
+                rotation: 0.0,
+                opacity: 100.0,
+            },
+            transform_animations: TransformAnimations::default(),
+            documents: TextDocumentTimeline {
+                keyed: true,
+                keys: vec![
+                    TextDocumentKey {
+                        time_millis: 0,
+                        document: first,
+                    },
+                    TextDocumentKey {
+                        time_millis: 500,
+                        document: second,
+                    },
+                ],
+            },
+            animators: vec![],
+            anchor_options: None,
+            path_options: None,
+        };
+        let clock = super::super::keyframes::PropertyClock::for_rate(
+            crate::timing::FrameRate::new(30.0).unwrap(),
+        )
+        .unwrap();
+        let group = text_properties_with_clock(&text, 49, clock).unwrap();
+        fn payload(chunk: &Chunk) -> Option<&[u8]> {
+            chunk
+                .opaque_payload()
+                .or_else(|| chunk.children()?.iter().find_map(payload))
+        }
+        let parsed = cos::parse(payload(&group).unwrap()).unwrap();
+        let fonts = parsed
+            .get("0")
+            .unwrap()
+            .get("1")
+            .unwrap()
+            .get("0")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(fonts.len(), 5);
+        for (index, font) in [(0, "ArialMT"), (2, "Helvetica"), (4, "TimesNewRomanPSMT")] {
+            assert_eq!(
+                fonts[index]
+                    .get("0")
+                    .unwrap()
+                    .get("0")
+                    .unwrap()
+                    .get("0")
+                    .unwrap()
+                    .as_str(),
+                Some(font)
+            );
+        }
+        let documents = parsed
+            .get("1")
+            .unwrap()
+            .get("1")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        for (document, expected_font, units) in [(0, 0, 4), (1, 4, 2)] {
+            let runs = documents[document]
+                .get("0")
+                .unwrap()
+                .get("6")
+                .unwrap()
+                .get("0")
+                .unwrap()
+                .as_array()
+                .unwrap();
+            assert_eq!(runs[0].get("1").unwrap().as_i64(), Some(units));
+            assert_eq!(
+                runs[0]
+                    .get("0")
+                    .unwrap()
+                    .get("0")
+                    .unwrap()
+                    .get("6")
+                    .unwrap()
+                    .get("0")
+                    .unwrap()
+                    .as_i64(),
+                Some(expected_font)
+            );
+        }
+    }
+
+    #[test]
     fn selector_enums_are_the_native_one_based_ordinals() {
         assert_eq!(enum_units(SelectorUnits::Index), 2.0);
         assert_eq!(enum_basis(SelectorBasis::Lines), 4.0);
@@ -897,6 +1558,7 @@ mod tests {
         let document = TextDocumentSpec {
             text: "Text".into(),
             font_postscript: "Inter-Regular".into(),
+            font_format: None,
             font_size: 24.0,
             apply_fill: true,
             fill_color: [1.0; 4],
@@ -910,6 +1572,7 @@ mod tests {
             baseline_shift: 0.0,
             box_size: None,
             box_position: None,
+            vertical_align: None,
             all_caps: false,
         };
         assert!(document.validate().is_err());
@@ -1020,6 +1683,153 @@ mod tests {
         assert!(clocks.len() >= 12);
         assert!(clocks.iter().all(|value| *value == 30_720));
         assert_eq!(keys, vec![33_792, 33_792]);
+    }
+
+    #[test]
+    fn keyed_range_float_envelopes_match_independent_native_source() {
+        use crate::properties::{data, runs, unique_list};
+        use crate::structure::ItemKind;
+        use sha2::{Digest, Sha256};
+
+        fn property<'a>(chunks: &'a [Chunk], name: &str) -> Option<&'a [Chunk]> {
+            if let Ok(records) = runs(chunks)
+                && let Some((_, record)) = records.into_iter().find(|(key, _)| *key == name)
+            {
+                return Some(record);
+            }
+            chunks.iter().find_map(|chunk| {
+                chunk
+                    .children()
+                    .and_then(|children| property(children, name))
+            })
+        }
+        let source = include_bytes!("../../tests/fixtures/text/import_selector_keyed_float.aep");
+        assert_eq!(
+            format!("{:x}", Sha256::digest(source)),
+            "8bf318d14b4ef527822e7790cdb7934c13b913dc2f0c454f423a87b4053d9413"
+        );
+        let project = crate::structure::read_project(source).unwrap();
+        let ItemKind::Composition(comp) = &project.item(1).unwrap().kind else {
+            panic!("native composition")
+        };
+        let clock = super::super::keyframes::PropertyClock::for_rate(
+            crate::timing::FrameRate::new(30.0).unwrap(),
+        )
+        .unwrap();
+        let mut animations = PropertyTracks::default();
+        for (name, values) in [
+            ("start", [0.0, 30.0]),
+            ("end", [80.0, 100.0]),
+            ("offset", [-20.0, 55.0]),
+            ("amount", [25.0, 75.0]),
+        ] {
+            animations.insert(
+                name,
+                NumericTrack {
+                    keys: values
+                        .into_iter()
+                        .zip([0, 500])
+                        .map(|(value, time_millis)| super::super::NumericKeyframe {
+                            time_millis,
+                            values: vec![value],
+                            easing: vec![super::super::KeyframeEasing::Linear],
+                            spatial_in: Vec::new(),
+                            spatial_out: Vec::new(),
+                        })
+                        .collect(),
+                },
+            );
+        }
+        let selector = RangeSelectorSpec {
+            value: RangeSelector::default(),
+            animations,
+        };
+        let fresh = range_selector(&selector, 1, clock).unwrap();
+        for name in [
+            "ADBE Text Percent Start",
+            "ADBE Text Percent End",
+            "ADBE Text Percent Offset",
+            "ADBE Text Selector Max Amount",
+        ] {
+            let native = comp
+                .layers
+                .iter()
+                .find_map(|layer| property(&layer.content, name))
+                .unwrap();
+            let native = unique_list(native, *b"tdbs").unwrap();
+            let actual =
+                unique_list(property(fresh.children().unwrap(), name).unwrap(), *b"tdbs").unwrap();
+            for tag in [*b"tdsb", *b"tdb4"] {
+                assert_eq!(
+                    data(actual, tag).unwrap(),
+                    data(native, tag).unwrap(),
+                    "{name}: {tag:?}"
+                );
+            }
+            let expected = crate::properties::read_numeric(native).unwrap();
+            let generated = crate::properties::read_numeric(actual).unwrap();
+            assert_eq!(generated.keyframes, expected.keyframes, "{name}");
+        }
+    }
+
+    #[test]
+    fn animated_wiggly_amount_keeps_native_min_and_max_symmetric() {
+        use crate::properties::{read_numeric, runs, unique_list};
+
+        let clock = super::super::keyframes::PropertyClock::for_rate(
+            crate::timing::FrameRate::new(30.0).unwrap(),
+        )
+        .unwrap();
+        let mut animations = PropertyTracks::default();
+        animations.insert(
+            "amount",
+            NumericTrack {
+                keys: [(0, 100.0), (500, 0.0), (1000, 50.0)]
+                    .into_iter()
+                    .map(|(time_millis, value)| super::super::NumericKeyframe {
+                        time_millis,
+                        values: vec![value],
+                        easing: vec![super::super::KeyframeEasing::Linear],
+                        spatial_in: Vec::new(),
+                        spatial_out: Vec::new(),
+                    })
+                    .collect(),
+            },
+        );
+        let selector = WigglySelectorSpec {
+            value: WigglySelector {
+                amount: 100.0,
+                ..WigglySelector::default()
+            },
+            animations,
+        };
+        fn property<'a>(chunks: &'a [Chunk], name: &str) -> Option<&'a [Chunk]> {
+            if let Ok(records) = runs(chunks)
+                && let Some((_, record)) = records.into_iter().find(|(key, _)| *key == name)
+            {
+                return Some(record);
+            }
+            chunks.iter().find_map(|chunk| {
+                chunk
+                    .children()
+                    .and_then(|children| property(children, name))
+            })
+        }
+        let group = wiggly_selector(&selector, 1, clock).unwrap();
+        let amount = |name: &str| {
+            let record = property(std::slice::from_ref(&group), name).unwrap();
+            read_numeric(unique_list(record, *b"tdbs").unwrap()).unwrap()
+        };
+        let (max, min) = (
+            amount("ADBE Text Wiggly Max Amount"),
+            amount("ADBE Text Wiggly Min Amount"),
+        );
+        assert_eq!(max.keyframes.len(), 3);
+        assert_eq!(min.keyframes.len(), 3);
+        for (max, min) in max.keyframes.iter().zip(&min.keyframes) {
+            assert_eq!(max.time_secs, min.time_secs);
+            assert_eq!(max.values[0], -min.values[0]);
+        }
     }
 
     #[test]

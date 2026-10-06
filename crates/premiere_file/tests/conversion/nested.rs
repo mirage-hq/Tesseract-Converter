@@ -4,20 +4,28 @@
 //! nest shape. Its AME render is the `premiere_isolated_nested_sequence`
 //! reference (`proof: video_reference`).
 
+#[cfg(feature = "ffmpeg-library")]
 use super::support::*;
 use premiere_file::PrProjectFile;
+#[cfg(feature = "ffmpeg-library")]
 use serde_json::{json, Value};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
-use tesseract_file::{AssetKind, TesseractFile, TesseractFileBuilder};
+#[cfg(feature = "ffmpeg-library")]
+use std::path::PathBuf;
+use std::{fs, path::Path};
+#[cfg(feature = "ffmpeg-library")]
+use tesseract_file::TesseractFile;
+#[cfg(feature = "ffmpeg-library")]
+use tesseract_file::{AssetKind, TesseractFileBuilder};
 
+#[cfg(feature = "ffmpeg-library")]
 const INNER: &str = "07beb511-806b-48cb-b0f5-92293e47d8f4";
+#[cfg(feature = "ffmpeg-library")]
 const OUTER: &str = "dab91e14-ca76-47e7-93fc-99bf6bcc94be";
+#[cfg(feature = "ffmpeg-library")]
 const HIDDEN_NEST_SEQUENCE: &str = "a8b57c46-9429-47b1-915f-e2b6e25ed337";
 
 /// Stages the fixture and its two sources at their package paths.
+#[cfg(feature = "ffmpeg-library")]
 fn nested_fixture(root: &Path) -> PathBuf {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     fs::create_dir_all(root.join("media")).unwrap();
@@ -36,9 +44,11 @@ fn nested_fixture(root: &Path) -> PathBuf {
     project
 }
 
+#[cfg(feature = "ffmpeg-library")]
 type LayerRow = (usize, String, Option<String>, Value, Value, Option<String>);
 
 /// Depth, type, group name, active and source ranges, and packaged file of every layer.
+#[cfg(feature = "ffmpeg-library")]
 fn layer_tree(file: &TesseractFile) -> Vec<LayerRow> {
     fn walk(file: &TesseractFile, layers: &Value, depth: usize, rows: &mut Vec<LayerRow>) {
         for layer in layers.as_array().unwrap() {
@@ -73,16 +83,19 @@ fn layer_tree(file: &TesseractFile) -> Vec<LayerRow> {
     rows
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn only_project(directory: &Path) -> TesseractFile {
     let projects = project_files(directory);
     assert_eq!(projects.len(), 1);
     TesseractFile::open(&projects[0]).unwrap()
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn range(start: i64, duration: i64) -> Value {
     json!({"start": start, "duration": duration})
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn row(
     depth: usize,
     kind: &str,
@@ -101,6 +114,7 @@ fn row(
     )
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn outer_rows() -> Vec<LayerRow> {
     let timecoded = Some("nested-timecoded.mp4");
     vec![
@@ -142,6 +156,7 @@ fn outer_rows() -> Vec<LayerRow> {
     ]
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn xml_edited_nests_import_as_independent_groups_over_the_outer_clip() {
     let dir = tempfile::tempdir().unwrap();
@@ -159,6 +174,57 @@ fn xml_edited_nests_import_as_independent_groups_over_the_outer_clip() {
     assert_eq!(layer_tree(&file), outer_rows());
 }
 
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn reverse_nested_public_import_publishes_child_assets_and_decreasing_playback() {
+    // Supplemental mutation of the existing native-derived nest scaffold;
+    // it does not claim independently Adobe-authored reverse-nest proof.
+    let dir = tempfile::tempdir().unwrap();
+    let source = nested_fixture(dir.path());
+    let mut xml = read_xml(&source);
+    for id in [86, 150] {
+        edit_record(
+            &mut xml,
+            &format!("<VideoClip ObjectID=\"{id}\""),
+            "</VideoClip>",
+            |record| record.replace("</Clip>", "<PlayBackwards>true</PlayBackwards></Clip>"),
+        );
+    }
+    write_prproj(&source, &xml);
+    let output = dir.path().join("converted");
+    let omissions = premiere_to_tesseract(&source, &output, Some(OUTER), false).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let file = only_project(&output);
+    assert_eq!(file.metadata().assets.len(), 2);
+    let document = file.project_json().unwrap();
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    for (owner, first, last) in [(&layers[0], 5000, 2000), (&layers[1], 6000, 0)] {
+        let picture = &owner["layers"][0];
+        let keys = picture["playback"]["mapping"]["property"]["keyframes"]
+            .as_array()
+            .unwrap();
+        assert_eq!(keys[0]["value"], first);
+        assert_eq!(keys[1]["value"], last);
+        let videos = picture["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|layer| layer["type"] == "Video")
+            .collect::<Vec<_>>();
+        assert_eq!(videos.len(), 2);
+        assert_eq!(*crate::test_support::layer_range(videos[0]), range(0, 4000));
+        assert_eq!(
+            *crate::test_support::layer_range(videos[1]),
+            range(5000, 1000)
+        );
+        assert!(videos.iter().all(|video| file
+            .metadata()
+            .assets
+            .contains_key(video["source"]["assetId"].as_str().unwrap())));
+    }
+}
+
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn nests_round_trip_through_premiere_as_one_sequence_per_group() {
     let dir = tempfile::tempdir().unwrap();
@@ -183,26 +249,46 @@ fn nests_round_trip_through_premiere_as_one_sequence_per_group() {
     assert_eq!(layer_tree(&only_project(&root.join("again"))), outer_rows());
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
-fn missing_nested_media_rejects_conversion_despite_healthy_outer_media() {
+fn missing_nested_media_preserves_healthy_outer_media() {
     let dir = tempfile::tempdir().unwrap();
     let project = nested_fixture(dir.path());
     fs::remove_file(dir.path().join("media/nested-timecoded.mp4")).unwrap();
     let output = dir.path().join("converted");
     for check in [true, false] {
-        let error = premiere_to_tesseract(&project, &output, Some(OUTER), check)
-            .unwrap_err()
-            .to_string();
+        let omissions = premiere_to_tesseract(&project, &output, Some(OUTER), check).unwrap();
         assert!(
-            error.contains("nested-timecoded.mp4")
-                && error.contains("failed admission")
-                && error.contains("missing media"),
-            "{error}"
+            omissions
+                .iter()
+                .any(|note| note.record == "VideoClipTrackItem:145"
+                    && note.reason.contains("missing media")),
+            "{omissions:?}"
         );
-        assert!(!output.exists());
+        if check {
+            assert!(!output.exists());
+        } else {
+            let file = only_project(&output);
+            assert_eq!(file.metadata().assets.len(), 1);
+            assert_eq!(
+                layer_tree(&file),
+                [
+                    row(
+                        0,
+                        "Video",
+                        None,
+                        range(0, 10000),
+                        range(0, 10000),
+                        Some("outer-red.mp4")
+                    ),
+                    row(0, "Rect", None, range(0, 11000), Value::Null, None),
+                ]
+            );
+        }
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn explicit_inner_selection_converts_the_inner_timeline_alone() {
     let dir = tempfile::tempdir().unwrap();
@@ -260,6 +346,7 @@ fn a_nest_whose_master_clip_plays_media_is_omitted() {
     assert_eq!(outer.video_occurrences().count(), 1);
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn media_under_an_omitted_group_is_not_inspected() {
     let dir = tempfile::tempdir().unwrap();
@@ -339,6 +426,7 @@ fn media_under_an_omitted_group_is_not_inspected() {
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_hidden_nests_import_as_hidden_groups_and_export_as_disabled_nests() {
     /// Start, hidden state and child count of each top-level group, by start.
@@ -361,7 +449,7 @@ fn adobe_hidden_nests_import_as_hidden_groups_and_export_as_disabled_nests() {
         groups.sort();
         groups
     }
-    // `premiere_isolated_hidden_nest_26_5` (Oracle run C6, F2), Premiere
+    // `premiere_isolated_hidden_nest_26_5`, Premiere
     // 26.5.1's save: AME renders the nest at 0-2 s, and neither the disabled
     // nest at 2-4 s nor the nest at 4-6 s on V3, whose track output is off.
     let dir = tempfile::tempdir().unwrap();
@@ -400,6 +488,7 @@ fn adobe_hidden_nests_import_as_hidden_groups_and_export_as_disabled_nests() {
 /// (100, 50) px, Opacity keys 100 to 40, a Gaussian Blur 20 and a Crop of 10%
 /// per edge) that plays the timecoded source from 1 s at group 0-2 s and from
 /// 5 s at 2.5-4.5 s.
+#[cfg(feature = "ffmpeg-library")]
 fn edited_group_document() -> Value {
     let transform = |anchor: [f64; 2], position: [f64; 2], scale: f64, rotation: f64| {
         json!({
@@ -471,6 +560,7 @@ fn edited_group_document() -> Value {
     })
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn an_edited_group_writes_one_nest_placement_that_carries_its_edits() {
     let dir = tempfile::tempdir().unwrap();
@@ -479,14 +569,16 @@ fn an_edited_group_writes_one_nest_placement_that_carries_its_edits() {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/feature_timecoded_source.mp4");
     let archive = root.join("edited-group.tsrct");
     write_archive(&archive, &edited_group_document(), &media);
-    // Set to keep this archive, the input of an Adobe reopen of its export.
-    if let Some(keep) = std::env::var_os("PREMIERE_EDITED_GROUP_INPUT") {
-        fs::copy(&archive, Path::new(&keep).join("edited-group.tsrct")).unwrap();
-    }
     let omissions = tesseract_to_premiere(&archive, root.join("native"), false).unwrap();
     assert!(omissions.is_empty(), "{omissions:?}");
     let xml = read_xml(&root.join("native/project.prproj"));
-    let document = roxmltree::Document::parse(&xml).unwrap();
+    assert_edited_group_native_controls(&xml);
+}
+
+/// Current native placement, child order, source trims, bypass and editable keys.
+#[cfg(feature = "ffmpeg-library")]
+fn assert_edited_group_native_controls(xml: &str) {
+    let document = roxmltree::Document::parse(xml).unwrap();
     fn child<'a, 'i>(node: roxmltree::Node<'a, 'i>, tag: &str) -> roxmltree::Node<'a, 'i> {
         node.children()
             .find(|child| child.has_tag_name(tag))
@@ -694,4 +786,120 @@ fn an_edited_group_writes_one_nest_placement_that_carries_its_edits() {
             (ticks(2.5)..ticks(4.5), (source(5.0), source(7.0))),
         ]
     );
+}
+
+/// Explicit edits of the existing native-backed G2 export input, not an Adobe
+/// motion-blur oracle. The lost optional flag must not erase its current edits.
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn group_motion_blur_preserves_native_content_controls_order_and_disabled_state() {
+    use premiere_file::{
+        ExportField, ExportLossDomain, ExportLossKind, ExportLossSource, Premiere,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let media =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/feature_timecoded_source.mp4");
+    let mut document = edited_group_document();
+    for index in [0, 1] {
+        document["composition"]["layers"][index]["motionBlur"] = json!(true);
+    }
+    let archive = root.join("group-motion-blur.tsrct");
+    write_archive(&archive, &document, &media);
+    let file = TesseractFile::open(&archive).unwrap();
+    let operation = Premiere
+        .prepare_export(&file, file.project(), &Default::default())
+        .unwrap();
+    let report = operation.losses();
+    assert!(report.has_native_content);
+    assert_eq!(report.losses.len(), 2, "{report:?}");
+    for id in [10, 20] {
+        let loss = report
+            .losses
+            .iter()
+            .find(|loss| loss.source == ExportLossSource::Layer(fx_schema::LayerId::new(id)))
+            .unwrap();
+        assert_eq!(loss.domain, ExportLossDomain::Picture);
+        assert_eq!(loss.kind, ExportLossKind::Field(ExportField::MotionBlur));
+        assert_eq!(loss.omission.scope, premiere_file::OmissionScope::Feature);
+        assert_eq!(loss.omission.kind, premiere_file::OmissionKind::Omitted);
+        assert!(loss
+            .omission
+            .reason
+            .contains("group motion blur was not exported"));
+    }
+    let staged = operation
+        .stage_with_picture_replacements(root, &root.join("native"), &[])
+        .unwrap();
+    assert_eq!(staged.report().diagnostics.len(), 2);
+    let xml = read_xml(&staged.directory().join("project.prproj"));
+    assert_eq!(xml.matches("<Sequence ObjectUID=").count(), 3);
+    assert_eq!(
+        xml.matches("<MatchName>AE.ADBE Geometry2</MatchName>")
+            .count(),
+        0
+    );
+    assert_edited_group_native_controls(&xml);
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn group_motion_blur_does_not_relax_required_name_or_report_unretained_owners() {
+    use premiere_file::{ExportField, ExportLossKind, ExportLossSource, Premiere};
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let media =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/feature_timecoded_source.mp4");
+    for empty in [false, true] {
+        let mut document = edited_group_document();
+        for index in [0, 1] {
+            document["composition"]["layers"][index]["motionBlur"] = json!(true);
+        }
+        if empty {
+            document["composition"]["layers"][0]["layers"] = json!([]);
+            document["composition"]["layers"][0]["masks"] = json!([]);
+        } else {
+            // Native sequence identity requires a nonempty name. An optional
+            // flag must not bypass this required structural-value guard.
+            document["composition"]["layers"][0]["name"] = json!("");
+        }
+        let archive = root.join(format!("invalid-group-{empty}.tsrct"));
+        write_archive(&archive, &document, &media);
+        let file = TesseractFile::open(&archive).unwrap();
+        let operation = Premiere
+            .prepare_export(&file, file.project(), &Default::default())
+            .unwrap();
+        let report = operation.losses();
+        let blur_losses: Vec<_> = report
+            .losses
+            .iter()
+            .filter(|loss| loss.kind == ExportLossKind::Field(ExportField::MotionBlur))
+            .collect();
+        assert_eq!(blur_losses.len(), 1, "{report:?}");
+        assert_eq!(
+            blur_losses[0].source,
+            ExportLossSource::Layer(fx_schema::LayerId::new(20))
+        );
+        let reason = if empty {
+            "group with no exportable video was not exported"
+        } else {
+            "the nested sequence name must have 1 to 255 characters"
+        };
+        assert!(
+            report.diagnostics.iter().any(|note| note.scope
+                == premiere_file::OmissionScope::Occurrence
+                && note.record.starts_with("layer 10 (")
+                && note.reason.contains(reason)),
+            "{report:?}"
+        );
+        let staged = operation
+            .stage_with_picture_replacements(root, &root.join(format!("native-{empty}")), &[])
+            .unwrap();
+        let xml = read_xml(&staged.directory().join("project.prproj"));
+        assert_eq!(xml.matches("<Sequence ObjectUID=").count(), 2);
+        assert!(xml.contains("<Name>Hidden</Name>"));
+        assert!(xml.contains("<IsMuted>true</IsMuted>"));
+    }
 }

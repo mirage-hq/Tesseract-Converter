@@ -149,48 +149,125 @@ impl Premiere {
         Ok(report)
     }
 
-    /// Import linked picture occurrences through a caller-supplied editable
-    /// resolver, in place of the built-in linked-composition import. Its
-    /// content takes the same placement, clock, canvas and omission rules; an
-    /// unsupported After Effects source that it reports omits that clip, and
-    /// any other failure stops the import. Native clips, audio, media checks
-    /// and publication are unchanged. Its assets are packaged as returned:
-    /// their lifetime and freshness are the caller's.
-    pub fn import_with_linked_compositions<'a>(
+    /// Import with explicit, source/sequence/Media-UID-bound local relocation.
+    /// Unlike prepared substitutions, these bindings precede native path admission.
+    /// The selected bytes still pass normal media, clock and publication checks.
+    pub fn import_with_media_relink(
         &self,
         input: &Path,
         output: &Path,
         options: &PremiereImportOptions,
         mode: ConversionMode,
-        resolver: &'a mut crate::LinkedCompositionResolver<'a>,
+        relink: &crate::ValidatedMediaRelink,
     ) -> Result<ConversionReport<Omission>, ConversionError> {
-        import(
+        self.import_with_media_relink_with_progress(
             input,
             output,
             options,
             mode,
-            Some(resolver),
+            relink,
             Progress::default(),
+        )
+    }
+
+    /// [`Self::import_with_media_relink`] with command-scoped progress.
+    pub fn import_with_media_relink_with_progress(
+        &self,
+        input: &Path,
+        output: &Path,
+        options: &PremiereImportOptions,
+        mode: ConversionMode,
+        relink: &crate::ValidatedMediaRelink,
+        progress: Progress<'_>,
+    ) -> Result<ConversionReport<Omission>, ConversionError> {
+        self.import_with_media_relink_and_map_with_progress(
+            input, output, options, mode, relink, None, progress,
+        )
+    }
+
+    /// Authenticate original-source relocations before applying prepared-media
+    /// substitutions. Both manifests retain their independent identity and
+    /// publication checks; the selected replacement still passes admission.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "original relocation and prepared substitution remain independently validated inputs"
+    )]
+    pub fn import_with_media_relink_and_map_with_progress(
+        &self,
+        input: &Path,
+        output: &Path,
+        options: &PremiereImportOptions,
+        mode: ConversionMode,
+        relink: &crate::ValidatedMediaRelink,
+        media_map: Option<&ValidatedMediaMap>,
+        progress: Progress<'_>,
+    ) -> Result<ConversionReport<Omission>, ConversionError> {
+        validate_paths(input, output)?;
+        let mut import = TesseractImport::convert_with_media_relink_and_map(
+            input,
+            output,
+            options.sequence.as_deref(),
+            relink,
+            media_map,
+            progress,
+        )?;
+        let report = ConversionReport {
+            diagnostics: std::mem::take(&mut import.omissions),
+            artifacts: import.artifacts(),
+        };
+        if !mode.is_check() {
+            progress.stage("write and publish Tesseract project");
+            if let Some(media_map) = media_map {
+                import.write_with_media_map(media_map)?;
+            } else {
+                import.write()?;
+            }
+        }
+        Ok(report)
+    }
+
+    /// Inspect the same explicit relocation used by import, without publishing.
+    pub fn inspect_media_with_relink(
+        &self,
+        input: &Path,
+        options: &PremiereImportOptions,
+        relink: &crate::ValidatedMediaRelink,
+    ) -> Result<fx_conv::MediaPreflight, ConversionError> {
+        let input = input
+            .canonicalize()
+            .map_err(crate::error::BuildError::from)?;
+        let targets = PrProjectFile::import_targets(&input)?;
+        let target = match options.sequence.as_deref() {
+            Some(id) if targets.iter().any(|target| target.id == id) => id,
+            None if targets.len() == 1 => targets[0].id.as_str(),
+            _ => {
+                return Err(crate::error::unsupported(
+                    "Premiere inspection must identify exactly one native sequence",
+                )
+                .into())
+            }
+        };
+        Ok(
+            crate::tesseract_output::inspect_native_premiere_media_with_relink(
+                &input, target, relink,
+            )?,
         )
     }
 }
 
-/// Converts and, unless `mode` only checks, publishes one sequence; a
-/// `resolver` replaces the built-in linked-composition import.
-fn import<'a>(
+/// Converts and, unless `mode` only checks, publishes one sequence.
+fn import(
     input: &Path,
     output: &Path,
     options: &PremiereImportOptions,
     mode: ConversionMode,
-    resolver: Option<&'a mut crate::LinkedCompositionResolver<'a>>,
     progress: Progress<'_>,
 ) -> Result<ConversionReport<Omission>, ConversionError> {
     validate_paths(input, output)?;
-    let mut import = TesseractImport::convert_with_links(
+    let mut import = TesseractImport::convert_with_progress(
         input,
         output,
         options.sequence.as_deref(),
-        resolver,
         progress,
     )?;
     let report = ConversionReport {
@@ -236,7 +313,7 @@ impl ImportToTesseract for Premiere {
         options: &Self::Options,
         mode: ConversionMode,
     ) -> Result<ConversionReport<Self::Diagnostic>, Self::Error> {
-        import(input, output, options, mode, None, Progress::default())
+        import(input, output, options, mode, Progress::default())
     }
 
     fn import_to_tesseract_with_progress(
@@ -247,7 +324,7 @@ impl ImportToTesseract for Premiere {
         mode: ConversionMode,
         progress: Progress<'_>,
     ) -> Result<ConversionReport<Self::Diagnostic>, Self::Error> {
-        import(input, output, options, mode, None, progress)
+        import(input, output, options, mode, progress)
     }
 }
 

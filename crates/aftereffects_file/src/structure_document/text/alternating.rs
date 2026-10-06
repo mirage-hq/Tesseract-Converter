@@ -170,6 +170,7 @@ pub(super) fn candidate(source: &SourceText) -> Result<Option<Candidate>, String
             selectors: vec![SelectorSource::Range {
                 properties: pair.range.clone(),
             }],
+            evaluated: animator.evaluated.clone(),
         });
         animators.push(correction(animator, pair, characters));
     }
@@ -339,6 +340,7 @@ fn correction(animator: &AnimatorSource, pair: &Pair<'_>, characters: usize) -> 
         // Adding zero keeps a zero component unsigned.
         properties: vec![native(POSITION, &[-2.0 * x + 0.0, -2.0 * y + 0.0, 0.0])],
         selectors,
+        evaluated: Vec::new(),
     }
 }
 

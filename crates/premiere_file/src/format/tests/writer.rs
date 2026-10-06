@@ -40,6 +40,7 @@ fn occurrence(path: &Path) -> PrVideoOccurrence {
         effects_above_mask: 0,
         stroke: None,
         active_transforms: 0,
+        source_effects: None,
     }
 }
 
@@ -65,6 +66,8 @@ fn project(occurrences: Vec<PrVideoOccurrence>) -> PrProjectFile {
                         (MediaPathField::FilePath, path),
                     ],
                     video: Some(PrVideoStream {
+                        pixel_aspect: Default::default(),
+                        interpretation: Default::default(),
                         orientation: crate::schema::VideoOrientation::Identity,
                         kind: crate::schema::PrMediaKind::Video {
                             codec: Some(VideoCodec::H264),
@@ -87,6 +90,7 @@ fn project(occurrences: Vec<PrVideoOccurrence>) -> PrProjectFile {
         .unwrap_or(0);
     PrProjectFile::from_sequences(
         vec![PrSequence {
+            native_frame_ticks: None,
             id: None,
             name: "Fresh & editable".into(),
             top_level: Some(true),
@@ -152,50 +156,135 @@ fn animated_nonuniform_scale_is_rejected_before_writing() {
 
 #[test]
 fn written_media_uses_its_own_frame_rate_and_exact_duration() {
-    let clip = occurrence(Path::new("/media/source.mp4"));
-    let mut project = project(vec![clip.clone()]);
-    let source = video_stream(project.media.get_mut(&clip.media).unwrap());
-    source.frame_rate = FrameRate::Fps24000Over1001.into();
-    source.intrinsic_ticks = 240 * 10_594_584_000;
-    let xml = project_xml(&project).unwrap();
-    let document = roxmltree::Document::parse(&xml).unwrap();
-    let stream = document
-        .descendants()
-        .find(|node| node.has_tag_name("VideoStream"))
-        .unwrap();
-    assert_eq!(xml_at(stream, "FrameRate").text(), Some("10594584000"));
-    assert_eq!(xml_at(stream, "Duration").text(), Some("2542700160000"));
-    for node in document.descendants().filter(|node| {
-        node.has_tag_name("TrackGroup")
-            && node.parent().is_some_and(|parent| {
-                parent.has_tag_name("VideoTrackGroup") || parent.has_tag_name("DataTrackGroup")
-            })
-    }) {
-        if let Some(rate) = node
-            .children()
-            .find(|child| child.has_tag_name("FrameRate"))
-        {
-            assert_eq!(rate.text(), Some("8467200000"));
-        }
-    }
-    assert_eq!(
-        document
+    // The 23.976 fps source keeps its own rate in a sequence of each rate. The
+    // sequence writes its frame ticks and the display code Premiere saves for it.
+    for (sequence_rate, sequence_ticks, display_format) in [
+        (FrameRate::Fps30, "8467200000", "104"),
+        (FrameRate::Fps50, "5080320000", "105"),
+        (FrameRate::Fps60, "4233600000", "108"),
+    ] {
+        let clip = occurrence(Path::new("/media/source.mp4"));
+        let mut project = project(vec![clip.clone()]);
+        project.sequences[0].frame_rate = sequence_rate;
+        let source = video_stream(project.media.get_mut(&clip.media).unwrap());
+        source.frame_rate = FrameRate::Fps24000Over1001.into();
+        source.intrinsic_ticks = 240 * 10_594_584_000;
+        let xml = project_xml(&project).unwrap();
+        let document = roxmltree::Document::parse(&xml).unwrap();
+        let stream = document
             .descendants()
-            .find(|node| node.has_tag_name("MediaFrameRate"))
-            .unwrap()
-            .text(),
-        Some("10594584000")
-    );
-    let reloaded = crate::format::inspect_project_with_media(&xml, None).unwrap();
-    let occurrence = reloaded
-        .sequences()
-        .next()
-        .unwrap()
-        .video_occurrences()
-        .next()
-        .unwrap();
-    let video = reloaded.media(occurrence).unwrap().video.as_ref().unwrap();
-    assert_eq!(video.frame_rate, FrameRate::Fps24000Over1001.into());
+            .find(|node| node.has_tag_name("VideoStream"))
+            .unwrap();
+        assert_eq!(xml_at(stream, "FrameRate").text(), Some("10594584000"));
+        assert_eq!(xml_at(stream, "Duration").text(), Some("2542700160000"));
+        let group_rates: Vec<_> = document
+            .descendants()
+            .filter(|node| {
+                node.has_tag_name("TrackGroup")
+                    && node.parent().is_some_and(|parent| {
+                        parent.has_tag_name("VideoTrackGroup")
+                            || parent.has_tag_name("DataTrackGroup")
+                    })
+            })
+            .map(|node| xml_at(node, "FrameRate").text())
+            .collect();
+        assert_eq!(group_rates, [Some(sequence_ticks); 2]);
+        let display_formats: Vec<_> = document
+            .descendants()
+            .filter(|node| node.has_tag_name("MZ.Sequence.VideoTimeDisplayFormat"))
+            .map(|node| node.text())
+            .collect();
+        assert_eq!(display_formats, [Some(display_format)]);
+        assert_eq!(
+            document
+                .descendants()
+                .find(|node| node.has_tag_name("MediaFrameRate"))
+                .unwrap()
+                .text(),
+            Some("10594584000")
+        );
+        let reloaded = crate::format::inspect_project_with_media(&xml, None).unwrap();
+        let sequence = reloaded.sequences().next().unwrap();
+        assert_eq!(sequence.frame_rate, sequence_rate);
+        let occurrence = sequence.video_occurrences().next().unwrap();
+        let video = reloaded.media(occurrence).unwrap().video.as_ref().unwrap();
+        assert_eq!(video.frame_rate, FrameRate::Fps24000Over1001.into());
+    }
+}
+
+/// A video master's `VideoStream` carries the code Premiere saves for its
+/// codec family and, for an alpha master, readable straight alpha: the
+/// corpus `ap4h` masters (Podcast Opener) save `CodecType` 1634743400 and
+/// `AlphaType` 1 without `IgnoreAlpha`; an opaque master keeps `AlphaType` 3
+/// and `IgnoreAlpha` true.
+#[test]
+fn written_video_masters_carry_their_codec_code_and_alpha_declaration() {
+    use crate::schema::video_codec::ProResProfile;
+    let child = |stream: roxmltree::Node<'_, '_>, tag: &str| {
+        stream
+            .children()
+            .find(|node| node.has_tag_name(tag))
+            .and_then(|node| node.text())
+            .map(str::to_owned)
+    };
+    for (codec, codec_type, alpha_type, ignore_alpha) in [
+        (VideoCodec::H264, "1635148593", "3", Some("true")),
+        (VideoCodec::HevcMain, "1212503619", "3", Some("true")),
+        (
+            VideoCodec::ProRes {
+                profile: ProResProfile::Hq,
+                alpha: false,
+            },
+            "1634755432",
+            "3",
+            Some("true"),
+        ),
+        (
+            VideoCodec::ProRes {
+                profile: ProResProfile::P4444,
+                alpha: true,
+            },
+            "1634743400",
+            "1",
+            None,
+        ),
+    ] {
+        let clip = occurrence(Path::new("/media/source.mov"));
+        let mut project = project(vec![clip.clone()]);
+        video_stream(project.media.get_mut(&clip.media).unwrap()).kind =
+            crate::schema::PrMediaKind::Video {
+                codec: Some(codec),
+                hdr_profile: None,
+            };
+        let xml = project_xml(&project).unwrap();
+        let document = roxmltree::Document::parse(&xml).unwrap();
+        let stream = document
+            .descendants()
+            .find(|node| node.has_tag_name("VideoStream"))
+            .unwrap();
+        assert_eq!(
+            child(stream, "CodecType").as_deref(),
+            Some(codec_type),
+            "{codec:?}"
+        );
+        assert_eq!(
+            child(stream, "AlphaType").as_deref(),
+            Some(alpha_type),
+            "{codec:?}"
+        );
+        assert_eq!(
+            child(stream, "IgnoreAlpha").as_deref(),
+            ignore_alpha,
+            "{codec:?}"
+        );
+        // The reader takes the codec from the file, not the record, so the
+        // written project reads back as a video master of the same frame.
+        let reloaded = crate::format::inspect_project_with_media(&xml, None).unwrap();
+        let sequence = reloaded.sequences().next().unwrap();
+        let occurrence = sequence.video_occurrences().next().unwrap();
+        let video = reloaded.media(occurrence).unwrap().video.as_ref().unwrap();
+        assert_eq!((video.width, video.height), (1920, 1080));
+    }
 }
 
 #[test]
@@ -590,6 +679,7 @@ fn edited_uniform_scale_and_rotation_export_independently() {
     let facts = std::collections::BTreeMap::from([(
         "premiere-video-1".to_owned(),
         crate::media::MediaFacts::Video(crate::media::VideoMedia {
+            pixel_aspect: Default::default(),
             orientation: crate::schema::VideoOrientation::Identity,
             codec: VideoCodec::H264,
             bit_depth: 8,
@@ -697,6 +787,7 @@ fn import_edit_export_and_reimport_use_the_edited_key() {
     let facts = std::collections::BTreeMap::from([(
         "premiere-video-1".to_owned(),
         crate::media::MediaFacts::Video(crate::media::VideoMedia {
+            pixel_aspect: Default::default(),
             orientation: crate::schema::VideoOrientation::Identity,
             codec: VideoCodec::H264,
             bit_depth: 8,

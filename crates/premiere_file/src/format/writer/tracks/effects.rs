@@ -11,14 +11,14 @@ use crate::format::{
 use crate::schema::{
     native::{
         MotionBody, MotionParams, MotionPrivateData, PointComponentParam, Record,
-        RetainedOrSkipped, VideoComponentParam, VideoFilterComponent,
+        RetainedOrSkipped, SubComponents, VideoComponentParam, VideoFilterComponent,
     },
     records, EffectParamSpec, EffectSpec, PrColourKeyframe, PrEffect, PrEffectParamKeys,
     PrEffectParams, PrKeyframeEasing, BLUR_DIMENSIONS_HORIZONTAL_AND_VERTICAL,
     FILM_IMPACT_BLUR_AMOUNT, FILM_IMPACT_BLUR_ANGLE, FILM_IMPACT_BLUR_DEFAULTS,
-    FILM_IMPACT_BLUR_EDGE, FILM_IMPACT_DIRECTIONAL_BLUR_DEFAULTS, INVERT_CHANNEL_RGB,
-    PREMIERE_NATIVE_FILTER_VERSIONS, PREMIERE_NATIVE_PARAMETER_ID, RAMP_SHAPE_LINEAR,
-    TRANSFORM_SAMPLING_BICUBIC, TRANSFORM_SAMPLING_BILINEAR,
+    FILM_IMPACT_BLUR_EDGE, FILM_IMPACT_DIRECTIONAL_BLUR_DEFAULTS, PREMIERE_NATIVE_FILTER_VERSIONS,
+    PREMIERE_NATIVE_PARAMETER_ID, RAMP_SHAPE_LINEAR, TRANSFORM_SAMPLING_BICUBIC,
+    TRANSFORM_SAMPLING_BILINEAR,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 
@@ -32,10 +32,19 @@ const FIRST_EFFECT_COMPONENT_ID: usize = 4;
 /// parameter is written like a keyed Motion parameter: its keys, no
 /// `IsTimeVarying`, and its static value, the first key's, as `StartKeyframe`.
 /// A keyed Premiere-native or Film Impact parameter is marked `IsTimeVarying`
-/// `true`, as Premiere 26.5.1 saves a keyed Levels (Oracle run E4) and Amount.
+/// `true`, as Premiere 26.5.1 saves a keyed Levels and Amount.
+/// Legacy Noise Amount also requires this flag: saved scalar keys alone remain dormant.
 pub(super) fn records(effects: &[PrEffect], ids: &[EffectIds]) -> Result<Vec<Record>> {
     let mut output = Vec::new();
     for (position, (effect, ids)) in effects.iter().zip(ids).enumerate() {
+        ensure_valid!(
+            !matches!(effect.params, PrEffectParams::LensDistortion(_)) || effect.enabled,
+            "bypassed Lens Distortion has no established native wire form"
+        );
+        ensure_valid!(
+            !matches!(effect.params, PrEffectParams::ModernNoise { .. }),
+            "Modern Noise must be lowered through editable Grain before canonical Legacy export"
+        );
         let spec = effect.spec();
         let film_impact = matches!(
             effect.params,
@@ -44,7 +53,16 @@ pub(super) fn records(effects: &[PrEffect], ids: &[EffectIds]) -> Result<Vec<Rec
         // A Premiere-native filter is written as Premiere 26.5.1 saves Levels,
         // without flags: export omits a disabled Levels.
         let native = spec.premiere_native;
-        let [version, body_version] = if native || film_impact {
+        // These effects follow their pinned 2026 9/7 components.
+        let find_edges = matches!(
+            effect.params,
+            PrEffectParams::FindEdges(_) | PrEffectParams::AlphaGlow { .. }
+        );
+        let posterize_time = matches!(effect.params, PrEffectParams::PosterizeTime { .. });
+        let legacy_luma = matches!(effect.params, PrEffectParams::LegacyLuma { .. });
+        let [version, body_version] = if matches!(effect.params, PrEffectParams::Noise { .. }) {
+            ["9", "7"]
+        } else if native || film_impact || find_edges || posterize_time || legacy_luma {
             PREMIERE_NATIVE_FILTER_VERSIONS
         } else {
             [
@@ -59,26 +77,61 @@ pub(super) fn records(effects: &[PrEffect], ids: &[EffectIds]) -> Result<Vec<Rec
             component: Some(MotionBody {
                 version: Some(body_version.to_owned()),
                 // Without parameters there is no `Params` element, as Premiere
-                // 26.5.1 saves a Black & White (Oracle run E7).
+                // 26.5.1 saves a Black & White.
                 params: (!spec.params.is_empty())
                     .then(|| MotionParams::from_ids(ids.params.iter().copied())),
                 id: Some((FIRST_EFFECT_COMPONENT_ID + position).to_string()),
                 display_name: Some(spec.display_name.to_owned()),
                 instance_name: None,
-                bypass: if film_impact {
+                bypass: if film_impact || find_edges || posterize_time || legacy_luma {
                     (!effect.enabled).then(|| "true".to_owned())
                 } else {
                     (!native).then(|| (!effect.enabled).to_string())
                 },
-                intrinsic: (!native && !film_impact).then(|| "false".to_owned()),
+                intrinsic: (!native
+                    && !film_impact
+                    && !find_edges
+                    && !posterize_time
+                    && !legacy_luma)
+                    .then(|| "false".to_owned()),
             }),
             premiere_filter_private_data: levels_private_data(effect)?,
-            sub_components: None,
+            sub_components: ids
+                .mask
+                .as_ref()
+                .map(|mask| SubComponents::from_ids([mask.component])),
             match_name: Some(spec.match_name.to_owned()),
             video_filter_type: Some(spec.filter_type.to_owned()),
         }));
+        if let (Some(mask), Some(ids)) = (&effect.mask, &ids.mask) {
+            output.extend(super::mask::records(mask, ids)?);
+        }
         // Static values in the native `Params` order of `spec`.
         let values = match &effect.params {
+            PrEffectParams::Offset(_) => {
+                return Err(crate::format::invalid(
+                    "Offset replacement must export edited MotionTile through the linked-AEP route",
+                ))
+            }
+            PrEffectParams::LumetriExposure(_)
+            | PrEffectParams::LumetriSaturation(_)
+            | PrEffectParams::LumetriVignette(_)
+            | PrEffectParams::LumetriTemperature(_)
+            | PrEffectParams::LumetriTint(_) => {
+                return Err(crate::format::invalid("saved Lumetri replacements must export from edited FX through the linked-AEP route"));
+            }
+            PrEffectParams::AlphaGlow {
+                size,
+                brightness,
+                color,
+            } => vec![
+                size.to_string(),
+                brightness.to_string(),
+                color.native().to_string(),
+                color.native().to_string(),
+                "false".to_owned(),
+                "true".to_owned(),
+            ],
             PrEffectParams::GaussianBlur(blur) => vec![
                 native_number(blur.blurriness),
                 BLUR_DIMENSIONS_HORIZONTAL_AND_VERTICAL.to_owned(),
@@ -126,7 +179,10 @@ pub(super) fn records(effects: &[PrEffect], ids: &[EffectIds]) -> Result<Vec<Rec
             ],
             // Without Invert's opaque private data (`EffectSpec::opaque_private_data`).
             PrEffectParams::Invert(invert) => {
-                vec![INVERT_CHANNEL_RGB.to_owned(), native_number(invert.blend)]
+                vec![invert.channel.to_string(), native_number(invert.blend)]
+            }
+            PrEffectParams::FindEdges(edges) => {
+                vec![edges.invert.to_string(), native_number(edges.blend)]
             }
             PrEffectParams::Tint(tint) => vec![
                 tint.black.native().to_string(),
@@ -134,6 +190,18 @@ pub(super) fn records(effects: &[PrEffect], ids: &[EffectIds]) -> Result<Vec<Rec
                 native_number(tint.amount),
             ],
             PrEffectParams::BlackWhite => Vec::new(),
+            PrEffectParams::Noise { amount } | PrEffectParams::ModernNoise { amount, .. } => {
+                vec![native_number(*amount), "true".to_owned(), "true".to_owned()]
+            }
+            PrEffectParams::LensDistortion(curvature) => vec![
+                native_number(*curvature),
+                "0".to_owned(),
+                "0".to_owned(),
+                "0".to_owned(),
+                "0".to_owned(),
+                "true".to_owned(),
+                crate::schema::PrColour::BLACK.native().to_string(),
+            ],
             // A linear ramp without scatter, the only form that converts.
             PrEffectParams::Ramp(ramp) => vec![
                 format!("{}:{}", ramp.start[0], ramp.start[1]),
@@ -150,7 +218,19 @@ pub(super) fn records(effects: &[PrEffect], ids: &[EffectIds]) -> Result<Vec<Rec
                 mosaic.vertical.to_string(),
                 mosaic.sharp_colors.to_string(),
             ],
-            PrEffectParams::Transform(transform) => vec![
+            // A whole Count, as Premiere 26.5.1 writes it.
+            PrEffectParams::Replicate(replicate) => vec![replicate.count.to_string()],
+            PrEffectParams::Sharpen(sharpen) => vec![sharpen.amount.to_string()],
+            PrEffectParams::LegacyLuma { threshold, cutoff } => {
+                vec![native_number(*threshold), native_number(*cutoff)]
+            }
+            // A whole Level, as Premiere writes this float (`7.`).
+            PrEffectParams::Posterize(posterize) => {
+                vec![native_number(f64::from(posterize.level))]
+            }
+            PrEffectParams::PosterizeTime { frame_rate } => vec![native_number(*frame_rate)],
+            PrEffectParams::Transform(transform)
+            | PrEffectParams::AdjustmentGeometry2(transform) => vec![
                 format!(
                     "{}:{}",
                     transform.anchor_point[0], transform.anchor_point[1]
@@ -202,8 +282,16 @@ pub(super) fn records(effects: &[PrEffect], ids: &[EffectIds]) -> Result<Vec<Rec
                 // (`EffectParamSpec::accepts_name`).
                 name: (!param.name.is_empty()).then(|| param.name.to_owned()),
                 is_time_varying: match keys {
-                    None => (!film_impact).then(|| "false".to_owned()),
-                    Some(_) => (native || film_impact).then(|| "true".to_owned()),
+                    None => {
+                        (!film_impact && !find_edges && !legacy_luma).then(|| "false".to_owned())
+                    }
+                    Some(_) => (native
+                        || film_impact
+                        || legacy_luma
+                        || (matches!(effect.params, PrEffectParams::Noise { .. })
+                            && param == &crate::schema::NOISE_AMOUNT)
+                        || matches!(effect.params, PrEffectParams::AlphaGlow { .. }))
+                    .then(|| "true".to_owned()),
                 },
                 discontinuous_interpolate: param
                     .discontinuous_interpolate
@@ -234,7 +322,7 @@ pub(super) fn records(effects: &[PrEffect], ids: &[EffectIds]) -> Result<Vec<Rec
 }
 
 /// Levels' private data: its 20 `StartKeyframe` values as little-endian u16s,
-/// as Premiere 26.5.1 saves it (Oracle run E4). Its `BinaryHash` is a random
+/// as Premiere 26.5.1 saves it. Its `BinaryHash` is a random
 /// UUID, as for file media (inferred).
 fn levels_private_data(effect: &PrEffect) -> Result<Option<RetainedOrSkipped<MotionPrivateData>>> {
     let PrEffectParams::Levels(levels) = &effect.params else {
@@ -262,7 +350,7 @@ fn levels_private_data(effect: &PrEffect) -> Result<Option<RetainedOrSkipped<Mot
 /// Colour keys in the 8-field scalar key form with a native colour value and
 /// zero handles: a Linear or Hold segment has no velocity. Premiere 26.5.1
 /// saves Linear colour keys this way apart from its automatic influence
-/// (Oracle run E6, Tint clip E).
+/// in the native Tint sample.
 fn colour_keyframes(keys: &[PrColourKeyframe]) -> Result<String> {
     let mut wire = String::new();
     for (index, key) in keys.iter().enumerate() {

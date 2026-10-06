@@ -2,13 +2,20 @@
 //!
 //! A nest is read by the placement rules shared with media
 //! (`video::read_placement`), clip Enable and track output included. It
-//! converts only as a plain placement: one constant forward speed that its
-//! saved window confirms ([`speed_matches_window`]), intrinsic Motion (static
-//! or keyed, without a Track Matte Key), default Crop and Opacity value
-//! without keys, any Blend Mode, no effects but a Track Matte Key, and the
-//! outer canvas, with the outer frame rate unless it is retimed. The ordinary
-//! sequence reader reads its inner timeline, at most [`MAX_NEST_DEPTH`] levels
-//! deep. Repeated placements share their media records and reuse one read of
+//! converts as a plain forward placement or bounded unit reverse; reverse
+//! reflects the saved window about OriginalDuration, never the current end.
+//! Forward placements use one constant speed that their
+//! saved input window confirms by the media rule ([`source_span_matches`]: the
+//! speed is source time over placement time, whatever the inner frame rate),
+//! optionally with a bounded forward source curve on a top-level placement,
+//! intrinsic Motion (static or keyed, without a Track Matte Key), Opacity
+//! (static, or keyed unless the nest is retimed), default or standalone static
+//! zero-feather Crop, any Blend Mode, and bounded occurrence effects under the
+//! [nested occurrence effect rules](../../../README.md#nested-occurrence-effects).
+//! Any canvas and frame rate are admitted, though a Track Matte Key only on the
+//! outer canvas. The ordinary sequence reader reads its inner timeline, at most
+//! [`MAX_NEST_DEPTH`] levels deep.
+//! Repeated placements share their media records and reuse one read of
 //! their inner sequence per nesting depth that remains below them, so a
 //! top-level read reads each sequence at most once per depth. A placement of
 //! a timeline on a nesting cycle is omitted, and so is one that closes a cycle
@@ -24,18 +31,20 @@
 //! ([`play_alone`]).
 
 use super::{
-    required_integer, sequence,
-    video::{read_placement, report_unknown_children},
+    animation::chain_components,
+    effects, required_integer, sequence,
+    video::{read_placement, report_unknown_children, Placement},
 };
 use crate::{
     error::{ensure, unsupported, BuildError, Result},
     format::{graph::Element, Graph, Located, Record},
     omit,
     schema::{
-        native::VideoClipTrackItem, occurrence_edits, records, ClipEdits, FrameRate, MediaId,
-        OccurrenceEdit, PrAudioOccurrence, PrBlendMode, PrKeyframeEasing, PrMedia,
-        PrNestOccurrence, PrPropertyAnimation, PrScalarKeyframe, PrSequence, PrStaticTransform,
-        PrTrackMatte, PrVideoItem, PrVideoTrack, PrVolumeKeys, MAX_NEST_DEPTH,
+        native::VideoClipTrackItem, occurrence_edits, records, source_span_matches, ClipEdits,
+        FrameRate, MediaId, OccurrenceEdit, PrAudioFade, PrAudioOccurrence, PrBlendMode,
+        PrKeyframeEasing, PrMedia, PrNestOccurrence, PrPropertyAnimation, PrScalarKeyframe,
+        PrSequence, PrStaticCrop, PrStaticTransform, PrTrackMatte, PrVideoItem, PrVideoTrack,
+        PrVolumeKeys, MAX_NEST_DEPTH, SOURCE_CHAIN_NOT_CONVERTED,
     },
     Omission, OmissionScope,
 };
@@ -58,6 +67,9 @@ pub(super) struct Parent<'a> {
     /// `Track/ID`, which a Track Matte Key names; `None` for an ID that more
     /// than one track carries.
     pub(super) track_ids: &'a BTreeMap<usize, Option<usize>>,
+    /// Whether the sequence is the inner timeline of a nest placement, not
+    /// the sequence that the read selected.
+    pub(super) nested: bool,
 }
 
 impl Parent<'_> {
@@ -112,18 +124,35 @@ pub(super) struct NestPlacement {
     id: String,
     timeline: Range<i64>,
     source: Range<i64>,
+    playback_rate: f64,
+    reverse_source_duration: Option<i64>,
+    time_remap: Option<crate::schema::PrTimeRemap>,
     /// Effective picture output, from clip Enable and track output.
     enabled: bool,
-    /// The placement's Motion, which its group carries.
+    /// The placement's Motion and Opacity, with their keys, which its group
+    /// carries.
     transform: PrStaticTransform,
+    crop: PrStaticCrop,
+    linear_wipe: Option<crate::schema::PrLinearWipe>,
+    opacity_mask: Option<crate::schema::PrMask>,
+    opacity: f64,
     animations: Vec<PrPropertyAnimation>,
+    effects: Vec<crate::schema::PrEffect>,
+    effects_above_mask: usize,
     track_matte: Option<PrTrackMatte>,
     blend_mode: PrBlendMode,
     read: ReadKey,
 }
 
-/// A sequence GUID and the nesting levels still allowed below it.
-type ReadKey = (String, usize);
+/// A sequence GUID, remaining nesting depth and optional multicam video track.
+/// Camera reads must not reuse a different cut's camera or the composite view.
+type ReadKey = (String, usize, Option<usize>);
+
+/// A nested composite or a resolved ordinary multicam picture.
+pub(super) enum NestedVideo {
+    Nest(Box<NestPlacement>),
+    Media(Box<crate::schema::PrVideoOccurrence>),
+}
 
 /// Recursion state for one top-level sequence read.
 pub(super) struct Nesting<'a> {
@@ -151,6 +180,11 @@ impl<'a> Nesting<'a> {
         }
     }
 
+    /// Whether the timeline being read is the inner timeline of a nest placement.
+    pub(super) fn reads_inner_timeline(&self) -> bool {
+        self.depth > 0
+    }
+
     /// Reads `guid` once per remaining depth; returns the cache key and the
     /// cached read.
     fn read(
@@ -159,6 +193,7 @@ impl<'a> Nesting<'a> {
         guid: &str,
         media: &mut BTreeMap<MediaId, PrMedia>,
         omissions: &mut Vec<Omission>,
+        selected_video_track: Option<usize>,
     ) -> Result<(ReadKey, &mut InnerRead)> {
         ensure!(
             !self.cyclic.contains(guid),
@@ -174,11 +209,22 @@ impl<'a> Nesting<'a> {
             level <= MAX_NEST_DEPTH,
             "nested sequence {guid} is deeper than {MAX_NEST_DEPTH} levels"
         );
-        let key = (guid.to_owned(), MAX_NEST_DEPTH - level);
+        let key = (
+            guid.to_owned(),
+            MAX_NEST_DEPTH - level,
+            selected_video_track,
+        );
         if !self.finished.contains_key(&key) {
             self.open.push(guid.to_owned());
             self.depth = level;
-            let read = sequence::read_sequence_at(graph, Some(guid), media, self, omissions);
+            let read = sequence::read_sequence_tracks_at(
+                graph,
+                Some(guid),
+                media,
+                self,
+                omissions,
+                selected_video_track,
+            );
             self.depth = level - 1;
             self.open.pop();
             let read = read.map_err(reason).map(Self::keep);
@@ -194,6 +240,9 @@ impl<'a> Nesting<'a> {
     fn keep(sequence: PrSequence) -> InnerRead {
         let nest = PrNestOccurrence {
             id: None,
+            reverse_source_duration: None,
+            playback_rate: 1.0,
+            time_remap: None,
             start_ticks: 0,
             end_ticks: 0,
             in_ticks: 0,
@@ -204,8 +253,10 @@ impl<'a> Nesting<'a> {
             animations: Vec::new(),
             crop: Default::default(),
             linear_wipe: None,
+            opacity_mask: None,
             track_matte: None,
             effects: Vec::new(),
+            effects_above_mask: 0,
             enabled: true,
             sequence,
         };
@@ -231,26 +282,6 @@ fn reason(error: BuildError) -> String {
     }
 }
 
-/// How far, in ticks, a nest's window may lie from the length that its speed
-/// gives, as a media clip's source span may (`PrVideoOccurrence::validate`):
-/// Adobe truncates the floating-point product to integer ticks.
-const SPEED_SPAN_TOLERANCE_TICKS: f64 = 4.0;
-
-/// Whether the window from In to Out of the checked `nest` is the one that
-/// the native forward `speed` plays over its placement on the `outer`
-/// sequence. Premiere counts a nest's speed in inner frames per outer frame, so
-/// a mixed-rate nest saves Out − In = duration × speed × the inner frame
-/// duration ÷ the outer frame duration. At one frame rate this is the rule of
-/// a media clip's speed. The saved window, not the speed, then defines the
-/// nest's clock, so the frame-rate ratio enters only this check.
-fn speed_matches_window(nest: &PrNestOccurrence, speed: f64, outer: FrameRate) -> bool {
-    let frame = |rate: FrameRate| rate.ticks_per_frame() as f64;
-    let played =
-        (nest.end_ticks - nest.start_ticks) as f64 * speed * frame(nest.sequence.frame_rate)
-            / frame(outer);
-    ((nest.out_ticks - nest.in_ticks) as f64 - played).abs() <= SPEED_SPAN_TOLERANCE_TICKS
-}
-
 /// Reads a track item whose clip plays the sequence `guid`, then rejects what
 /// a nest cannot carry. The inner timeline is checked but not yet copied.
 pub(super) fn read_nest(
@@ -261,13 +292,115 @@ pub(super) fn read_nest(
     media: &mut BTreeMap<MediaId, PrMedia>,
     nesting: &mut Nesting<'_>,
     omissions: &mut Vec<Omission>,
-) -> Result<NestPlacement> {
-    let placement = read_placement(graph, &item, parent, omissions)?;
+) -> Result<NestedVideo> {
+    let placement = read_placement(graph, &item, parent, false, omissions)?;
+    for (owner, chain) in placement
+        .chain
+        .iter()
+        .map(|chain| ("placement", chain))
+        .chain(
+            placement
+                .source_chain
+                .iter()
+                .map(|source| ("source", &source.chain)),
+        )
+    {
+        super::effects::split_chain(
+            graph,
+            super::animation::chain_components(chain)?,
+            &chain.identity,
+        )?
+        .reject_unconverted_coverage(owner)?;
+    }
+
+    if let Some(index) = placement
+        .clip
+        .value
+        .clip
+        .as_ref()
+        .and_then(|clip| clip.selected_track_index)
+    {
+        return read_multicam(
+            graph,
+            &item.identity,
+            guid,
+            index,
+            placement,
+            parent,
+            media,
+            nesting,
+            omissions,
+        )
+        .map(|camera| NestedVideo::Media(Box::new(camera)));
+    }
+    // A nest placement carries no source effects; its picture converts
+    // without them, as without an admitted chain.
+    if let Some(source) = &placement.source_chain {
+        omit(
+            omissions,
+            OmissionScope::Feature,
+            &source.master,
+            SOURCE_CHAIN_NOT_CONVERTED,
+        );
+    }
     let identity = &item.identity;
-    ensure!(
-        !placement.has_effects,
-        "{identity}: effects on a nested sequence occurrence are not converted"
-    );
+    let mut occurrence_effect_omissions = Vec::new();
+    let (occurrence_effects, effects_above_mask, transform_stage, geometry2) = if placement
+        .has_effects
+    {
+        let chain = placement.chain.as_ref().ok_or_else(|| {
+            unsupported(format!(
+                "{identity}: nested effects have no component chain"
+            ))
+        })?;
+        let split = effects::split_chain(graph, chain_components(chain)?, &chain.identity)?;
+        if split.has_active_nest_transform() {
+            // Keep the existing bounded Transform admission; ordinary effects
+            // do not establish a new Transform coordinate basis or stack order.
+            let effect = split
+                .read_nest_transform(graph)
+                .map_err(|error| unsupported(format!("{identity}: {}", effects::reason(error))))?;
+            (vec![effect], 0, true, split.has_active_nest_geometry2())
+        } else {
+            ensure!(
+                !split.has_active_nest_corner_pin(),
+                "{identity}: active Corner Pin on a nested sequence occurrence is not converted: the picture Group has no fixed native canvas bounds; occurrence omitted to preserve coverage"
+            );
+            let owner = effects::EffectOwner {
+                occurrence: identity,
+                source: None,
+                stroke_geometry: false,
+                clip_name: placement.sub.value.name.as_deref(),
+                track_index: parent.track_index,
+                timeline_ticks: placement.start..placement.end,
+                // The canvas is read later. No point-frame mapping is admitted
+                // by claiming it matches the parent's canvas here.
+                source_is_canvas: false,
+                adjustment: false,
+            };
+            let (effects, above_mask) = split.read_effects(
+                graph,
+                &owner,
+                placement.linear_wipe.is_some(),
+                &mut occurrence_effect_omissions,
+            );
+            // The existing picture stage carries supported effects and keys;
+            // the outer owner retains its independent mask/matte coverage.
+            // Unsupported optional effects have their own field-local reports.
+            if !effects.is_empty()
+                && (!placement.crop.is_default() || placement.track_matte.is_some())
+            {
+                crate::approximate(
+                    &mut occurrence_effect_omissions,
+                    identity,
+                    "nested effects retain editable controls before outer coverage; native effect/mask order and edge sampling may differ",
+                );
+            }
+            (effects, above_mask, false, false)
+        }
+    } else {
+        (Vec::new(), 0, false, false)
+    };
     ensure!(
         !placement.scale_to_frame,
         "{identity}: Scale to Frame Size on a nested sequence occurrence is not converted"
@@ -284,13 +417,15 @@ pub(super) fn read_nest(
         playback_rate: placement.playback_rate,
         time_remap: placement.time_remap.as_ref(),
     });
-    // A Track Matte Key keys the nest's canvas-sized picture, and a blend
-    // mode blends it, which its group carries. So is its Motion, static or
-    // keyed, as a clip's is its layer's, though not beside a Track Matte Key,
-    // whose order against it no nest case measures. Every other edit omits
-    // the nest.
+    // A Track Matte Key keys the nest's canvas-sized picture, a blend mode
+    // blends it and its Opacity, static or keyed, fades it, which its group
+    // carries; Opacity scales the keyed picture's alpha in either order. So
+    // is its Motion, static or keyed, as a clip's is its layer's, though not
+    // beside a Track Matte Key, whose order against it no nest case
+    // measures. A standalone static Crop clips its own canvas before Motion;
+    // feather, Motion Crop and Crop beside a Track Matte Key remain excluded.
     let reason = edits.iter().find_map(|&edit| match edit {
-        OccurrenceEdit::TrackMatte => None,
+        OccurrenceEdit::TrackMatte | OccurrenceEdit::Opacity | OccurrenceEdit::OpacityKeys => None,
         OccurrenceEdit::MotionKeys
         | OccurrenceEdit::Position
         | OccurrenceEdit::AnchorPoint
@@ -298,42 +433,105 @@ pub(super) fn read_nest(
         | OccurrenceEdit::Rotation => placement.track_matte.is_some().then(|| {
             format!("{identity}: Motion with a Track Matte Key on a nested sequence occurrence is not converted")
         }),
-        OccurrenceEdit::LinearWipe => Some(format!(
-            "{identity}: Linear Wipe on a nested sequence occurrence is not converted"
-        )),
-        OccurrenceEdit::OpacityKeys => Some(format!(
-            "{identity}: Opacity keyframes on a nested sequence occurrence are not converted"
-        )),
-        OccurrenceEdit::OpacityMask => Some(format!(
-            "{identity}: an Opacity mask on a nested sequence occurrence is not converted"
-        )),
-        OccurrenceEdit::Opacity => Some(format!(
-            "{identity}: nondefault Opacity on a nested sequence occurrence is not converted"
-        )),
-        OccurrenceEdit::Crop => Some(format!(
-            "{identity}: Crop on a nested sequence occurrence is not converted"
-        )),
-        // A forward speed is checked against the window once the inner
-        // frame rate is read.
-        OccurrenceEdit::PlaybackRate => (placement.playback_rate < 0.0).then(|| {
-            format!("{clip}: reverse playback of a nested sequence occurrence is not converted")
-        }),
-        OccurrenceEdit::TimeRemap => Some(format!(
-            "{clip}: TimeRemapping on a nested sequence occurrence is not converted"
+        OccurrenceEdit::LinearWipe => (!placement.crop.is_default()
+            || placement.track_matte.is_some()
+            || placement.opacity_mask.is_some()
+            || placement.playback_rate != 1.0
+            || placement.time_remap.is_some())
+            .then(|| format!(
+                "{identity}: nested Linear Wipe requires a unit-forward clock without other masks"
+            )),
+        OccurrenceEdit::OpacityMask => (!placement.crop.is_default()
+            || placement.linear_wipe.is_some() || placement.track_matte.is_some()
+            || placement.playback_rate != 1.0 || placement.time_remap.is_some()
+            || placement.opacity_mask.as_ref().is_some_and(|mask|
+                mask.raster.is_some() || !mask.path_keys.is_empty()))
+            .then(|| format!("{identity}: nested Opacity mask requires a static vector outline, unit-forward playback and no other masks")),
+        OccurrenceEdit::Crop => {
+            let reason = if placement.crop_from_motion {
+                Some("Motion Crop")
+            } else if placement.crop.edge_feather != 0.0 {
+                Some("feathered Crop")
+            } else if placement.track_matte.is_some() {
+                Some("Crop with a Track Matte Key")
+            } else {
+                None
+            };
+            reason.map(|reason| format!(
+                "{identity}: {reason} on a nested sequence occurrence is not converted"
+            ))
+        },
+        // Check the input span and reverse OriginalDuration reflection against
+        // the actual inner timeline, not a forward-only admission predicate.
+        OccurrenceEdit::PlaybackRate => None,
+        OccurrenceEdit::TimeRemap => parent.nested.then(|| format!(
+            "{clip}: TimeRemapping on a nested sequence occurrence inside another nest is not converted"
         )),
     });
     if let Some(reason) = reason {
         return Err(unsupported(reason));
     }
-    read_sequence_source(graph, placement.source_record, omissions)?;
-    let (key, read) = nesting.read(graph, guid, media, omissions)?;
+    let source_duration = read_sequence_source(graph, placement.source_record, omissions)?;
+    let (key, read) = nesting.read(graph, guid, media, omissions, None)?;
     let id = item.identity;
     let nest = &mut read.nest;
+    if transform_stage {
+        let old_envelope = crate::schema::nested_transform_canvas_reason(
+            nest.sequence.dimensions(),
+            parent.dimensions,
+            &placement.transform,
+            placement.opacity,
+            !placement.animations.is_empty(),
+            &occurrence_effects[0],
+        );
+        if let Some(reason) = crate::schema::nested_transform_import_canvas_reason(
+            nest.sequence.dimensions(),
+            parent.dimensions,
+            &placement.transform,
+            placement.opacity,
+            &placement.animations,
+            &occurrence_effects[0],
+        ) {
+            return Err(unsupported(format!(
+                "{id}: {reason}; source {:?}, placement {:?}",
+                nest.sequence.dimensions(),
+                parent.dimensions
+            )));
+        }
+        ensure!(
+            old_envelope.is_none() || geometry2,
+            "{id}: differing-canvas keyed affine import requires native Geometry2; ordinary Transform point basis is unmeasured"
+        );
+        ensure!(
+            placement.playback_rate == 1.0
+                && placement.time_remap.is_none()
+                && placement.source_out - placement.source_in == placement.end - placement.start
+                && nest.sequence.frame_rate == parent.frame_rate,
+            "{id}: nested Transform requires unit-forward matching clocks"
+        );
+        ensure!(
+            placement.track_matte.is_none() && placement.opacity_mask.is_none(),
+            "{id}: nested Transform with Track Matte Key or Opacity mask is not converted"
+        );
+    }
     (nest.start_ticks, nest.end_ticks) = (placement.start, placement.end);
     (nest.in_ticks, nest.out_ticks) = (placement.source_in, placement.source_out);
-    (nest.transform, nest.animations) = (placement.transform, placement.animations);
+    nest.playback_rate = placement.playback_rate;
+    nest.reverse_source_duration = (placement.playback_rate < 0.0).then_some(source_duration);
+    nest.time_remap = placement.time_remap.clone();
+    (nest.transform, nest.opacity, nest.animations) =
+        (placement.transform, placement.opacity, placement.animations);
+    nest.crop = placement.crop;
+    nest.linear_wipe = placement.linear_wipe;
+    nest.opacity_mask = placement.opacity_mask;
+    ensure!(
+        nest.opacity_mask.is_none()
+            || (nest.sequence.dimensions() == parent.dimensions
+                && nest.sequence.frame_rate == parent.frame_rate),
+        "{id}: nested Opacity mask requires equal canvases and matching clocks"
+    );
     // Before a later first key Premiere shows that key's value, as AME renders
-    // effect parameters (Oracle run D). So a keyed property's static value is
+    // effect parameters. So a keyed property's static value is
     // its first key's, as an effect parameter's is.
     for animation in &nest.animations {
         match animation {
@@ -364,19 +562,43 @@ pub(super) fn read_nest(
                     nest.transform.scale[0] = key.value;
                 }
             }
-            // A nest's Opacity keys omit it above.
-            PrPropertyAnimation::Opacity(_) => {}
+            PrPropertyAnimation::Opacity(keys) => {
+                if let Some(key) = keys.first() {
+                    nest.opacity = key.value;
+                }
+            }
         }
     }
-    nest.validate(parent.frame_rate, parent.dimensions, media)?;
+    nest.validate(parent.frame_rate, media)?;
+    // Motion places a nest of another canvas, and Premiere keys the picture
+    // before it moves it, so its matte would move with its group; that
+    // order is unmeasured, as for a moved nest.
     ensure!(
-        speed_matches_window(nest, placement.playback_rate, parent.frame_rate),
+        placement.track_matte.is_none() || nest.sequence.dimensions() == parent.dimensions,
+        "{id}: a Track Matte Key on a nested sequence occurrence of another canvas is not converted"
+    );
+    // The saved input window must agree with the speed even with a source curve.
+    ensure!(
+        source_span_matches(
+            nest.end_ticks - nest.start_ticks,
+            nest.out_ticks - nest.in_ticks,
+            placement.playback_rate
+        ),
         "{clip}: In {} to Out {} does not match PlaybackSpeed {} over the {}-tick placement of a nested sequence occurrence",
         nest.in_ticks,
         nest.out_ticks,
         placement.playback_rate,
         nest.end_ticks - nest.start_ticks
     );
+    // A retimed nest's keys are not converted: its group keeps their static
+    // values. Dropping Opacity keys could show what they hide, so they omit a
+    // retimed nest.
+    if nest.is_retimed() && nest.playback_rate > 0.0 && edits.contains(&OccurrenceEdit::OpacityKeys)
+    {
+        return Err(unsupported(format!(
+            "{id}: Opacity keyframes on a retimed nested sequence occurrence are not converted"
+        )));
+    }
     // Frame Blending or Optical Flow interpolates the retimed picture of the
     // whole nest; an FX group has no such field, and each inner video's own
     // blending would interpolate its media instead.
@@ -385,26 +607,144 @@ pub(super) fn read_nest(
             fx_schema::FrameBlendingMode::Simple => "Frame Blending",
             fx_schema::FrameBlendingMode::OpticalFlow => "Optical Flow",
         };
-        omit(
-            omissions,
-            OmissionScope::Feature,
-            clip,
-            format!(
-                "{mode} time interpolation of a retimed nested sequence occurrence is not converted; its group shows the nested frame at each mapped time"
-            ),
-        );
+        if nest.time_remap.is_some() {
+            crate::approximate(
+                omissions,
+                &id,
+                format!("{mode} composite time interpolation is unsupported; sampling fallback evaluates editable children once at each mapped time, without interpolating composite frames or moving interpolation onto a leaf"),
+            );
+        } else {
+            omit(
+                omissions,
+                OmissionScope::Feature,
+                clip,
+                format!(
+                    "{mode} time interpolation of a retimed nested sequence occurrence is not converted; its group shows the nested frame at each mapped time"
+                ),
+            );
+        }
     }
-    Ok(NestPlacement {
+    // Only admitted occurrences may describe converted or omitted effects.
+    omissions.extend(occurrence_effect_omissions);
+    Ok(NestedVideo::Nest(Box::new(NestPlacement {
         id,
         timeline: placement.start..placement.end,
         source: placement.source_in..placement.source_out,
+        playback_rate: placement.playback_rate,
+        reverse_source_duration: nest.reverse_source_duration,
+        time_remap: placement.time_remap,
         enabled: placement.enabled && parent.track_output,
         transform: nest.transform,
+        crop: nest.crop,
+        linear_wipe: nest.linear_wipe.clone(),
+        opacity_mask: nest.opacity_mask.clone(),
+        opacity: nest.opacity,
         animations: std::mem::take(&mut nest.animations),
+        effects: occurrence_effects,
+        effects_above_mask,
         track_matte: placement.track_matte,
         blend_mode: placement.blend_mode,
         read: key,
-    })
+    })))
+}
+
+/// Resolves a plain saved camera cut to the underlying editable media occurrence.
+/// Sound remains owned by the outer audio items, never by the chosen picture.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "shares the native reader's graph, placement and recursion context"
+)]
+fn read_multicam(
+    graph: &Graph<'_>,
+    identity: &str,
+    guid: &str,
+    index: usize,
+    placement: Placement<'_>,
+    parent: &Parent<'_>,
+    media: &mut BTreeMap<MediaId, PrMedia>,
+    nesting: &mut Nesting<'_>,
+    omissions: &mut Vec<Omission>,
+) -> Result<crate::schema::PrVideoOccurrence> {
+    let edits = occurrence_edits(ClipEdits {
+        linear_wipe: placement.linear_wipe.as_ref(),
+        animations: &placement.animations,
+        transform: placement.transform,
+        crop: placement.crop,
+        opacity_mask: placement.opacity_mask.as_ref(),
+        track_matte: placement.track_matte.as_ref(),
+        opacity: placement.opacity,
+        playback_rate: placement.playback_rate,
+        time_remap: placement.time_remap.as_ref(),
+    });
+    ensure!(
+        edits.is_empty(),
+        "{identity}: multicam placement edits are not converted: {edits:?}"
+    );
+    ensure!(
+        !placement.has_effects
+            && placement.source_chain.is_none()
+            && !placement.scale_to_frame
+            && placement.blend_mode == PrBlendMode::Normal
+            && placement.end > placement.start
+            && placement.source_out.checked_sub(placement.source_in)
+                == placement.end.checked_sub(placement.start),
+        "{identity}: only plain unit-speed multicam cuts are converted"
+    );
+    read_sequence_source(graph, placement.source_record, omissions)?;
+    let (_, read) = nesting.read(graph, guid, media, omissions, Some(index))?;
+    let sequence = &read.nest.sequence;
+    ensure!(
+        sequence.frame_rate == parent.frame_rate
+            && [sequence.width, sequence.height] == parent.dimensions,
+        "{identity}: multicam camera canvas and rate must match the outer sequence"
+    );
+    let track = &sequence.video_tracks[0];
+    ensure!(
+        track.nests.is_empty() && track.transitions.is_empty() && track.items.len() == 1,
+        "{identity}: the selected multicam track must contain one ordinary camera clip"
+    );
+    let camera = track.items[0].media().ok_or_else(|| {
+        unsupported(format!(
+            "{identity}: the selected multicam track is not ordinary media"
+        ))
+    })?;
+    let source = &media[&camera.media];
+    ensure!(
+        camera.enabled && camera.active_transforms == 0
+            && camera.edits().is_empty()
+            && camera.effects.is_empty()
+            && camera.source_effects.is_none()
+            && camera.stroke.is_none()
+            && camera.blend_mode == PrBlendMode::Normal
+            && source.video.as_ref().is_some_and(|stream| {
+                matches!(stream.kind, crate::schema::PrMediaKind::Video { .. })
+                    && [stream.width, stream.height] == parent.dimensions
+            }),
+        "{identity}: the selected multicam camera must be enabled, full-canvas and have no retained edits"
+    );
+    ensure!(
+        camera.start_ticks <= placement.source_in && placement.source_out <= camera.end_ticks,
+        "{identity}: the selected multicam camera does not cover the cut's source window"
+    );
+    let mut camera = camera.clone();
+    camera.in_ticks = camera
+        .in_ticks
+        .checked_add(placement.source_in - camera.start_ticks)
+        .ok_or_else(|| unsupported(format!("{identity}: multicam source In exceeds tick range")))?;
+    camera.out_ticks = camera
+        .in_ticks
+        .checked_add(placement.end - placement.start)
+        .ok_or_else(|| {
+            unsupported(format!(
+                "{identity}: multicam source Out exceeds tick range"
+            ))
+        })?;
+    camera.start_ticks = placement.start;
+    camera.end_ticks = placement.end;
+    camera.id = Some(identity.to_owned());
+    camera.enabled &= placement.enabled && parent.track_output;
+    camera.validate(parent.frame_rate, source)?;
+    Ok(camera)
 }
 
 /// Keeps the nested placements that overlap neither a kept media or graphic
@@ -414,17 +754,21 @@ pub(super) fn keep_non_overlapping(
     items: &[PrVideoItem],
     omissions: &mut Vec<Omission>,
 ) -> Vec<NestPlacement> {
-    let overlap = |a: &Range<i64>, b: &Range<i64>| a.start < b.end && b.start < a.end;
+    // Ordinary media-only tracks need no overlap index.
+    if nests.is_empty() {
+        return nests;
+    }
+    let mut item_ranges: Vec<_> = items.iter().map(PrVideoItem::timeline_ticks).collect();
+    item_ranges.sort_by_key(|range| range.start);
+    let mut item_index = IntervalIndex::default();
+    for range in item_ranges {
+        item_index.push(&range);
+    }
     nests.sort_by_key(|nest| nest.timeline.start);
     let mut kept: Vec<NestPlacement> = Vec::with_capacity(nests.len());
+    let mut kept_index = IntervalIndex::default();
     for nest in nests {
-        if items
-            .iter()
-            .any(|item| overlap(&item.timeline_ticks(), &nest.timeline))
-            || kept
-                .iter()
-                .any(|other| overlap(&other.timeline, &nest.timeline))
-        {
+        if item_index.overlaps(&nest.timeline) || kept_index.overlaps(&nest.timeline) {
             omit(
                 omissions,
                 OmissionScope::Occurrence,
@@ -432,10 +776,37 @@ pub(super) fn keep_non_overlapping(
                 "overlaps another occurrence on this track",
             );
         } else {
+            kept_index.push(&nest.timeline);
             kept.push(nest);
         }
     }
     kept
+}
+
+/// Sorted starts and prefix maximum ends implement the exact strict overlap
+/// predicate, even for empty or reversed ranges. No endpoint arithmetic is needed.
+#[derive(Default)]
+struct IntervalIndex {
+    starts: Vec<i64>,
+    max_ends: Vec<i64>,
+}
+
+impl IntervalIndex {
+    // Callers append in nondecreasing start order.
+    fn push(&mut self, range: &Range<i64>) {
+        debug_assert!(self.starts.last().is_none_or(|start| *start <= range.start));
+        self.starts.push(range.start);
+        self.max_ends.push(
+            self.max_ends
+                .last()
+                .map_or(range.end, |end| (*end).max(range.end)),
+        );
+    }
+
+    fn overlaps(&self, range: &Range<i64>) -> bool {
+        let count = self.starts.partition_point(|start| *start < range.end);
+        count > 0 && self.max_ends[count - 1] > range.start
+    }
 }
 
 /// Copies the nested placements of one sequence into `tracks`.
@@ -449,18 +820,23 @@ pub(super) fn copy_placements(
             let sequence = nesting.copy(&placement);
             track.nests.push(PrNestOccurrence {
                 id: Some(placement.id),
+                playback_rate: placement.playback_rate,
+                reverse_source_duration: placement.reverse_source_duration,
+                time_remap: placement.time_remap,
                 start_ticks: placement.timeline.start,
                 end_ticks: placement.timeline.end,
                 in_ticks: placement.source.start,
                 out_ticks: placement.source.end,
                 transform: placement.transform,
-                opacity: 100.0,
+                opacity: placement.opacity,
                 blend_mode: placement.blend_mode,
                 animations: placement.animations,
-                crop: Default::default(),
-                linear_wipe: None,
+                crop: placement.crop,
+                linear_wipe: placement.linear_wipe,
+                opacity_mask: placement.opacity_mask,
                 track_matte: placement.track_matte,
-                effects: Vec::new(),
+                effects: placement.effects,
+                effects_above_mask: placement.effects_above_mask,
                 enabled: placement.enabled,
                 sequence,
             });
@@ -489,21 +865,46 @@ pub(super) fn pair_sounds(
     sounds: Vec<NestSound>,
     omissions: &mut Vec<Omission>,
 ) -> Result<Vec<NestSound>> {
+    let mut buckets: BTreeMap<_, Vec<usize>> = BTreeMap::new();
+    for (index, sound) in sounds.iter().enumerate() {
+        buckets
+            .entry((
+                sound.sequence.clone(),
+                sound.timeline.start,
+                sound.timeline.end,
+                sound.source.start,
+                sound.source.end,
+            ))
+            .or_default()
+            .push(index);
+    }
     let mut unpaired: Vec<Option<NestSound>> = sounds.into_iter().map(Some).collect();
     let mut alone = Vec::new();
     for track in tracks.iter_mut() {
         let mut kept = Vec::with_capacity(track.nests.len());
         for mut nest in std::mem::take(&mut track.nests) {
-            let mut matching: Vec<NestSound> = unpaired
-                .iter_mut()
-                .filter(|sound| {
-                    sound.as_ref().is_some_and(|sound| {
-                        nest.sequence.id.as_deref() == Some(sound.sequence.as_str())
-                            && sound.timeline == nest.timeline_ticks()
-                            && sound.source == (nest.in_ticks..nest.out_ticks)
-                    })
-                })
-                .filter_map(Option::take)
+            // Removing the whole bucket gives the first nest every duplicate,
+            // in sound order; later nests cannot claim any of those items.
+            // A reversed picture does not establish a reverse sound clock.
+            // Leave its independently saved forward sound items to play_alone.
+            let indices = nest
+                .sequence
+                .id
+                .as_ref()
+                .filter(|_| nest.playback_rate > 0.0)
+                .and_then(|sequence| {
+                    buckets.remove(&(
+                        sequence.clone(),
+                        nest.start_ticks,
+                        nest.end_ticks,
+                        nest.in_ticks,
+                        nest.out_ticks,
+                    ))
+                });
+            let mut matching: Vec<NestSound> = indices
+                .into_iter()
+                .flatten()
+                .filter_map(|index| unpaired[index].take())
                 .collect();
             let plays_alone = match matching.as_slice() {
                 [] => false,
@@ -581,7 +982,7 @@ fn heard_alone(
     omissions: &mut Vec<Omission>,
 ) -> std::result::Result<Vec<PrAudioOccurrence>, String> {
     let (_, read) = nesting
-        .read(graph, &sound.sequence, media, omissions)
+        .read(graph, &sound.sequence, media, omissions, None)
         .map_err(reason)?;
     let shift = sound
         .timeline
@@ -590,7 +991,15 @@ fn heard_alone(
         .ok_or_else(|| TICK_RANGE.to_owned())?;
     // At unit gain: the item's gain or keys reach each sound below.
     let mut played = Vec::new();
-    played_sounds(&read.nest.sequence, &sound.source, shift, 1.0, &mut played).map_err(reason)?;
+    played_sounds(
+        &read.nest.sequence,
+        &sound.source,
+        shift,
+        1.0,
+        &mut played,
+        omissions,
+    )
+    .map_err(reason)?;
     let gain = if sound.enabled { sound.gain } else { 0.0 };
     let mut heard = Vec::with_capacity(played.len());
     for mut clip in played {
@@ -614,7 +1023,17 @@ fn heard_alone(
             }
         });
         match failure {
-            None => heard.push(clip),
+            None => {
+                for fade in unheld_fades(&mut clip) {
+                    omit(
+                        omissions,
+                        OmissionScope::Feature,
+                        fade.id.as_deref().unwrap_or(clip.record()),
+                        "audio fade not converted: the Level keys of the nested sequence's audio item change during it",
+                    );
+                }
+                heard.push(clip);
+            }
             Some(failure) => omit(
                 omissions,
                 OmissionScope::Occurrence,
@@ -624,6 +1043,38 @@ fn heard_alone(
         }
     }
     Ok(heard)
+}
+
+/// Drops and returns the fades of `clip` over which its Level, which the
+/// keys of an audio item may have replaced ([`apply_level_keys`]), no longer
+/// holds one value as a fade requires (`audio::level_holds_over_fade`).
+fn unheld_fades(clip: &mut PrAudioOccurrence) -> Vec<PrAudioFade> {
+    let Some(keys) = &clip.volume_keys else {
+        return Vec::new();
+    };
+    let spans = [
+        clip.fade_in.as_ref().map(|fade| {
+            clip.source_part(&(clip.start_ticks..clip.start_ticks + fade.duration_ticks))
+                .expect("validated fade lies inside its audio source span")
+        }),
+        clip.fade_out.as_ref().map(|fade| {
+            clip.source_part(&(clip.end_ticks - fade.duration_ticks..clip.end_ticks))
+                .expect("validated fade lies inside its audio source span")
+        }),
+    ];
+    let mut unheld = Vec::new();
+    for (fade, fade_in, span) in [
+        (&mut clip.fade_in, true, &spans[0]),
+        (&mut clip.fade_out, false, &spans[1]),
+    ] {
+        let holds = span.as_ref().is_none_or(|span| {
+            super::audio::level_holds_over_fade(&keys.keys, span.clone(), fade_in)
+        });
+        if !holds {
+            unheld.extend(fade.take());
+        }
+    }
+    unheld
 }
 
 const TICK_RANGE: &str = "nested sequence audio item exceeds Premiere's tick range";
@@ -636,20 +1087,33 @@ const LINEAR_PRODUCT: &str = "its Volume and the Level keys of this audio item b
 /// inside it that `window` shows, moved by `shift` ticks and multiplied by
 /// `gain`. A nest's group carries only the sound of an item with its
 /// picture's Enable ([`pair_sounds`]), so a hidden group's sound is a
-/// disabled item's and plays at zero gain.
+/// disabled item's and plays at zero gain. A fade that `window` shows only
+/// part of is reported and dropped ([`PrAudioOccurrence::play_part`]).
 fn played_sounds(
     sequence: &PrSequence,
     window: &Range<i64>,
     shift: i64,
     gain: f64,
     played: &mut Vec<PrAudioOccurrence>,
+    omissions: &mut Vec<Omission>,
 ) -> Result<()> {
     for clip in &sequence.audio {
         let range = clip.start_ticks..clip.end_ticks;
-        if let Some((timeline, source)) = shown(range, clip.in_ticks, window, shift)? {
+        if let Some((timeline, source)) = shown(range.clone(), clip.in_ticks, window, shift)? {
+            let source = if clip.playback_rate == 1.0 {
+                source
+            } else {
+                clip.source_part(&(range.start.max(window.start)..range.end.min(window.end)))?
+            };
             let mut clip = clip.clone();
-            (clip.start_ticks, clip.end_ticks) = (timeline.start, timeline.end);
-            (clip.in_ticks, clip.out_ticks) = (source.start, source.end);
+            for fade in clip.play_part(timeline, source)? {
+                omit(
+                    omissions,
+                    OmissionScope::Feature,
+                    fade.id.as_deref().unwrap_or(clip.record()),
+                    PrAudioFade::PARTLY_PLAYED,
+                );
+            }
             scale(&mut clip, gain)?;
             played.push(clip);
         }
@@ -663,7 +1127,7 @@ fn played_sounds(
                 .checked_sub(source.start)
                 .ok_or_else(|| unsupported(TICK_RANGE))?;
             let gain = if nest.enabled { gain } else { 0.0 };
-            played_sounds(&nest.sequence, &source, shift, gain, played)?;
+            played_sounds(&nest.sequence, &source, shift, gain, played, omissions)?;
         }
     }
     Ok(())
@@ -672,7 +1136,7 @@ fn played_sounds(
 /// The part of a placement over `range` from `source_in` that the inner
 /// range `window` shows: that part moved by `shift` ticks and its source
 /// range, or `None` when `window` shows none of it.
-fn shown(
+pub(super) fn shown(
     range: Range<i64>,
     source_in: i64,
     window: &Range<i64>,
@@ -720,13 +1184,24 @@ fn apply_level_keys(
     } else {
         (0.0, 0.0)
     };
-    let offset = i128::from(shift) + i128::from(clip.in_ticks) - i128::from(clip.start_ticks);
     let keys = keys
         .keys
         .iter()
         .map(|key| {
-            let source_ticks = i64::try_from(i128::from(key.source_ticks) + offset)
-                .map_err(|_| unsupported(TICK_RANGE))?;
+            let source_ticks = if clip.playback_rate == 1.0 {
+                // Preserve the established unit clock and its overflow boundary.
+                let offset =
+                    i128::from(shift) + i128::from(clip.in_ticks) - i128::from(clip.start_ticks);
+                i64::try_from(i128::from(key.source_ticks) + offset)
+                    .map_err(|_| unsupported(TICK_RANGE))?
+            } else {
+                let timeline_ticks = key
+                    .source_ticks
+                    .checked_add(shift)
+                    .ok_or_else(|| unsupported(TICK_RANGE))?;
+                clip.source_at(timeline_ticks)
+                    .map_err(|_| unsupported(TICK_RANGE))?
+            };
             Ok(PrScalarKeyframe {
                 source_ticks,
                 ..key.clone()
@@ -843,7 +1318,7 @@ fn level_over(keys: &[PrScalarKeyframe], range: &Range<i64>) -> Option<f64> {
 }
 
 /// Multiplies one sound's gain by `gain`, its Volume keys included.
-fn scale(clip: &mut PrAudioOccurrence, gain: f64) -> Result<()> {
+pub(super) fn scale(clip: &mut PrAudioOccurrence, gain: f64) -> Result<()> {
     clip.volume = fx_schema::LinearGain::new(clip.volume.as_f64() * gain)
         .map_err(|_| unsupported(GAIN_OVERFLOW))?;
     if let Some(keys) = &mut clip.volume_keys {
@@ -883,7 +1358,7 @@ fn read_sequence_source(
     graph: &Graph<'_>,
     source: Record<'_>,
     omissions: &mut Vec<Omission>,
-) -> Result<()> {
+) -> Result<i64> {
     let identity = source.identity();
     ensure!(
         source.tag() == records::VIDEO_SEQUENCE_SOURCE.tag,
@@ -913,8 +1388,7 @@ fn read_sequence_source(
         element.child("OriginalDuration").and_then(Element::text),
         &identity,
         "OriginalDuration",
-    )?;
-    Ok(())
+    )
 }
 
 #[cfg(test)]
@@ -938,6 +1412,345 @@ mod tests {
     };
     use base64::{engine::general_purpose::STANDARD, Engine};
     use std::io::Read;
+
+    // Frozen pre-index implementation: an independent ordering/error oracle.
+    fn old_pair_sounds(
+        tracks: &mut [PrVideoTrack],
+        sounds: Vec<NestSound>,
+        omissions: &mut Vec<Omission>,
+    ) -> Result<Vec<NestSound>> {
+        let mut unpaired: Vec<Option<NestSound>> = sounds.into_iter().map(Some).collect();
+        let mut alone = Vec::new();
+        for track in tracks.iter_mut() {
+            let mut kept = Vec::with_capacity(track.nests.len());
+            for mut nest in std::mem::take(&mut track.nests) {
+                let mut matching: Vec<NestSound> = unpaired
+                    .iter_mut()
+                    .filter(|sound| {
+                        sound.as_ref().is_some_and(|sound| {
+                            nest.sequence.id.as_deref() == Some(sound.sequence.as_str())
+                                && sound.timeline == nest.timeline_ticks()
+                                && sound.source == (nest.in_ticks..nest.out_ticks)
+                        })
+                    })
+                    .filter_map(Option::take)
+                    .collect();
+                let plays_alone = match matching.as_slice() {
+                    [] => false,
+                    [sound] if sound.enabled == nest.enabled && sound.volume_keys.is_none() => {
+                        fold_gain(&mut nest.sequence, sound.gain)?;
+                        kept.push(nest);
+                        continue;
+                    }
+                    _ => {
+                        alone.append(&mut matching);
+                        true
+                    }
+                };
+                silence(&mut nest.sequence);
+                if nest.sequence.expanded_occurrence_count() > 0 {
+                    kept.push(nest);
+                } else if !plays_alone {
+                    omit(
+                        omissions,
+                        OmissionScope::Occurrence,
+                        nest.record(),
+                        "nested sequence has only sound that no audio item of it plays",
+                    );
+                }
+            }
+            track.nests = kept;
+        }
+        alone.extend(unpaired.into_iter().flatten());
+        Ok(alone)
+    }
+
+    fn indexed_placement(index: usize, timeline: Range<i64>) -> NestPlacement {
+        NestPlacement {
+            id: index.to_string(),
+            timeline,
+            source: 0..1,
+            reverse_source_duration: None,
+            playback_rate: 1.0,
+            time_remap: None,
+            enabled: true,
+            transform: Default::default(),
+            crop: Default::default(),
+            linear_wipe: None,
+            opacity_mask: None,
+            opacity: 100.0,
+            animations: Vec::new(),
+            effects: Vec::new(),
+            effects_above_mask: 0,
+            track_matte: None,
+            blend_mode: PrBlendMode::Normal,
+            read: ("inner".into(), 1, None),
+        }
+    }
+
+    fn compare_overlap(ranges: &[Range<i64>], item_ranges: &[Range<i64>]) {
+        let placements = || {
+            ranges
+                .iter()
+                .cloned()
+                .enumerate()
+                .map(|(index, range)| indexed_placement(index, range))
+                .collect::<Vec<_>>()
+        };
+        let items: Vec<_> = item_ranges
+            .iter()
+            .cloned()
+            .map(|range| PrVideoItem::Media(clip_of("media", range, 0)))
+            .collect();
+        let mut ordered = placements();
+        ordered.sort_by_key(|nest| nest.timeline.start);
+        let mut expected: Vec<NestPlacement> = Vec::new();
+        let mut expected_omissions = Vec::new();
+        let start = std::time::Instant::now();
+        for nest in ordered {
+            let overlaps = |range: &Range<i64>| {
+                range.start < nest.timeline.end && nest.timeline.start < range.end
+            };
+            if items.iter().any(|item| overlaps(&item.timeline_ticks()))
+                || expected.iter().any(|other| overlaps(&other.timeline))
+            {
+                omit(
+                    &mut expected_omissions,
+                    OmissionScope::Occurrence,
+                    nest.id,
+                    "overlaps another occurrence on this track",
+                );
+            } else {
+                expected.push(nest);
+            }
+        }
+        let old_elapsed = start.elapsed();
+        let input = placements();
+        let mut omissions = Vec::new();
+        let start = std::time::Instant::now();
+        let actual = keep_non_overlapping(input, &items, &mut omissions);
+        let new_elapsed = start.elapsed();
+        if ranges.len() >= 2048 {
+            eprintln!(
+                "overlap 2048 disjoint nests/items: scan={old_elapsed:?}, index={new_elapsed:?}"
+            );
+        }
+        assert_eq!(
+            actual.iter().map(|nest| &nest.id).collect::<Vec<_>>(),
+            expected.iter().map(|nest| &nest.id).collect::<Vec<_>>()
+        );
+        assert_eq!(format!("{omissions:?}"), format!("{expected_omissions:?}"));
+    }
+
+    #[test]
+    fn indexed_overlap_matches_strict_scan_for_permutations_and_stress() {
+        let single = 0..1;
+        compare_overlap(&[], std::slice::from_ref(&single));
+        compare_overlap(std::slice::from_ref(&single), &[]);
+        // These are interval data, not iterators: preserve reversed endpoints too.
+        let reversed = Range { start: 3, end: 1 };
+        let mut ranges = vec![0..0, 0..2, 0..1, 2..4, 1..3, reversed.clone(), -2..0, 4..4];
+        for rotation in 0..ranges.len() {
+            ranges.rotate_left(rotation);
+            compare_overlap(&ranges, &[]);
+            compare_overlap(&ranges, &[0..0, reversed.clone(), 2..4, -3..-1]);
+            ranges.reverse();
+        }
+        // Exhaust all endpoint pairs, including signed extremes without arithmetic.
+        let endpoints = [i64::MIN, -1, 0, 1, i64::MAX];
+        for start in endpoints {
+            for end in endpoints {
+                let mut index = IntervalIndex::default();
+                index.push(&(start..end));
+                for query_start in endpoints {
+                    for query_end in endpoints {
+                        assert_eq!(
+                            index.overlaps(&(query_start..query_end)),
+                            start < query_end && query_start < end
+                        );
+                    }
+                }
+            }
+        }
+        let disjoint: Vec<_> = (0..2048).map(|i| 4 * i..4 * i + 1).collect();
+        let items: Vec<_> = (0..2048).map(|i| 4 * i + 2..4 * i + 3).collect();
+        compare_overlap(&disjoint, &items);
+    }
+
+    fn pairing_fixture(order: &[usize], gain: f64) -> (Vec<PrVideoTrack>, Vec<NestSound>) {
+        let mut inner = sequence_of(
+            "Inner",
+            vec![PrVideoTrack::media([clip_of("media", 0..4, 0)])],
+        );
+        inner.id = Some("inner".into());
+        inner.audio = vec![PrAudioOccurrence {
+            source_channel: None,
+            preserve_audio_pitch: false,
+            playback_rate: 1.0,
+            id: None,
+            media: MediaId("media".into()),
+            start_ticks: 0,
+            end_ticks: 4,
+            in_ticks: 0,
+            out_ticks: 4,
+            volume: fx_schema::LinearGain::new(0.5).unwrap(),
+            volume_keys: None,
+            fade_in: None,
+            fade_out: None,
+        }];
+        let mut nests: Vec<_> = (0..12)
+            .map(|index| {
+                let mut sequence = inner.clone();
+                if index % 4 == 3 {
+                    sequence.video_tracks.clear();
+                }
+                if index == 11 {
+                    sequence.id = None;
+                }
+                let mut nest = nest_of(sequence, 4 * (index / 2)..4 * (index / 2) + 4, 0);
+                nest.id = Some(index.to_string());
+                nest.enabled = index % 3 != 0;
+                nest
+            })
+            .collect();
+        // Split a duplicate identity across tracks to exercise first-track claim.
+        let later = nests.split_off(5);
+        let tracks = vec![
+            PrVideoTrack {
+                transitions: Vec::new(),
+                items: Vec::new(),
+                nests,
+            },
+            PrVideoTrack {
+                transitions: Vec::new(),
+                items: Vec::new(),
+                nests: later,
+            },
+        ];
+        let sounds = order
+            .iter()
+            .map(|index| NestSound {
+                id: index.to_string(),
+                sequence: if *index == 9 { "unmatched" } else { "inner" }.into(),
+                timeline: 4 * (*index as i64 / 2)..4 * (*index as i64 / 2) + 4,
+                source: if *index == 8 { 1..5 } else { 0..4 },
+                gain,
+                enabled: index % 3 != 0,
+                volume_keys: (index % 4 == 2).then(|| PrVolumeKeys {
+                    keys: vec![key(0.0, 1.0, PrKeyframeEasing::Linear)],
+                    gain: 1.0,
+                }),
+            })
+            .collect();
+        (tracks, sounds)
+    }
+
+    #[test]
+    fn reverse_nest_never_claims_or_retimes_an_independent_forward_sound_item() {
+        let (mut tracks, sounds) = pairing_fixture(&[1], 0.25);
+        tracks.truncate(1);
+        tracks[0].nests.truncate(1);
+        let nest = &mut tracks[0].nests[0];
+        nest.enabled = true;
+        nest.playback_rate = -1.0;
+        nest.reverse_source_duration = Some(4);
+        let mut omissions = Vec::new();
+        let alone = pair_sounds(&mut tracks, sounds, &mut omissions).unwrap();
+        assert!(omissions.is_empty());
+        assert!(!tracks[0].nests[0].sequence.has_sound());
+        assert_eq!(alone.len(), 1);
+        assert_eq!(alone[0].timeline, 0..4);
+        assert_eq!(alone[0].source, 0..4);
+        assert_eq!(alone[0].gain, 0.25);
+        assert!(alone[0].enabled);
+    }
+
+    fn compare_pairing(order: &[usize], gain: f64) {
+        let (mut actual, sounds) = pairing_fixture(order, gain);
+        let (mut expected, old_sounds) = pairing_fixture(order, gain);
+        let mut omissions = Vec::new();
+        let mut expected_omissions = Vec::new();
+        let result = pair_sounds(&mut actual, sounds, &mut omissions);
+        let expected_result = old_pair_sounds(&mut expected, old_sounds, &mut expected_omissions);
+        let summarize = |result: Result<Vec<NestSound>>| {
+            result
+                .map(|sounds| sounds.into_iter().map(|sound| sound.id).collect::<Vec<_>>())
+                .map_err(|error| error.to_string())
+        };
+        assert_eq!(summarize(result), summarize(expected_result));
+        assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+        assert_eq!(format!("{omissions:?}"), format!("{expected_omissions:?}"));
+    }
+
+    #[test]
+    fn indexed_pairing_matches_scan_order_branches_and_errors() {
+        let mut order: Vec<_> = (0..12).collect();
+        order.extend([0, 2, 6]);
+        for rotation in 0..order.len() {
+            order.rotate_left(rotation);
+            compare_pairing(&order, 0.5);
+            order.reverse();
+            compare_pairing(&order, 0.5);
+        }
+        for index in 0..12 {
+            compare_pairing(&[index], 0.5);
+            compare_pairing(&[index], f64::MAX);
+            compare_pairing(&[index], f64::INFINITY);
+            compare_pairing(&[index], f64::NAN);
+        }
+        compare_pairing(&[], 0.5);
+        let stress: Vec<_> = (0..4096).map(|index| index % 12).collect();
+        compare_pairing(&stress, 0.5);
+    }
+
+    #[test]
+    fn indexed_pairing_bounded_cpu_comparison() {
+        let (tracks, _) = pairing_fixture(&[], 0.5);
+        let template = tracks[0].nests[0].clone();
+        let input = || {
+            let nests = (0..2048)
+                .map(|index| {
+                    let mut nest = template.clone();
+                    nest.start_ticks = index * 4;
+                    nest.end_ticks = index * 4 + 4;
+                    nest
+                })
+                .collect();
+            let sounds = (0..2048)
+                .map(|index| NestSound {
+                    id: index.to_string(),
+                    sequence: "inner".into(),
+                    timeline: index * 4..index * 4 + 4,
+                    source: 0..4,
+                    gain: 0.5,
+                    volume_keys: None,
+                    enabled: template.enabled,
+                })
+                .collect();
+            (
+                vec![PrVideoTrack {
+                    items: Vec::new(),
+                    transitions: Vec::new(),
+                    nests,
+                }],
+                sounds,
+            )
+        };
+        let (mut old_tracks, old_sounds) = input();
+        let (mut new_tracks, new_sounds) = input();
+        let mut old_omissions = Vec::new();
+        let mut new_omissions = Vec::new();
+        let start = std::time::Instant::now();
+        let old = old_pair_sounds(&mut old_tracks, old_sounds, &mut old_omissions).unwrap();
+        let old_elapsed = start.elapsed();
+        let start = std::time::Instant::now();
+        let new = pair_sounds(&mut new_tracks, new_sounds, &mut new_omissions).unwrap();
+        let new_elapsed = start.elapsed();
+        assert!(old.is_empty() && new.is_empty());
+        assert_eq!(format!("{old_tracks:?}"), format!("{new_tracks:?}"));
+        assert_eq!(format!("{old_omissions:?}"), format!("{new_omissions:?}"));
+        eprintln!("pairing 2048 disjoint nests: scan={old_elapsed:?}, index={new_elapsed:?}");
+    }
 
     /// A placement from `start` to `end` seconds, from the source's start.
     fn span(start: i64, end: i64) -> Placement {
@@ -1316,6 +2129,9 @@ mod tests {
     #[test]
     fn each_nest_level_scales_every_sound_below_it() {
         let sound = |volume: f64, keys: Option<PrVolumeKeys>| PrAudioOccurrence {
+            source_channel: None,
+            preserve_audio_pitch: false,
+            playback_rate: 1.0,
             id: None,
             media: MediaId("timecoded".into()),
             start_ticks: 0,
@@ -1324,6 +2140,8 @@ mod tests {
             out_ticks: 4 * TICKS,
             volume: fx_schema::LinearGain::new(volume).unwrap(),
             volume_keys: keys,
+            fade_in: None,
+            fade_out: None,
         };
         let nested = |guid: &str, mut sequence: PrSequence| {
             sequence.id = Some(guid.into());
@@ -1384,6 +2202,9 @@ mod tests {
         );
         inner.id = Some("inner".into());
         inner.audio = vec![PrAudioOccurrence {
+            source_channel: None,
+            preserve_audio_pitch: false,
+            playback_rate: 1.0,
             id: None,
             media: MediaId("timecoded".into()),
             start_ticks: 0,
@@ -1392,6 +2213,8 @@ mod tests {
             out_ticks: 4 * TICKS,
             volume: fx_schema::LinearGain::new(1.0).unwrap(),
             volume_keys: None,
+            fade_in: None,
+            fade_out: None,
         }];
         // Inner 0-2 s over 0-4 s: half speed.
         let mut nest = nest_of(inner, 0..4 * TICKS, 0);
@@ -1439,6 +2262,9 @@ mod tests {
     fn a_sound_that_plays_alone_keeps_every_nested_clock() {
         let at = |seconds: f64| (seconds * TICKS as f64) as i64;
         let sound = |timeline: Range<i64>, source_in: i64, volume: f64| PrAudioOccurrence {
+            source_channel: None,
+            preserve_audio_pitch: false,
+            playback_rate: 1.0,
             id: None,
             media: MediaId("timecoded".into()),
             out_ticks: source_in + timeline.end - timeline.start,
@@ -1447,6 +2273,8 @@ mod tests {
             in_ticks: source_in,
             volume: fx_schema::LinearGain::new(volume).unwrap(),
             volume_keys: None,
+            fade_in: None,
+            fade_out: None,
         };
         let mut inner = sequence_of("Inner", Vec::new());
         inner.audio = vec![sound(0..at(4.0), 0, 0.25)];
@@ -1472,7 +2300,15 @@ mod tests {
             ..sound(at(1.0)..at(3.0), at(5.0), 0.8)
         }];
         let mut played = Vec::new();
-        played_sounds(&mid, &(at(1.5)..at(7.0)), at(8.5), 0.5, &mut played).unwrap();
+        played_sounds(
+            &mid,
+            &(at(1.5)..at(7.0)),
+            at(8.5),
+            0.5,
+            &mut played,
+            &mut Vec::new(),
+        )
+        .unwrap();
         let rows: Vec<_> = played
             .iter()
             .map(|clip| {
@@ -1555,6 +2391,9 @@ mod tests {
     fn a_sound_takes_the_item_level_keys_while_one_level_holds_over_it() {
         use PrKeyframeEasing::Linear;
         let clip = |volume: f64, keys: Option<PrVolumeKeys>| PrAudioOccurrence {
+            source_channel: None,
+            preserve_audio_pitch: false,
+            playback_rate: 1.0,
             id: None,
             media: MediaId("timecoded".into()),
             start_ticks: 10 * TICKS,
@@ -1563,6 +2402,8 @@ mod tests {
             out_ticks: 2 * TICKS,
             volume: fx_schema::LinearGain::new(volume).unwrap(),
             volume_keys: keys,
+            fade_in: None,
+            fade_out: None,
         };
         let item_keys = vec![key(0.5, 0.5, Linear), key(1.5, 1.0, Linear)];
         let item = |enabled: bool| NestSound {
@@ -1675,6 +2516,113 @@ mod tests {
         }
     }
 
+    #[test]
+    fn audio_clock_outer_nested_gain_keys_follow_retimed_inner_source() {
+        for rate in [2.0, -2.0] {
+            let mut clip = PrAudioOccurrence {
+                id: None,
+                media: MediaId("timecoded".into()),
+                source_channel: None,
+                preserve_audio_pitch: false,
+                playback_rate: rate,
+                start_ticks: 10 * TICKS,
+                end_ticks: 12 * TICKS,
+                in_ticks: 0,
+                out_ticks: 4 * TICKS,
+                volume: fx_schema::LinearGain::new(0.5).unwrap(),
+                volume_keys: None,
+                fade_in: Some(PrAudioFade {
+                    id: None,
+                    duration_ticks: 3 * TICKS / 4,
+                    curve: crate::schema::PrFadeCurve::ConstantGain,
+                }),
+                fade_out: None,
+            };
+            let keys = PrVolumeKeys {
+                gain: 0.8,
+                keys: vec![
+                    key(0.5, 0.5, PrKeyframeEasing::Linear),
+                    key(1.5, 1.0, PrKeyframeEasing::Linear),
+                ],
+            };
+            let item = NestSound {
+                id: "outer".into(),
+                sequence: "inner".into(),
+                timeline: 10 * TICKS..12 * TICKS,
+                source: 0..2 * TICKS,
+                gain: 0.8,
+                volume_keys: Some(keys.clone()),
+                enabled: true,
+            };
+            assert!(apply_level_keys(&mut clip, &item, &keys, 10 * TICKS).unwrap());
+            let gain = clip.volume_keys.as_ref().unwrap();
+            assert_eq!(
+                gain.keys,
+                [
+                    key(1.0, 0.5, PrKeyframeEasing::Linear),
+                    key(3.0, 1.0, PrKeyframeEasing::Linear)
+                ]
+            );
+            assert!((gain.gain - 0.4).abs() < 1e-12);
+            assert_eq!(unheld_fades(&mut clip).len(), 1);
+            assert!(clip.fade_in.is_none());
+        }
+    }
+
+    #[test]
+    fn audio_clock_retimed_nested_window_trims_source_and_reports_partial_fade() {
+        for rate in [2.0, 0.5, -2.0] {
+            let mut inner = crate::tests::support::video_sequence();
+            inner.video_tracks.clear();
+            inner.audio = vec![PrAudioOccurrence {
+                source_channel: None,
+                preserve_audio_pitch: false,
+                playback_rate: rate,
+                id: Some("trim sound".into()),
+                media: MediaId("source".into()),
+                start_ticks: 0,
+                end_ticks: 4 * TICKS,
+                in_ticks: TICKS,
+                out_ticks: TICKS + (4.0 * rate.abs()) as i64 * TICKS,
+                volume: fx_schema::LinearGain::UNITY,
+                volume_keys: None,
+                fade_in: Some(PrAudioFade {
+                    id: Some("partial".into()),
+                    curve: crate::schema::PrFadeCurve::ConstantGain,
+                    duration_ticks: 2 * TICKS,
+                }),
+                fade_out: Some(PrAudioFade {
+                    id: Some("whole".into()),
+                    curve: crate::schema::PrFadeCurve::ConstantGain,
+                    duration_ticks: TICKS,
+                }),
+            }];
+            let mut played = Vec::new();
+            let mut notes = Vec::new();
+            played_sounds(
+                &inner,
+                &(TICKS..4 * TICKS),
+                10 * TICKS,
+                0.5,
+                &mut played,
+                &mut notes,
+            )
+            .unwrap();
+            let sound = &played[0];
+            assert_eq!(
+                (sound.start_ticks, sound.end_ticks),
+                (11 * TICKS, 14 * TICKS)
+            );
+            assert_eq!(sound.in_ticks, TICKS + (rate.abs() * TICKS as f64) as i64);
+            assert_eq!(sound.out_ticks, inner.audio[0].out_ticks);
+            assert!(sound.fade_in.is_none());
+            assert!(sound.fade_out.is_some());
+            assert_eq!(sound.volume.as_f64(), 0.5);
+            assert_eq!(notes.len(), 1);
+            assert_eq!(notes[0].record, "partial");
+        }
+    }
+
     /// The Level at `ticks` of keys that only step: the last key's at or
     /// before it, or the first key's before them all.
     fn stepped(keys: &[PrScalarKeyframe], ticks: i64) -> f64 {
@@ -1715,6 +2663,9 @@ mod tests {
         ];
         // The sound's Level before its keys times its other stages, 0.5.
         let sound = |keys: Vec<PrScalarKeyframe>| PrAudioOccurrence {
+            source_channel: None,
+            preserve_audio_pitch: false,
+            playback_rate: 1.0,
             id: None,
             media: MediaId("timecoded".into()),
             start_ticks: 10 * TICKS,
@@ -1723,6 +2674,8 @@ mod tests {
             out_ticks: 2 * TICKS,
             volume: fx_schema::LinearGain::new(0.25).unwrap(),
             volume_keys: Some(PrVolumeKeys { keys, gain: 0.5 }),
+            fade_in: None,
+            fade_out: None,
         };
         // The item's Level before its keys, 2/3, times its other stages, 0.75.
         let item = |keys: Vec<PrScalarKeyframe>, enabled: bool| NestSound {
@@ -1795,7 +2748,15 @@ mod tests {
             ..item(Vec::new(), true)
         };
         let mut played = Vec::new();
-        played_sounds(&inner, &top.source, 11 * TICKS, 1.0, &mut played).unwrap();
+        played_sounds(
+            &inner,
+            &top.source,
+            11 * TICKS,
+            1.0,
+            &mut played,
+            &mut Vec::new(),
+        )
+        .unwrap();
         let [mut clip] = <[_; 1]>::try_from(played).unwrap();
         assert!(apply(&mut clip, &top, 11 * TICKS));
         let keys = clip.volume_keys.unwrap();
@@ -1846,6 +2807,9 @@ mod tests {
         use PrKeyframeEasing::Linear;
         let at = |seconds: f64| (seconds * TICKS as f64) as i64;
         let sound = |timeline: Range<i64>, source_in: i64, volume: f64| PrAudioOccurrence {
+            source_channel: None,
+            preserve_audio_pitch: false,
+            playback_rate: 1.0,
             id: None,
             media: MediaId("timecoded".into()),
             out_ticks: source_in + timeline.end - timeline.start,
@@ -1854,6 +2818,8 @@ mod tests {
             in_ticks: source_in,
             volume: fx_schema::LinearGain::new(volume).unwrap(),
             volume_keys: None,
+            fade_in: None,
+            fade_out: None,
         };
         let mut inner = sequence_of("Inner", Vec::new());
         inner.audio = vec![sound(0..at(4.0), 0, 0.25)];
@@ -1884,7 +2850,7 @@ mod tests {
         };
         let shift = at(8.5);
         let mut played = Vec::new();
-        played_sounds(&mid, &item.source, shift, 1.0, &mut played).unwrap();
+        played_sounds(&mid, &item.source, shift, 1.0, &mut played, &mut Vec::new()).unwrap();
         let rows: Vec<_> = played
             .into_iter()
             .map(|mut clip| {

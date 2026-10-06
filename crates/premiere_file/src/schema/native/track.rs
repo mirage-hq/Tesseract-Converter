@@ -231,6 +231,10 @@ pub(crate) struct VideoComponentChain {
     pub(crate) class_id: Option<String>,
     #[serde(rename = "@Version", skip_serializing_if = "Option::is_none")]
     pub(crate) version: Option<String>,
+    /// A graphic's SubGroup membership ([`ComponentPinVectorSerializer`]),
+    /// which Premiere 26.5.1 saves before `DefaultMotion`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) component_group_map: Option<Reference>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) default_motion: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -247,6 +251,69 @@ pub(crate) struct VideoComponentChain {
     pub(crate) default_opacity_component_id: Option<RetainedOrSkipped<&'static str>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) component_chain: Option<VideoChain>,
+}
+
+/// A graphic chain's SubGroup membership (`ComponentGroupMap`): one pin per
+/// member component, in chain order.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "PascalCase", deny_unknown_fields)]
+pub(crate) struct ComponentPinVectorSerializer {
+    #[serde(rename = "@ObjectID")]
+    pub(crate) object_id: ObjectId<ComponentPinVectorSerializer>,
+    #[serde(rename = "@ClassID", skip_serializing_if = "Option::is_none")]
+    pub(crate) class_id: Option<String>,
+    #[serde(rename = "@Version", skip_serializing_if = "Option::is_none")]
+    pub(crate) version: Option<String>,
+    pub(crate) pin_vector: PinVector,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct PinVector {
+    #[serde(rename = "@Version", skip_serializing_if = "Option::is_none")]
+    pub(crate) version: Option<String>,
+    #[serde(rename = "PinVectorItem")]
+    pub(crate) items: Vec<Reference>,
+}
+
+impl<'de> Deserialize<'de> for PinVector {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let references = ReferenceList::deserialize(deserializer)?;
+        Ok(Self {
+            version: None,
+            items: references.items,
+        })
+    }
+}
+
+impl PinVector {
+    pub(crate) fn from_ids(
+        ids: impl IntoIterator<Item = ObjectId<ComponentPinSerializer>>,
+    ) -> Self {
+        Self {
+            version: Some("1".into()),
+            items: ids
+                .into_iter()
+                .enumerate()
+                .map(|(index, id)| Reference::indexed_object(index, id))
+                .collect(),
+        }
+    }
+}
+
+/// One SubGroup member: the `ID` of its component and of its SubGroup's.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "PascalCase", deny_unknown_fields)]
+pub(crate) struct ComponentPinSerializer {
+    #[serde(rename = "@ObjectID")]
+    pub(crate) object_id: ObjectId<ComponentPinSerializer>,
+    #[serde(rename = "@ClassID", skip_serializing_if = "Option::is_none")]
+    pub(crate) class_id: Option<String>,
+    #[serde(rename = "@Version", skip_serializing_if = "Option::is_none")]
+    pub(crate) version: Option<String>,
+    #[serde(rename = "ChildPinID")]
+    pub(crate) child_pin_id: String,
+    #[serde(rename = "ParentPinID")]
+    pub(crate) parent_pin_id: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -349,6 +416,8 @@ pub(crate) struct VideoClipTrackItem {
     pub(crate) frame_rect: Option<String>,
 }
 
+/// Fields in the order that Premiere 26.5.1 writes them for an audio
+/// transition; older records and video transitions order them differently.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub(crate) struct TransitionTrackItem {
@@ -357,15 +426,42 @@ pub(crate) struct TransitionTrackItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) track_item: Option<TrackItemRange>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) alignment: Option<String>,
+    pub(crate) has_outgoing_clip: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) has_incoming_clip: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) display_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) match_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) has_outgoing_clip: Option<String>,
+    pub(crate) alignment: Option<String>,
+}
+
+/// An audio transition. It has no parameters: `MatchName` selects the curve.
+/// Records up to project version 43 also write `ChannelType` and
+/// `FrameRate`, and version 43 the three fade-shape fields; Premiere 26.5.1
+/// writes the fade-shape pair of Constant Gain and Exponential Fade only.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub(crate) struct AudioTransitionTrackItem {
+    #[serde(rename = "@ObjectID")]
+    pub(crate) object_id: ObjectId<AudioTransitionTrackItem>,
+    #[serde(rename = "@ClassID", skip_serializing_if = "Option::is_none")]
+    pub(crate) class_id: Option<String>,
+    #[serde(rename = "@Version", skip_serializing_if = "Option::is_none")]
+    pub(crate) version: Option<String>,
+    pub(crate) transition_track_item: TransitionTrackItem,
+    pub(crate) audio_channel_layout: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) has_incoming_clip: Option<String>,
+    pub(crate) channel_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) frame_rate: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) fade_shape_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) fade_shape_value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) crossfade_symmetry: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

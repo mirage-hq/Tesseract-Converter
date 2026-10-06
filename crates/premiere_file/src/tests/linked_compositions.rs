@@ -7,8 +7,8 @@
 use crate::{
     format::{FrameRate, MediaId, PrMedia, PrSequence},
     schema::{
-        after_effects::LINKED_AUDIO_REASON, AudioChannels, PrAfterEffectsComposition,
-        PrAudioOccurrence, PrAudioStream, PrMediaKind, PrVideoStream, PrVideoTrack, TICKS,
+        AudioChannels, PrAfterEffectsComposition, PrAudioOccurrence, PrAudioStream, PrMediaKind,
+        PrVideoStream, PrVideoTrack, TICKS,
     },
     tesseract_import::TesseractImport,
     tesseract_output::convert_premiere_sequence,
@@ -25,6 +25,10 @@ use std::{
 };
 use tesseract_file::TesseractFile;
 
+mod audio;
+mod format96;
+mod missing_media;
+
 const IDENTITY: &str = "../aftereffects_file/tests/fixtures/hybrid/identity";
 const RED: &str = "00000001-0000-0000-0000-000000000000";
 const BLUE: &str = "00000010-0000-0000-0000-000000000000";
@@ -36,28 +40,9 @@ fn fixture(path: &str) -> PathBuf {
 }
 
 /// The native identity package, staged with its one ordinary media file.
+#[cfg(feature = "ffmpeg-library")]
 fn identity_package(root: &Path) -> PathBuf {
-    fn relink(xml: &mut String, tag: &str, file: &Path) -> usize {
-        let open = format!("<{tag}>");
-        let close = format!("</{tag}>");
-        let replacement = quick_xml::escape::escape(file.to_str().unwrap());
-        let mut count = 0;
-        let mut offset = 0;
-        while let Some(start) = xml[offset..]
-            .find(&open)
-            .map(|index| offset + index + open.len())
-        {
-            let end = start + xml[start..].find(&close).unwrap();
-            if Path::new(&xml[start..end]).file_name() == file.file_name() {
-                xml.replace_range(start..end, &replacement);
-                offset = start + replacement.len() + close.len();
-                count += 1;
-            } else {
-                offset = end + close.len();
-            }
-        }
-        count
-    }
+    use crate::tests::support::{prproj_xml, relink};
 
     let package = root.join("package");
     fs::create_dir_all(&package).unwrap();
@@ -74,14 +59,7 @@ fn identity_package(root: &Path) -> PathBuf {
 
     // The Adobe-authored project retains absolute author-host hints. Relink only
     // the temporary copy so source selection cannot escape this test package.
-    let mut xml = String::new();
-    std::io::Read::read_to_string(
-        &mut flate2::read::GzDecoder::new(
-            fs::File::open(fixture(IDENTITY).join("native-linked.prproj")).unwrap(),
-        ),
-        &mut xml,
-    )
-    .unwrap();
+    let mut xml = prproj_xml(&fixture(IDENTITY).join("native-linked.prproj"));
     for (file, expected) in [
         (package.join("linked-compositions.aep"), 2),
         (package.join("background.mp4"), 1),
@@ -108,6 +86,8 @@ fn linked(aep: &str, guid: &str, canvas: [u32; 2]) -> PrMedia {
         relative_paths: vec![format!("./{aep}")],
         absolute_paths: Vec::new(),
         video: Some(PrVideoStream {
+            pixel_aspect: Default::default(),
+            interpretation: Default::default(),
             orientation: crate::schema::VideoOrientation::Identity,
             kind: PrMediaKind::AfterEffectsComposition(
                 PrAfterEffectsComposition::parse(guid).unwrap(),
@@ -341,6 +321,7 @@ fn composition_root(group: &Value) -> &Value {
     root
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn native_links_import_editable_same_name_compositions_by_exact_guid() {
     let root = tempfile::tempdir().unwrap();
@@ -560,6 +541,14 @@ fn equal_item_ids_of_two_aeps_select_each_file_s_own_composition() {
 /// A native AE 26.5 composition (AUDIO_UNITY, item 2) whose one WAV footage,
 /// item 1, is relinked to the relative `wav`, which holds `bytes`.
 fn audio_composition(directory: &Path, bytes: &[u8]) {
+    relocated_audio_composition(
+        directory,
+        &fixture("../aftereffects_file/tests/fixtures/media/import_audio_media_controls.aep"),
+        bytes,
+    );
+}
+
+fn relocated_audio_composition(directory: &Path, source: &Path, bytes: &[u8]) {
     use aftereffects_file::{aep::Project, rifx::Chunk};
     fn relink(chunks: &mut [Chunk]) {
         for chunk in chunks {
@@ -573,13 +562,7 @@ fn audio_composition(directory: &Path, bytes: &[u8]) {
             }
         }
     }
-    let mut native = Project::parse(
-        &fs::read(fixture(
-            "../aftereffects_file/tests/fixtures/media/import_audio_media_controls.aep",
-        ))
-        .unwrap(),
-    )
-    .unwrap();
+    let mut native = Project::parse(&fs::read(source).unwrap()).unwrap();
     relink(&mut native.chunks);
     fs::create_dir_all(directory).unwrap();
     fs::write(directory.join("controls.aep"), native.encode().unwrap()).unwrap();
@@ -587,7 +570,7 @@ fn audio_composition(directory: &Path, bytes: &[u8]) {
 }
 
 #[test]
-fn equal_footage_ids_of_two_aeps_package_distinct_muted_assets_and_linked_sound_is_omitted() {
+fn equal_footage_ids_of_two_aeps_package_distinct_assets_with_one_independent_sound() {
     let root = tempfile::tempdir().unwrap();
     let wav = fs::read(fixture("tests/fixtures/audio-stereo.wav")).unwrap();
     let mut other = wav.clone();
@@ -603,6 +586,9 @@ fn equal_footage_ids_of_two_aeps_package_distinct_muted_assets_and_linked_sound_
     );
     // Premiere plays a link's sound only through its audio items.
     sequence.audio.push(PrAudioOccurrence {
+        source_channel: None,
+        preserve_audio_pitch: false,
+        playback_rate: 1.0,
         id: Some("sound of one".into()),
         media: MediaId("one".into()),
         start_ticks: 0,
@@ -611,9 +597,12 @@ fn equal_footage_ids_of_two_aeps_package_distinct_muted_assets_and_linked_sound_
         out_ticks: TICKS,
         volume: LinearGain::UNITY,
         volume_keys: None,
+        fade_in: None,
+        fade_out: None,
     });
     let mut one = linked("one/controls.aep", UNITY, [1920, 1080]);
     one.audio = Some(PrAudioStream {
+        prepared_clock: None,
         intrinsic_ticks: 2 * TICKS,
         channels: AudioChannels::Stereo,
         sample_rate: 48_000,
@@ -626,12 +615,12 @@ fn equal_footage_ids_of_two_aeps_package_distinct_muted_assets_and_linked_sound_
         ),
     ]);
     let (document, omissions) = convert(root.path(), sequence, media);
-    assert!(omissions.contains(&Omission {
-        scope: OmissionScope::Occurrence,
-        kind: crate::OmissionKind::Omitted,
-        record: "sound of one".into(),
-        reason: LINKED_AUDIO_REASON.into(),
-    }));
+    assert!(
+        !omissions.iter().any(|omission| {
+            omission.scope == OmissionScope::Occurrence && omission.record == "sound of one"
+        }),
+        "{omissions:?}"
+    );
     assert_unique_identities(&document);
     let sounds: Vec<_> = all_layers(&document["composition"])
         .into_iter()
@@ -643,9 +632,14 @@ fn equal_footage_ids_of_two_aeps_package_distinct_muted_assets_and_linked_sound_
             .iter()
             .map(|layer| layer["source"]["assetId"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        ["premiere-aep-1-item-1", "premiere-aep-2-item-1"]
+        [
+            "premiere-aep-1-item-1",
+            "premiere-aep-2-item-1",
+            "premiere-aep-1-item-1"
+        ]
     );
-    assert!(sounds.iter().all(|layer| layer["isHidden"] == true));
+    assert!(sounds[..2].iter().all(|layer| layer["isHidden"] == true));
+    assert_ne!(sounds[2]["isHidden"], true);
     let archive = TesseractFile::open(root.path().join("converted.tsrct")).unwrap();
     for (id, bytes) in [
         ("premiere-aep-1-item-1", &wav),
@@ -976,6 +970,7 @@ fn linked_av_declaring(aep: &str, guid: &str, ticks: &str) -> String {
     xml.replace(LINKED_AV_SOURCE_TICKS, ticks)
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn linked_video_preflight_is_fatal_and_accepts_an_outer_project_media_map() {
     use aftereffects_file::{aep::Project, rifx::Chunk, AfterEffects};
@@ -1090,7 +1085,7 @@ fn linked_video_preflight_is_fatal_and_accepts_an_outer_project_media_map() {
             let document = archive.project_json().unwrap();
             let videos: Vec<_> = all_layers(&document["composition"])
                 .into_iter()
-                .filter(|layer| layer["type"] == "Video")
+                .filter(|layer| layer["type"] == "Video" && layer["isHidden"] != true)
                 .collect();
             assert_eq!(videos.len(), 1);
             let asset = videos[0]["source"]["assetId"].as_str().unwrap();
@@ -1118,7 +1113,7 @@ fn linked_video_preflight_is_fatal_and_accepts_an_outer_project_media_map() {
 }
 
 #[test]
-fn a_linked_composition_s_sound_item_is_omitted_and_its_picture_imports_muted() {
+fn a_declared_linked_audio_stream_imports_the_actual_composition_without_inventing_sound() {
     let xml = linked_av_as_composition_xml("linked-compositions.aep", RED);
     let (project, omissions) = crate::format::inspect_project_with_omissions(&xml, None).unwrap();
     let sequence = project.single_sequence().unwrap();
@@ -1127,16 +1122,10 @@ fn a_linked_composition_s_sound_item_is_omitted_and_its_picture_imports_muted() 
     let source = project.media(picture).unwrap();
     assert!(source.after_effects_composition().is_some());
     assert!(source.audio.is_some());
-    assert!(sequence.audio.is_empty());
-    let sound = omissions
-        .iter()
-        .find(|omission| omission.record == "122")
-        .unwrap();
-    assert_eq!(sound.scope, OmissionScope::Occurrence);
+    assert_eq!(sequence.audio.len(), 1);
     assert!(
-        sound.reason.ends_with(LINKED_AUDIO_REASON),
-        "{}",
-        sound.reason
+        !omissions.iter().any(|omission| omission.record == "122"),
+        "{omissions:?}"
     );
 
     let root = tempfile::tempdir().unwrap();
@@ -1151,12 +1140,13 @@ fn a_linked_composition_s_sound_item_is_omitted_and_its_picture_imports_muted() 
     crate::test_support::write_prproj(&prproj, &xml);
     let output = root.path().join("converted");
     let converted = crate::premiere_to_tesseract(&prproj, &output, None, false).unwrap();
-    assert!(converted.contains(sound));
+    assert!(!converted.iter().any(|omission| omission.scope == OmissionScope::Occurrence && omission.record == "122"), "{converted:?}");
     let document = TesseractFile::open(output.join("project.tsrct"))
         .unwrap()
         .project_json()
         .unwrap();
-    // One owner for the sound: neither the omitted item nor the picture plays it.
+    // The actual selected red composition has no sound, even though the
+    // supplementary Premiere records declare an audio stream.
     assert!(!all_layers(&document["composition"])
         .iter()
         .any(|layer| layer["type"] == "Audio"));
@@ -1284,6 +1274,7 @@ fn keyed_clip(media: &str) -> crate::schema::PrVideoOccurrence {
     clip.opacity = 60.0;
     clip.crop = left_crop();
     clip.effects = vec![PrEffect {
+        mask: None,
         enabled: true,
         params: PrEffectParams::GaussianBlur(PrGaussianBlur {
             blurriness: 12.0,
@@ -1407,6 +1398,241 @@ fn a_linked_clip_is_placed_and_keyed_on_the_video_clip_clock() {
 }
 
 #[test]
+fn a_linked_clip_takes_its_source_effects_before_its_own_as_a_video_clip_does() {
+    use crate::schema::{PrEffect, PrEffectParams, PrGaussianBlur, PrSourceEffects};
+    // Supplementary: a moved clip under its own blur, whose master clip owns
+    // a bypassed repeat-edge blur. The linked picture group, like the video,
+    // takes the master clip's blur first.
+    let blur = |enabled, blurriness, repeat_edge_pixels| PrEffect {
+        mask: None,
+        enabled,
+        params: PrEffectParams::GaussianBlur(PrGaussianBlur {
+            blurriness,
+            repeat_edge_pixels,
+        }),
+        animations: Vec::new(),
+    };
+    let ((video, video_omissions), (composition, omissions)) = as_video_and_linked(|media| {
+        let mut clip = clip_of(media, 0..TICKS, TICKS / 3);
+        clip.id = Some("placed".into());
+        clip.transform.scale = [50.0, 50.0];
+        clip.effects = vec![blur(true, 12.0, false)];
+        clip.source_effects = Some(PrSourceEffects {
+            master: "MasterClip:master-1".into(),
+            effects: vec![blur(false, 20.0, true)],
+            active_transforms: 0,
+        });
+        sequence_of("Placed", vec![PrVideoTrack::media([clip])])
+    });
+    let video_layer = &video["composition"]["layers"][0];
+    assert_eq!(video_layer["type"], "Video");
+    assert_eq!(
+        video_layer["effects"],
+        serde_json::json!([
+            {"id": 1, "enabled": false, "effect": {"type": "gaussianBlur", "blurriness": 20.0, "repeatEdgePixels": true}},
+            {"id": 2, "enabled": true, "effect": {"type": "gaussianBlur", "blurriness": 12.0}},
+        ])
+    );
+    assert_eq!(
+        linked_groups(&composition)[0]["effects"],
+        video_layer["effects"]
+    );
+    let linked_editing = Omission {
+        scope: OmissionScope::Feature,
+        kind: crate::OmissionKind::Omitted,
+        record: "MasterClip:master-1".into(),
+        reason: crate::convert::LINKED_SOURCE_EDITING_REASON.into(),
+    };
+    assert_eq!(video_omissions, std::slice::from_ref(&linked_editing));
+    assert_eq!(clip_omissions(&omissions), [&linked_editing]);
+}
+
+/// Clip `framed` of `media`, whose master clip applies an active Corner Pin
+/// that moves the frame right by a tenth of its width, a bypassed keystone
+/// Corner Pin and a bypassed Gaussian Blur 20 that repeats edge pixels, and
+/// which applies its own keystone, a Gaussian Blur 12 and a Mosaic. Every
+/// Corner Pin is a straight quad other than the identity.
+fn framed_clip(media: &str) -> crate::schema::PrVideoOccurrence {
+    use crate::schema::{
+        PrCornerPin, PrEffect, PrEffectParams, PrGaussianBlur, PrMosaic, PrSourceEffects,
+    };
+    let effect = |enabled, params| PrEffect {
+        mask: None,
+        enabled,
+        params,
+        animations: Vec::new(),
+    };
+    let pin = |corners| PrEffectParams::CornerPin(PrCornerPin { corners });
+    let blur = |blurriness, repeat_edge_pixels| {
+        PrEffectParams::GaussianBlur(PrGaussianBlur {
+            blurriness,
+            repeat_edge_pixels,
+        })
+    };
+    let shifted = [[0.1, 0.0], [1.1, 0.0], [0.1, 1.0], [1.1, 1.0]];
+    let keystone = [[0.2, 0.1], [0.8, 0.1], [0.0, 1.0], [1.0, 1.0]];
+    let mut clip = clip_of(media, 0..TICKS, TICKS / 3);
+    clip.id = Some("framed".into());
+    clip.source_effects = Some(PrSourceEffects {
+        master: "MasterClip:master-1".into(),
+        effects: vec![
+            effect(true, pin(shifted)),
+            effect(false, pin(keystone)),
+            effect(false, blur(20.0, true)),
+        ],
+        active_transforms: 0,
+    });
+    clip.effects = vec![
+        effect(true, pin(keystone)),
+        effect(true, blur(12.0, false)),
+        effect(
+            true,
+            PrEffectParams::Mosaic(PrMosaic {
+                horizontal: 16,
+                vertical: 9,
+                sharp_colors: true,
+            }),
+        ),
+    ];
+    clip
+}
+
+#[test]
+fn a_linked_composition_off_the_canvas_size_omits_its_frame_bound_effects() {
+    // Supplementary: typed sequences of `framed_clip` over 1920x1080 media,
+    // a video or the identity AEP's red composition, on a canvas of that size
+    // and a smaller one. FX lays a video layer's effects over
+    // its media frame, where Premiere applies them, and a group's over the
+    // canvas: a Corner Pin's corners, a Mosaic's grid and repeated edge
+    // pixels there would span the canvas instead, so they are omitted, the
+    // bypassed ones too.
+    let effect_types = |effects: &serde_json::Value| -> Vec<(bool, String)> {
+        effects
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|effect| {
+                (
+                    effect["enabled"].as_bool().unwrap(),
+                    effect["effect"]["type"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect()
+    };
+    let reported = |omissions: &[Omission], reason: &str| {
+        omissions
+            .iter()
+            .any(|omission| omission.record == "MasterClip:master-1" && omission.reason == reason)
+    };
+    let linked_editing = crate::convert::LINKED_SOURCE_EDITING_REASON;
+    let not_converted = crate::schema::SOURCE_CHAIN_NOT_CONVERTED;
+    // The last case keeps the linked picture's 1920x1080 local sequence
+    // inside a smaller document. Group effects still use the document frame,
+    // not the inner sequence frame used for the clip's Motion.
+    for (canvas, nested) in [
+        ([1920, 1080], false),
+        ([1280, 720], false),
+        ([1280, 720], true),
+    ] {
+        let ((video, video_omissions), (composition, omissions)) = as_video_and_linked(|media| {
+            let inner = sequence_of("Framed", vec![PrVideoTrack::media([framed_clip(media)])]);
+            let mut sequence = if nested {
+                sequence_of(
+                    "Outer",
+                    vec![PrVideoTrack {
+                        items: Vec::new(),
+                        nests: vec![nest_of(inner, 0..TICKS, 0)],
+                        transitions: Vec::new(),
+                    }],
+                )
+            } else {
+                inner
+            };
+            (sequence.width, sequence.height) = (canvas[0], canvas[1]);
+            sequence
+        });
+        // The video converts every effect, its media frame the Corner Pins'.
+        let video_layer = all_layers(&video["composition"])
+            .into_iter()
+            .find(|layer| layer["type"] == "Video")
+            .unwrap();
+        let video_effects = &video_layer["effects"];
+        let kind = |enabled: bool, name: &str| (enabled, name.to_owned());
+        assert_eq!(
+            effect_types(video_effects),
+            [
+                kind(true, "cornerPin"),
+                kind(false, "cornerPin"),
+                kind(false, "gaussianBlur"),
+                kind(true, "cornerPin"),
+                kind(true, "gaussianBlur"),
+                kind(true, "mosaic"),
+            ],
+            "{canvas:?}"
+        );
+        assert_eq!(
+            video_effects[0]["effect"],
+            serde_json::json!({"type": "cornerPin",
+                "upperLeftX": 0.1, "upperLeftY": 0.0, "upperRightX": 1.1, "upperRightY": 0.0,
+                "lowerLeftX": 0.1, "lowerLeftY": 1.0, "lowerRightX": 1.1, "lowerRightY": 1.0})
+        );
+        assert!(
+            reported(&video_omissions, linked_editing),
+            "{video_omissions:?}"
+        );
+        let group = linked_groups(&composition)[0];
+        if nested {
+            let nest = all_layers(&composition["composition"])
+                .into_iter()
+                .find(|layer| layer["name"] == "Framed")
+                .unwrap();
+            assert_eq!(group["parent"], nest["id"]);
+            assert_eq!(group["transform"], video_layer["transform"]);
+            assert_eq!(
+                group["transform"]["position"],
+                serde_json::json!([960.0, 540.0])
+            );
+        }
+        let group_effects = &group["effects"];
+        if canvas == [1920, 1080] {
+            // The composition's frame is the canvas: the same effects.
+            assert_eq!(group_effects, video_effects);
+            assert_eq!(clip_omissions(&omissions), clip_omissions(&video_omissions));
+            continue;
+        }
+        assert_eq!(
+            group_effects,
+            &serde_json::json!([{"id": 1, "enabled": true, "effect": {"type": "gaussianBlur", "blurriness": 12.0}}]),
+            "{canvas:?}"
+        );
+        let frame = format!(
+            "was not imported: its picture's FX layer lays effects over {}x{} pixels, and Premiere over the clip's 1920x1080 frame; a Corner Pin, Mosaic or Blur that repeats edge pixels converts only on a picture whose FX layer lays its effects over the clip's own frame",
+            canvas[0], canvas[1]
+        );
+        let frame_bound: Vec<_> = clip_omissions(&omissions)
+            .into_iter()
+            .filter(|omission| omission.record == "framed" && omission.reason.contains(&frame))
+            .map(|omission| omission.reason.split(" was not imported").next().unwrap())
+            .collect();
+        assert_eq!(
+            frame_bound,
+            [
+                "Corner Pin effect at source stack position 1 of MasterClip:master-1",
+                "Corner Pin effect at source stack position 2 of MasterClip:master-1",
+                "Gaussian Blur effect at source stack position 3 of MasterClip:master-1",
+                "Corner Pin effect at stack position 1",
+                "Mosaic (Legacy) effect at stack position 3",
+            ],
+            "{canvas:?}"
+        );
+        // No source effect converts, so the chain is reported as such and
+        // no copy's linked editing is claimed.
+        assert!(reported(&omissions, not_converted), "{omissions:?}");
+        assert!(!reported(&omissions, linked_editing), "{omissions:?}");
+    }
+}
+
+#[test]
 fn a_retimed_linked_clip_plays_its_composition_at_the_clip_speed_with_static_keys() {
     // Sequence 0.5-1 s of the keyed clip at 2x and in reverse: the source
     // group plays the composition at that speed on the clip clock.
@@ -1440,11 +1666,13 @@ fn a_retimed_linked_clip_plays_its_composition_at_the_clip_speed_with_static_key
                 .collect();
             assert_eq!(shifted, clock);
         }
-        // Native keys are on the source clock, which neither clip clock
-        // matches: the Motion and Opacity keys are omitted as for the video,
-        // and the linked clip's effect keys too, keeping static values.
+        // The physical video's effects now keep media-clock keys with an
+        // approximation note. That does not establish a linked-group clock:
+        // linked effects still keep static values, and both omit Motion keys.
         assert!(clip_entries(&composition).is_empty(), "{rate}");
+        assert!(!clip_entries(&video).is_empty(), "{rate}");
         let mut expected = clip_omissions(&video_omissions);
+        expected.retain(|o| o.kind == crate::OmissionKind::Omitted);
         let effect = Omission {
             scope: OmissionScope::Feature,
             kind: crate::OmissionKind::Omitted,
@@ -1776,407 +2004,65 @@ fn a_clip_omitted_past_its_composition_s_end_leaves_the_shutter_to_its_sibling()
     assert_eq!(group["motionBlur"], true);
 }
 
-/// A caller's editable content for one placement, with identities from
-/// `first`: a `width`x1080 composition of 1 s whose root Group holds one red
-/// 120x80 rect, as `import_editable_picture` returns it.
-fn supplied_document(first: u64, width: u32) -> fx_schema::EditableFxCompositionDocument {
-    let identity = crate::convert::identity_transform();
-    fx_schema::EditableFxCompositionDocument::from_json_value(serde_json::json!({
-        "$schema": "https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json",
-        "formatVersion": 1,
-        "dimensions": {"width": width, "height": 1080},
-        "duration": 1.0,
-        "composition": {"id": "main", "name": "Resolved AEP", "layers": [{
-            "type": "Group", "id": first, "name": "Source composition",
-            "playback": crate::test_support::linear_playback(serde_json::json!({"start": 0, "duration": 1000}), serde_json::json!({"start": 0, "duration": 1000})), "transform": identity,
-            "layers": [{
-                "type": "Rect", "id": first + 1, "name": "Editable content",
-                "activeRange": {"start": 0, "duration": 1000}, "transform": identity,
-                "rect": {"size": [120.0, 80.0], "fillColor": [1.0, 0.0, 0.0, 1.0]}
-            }]
-        }]}
-    }))
-    .unwrap()
-}
-
-/// Converts `sequence` from a project in `package`, with every linked
-/// picture supplied by `resolver`, and writes its archive.
-fn convert_supplied<'a>(
-    package: &Path,
-    sequence: PrSequence,
-    media: BTreeMap<MediaId, PrMedia>,
-    resolver: &'a mut crate::LinkedCompositionResolver<'a>,
-) -> crate::error::Result<(TesseractFile, Vec<Omission>)> {
-    let mut omissions = Vec::new();
-    let package = fs::canonicalize(package).unwrap();
-    let pending = crate::tesseract_output::convert_premiere_sequence_with_links(
-        &package.join("project.prproj"),
+#[test]
+fn linked_twirl_plane_different_canvas_builtin_retains_unstaged_editable_owner() {
+    let root = tempfile::tempdir().unwrap();
+    fs::copy(
+        fixture("../aftereffects_file/tests/fixtures/effects_coverage/native_static_controls.aep"),
+        root.path().join("twirl.aep"),
+    )
+    .unwrap();
+    let mut sequence = sequence_of(
+        "Twirl destination",
+        vec![PrVideoTrack::media([clip_of("twirl", 0..TICKS, 0)])],
+    );
+    (sequence.width, sequence.height) = (640, 360);
+    let (document, omissions) = convert(
+        root.path(),
         sequence,
-        Arc::new(media),
-        &mut omissions,
-        Some(resolver),
-        fx_conv::Progress::default(),
-    )?
-    .unwrap();
-    let archive = package.join("converted.tsrct");
-    pending.write_to_staging(&archive)?;
-    Ok((TesseractFile::open(&archive).unwrap(), omissions))
-}
-
-#[test]
-fn caller_supplied_compositions_take_the_linked_clip_placement() {
-    // Two placements of one link from source 0.3 s, the second screened:
-    // each is placed as a built-in picture would be, on its own clip clock
-    // and identities, and each call's assets are packaged as returned.
-    let root = tempfile::tempdir().unwrap();
-    fs::copy(
-        fixture(IDENTITY).join("linked-compositions.aep"),
-        root.path().join("comps.aep"),
-    )
-    .unwrap();
-    let still = fixture("tests/fixtures/a1_bg_chart.png");
-    let first = clip_of("blue", TICKS / 10..3 * TICKS / 10, 3 * TICKS / 10);
-    let mut second = clip_of("blue", 4 * TICKS / 10..6 * TICKS / 10, 3 * TICKS / 10);
-    second.blend_mode = crate::schema::PrBlendMode::Screen;
-    let mut calls = Vec::new();
-    let mut resolve = |path: &Path, identity: PrAfterEffectsComposition, first: u64| {
-        calls.push((path.to_owned(), identity.dynamic_link_guid(), first));
-        Ok(crate::LinkedComposition {
-            document: supplied_document(first, 1920),
-            next_id: first + 2,
-            assets: vec![(
-                fx_schema::AssetId::from_trusted(format!("supplied-{first}")),
-                still.clone(),
-                tesseract_file::AssetKind::Image,
-            )],
-        })
-    };
-    let (archive, omissions) = convert_supplied(
-        root.path(),
-        sequence_of("Supplied", vec![PrVideoTrack::media([first, second])]),
         BTreeMap::from([(
-            MediaId("blue".into()),
-            linked("comps.aep", BLUE, [1920, 1080]),
+            MediaId("twirl".into()),
+            linked(
+                "twirl.aep",
+                "00000271-0000-0000-0000-000000000000",
+                [320, 180],
+            ),
         )]),
-        &mut resolve,
-    )
-    .unwrap();
-    assert!(omissions.is_empty(), "{omissions:?}");
-    let aep = fs::canonicalize(root.path()).unwrap().join("comps.aep");
-    let firsts: Vec<_> = calls.iter().map(|(_, _, first)| *first).collect();
-    assert_eq!(
-        calls,
-        firsts
-            .iter()
-            .map(|first| (aep.clone(), BLUE.to_owned(), *first))
-            .collect::<Vec<_>>()
     );
-    let document = archive.project_json().unwrap();
-    assert_unique_identities(&document);
-    let groups = linked_groups(&document);
-    assert_eq!(groups.len(), 2);
-    for (group, start, first, blend) in [
-        (groups[0], 100, firsts[0], "normal"),
-        (groups[1], 400, firsts[1], "screen"),
-    ] {
-        assert_eq!(range(group), (start, 200));
-        assert_eq!(playback(group), document_clock_seed(group));
-        assert_eq!(group["blendMode"], blend);
-        let source = source_group(group).unwrap();
-        assert_eq!(playback(source), [(0, 300), (200, 500)]);
-        assert!(source["blendMode"].is_null() || source["blendMode"] == "normal");
-        let root = composition_root(group);
-        assert_eq!(root["id"], first);
-        assert_eq!(root["name"], "Source composition");
-        assert_canvas_clip(group, [1920.0, 1080.0]);
-        assert_eq!(
-            rect_fills(group),
-            [&serde_json::json!([1.0, 0.0, 0.0, 1.0])]
-        );
-    }
-    // The second placement's identities follow the first's canvas guide.
-    assert!(firsts[1] >= firsts[0] + 4, "{firsts:?}");
     assert_eq!(
-        archive.metadata().assets.keys().collect::<Vec<_>>(),
-        [
-            &format!("supplied-{}", firsts[0]),
-            &format!("supplied-{}", firsts[1])
-        ]
+        document["dimensions"],
+        serde_json::json!({"width":640,"height":360})
     );
-}
-
-#[test]
-fn a_caller_supplied_composition_that_cannot_be_placed_omits_only_its_clip() {
-    // Content on another canvas and an unsupported After Effects source are
-    // omitted clip by clip, as the built-in import omits them, without their
-    // assets; the sibling converts. Any other importer failure stops the
-    // import before anything is written.
-    let root = tempfile::tempdir().unwrap();
-    fs::copy(
-        fixture(IDENTITY).join("linked-compositions.aep"),
-        root.path().join("comps.aep"),
-    )
-    .unwrap();
-    const ABSENT: &str = "00000009-0000-0000-0000-000000000000";
-    let still = fixture("tests/fixtures/a1_bg_chart.png");
-    let clips = ["wide", "absent", "blue"]
-        .iter()
-        .enumerate()
-        .map(|(index, name)| {
-            let start = i64::try_from(index).unwrap() * TICKS;
-            let mut clip = clip_of(name, start..start + TICKS / 2, 0);
-            clip.id = Some(format!("clip {name}"));
-            clip
-        })
-        .collect::<Vec<_>>();
-    let media = || {
-        BTreeMap::from([
-            (
-                MediaId("wide".into()),
-                linked("comps.aep", RED, [1920, 1080]),
-            ),
-            (
-                MediaId("absent".into()),
-                linked("comps.aep", ABSENT, [1920, 1080]),
-            ),
-            (
-                MediaId("blue".into()),
-                linked("comps.aep", BLUE, [1920, 1080]),
-            ),
-        ])
-    };
-    let mut resolve = |_: &Path, identity: PrAfterEffectsComposition, first: u64| match identity
-        .dynamic_link_guid()
-        .as_str()
-    {
-        ABSENT => Err(aftereffects_file::DynamicLinkImportError::MissingComposition(9).into()),
-        guid => Ok(crate::LinkedComposition {
-            document: supplied_document(first, if guid == RED { 1280 } else { 1920 }),
-            next_id: first + 2,
-            assets: vec![(
-                fx_schema::AssetId::from_trusted(format!("supplied-{guid}")),
-                still.clone(),
-                tesseract_file::AssetKind::Image,
-            )],
-        }),
-    };
-    let (archive, omissions) = convert_supplied(
-        root.path(),
-        sequence_of("Supplied", vec![PrVideoTrack::media(clips.clone())]),
-        media(),
-        &mut resolve,
-    )
-    .unwrap();
-    let aep = fs::canonicalize(root.path()).unwrap().join("comps.aep");
-    let occurrences: Vec<_> = omissions
-        .iter()
-        .filter(|omission| omission.scope == OmissionScope::Occurrence)
-        .map(|omission| (omission.record.as_str(), omission.reason.clone()))
-        .collect();
-    assert_eq!(
-        occurrences,
-        [
-            (
-                "clip wide",
-                format!("the linked composition supplied for GUID {RED} is 1280x1080 in {aep:?}, but Premiere links it as 1920x1080; placement geometry would change")
-            ),
-            (
-                "clip absent",
-                format!("linked After Effects composition GUID {ABSENT} in {aep:?} forms no editable picture: Dynamic Link item 9 is absent or is not a composition in this AEP")
-            ),
-        ]
-    );
-    let document = archive.project_json().unwrap();
-    let [group] = linked_groups(&document)[..] else {
-        panic!("only the placeable sibling imports");
-    };
-    assert_eq!(range(group), (2000, 500));
-    assert_canvas_clip(group, [1920.0, 1080.0]);
-    assert_eq!(
-        archive.metadata().assets.keys().collect::<Vec<_>>(),
-        [&format!("supplied-{BLUE}")]
-    );
-
-    let failed = root.path().join("failed");
-    fs::create_dir(&failed).unwrap();
-    fs::copy(root.path().join("comps.aep"), failed.join("comps.aep")).unwrap();
-    let mut broken = |_: &Path, _: PrAfterEffectsComposition, _: u64| {
-        Err(anyhow::anyhow!("the importer lost its scratch volume"))
-    };
-    let error = convert_supplied(
-        &failed,
-        sequence_of("Supplied", vec![PrVideoTrack::media(clips)]),
-        media(),
-        &mut broken,
-    )
-    .err()
-    .unwrap()
-    .to_string();
-    assert_eq!(
-        error,
-        "linked composition import failed: the importer lost its scratch volume"
-    );
-    assert!(!failed.join("converted.tsrct").exists());
-}
-
-#[test]
-fn a_caller_supplied_composition_that_forms_no_picture_leaves_the_shutter_to_its_sibling() {
-    // The importer finds no composition for the first clip, blurred at 90°,
-    // which is omitted after its Transform is read. The sibling's Transform
-    // asks for 180° before its composition asks for its own 360°: the
-    // composition's one shutter is the sibling Transform's, and only the
-    // sibling's second request is reported.
-    let root = tempfile::tempdir().unwrap();
-    fs::copy(
-        fixture(IDENTITY).join("linked-compositions.aep"),
-        root.path().join("comps.aep"),
-    )
-    .unwrap();
-    const ABSENT: &str = "00000009-0000-0000-0000-000000000000";
-    let mut resolve = |_: &Path, identity: PrAfterEffectsComposition, first: u64| match identity
-        .dynamic_link_guid()
-        .as_str()
-    {
-        ABSENT => Err(aftereffects_file::DynamicLinkImportError::MissingComposition(9).into()),
-        _ => {
-            let mut document = supplied_document(first, 1920).to_json_value().unwrap();
-            document["composition"]["motionBlur"] =
-                serde_json::json!({"enabled": true, "shutterAngle": 360.0, "shutterPhase": 0.0});
-            Ok(crate::LinkedComposition {
-                document: fx_schema::EditableFxCompositionDocument::from_json_value(document)
-                    .unwrap(),
-                next_id: first + 2,
-                assets: Vec::new(),
+    let owner = all_layers(&document["composition"])
+        .into_iter()
+        .find(|layer| {
+            layer["effects"].as_array().is_some_and(|effects| {
+                effects
+                    .iter()
+                    .any(|effect| effect["effect"]["type"] == "twirl")
             })
-        }
-    };
-    let (archive, omissions) = convert_supplied(
-        root.path(),
-        sequence_of(
-            "Supplied",
-            vec![PrVideoTrack::media([
-                blurred(clip_of("absent", 0..TICKS / 2, 0), "absent", 90.0),
-                blurred(clip_of("blue", TICKS..3 * TICKS / 2, 0), "blue", 180.0),
-            ])],
-        ),
-        BTreeMap::from([
-            (
-                MediaId("absent".into()),
-                linked("comps.aep", ABSENT, [1920, 1080]),
-            ),
-            (
-                MediaId("blue".into()),
-                linked("comps.aep", BLUE, [1920, 1080]),
-            ),
-        ]),
-        &mut resolve,
-    )
-    .unwrap();
-    let aep = fs::canonicalize(root.path()).unwrap().join("comps.aep");
-    let occurrences: Vec<_> = omissions
-        .iter()
-        .filter(|omission| omission.scope == OmissionScope::Occurrence)
-        .map(|omission| (omission.record.as_str(), omission.reason.clone()))
-        .collect();
-    assert_eq!(
-        occurrences,
-        [(
-            "absent",
-            format!("linked After Effects composition GUID {ABSENT} in {aep:?} forms no editable picture: Dynamic Link item 9 is absent or is not a composition in this AEP")
-        )]
-    );
-    let document = archive.project_json().unwrap();
-    assert_eq!(
-        (
-            composition_shutter(&document),
-            shutter_conflicts(&omissions)
-        ),
-        (
-            [
-                &serde_json::json!(true),
-                &serde_json::json!(180.0),
-                &serde_json::json!(0.0)
-            ],
-            vec![(
-                "blue",
-                "composition shutter set to 180° by clip blue; clip blue requested 360°"
-            )]
-        )
-    );
-    let [group] = linked_groups(&document)[..] else {
-        panic!("only the sibling imports: {document}");
-    };
-    assert_eq!(group["motionBlur"], true);
-}
-
-#[test]
-fn a_caller_supplied_import_editable_picture_matches_the_built_in_import() {
-    // The compatibility route: the caller converts each placement with
-    // `import_editable_picture`, as the former CLI resolver did. Its pictures
-    // are the built-in import's, identity for identity; only the AE notes
-    // stay with the caller.
-    let root = tempfile::tempdir().unwrap();
-    let project = identity_package(root.path());
-    let built_in =
-        crate::premiere_to_tesseract(&project, root.path().join("built-in"), None, false).unwrap();
-    let mut prepared = BTreeMap::new();
-    let mut notes = Vec::new();
-    let mut guards = Vec::new();
-    let mut resolve = |path: &Path, identity: PrAfterEffectsComposition, first: u64| {
-        let source = match prepared.entry(path.to_owned()) {
-            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
-            std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(aftereffects_file::AfterEffects.prepare_linked_import(path)?)
-            }
-        };
-        let composition = source.resolve_composition(&identity.guid_bytes())?;
-        let mut converted =
-            composition.import_editable_picture(first, &format!("linked-{first}-"))?;
-        notes.append(&mut converted.diagnostics);
-        let document = converted.take_document()?;
-        let assets = std::mem::take(&mut converted.assets);
-        let next_id = converted.next_id;
-        guards.push(converted);
-        Ok(crate::LinkedComposition {
-            document,
-            next_id,
-            assets,
         })
-    };
-    let supplied = crate::Premiere
-        .import_with_linked_compositions(
-            &project,
-            &root.path().join("supplied"),
-            &crate::PremiereImportOptions::default(),
-            fx_conv::ConversionMode::Write,
-            &mut resolve,
-        )
-        .unwrap();
-    let open = |name: &str| {
-        TesseractFile::open(root.path().join(name).join("project.tsrct"))
-            .unwrap()
-            .project_json()
-            .unwrap()
-    };
-    assert_eq!(open("supplied"), open("built-in"));
-    assert!(!notes.is_empty());
-    // The built-in import reports the AE notes per linked media record; the
-    // caller keeps its own. Every other diagnostic is the same.
-    let linked_note = |omission: &Omission| {
-        omission
-            .reason
-            .starts_with("linked After Effects composition: ")
-    };
-    assert!(built_in.iter().any(linked_note));
-    assert!(!supplied.diagnostics.iter().any(linked_note));
+        .expect("public built-in linked import retains Twirl");
     assert_eq!(
-        supplied.diagnostics,
-        built_in
-            .into_iter()
-            .filter(|omission| !linked_note(omission))
-            .collect::<Vec<_>>()
+        owner["transform"]["position"],
+        serde_json::json!([160.0, 90.0])
     );
-    assert_eq!(guards.len(), 2);
+    assert_eq!(
+        owner["transform"]["anchorPoint"],
+        serde_json::json!([60.0, 40.0])
+    );
+    assert_eq!(
+        owner["effects"].as_array().unwrap().len(),
+        1,
+        "no source-normalized transport in destination frame"
+    );
+    assert!(omissions.iter().any(|note| note
+        .reason
+        .contains("Twirl late image transport not staged for linked picture")));
+    assert!(!omissions
+        .iter()
+        .any(|note| note.reason.contains("Twirl source-local image staged")));
+    assert_unique_identities(&document);
 }
 
 #[test]

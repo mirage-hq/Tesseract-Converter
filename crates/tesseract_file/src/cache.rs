@@ -45,13 +45,25 @@ impl MaterializationCache {
         let filename = materialization_filename(&descriptor.path);
         let destination = content_directory.join(&filename);
         let marker = marker_directory.join(format!("{filename}.verified"));
-        let expected_marker = format!("{}\n{}\n", descriptor.byte_length, digest);
+        let expected_marker = |metadata: &std::fs::Metadata| {
+            format!(
+                "{}\n{}\n{}\n",
+                descriptor.byte_length,
+                digest,
+                file_identity(metadata)
+            )
+        };
 
-        if destination
-            .metadata()
-            .is_ok_and(|metadata| metadata.is_file() && metadata.len() == descriptor.byte_length)
-            && std::fs::read_to_string(&marker).is_ok_and(|value| value == expected_marker)
-        {
+        // A hit must be the exact regular file this cache verified: the marker
+        // records its identity, so a later in-place edit, replacement or
+        // symlink is re-materialized from the archive instead of trusted.
+        let verified_hit = std::fs::symlink_metadata(&destination).is_ok_and(|metadata| {
+            metadata.file_type().is_file()
+                && metadata.len() == descriptor.byte_length
+                && std::fs::read_to_string(&marker)
+                    .is_ok_and(|value| value == expected_marker(&metadata))
+        });
+        if verified_hit {
             return Ok(MaterializedAsset { path: destination });
         }
 
@@ -65,7 +77,7 @@ impl MaterializationCache {
             asset.crc32(),
         )?;
         temporary.as_file_mut().sync_all().at(temporary.path())?;
-        if destination.exists() {
+        if std::fs::symlink_metadata(&destination).is_ok() {
             std::fs::remove_file(&destination).at(&destination)?;
         }
         temporary
@@ -74,10 +86,14 @@ impl MaterializationCache {
                 path: destination.clone(),
                 source: error.error,
             })?;
+        let metadata = std::fs::symlink_metadata(&destination).at(&destination)?;
 
         let marker_temporary = tempfile::NamedTempFile::new_in(&directory).at(&directory)?;
-        std::fs::write(marker_temporary.path(), expected_marker.as_bytes())
-            .at(marker_temporary.path())?;
+        std::fs::write(
+            marker_temporary.path(),
+            expected_marker(&metadata).as_bytes(),
+        )
+        .at(marker_temporary.path())?;
         if marker.exists() {
             std::fs::remove_file(&marker).at(&marker)?;
         }
@@ -102,6 +118,25 @@ impl MaterializedAsset {
     /// Returns the normal filesystem path accepted by FFmpeg and native decoders.
     pub fn path(&self) -> &Path {
         &self.path
+    }
+}
+
+/// Identity of the verified regular file: modification time and, on Unix, its
+/// device and inode. Same-length content edits or replacements change it.
+fn file_identity(metadata: &std::fs::Metadata) -> String {
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |duration| duration.as_nanos());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        format!("{modified} {} {}", metadata.dev(), metadata.ino())
+    }
+    #[cfg(not(unix))]
+    {
+        format!("{modified}")
     }
 }
 

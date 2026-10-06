@@ -233,6 +233,63 @@ fn numeric_index_one_reads_only_the_slider_value() {
 }
 
 #[test]
+fn direct_static_angle_control_replaces_stale_text_rotation() {
+    let content = layer(effect(
+        "ADBE Angle Control",
+        "Blur & Fade In - Rotation",
+        stored(&[53.0], None),
+    ));
+    for expression in [
+        "effect(\"Blur & Fade In - Rotation\")(1);",
+        "effect(\"Blur & Fade In - Rotation\")(\"ADBE Angle Control-0001\")",
+    ] {
+        let lowered = lower_in(&content, &[], expression, &[-67.0]).unwrap();
+        assert_eq!(lowered.values, [53.0]);
+        assert!(!lowered.expression_enabled && !lowered.expression_present);
+        assert!(!lowered.animated && lowered.keyframes.is_empty());
+    }
+    for expression in [
+        "effect(\"Blur & Fade In - Rotation\")(0)",
+        "effect(\"Blur & Fade In - Rotation\")(2)",
+        "effect(\"Blur & Fade In - Rotation\")(1.0)",
+        "effect(\"Blur & Fade In - Rotation\")(\"ADBE Angle Control-0000\")",
+        "effect(\"Blur & Fade In - Rotation\")(1);evil()",
+        "effect(\"Blur & Fade In - Rotation\")(1)+time",
+        "effect(\"Blur & Fade In - Rotation\")(1)+1",
+    ] {
+        assert!(
+            lower_in(&content, &[], expression, &[-67.0]).is_err(),
+            "{expression}"
+        );
+    }
+    for value in [
+        stored(&[53.0], Some("time")),
+        stored(&[f64::INFINITY], None),
+        keyed(&[(0, 0.0, 1, 0.0, 16.0), (800, 53.0, 1, 0.0, 16.0)]),
+    ] {
+        let content = layer(effect("ADBE Angle Control", "Angle", value));
+        assert!(lower_in(&content, &[], "effect(\"Angle\")(1)", &[-67.0]).is_err());
+    }
+    let ambiguous = layer(
+        [
+            effect("ADBE Angle Control", "Angle", stored(&[53.0], None)),
+            slider("Angle", stored(&[0.0], None)),
+        ]
+        .concat(),
+    );
+    assert!(lower_in(&ambiguous, &[], "effect(\"Angle\")(1)", &[-67.0]).is_err());
+    assert!(
+        lower_in(
+            &content,
+            &[],
+            "effect(\"Blur & Fade In - Rotation\")(1)",
+            &[0.0, 0.0, 0.0]
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn affine_sums_map_values_and_speeds_without_moving_keys() {
     assert_eq!(constant("100-effect(\"Width\")(1);"), 60.0);
     assert_eq!(constant("  -effect('Width')(1) + 5 ; "), -35.0);
@@ -505,7 +562,7 @@ fn selector_aliases_resolve_unique_named_percentage_fields() {
         ("First", "Missing", "start", "Range Selector is absent"),
         ("Twin", "Any", "start", "ambiguous text animator name"),
         ("Pair", "Same", "start", "ambiguous Range Selector name"),
-        ("Second", "Counted", "start", "percentage units"),
+        ("Second", "Counted", "start", "unmaterialized Index field"),
         ("Second", "Shake", "start", "not a Range Selector"),
         ("Second", DEFAULT_NAME, "start", "Range Selector is absent"),
         ("First", "Lead", "advanced.amount", "field alias"),
@@ -516,6 +573,204 @@ fn selector_aliases_resolve_unique_named_percentage_fields() {
         assert!(
             error.contains(reason),
             "{animator}/{selector}/{field}: {error}"
+        );
+    }
+}
+
+#[test]
+fn index_selector_aliases_read_active_index_values_without_percent_scaling() {
+    let selector = range(
+        "Lead",
+        [
+            leaf("ADBE Text Percent Start", stored(&[75.0], None)),
+            leaf("ADBE Text Percent End", stored(&[90.0], None)),
+            leaf("ADBE Text Percent Offset", stored(&[30.0], None)),
+            leaf("ADBE Text Index Start", stored(&[1.25], None)),
+            leaf("ADBE Text Index End", stored(&[3.5], None)),
+            leaf(
+                "ADBE Text Index Offset",
+                keyed(&[(0, -0.5, 1, 0.0, 0.0), (800, 1.5, 1, 0.0, 0.0)]),
+            ),
+            group(
+                "ADBE Text Range Advanced",
+                None,
+                leaf("ADBE Text Range Units", stored(&[2.0], None)),
+            ),
+        ]
+        .concat(),
+    );
+    let text_group = text(animator("Rig", selector));
+    let content = layer(Vec::new());
+    let alias = |field: &str| {
+        lower_in(
+            &content,
+            &text_group,
+            &format!("text.animator('Rig').selector('Lead').{field}"),
+            &[0.0],
+        )
+        .unwrap()
+    };
+    assert_eq!(alias("start").values, [1.25]);
+    assert_eq!(alias("end").values, [3.5]);
+    assert_eq!(keys(&alias("offset")), [(0.0, -0.5), (0.8, 1.5)]);
+}
+
+#[test]
+fn index_selector_aliases_do_not_fall_back_to_dormant_percentage_fields() {
+    let selector = range(
+        "Lead",
+        [
+            leaf("ADBE Text Percent Start", stored(&[75.0], None)),
+            leaf("ADBE Text Percent End", stored(&[90.0], None)),
+            leaf("ADBE Text Percent Offset", stored(&[30.0], None)),
+            group(
+                "ADBE Text Range Advanced",
+                None,
+                leaf("ADBE Text Range Units", stored(&[2.0], None)),
+            ),
+        ]
+        .concat(),
+    );
+    let text_group = text(animator("Rig", selector));
+    for field in ["start", "end", "offset"] {
+        let error = lower_in(
+            &layer(Vec::new()),
+            &text_group,
+            &format!("text.animator('Rig').selector('Lead').{field}"),
+            &[0.0],
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("unmaterialized Index field"), "{error}");
+    }
+}
+
+#[test]
+fn index_selector_aliases_resolve_mixed_unit_chains_and_active_field_cycles() {
+    let index = range(
+        "Index",
+        [
+            leaf("ADBE Text Index Start", stored(&[1.25], None)),
+            group(
+                "ADBE Text Range Advanced",
+                None,
+                leaf("ADBE Text Range Units", stored(&[2.0], None)),
+            ),
+        ]
+        .concat(),
+    );
+    let percentage = range(
+        "Percentage",
+        leaf(
+            "ADBE Text Percent Start",
+            stored(
+                &[75.0],
+                Some("text.animator('Rig').selector('Index').start"),
+            ),
+        ),
+    );
+    let text_group = text(animator("Rig", [index, percentage].concat()));
+    let content = layer(Vec::new());
+    let resolved = lower_in(
+        &content,
+        &text_group,
+        "text.animator('Rig').selector('Percentage').start",
+        &[0.0],
+    )
+    .unwrap();
+    // Every alias hop is in native units, regardless of the owner's units.
+    assert_eq!(resolved.values, [1.25]);
+
+    let cyclic = range(
+        "Index",
+        [
+            leaf("ADBE Text Percent Start", stored(&[75.0], None)),
+            leaf(
+                "ADBE Text Index Start",
+                stored(
+                    &[1.25],
+                    Some("text.animator('Rig').selector('Index').start"),
+                ),
+            ),
+            group(
+                "ADBE Text Range Advanced",
+                None,
+                leaf("ADBE Text Range Units", stored(&[2.0], None)),
+            ),
+        ]
+        .concat(),
+    );
+    let text_group = text(animator("Rig", cyclic));
+    let error = lower_in(
+        &content,
+        &text_group,
+        "text.animator('Rig').selector('Index').start",
+        &[0.0],
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("cyclic Range Selector alias"), "{error}");
+}
+
+#[test]
+fn index_selector_aliases_reject_duplicate_active_fields() {
+    let selector = range(
+        "Lead",
+        [
+            leaf("ADBE Text Index Start", stored(&[1.25], None)),
+            leaf("ADBE Text Index Start", stored(&[2.25], None)),
+            group(
+                "ADBE Text Range Advanced",
+                None,
+                leaf("ADBE Text Range Units", stored(&[2.0], None)),
+            ),
+        ]
+        .concat(),
+    );
+    let text_group = text(animator("Rig", selector));
+    let error = lower_in(
+        &layer(Vec::new()),
+        &text_group,
+        "text.animator('Rig').selector('Lead').start",
+        &[0.0],
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("duplicate Range Selector field"), "{error}");
+}
+
+#[test]
+fn index_selector_aliases_keep_dynamic_and_unknown_unit_guards() {
+    for units in [
+        stored(&[3.0], None),
+        stored(&[1.5], None),
+        stored(&[2.0], Some("value")),
+        keyed(&[(0, 2.0, 2, 0.0, 0.0), (800, 1.0, 2, 0.0, 0.0)]),
+    ] {
+        let selector = range(
+            "Lead",
+            [
+                leaf("ADBE Text Index Start", stored(&[1.25], None)),
+                group(
+                    "ADBE Text Range Advanced",
+                    None,
+                    leaf("ADBE Text Range Units", units),
+                ),
+            ]
+            .concat(),
+        );
+        let text_group = text(animator("Rig", selector));
+        let error = lower_in(
+            &layer(Vec::new()),
+            &text_group,
+            "text.animator('Rig').selector('Lead').start",
+            &[0.0],
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("static Percentage or Index units"),
+            "{error}"
         );
     }
 }

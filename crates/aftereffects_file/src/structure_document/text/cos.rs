@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-#[derive(Clone, Debug, PartialEq)]
-pub(super) enum Value {
+#[derive(Debug)]
+pub(crate) enum Value {
     Null,
     Bool(bool),
     Number(f64),
@@ -9,6 +9,70 @@ pub(super) enum Value {
     Name(String),
     Array(Vec<Value>),
     Dict(BTreeMap<String, Value>),
+}
+
+// Parsing and destruction are iterative; ownership and style comparisons must
+// also tolerate the same deeply nested native Source Text containers.
+impl Clone for Value {
+    fn clone(&self) -> Self {
+        let mut pending = vec![(self, false)];
+        let mut cloned = Vec::new();
+        while let Some((value, visited)) = pending.pop() {
+            match value {
+                Self::Array(values) if !visited => {
+                    pending.push((value, true));
+                    pending.extend(values.iter().rev().map(|value| (value, false)));
+                }
+                Self::Dict(values) if !visited => {
+                    pending.push((value, true));
+                    pending.extend(values.values().rev().map(|value| (value, false)));
+                }
+                Self::Array(values) => {
+                    let children = cloned.split_off(cloned.len() - values.len());
+                    cloned.push(Self::Array(children));
+                }
+                Self::Dict(values) => {
+                    let children = cloned.split_off(cloned.len() - values.len());
+                    cloned.push(Self::Dict(values.keys().cloned().zip(children).collect()));
+                }
+                Self::Null => cloned.push(Self::Null),
+                Self::Bool(value) => cloned.push(Self::Bool(*value)),
+                Self::Number(value) => cloned.push(Self::Number(*value)),
+                Self::String(value) => cloned.push(Self::String(value.clone())),
+                Self::Name(value) => cloned.push(Self::Name(value.clone())),
+            }
+        }
+        cloned.pop().expect("the root value was cloned")
+    }
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        let mut pending = vec![(self, other)];
+        while let Some((left, right)) = pending.pop() {
+            match (left, right) {
+                (Self::Null, Self::Null) => {}
+                (Self::Bool(left), Self::Bool(right)) if left == right => {}
+                (Self::Number(left), Self::Number(right)) if left == right => {}
+                (Self::String(left), Self::String(right))
+                | (Self::Name(left), Self::Name(right))
+                    if left == right => {}
+                (Self::Array(left), Self::Array(right)) if left.len() == right.len() => {
+                    pending.extend(left.iter().zip(right));
+                }
+                (Self::Dict(left), Self::Dict(right)) if left.len() == right.len() => {
+                    for ((left_key, left), (right_key, right)) in left.iter().zip(right) {
+                        if left_key != right_key {
+                            return false;
+                        }
+                        pending.push((left, right));
+                    }
+                }
+                _ => return false,
+            }
+        }
+        true
+    }
 }
 
 impl Drop for Value {
@@ -47,48 +111,48 @@ impl Drop for Value {
 }
 
 impl Value {
-    pub(super) fn get(&self, key: &str) -> Option<&Self> {
+    pub(crate) fn get(&self, key: &str) -> Option<&Self> {
         match self {
             Self::Dict(values) => values.get(key),
             _ => None,
         }
     }
 
-    pub(super) fn index(&self, index: usize) -> Option<&Self> {
+    pub(crate) fn index(&self, index: usize) -> Option<&Self> {
         match self {
             Self::Array(values) => values.get(index),
             _ => None,
         }
     }
 
-    pub(super) fn as_array(&self) -> Option<&[Self]> {
+    pub(crate) fn as_array(&self) -> Option<&[Self]> {
         match self {
             Self::Array(values) => Some(values),
             _ => None,
         }
     }
 
-    pub(super) fn as_str(&self) -> Option<&str> {
+    pub(crate) fn as_str(&self) -> Option<&str> {
         match self {
             Self::String(value) | Self::Name(value) => Some(value),
             _ => None,
         }
     }
 
-    pub(super) fn as_f64(&self) -> Option<f64> {
+    pub(crate) fn as_f64(&self) -> Option<f64> {
         match self {
             Self::Number(value) => Some(*value),
             _ => None,
         }
     }
 
-    pub(super) fn as_i64(&self) -> Option<i64> {
+    pub(crate) fn as_i64(&self) -> Option<i64> {
         let value = self.as_f64()?;
         (value.fract() == 0.0 && value >= i64::MIN as f64 && value < -(i64::MIN as f64))
             .then_some(value as i64)
     }
 
-    pub(super) fn as_bool(&self) -> Option<bool> {
+    pub(crate) fn as_bool(&self) -> Option<bool> {
         match self {
             Self::Bool(value) => Some(*value),
             _ => None,
@@ -97,14 +161,14 @@ impl Value {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-pub(super) enum Error {
+pub(crate) enum Error {
     #[error("malformed COS data: {0}")]
     Malformed(&'static str),
     #[error("unsupported COS string encoding")]
     Encoding,
 }
 
-pub(super) fn parse(bytes: &[u8]) -> Result<Value, Error> {
+pub(crate) fn parse(bytes: &[u8]) -> Result<Value, Error> {
     enum Frame {
         Array(Vec<Value>),
         Dict {
@@ -496,6 +560,22 @@ fn hex(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_cos_clone_and_equality_preserve_value_semantics() {
+        let value =
+            parse(br#"[ null true false 2 (string) /name [ ] << /a 1 /b [ 3 ] >> ]"#).unwrap();
+        let cloned = value.clone();
+        assert!(value == cloned);
+        let different =
+            parse(br#"[ null true false 2 (string) /name [ ] << /a 1 /c [ 3 ] >> ]"#).unwrap();
+        assert!(value != different);
+        assert!(Value::String("same".into()) != Value::Name("same".into()));
+        assert!(Value::Number(f64::NAN) != Value::Number(f64::NAN));
+        assert!(Value::Number(-0.0) == Value::Number(0.0));
+        assert!(parse(b"[ 1 2 ]").unwrap() != parse(b"[ 2 1 ]").unwrap());
+        assert!(parse(b"[ 1 ]").unwrap() != parse(b"[ 1 2 ]").unwrap());
+    }
 
     #[test]
     fn cos_scale_retains_large_strings_and_flat_arrays() {

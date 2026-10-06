@@ -59,14 +59,39 @@ pub(crate) fn replace_fresh_layer_transform(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn replace_fresh_layer_transform_with_clock(
     layer: &mut Chunk,
     transform: &NativeTransform3d,
     animations: &Transform3dAnimations,
     clock: super::keyframes::PropertyClock,
 ) -> Result<(), AepWriteError> {
+    replace_fresh_layer_transform_with_key_units(
+        layer,
+        transform,
+        animations,
+        clock,
+        &TransformKeyUnits::default(),
+    )
+}
+
+/// Final wire times for the independently proved planar Video profiles only.
+/// Authored occurrence milliseconds remain in the numeric animation tracks.
+#[derive(Default)]
+pub(super) struct TransformKeyUnits {
+    pub scale: Option<Vec<i32>>,
+    pub position_separated: [Option<Vec<i32>>; 3],
+}
+
+pub(crate) fn replace_fresh_layer_transform_with_key_units(
+    layer: &mut Chunk,
+    transform: &NativeTransform3d,
+    animations: &Transform3dAnimations,
+    clock: super::keyframes::PropertyClock,
+    key_units: &TransformKeyUnits,
+) -> Result<(), AepWriteError> {
     validate(transform)?;
-    let replacement = transform_group_with_clock(transform, animations, clock)?;
+    let replacement = transform_group_with_key_units(transform, animations, clock, key_units)?;
     let children = layer
         .children_mut()
         .ok_or(AepWriteError::Invalid("native 3D layer is not a LIST"))?;
@@ -121,10 +146,20 @@ fn transform_group(
     transform_group_with_clock(value, animations, super::keyframes::PropertyClock::DEFAULT)
 }
 
+#[cfg(test)]
 fn transform_group_with_clock(
     value: &NativeTransform3d,
     animations: &Transform3dAnimations,
     clock: super::keyframes::PropertyClock,
+) -> Result<Chunk, AepWriteError> {
+    transform_group_with_key_units(value, animations, clock, &TransformKeyUnits::default())
+}
+
+fn transform_group_with_key_units(
+    value: &NativeTransform3d,
+    animations: &Transform3dAnimations,
+    clock: super::keyframes::PropertyClock,
+    key_units: &TransformKeyUnits,
 ) -> Result<Chunk, AepWriteError> {
     if animations.position.is_some() && animations.position_separated.is_some() {
         return Err(AepWriteError::Invalid(
@@ -151,6 +186,7 @@ fn transform_group_with_clock(
                 None,
                 0x0000_0803,
                 clock,
+                None,
             )?,
         ));
         for (name, axis, animation) in [
@@ -167,6 +203,7 @@ fn transform_group_with_clock(
                     animation.as_ref(),
                     1,
                     clock,
+                    key_units.position_separated[axis].as_deref(),
                 )?,
             ));
         }
@@ -185,12 +222,11 @@ fn transform_group_with_clock(
     entries.extend([
         (
             "ADBE Scale",
-            views::property_with_clock(
-                ValueKind::Scale,
+            views::property_with_scale_units(
                 &value.scale,
-                Some((0.0, 0.0)),
                 animations.scale.as_ref(),
                 clock,
+                key_units.scale.as_deref(),
             )?,
         ),
         (
@@ -248,8 +284,18 @@ fn property_with_flags(
     animation: Option<&NumericTrack>,
     flags: u32,
     clock: super::keyframes::PropertyClock,
+    units: Option<&[i32]>,
 ) -> Result<Chunk, AepWriteError> {
-    let mut property = views::property_with_clock(kind, values, bounds, animation, clock)?;
+    let mut property = if let Some(units) = units {
+        if kind != ValueKind::Scalar {
+            return Err(AepWriteError::Invalid(
+                "native follower ticks require scalar Position",
+            ));
+        }
+        views::property_with_follower_units(values, bounds, animation, clock, Some(units))?
+    } else {
+        views::property_with_clock(kind, values, bounds, animation, clock)?
+    };
     let children = property
         .children_mut()
         .ok_or(AepWriteError::Invalid("native property is not a LIST"))?;

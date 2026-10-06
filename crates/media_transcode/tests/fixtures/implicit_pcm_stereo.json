@@ -1,0 +1,12 @@
+{
+  "container": "mov,mp4,m4a,3gp,3g2,mj2",
+  "audio": {
+    "codec": "pcm_s16be",
+    "sample_format": "s16",
+    "sample_rate": 48000,
+    "channels": 2,
+    "channel_layout": "2 channels",
+    "start_seconds": 0.0,
+    "duration_seconds": 4.004
+  }
+}

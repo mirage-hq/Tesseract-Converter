@@ -46,6 +46,18 @@ impl<T> Stored<T> {
     pub(crate) fn contains_key(&self, key: &str) -> bool {
         self.wire.contains_key(key)
     }
+
+    #[cfg(test)]
+    pub(crate) fn is_wire_materialized(&self) -> bool {
+        self.wire.is_materialized()
+    }
+}
+
+impl<T: Serialize> Stored<T> {
+    /// Nested records listed by (JSON depth, field) are queried separately.
+    pub(crate) fn has_unknown_fields(&self, skip: &[(usize, &'static str)]) -> bool {
+        self.wire.has_unknown_fields(&self.data, skip)
+    }
 }
 
 impl<T: DeserializeOwned> Stored<T> {

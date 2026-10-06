@@ -102,7 +102,7 @@ fn edited_shape_and_boolean_export_native_static_paint_modes() {
 
 #[test]
 fn integrated_caps_dashes_paint_opacity_and_layer_keys_keep_separate_records() {
-    // Cross-slice regression code only; no execution or independent Adobe proof.
+    // Supplemental cross-control structure, not independent Adobe proof.
     for boolean in [false, true] {
         for (cap, ordinal) in [("round", 2.0), ("square", 3.0)] {
             let mut value = imported();
@@ -130,7 +130,7 @@ fn integrated_caps_dashes_paint_opacity_and_layer_keys_keep_separate_records() {
                 ("ADBE Vector Stroke Dash 1", 4.0),
                 ("ADBE Vector Stroke Gap 1", 2.0),
                 ("ADBE Vector Stroke Offset", -3.0),
-                ("ADBE Vector Stroke Opacity", 25.0),
+                ("ADBE Vector Stroke Opacity", 12.5), // 25% paint × 0.5 color alpha.
             ] {
                 assert_eq!(native_scalar(content, name), Some(expected));
             }
@@ -154,7 +154,7 @@ fn integrated_caps_dashes_paint_opacity_and_layer_keys_keep_separate_records() {
                 native_numeric(content, "ADBE Vector Stroke Color")
                     .unwrap()
                     .values,
-                vec![0.3, 0.6, 0.2, 0.5]
+                vec![0.3, 0.6, 0.2, 1.0]
             );
         }
     }

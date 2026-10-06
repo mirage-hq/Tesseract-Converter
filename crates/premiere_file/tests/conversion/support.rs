@@ -4,6 +4,7 @@ use serde_json::Value;
 use std::{fs, io::Read, path::Path};
 pub(super) const XML: &str = include_str!("../fixtures/one-clip.xml");
 pub(super) const MEDIA: &[u8] = include_bytes!("../fixtures/video-30fps.mp4");
+#[cfg(feature = "ffmpeg-library")]
 pub(super) const MOV: &[u8] = include_bytes!("../fixtures/video-30fps.mov");
 
 pub(super) fn one_second() -> String {
@@ -11,6 +12,7 @@ pub(super) fn one_second() -> String {
         .replace("2540160000000", "254016000000")
 }
 
+#[cfg(feature = "ffmpeg-library")]
 pub(super) fn two_timelines() -> String {
     let first = one_second();
     let second = first
@@ -24,6 +26,7 @@ pub(super) fn two_timelines() -> String {
     )
 }
 
+#[cfg(feature = "ffmpeg-library")]
 pub(super) fn build_tesseract_file(
     input: &Path,
     output: &Path,
@@ -40,6 +43,7 @@ pub(super) fn build_tesseract_file(
 }
 
 /// The document's root video layers, in layer order.
+#[cfg(feature = "ffmpeg-library")]
 pub(super) fn video_layers(document: &Value) -> Vec<&Value> {
     document["composition"]["layers"]
         .as_array()
@@ -83,6 +87,7 @@ pub(super) fn fixture(directory: &Path, xml: &str) -> std::path::PathBuf {
     native
 }
 
+#[cfg(feature = "ffmpeg-library")]
 pub(super) fn track_item_ticks(document: &roxmltree::Document<'_>, tag: &str) -> Vec<i64> {
     document
         .descendants()
@@ -122,6 +127,7 @@ pub(super) fn read_xml(path: &Path) -> String {
     xml
 }
 
+#[cfg(feature = "ffmpeg-library")]
 pub(super) fn document(dir: &Path) -> Value {
     fs::write(dir.join("source.mp4"), MEDIA).unwrap();
     crate::test_support::editable_document()

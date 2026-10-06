@@ -12,12 +12,16 @@
 //! Tesseract document exports, and the crate reader reads it back.
 
 use super::support::*;
+#[cfg(feature = "ffmpeg-library")]
 use premiere_file::PrProjectFile;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
-use tesseract_file::{AssetKind, TesseractFile, TesseractFileBuilder};
+use tesseract_file::TesseractFile;
+#[cfg(feature = "ffmpeg-library")]
+use tesseract_file::{AssetKind, TesseractFileBuilder};
 
 const SEQUENCE: &str = "c8acf9c1-34b2-4086-9f55-d528950a7059";
+#[cfg(feature = "ffmpeg-library")]
 const FONT_NOT_PACKAGED: &str = "font \"Arial-BoldMT\" is not packaged in this document; import it with tsrct project import-font before preview or export.";
 
 fn fixture(name: &str) -> PathBuf {
@@ -64,6 +68,7 @@ fn keys(list: &[(i64, f64, &str)]) -> Vec<Key> {
 }
 
 /// The graphic group and its text layer.
+#[cfg(feature = "ffmpeg-library")]
 fn graphic(document: &Value) -> (&Value, &Value) {
     let group = document["composition"]["layers"]
         .as_array()
@@ -89,6 +94,56 @@ fn track_mut<'a>(document: &'a mut Value, layer: &Value, property: &str) -> &'a 
         .unwrap_or_else(|| panic!("{property} track"))
 }
 
+#[test]
+fn modern_run_style_metadata_publishes_meaningful_editable_native_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("converted");
+    let omissions = premiere_to_tesseract(
+        fixture("feature_text_point_style_metadata_derived.prproj"),
+        &output,
+        Some(SEQUENCE),
+        false,
+    )
+    .unwrap();
+    assert!(
+        !omissions
+            .iter()
+            .any(|omission| omission.scope == premiere_file::OmissionScope::Occurrence),
+        "{omissions:?}"
+    );
+    assert!(
+        omissions.iter().any(|omission| {
+            omission.kind == premiere_file::OmissionKind::Approximated
+                && omission.reason.contains("run style[21]")
+                && omission.reason.contains("metadata")
+        }),
+        "{omissions:?}"
+    );
+    let archive = TesseractFile::open(first_project(&output)).unwrap();
+    let document = archive.project_json().unwrap();
+    tesseract_file::TesseractFileBuilder::from_project_json(
+        &serde_json::to_vec(&document).unwrap(),
+    )
+    .unwrap()
+    .validate()
+    .unwrap();
+    let text = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Text")
+        .expect("the native text must survive, not only its canvas");
+    assert_eq!(text["sourceText"]["text"], "py");
+    assert_eq!(text["sourceText"]["fontFamily"], "Arial-BoldMT");
+    assert_eq!(text["sourceText"]["fontSize"], 160.0);
+    assert_eq!(text["sourceText"]["fillColor"], json!([1.0, 1.0, 1.0, 1.0]));
+    assert_eq!(text["sourceText"]["applyFill"], true);
+    assert_eq!(text["sourceText"]["applyStroke"], false);
+    assert_eq!(text["activeRange"], json!({"start": 0, "duration": 2000}));
+    assert_eq!(text["transform"]["position"], json!([480.0, 540.0]));
+}
+
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_measured_graphic_bezier_keys_import_on_the_generator_clock() {
     // C1: unchanged Premiere 26.5.1 save, independently rendered in AME.
@@ -277,6 +332,204 @@ fn adobe_derived_multi_text_keys_target_only_their_own_layer() {
     );
 }
 
+fn native_field<'a>(node: roxmltree::Node<'a, 'a>, name: &str) -> Option<&'a str> {
+    node.descendants()
+        .find(|node| node.has_tag_name(name))
+        .and_then(|node| node.text())
+}
+
+fn native_record<'a>(document: &'a roxmltree::Document<'a>, id: &str) -> roxmltree::Node<'a, 'a> {
+    document
+        .root_element()
+        .children()
+        .find(|node| node.attribute("ObjectID") == Some(id))
+        .unwrap()
+}
+
+fn native_params<'a>(
+    document: &'a roxmltree::Document<'a>,
+    component: roxmltree::Node<'a, 'a>,
+) -> Vec<roxmltree::Node<'a, 'a>> {
+    component
+        .descendants()
+        .filter(|node| node.has_tag_name("Param"))
+        .map(|node| native_record(document, node.attribute("ObjectRef").unwrap()))
+        .collect()
+}
+
+/// Resolve the chain rather than assuming record order or reusing source IDs.
+fn keyed_graphic_objects<'a>(
+    document: &'a roxmltree::Document<'a>,
+) -> Vec<roxmltree::Node<'a, 'a>> {
+    for chain in document
+        .root_element()
+        .children()
+        .filter(|node| node.has_tag_name("VideoComponentChain"))
+    {
+        let objects: Vec<_> = chain
+            .descendants()
+            .filter(|node| node.has_tag_name("Component"))
+            .filter_map(|node| node.attribute("ObjectRef"))
+            .map(|id| native_record(document, id))
+            .filter(|node| {
+                matches!(
+                    native_field(*node, "MatchName"),
+                    Some("AE.ADBE Text" | "AE.ADBE Shape")
+                )
+            })
+            .collect();
+        if objects.iter().any(|object| {
+            native_field(*object, "MatchName") == Some("AE.ADBE Text")
+                && native_params(document, *object)
+                    .iter()
+                    .any(|param| native_field(*param, "Keyframes").is_some())
+        }) {
+            let mut ids = std::collections::BTreeSet::new();
+            let mut hashes = std::collections::BTreeSet::new();
+            for object in &objects {
+                assert!(ids.insert(object.attribute("ObjectID").unwrap()));
+                for param in native_params(document, *object) {
+                    assert!(ids.insert(param.attribute("ObjectID").unwrap()));
+                    for value in param
+                        .descendants()
+                        .filter(|node| node.has_tag_name("StartKeyframeValue"))
+                    {
+                        assert!(hashes.insert(value.attribute("BinaryHash").unwrap()));
+                    }
+                }
+            }
+            return objects;
+        }
+    }
+    panic!("no graphic with authored Text keys")
+}
+
+fn assert_native_text_keys(
+    document: &roxmltree::Document<'_>,
+    object: roxmltree::Node<'_, '_>,
+    name: &str,
+    expected: &[(i64, &str, &str)],
+) {
+    let params = native_params(document, object);
+    let param = *params
+        .iter()
+        .find(|param| native_field(**param, "Name") == Some(name))
+        .unwrap();
+    assert_eq!(native_field(param, "IsTimeVarying"), Some("true"));
+    let keys: Vec<_> = native_field(param, "Keyframes")
+        .unwrap()
+        .split(';')
+        .filter(|key| !key.is_empty())
+        .collect();
+    assert_eq!(keys.len(), expected.len());
+    for (key, (time, value, mode)) in keys.iter().zip(expected) {
+        let fields: Vec<_> = key.split(',').collect();
+        // Export chooses the existing one-hour generator In, not the original
+        // native timestamps. Off-trim keys stay on that same clock.
+        assert_eq!(
+            fields[0].parse::<i64>().unwrap(),
+            914_457_600_000_000 + time * 254_016_000
+        );
+        let actual: Vec<f64> = fields[1]
+            .split(':')
+            .map(|part| part.parse().unwrap())
+            .collect();
+        let expected: Vec<f64> = value.split(':').map(|part| part.parse().unwrap()).collect();
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert!((actual - expected).abs() < 1e-9, "{name}: {key}");
+        }
+        assert_eq!(fields[2], *mode);
+    }
+}
+
+#[test]
+fn multi_text_authored_keys_export_current_values() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("converted");
+    premiere_to_tesseract(
+        fixture("feature_multi_text_transform_keys_26_5_derived.prproj"),
+        &output,
+        Some(SEQUENCE),
+        false,
+    )
+    .unwrap();
+    let mut document = TesseractFile::open(first_project(&output))
+        .unwrap()
+        .project_json()
+        .unwrap();
+    let group = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Group" && layer["playback"]["inputRange"]["start"] == 2000)
+        .unwrap()
+        .clone();
+    let text = &group["layers"][0];
+    assert_eq!(text["sourceText"]["text"], "py");
+    for axis in ["scaleX", "scaleY"] {
+        let key = &mut track_mut(&mut document, text, axis)["animator"]["keyframes"][1];
+        assert_eq!(key["value"]["value"], 120.0);
+        key["value"]["value"] = json!(130.0);
+    }
+    let edited = archive(dir.path(), &document, &fixture("video-30fps-10s.mp4"));
+    let native = dir.path().join("native");
+    let omissions = tesseract_to_premiere(&edited, &native, false).unwrap();
+    assert!(
+        !omissions
+            .iter()
+            .any(|omission| omission.scope == premiere_file::OmissionScope::Occurrence),
+        "{omissions:?}"
+    );
+    let xml = read_xml(&native.join("project.prproj"));
+    let native_document = roxmltree::Document::parse(&xml).unwrap();
+    let objects = keyed_graphic_objects(&native_document);
+    assert_eq!(objects.len(), 2);
+    assert_eq!(native_field(objects[0], "InstanceName"), Some("py"));
+    assert_eq!(native_field(objects[1], "InstanceName"), Some("ok"));
+    assert_native_text_keys(
+        &native_document,
+        objects[0],
+        "Position",
+        &[(500, "0.25:0.5", "0"), (1500, "0.3:0.55", "0")],
+    );
+    assert_native_text_keys(
+        &native_document,
+        objects[0],
+        "Scale",
+        &[(500, "100", "0"), (1500, "130", "0")],
+    );
+    assert_native_text_keys(
+        &native_document,
+        objects[0],
+        "Opacity",
+        &[(500, "100", "0"), (1500, "40", "0")],
+    );
+    for param in native_params(&native_document, objects[1]) {
+        assert_eq!(native_field(param, "Keyframes"), None);
+    }
+    let reimported = dir.path().join("reimported");
+    premiere_to_tesseract(native.join("project.prproj"), &reimported, None, false).unwrap();
+    let restored = TesseractFile::open(first_project(&reimported))
+        .unwrap()
+        .project_json()
+        .unwrap();
+    let restored_group = restored["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Group" && layer["playback"]["inputRange"]["start"] == 2000)
+        .expect("the keyed graphic and its static sibling must export");
+    let children = restored_group["layers"].as_array().unwrap();
+    assert_eq!(children.len(), 2);
+    assert_eq!(children[0]["sourceText"]["text"], "py");
+    assert_eq!(children[1]["sourceText"], group["layers"][1]["sourceText"]);
+    assert_eq!(children[1]["transform"], group["layers"][1]["transform"]);
+    assert!(tracks(&restored, &children[1]).is_empty());
+    assert_eq!(tracks(&restored, &children[0]), tracks(&document, text));
+    assert_eq!(tracks(&restored, restored_group), tracks(&document, &group));
+}
+
 #[test]
 fn derived_multi_text_source_keys_keep_independent_tracks_and_trimmed_clocks() {
     // Supplementary XML combination of native payloads, never Adobe-saved:
@@ -407,8 +660,126 @@ fn derived_multi_text_source_keys_keep_independent_tracks_and_trimmed_clocks() {
         2,
         "the first, unrelated static graphic is preserved"
     );
+
+    let group = group.clone();
+    let children = group["layers"].as_array().unwrap();
+    let mut edited = document.clone();
+    track_mut(&mut edited, &children[0], "textContent")["animator"]["keyframes"][1]["value"]
+        ["value"] = json!("FOUR");
+    track_mut(&mut edited, &children[1], "strokeEnabled")["animator"]["keyframes"][1]
+        ["layerTime"] = json!(750);
+    // Retain a supported key past the placement Out without lengthening it.
+    track_mut(&mut edited, &children[0], "opacity")["animator"]["keyframes"][1]["layerTime"] =
+        json!(2500);
+    let native = dir.path().join("native");
+    let omissions = tesseract_to_premiere(
+        archive(dir.path(), &edited, &fixture("video-30fps-10s.mp4")),
+        &native,
+        false,
+    )
+    .unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let xml = read_xml(&native.join("project.prproj"));
+    let native_document = roxmltree::Document::parse(&xml).unwrap();
+    let objects = keyed_graphic_objects(&native_document);
+    assert_eq!(objects.len(), 3);
+    assert_eq!(
+        objects
+            .iter()
+            .map(|object| native_field(*object, "InstanceName").unwrap())
+            .collect::<Vec<_>>(),
+        ["py", "ok", "Rectangle"]
+    );
+    for (index, positions, scales, opacities) in [
+        (0, ["0.25:0.5", "0.3:0.55"], ["100", "120"], ["100", "40"]),
+        (1, ["0.6:0.3", "0.65:0.35"], ["90", "110"], ["80", "20"]),
+    ] {
+        assert_native_text_keys(
+            &native_document,
+            objects[index],
+            "Position",
+            &[(0, positions[0], "0"), (1000, positions[1], "0")],
+        );
+        assert_native_text_keys(
+            &native_document,
+            objects[index],
+            "Scale",
+            &[(0, scales[0], "0"), (1000, scales[1], "0")],
+        );
+        assert_native_text_keys(
+            &native_document,
+            objects[index],
+            "Opacity",
+            &[
+                (0, opacities[0], "0"),
+                (if index == 0 { 2500 } else { 1000 }, opacities[1], "0"),
+            ],
+        );
+    }
+    for param in native_params(&native_document, objects[2]) {
+        assert_eq!(native_field(param, "Keyframes"), None);
+    }
+    const HOUR: i64 = 914_457_600_000_000;
+    assert_eq!(
+        source_text_key_times(&xml),
+        [
+            vec![HOUR, HOUR + 254_016_000_000],
+            vec![HOUR, HOUR + 190_512_000_000, HOUR + 254_016_000_000]
+        ]
+    );
+    let reimported = dir.path().join("reimported");
+    premiere_to_tesseract(native.join("project.prproj"), &reimported, None, false).unwrap();
+    let restored = TesseractFile::open(first_project(&reimported))
+        .unwrap()
+        .project_json()
+        .unwrap();
+    let restored_groups: Vec<_> = restored["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|layer| layer["type"] == "Group")
+        .collect();
+    assert_eq!(restored_groups.len(), 2);
+    let restored_group = restored_groups
+        .into_iter()
+        .find(|layer| layer["playback"]["inputRange"]["start"] == 2000)
+        .unwrap();
+    assert_eq!(restored_group["playback"], group["playback"]);
+    assert_eq!(
+        valued_tracks(&restored, restored_group),
+        valued_tracks(&edited, &group)
+    );
+    let restored_children = restored_group["layers"].as_array().unwrap();
+    assert_eq!(
+        valued_tracks(&restored, &restored_children[0]),
+        valued_tracks(&edited, &children[0])
+    );
+    let second_tracks = valued_tracks(&restored, &restored_children[1]);
+    assert_eq!(
+        second_tracks
+            .iter()
+            .find(|(name, _)| name == "strokeEnabled")
+            .unwrap()
+            .1,
+        held(&[(0, json!(false)), (750, json!(true)), (1000, json!(true))])
+    );
+    assert_eq!(
+        second_tracks
+            .iter()
+            .find(|(name, _)| name == "textContent")
+            .unwrap()
+            .1,
+        held(&[
+            (0, json!("SIZE")),
+            (750, json!("SIZE")),
+            (1000, json!("SIZE"))
+        ])
+    );
+    assert_eq!(restored_children[2]["shape"], children[2]["shape"]);
+    assert!(valued_tracks(&restored, &restored_children[2]).is_empty());
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_graphic_transform_keys_stay_editable_in_both_directions() {
     let dir = tempfile::tempdir().unwrap();
@@ -602,6 +973,7 @@ fn adobe_graphic_transform_keys_stay_editable_in_both_directions() {
 
 /// The chain of the exported graphic: its `Default*` fields, and the match
 /// names of its components in order.
+#[cfg(feature = "ffmpeg-library")]
 fn graphic_chain(xml: &str) -> (Vec<String>, Vec<String>) {
     let document = roxmltree::Document::parse(xml).unwrap();
     let records: Vec<_> = document.root_element().children().collect();
@@ -641,6 +1013,7 @@ fn graphic_chain(xml: &str) -> (Vec<String>, Vec<String>) {
     panic!("no graphic chain")
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_graphic_clip_opacity_keys_stay_editable_in_both_directions() {
     let dir = tempfile::tempdir().unwrap();
@@ -828,6 +1201,7 @@ fn adobe_graphic_clip_opacity_keys_stay_editable_in_both_directions() {
 }
 
 /// A layer as (type, name, hidden) with its layers, for structure checks.
+#[cfg(feature = "ffmpeg-library")]
 fn outline(layer: &Value) -> (String, String, bool, Vec<(String, String)>) {
     let text = |value: &Value| value.as_str().unwrap_or_default().to_owned();
     let children = layer["layers"].as_array().map_or_else(Vec::new, |layers| {
@@ -844,6 +1218,7 @@ fn outline(layer: &Value) -> (String, String, bool, Vec<(String, String)>) {
     )
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_graphic_shapes_and_objects_stay_editable_in_both_directions() {
     let dir = tempfile::tempdir().unwrap();
@@ -1109,6 +1484,7 @@ fn held(list: &[(i64, Value)]) -> Vec<ValuedKey> {
         .collect()
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_source_text_hold_keys_stay_editable_in_both_directions() {
     let dir = tempfile::tempdir().unwrap();
@@ -1127,7 +1503,7 @@ fn adobe_source_text_hold_keys_stay_editable_in_both_directions() {
         .collect();
     // Three ID-only TrackItem Nodes come from the Premiere 26.5.1 saves. C
     // and D are the gradient probe's shapes, saved with the unmeasured
-    // Appearance slot 8 (JRB-2015); each omits its own occurrence.
+    // Appearance slot 8; each omits its own occurrence.
     assert_eq!(
         reasons,
         [
@@ -1331,6 +1707,7 @@ fn adobe_source_text_hold_keys_stay_editable_in_both_directions() {
 /// video, and the shadow and keys read back. Before the fix the shadow reached
 /// only the static document, so the project failed validation and no sibling
 /// exported.
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_source_text_hold_keys_export_with_a_shadow_beside_siblings() {
     let dir = tempfile::tempdir().unwrap();
@@ -1426,9 +1803,11 @@ fn adobe_source_text_hold_keys_export_with_a_shadow_beside_siblings() {
 }
 
 /// The warning of a gradient with opacity stops, in both directions.
+#[cfg(feature = "ffmpeg-library")]
 const OPACITY_STOPS_WARNING: &str = "gradient opacity stops composite in about gamma-2.4 light in Premiere; converted as FX stop alpha, which composites in encoded RGB, so partly transparent areas render darker (on the fixture's ramp 10 levels RMSE over a dark backdrop, up to 89 over bright content)";
 
 /// The gradient paint of the shape layer named `name`.
+#[cfg(feature = "ffmpeg-library")]
 fn gradient_paint<'a>(layers: &'a [Value], name: &str) -> &'a Value {
     let layer = layers
         .iter()
@@ -1437,6 +1816,7 @@ fn gradient_paint<'a>(layers: &'a [Value], name: &str) -> &'a Value {
     &layer["shape"]["fills"][0]["paint"]
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn adobe_gradient_fills_stay_editable_in_both_directions() {
     let dir = tempfile::tempdir().unwrap();
@@ -1465,7 +1845,7 @@ fn adobe_gradient_fills_stay_editable_in_both_directions() {
         .clone();
     let blue = json!([0.0, 96.0 / 255.0, 254.0 / 255.0, 1.0]);
     // A stays the solid control; B and C keep their saved geometry, stops
-    // and C's middle stop at 0.49922094 (Oracle run 23, G1-G3).
+    // and C's middle stop at 0.49922094.
     assert_eq!(
         layers[0]["shape"]["fills"][0]["paint"],
         json!({"type": "solid", "color": blue})

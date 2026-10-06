@@ -24,7 +24,7 @@ fn native_after_effects_link_is_not_decoded_video() {
     for (name, expected) in [
         (
             "native-linked.prproj",
-            "7ce138008b0dd305a3f033fd7020051b4e93d3593ffcf747f2664fe56782c25e",
+            "a6a7a7a662bd8f2b5b9392cd11e97dde16344ccb55a589a1d902b6f40ac88154",
         ),
         (
             "native-title.aep",
@@ -185,4 +185,80 @@ fn after_effects_link_resolves_shared_importer_binary_payload() {
             .dynamic_link_guid(),
         "00000001-0000-0000-0000-000000000000"
     );
+}
+
+#[test]
+fn object_mask_sampling_trigger_excludes_nonphysical_owners() {
+    let source = include_str!("../../../../tests/fixtures/one-clip.xml");
+    let nest = source
+        .replace(
+            "<VideoMediaSource ObjectID=\"7\">",
+            "<VideoSequenceSource ObjectID=\"7\">",
+        )
+        .replace("</VideoMediaSource>", "</VideoSequenceSource>");
+    let adjustment = source.replace(
+        "</Clip></VideoClip>",
+        "</Clip><AdjustmentLayer>true</AdjustmentLayer></VideoClip>",
+    );
+    for (name, xml, expected) in [
+        ("physical", source.to_owned(), true),
+        (
+            "still",
+            crate::format::tests::still::still_xml(false),
+            false,
+        ),
+        (
+            "Color Matte",
+            crate::format::tests::color_matte::matte_xml("ZEGlAAEAAAA="),
+            false,
+        ),
+        ("adjustment", adjustment, false),
+        ("nest", nest, false),
+        ("After Effects", native_link_xml(), false),
+    ] {
+        let dom = roxmltree::Document::parse(&xml).unwrap();
+        let item = dom
+            .descendants()
+            .find(|n| {
+                n.has_tag_name("VideoClipTrackItem")
+                // Pinned AE placement69; placement68 is the ordinary-video control.
+                && (name != "After Effects" || n.attribute("ObjectID") == Some("69"))
+            })
+            .unwrap();
+        let id = item.attribute("ObjectID").unwrap().to_owned();
+        let chain = item
+            .descendants()
+            .find(|n| n.has_tag_name("Components"))
+            .unwrap()
+            .attribute("ObjectRef")
+            .unwrap();
+        let node = dom
+            .root_element()
+            .children()
+            .find(|n| {
+                n.has_tag_name("VideoComponentChain") && n.attribute("ObjectID") == Some(chain)
+            })
+            .unwrap();
+        let replacement=format!("<VideoComponentChain ObjectID=\"{chain}\"><DefaultMotion>true</DefaultMotion><ComponentChain><Components><Component Index=\"0\" ObjectRef=\"665\"/></Components></ComponentChain></VideoComponentChain>");
+        let mut masked = xml.clone();
+        masked.replace_range(node.range(), &replacement);
+        masked = masked.replace(
+            "</PremiereData>",
+            &format!(
+                "{}</PremiereData>",
+                include_str!("../../../../tests/fixtures/object_mask/opacity.xml")
+            ),
+        );
+        let graph = Graph::parse(&masked).unwrap();
+        let reference = Reference {
+            id: Some(id),
+            uid: None,
+            index: None,
+        };
+        assert_eq!(
+            has_saved_raster(&graph, &reference, "test owner").unwrap_or(false),
+            expected,
+            "{name}"
+        );
+    }
 }

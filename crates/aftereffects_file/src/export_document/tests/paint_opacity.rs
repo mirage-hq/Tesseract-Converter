@@ -72,6 +72,62 @@ fn document(boolean: bool, stroke: bool, opacity: f64, animated: bool) -> Value 
 }
 
 #[test]
+fn static_solid_alpha_keeps_fill_stroke_layer_keys_and_opaque_sibling() {
+    let mut value = document(false, false, 1.0, true);
+    let shape = &mut value["composition"]["layers"][0];
+    shape["shape"]["fills"][0]["paint"]["color"][3] = json!(0.27);
+    shape["shape"]["strokes"] = json!([{
+        "paint":{"type":"solid","color":[1.0,0.91,0.77,0.82]},
+        "opacity":1.0,"width":1.7
+    }]);
+    let mut opaque = shape.clone();
+    opaque["id"] = json!(401);
+    opaque["shape"]["fills"][0]["paint"]["color"][3] = json!(1.0);
+    opaque["shape"]["strokes"][0]["paint"]["color"][3] = json!(1.0);
+    value["composition"]["layers"]
+        .as_array_mut()
+        .unwrap()
+        .push(opaque);
+    let output = export(value);
+    let native = read_project(&output.bytes).unwrap();
+    let native_layers = layers(&native);
+    assert_eq!(native_layers.len(), 2, "{:?}", output.diagnostics);
+    let painted = &native_layers[0].content;
+    assert_eq!(
+        numeric(painted, "ADBE Vector Fill Opacity").unwrap().values,
+        [27.0]
+    );
+    assert_eq!(
+        numeric(painted, "ADBE Vector Stroke Opacity")
+            .unwrap()
+            .values,
+        [82.0]
+    );
+    assert_eq!(
+        numeric(painted, "ADBE Vector Fill Color").unwrap().values,
+        [0.2, 0.4, 0.6, 1.0]
+    );
+    let layer_opacity = numeric(painted, "ADBE Opacity").unwrap();
+    assert_eq!(layer_opacity.keyframes.len(), 2);
+    for (key, (time, opacity)) in layer_opacity.keyframes.iter().zip([(0.0, 0.2), (0.5, 0.7)]) {
+        assert_eq!(key.time_secs, time);
+        assert!((key.values[0] - opacity).abs() < 1.0e-6);
+    }
+    let sibling = &native_layers[1].content;
+    assert_eq!(
+        numeric(sibling, "ADBE Vector Fill Opacity").unwrap().values,
+        [100.0]
+    );
+    assert_eq!(
+        numeric(sibling, "ADBE Vector Stroke Opacity")
+            .unwrap()
+            .values,
+        [100.0]
+    );
+    assert_eq!(numeric(sibling, "ADBE Opacity").unwrap().values, [0.8]);
+}
+
+#[test]
 fn single_paint_preserves_showreel_leaf_opacity_product() {
     // Reduced explicit FX inputs using the reported finale's paint/layer
     // factors. Geometry is synthetic, not independent Adobe-render evidence.
@@ -809,8 +865,22 @@ fn cubic_paint_color_retains_base_owner_opacity_and_sibling() {
                 },
             )
             .unwrap();
-            assert_eq!(color.values, vec![0.2, 0.4, 0.6, 0.4]);
+            assert_eq!(color.values, vec![0.2, 0.4, 0.6, 1.0]);
             assert!(!color.animated);
+            assert_eq!(
+                numeric(
+                    &owner.content,
+                    if stroke {
+                        "ADBE Vector Stroke Opacity"
+                    } else {
+                        "ADBE Vector Fill Opacity"
+                    }
+                )
+                .unwrap()
+                .values,
+                [20.0],
+                "omitted color animation retains the authored static paint alpha"
+            );
             assert_eq!(
                 numeric(&owner.content, "ADBE Opacity")
                     .unwrap()
@@ -851,7 +921,7 @@ fn paint_alpha_and_opacity_are_not_folded_into_layer_opacity_or_keys() {
                     };
                     let paint = numeric(content, paint_name).unwrap();
                     assert!(!paint.animated);
-                    assert_eq!(paint.values, vec![opacity * 100.0]);
+                    assert_eq!(paint.values, vec![opacity * 100.0 * 0.4]);
                     let color_name = if stroke {
                         "ADBE Vector Stroke Color"
                     } else {
@@ -859,7 +929,7 @@ fn paint_alpha_and_opacity_are_not_folded_into_layer_opacity_or_keys() {
                     };
                     assert_eq!(
                         numeric(content, color_name).unwrap().values,
-                        vec![0.2, 0.4, 0.6, 0.4]
+                        vec![0.2, 0.4, 0.6, 1.0]
                     );
                     let layer = numeric(content, "ADBE Opacity").unwrap();
                     assert_eq!(layer.animated, animated);

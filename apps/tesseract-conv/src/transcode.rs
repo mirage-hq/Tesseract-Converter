@@ -81,7 +81,11 @@ pub(super) fn run(
     if args.json {
         Ok(serde_json::to_string_pretty(&result)?)
     } else {
-        Ok(format!("Media written: {}", result.output.display()))
+        let mut message = format!("Media written: {}", result.output.display());
+        for warning in &result.warnings {
+            message.push_str(&format!("\nWarning: {warning}"));
+        }
+        Ok(message)
     }
 }
 

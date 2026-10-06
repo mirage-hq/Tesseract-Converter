@@ -170,7 +170,10 @@ where
 
     /// Parses and validates a JSON value produced by an editor or agent.
     pub fn from_json_value(value: Value) -> Result<Self, EditableFxDocumentError> {
-        Self::from_json_slice(&serde_json::to_vec(&value)?)
+        let bytes = serde_json::to_vec(&value)?;
+        // Do not retain the full JSON tree while allocating the decoded document.
+        drop(value);
+        Self::from_json_slice(&bytes)
     }
 
     /// Serializes deterministic, human-readable JSON suitable for direct edits.
@@ -342,6 +345,37 @@ mod tests {
         );
         assert_eq!(encoded["futureEnvelopeField"]["alsoKept"], true);
         assert_eq!(encoded["duration"], 6.0);
+    }
+
+    #[test]
+    fn value_and_slice_parsing_have_identical_results_and_errors() {
+        for value in [
+            minimal_document(),
+            {
+                let mut value = minimal_document();
+                value["futureEnvelopeField"] = json!({"null": null, "large": 9007199254740991_u64});
+                value
+            },
+            {
+                let mut value = minimal_document();
+                value["formatVersion"] = json!(2);
+                value
+            },
+            {
+                let mut value = minimal_document();
+                value["dimensions"]["width"] = json!(0);
+                value
+            },
+        ] {
+            let bytes = serde_json::to_vec(&value).unwrap();
+            let from_value = EditableFxCompositionDocument::from_json_value(value)
+                .map(|document| document.to_json_vec().unwrap())
+                .map_err(|error| error.to_string());
+            let from_slice = EditableFxCompositionDocument::from_json_slice(&bytes)
+                .map(|document| document.to_json_vec().unwrap())
+                .map_err(|error| error.to_string());
+            assert_eq!(from_value, from_slice);
+        }
     }
 
     #[test]

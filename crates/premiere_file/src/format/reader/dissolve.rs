@@ -5,7 +5,7 @@ use crate::{
     format::{Graph, Record},
 };
 
-// Native Bonsa component 1610, all 27 profiles identical. Record identities
+// Native Film Impact component 1610, all 27 profiles identical. Record identities
 // are deliberately absent: only semantic controls select this profile.
 const PROFILE: [ProfileParam; 30] = [
     film_impact::ERROR_OCCURRED,

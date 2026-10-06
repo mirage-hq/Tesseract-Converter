@@ -4,13 +4,16 @@
 //! remain in the shared export module so sibling-local rollback stays central.
 
 mod animated_bounds;
+mod blur_bounds;
+#[cfg(test)]
+mod blur_bounds_tests;
 mod collapsed;
 #[cfg(test)]
 mod collapsed_tests;
 mod demand;
 mod effect_support;
 mod root_viewport;
-mod skew;
+pub(super) mod skew;
 
 #[cfg(test)]
 mod demand_tests;
@@ -19,13 +22,15 @@ mod demand_tests;
 mod skew_tests;
 
 #[cfg(test)]
+mod nested_viewport_tests;
+#[cfg(test)]
 mod root_viewport_tests;
 
 use std::collections::BTreeMap;
 
 use fx_schema::{
     GroupLayer, Layer, LayerData, LayerId, Position, ShapeLineJoin, Time, Transform,
-    animator::AnimationGraphEntry, layer::ShapePathCommand,
+    layer::ShapePathCommand,
 };
 
 use crate::{
@@ -40,12 +45,34 @@ use super::media;
 
 pub(super) use demand::Demand;
 
+#[derive(Clone, Copy)]
+pub(super) struct SourceInterval {
+    range: fx_schema::TimeRangeProperty,
+    clock: crate::writer::PropertyClock,
+}
+
+impl SourceInterval {
+    pub(super) fn new(
+        range: fx_schema::TimeRangeProperty,
+        rate: crate::timing::FrameRate,
+    ) -> Result<Self, crate::rifx::RifxError> {
+        Ok(Self {
+            range,
+            clock: crate::writer::PropertyClock::for_rate(rate)?,
+        })
+    }
+}
+
 /// A bounded output canvas, never permission to crop child effect inputs.
 /// Consumer viewports are a diagnosed approximation for otherwise oversized 3D sources.
 pub(super) struct CertifiedCanvas {
     bounds: Bounds,
     root_output: bool,
     consumer_3d: bool,
+    /// Declared native input domain, following all-child support validation.
+    source_mask: bool,
+    /// Input support bounds intersect validated content instead of replacing it.
+    intersect_content: bool,
 }
 
 pub(super) struct ChildDemand {
@@ -54,10 +81,23 @@ pub(super) struct ChildDemand {
 }
 
 impl ChildDemand {
+    /// A native hard mask or supported logical effect plane bounds source input
+    /// independently of any unknown glyph extent or occurrence projection.
+    pub(super) fn use_source_mask_viewport(&mut self, bounds: Bounds, duration_millis: u64) {
+        self.propagated = Demand::root(bounds, duration_millis);
+        self.finite_canvas = Some(CertifiedCanvas {
+            bounds,
+            root_output: false,
+            consumer_3d: false,
+            source_mask: true,
+            intersect_content: false,
+        });
+    }
+
     pub(super) fn use_root_output_viewport(
         &mut self,
         group: &GroupLayer,
-        dynamics: &[AnimationGraphEntry],
+        dynamics: &crate::export_document::AnimationIndex<'_>,
         siblings: &[Layer],
         canvas: fx_schema::Dimensions,
     ) -> bool {
@@ -68,18 +108,73 @@ impl ChildDemand {
         false
     }
 
+    /// An identity 2D source can share the final output plane only when its
+    /// consumers have already proved that exact plane as their entire demand.
+    /// Do not substitute the root canvas for an unknown or transformed domain.
+    pub(super) fn use_nested_output_viewport(
+        &mut self,
+        group: &GroupLayer,
+        dynamics: &crate::export_document::AnimationIndex<'_>,
+        siblings: &[Layer],
+        canvas: fx_schema::Dimensions,
+    ) -> bool {
+        if !demand_clock_is_unit(&group.playback)
+            || subtree_needs_projection(&group.layers, dynamics)
+        {
+            return false;
+        }
+        let Some(viewport) = root_viewport::nested_canvas(group, dynamics, siblings, canvas) else {
+            return false;
+        };
+        let Ok(demand) = self.propagated.finite_union() else {
+            return false;
+        };
+        if demand.min != viewport.bounds.min || demand.max != viewport.bounds.max {
+            return false;
+        }
+        self.finite_canvas = Some(viewport);
+        true
+    }
+
+    /// The source has already inverted its identity occurrence and expanded the
+    /// consumer demand by every supported effect kernel. Preserve finite content
+    /// smaller than that demand rather than replacing it with a nominal canvas.
+    pub(super) fn use_nested_input_viewport(
+        &mut self,
+        group: &GroupLayer,
+        dynamics: &crate::export_document::AnimationIndex<'_>,
+        siblings: &[Layer],
+        canvas: fx_schema::Dimensions,
+    ) -> bool {
+        if !demand_clock_is_unit(&group.playback)
+            || subtree_needs_projection(&group.layers, dynamics)
+        {
+            return false;
+        }
+        let Some(mut certificate) = root_viewport::input_canvas(group, dynamics, siblings, canvas)
+        else {
+            return false;
+        };
+        let Ok(bounds) = self.propagated.finite_union() else {
+            return false;
+        };
+        certificate.bounds = bounds;
+        self.finite_canvas = Some(certificate);
+        true
+    }
+
     /// Certify finite geometric output support, not pixel-exact native rasterization.
     pub(super) fn use_3d_consumer_viewport(
         &mut self,
         group: &GroupLayer,
         siblings: &[Layer],
-        dynamics: &[AnimationGraphEntry],
+        dynamics: &crate::export_document::AnimationIndex<'_>,
     ) -> Result<(), &'static str> {
         if group.motion_blur
             || !group.masks.is_empty()
             || group.track_matte.is_some()
             || !group.fills.is_empty()
-            || !super::playback_is_identity(&group.playback)
+            || !demand_clock_is_unit(&group.playback)
             || effect_support::stack(&group.effects).is_err()
         {
             return Err("3D consumer has unsupported masks, clock, blur or owner controls");
@@ -120,8 +215,85 @@ impl ChildDemand {
             bounds,
             root_output: false,
             consumer_3d: true,
+            source_mask: false,
+            intersect_content: false,
         });
         Ok(())
+    }
+
+    /// A mixed source with unknown Text glyph bounds may use only the pixels
+    /// that can reach its native consumer. Every ancestor's pointwise effects,
+    /// clocks and inverse planar transforms have already shaped this demand;
+    /// unsafe masks and non-invertible controls mark it full instead.
+    /// An exact root clock may request any moment in its native source. The
+    /// final output clip is still the same untransformed canvas at every such
+    /// moment; replacing the clock's unknown phase with all source times only
+    /// enlarges demand, never drops a visible pixel.
+    pub(super) fn use_clocked_root_output_viewport(&mut self, source_duration_millis: u64) {
+        if self
+            .finite_canvas
+            .as_ref()
+            .is_some_and(|canvas| canvas.root_output)
+            && let Some(canvas) = &self.finite_canvas
+        {
+            self.propagated = Demand::root(canvas.bounds, source_duration_millis);
+        }
+    }
+
+    /// The caller has already checked native clock representability. Widen
+    /// temporal coverage after spatial inversion; no source phase is assumed.
+    pub(super) fn use_checked_source_domain(&mut self, checked: Self) {
+        self.propagated = checked.propagated;
+    }
+
+    pub(super) fn text_canvas(
+        &self,
+        group: &GroupLayer,
+        siblings: &[Layer],
+    ) -> Result<Bounds, &'static str> {
+        // Null parenting and native collapse are selected before this fallback.
+        // Effectful or opacity-keyed Text-only groups may instead need a real
+        // precomposition; they obey the same finite-demand checks as mixed ones.
+        if group.motion_blur || !group.fills.is_empty() {
+            return Err("Text consumer has motion blur or authored fills");
+        }
+        // Finite spatial demand does not certify compositing isolation or the
+        // additional shutter-time samples of a nested Text source.
+        fn text_compositing_is_supported(layer: &Layer) -> bool {
+            match layer.data() {
+                LayerData::Text(text) => text.blend_mode == Default::default() && !text.motion_blur,
+                LayerData::Group(group) => {
+                    group.blend_mode == Default::default()
+                        && !group.motion_blur
+                        && group.layers.iter().all(text_compositing_is_supported)
+                }
+                _ => true,
+            }
+        }
+        if !group.layers.iter().all(text_compositing_is_supported) {
+            return Err("Text source has unsupported nested blending or motion blur");
+        }
+        if group
+            .layers
+            .iter()
+            .any(|child| child.parent_id().is_some_and(|parent| parent != group.id))
+        {
+            return Err("Text source has external native parent references");
+        }
+        for sibling in siblings {
+            if sibling.id() == group.id {
+                continue;
+            }
+            if root_viewport::references(sibling, group.id) != Some(false) {
+                return Err("Text source has external or unknown sibling consumers");
+            }
+            if let LayerData::Adjustment(adjustment) = sibling.data()
+                && effect_support::stack(&adjustment.effects).is_err()
+            {
+                return Err("Nonpointwise sibling Adjustment samples Text source");
+            }
+        }
+        self.propagated.finite_union()
     }
 
     pub(super) const fn finite_canvas(&self) -> Option<&CertifiedCanvas> {
@@ -131,6 +303,61 @@ impl ChildDemand {
     pub(super) const fn propagated(&self) -> &Demand {
         &self.propagated
     }
+}
+
+pub(super) fn validate_masked_source(
+    group: &GroupLayer,
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+    resolved_media: &BTreeMap<String, media::ResolvedMediaSource>,
+    canvas: fx_schema::Dimensions,
+) -> Result<(), &'static str> {
+    animated_bounds::validate_masked_source(group, dynamics, resolved_media, canvas)
+}
+
+pub(super) fn has_active_shadow(records: &[fx_schema::EffectRecord]) -> bool {
+    records.iter().any(|record| {
+        let payload = match record.data() {
+            fx_schema::EffectData::Identified { enabled: false, .. } => return false,
+            fx_schema::EffectData::Identified { effect, .. }
+            | fx_schema::EffectData::Legacy(effect) => effect,
+        };
+        matches!(payload, fx_schema::EffectPayload::Known(fx_schema::LayerEffect::DropShadow(shadow)) if shadow.enabled)
+    })
+}
+
+pub(super) fn static_shadow_stack(
+    records: &[fx_schema::EffectRecord],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+) -> bool {
+    effect_support::shadow_bounds(
+        Bounds {
+            min: [0.0; 2],
+            max: [0.0; 2],
+        },
+        records,
+        dynamics,
+    )
+    .is_ok()
+}
+
+fn group_effect_bounds(
+    bounds: Bounds,
+    group: &GroupLayer,
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+) -> Result<Bounds, &'static str> {
+    // Other profiles retain their existing content-only policy and diagnostics.
+    // This exception does not certify an inverse sampling demand or a crop.
+    if static_shadow_stack(&group.effects, dynamics) {
+        effect_support::shadow_bounds(bounds, &group.effects, dynamics)
+    } else {
+        Ok(bounds)
+    }
+}
+
+pub(super) fn pointwise_effect_stack(
+    records: &[fx_schema::EffectRecord],
+) -> Result<(), &'static str> {
+    effect_support::stack(records)
 }
 
 pub(super) fn root_demand(canvas: fx_schema::Dimensions, duration_ms: u64) -> Demand {
@@ -143,6 +370,21 @@ pub(super) fn root_demand(canvas: fx_schema::Dimensions, duration_ms: u64) -> De
     )
 }
 
+/// The zero-origin, full-window unit mapping is exactly `t - active.start`,
+/// matching `Demand::map_clock(start, 1)`. Keep existing strict identity behavior;
+/// independent mapping windows, offsets and TimeRemap need separate phase proof.
+fn demand_clock_is_unit(playback: &fx_schema::layer::LayerPlayback) -> bool {
+    super::playback_is_identity(playback)
+        || (playback.input_offset_ms() == 0
+            && matches!(
+                playback.mapping(),
+                fx_schema::layer::LayerPlaybackMapping::Linear { input, output }
+                    if *input == playback.input_range()
+                        && output.start == Time::ZERO
+                        && input.duration == output.duration
+            ))
+}
+
 /// Reverse occurrence operators while retaining root-time/local-time coupling.
 /// Native precomposition sampling at a new crop boundary has no independent
 /// support proof yet, so inferred demand never replaces full bounds.
@@ -150,9 +392,56 @@ pub(super) fn child_demand(
     source: &GroupLayer,
     _geometry: &GroupLayer,
     masks: &[fx_schema::layer::PathMask],
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     canvas: fx_schema::Dimensions,
     inherited: &Demand,
+    native_pointwise_mask_crop: bool,
+) -> ChildDemand {
+    child_demand_inner(
+        source,
+        masks,
+        dynamics,
+        canvas,
+        inherited,
+        native_pointwise_mask_crop,
+        None,
+        false,
+    )
+}
+
+/// Call only after checking native clock representation and its source domain.
+pub(super) fn checked_source_demand(
+    source: &GroupLayer,
+    masks: &[fx_schema::layer::PathMask],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+    canvas: fx_schema::Dimensions,
+    inherited: &Demand,
+    native_pointwise_mask_crop: bool,
+    source_duration_millis: u64,
+) -> ChildDemand {
+    child_demand_inner(
+        source,
+        masks,
+        dynamics,
+        canvas,
+        inherited,
+        native_pointwise_mask_crop,
+        Some(source_duration_millis),
+        false,
+    )
+}
+
+// Mask crop, checked source duration and blur approximation are independent proof inputs.
+#[allow(clippy::too_many_arguments)]
+fn child_demand_inner(
+    source: &GroupLayer,
+    masks: &[fx_schema::layer::PathMask],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+    canvas: fx_schema::Dimensions,
+    inherited: &Demand,
+    native_pointwise_mask_crop: bool,
+    checked_source_duration: Option<u64>,
+    approximate_blur_reach: bool,
 ) -> ChildDemand {
     let mut propagated = inherited.clone();
     let active_range = source.playback.input_range();
@@ -160,21 +449,31 @@ pub(super) fn child_demand(
         active_range.start.as_millis(),
         active_range.end().as_millis(),
     );
-    if let Err(reason) = effect_support::stack(&source.effects) {
+    let finite_input_profile = demand_clock_is_unit(&source.playback)
+        && !subtree_needs_projection(&source.layers, dynamics)
+        && root_viewport::input_canvas(source, dynamics, &[], canvas).is_some();
+    let reach = if approximate_blur_reach {
+        effect_support::viewport_approximation_reach(&source.effects, dynamics)
+    } else if finite_input_profile {
+        effect_support::input_reach(&source.effects, dynamics)
+    } else {
+        effect_support::stack(&source.effects).map(|()| 0.0)
+    };
+    if let Err(reason) = reach {
         propagated.full(reason);
     }
-    if !masks.is_empty() {
+    if !masks.is_empty() && !native_pointwise_mask_crop {
         match finite_mask_gate(masks, dynamics) {
             Ok(_gate) => propagated.full("Static Group Add mask is structurally finite, but native crop-boundary support is not independently proved"),
             Err(reason) => propagated.full(reason),
         }
     }
-    if source.track_matte.is_some() {
+    if source.track_matte.is_some() && !finite_input_profile {
         propagated.full("Group matte source has no proved crop support");
     }
-    if super::playback_is_identity(&source.playback) {
+    if demand_clock_is_unit(&source.playback) {
         propagated.map_clock(active_range.start.as_millis(), 1.0);
-    } else {
+    } else if checked_source_duration.is_none() {
         propagated.full("Nonidentity Group source clock requires coupled native phase proof");
     }
     if let Err(reason) = animated_bounds::inverse_planar_demand(
@@ -188,17 +487,91 @@ pub(super) fn child_demand(
     ) {
         propagated.full(reason);
     }
+    if let Ok(radius) = reach {
+        propagated.inverse_regions(|bounds| bounds.expand(radius));
+    }
+    if let Some(duration) = checked_source_duration {
+        // Spatial inversion used the actual occurrence and all-time transform
+        // hulls. Its union is valid at every checked native source time, even
+        // when a nonlinear/remapped clock visits them out of order.
+        if let Ok(bounds) = propagated.finite_union() {
+            propagated = Demand::root(bounds, duration);
+        }
+    }
     ChildDemand {
         propagated,
         finite_canvas: None,
     }
 }
 
+/// Only the precise finite-geometry overflow rejection can trigger a retry.
+pub(super) const NATIVE_CANVAS_OVERFLOW: &str = "Proven precomposition bounds exceed the native canvas; subtree is not a certified collapsed 2D vector source";
+
+/// A deliberately approximate source working plane, not a final-output or
+/// native sampling certificate. Original geometry validation must run first.
+pub(super) fn approximate_child_demand(
+    group: &GroupLayer,
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+    canvas: fx_schema::Dimensions,
+    inherited: &Demand,
+    siblings: &[Layer],
+    checked_source_duration: Option<u64>,
+) -> Option<ChildDemand> {
+    if !demand_clock_is_unit(&group.playback)
+        || !group.masks.is_empty()
+        || group.track_matte.is_some()
+        || !group.fills.is_empty()
+        || subtree_has_temporal_effects(&group.layers)
+    {
+        return None;
+    }
+    for sibling in siblings {
+        if sibling.id() != group.id
+            && (root_viewport::references(sibling, group.id)?
+                || matches!(sibling.data(), LayerData::Adjustment(adjustment)
+                    if !adjustment.effects.iter().all(root_viewport::pointwise_adjustment)))
+        {
+            return None;
+        }
+    }
+    // Full inherited demand remains Full. No nominal root-canvas substitution.
+    inherited.finite_union().ok()?;
+    // Keep the spatial union in the already validated native source-time
+    // domain, just as checked_source_demand does on the ordinary path.
+    let mut candidate = child_demand_inner(
+        group,
+        &[],
+        dynamics,
+        canvas,
+        inherited,
+        false,
+        checked_source_duration,
+        true,
+    );
+    let bounds = candidate.propagated.finite_union().ok()?;
+    candidate.finite_canvas = Some(CertifiedCanvas {
+        bounds,
+        root_output: false,
+        consumer_3d: false,
+        source_mask: false,
+        intersect_content: false,
+    });
+    Some(candidate)
+}
+
+fn subtree_has_temporal_effects(layers: &[Layer]) -> bool {
+    layers.iter().any(|layer| {
+        animated_bounds::temporal_effects(layer.data().effects())
+            || matches!(layer.data(), LayerData::Group(group)
+                if subtree_has_temporal_effects(&group.layers))
+    })
+}
+
 /// Necessary, not sufficient, proof of a finite source-local mask enclosure.
 /// The actual native/source support comparison must authorize use as a crop.
 fn finite_mask_gate(
     masks: &[fx_schema::layer::PathMask],
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
 ) -> Result<Bounds, &'static str> {
     let [mask] = masks else {
         return Err("Only one static Add mask has a candidate finite support gate");
@@ -268,7 +641,7 @@ pub(super) fn classify(
     group: &GroupLayer,
     composition_end: Time,
     duration: Duration24,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     resolved_media: &BTreeMap<String, media::ResolvedMediaSource>,
     canvas: fx_schema::Dimensions,
 ) -> Result<HierarchyPlan, &'static str> {
@@ -280,17 +653,21 @@ pub(super) fn classify(
         resolved_media,
         canvas,
         None,
+        None,
     )
 }
 
+// Keep the established classifier's clock/media/canvas inputs explicit.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn classify_with_demand(
     group: &GroupLayer,
     composition_end: Time,
     duration: Duration24,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     resolved_media: &BTreeMap<String, media::ResolvedMediaSource>,
     canvas: fx_schema::Dimensions,
     finite_canvas: Option<&CertifiedCanvas>,
+    text_canvas: Option<Bounds>,
 ) -> Result<HierarchyPlan, &'static str> {
     classify_inner(
         group,
@@ -302,6 +679,8 @@ pub(super) fn classify_with_demand(
         false,
         None,
         finite_canvas,
+        text_canvas,
+        None,
     )
 }
 
@@ -312,7 +691,7 @@ pub(super) fn classify_with_skew_helper(
     group: &GroupLayer,
     composition_end: Time,
     duration: Duration24,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     resolved_media: &BTreeMap<String, media::ResolvedMediaSource>,
     canvas: fx_schema::Dimensions,
     helper_id: LayerId,
@@ -324,6 +703,7 @@ pub(super) fn classify_with_skew_helper(
         dynamics,
         resolved_media,
         canvas,
+        None,
         None,
         helper_id,
     )
@@ -337,10 +717,11 @@ pub(super) fn classify_with_skew_helper_and_demand(
     group: &GroupLayer,
     composition_end: Time,
     duration: Duration24,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     resolved_media: &BTreeMap<String, media::ResolvedMediaSource>,
     canvas: fx_schema::Dimensions,
     finite_canvas: Option<&CertifiedCanvas>,
+    text_canvas: Option<Bounds>,
     helper_id: LayerId,
 ) -> Result<HierarchyPlan, &'static str> {
     classify_inner(
@@ -353,6 +734,8 @@ pub(super) fn classify_with_skew_helper_and_demand(
         true,
         Some(helper_id),
         finite_canvas,
+        text_canvas,
+        None,
     )
 }
 
@@ -369,7 +752,7 @@ pub(super) fn classify_precomposition(
     group: &GroupLayer,
     composition_end: Time,
     duration: Duration24,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     resolved_media: &BTreeMap<String, media::ResolvedMediaSource>,
     canvas: fx_schema::Dimensions,
 ) -> Result<HierarchyPlan, &'static str> {
@@ -381,17 +764,25 @@ pub(super) fn classify_precomposition(
         resolved_media,
         canvas,
         None,
+        None,
+        None,
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "source visibility and spatial demand are independently certified bounds inputs"
+)]
 pub(super) fn classify_precomposition_with_demand(
     group: &GroupLayer,
     composition_end: Time,
     duration: Duration24,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     resolved_media: &BTreeMap<String, media::ResolvedMediaSource>,
     canvas: fx_schema::Dimensions,
     finite_canvas: Option<&CertifiedCanvas>,
+    text_canvas: Option<Bounds>,
+    source_interval: Option<SourceInterval>,
 ) -> Result<HierarchyPlan, &'static str> {
     classify_inner(
         group,
@@ -403,6 +794,8 @@ pub(super) fn classify_precomposition_with_demand(
         true,
         None,
         finite_canvas,
+        text_canvas,
+        source_interval,
     )
 }
 
@@ -414,12 +807,14 @@ fn classify_inner(
     group: &GroupLayer,
     composition_end: Time,
     duration: Duration24,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     resolved_media: &BTreeMap<String, media::ResolvedMediaSource>,
     canvas: fx_schema::Dimensions,
     force_precomposition: bool,
     skew_helper_id: Option<LayerId>,
     finite_canvas: Option<&CertifiedCanvas>,
+    text_canvas: Option<Bounds>,
+    source_interval: Option<SourceInterval>,
 ) -> Result<HierarchyPlan, &'static str> {
     check_shared_group(group, composition_end)?;
     let inner_parent = skew_helper_id
@@ -436,14 +831,11 @@ fn classify_inner(
         && !spatial
         && parenting_eligible(group)
         && transform_animations.opacity.is_none();
-    // Imported vector control groups can be hidden and childless. A disabled
-    // Null retains their editable controls without inventing a render canvas.
-    let empty_hidden_controls = !force_precomposition
-        && group.is_hidden
-        && group.layers.is_empty()
-        && group.effects.is_empty()
-        && group.track_matte.is_none();
-    if empty_hidden_controls
+    // Childless controls have no painted extent, even when their occurrence
+    // clock requires the forced classifier. Keep a native non-rendering Null
+    // rather than inventing a source canvas; caller validates its clock/mattes.
+    let empty_controls = inner_parent.is_none() && empty_controls_eligible(group);
+    if empty_controls
         || (parenting_eligible
             && (group.layers.len() > 1
                 || group.layers.first().is_some_and(|child| {
@@ -469,14 +861,39 @@ fn classify_inner(
             min: [0.0; 2],
             max: [1.0; 2],
         }))
+    } else if group.fills.is_empty()
+        && group.effects.is_empty()
+        && !spatial
+        && transparent_hidden_content(&group.layers)
+    {
+        // Keep the containing canvas for known disabled artwork, rather than
+        // shrinking its editable source to the audio-only one-pixel convention.
+        Ok(Some(Bounds {
+            min: [0.0; 2],
+            max: [f64::from(canvas.width), f64::from(canvas.height)],
+        }))
     } else if spatial
         || subtree_has_masks(&group.layers)
         || subtree_has_dynamics(&group.layers, dynamics)
     {
-        animated_bounds::child_union(group, dynamics, resolved_media, canvas)
+        animated_bounds::child_union_in_interval(
+            group,
+            dynamics,
+            resolved_media,
+            canvas,
+            source_interval,
+        )
     } else {
         child_union(group, resolved_media, canvas)
     };
+    let spatial_text_canvas = spatial
+        && inner_parent.is_none()
+        && matches!(
+            bounds,
+            Err("Text/font glyph bounds are not known from the FX text box")
+        )
+        && finite_canvas
+            .is_some_and(|canvas| canvas.root_output || canvas.consumer_3d || canvas.source_mask);
     let bounds = match bounds {
         Ok(Some(bounds)) => bounds,
         Ok(None) if parenting_eligible => {
@@ -511,6 +928,36 @@ fn classify_inner(
                 inner_parent: None,
             }));
         }
+        Err("Text/font glyph bounds are not known from the FX text box")
+            if spatial
+                && inner_parent.is_none()
+                && finite_canvas.is_some_and(|canvas| {
+                    canvas.root_output || canvas.consumer_3d || canvas.source_mask
+                }) =>
+        {
+            animated_bounds::validate_spatial_source_with_planar_text(
+                group,
+                dynamics,
+                resolved_media,
+                canvas,
+            )?;
+            finite_canvas
+                .expect("guarded final-output, planar-consumer, or native-mask certificate")
+                .bounds
+        }
+        Err("Text/font glyph bounds are not known from the FX text box")
+            if !spatial
+                && inner_parent.is_none()
+                && (text_canvas.is_some()
+                    || finite_canvas.is_some_and(|canvas| canvas.root_output)) =>
+        {
+            // This is the consumer's all-time visible preimage, not a guess
+            // from the FX text box. A certified identity root clips to the
+            // output even when its source clock is nonidentity.
+            text_canvas
+                .or_else(|| finite_canvas.map(|canvas| canvas.bounds))
+                .expect("guarded by the viewport certificate")
+        }
         Err(error) => return Err(error),
     };
     // Retain the original support/near-plane validation above. A final output
@@ -520,6 +967,7 @@ fn classify_inner(
     // sources whose full symmetric 3D canvas would otherwise be omitted.
     let finite_canvas = finite_canvas.filter(|certificate| {
         !certificate.consumer_3d
+            || spatial_text_canvas
             || (spatial
                 && (0..2).any(|axis| {
                     let radius = (root_camera.center[axis] - bounds.min[axis])
@@ -529,7 +977,17 @@ fn classify_inner(
                     radius * 2.0 > f64::from(u16::MAX)
                 }))
     });
-    let bounds = finite_canvas.map_or(bounds, |certified| certified.bounds);
+    let bounds = finite_canvas.map_or(bounds, |certified| {
+        if certified.intersect_content {
+            Bounds {
+                min: std::array::from_fn(|axis| bounds.min[axis].max(certified.bounds.min[axis])),
+                max: std::array::from_fn(|axis| bounds.max[axis].min(certified.bounds.max[axis])),
+            }
+        } else {
+            certified.bounds
+        }
+    });
+    let bounds = group_effect_bounds(bounds, group, dynamics)?;
     let bounds = if let Some(lowering) = &inner_parent {
         let inner = &lowering.inner.transform;
         affine_bounds(
@@ -595,9 +1053,7 @@ fn classify_inner(
         right - left > f64::from(u16::MAX) || bottom - top > f64::from(u16::MAX);
     if collapse_transformations {
         if spatial || inner_parent.is_some() || !collapsed::eligible(group, dynamics) {
-            return Err(
-                "Proven precomposition bounds exceed the native canvas; subtree is not a certified collapsed 2D vector source",
-            );
+            return Err(NATIVE_CANVAS_OVERFLOW);
         }
         // Collapse retains vector geometry beyond this source viewport. Unlike
         // cropping, no child geometry or effect input is shortened or shifted.
@@ -795,7 +1251,7 @@ fn identity_clock(group: &GroupLayer, composition_end: Time) -> bool {
 /// Text, or a nonempty Group of such branches, such as an imported text layer's
 /// clock Group holding one Text per held Source Text value. FX Text has no glyph
 /// bounds to size a precomposition; each nested Group is classified on its own.
-fn text_only_branch(layer: &Layer) -> bool {
+pub(super) fn text_only_branch(layer: &Layer) -> bool {
     match layer.data() {
         LayerData::Text(_) => true,
         LayerData::Group(group) => {
@@ -803,6 +1259,36 @@ fn text_only_branch(layer: &Layer) -> bool {
         }
         _ => false,
     }
+}
+
+// Known disabled artwork is transparent, not unknown geometry. Keep a real
+// transparent source for a live masked/matted owner rather than dropping the
+// owner and leaving its canvas guide as ordinary paint. Never guess for live
+// unsupported content or for effects/fills that could generate coverage.
+fn transparent_hidden_content(layers: &[Layer]) -> bool {
+    layers.iter().all(|layer| {
+        if super::layer_is_hidden(layer) {
+            return true;
+        }
+        match layer.data() {
+            LayerData::Audio(_) => true,
+            LayerData::Group(group) => {
+                group.fills.is_empty()
+                    && group.effects.is_empty()
+                    && group.blend_mode == Default::default()
+                    && transparent_hidden_content(&group.layers)
+            }
+            _ => false,
+        }
+    })
+}
+
+pub(super) fn empty_controls_eligible(group: &GroupLayer) -> bool {
+    group.layers.is_empty()
+        && group.fills.is_empty()
+        && group.effects.is_empty()
+        && group.masks.is_empty()
+        && group.track_matte.is_none()
 }
 
 fn parenting_eligible(group: &GroupLayer) -> bool {
@@ -819,7 +1305,7 @@ fn parenting_eligible(group: &GroupLayer) -> bool {
 
 fn native_transform(
     group: &GroupLayer,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
 ) -> Result<(SolidTransform, TransformAnimations), &'static str> {
     let Position::TwoD(position) = group.transform.position else {
         return Err("Native hierarchy does not invent 3D parent/precomposition records");
@@ -843,7 +1329,10 @@ fn native_transform(
     Ok((transform, animations))
 }
 
-fn subtree_needs_projection(layers: &[Layer], dynamics: &[AnimationGraphEntry]) -> bool {
+fn subtree_needs_projection(
+    layers: &[Layer],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+) -> bool {
     layers.iter().any(|layer| {
         super::mask_and_transform(layer).is_some_and(|(transform, _, _)| {
             super::transform3d::requires_native_3d(dynamics, transform, layer.id())
@@ -858,11 +1347,13 @@ fn subtree_has_masks(layers: &[Layer]) -> bool {
     })
 }
 
-fn subtree_has_dynamics(layers: &[Layer], dynamics: &[AnimationGraphEntry]) -> bool {
+fn subtree_has_dynamics(
+    layers: &[Layer],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+) -> bool {
     layers.iter().any(|layer| {
-        dynamics
-            .iter()
-            .any(|entry| entry.target.layer_id() == Some(layer.id()))
+        dynamics.for_layer(layer.id()).next().is_some()
+            || matches!(layer.data(), LayerData::Shape(shape) if blur_bounds::has_dynamics(&shape.effects, dynamics))
             || layer
                 .child_layers()
                 .is_some_and(|children| subtree_has_dynamics(children, dynamics))
@@ -904,11 +1395,13 @@ pub(super) fn static_child_union(
 
 pub(super) fn all_time_layer_bounds(
     layer: &Layer,
-    dynamics: &[AnimationGraphEntry],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
     resolved_media: &BTreeMap<String, media::ResolvedMediaSource>,
     canvas: fx_schema::Dimensions,
 ) -> Result<Option<Bounds>, &'static str> {
-    if subtree_has_dynamics(std::slice::from_ref(layer), dynamics) {
+    if subtree_has_masks(std::slice::from_ref(layer))
+        || subtree_has_dynamics(std::slice::from_ref(layer), dynamics)
+    {
         animated_bounds::layer_bounds(layer, dynamics, resolved_media, canvas)
     } else {
         layer_bounds(layer, resolved_media, canvas)
@@ -970,6 +1463,48 @@ fn layer_bounds(
             if !shape.masks.is_empty() {
                 return Err("Path masks make precomposition render bounds unproved");
             }
+            // Integer, unrounded radial primitives have a source-derived
+            // circumradius. Reuse the existing checked enclosure arithmetic;
+            // do not infer a hull for rounded/fractional native semantics.
+            if shape.shape.ellipse.is_none()
+                && shape.shape.path.commands.is_empty()
+                && let Some(star) = &shape.shape.poly_star
+                && star.points.is_finite()
+                && (3.0..=1000.0).contains(&star.points)
+                && star.points.fract() == 0.0
+                && star.outer_radius.is_finite()
+                && star.outer_radius >= 0.0
+                && star.inner_radius.is_finite()
+                && star.inner_radius >= 0.0
+                && star.outer_roundness == 0.0
+                && star.inner_roundness == 0.0
+            {
+                return animated_bounds::layer_bounds(
+                    layer,
+                    &crate::export_document::AnimationIndex::new(&[]),
+                    resolved_media,
+                    canvas,
+                );
+            }
+            if shape.shape.ellipse.is_some()
+                && shape.shape.poly_star.is_none()
+                && shape
+                    .shape
+                    .path
+                    .commands
+                    .iter()
+                    .all(|command| matches!(command, ShapePathCommand::Close))
+            {
+                // Match native Ellipse lowering: a close-only placeholder has
+                // no contour. Reuse the checked centered ellipse hull and its
+                // modifier/transform reach, with no animation in this branch.
+                return animated_bounds::layer_bounds(
+                    layer,
+                    &crate::export_document::AnimationIndex::new(&[]),
+                    resolved_media,
+                    canvas,
+                );
+            }
             if shape.shape.ellipse.is_some()
                 || shape.shape.poly_star.is_some()
                 || shape.shape.path.commands.is_empty()
@@ -979,10 +1514,22 @@ fn layer_bounds(
                 );
             }
             let mut bounds = path_bounds(&shape.shape.path.commands)?;
-            let offset_reach = shape
-                .shape
-                .offset_paths
-                .map_or(0.0, |offset| offset.amount.abs());
+            // Mitered Offset Paths corners protrude up to the miter limit times
+            // the amount, as the animated analyzer already accounts for.
+            let offset_reach = match shape.shape.offset_paths {
+                Some(offset) => {
+                    let multiplier = if offset.line_join == ShapeLineJoin::Miter {
+                        if !offset.miter_limit.is_finite() {
+                            return Err("Shape miter limit is non-finite");
+                        }
+                        offset.miter_limit.abs().max(1.0)
+                    } else {
+                        1.0
+                    };
+                    offset.amount.abs() * multiplier
+                }
+                None => 0.0,
+            };
             let mut stroke_reach: f64 = 0.0;
             for stroke in shape.shape.strokes.iter().filter(|stroke| stroke.enabled) {
                 let half = stroke.width.value() / 2.0;
@@ -993,7 +1540,14 @@ fn layer_bounds(
                 };
                 stroke_reach = stroke_reach.max(reach);
             }
-            bounds = bounds.expand(offset_reach + stroke_reach)?;
+            bounds = bounds.expand(
+                offset_reach
+                    + stroke_reach
+                    + blur_bounds::shape_reach(
+                        shape,
+                        &crate::export_document::AnimationIndex::new(&[]),
+                    ),
+            )?;
             transform_bounds(bounds, &shape.transform).map(Some)
         }
         LayerData::Group(group) => {
@@ -1001,18 +1555,33 @@ fn layer_bounds(
                 return Ok(None);
             }
             check_static_nested_group(group)?;
+            let dynamics = crate::export_document::AnimationIndex::new(&[]);
+            if super::logical_bulge_source_bounds(group, &dynamics, canvas).is_some() {
+                return animated_bounds::layer_bounds(layer, &dynamics, resolved_media, canvas);
+            }
             let Some(bounds) = child_union(group, resolved_media, canvas)? else {
                 return Ok(None);
             };
-            let bounds = collapsed::mask_output(group, &[]).unwrap_or(bounds);
+            let bounds =
+                collapsed::mask_output(group, &crate::export_document::AnimationIndex::new(&[]))
+                    .unwrap_or(bounds);
+            let bounds = group_effect_bounds(bounds, group, &dynamics)?;
             transform_bounds(bounds, &group.transform).map(Some)
         }
         LayerData::Image(_) | LayerData::Video(_) => {
+            // Match animated bounds: disabled picture has no paint enclosure.
+            // In particular, linked sources can retain disabled video beside
+            // live independent audio; it must not invalidate visible siblings.
+            if super::layer_is_hidden(layer) {
+                return Ok(None);
+            }
             let request = media::request(layer).ok_or("Visual media has no archive request")?;
             let source = resolved_media
                 .get(request.asset_id.as_str())
                 .ok_or("Visual media archive source was not resolved for bounds")?;
-            let spec = media::lower(layer, source, canvas)?;
+            let content = super::media_matte_content_view(layer)
+                .map_err(|_| "Media matte content view could not be constructed")?;
+            let spec = media::lower(&content, source, canvas)?;
             let size = spec.source.dimensions.map(f64::from);
             let geometry = spec.source_geometry;
             let bounds = Bounds {
@@ -1048,7 +1617,7 @@ fn check_static_nested_group(group: &GroupLayer) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn path_bounds(commands: &[ShapePathCommand]) -> Result<Bounds, &'static str> {
+pub(super) fn path_bounds(commands: &[ShapePathCommand]) -> Result<Bounds, &'static str> {
     if commands.is_empty() {
         // Empty held samples paint nothing. Including the origin is a
         // conservative finite enclosure; other keys still expand the union.
@@ -1208,6 +1777,172 @@ mod masked_skew_bounds_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn static_ellipse_value(size: [f64; 2]) -> serde_json::Value {
+        let source = crate::export_document::tests::imported();
+        let mut shape = crate::export_document::tests::rect(&source, 210);
+        shape["type"] = serde_json::json!("Shape");
+        shape.as_object_mut().unwrap().remove("rect");
+        shape["transform"]["anchorPoint"] = serde_json::json!([0.0, 0.0]);
+        shape["transform"]["position"] = serde_json::json!([0.0, 0.0]);
+        shape["transform"]["scale"] = serde_json::json!([100.0, 100.0]);
+        shape["transform"]["rotation"] = serde_json::json!(0.0);
+        shape["shape"] = serde_json::json!({
+            "path": {"commands": []},
+            "ellipse": {"size": size, "position": [11.0, -8.0]},
+            "fills": [{"paint": {"type": "solid", "color": [0.0, 1.0, 1.0, 1.0]}}]
+        });
+        shape
+    }
+
+    fn static_bounds(value: serde_json::Value) -> Result<Option<Bounds>, &'static str> {
+        let layer: Layer = serde_json::from_value(value).unwrap();
+        layer_bounds(
+            &layer,
+            &BTreeMap::new(),
+            fx_schema::Dimensions {
+                width: 320,
+                height: 240,
+            },
+        )
+    }
+
+    #[test]
+    fn static_ellipse_bounds_follow_center_and_edited_extent() {
+        for (size, min, max) in [
+            ([82.0, 54.0], [-30.0, -35.0], [52.0, 19.0]),
+            ([126.0, 70.0], [-52.0, -43.0], [74.0, 27.0]),
+        ] {
+            for commands in [
+                serde_json::json!([]),
+                serde_json::json!([{"type": "close"}]),
+            ] {
+                let mut shape = static_ellipse_value(size);
+                shape["shape"]["path"]["commands"] = commands;
+                let bounds = static_bounds(shape).unwrap().unwrap();
+                assert_eq!(bounds.min, min);
+                assert_eq!(bounds.max, max);
+            }
+        }
+    }
+
+    #[test]
+    fn static_ellipse_bounds_keep_masks_ambiguous_geometry_and_overflow_guarded() {
+        let mut base = static_ellipse_value([82.0, 54.0]);
+        base["shape"]["path"]["commands"] = serde_json::json!([{"type": "close"}]);
+        let mut masked = base.clone();
+        masked["masks"] = serde_json::json!([{"id": 9001, "mode": "add", "layer": 211}]);
+        assert_eq!(
+            static_bounds(masked).unwrap_err(),
+            "Path masks make precomposition render bounds unproved"
+        );
+        let mut mixed_path = base.clone();
+        mixed_path["shape"]["path"]["commands"] = serde_json::json!([
+            {"type": "moveTo", "x": 1000.0, "y": 1000.0},
+            {"type": "lineTo", "x": 1100.0, "y": 1000.0},
+            {"type": "lineTo", "x": 1100.0, "y": 1100.0},
+            {"type": "close"}
+        ]);
+        assert!(static_bounds(mixed_path).is_err());
+        let mut ambiguous = base.clone();
+        ambiguous["shape"]["polyStar"] = serde_json::json!({});
+        assert!(static_bounds(ambiguous.clone()).is_err());
+        ambiguous["shape"]
+            .as_object_mut()
+            .unwrap()
+            .remove("ellipse");
+        // PolyStar still requires an empty Path, not the Ellipse placeholder.
+        assert!(static_bounds(ambiguous.clone()).is_err());
+        ambiguous["shape"]["path"]["commands"] = serde_json::json!([]);
+        assert!(static_bounds(ambiguous).is_ok());
+        let mut overflow = base;
+        overflow["shape"]["ellipse"]["size"] = serde_json::json!([f64::MAX, 54.0]);
+        overflow["shape"]["ellipse"]["position"] = serde_json::json!([f64::MAX, -8.0]);
+        assert!(static_bounds(overflow).is_err());
+    }
+
+    #[test]
+    fn static_close_only_ellipse_group_retains_edited_geometry_and_sibling() {
+        use crate::structure::{ItemKind, read_project};
+        use crate::structure_document::to_structural_fx_document;
+        use fx_schema::EditableFxCompositionDocument;
+        use serde_json::{Value, json};
+
+        fn find_shape(value: &mut Value) -> Option<&mut Value> {
+            if value["type"] == "Shape" {
+                return Some(value);
+            }
+            value["layers"]
+                .as_array_mut()?
+                .iter_mut()
+                .find_map(find_shape)
+        }
+
+        fn find_ellipse(layers: &[Layer]) -> Option<&fx_schema::ShapeLayer> {
+            layers.iter().find_map(|layer| match layer.data() {
+                LayerData::Shape(shape) if shape.name == "Close-only ellipse" => Some(shape),
+                LayerData::Group(group) => find_ellipse(&group.layers),
+                _ => None,
+            })
+        }
+
+        let source = read_project(include_bytes!(
+            "../../tests/fixtures/static_ellipse_enclosure/native.aep"
+        ))
+        .unwrap();
+        let imported = to_structural_fx_document(&source, Some(1)).unwrap();
+        // The close-only placeholder is an explicit editable FX input. The
+        // native fixture supplies the independent Ellipse capability control.
+        for size in [[82.0, 54.0], [126.0, 70.0]] {
+            let mut value = imported.document.to_json_value().unwrap();
+            let group = &mut value["composition"]["layers"][0];
+            group["name"] = json!("Close-only ellipse owner");
+            group["transform"]["opacity"] = json!(50.0);
+            let shape = find_shape(group).expect("native editable Ellipse");
+            assert_eq!(shape["shape"]["ellipse"]["size"], json!([82.0, 54.0]));
+            assert_eq!(shape["shape"]["ellipse"]["position"], json!([11.0, -8.0]));
+            shape["name"] = json!("Close-only ellipse");
+            shape["shape"]["ellipse"]["size"] = json!(size);
+            shape["shape"]["path"]["commands"] = json!([{"type": "close"}]);
+            let mut sibling = shape.clone();
+            sibling["id"] = json!(100);
+            sibling["parent"] = Value::Null;
+            sibling["name"] = json!("Independent ellipse");
+            sibling["shape"]["ellipse"]["size"] = json!([12.0, 12.0]);
+            sibling["shape"]["ellipse"]["position"] = json!([250.0, 190.0]);
+            sibling["shape"]["path"]["commands"] = json!([]);
+            value["composition"]["layers"]
+                .as_array_mut()
+                .unwrap()
+                .push(sibling);
+            let document = EditableFxCompositionDocument::from_json_value(value).unwrap();
+            let output = super::super::to_aep(&document).unwrap();
+            let generated = read_project(&output.bytes).unwrap();
+            let ItemKind::Composition(root) = &generated.item(1).unwrap().kind else {
+                panic!("native root composition")
+            };
+            assert_eq!(root.layers.len(), 2, "{:?}", output.diagnostics);
+            assert_eq!(root.layers[0].name.as_ref(), "Close-only ellipse owner");
+            assert_eq!(root.layers[1].name.as_ref(), "Independent ellipse");
+            let reimported = to_structural_fx_document(&generated, Some(1)).unwrap();
+            let actual = find_ellipse(reimported.document.composition().layers())
+                .expect("editable Ellipse retained inside its Group");
+            assert_eq!(actual.shape.ellipse.as_ref().unwrap().size, size);
+            assert_eq!(
+                actual.shape.ellipse.as_ref().unwrap().position,
+                [11.0, -8.0]
+            );
+            assert_eq!(actual.shape.fills.len(), 1);
+            assert!(
+                output
+                    .diagnostics
+                    .iter()
+                    .all(|diagnostic| !diagnostic.message.contains("subtree omitted")),
+                "{:?}",
+                output.diagnostics
+            );
+        }
+    }
 
     #[test]
     fn origin_conjugation_preserves_world_mapping() {

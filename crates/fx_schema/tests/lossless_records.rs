@@ -36,6 +36,39 @@ fn document() -> Value {
 }
 
 #[test]
+fn leaf_layer_unknown_layers_matches_materialized_diagnostic() {
+    let mut wire = document();
+    wire.as_object_mut().unwrap().remove("futureComposition");
+    wire["dynamics"] = json!({"entries": []});
+    wire["layers"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("futureLayer");
+    wire["layers"][0].as_object_mut().unwrap().remove("effects");
+    wire["layers"][0]["source"]
+        .as_object_mut()
+        .unwrap()
+        .remove("historicalCrop");
+    wire["layers"][0]["transform"]
+        .as_object_mut()
+        .unwrap()
+        .remove("futureTransform");
+    let clean: FXComposition = serde_json::from_value(wire.clone()).unwrap();
+    assert!(!clean.has_unknown_fields());
+    assert!(clean.unknown_fields().next().is_none());
+    wire["layers"][0]["layers"] = json!([{"future": true}]);
+    let composition: FXComposition = serde_json::from_value(wire).unwrap();
+    assert!(composition.layers()[0].child_layers().is_none());
+    assert!(composition
+        .unknown_fields()
+        .any(|(path, _)| path == "layers.0.layers"));
+    assert_eq!(
+        composition.has_unknown_fields(),
+        composition.unknown_fields().next().is_some()
+    );
+}
+
+#[test]
 fn legacy_media_remains_an_asset_metadata_source_without_rewriting() {
     for kind in ["video", "image"] {
         let mut wire = document();
@@ -205,6 +238,7 @@ fn standalone_time_remap_keeps_unknown_fields_without_execution() {
 #[test]
 fn unknown_field_reporting_uses_known_data_not_lossless_serialization() {
     let composition: FXComposition = serde_json::from_value(document()).unwrap();
+    assert!(composition.has_unknown_fields());
     let paths = composition
         .unknown_fields()
         .map(|(path, _)| path)
@@ -221,4 +255,108 @@ fn unknown_field_reporting_uses_known_data_not_lossless_serialization() {
             "missing {path}: {paths:?}"
         );
     }
+}
+
+fn canonical_nested_document() -> Value {
+    let source: FXComposition = serde_json::from_value(document()).unwrap();
+    let mut child = source.layers()[0].known_value();
+    child["parent"] = json!(2);
+    let group: Layer = serde_json::from_value(json!({
+        "type": "BooleanOperation", "id": 2, "name": "group",
+        "activeRange": child["activeRange"], "transform": child["transform"], "layers": [child]
+    }))
+    .unwrap();
+    json!({
+        "id": "main", "name": "known",
+        "layers": [group.known_value()],
+        "dynamics": source.dynamics().known_value()
+    })
+}
+
+fn assert_presence_matches_listing(wire: Value) -> bool {
+    let composition: FXComposition = serde_json::from_value(wire.clone()).unwrap();
+    let before = serde_json::to_value(&composition).unwrap();
+    let present = composition.has_unknown_fields();
+    assert_eq!(
+        present,
+        composition.unknown_fields().next().is_some(),
+        "{wire}"
+    );
+    assert_eq!(serde_json::to_value(&composition).unwrap(), before);
+    present
+}
+
+#[test]
+fn unknown_presence_matches_listing_for_nested_records_and_opaque_effects() {
+    let base = canonical_nested_document();
+    assert!(!assert_presence_matches_listing(base.clone()));
+    for path in [
+        "",
+        "/layers/0",
+        "/layers/0/transform",
+        "/layers/0/layers/0",
+        "/layers/0/layers/0/transform",
+        "/dynamics",
+        "/dynamics/entries/0",
+        "/dynamics/entries/0/animator",
+    ] {
+        for value in [Value::Null, json!([1, 2, 1]), json!({"nested": true})] {
+            let mut changed = base.clone();
+            changed.pointer_mut(path).unwrap()["futureField"] = value;
+            assert!(assert_presence_matches_listing(changed), "{path}");
+        }
+    }
+    for effect in [
+        json!({"type": "gaussianBlur", "blurriness": 3, "futureField": null}),
+        json!({"type": "futureEffect", "futureField": {"nested": [1,2]}}),
+        json!({"id": 7, "enabled": true, "effect": {"type": "futureEffect", "data": [1,2]}, "futureField": null}),
+    ] {
+        let mut changed = base.clone();
+        changed["layers"][0]["layers"][0]["effects"] = json!([effect]);
+        assert_presence_matches_listing(changed);
+    }
+}
+
+#[test]
+fn unknown_presence_matches_constant_and_keyframe_animators() {
+    use fx_schema::{
+        animator::PropertyKeyframe, KeyframeId, PropertyKeyframeEasing, PropertyValue, TimeOffset,
+    };
+    let mut key = serde_json::to_value(PropertyKeyframe::new(
+        KeyframeId::new("a"),
+        TimeOffset::from_millis(0),
+        PropertyValue::Float(1.0),
+        PropertyKeyframeEasing::Linear,
+    ))
+    .unwrap();
+    key["futureKey"] = json!({"nested": null});
+    key["easing"]["futureEasing"] = json!(true);
+    for animator in [
+        json!({"type": "constant", "value": {"type": "float", "value": 1}}),
+        json!({"type": "constant", "value": {"type": "float", "value": 1, "future": null}}),
+        json!({"type": "keyframes", "enabled": true, "keyframes": [key]}),
+        json!({"type": "keyframes", "enabled": true, "keyframes": [key], "futureTrack": null}),
+    ] {
+        let mut wire = canonical_nested_document();
+        wire["dynamics"]["entries"][0]["animator"] = animator;
+        assert_presence_matches_listing(wire);
+    }
+}
+
+#[test]
+fn unknown_presence_preserves_absent_defaults_and_explicit_null_semantics() {
+    assert!(!assert_presence_matches_listing(
+        json!({"id": "main", "name": "empty"})
+    ));
+    assert!(!assert_presence_matches_listing(
+        json!({"id": "main", "name": "empty", "dynamics": {}})
+    ));
+    // The full iterator reports a retained null version because typed output
+    // omits None. Presence detection must not substitute deserializer behavior.
+    assert!(assert_presence_matches_listing(
+        json!({"id": "main", "name": "empty", "version": null})
+    ));
+    let mut base = canonical_nested_document();
+    base["dynamics"]["entries"][0]["randomSeedTarget"] = Value::Null;
+    assert_presence_matches_listing(base);
 }

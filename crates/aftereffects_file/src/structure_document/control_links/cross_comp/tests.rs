@@ -2,11 +2,106 @@ use std::collections::HashMap;
 
 use super::super::tests::{data, list, numeric};
 use super::*;
+
+#[test]
+fn native_hold_endpoint_flags_are_admitted_without_weakening_curve_guards() {
+    let curve = super::super::tests::native_hold_endpoint_curve("control-0");
+    validate_curve(&curve, 1).unwrap();
+    let mut invalid = curve.clone();
+    invalid.keyframes[0].out_interpolation = 4;
+    assert!(validate_curve(&invalid, 1).is_err());
+    invalid = curve;
+    invalid.keyframes[0].out_interpolation = 1;
+    invalid.keyframes[1].in_interpolation = 3;
+    assert!(validate_curve(&invalid, 1).is_err());
+}
 use crate::{
     properties::{NumericKeyframe, NumericValueKind},
     schema::layer_records::LayerRecord,
     structure::{ItemKind, ProjectItem, SolidSource, read_project},
 };
+
+#[test]
+fn static_cross_comp_slider_scale_replaces_the_cached_transform() {
+    let (template, mut source_comp) = template();
+    let mut controls = template.clone();
+    controls.name = "Controls".into();
+    controls.record = record_with_id(&controls.record, 2);
+    controls.content = vec![list(
+        b"tdgp",
+        vec![
+            data(b"tdmn", b"ADBE Effect Parade"),
+            list(
+                b"tdgp",
+                vec![
+                    data(b"tdmn", b"ADBE Slider Control"),
+                    list(
+                        b"sspc",
+                        vec![list(
+                            b"tdgp",
+                            vec![
+                                super::super::tests::name("Text Scale"),
+                                data(b"tdmn", b"ADBE Slider Control-0001"),
+                                numeric(&[129.8462], None),
+                            ],
+                        )],
+                    ),
+                ],
+            ),
+        ],
+    )];
+    source_comp.layers = vec![controls];
+    let mut owner_comp = source_comp.clone();
+    owner_comp.layers = vec![layer(
+        &template,
+        1,
+        "Owner",
+        vec![(
+            "ADBE Scale",
+            numeric(
+                &[1.0, 1.0],
+                Some(
+                    "temp = comp(\"Render\").layer(\"Controls\").effect(\"Text Scale\")(\"ADBE Slider Control-0001\"); [temp, temp]",
+                ),
+            ),
+        )],
+    )];
+    let source_item = item(3, "Render", source_comp);
+    let owner_item = item(4, "Child", owner_comp.clone());
+    let items = HashMap::from([(3, &source_item), (4, &owner_item)]);
+    let (properties, warnings) = super::super::read_layer_transform_with_sources(
+        &owner_comp.layers[0],
+        4,
+        &owner_comp,
+        &items,
+    )
+    .unwrap();
+    let scale = property(&properties, "ADBE Scale");
+    assert_eq!(scale.values, vec![129.8462 * 0.01; 2]);
+    assert!(!scale.expression_enabled);
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("static cross-composition Slider"))
+    );
+    let duplicate = item(
+        5,
+        "Render",
+        match &source_item.kind {
+            ItemKind::Composition(composition) => (**composition).clone(),
+            _ => unreachable!(),
+        },
+    );
+    let ambiguous = HashMap::from([(3, &source_item), (4, &owner_item), (5, &duplicate)]);
+    let (properties, _) = super::super::read_layer_transform_with_sources(
+        &owner_comp.layers[0],
+        4,
+        &owner_comp,
+        &ambiguous,
+    )
+    .unwrap();
+    assert!(property(&properties, "ADBE Scale").expression_enabled);
+}
 
 fn template() -> (Layer, Composition) {
     let project = read_project(include_bytes!(
@@ -113,25 +208,6 @@ fn property<'a>(
         .numeric
         .as_ref()
         .unwrap_or_else(|error| panic!("{name}: {error}"))
-}
-
-fn editable_scale_curves(
-    properties: &[crate::properties::TransformProperty],
-) -> Vec<&NumericProperty> {
-    let x = properties
-        .iter()
-        .find(|property| property.match_name == super::super::SCALE_X);
-    let y = properties
-        .iter()
-        .find(|property| property.match_name == super::super::SCALE_Y);
-    match (x, y) {
-        (Some(_), Some(_)) => vec![
-            property(properties, super::super::SCALE_X),
-            property(properties, super::super::SCALE_Y),
-        ],
-        (None, None) => vec![property(properties, "ADBE Scale")],
-        _ => panic!("incomplete independent Scale axes"),
-    }
 }
 
 #[test]
@@ -626,451 +702,4 @@ fn direct_alias_lowers_and_ambiguous_or_cyclic_sources_remain_expressions() {
         super::super::read_layer_transform_with_sources(owner, 4, &owner_comp, &cyclic).unwrap();
     assert!(property(&properties, "ADBE Rotate Z").expression_enabled);
     assert!(warnings.iter().any(|warning| warning.contains("cyclic")));
-}
-
-#[test]
-#[ignore = "requires local licensed AEP_PROPERTY_ALIAS_SOURCE, which cannot be redistributed"]
-fn local_frame108_keyed_cap_alias_uses_source_curve_not_stale_native_keys() {
-    use sha2::{Digest, Sha256};
-
-    let bytes = std::fs::read(
-        std::env::var_os("AEP_PROPERTY_ALIAS_SOURCE").expect("local licensed source path"),
-    )
-    .unwrap();
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&bytes)),
-        "28bbce1b8c9f9625105d632504a97c598394a4753d6b0d923fb19942e302bb5d"
-    );
-    let project = read_project(&bytes).unwrap();
-    let items: HashMap<_, _> = project.items.iter().map(|item| (item.id, item)).collect();
-    let ItemKind::Composition(source) = &project.item(3).unwrap().kind else {
-        panic!("source composition 3")
-    };
-    let ItemKind::Composition(destination) = &project.item(596).unwrap().kind else {
-        panic!("destination composition 596")
-    };
-    let right_source = native_layer(source, 472);
-    let right_cap = native_layer(destination, 644);
-    assert_eq!(
-        reference(right_cap, Member::PositionX).unwrap().unwrap(),
-        Reference {
-            composition: "SH01",
-            layer: "Circle_R",
-            member: Member::PositionX,
-        }
-    );
-    let source_curve = property(
-        &super::super::read_layer_transform_with_sources(right_source, 3, source, &items)
-            .unwrap()
-            .0,
-        "ADBE Position_0",
-    )
-    .clone();
-    assert_eq!(source_curve.keyframes[2].values, vec![536.0]);
-    assert!((source_curve.keyframes[2].time_secs - 0.875).abs() < 1e-9);
-    let native_properties = properties::read_transform(&right_cap.content).unwrap();
-    let stored = property(&native_properties, "ADBE Position_0");
-    assert!(stored.expression_enabled && stored.animated);
-    assert_eq!(stored.keyframes[2].values, vec![300.0]);
-    let (properties, warnings) =
-        super::super::read_layer_transform_with_sources(right_cap, 596, destination, &items)
-            .unwrap();
-    let lowered = property(&properties, "ADBE Position_0");
-    assert!(
-        !lowered.expression_enabled,
-        "keyed direct alias must resolve: {warnings:#?}"
-    );
-    assert_eq!(lowered.keyframes.len(), source_curve.keyframes.len());
-    assert_eq!(lowered.keyframes[2].values, vec![536.0]);
-    let source_start = right_source.record.start_time().unwrap();
-    let source_stretch = right_source.record.stretch().unwrap();
-    let destination_start = right_cap.record.start_time().unwrap();
-    let destination_stretch = right_cap.record.stretch().unwrap();
-    for (actual, original) in lowered.keyframes.iter().zip(&source_curve.keyframes) {
-        assert_eq!(actual.values, original.values);
-        let expected = (source_start + original.time_secs * source_stretch - destination_start)
-            / destination_stretch;
-        assert!((actual.time_secs - expected).abs() < 1e-9);
-    }
-    assert!(
-        properties::read_transform(&right_source.content)
-            .unwrap()
-            .iter()
-            .all(|property| property.match_name != "ADBE Rotate Z")
-    );
-    let rotation = property(&properties, "ADBE Rotate Z");
-    assert!(!rotation.expression_enabled, "{warnings:#?}");
-    assert!(!rotation.animated);
-    assert!(rotation.keyframes.is_empty());
-    assert_eq!(rotation.values, vec![0.0]);
-
-    let (entries, _) = crate::structure_document::animation::transform_entries_with_sources(
-        right_cap,
-        596,
-        destination,
-        &items,
-        fx_schema::LayerId::new(999),
-        crate::structure_document::animation::AnimationTargetClock::ParentIdentity,
-        [1.0, 1.0],
-        &mut crate::structure_document::animation_budget::AnimationBudget::default(),
-    );
-    let position = entries
-        .iter()
-        .find(|entry| {
-            entry
-                .target
-                .as_property()
-                .is_some_and(|property| property.property_type() == fx_schema::PropType::PositionX)
-        })
-        .unwrap();
-    let editable = serde_json::to_value(position).unwrap();
-    assert_eq!(editable["animator"]["type"], "keyframes");
-    assert_eq!(
-        editable["animator"]["keyframes"][2]["value"]["value"],
-        536.0
-    );
-    assert_eq!(editable["animator"]["keyframes"][2]["layerTime"], 4417);
-    assert!(!entries.iter().any(|entry| {
-        entry
-            .target
-            .as_property()
-            .is_some_and(|property| property.property_type() == fx_schema::PropType::Rotation)
-    }));
-}
-
-fn native_layer(composition: &Composition, id: u32) -> &Layer {
-    composition
-        .layers
-        .iter()
-        .find(|layer| layer.record.id() == id)
-        .unwrap_or_else(|| panic!("native layer {id}"))
-}
-
-#[test]
-#[ignore = "requires local licensed AEP_PROPERTY_ALIAS_SOURCE, which cannot be redistributed"]
-fn local_ordinary_intro_opening_aliases_keep_curves_clocks_and_hierarchy() {
-    use sha2::{Digest, Sha256};
-
-    let bytes = std::fs::read(
-        std::env::var_os("AEP_PROPERTY_ALIAS_SOURCE").expect("local licensed source path"),
-    )
-    .unwrap();
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&bytes)),
-        "28bbce1b8c9f9625105d632504a97c598394a4753d6b0d923fb19942e302bb5d"
-    );
-    let project = read_project(&bytes).unwrap();
-    let items: HashMap<_, _> = project.items.iter().map(|item| (item.id, item)).collect();
-    let ItemKind::Composition(composition) = &project.item(334).unwrap().kind else {
-        panic!("composition 334")
-    };
-
-    let scaler = native_layer(composition, 345);
-    let scaler_reference = reference(scaler, Member::Scale).unwrap().unwrap();
-    assert_eq!(
-        scaler_reference,
-        Reference {
-            composition: "SH01",
-            layer: "Scaler",
-            member: Member::Scale,
-        }
-    );
-    let (scaler_properties, scaler_warnings) =
-        super::super::read_layer_transform_with_sources(scaler, 334, composition, &items).unwrap();
-    let scale_curves = editable_scale_curves(&scaler_properties);
-    let source = source(
-        Context {
-            composition_id: 334,
-            composition,
-            items: &items,
-        },
-        scaler_reference,
-    )
-    .unwrap();
-    assert_eq!(source.context.composition_id, 3);
-    assert_eq!(source.layer.record.id(), 36);
-    let (source_properties, _) = super::super::read_layer_transform_with_sources(
-        source.layer,
-        source.context.composition_id,
-        source.context.composition,
-        &items,
-    )
-    .unwrap();
-    let source_scale_curves = editable_scale_curves(&source_properties);
-    let source_start = source.layer.record.start_time().unwrap();
-    let source_stretch = source.layer.record.stretch().unwrap();
-    let owner_start = scaler.record.start_time().unwrap();
-    let owner_stretch = scaler.record.stretch().unwrap();
-    let clock_scale = source_stretch / owner_stretch;
-    assert_eq!(scale_curves.len(), source_scale_curves.len());
-    for (curve, source_curve) in scale_curves.iter().zip(&source_scale_curves) {
-        assert_eq!(
-            curve.keyframes.len(),
-            4,
-            "destination={curve:#?} source={source_curve:#?} warnings={scaler_warnings:#?}"
-        );
-        assert_eq!(curve.keyframes.len(), source_curve.keyframes.len());
-        for (key, source_key) in curve.keyframes.iter().zip(&source_curve.keyframes) {
-            let expected_time = (source_start + source_key.time_secs * source_stretch
-                - owner_start)
-                / owner_stretch;
-            assert!((key.time_secs - expected_time).abs() < 1e-9);
-            assert_eq!(key.values, source_key.values);
-            assert_eq!(key.in_interpolation, source_key.in_interpolation);
-            assert_eq!(key.out_interpolation, source_key.out_interpolation);
-            assert_eq!(key.in_influence, source_key.in_influence);
-            assert_eq!(key.out_influence, source_key.out_influence);
-            for (speed, source_speed) in key.in_speed.iter().zip(&source_key.in_speed) {
-                assert!((speed - source_speed / clock_scale).abs() < 1e-12);
-            }
-            for (speed, source_speed) in key.out_speed.iter().zip(&source_key.out_speed) {
-                assert!((speed - source_speed / clock_scale).abs() < 1e-12);
-            }
-        }
-    }
-    let scale = scale_curves[0];
-    assert!((scale.keyframes[1].values[0] - 0.65).abs() < 1e-12);
-    if scale_curves.len() == 1 {
-        assert!((scale.keyframes[1].values[1] - 0.65).abs() < 1e-12);
-    }
-    assert!(
-        scaler_warnings
-            .iter()
-            .any(|warning| warning.contains("cross-composition"))
-    );
-    assert!(
-        (scaler.record.start_time().unwrap()
-            + scale.keyframes[1].time_secs * scaler.record.stretch().unwrap()
-            - 2.041_666_666_666_666_5)
-            .abs()
-            < 1e-9
-    );
-
-    let middle = native_layer(composition, 340);
-    let (middle_properties, _) =
-        super::super::read_layer_transform_with_sources(middle, 334, composition, &items).unwrap();
-    assert_eq!(
-        property(&middle_properties, "ADBE Rotate Z").values,
-        vec![45.0]
-    );
-
-    let guide = native_layer(composition, 339);
-    let (guide_properties, _) =
-        super::super::read_layer_transform_with_sources(guide, 334, composition, &items).unwrap();
-    // Supplementary keyed-destination case: independent source axes must not
-    // leave the destination's obsolete vector animation active underneath them.
-    let ItemKind::Composition(cap_comp) = &project.item(596).unwrap().kind else {
-        panic!("composition 596")
-    };
-    let cap = native_layer(cap_comp, 644);
-    let mut keyed_scale = scale_curves[0].clone();
-    keyed_scale.values.clear();
-    keyed_scale.expression_enabled = true;
-    keyed_scale.expression_present = true;
-    let dimensions = keyed_scale.keyframes[0].values.len();
-    assert!(matches!(dimensions, 2 | 3));
-    for key in &mut keyed_scale.keyframes {
-        key.values = vec![77.0; dimensions];
-    }
-    let copied = super::super::lower_cross_comp_alias(
-        cap,
-        Context {
-            composition_id: 596,
-            composition: cap_comp,
-            items: &items,
-        },
-        Member::Scale,
-        Reference {
-            composition: &project.item(334).unwrap().name,
-            layer: &guide.name,
-            member: Member::Scale,
-        },
-        &keyed_scale,
-        &mut Vec::new(),
-    )
-    .unwrap();
-    assert_eq!(copied.axes.len(), 2);
-    assert_eq!(copied.numeric.values, vec![1.0; dimensions]);
-    assert!(!copied.numeric.animated);
-    assert!(copied.numeric.keyframes.is_empty());
-
-    let reciprocal = property(&guide_properties, super::super::SCALE_X);
-    let frame_49 = reciprocal
-        .keyframes
-        .iter()
-        .min_by(|left, right| {
-            let left_time = guide.record.start_time().unwrap()
-                + left.time_secs * guide.record.stretch().unwrap();
-            let right_time = guide.record.start_time().unwrap()
-                + right.time_secs * guide.record.stretch().unwrap();
-            (left_time - 2.041_666_666_666_666_5)
-                .abs()
-                .total_cmp(&(right_time - 2.041_666_666_666_666_5).abs())
-        })
-        .unwrap();
-    assert!((1.50..1.57).contains(&frame_49.values[0]));
-
-    assert_eq!(middle.record.parent_id(), 345);
-    assert_eq!(scaler.record.parent_id(), 346);
-    assert_eq!(native_layer(composition, 344).record.parent_id(), 339);
-    assert_eq!(guide.record.parent_id(), 345);
-    assert_eq!(native_layer(composition, 346).record.parent_id(), 0);
-    assert!((scaler.record.in_point().unwrap() - 2.916_666_666_666_666_5).abs() < 1e-9);
-    assert!((scaler.record.start_time().unwrap() + 0.916_666_666_666_666_6).abs() < 1e-9);
-
-    for composition_id in [290, 312, 356] {
-        let ItemKind::Composition(sibling) = &project.item(composition_id).unwrap().kind else {
-            panic!("composition {composition_id}")
-        };
-        let sibling_scaler = sibling
-            .layers
-            .iter()
-            .find(|layer| layer.name.as_ref() == "Scaler 2")
-            .unwrap();
-        let sibling_middle = sibling
-            .layers
-            .iter()
-            .find(|layer| layer.name.as_ref() == "Box_middle")
-            .unwrap();
-        let sibling_guide = sibling
-            .layers
-            .iter()
-            .find(|layer| layer.name.as_ref() == "Box_12")
-            .unwrap();
-        let (properties, warnings) = super::super::read_layer_transform_with_sources(
-            sibling_scaler,
-            composition_id,
-            sibling,
-            &items,
-        )
-        .unwrap();
-        let sibling_scale_curves = editable_scale_curves(&properties);
-        assert!(
-            sibling_scale_curves
-                .iter()
-                .all(|curve| curve.keyframes.len() == 4)
-        );
-        assert!(
-            sibling_scale_curves
-                .iter()
-                .all(|curve| (curve.keyframes[1].values[0] - 0.65).abs() < 1e-12)
-        );
-        assert!(
-            warnings
-                .iter()
-                .any(|warning| warning.contains("cross-composition"))
-        );
-        let (middle_properties, _) = super::super::read_layer_transform_with_sources(
-            sibling_middle,
-            composition_id,
-            sibling,
-            &items,
-        )
-        .unwrap();
-        assert_eq!(
-            property(&middle_properties, "ADBE Rotate Z").values,
-            vec![45.0]
-        );
-        let (guide_properties, _) = super::super::read_layer_transform_with_sources(
-            sibling_guide,
-            composition_id,
-            sibling,
-            &items,
-        )
-        .unwrap();
-        assert!(
-            !property(&guide_properties, super::super::SCALE_X)
-                .keyframes
-                .is_empty()
-        );
-        assert_eq!(
-            sibling_middle.record.parent_id(),
-            sibling_scaler.record.id()
-        );
-        assert_eq!(sibling_guide.record.parent_id(), sibling_scaler.record.id());
-    }
-
-    let converted =
-        crate::structure_document::to_structural_fx_document(&project, Some(3)).unwrap();
-    assert!(
-        converted
-            .document
-            .composition()
-            .dynamics()
-            .entries()
-            .iter()
-            .all(|entry| !entry.animator.is_js_script())
-    );
-
-    fn collect_opening_preserve_mattes(
-        layers: &[fx_schema::Layer],
-        preserved: &mut Vec<(u32, fx_schema::TrackMatte)>,
-        helpers: &mut Vec<(fx_schema::LayerId, Vec<u32>)>,
-    ) {
-        for layer in layers {
-            let fx_schema::LayerData::Group(group) = layer.data() else {
-                continue;
-            };
-            for native_id in [2111, 2112, 2113, 2114] {
-                if group
-                    .description
-                    .starts_with(&format!("AEP comp=3 layer={native_id} kind="))
-                {
-                    preserved.push((
-                        native_id,
-                        group
-                            .track_matte
-                            .clone()
-                            .expect("preserve-alpha opening layer must use an editable matte"),
-                    ));
-                }
-            }
-            if group.name == "Preserve Underlying Transparency source" {
-                let provider_ids = group
-                    .layers
-                    .iter()
-                    .filter_map(|layer| match layer.data() {
-                        fx_schema::LayerData::Group(provider) => {
-                            [382, 381, 380, 378, 379].into_iter().find(|native_id| {
-                                provider
-                                    .description
-                                    .starts_with(&format!("AEP comp=3 layer={native_id} kind="))
-                            })
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                helpers.push((group.id, provider_ids));
-            }
-            collect_opening_preserve_mattes(&group.layers, preserved, helpers);
-        }
-    }
-
-    let mut preserved = Vec::new();
-    let mut helpers = Vec::new();
-    collect_opening_preserve_mattes(
-        converted.document.composition().layers(),
-        &mut preserved,
-        &mut helpers,
-    );
-    preserved.sort_by_key(|(native_id, _)| *native_id);
-    assert_eq!(
-        preserved
-            .iter()
-            .map(|(native_id, _)| *native_id)
-            .collect::<Vec<_>>(),
-        vec![2111, 2112, 2113, 2114]
-    );
-    let helper_id = preserved[0].1.layer;
-    assert!(
-        preserved.iter().all(|(_, matte)| {
-            matte.mode == fx_schema::TrackMatteType::Alpha && matte.layer == helper_id
-        }),
-        "consecutive preserve-alpha siblings must reuse one bounded underlying sample"
-    );
-    let (_, provider_ids) = helpers
-        .iter()
-        .find(|(id, _)| *id == helper_id)
-        .expect("referenced preserve-alpha helper");
-    assert_eq!(provider_ids, &[382, 381, 380, 378, 379]);
 }

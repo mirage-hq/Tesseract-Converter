@@ -39,7 +39,8 @@ fn check_case(name: &str, input_json: &str, expected_json: &str) {
         "Text export must remain native and editable"
     );
     let output = export(input);
-    if let Some(directory) = std::env::var_os("AEP_EFFECTS_FX_PANEL_DIR") {
+    {
+        let directory = crate::adobe_test_support::artifact_directory();
         std::fs::create_dir_all(&directory).expect("artifact directory");
         let base = std::path::Path::new(&directory).join(name);
         std::fs::write(base.with_extension("fx.json"), input_json).expect("explicit FX artifact");

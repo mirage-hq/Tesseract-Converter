@@ -11,6 +11,8 @@ use crate::{document::DocumentError, effects::definitions, rifx::Chunk, structur
 #[cfg(test)]
 mod tests;
 
+mod partial_chain;
+
 impl Converter<'_> {
     pub(super) fn adjustment_layer(
         &mut self,
@@ -277,12 +279,34 @@ impl Converter<'_> {
                 .into(),
         );
 
+        let (native_effects, _) = crate::effects::native::read_effects(
+            &normalized.content,
+            [
+                f64::from(context.comp.width),
+                f64::from(context.comp.height),
+            ],
+        );
+        let unsafe_partial_chain = partial_chain::unsafe_partial_chain(
+            layer.record.flags().adjustment_layer,
+            layer.record.flags().effects_active,
+            outer.blend_mode,
+            &native_effects,
+        );
+        if unsafe_partial_chain {
+            self.warn(
+                Limitation::Properties,
+                Some(context.comp_id),
+                Some(layer.record.id()),
+                "HardLight Adjustment Tint → unsupported ADBE Emboss with static Blend With Original 0: unsafe partial color stage disabled as a best-effort omission; editable supported effects, timing and guides retained, lower siblings unchanged. Image Emboss output and fidelity are not implemented".into(),
+            );
+        }
+
         Ok((
             AdjustmentLayer {
                 id: actual.id,
                 name: actual.name.clone(),
                 description: actual.description.clone(),
-                is_hidden: actual.is_hidden,
+                is_hidden: actual.is_hidden || unsafe_partial_chain,
                 parent: Some(context.parent),
                 blend_mode: outer.blend_mode,
                 track_matte: None,

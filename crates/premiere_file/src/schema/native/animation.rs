@@ -202,7 +202,7 @@ pub(crate) struct VideoComponentParam {
     pub(crate) bypass: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase", deny_unknown_fields)]
 pub(crate) struct TimeRemapping {
     #[serde(rename = "@ObjectID")]
@@ -214,7 +214,10 @@ pub(crate) struct TimeRemapping {
     pub(crate) keyframes: Reference,
 }
 
-#[derive(Debug, Deserialize)]
+/// The Speed parameter of a `TimeRemapping`. Its five optional flags are
+/// saved by Version 8 and omitted by Version 9 (Premiere 26.5.1);
+/// `read_time_remapping` admits their absence only in Version 9.
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase", deny_unknown_fields)]
 pub(crate) struct TimeComponentParam {
     #[serde(rename = "@ObjectID")]
@@ -224,17 +227,22 @@ pub(crate) struct TimeComponentParam {
     #[serde(rename = "@Version")]
     pub(crate) version: String,
     pub(crate) name: String,
-    pub(crate) is_time_varying: String,
-    pub(crate) is_locked: String,
-    pub(crate) discontinuous_interpolate: String,
-    pub(crate) parameter_control_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) is_time_varying: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) is_locked: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) discontinuous_interpolate: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) parameter_control_type: Option<String>,
     pub(crate) start_keyframe: String,
     pub(crate) keyframes: String,
     #[serde(rename = "CurrentValue")]
     pub(crate) _current_value: String,
     #[serde(rename = "ParameterID")]
     pub(crate) parameter_id: String,
-    pub(crate) range_locked: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) range_locked: Option<String>,
     pub(crate) lower_bound: String,
     #[serde(rename = "UpperBound")]
     pub(crate) _upper_bound: String,
@@ -285,7 +293,7 @@ pub(crate) struct EncodedValue {
 
 /// An arbitrary-data parameter, such as a graphic's Source Text.
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "PascalCase", deny_unknown_fields)]
+#[serde(rename_all = "PascalCase")]
 pub(crate) struct ArbVideoComponentParam {
     #[serde(rename = "@ObjectID")]
     pub(crate) object_id: ObjectId<MotionParamId>,

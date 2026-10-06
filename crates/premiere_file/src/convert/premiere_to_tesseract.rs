@@ -6,6 +6,7 @@ mod pop;
 mod stroke;
 
 use super::{
+    audio::VolumeKey,
     background::{black_shape, identity_transform, plain_group},
     effects, fonts,
     graphic::{fx_path, scaled_path},
@@ -13,37 +14,47 @@ use super::{
     nested::{self, ItemLayer, ItemLayers, LayerScope},
     tesseract_to_premiere::LINEAR_WIPE_GUIDE_PREFIX,
     text::STROKE_WIDTH_RATIO,
-    timing::{duration_from_ticks, time_from_ticks},
+    timing::{self, duration_from_ticks, time_from_ticks},
 };
 use crate::{
-    error::{unsupported, BuildError, CreationError, EditableBuildError, Result},
+    error::{ensure, unsupported, BuildError, EditableBuildError, Result},
     format::{MediaId, PrGraphic, PrMedia, PrSequence, PrVideoItem, PrVideoOccurrence},
     linked_compositions::LinkedCompositions,
     schema::{
-        text::{PrJustification, PrRgb, PrTextFrame, PrTextTransform, PrVerticalAlign},
+        text::{
+            PrJustification, PrRgb, PrShapePath, PrTextFrame, PrTextTransform, PrVerticalAlign,
+            EMPTY_TEXT_FONT,
+        },
         MaskBoundary, PrAnimatedProperty, PrAudioOccurrence, PrEffect, PrEffectParamKeys,
-        PrKeyframeEasing, PrLinearWipe, PrMatteChannel, PrMediaKind, PrNestOccurrence,
-        PrPointKeyframe, PrPropertyAnimation, PrScalarKeyframe, PrStaticTransform, PrText,
-        PrTimeRemap, PrTrackMatte, PrTransform, PrVideoStream, PrVolumeKeys, TransformOwner,
-        TRANSFORM_OPACITY, TRANSFORM_POSITION, TRANSFORM_ROTATION, TRANSFORM_SCALE_HEIGHT,
-        TRANSFORM_SCALE_WIDTH, TRANSFORM_SHUTTER_ANGLE,
+        PrFadeCurve, PrKeyframeEasing, PrLinearWipe, PrMask, PrMatteChannel, PrMediaKind,
+        PrNestOccurrence, PrPointKeyframe, PrPropertyAnimation, PrScalarKeyframe, PrStaticCrop,
+        PrStaticTransform, PrText, PrTimeRemap, PrTrackMatte, PrTransform, PrVideoStream,
+        PrVolumeKeys, TransformOwner, TICKS_PER_MILLISECOND, TRANSFORM_OPACITY, TRANSFORM_POSITION,
+        TRANSFORM_ROTATION, TRANSFORM_SCALE_HEIGHT, TRANSFORM_SCALE_WIDTH, TRANSFORM_SHUTTER_ANGLE,
     },
     {approximate, omit, Omission, OmissionScope},
 };
 use fx_schema::{
     animator::{
-        AnimationGraphError, PropertyKeyframe, PropertyKeyframeEasing, PropertyKeyframeTrack,
+        AnimationGraphEntry, AnimationGraphError, PropertyKeyframe, PropertyKeyframeEasing,
+        PropertyKeyframeTrack,
     },
     AnimationGraph, AssetId, AudioLayer, AudioSource, BlendMode, CompositionId, Dimensions,
     Duration, EditableFxCompositionDocument, FXComposition, FxItemId, GroupLayer, Justification,
-    KeyframeId, Layer, LayerData, LayerId, LinearGain, MaskMode, MediaFit, MotionBlurSettings,
-    NonNegativeProperty, PathMask, PercentageProperty, Position, PositiveProperty, PositiveRect,
-    PropType, Property, PropertyAnimator, PropertyValue, RectBounds, RectLayer, RectShape,
-    ShapeContent, ShapeLayer, ShapePath, TextDocument, TextLayer, Time, TimeOffset,
-    TimeRangeProperty, TimeRemapExtrapolation, TimeRemapKeyframe, TimeRemapProperty, TrackMatte,
-    TrackMatteType, Transform, VerticalAlign, VideoLayer, VideoSource,
+    KeyframeId, Layer, LayerData, LayerId, LayerRefMap, LinearGain, MaskMode, MediaFit,
+    MotionBlurSettings, NonNegativeProperty, PathMask, PercentageProperty, Position,
+    PositiveProperty, PositiveRect, PropType, Property, PropertyAnimator, PropertyValue,
+    RectBounds, RectLayer, RectShape, ShapeContent, ShapeLayer, ShapePath, TextDocument, TextLayer,
+    Time, TimeOffset, TimeRangeProperty, TimeRemapExtrapolation, TimeRemapKeyframe,
+    TimeRemapProperty, TrackMatte, TrackMatteType, Transform, VerticalAlign, VideoLayer,
+    VideoSource,
 };
-use std::{cell::Cell, collections::BTreeMap, ops::Range, sync::Arc};
+use std::{
+    cell::Cell,
+    collections::{BTreeMap, BTreeSet},
+    ops::Range,
+    sync::Arc,
+};
 
 pub(super) struct Processed<'a> {
     pub(super) progress: Option<(fx_conv::ProgressPhase<'a>, &'a Cell<usize>)>,
@@ -76,8 +87,9 @@ const STAGED_RETIMED_MATTE_REASON: &str = "a Track Matte Key whose matte clip pl
 ///
 /// Native keys are on the source clock; they equal layer time only under unit
 /// forward playback. How Premiere places keys under constant speed, reverse or
-/// Time Remapping is not pinned by an Adobe fixture, so those keys fail closed.
-fn retimed_keys_reason(clip: &PrVideoOccurrence) -> Option<&'static str> {
+/// Time Remapping is unverified except for the bounded physical-video Rotation
+/// path in `import_video_clip`, so the other keys fail closed.
+pub(super) fn retimed_keys_reason(clip: &PrVideoOccurrence) -> Option<&'static str> {
     (clip.playback_rate != 1.0 || clip.time_remap.is_some())
         .then_some("keys on a retimed, reversed or time-remapped clip are not converted")
 }
@@ -115,7 +127,17 @@ fn wipe_keys(
     guide_id: LayerId,
     property_type: PropType,
 ) -> Result<PropertyKeyframeTrack> {
-    let mut keys = Vec::with_capacity(wipe.completion.len());
+    let mut keys = Vec::with_capacity(wipe.completion.len().max(1));
+    // A constant still needs one editable guide key: the exporter distinguishes
+    // a wipe from an ordinary Crop by the guide's animated axis.
+    if wipe.completion.is_empty() {
+        keys.push(PropertyKeyframe::new(
+            keyframe_id(guide_id, "linear-wipe", 0),
+            TimeOffset::ZERO,
+            PropertyValue::Float(100.0 - wipe.initial_completion),
+            PropertyKeyframeEasing::Linear,
+        ));
+    }
     for (index, key) in wipe.completion.iter().enumerate() {
         let millis = keyframes::layer_millis(key.source_ticks, source_in)?;
         keys.push(PropertyKeyframe::new(
@@ -136,7 +158,7 @@ fn wipe_keys(
 
 /// The static transform, animated scale axis and completion keys of the
 /// canvas-sized guide that reveals `wipe`.
-fn linear_wipe_guide(
+pub(super) fn linear_wipe_guide(
     wipe: &PrLinearWipe,
     source_in: i64,
     guide_id: LayerId,
@@ -216,30 +238,51 @@ fn scalar_property_keys(
     })
 }
 
-/// Clip Volume keys as `AudioVolume` keys. The other stages scale each value;
+/// Clip Volume keys on the layer clock. The other stages scale each value;
 /// the easing of a Linear segment is fitted to its own Level values, because
 /// Premiere's curve depends on them.
-fn volume_keys(
-    keys: &PrVolumeKeys,
-    source_in: i64,
-    layer_id: LayerId,
-) -> Result<PropertyKeyframeTrack> {
-    let mut output = Vec::with_capacity(keys.keys.len());
-    for (index, key) in keys.keys.iter().enumerate() {
-        let easing = match (index.checked_sub(1), key.easing) {
-            (_, PrKeyframeEasing::Hold) => PropertyKeyframeEasing::Hold,
-            (Some(previous), _) => {
-                super::audio::fitted_level_easing(keys.keys[previous].value, key.value)
-            }
-            (None, _) => PropertyKeyframeEasing::Linear,
-        };
-        output.push(PropertyKeyframe::new(
-            keyframe_id(layer_id, "volume", index),
-            TimeOffset::from_millis(keyframes::layer_millis(key.source_ticks, source_in)?),
-            PropertyValue::Float(key.value * keys.gain),
-            easing,
-        ));
-    }
+fn level_keys(keys: &PrVolumeKeys, source_in: i64, reference_level: f64) -> Result<Vec<VolumeKey>> {
+    keys.keys
+        .iter()
+        .enumerate()
+        .map(|(index, key)| {
+            Ok(VolumeKey {
+                millis: keyframes::layer_millis(key.source_ticks, source_in)?,
+                gain: key.value * keys.gain,
+                easing: match (index.checked_sub(1), key.easing) {
+                    (_, PrKeyframeEasing::Hold) => PropertyKeyframeEasing::Hold,
+                    (Some(previous), _) => {
+                        if reference_level == 1.0 {
+                            super::audio::fitted_level_easing(keys.keys[previous].value, key.value)
+                        } else {
+                            super::audio::fitted_level_easing_at_reference(
+                                keys.keys[previous].value,
+                                key.value,
+                                reference_level,
+                            )
+                        }
+                    }
+                    (None, _) => PropertyKeyframeEasing::Linear,
+                },
+            })
+        })
+        .collect()
+}
+
+/// A layer's `AudioVolume` key track.
+fn volume_keys(keys: &[VolumeKey], layer_id: LayerId) -> Result<PropertyKeyframeTrack> {
+    let output = keys
+        .iter()
+        .enumerate()
+        .map(|(index, key)| {
+            PropertyKeyframe::new(
+                keyframe_id(layer_id, "volume", index),
+                TimeOffset::from_millis(key.millis),
+                PropertyValue::Float(key.gain),
+                key.easing,
+            )
+        })
+        .collect();
     PropertyKeyframeTrack::new(output).map_err(|error| {
         unsupported(format!(
             "Premiere volume keyframe times/values cannot be imported: {error}"
@@ -247,16 +290,280 @@ fn volume_keys(
     })
 }
 
-fn time_remap_property(remap: &PrTimeRemap, start_ticks: i64) -> Result<TimeRemapProperty> {
+/// The keys of a placement's fade-in and fade-out, at the level that its clip
+/// Level keys `level_keys` hold over each. The reader admits a fade only where
+/// that Level holds one value, with no Level key within 2 ms of it but one
+/// exactly at its full-level edge. Short spans may coarsen inner keys. That
+/// key moves onto the fade's edge millisecond: it rounds relative to the In
+/// point and the fade like a clip boundary, which can part the two by 1 ms.
+fn placement_fade_keys(
+    clip: &PrAudioOccurrence,
+    level_keys: &mut [VolumeKey],
+    omissions: &mut Vec<Omission>,
+) -> Result<[Vec<VolumeKey>; 2]> {
+    let layer_millis = |ticks: i64| -> Result<i64> {
+        i64::try_from(tick_range(clip.start_ticks, ticks)?.duration.as_millis())
+            .map_err(|_| unsupported("audio fade exceeds the millisecond range"))
+    };
+    // Level keys that import in full, one for each native key.
+    let native = clip
+        .volume_keys
+        .as_ref()
+        .map(|keys| keys.keys.as_slice())
+        .filter(|keys| keys.len() == level_keys.len())
+        .unwrap_or_default();
+    let mut output = [Vec::new(), Vec::new()];
+    for (fade, fade_in, keys) in [(&clip.fade_in, true, 0), (&clip.fade_out, false, 1)] {
+        let Some(fade) = fade else {
+            continue;
+        };
+        let (start, end) = if fade_in {
+            (0, layer_millis(clip.start_ticks + fade.duration_ticks)?)
+        } else {
+            (
+                layer_millis(clip.end_ticks - fade.duration_ticks)?,
+                layer_millis(clip.end_ticks)?,
+            )
+        };
+        let edge_time = if fade_in {
+            clip.start_ticks + fade.duration_ticks
+        } else {
+            clip.end_ticks - fade.duration_ticks
+        };
+        let edge_ticks = clip.source_at(edge_time)?;
+        let (start, end, edge) = if clip.uses_layer_clock() {
+            (start, end, if fade_in { end } else { start })
+        } else {
+            let timeline = if fade_in {
+                clip.start_ticks..edge_time
+            } else {
+                edge_time..clip.end_ticks
+            };
+            let source = clip.source_part(&timeline)?;
+            (
+                keyframes::layer_millis(source.start, 0)?,
+                keyframes::layer_millis(source.end, 0)?,
+                keyframes::layer_millis(edge_ticks, 0)?,
+            )
+        };
+        if let Some(index) = native.iter().position(|key| key.source_ticks == edge_ticks) {
+            level_keys[index].millis = edge;
+        }
+        let level = level_keys
+            .iter()
+            .rev()
+            .find(|key| key.millis <= edge)
+            .or(level_keys.first())
+            .map_or(clip.volume.as_f64(), |key| key.gain);
+        match super::audio::fade_keys(fade.curve, fade_in, start, end, level) {
+            Some(fade_keys) => {
+                if let PrFadeCurve::Custom(shape) = fade.curve {
+                    approximate(
+                        omissions,
+                        fade.id.as_deref().unwrap_or("audio transition"),
+                        format!("Custom Fade {} shape {} approximated by editable Volume keys of the squared-sine power model; four incoming and six half-gain outgoing controls measured, other parameters interpolated; no native Custom Fade replay on export", if fade_in { "incoming" } else { "outgoing" }, shape.value()),
+                    );
+                }
+                output[keys] = fade_keys;
+            }
+            None => omit(
+                omissions,
+                OmissionScope::Feature,
+                fade.id.as_deref().unwrap_or("audio transition"),
+                "audio fade has no positive millisecond span; fade not converted",
+            ),
+        }
+    }
+    Ok(output)
+}
+
+/// The `AudioVolume` key track of `clip`, if it has keys: its clip Level keys
+/// and the keys of its fades. A fade shares its full-level key with a Level
+/// key there, or with the other fade where they touch; the key keeps the
+/// easing that arrives at it, the fade-in's, else the Level's (stable order).
+pub(super) fn placement_volume_track(
+    clip: &PrAudioOccurrence,
+    layer_id: LayerId,
+    intrinsic_ticks: i64,
+    omissions: &mut Vec<Omission>,
+) -> Result<Option<PropertyKeyframeTrack>> {
+    if clip.playback_rate != 1.0 && clip.has_volume_animation() {
+        approximate(
+            omissions,
+            clip.record(),
+            super::audio::RETIMED_GAIN_CLOCK_WARNING,
+        );
+    }
+    // Custom automation exports as ordinary Level records. An explicit fade,
+    // or silence at the source edge, identifies its precision band on reimport
+    // without persisting origin metadata. Other Volume tracks retain unity.
+    let reference_level = clip
+        .volume_keys
+        .as_ref()
+        .filter(|native| {
+            clip.fade_in.is_some()
+                || clip.fade_out.is_some()
+                || native
+                    .keys
+                    .first()
+                    .is_some_and(|key| key.source_ticks == clip.in_ticks && key.value == 0.0)
+                || native
+                    .keys
+                    .last()
+                    .is_some_and(|key| key.source_ticks == clip.out_ticks && key.value == 0.0)
+        })
+        .map(|native| {
+            (native
+                .keys
+                .iter()
+                .map(|key| key.value)
+                .fold(0.0_f64, f64::max)
+                * native.gain)
+                .min(1.0)
+        });
+    let mut level = match &clip.volume_keys {
+        // Checked alone, so that sharing fade keys cannot hide Level keys
+        // that the track rejects.
+        Some(native) => level_keys(
+            native,
+            if clip.uses_layer_clock() {
+                clip.in_ticks
+            } else {
+                0
+            },
+            reference_level
+                .filter(|_| native.gain > 0.0)
+                .map_or(1.0, |level| level / native.gain),
+        )
+        .and_then(|level| volume_keys(&level, layer_id).map(|_| level))?,
+        None => Vec::new(),
+    };
+    let [fade_in, fade_out] = placement_fade_keys(clip, &mut level, omissions)?;
+    if let Some(native) = &clip.volume_keys {
+        let (refined, limited) =
+            super::audio::refine_level_keys(level, native.gain, reference_level)?;
+        level = refined;
+        if limited {
+            approximate(
+                omissions,
+                format!("AudioVolume layer {layer_id}"),
+                "Volume curve fit exceeds 0.01 dB at the 1 ms key timing limit",
+            );
+        }
+    }
+    let mut keys = [fade_in, level, fade_out].concat();
+    keys.sort_by_key(|key| key.millis);
+    keys.dedup_by(|later, earlier| later.millis == earlier.millis && later.gain == earlier.gain);
+    if clip.playback_rate < 0.0 {
+        keys = super::audio::reverse_volume_keys(
+            keys,
+            keyframes::layer_millis(intrinsic_ticks, 0)?,
+            clip.record(),
+            omissions,
+        )?;
+    }
+    (!keys.is_empty())
+        .then(|| volume_keys(&keys, layer_id))
+        .transpose()
+}
+
+/// Keep the bracketing keys of the clipped active window, including outside
+/// support keys needed to preserve an in-flight eased fade without refitting it.
+fn rebase_audio_track(
+    track: PropertyKeyframeTrack,
+    original: TimeRangeProperty,
+    active: TimeRangeProperty,
+) -> Result<PropertyKeyframeTrack> {
+    let shift = i64::try_from(active.start.as_millis() - original.start.as_millis())
+        .map_err(|_| unsupported("audio key shift exceeds signed milliseconds"))?;
+    let end = shift
+        .checked_add(
+            i64::try_from(active.duration.as_millis())
+                .map_err(|_| unsupported("audio key duration exceeds signed milliseconds"))?,
+        )
+        .ok_or_else(|| unsupported("audio key window overflows"))?;
+    let keys = track.keyframes();
+    let first = keys
+        .iter()
+        .rposition(|key| key.layer_time().as_millis() <= shift)
+        .unwrap_or(0);
+    let last = keys
+        .iter()
+        .position(|key| key.layer_time().as_millis() >= end)
+        .unwrap_or(keys.len() - 1);
+    let keys = keys[first..=last]
+        .iter()
+        .map(|key| {
+            let time = key
+                .layer_time()
+                .as_millis()
+                .checked_sub(shift)
+                .ok_or_else(|| unsupported("audio key rebasing overflows"))?;
+            Ok(PropertyKeyframe::new(
+                key.id().clone(),
+                TimeOffset::from_millis(time),
+                key.value().clone(),
+                key.easing(),
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    PropertyKeyframeTrack::new(keys)
+        .map_err(|error| unsupported(format!("rebased audio keys: {error}")))
+}
+
+/// `clip`'s `remap` as an editable curve on the parent clock on which the clip
+/// starts at `start_ticks`, with the playback input offset that it needs. The
+/// clip reaches a key `timeline_ticks / playback_rate` ticks after its start;
+/// that parent time stays an exact fraction until it rounds once to the
+/// millisecond, ties away from zero, and a key that rounds before zero fails.
+/// When keys of a curve from another In or speed
+/// ([`PrVideoOccurrence::remaps_from_in_or_speed`]) precede the parent clock's
+/// zero, as keys before a trimmed In can, the curve and its input first move
+/// later together by the fewest whole milliseconds that keep every key at or
+/// after zero; another remap keeps a zero offset.
+fn time_remap_property(
+    remap: &PrTimeRemap,
+    start_ticks: i64,
+    playback_rate: f64,
+    from_in_or_speed: bool,
+) -> Result<(TimeRemapProperty, i64)> {
+    let out_of_range = || unsupported("TimeRemapping parent time exceeds Premiere's tick range");
+    // `ticks / playback_rate` is `ticks * per_tick / denominator`, exactly.
+    let reciprocal = timing::reciprocal(playback_rate);
+    let (per_tick, denominator) = reciprocal.ok_or_else(out_of_range)?;
+    let millisecond = denominator
+        .checked_mul(i128::from(TICKS_PER_MILLISECOND))
+        .ok_or_else(out_of_range)?;
+    // Each key's parent time in ticks, times `denominator`.
+    let parent_times = remap
+        .keys
+        .iter()
+        .map(|key| {
+            i128::from(start_ticks)
+                .checked_mul(denominator)?
+                .checked_add(i128::from(key.timeline_ticks).checked_mul(per_tick)?)
+        })
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(out_of_range)?;
+    let deficit = match parent_times.iter().min() {
+        Some(&earliest) if earliest < 0 && from_in_or_speed => {
+            earliest.checked_neg().ok_or_else(out_of_range)?
+        }
+        _ => 0,
+    };
+    let input_offset_ms = deficit / millisecond + i128::from(deficit % millisecond != 0);
     let keys = remap
         .keys
         .iter()
+        .zip(parent_times)
         .enumerate()
-        .map(|(index, key)| {
-            let parent_ticks = start_ticks.checked_add(key.timeline_ticks).ok_or_else(|| {
-                unsupported("TimeRemapping parent time exceeds Premiere's tick range")
-            })?;
-            let parent_millis = u64::try_from(keyframes::layer_millis(parent_ticks, 0)?)
+        .map(|(index, (key, parent_time))| {
+            let rounded = input_offset_ms
+                .checked_mul(millisecond)
+                .and_then(|shift| parent_time.checked_add(shift))
+                .and_then(|shifted| timing::nearest(shifted, millisecond))
+                .ok_or_else(out_of_range)?;
+            let parent_millis = u64::try_from(rounded)
                 .map_err(|_| unsupported("TimeRemapping parent time must be non-negative"))?;
             let source_millis = u64::try_from(keyframes::layer_millis(key.source_ticks, 0)?)
                 .map_err(|_| unsupported("TimeRemapping source time must be non-negative"))?;
@@ -268,12 +575,114 @@ fn time_remap_property(remap: &PrTimeRemap, start_ticks: i64) -> Result<TimeRema
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    TimeRemapProperty::new(
+    let property = TimeRemapProperty::new(
         keys,
         TimeRemapExtrapolation::Continue,
         TimeRemapExtrapolation::Continue,
     )
-    .map_err(|error| unsupported(format!("TimeRemapping cannot be imported: {error}")))
+    .map_err(|error| unsupported(format!("TimeRemapping cannot be imported: {error}")))?;
+    let input_offset_ms = i64::try_from(input_offset_ms)
+        .map_err(|_| unsupported("TimeRemapping input offset exceeds the clock range"))?;
+    Ok((property, input_offset_ms))
+}
+
+/// [`time_remap_property`] for `clip`, which plays `remap` over `window` on a
+/// parent clock on which it starts at `start_ticks`. A curve from another In
+/// or speed ([`PrVideoOccurrence::remaps_from_in_or_speed`]) must also cover
+/// the millisecond window that the clip plays, moved by its input offset:
+/// from the first key to the last, or to the key before a last key at the end
+/// of `source`, whose segment is unmeasured. Within the constant-speed
+/// tolerance the saved In and Out can leave input uncovered, which a slow
+/// speed stretches into whole milliseconds of playback.
+fn played_time_remap(
+    clip: &PrVideoOccurrence,
+    remap: &PrTimeRemap,
+    source: &PrVideoStream,
+    window: TimeRangeProperty,
+    start_ticks: i64,
+) -> Result<(TimeRemapProperty, i64)> {
+    mapped_time_remap(
+        remap,
+        clip.playback_rate,
+        clip.remaps_from_in_or_speed(),
+        source.intrinsic_ticks,
+        window,
+        start_ticks,
+    )
+}
+
+/// Shared input/source clock mapping for physical video and nested composites.
+/// Round signed input/rate + placement once, retain every authored key and ease,
+/// and recheck the played window after integer-millisecond quantization.
+pub(super) fn mapped_time_remap(
+    remap: &PrTimeRemap,
+    playback_rate: f64,
+    from_in_or_speed: bool,
+    intrinsic_ticks: i64,
+    window: TimeRangeProperty,
+    start_ticks: i64,
+) -> Result<(TimeRemapProperty, i64)> {
+    let (property, input_offset_ms) =
+        time_remap_property(remap, start_ticks, playback_rate, from_in_or_speed)?;
+    let extends_past_media = remap
+        .keys
+        .last()
+        .is_some_and(|key| key.source_ticks > intrinsic_ticks);
+    if extends_past_media {
+        // Native admission bounds the saved Out. Recheck the actual emitted
+        // window and rounded keys against the exact media end: independent
+        // millisecond rounding must not turn an unused tail into played media.
+        let keys = property.keyframes();
+        let millis = |time: Time| i128::from(time.as_millis());
+        let ticks = |time: Time| millis(time) * i128::from(TICKS_PER_MILLISECOND);
+        let offset = i128::from(input_offset_ms);
+        let start = millis(window.start) + offset;
+        let end = millis(window.end()) + offset;
+        let bounded = keys.len() >= 2 && {
+            let first = &keys[0];
+            let previous = &keys[keys.len() - 2];
+            let last = &keys[keys.len() - 1];
+            millis(first.time) <= start
+                && last.easing == PropertyKeyframeEasing::Linear
+                && keys[..keys.len() - 1]
+                    .iter()
+                    .all(|key| ticks(key.value) <= i128::from(intrinsic_ticks))
+                && crate::schema::linear_tail_within_media(
+                    millis(previous.time)..millis(last.time),
+                    ticks(previous.value)..ticks(last.value),
+                    end,
+                    i128::from(intrinsic_ticks),
+                )
+        };
+        ensure!(
+            bounded,
+            "TimeRemapping rounded playback window reaches outside the media bounds"
+        );
+    }
+    if !from_in_or_speed {
+        return Ok((property, input_offset_ms));
+    }
+    let ends_at_media_end = remap
+        .keys
+        .last()
+        .is_some_and(|key| key.source_ticks == intrinsic_ticks);
+    let keys = property.keyframes();
+    let tail = 1 + usize::from(ends_at_media_end);
+    let covering = keys.len().saturating_sub(tail);
+    let (Some(first), Some(last)) = (keys.first(), keys.get(covering)) else {
+        return Err(unsupported("TimeRemapping has no keys"));
+    };
+    let millis = |time: Time| i128::from(time.as_millis());
+    let offset = i128::from(input_offset_ms);
+    let start = millis(window.start) + offset;
+    let end = millis(window.end()) + offset;
+    let (first, last) = (millis(first.time), millis(last.time));
+    if first > start || end > last {
+        return Err(unsupported(format!(
+            "TimeRemapping from a source In or at another speed plays input {start} to {end} ms, outside its covering keys at {first} to {last} ms"
+        )));
+    }
+    Ok((property, input_offset_ms))
 }
 
 /// The identity-rate playback of a linked clip's picture group, over its
@@ -296,18 +705,23 @@ fn document_clock_seed(range: TimeRangeProperty) -> Result<TimeRemapProperty> {
 }
 
 /// `playback`, whose key times are on a clock on which its clip starts at
-/// `start`, with its key times on the clip's own clock, which starts at zero.
-fn on_clip_clock(playback: &TimeRemapProperty, start: Time) -> Result<TimeRemapProperty> {
+/// `start` and which reads them `input_offset_ms` later, with its key times on
+/// the clip's own clock, which starts at zero and has no offset. A key before
+/// the clip fails, also one that only the offset kept at or after zero.
+fn on_clip_clock(
+    playback: &TimeRemapProperty,
+    start: Time,
+    input_offset_ms: i64,
+) -> Result<TimeRemapProperty> {
+    let origin = i128::from(start.as_millis()) + i128::from(input_offset_ms);
     let keyframes = playback
         .keyframes()
         .iter()
         .map(|key| {
-            let time = key
-                .time
-                .checked_sub(start)
-                .ok_or_else(|| unsupported("a playback key precedes its clip"))?;
+            let time = u64::try_from(i128::from(key.time.as_millis()) - origin)
+                .map_err(|_| unsupported("a playback key precedes its clip"))?;
             Ok(TimeRemapKeyframe {
-                time: Time::ZERO + time,
+                time: Time::from_millis(time),
                 ..key.clone()
             })
         })
@@ -319,7 +733,7 @@ fn on_clip_clock(playback: &TimeRemapProperty, start: Time) -> Result<TimeRemapP
     })
 }
 
-fn constant_time_remap(
+pub(super) fn constant_time_remap(
     reverse: bool,
     active_range: TimeRangeProperty,
     source_range: TimeRangeProperty,
@@ -398,7 +812,8 @@ pub(super) fn position_tracks(
 
 /// The FX tracks of the two axes of `point`, a native point property, from
 /// its keys on the source clock from `source_in`, each coordinate scaled by
-/// `dimensions`, as Motion Position keys convert.
+/// `dimensions`, as Motion Position keys convert. Spatial handles are retained
+/// only on curved adjacent segments, with one 2D decision shared by both axes.
 fn point_property_tracks(
     native_keys: &[PrPointKeyframe],
     source_in: i64,
@@ -412,6 +827,15 @@ fn point_property_tracks(
     for (index, key) in native_keys.iter().enumerate() {
         let millis = keyframes::layer_millis(key.source_ticks, source_in)?;
         let easing = keyframes::fx_easing(key.easing);
+        // Native straight paths follow temporal easing alone; FX would traverse
+        // retained handles parametrically. Decide each side in 2D so both axes
+        // agree, without dropping handles of a neighboring curved segment.
+        let curved_in = index
+            .checked_sub(1)
+            .is_some_and(|previous| crate::schema::spatial::is_curved(&native_keys[previous], key));
+        let curved_out = native_keys
+            .get(index + 1)
+            .is_some_and(|next| crate::schema::spatial::is_curved(key, next));
         for (axis, output, name) in [(0, &mut x_keys, x_name), (1, &mut y_keys, y_name)] {
             let scale = f64::from(dimensions[axis]);
             output.push(
@@ -422,11 +846,11 @@ fn point_property_tracks(
                     easing,
                 )
                 .with_spatial_tangents(
-                    (index > 0)
+                    curved_in
                         .then_some(key.spatial_in_tangent)
                         .flatten()
                         .map(|tangent| tangent[axis] * scale),
-                    (index + 1 < native_keys.len())
+                    curved_out
                         .then_some(key.spatial_out_tangent)
                         .flatten()
                         .map(|tangent| tangent[axis] * scale),
@@ -455,7 +879,7 @@ fn point_property_tracks(
 
 /// The staged video's transform from the clip's one Transform effect
 /// (`PrVideoOccurrence::transform_stage`) on a `source`-pixel frame: both
-/// points are the effect's, in source pixels (Oracle run E11 T7); the scale is
+/// points are the effect's, in source pixels; the scale is
 /// Scale Height on both axes under Uniform Scale (T3); the rotation is the
 /// effect's, clockwise (T4); the skew is the effect's and the skew axis
 /// Skew Axis − 90° under a skew, else 0 ([`PrTransform::fx_skew_axis`],
@@ -463,7 +887,10 @@ fn point_property_tracks(
 /// effect's, which FX blends in sRGB. The
 /// group's Motion and clip Opacity apply after it (T10), so the two
 /// opacities multiply.
-fn staged_video_transform(transform: &PrTransform, source: [u32; 2]) -> Result<Transform> {
+pub(super) fn staged_video_transform(
+    transform: &PrTransform,
+    source: [u32; 2],
+) -> Result<Transform> {
     let [width, height] = source.map(f64::from);
     Ok(Transform {
         anchor_point: [
@@ -567,8 +994,9 @@ impl CompositionShutter {
 /// Shutter Angle keys and Scale Width keys under Uniform Scale have no track
 /// ([`PrTransform::approximations`] and
 /// [`PrTransform::unimported_scale_width_keys`] report them); the reader
-/// rejects every other keyed parameter.
-fn transform_stage_tracks(
+/// rejects every other keyed parameter except adjustment Geometry2's Anchor,
+/// which maps to paired `AnchorPointX`/`AnchorPointY` tracks.
+pub(super) fn transform_stage_tracks(
     effect: &PrEffect,
     transform: &PrTransform,
     source: [u32; 2],
@@ -588,6 +1016,19 @@ fn transform_stage_tracks(
             (PrEffectParamKeys::Point(keys), id) if id == TRANSFORM_POSITION.id => {
                 let axes =
                     point_property_tracks(keys, source_in, layer_id, &POSITION_TRACKS, source)?;
+                tracks.extend(
+                    axes.map(|(property, track)| (Property::new(layer_id, property), track)),
+                );
+            }
+            (PrEffectParamKeys::Point(keys), id)
+                if id == crate::schema::TRANSFORM_ANCHOR_POINT.id
+                    && matches!(
+                        effect.params,
+                        crate::schema::PrEffectParams::AdjustmentGeometry2(_)
+                    ) =>
+            {
+                let axes =
+                    point_property_tracks(keys, source_in, layer_id, &ANCHOR_POINT_TRACKS, source)?;
                 tracks.extend(
                     axes.map(|(property, track)| (Property::new(layer_id, property), track)),
                 );
@@ -646,13 +1087,14 @@ pub(crate) fn sequence_document(
     project: &PrSequence,
     media: &BTreeMap<MediaId, PrMedia>,
     asset_ids: &BTreeMap<MediaId, fx_schema::AssetId>,
-    linked: &mut LinkedCompositions<'_, '_>,
+    linked: &mut LinkedCompositions<'_>,
     omissions: &mut Vec<Omission>,
 ) -> Result<EditableFxCompositionDocument> {
     sequence_document_with_progress(
         project,
         media,
         asset_ids,
+        &crate::media::PictureClocks::new(),
         linked,
         omissions,
         fx_conv::Progress::default(),
@@ -663,7 +1105,8 @@ pub(crate) fn sequence_document_with_progress(
     project: &PrSequence,
     media: &BTreeMap<MediaId, PrMedia>,
     asset_ids: &BTreeMap<MediaId, fx_schema::AssetId>,
-    linked: &mut LinkedCompositions<'_, '_>,
+    picture_clocks: &crate::media::PictureClocks,
+    linked: &mut LinkedCompositions<'_>,
     omissions: &mut Vec<Omission>,
     progress: fx_conv::Progress<'_>,
 ) -> Result<EditableFxCompositionDocument> {
@@ -682,7 +1125,11 @@ pub(crate) fn sequence_document_with_progress(
     let end = project.end_ticks();
     let duration = duration_from_ticks(end)?;
     if project.width == 0 || project.height == 0 {
-        return Err(CreationError::MissingDimensions.into());
+        return Err(EditableBuildError::invalid_input(
+            "dimensions",
+            "width and height must be non-zero",
+        )
+        .into());
     }
     if duration.is_zero() {
         return Err(
@@ -698,9 +1145,11 @@ pub(crate) fn sequence_document_with_progress(
     let mut layers = video_layers(
         project,
         LayerScope::root(
+            project.dimensions(),
             &mut next_index,
             &mut effect_ids,
             &mut composition_shutter,
+            picture_clocks,
             linked,
         ),
         media,
@@ -713,6 +1162,8 @@ pub(crate) fn sequence_document_with_progress(
         &project.audio,
         None,
         &mut next_index,
+        &mut effect_ids,
+        linked,
         media,
         asset_ids,
         &mut dynamics,
@@ -763,15 +1214,17 @@ pub(crate) fn sequence_document_with_progress(
 }
 
 /// Editable audio layers of `sounds`, children of `parent`, with the next
-/// ids of `next_index` and their Volume keys in `dynamics`. A key track that
-/// cannot import is reported, and its sound keeps its placement at zero
-/// gain: the value before the keys would play through their silent
-/// intervals.
+/// ids of `next_index` and their Volume and fade keys in `dynamics`. A key
+/// track that cannot import is reported, and its sound keeps its placement at
+/// zero gain without its fades: the value before the keys would play through
+/// their silent intervals.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn audio_layers(
     sounds: &[PrAudioOccurrence],
     parent: Option<LayerId>,
     next_index: &mut usize,
+    effect_ids: &mut effects::EffectIdAllocator,
+    linked: &mut LinkedCompositions<'_>,
     media: &BTreeMap<MediaId, PrMedia>,
     asset_ids: &BTreeMap<MediaId, fx_schema::AssetId>,
     dynamics: &mut AnimationGraph,
@@ -780,7 +1233,33 @@ pub(super) fn audio_layers(
 ) -> Result<Vec<Layer>> {
     let mut layers = Vec::with_capacity(sounds.len());
     for (index, clip) in sounds.iter().enumerate() {
+        ensure!(
+            clip.source_channel.is_none(),
+            "selected audio channels must be extracted before editable conversion"
+        );
         let _processed = Processed { progress };
+        if media
+            .get(&clip.media)
+            .is_some_and(|media| media.after_effects_composition().is_some())
+        {
+            if let Some(layer) = super::linked_audio::layer(
+                clip,
+                parent,
+                next_index,
+                effect_ids,
+                linked,
+                dynamics,
+                media
+                    .get(&clip.media)
+                    .and_then(|media| media.audio.as_ref())
+                    .ok_or_else(|| unsupported("linked audio has no source clock"))?
+                    .intrinsic_ticks,
+                omissions,
+            )? {
+                layers.push(layer);
+            }
+            continue;
+        }
         let source = media
             .get(&clip.media)
             .and_then(|source| source.audio.as_ref())
@@ -789,33 +1268,170 @@ pub(super) fn audio_layers(
             .get(&clip.media)
             .ok_or_else(|| unsupported("audio occurrence has no asset ID"))?;
         // Sound follows the same boundary rounding as picture.
-        let active_range = tick_range(clip.start_ticks, clip.end_ticks)?;
-        let source_range =
-            TimeRangeProperty::new(time_from_ticks(clip.in_ticks)?, active_range.duration);
+        let original_range = tick_range(clip.start_ticks, clip.end_ticks)?;
+        let (active_range, source_range) = if let Some(clock) = &source.prepared_clock {
+            let window = match clock.window(clip) {
+                Ok(window) => window,
+                Err(error) => {
+                    omit(
+                        omissions,
+                        OmissionScope::Occurrence,
+                        clip.record(),
+                        format!("prepared audio clock was not imported: {error}"),
+                    );
+                    continue;
+                }
+            };
+            let Some((timeline, raw)) = window else {
+                approximate(omissions, clip.record(), "delayed audio interval is entirely outside the playable edit; retained as silence");
+                continue;
+            };
+            let timeline = tick_range(timeline.start, timeline.end)?;
+            let raw = tick_range(raw.start, raw.end)?;
+            // Unit sound retains its established shorter-span rounding. Retimed
+            // sound keeps both independent windows for its explicit source map.
+            let duration = timeline.duration.min(raw.duration);
+            if duration.as_millis() == 0 {
+                approximate(
+                    omissions,
+                    clip.record(),
+                    "delayed playable sound collapses on the editable millisecond grid",
+                );
+                continue;
+            }
+            approximate(omissions, clip.record(), "delayed sound intersected with its playable presentation edit and mapped to raw source; absolute boundaries rounded to milliseconds, unit span clipped to the shorter rounded window; volume/fade keys rebased with boundary-support keys retained");
+            (
+                if clip.playback_rate == 1.0 {
+                    TimeRangeProperty::new(timeline.start, duration)
+                } else {
+                    timeline
+                },
+                if clip.playback_rate == 1.0 {
+                    TimeRangeProperty::new(raw.start, duration)
+                } else {
+                    raw
+                },
+            )
+        } else {
+            (
+                original_range,
+                if clip.playback_rate == 1.0 {
+                    TimeRangeProperty::new(time_from_ticks(clip.in_ticks)?, original_range.duration)
+                } else {
+                    let (source_in, source_out) = if clip.playback_rate < 0.0 {
+                        (
+                            source.intrinsic_ticks - clip.out_ticks,
+                            source.intrinsic_ticks - clip.in_ticks,
+                        )
+                    } else {
+                        (clip.in_ticks, clip.out_ticks)
+                    };
+                    if source_in < 0 {
+                        approximate(
+                            omissions,
+                            clip.record(),
+                            super::audio::REVERSE_SOURCE_START_CLIPPING_WARNING,
+                        );
+                    }
+                    tick_range(source_in.max(0), source_out)?
+                },
+            )
+        };
+        if active_range.duration.as_millis() == 0 || source_range.duration.as_millis() == 0 {
+            omit(
+                omissions,
+                OmissionScope::Occurrence,
+                clip.record(),
+                "audio placement/source window collapses on the editable millisecond grid",
+            );
+            continue;
+        }
         let layer_id = LayerId::new(*next_index as u64 + 1);
         *next_index += 1;
         let mut volume = clip.volume;
-        if let Some(keys) = &clip.volume_keys {
-            match volume_keys(keys, clip.in_ticks, layer_id) {
-                Ok(track) => dynamics
-                    .set_property(
-                        Property::new(layer_id, PropType::AudioVolume),
-                        PropertyAnimator::keyframes(track),
-                        Vec::new(),
-                    )
-                    .map_err(map_animation_graph_error)?,
-                Err(error) => {
-                    volume = LinearGain::ZERO;
-                    omit(
-                        omissions,
-                        OmissionScope::Feature,
-                        clip.record(),
-                        format!(
-                            "volume animation was not imported: {error}; the sound was kept at zero gain"
-                        ),
-                    );
-                }
+        let native_intrinsic_ticks = source
+            .prepared_clock
+            .as_ref()
+            .map_or(source.intrinsic_ticks, |clock| {
+                clock.presentation_duration_ticks()
+            });
+        let volume_track =
+            placement_volume_track(clip, layer_id, native_intrinsic_ticks, omissions).and_then(
+                |track| {
+                    if let Some(clock) = &source.prepared_clock {
+                        track
+                            .map(|track| {
+                                if clip.uses_layer_clock() {
+                                    rebase_audio_track(track, original_range, active_range)
+                                } else {
+                                    let shift =
+                                        keyframes::layer_millis(clock.source_offset_ticks(), 0)?;
+                                    let keys = track
+                                        .keyframes()
+                                        .iter()
+                                        .map(|key| {
+                                            Ok(PropertyKeyframe::new(
+                                                key.id().clone(),
+                                                TimeOffset::from_millis(
+                                                    key.layer_time()
+                                                        .as_millis()
+                                                        .checked_sub(shift)
+                                                        .ok_or_else(|| {
+                                                            unsupported(
+                                                        "prepared audio key clock overflows",
+                                                    )
+                                                        })?,
+                                                ),
+                                                key.value().clone(),
+                                                key.easing(),
+                                            ))
+                                        })
+                                        .collect::<Result<Vec<_>>>()?;
+                                    PropertyKeyframeTrack::new(keys)
+                                        .map_err(|error| unsupported(error.to_string()))
+                                }
+                            })
+                            .transpose()
+                    } else {
+                        Ok(track)
+                    }
+                },
+            );
+        match volume_track {
+            Ok(Some(track)) => dynamics
+                .set_property(
+                    Property::new(layer_id, PropType::AudioVolume),
+                    PropertyAnimator::keyframes(track),
+                    Vec::new(),
+                )
+                .map_err(map_animation_graph_error)?,
+            Ok(None) => {}
+            Err(error) => {
+                volume = LinearGain::ZERO;
+                omit(
+                    omissions,
+                    OmissionScope::Feature,
+                    clip.record(),
+                    format!(
+                        "volume animation was not imported: {error}; the sound was kept at zero gain"
+                    ),
+                );
             }
+        }
+        if clip.playback_rate != 1.0 {
+            approximate(omissions, clip.record(), format!(
+                "constant audio clock uses independently rounded millisecond endpoints; saved signed rate {} becomes {} over the editable window",
+                clip.playback_rate,
+                source_range.duration.as_millis() as f64 / active_range.duration.as_millis() as f64 * clip.playback_rate.signum(),
+            ));
+        }
+        let effective_rate = source_range.duration.as_millis() as f64
+            / active_range.duration.as_millis() as f64
+            * clip.playback_rate.signum();
+        if clip.preserve_audio_pitch
+            && !crate::schema::RUNTIME_PITCH_RATES.contains(&effective_rate)
+        {
+            approximate(omissions, clip.record(), "saved pitch-ON remains editable, but the existing audio runtime preserves pitch only on forward 0.25x–4x source maps; this clock uses ordinary mapped resampling");
         }
         let sound = AudioLayer {
             id: layer_id,
@@ -835,14 +1451,8 @@ pub(super) fn audio_layers(
             captions_enabled: None,
             caption_presentation: None,
             source_range,
-            playback: fx_schema::LayerPlayback::linear(
-                active_range,
-                active_range,
-                TimeRangeProperty::new(source_range.start, active_range.duration),
-                0,
-            )
-            .map_err(unsupported)?,
-            preserve_audio_pitch: false,
+            playback: super::audio::playback(clip, active_range, source_range, layer_id)?,
+            preserve_audio_pitch: clip.preserve_audio_pitch,
             source_intrinsic_duration: duration_from_ticks(source.intrinsic_ticks)?,
         };
         validate_time_range("playback.inputRange", sound.playback.input_range())?;
@@ -854,7 +1464,7 @@ pub(super) fn audio_layers(
 
 pub(super) fn video_layers(
     project: &PrSequence,
-    mut scope: LayerScope<'_, '_, '_>,
+    mut scope: LayerScope<'_, '_>,
     media: &BTreeMap<MediaId, PrMedia>,
     asset_ids: &BTreeMap<MediaId, fx_schema::AssetId>,
     dynamics: &mut AnimationGraph,
@@ -862,6 +1472,7 @@ pub(super) fn video_layers(
     progress: Option<(fx_conv::ProgressPhase<'_>, &Cell<usize>)>,
 ) -> Result<Vec<Layer>> {
     let mut layers = Vec::with_capacity(project.video_items().count() * 2);
+    let mut adjustment_wipes = Vec::new();
     let mut offset = scope.first_index + project.video_items().count();
     // How many placements key each matte, by the matte's track and start: a
     // stage group takes only a matte of its own.
@@ -896,21 +1507,60 @@ pub(super) fn video_layers(
             let clip = match item {
                 PrVideoItem::Media(clip) => clip,
                 PrVideoItem::Graphic(graphic) => {
-                    let root = super::graphic::import_graphic(
-                        graphic,
-                        project.dimensions(),
-                        layer_id,
-                        index,
-                        &mut scope,
-                        dynamics,
-                        omissions,
-                    )?;
+                    let imported = if graphic.clip_motion == PrStaticTransform::default() {
+                        super::graphic::import_graphic(
+                            graphic,
+                            project.dimensions(),
+                            layer_id,
+                            index,
+                            &mut scope,
+                            dynamics,
+                            omissions,
+                        )?
+                    } else {
+                        // A Source Graphic placement that its own clip Motion
+                        // moves: a group of its content is its root.
+                        super::graphic::import_moved_graphic(
+                            graphic,
+                            project.dimensions(),
+                            layer_id,
+                            index,
+                            &mut scope,
+                            dynamics,
+                            omissions,
+                        )?
+                        .map(|root| (root, None))
+                    };
+                    let Some((root, guide)) = imported else {
+                        continue;
+                    };
+                    // A matte names the whole root: the group of several
+                    // objects, not the first object, which takes `layer_id`.
                     scope
                         .item_layers
                         .insert(item_key, ItemLayer::Plain(root.id()));
                     layers.push(root);
+                    layers.extend(guide);
                     continue;
                 }
+            };
+            let record = clip.record();
+            let matte = match clip.track_matte {
+                None => None,
+                Some(matte) => match matte_layer(
+                    &scope.item_layers,
+                    matte,
+                    clip.timeline_ticks(),
+                    track_index,
+                    record,
+                    omissions,
+                ) {
+                    Ok(matte) => Some(matte),
+                    Err(reason) => {
+                        omit(omissions, OmissionScope::Occurrence, record, reason);
+                        continue;
+                    }
+                },
             };
             // Generator media has no asset: a matte becomes an editable
             // rectangle, an adjustment an FX adjustment layer.
@@ -920,6 +1570,16 @@ pub(super) fn video_layers(
                 .map(|video| video.kind)
             {
                 Some(PrMediaKind::Adjustment) => {
+                    if clip.linear_wipe.is_some()
+                        || clip.effects.iter().any(|effect| {
+                            matches!(
+                                effect.params,
+                                crate::schema::PrEffectParams::AdjustmentGeometry2(_)
+                            )
+                        })
+                    {
+                        adjustment_wipes.push((layer_id, clip));
+                    }
                     layers.extend(super::adjustment::import_adjustment(
                         clip,
                         layer_id,
@@ -931,11 +1591,55 @@ pub(super) fn video_layers(
                     )?);
                     continue;
                 }
-                Some(PrMediaKind::ColorMatte(matte)) => {
-                    effects::omit_effects(clip, "Color Matte", omissions);
+                Some(PrMediaKind::ColorMatte(color)) => {
+                    let canvas = [project.width, project.height];
+                    let carries_key = clip
+                        .effects
+                        .iter()
+                        .chain(clip.source_effects.iter().flat_map(|s| &s.effects))
+                        .any(crate::schema::PrEffect::requires_coverage);
+                    let (mut mapped, mut effect_tracks) = if carries_key {
+                        approximate(omissions, clip.record(), "Color Matte retains Legacy Luma and its editable sibling stack on the generated rectangle; native generator/effect order is approximate");
+                        effects::import_source_effects(
+                            clip,
+                            layer_id,
+                            false,
+                            MaskBoundary::Flat,
+                            canvas,
+                            canvas,
+                            canvas,
+                            scope.effect_ids,
+                            omissions,
+                        )
+                    } else {
+                        effects::omit_effects(clip, "Color Matte", omissions);
+                        (Vec::new(), Vec::new())
+                    };
+                    if carries_key {
+                        let (own, tracks) = effects::import_effects(
+                            clip,
+                            layer_id,
+                            false,
+                            MaskBoundary::Flat,
+                            scope.parent.is_some(),
+                            false,
+                            PrMediaKind::ColorMatte(color),
+                            canvas,
+                            canvas,
+                            canvas,
+                            scope.effect_ids,
+                            omissions,
+                        );
+                        mapped.extend(own);
+                        effect_tracks.extend(tracks);
+                    }
+                    if !effects::retains_coverage(clip, &mapped, omissions) {
+                        continue;
+                    }
+                    effects::report_source_effects(clip, carries_key, omissions);
                     let mut rect = super::color_matte::rect_layer(
                         project,
-                        matte,
+                        color,
                         tick_range(clip.start_ticks, clip.end_ticks)?,
                         LayerId::new(index as u64 + 1),
                         format!("Premiere color matte {}", index + 1),
@@ -943,10 +1647,30 @@ pub(super) fn video_layers(
                     );
                     rect.parent = scope.parent;
                     rect.blend_mode = clip.blend_mode.fx_mode();
+                    rect.track_matte = matte;
+                    rect.effects = mapped;
+                    for (target, track) in effect_tracks {
+                        dynamics
+                            .set_property(target, PropertyAnimator::keyframes(track), Vec::new())
+                            .map_err(map_animation_graph_error)?;
+                    }
                     rect.transform.opacity = PercentageProperty::new(clip.opacity)
                         .ok_or_else(|| unsupported("Premiere opacity must be between 0 and 100"))?;
+                    let guide = if clip.crop.is_default() {
+                        None
+                    } else {
+                        let guide_id = LayerId::new(*scope.next_index as u64 + 1);
+                        let mask_id = FxItemId::new(*scope.next_index as u64 + 2);
+                        *scope.next_index += 2;
+                        Some(super::color_matte::bind_sharp_crop(
+                            &mut rect, &clip.crop, canvas, guide_id, mask_id,
+                        )?)
+                    };
                     validate_time_range("active_range", rect.active_range)?;
                     layers.push(Layer::from_data(&fx_schema::LayerData::Rect(rect))?);
+                    if let Some(guide) = guide {
+                        layers.push(Layer::from_data(&fx_schema::LayerData::Rect(guide))?);
+                    }
                     scope
                         .item_layers
                         .insert(item_key, ItemLayer::Plain(layer_id));
@@ -971,7 +1695,8 @@ pub(super) fn video_layers(
                 Some(
                     PrMediaKind::AfterEffectsComposition(_)
                     | PrMediaKind::Video { .. }
-                    | PrMediaKind::Still { .. },
+                    | PrMediaKind::Still { .. }
+                    | PrMediaKind::NumberedStills { .. },
                 )
                 | None => {}
             }
@@ -979,48 +1704,290 @@ pub(super) fn video_layers(
                 .get(&clip.media)
                 .and_then(|source| source.video.as_ref())
                 .ok_or_else(|| unsupported("video occurrence references unknown media"))?;
-            if source.kind.is_still() {
+            if !source.pixel_aspect.is_square() {
+                approximate(omissions, clip.record(),
+                    "source pixel aspect is normalized into editable scale on decoded pixels; source-space spatial effects may differ, and export uses square-pixel interpretation rather than restoring the original override");
+            }
+            if matches!(source.kind, PrMediaKind::NumberedStills { .. }) {
+                if let Some(reason) = crate::numbered_images::unsupported_occurrence(clip) {
+                    omit(omissions, OmissionScope::Occurrence, clip.record(), reason);
+                    continue;
+                }
                 let asset_id = asset_ids
                     .get(&clip.media)
-                    .ok_or_else(|| unsupported("still occurrence has no asset ID"))?;
-                effects::omit_effects(clip, "still image", omissions);
-                let canvas = [project.width, project.height];
-                let mut image = super::still::image_layer(
+                    .ok_or_else(|| unsupported("numbered-image occurrence has no asset ID"))?;
+                if scope.parent.is_some() {
+                    omit(omissions, OmissionScope::Occurrence, clip.record(),
+                        "numbered-image sequence sampling under a containing clock is unproved; occurrence omitted");
+                    continue;
+                }
+                let sampled = match crate::numbered_images::sampling::occurrence(
+                    clip,
+                    source,
+                    project.frame_rate,
+                ) {
+                    Ok(sampled) => sampled,
+                    Err(error) => {
+                        omit(
+                            omissions,
+                            OmissionScope::Occurrence,
+                            clip.record(),
+                            error.to_string(),
+                        );
+                        continue;
+                    }
+                };
+                let active_range = sampled.window;
+                let frames = super::timed_images::import_frames(
                     source,
                     asset_id,
                     layer_id,
-                    format!("Premiere still {}", index + 1),
-                    tick_range(clip.start_ticks, clip.end_ticks)?,
-                    !clip.enabled,
-                    clip_transform(
-                        &clip.transform,
-                        clip.opacity,
-                        [source.width, source.height],
-                        canvas,
-                    )?,
+                    sampled.frames,
+                    scope.next_index,
                 )?;
-                image.parent = scope.parent;
-                image.blend_mode = clip.blend_mode.fx_mode();
-                validate_time_range("active_range", image.active_range)?;
-                layers.push(Layer::from_data(&fx_schema::LayerData::Image(image))?);
-                // A still has no mask guide; its keys import as a video's do.
-                let tracks = motion_tracks(
+                let canvas = [project.width, project.height];
+                let mut group = plain_group(
+                    layer_id,
+                    format!("Premiere numbered images {}", index + 1),
+                    active_range,
+                    source_aspect_transform(
+                        clip_transform(
+                            &clip.transform,
+                            clip.opacity,
+                            [source.width, source.height],
+                            canvas,
+                        )?,
+                        source,
+                    ),
+                    frames,
+                )?;
+                group.parent = scope.parent;
+                group.is_hidden = !clip.enabled;
+                group.blend_mode = clip.blend_mode.fx_mode();
+                let mut key_omissions = Vec::new();
+                let mut tracks = motion_tracks(
                     &clip.animations,
                     clip.in_ticks,
-                    retimed_keys_reason(clip),
+                    None,
                     layer_id,
                     None,
                     [source.width, source.height],
                     canvas,
                     clip.record(),
-                    omissions,
+                    &mut key_omissions,
                 );
+                if !key_omissions.is_empty() {
+                    for omission in key_omissions {
+                        omit(omissions, OmissionScope::Occurrence, clip.record(),
+                            format!("numbered-image key clock cannot be preserved; occurrence omitted: {omission}"));
+                    }
+                    continue;
+                }
+                source_aspect_tracks(&mut tracks, source, &[Some(layer_id)])?;
                 set_tracks(dynamics, tracks)?;
+                layers.push(Layer::from_data(&LayerData::Group(group))?);
                 scope
                     .item_layers
                     .insert(item_key, ItemLayer::Plain(layer_id));
                 if let Some(warning) = clip.blend_mode.approximation() {
                     approximate(omissions, clip.record(), warning);
+                }
+                continue;
+            }
+            if source.kind.is_still() {
+                if clip
+                    .opacity_mask
+                    .as_ref()
+                    .is_some_and(|mask| !mask.path_keys.is_empty())
+                {
+                    omit(
+                        omissions,
+                        OmissionScope::Occurrence,
+                        clip.record(),
+                        "Mask Path keys on a still are not converted; only a video clip's Opacity mask converts keyed",
+                    );
+                    continue;
+                }
+                let unsupported_mask = clip.opacity_mask.as_ref().and_then(|mask| {
+                    if mask.has_numeric_keys() {
+                        Some("numeric Opacity mask keys on a still are not converted; this host has no admitted numeric mask clock")
+                    } else if mask.expansion != 0.0 {
+                        Some("Mask Expansion on a still is not converted")
+                    } else {
+                        None
+                    }
+                });
+                if let Some(reason) = unsupported_mask {
+                    omit(omissions, OmissionScope::Occurrence, clip.record(), reason);
+                    continue;
+                }
+                let asset_id = asset_ids
+                    .get(&clip.media)
+                    .ok_or_else(|| unsupported("still occurrence has no asset ID"))?;
+                let record = clip.record();
+                let retains_source_key = clip.source_effects.as_ref().is_some_and(|s| {
+                    s.effects
+                        .iter()
+                        .any(crate::schema::PrEffect::requires_coverage)
+                });
+                effects::report_source_effects(clip, retains_source_key, omissions);
+                let canvas = [project.width, project.height];
+                let frame = [source.width, source.height];
+                let (mut effects, mut effect_tracks) = effects::import_still_effects(
+                    clip,
+                    layer_id,
+                    matte_consumers.contains_key(&(track_index, clip.start_ticks)),
+                    source.kind,
+                    frame,
+                    canvas,
+                    scope.effect_ids,
+                    omissions,
+                );
+                if retains_source_key {
+                    approximate(omissions, record, "Legacy Luma source stack retained on the still before its own effects but after its mask; native source/mask order is approximate");
+                    let (mut source_effects, source_tracks) = effects::import_source_effects(
+                        clip,
+                        layer_id,
+                        false,
+                        MaskBoundary::Flat,
+                        frame,
+                        frame,
+                        canvas,
+                        scope.effect_ids,
+                        omissions,
+                    );
+                    source_effects.extend(effects);
+                    effects = source_effects;
+                    effect_tracks.extend(source_tracks);
+                }
+                if !effects::retains_coverage(clip, &effects, omissions) {
+                    continue;
+                }
+                // Their keys are on the source clock, as the still's Motion
+                // keys are, which an image layer's clock matches only under
+                // unit forward playback.
+                let retimed = retimed_keys_reason(clip).filter(|_| !effect_tracks.is_empty());
+                if let Some(reason) = retimed {
+                    effect_tracks.clear();
+                    omit(
+                        omissions,
+                        OmissionScope::Feature,
+                        record,
+                        format!(
+                            "effect animation was not imported: {reason}; static values were kept"
+                        ),
+                    );
+                }
+                let active_range = tick_range(clip.start_ticks, clip.end_ticks)?;
+                let transform = source_aspect_transform(
+                    clip_transform(&clip.transform, clip.opacity, frame, canvas)?,
+                    source,
+                );
+                let mut image = super::still::image_layer(
+                    source,
+                    asset_id,
+                    layer_id,
+                    format!("Premiere still {}", index + 1),
+                    active_range,
+                    !clip.enabled,
+                    transform,
+                )?;
+                image.parent = scope.parent;
+                image.blend_mode = clip.blend_mode.fx_mode();
+                image.effects = effects;
+                validate_time_range("active_range", image.active_range)?;
+                // The one mask that a still keeps is its Crop (a Crop effect or
+                // its Motion Crop) or its Opacity mask (`reader/still.rs`),
+                // which mask the image's own frame before Motion: as a flat
+                // video's, its guide is beside the image with the image's
+                // transform and Motion keys.
+                let guide = if clip.crop.is_default() && clip.opacity_mask.is_none() {
+                    None
+                } else {
+                    let guide_id = LayerId::new(*scope.next_index as u64 + 1);
+                    let mask_id = FxItemId::new(*scope.next_index as u64 + 2);
+                    *scope.next_index += 2;
+                    Some(match &clip.opacity_mask {
+                        None => {
+                            image
+                                .masks
+                                .push(crop_mask(&clip.crop, mask_id, guide_id, record, omissions));
+                            fx_schema::LayerData::Rect(guide_layer(
+                                guide_id,
+                                format!("Premiere Crop guide {}", index + 1),
+                                scope.parent,
+                                active_range,
+                                transform,
+                                crop_rect(&clip.crop, frame),
+                            ))
+                        }
+                        Some(mask) => {
+                            let (path_mask, outline) =
+                                opacity_mask(mask, mask_id, guide_id, frame, record, omissions)?;
+                            image.masks.push(path_mask);
+                            fx_schema::LayerData::Shape(shape_guide(
+                                guide_id,
+                                format!("Premiere Opacity mask {}", index + 1),
+                                scope.parent,
+                                active_range,
+                                transform,
+                                outline,
+                            ))
+                        }
+                    })
+                };
+                let frame_guide = guide.as_ref().map(fx_schema::LayerData::id);
+                let picture = super::invert_alpha::lower(
+                    clip,
+                    canvas,
+                    frame,
+                    Layer::from_data(&fx_schema::LayerData::Image(image))?,
+                    scope.next_index,
+                    omissions,
+                )?;
+                let picture_id = picture.id();
+                layers.push(picture);
+                if let Some(guide) = guide {
+                    layers.push(Layer::from_data(&guide)?);
+                }
+                // A still's keys import as a video's do.
+                let mut tracks = motion_tracks(
+                    &clip.animations,
+                    clip.in_ticks,
+                    retimed_keys_reason(clip),
+                    layer_id,
+                    frame_guide,
+                    frame,
+                    canvas,
+                    record,
+                    omissions,
+                );
+                source_aspect_tracks(&mut tracks, source, &[Some(layer_id), frame_guide])?;
+                set_tracks(dynamics, tracks)?;
+                for (target, track) in effect_tracks {
+                    dynamics
+                        .set_property(target, PropertyAnimator::keyframes(track), Vec::new())
+                        .map_err(map_animation_graph_error)?;
+                }
+                let index = layers
+                    .iter()
+                    .position(|layer| layer.id() == picture_id)
+                    .expect("new still occurrence");
+                layers[index] = super::channel_levels::lower(
+                    clip,
+                    canvas,
+                    frame,
+                    layers[index].clone(),
+                    scope.next_index,
+                    scope.effect_ids,
+                    dynamics,
+                    omissions,
+                )?;
+                scope
+                    .item_layers
+                    .insert(item_key, ItemLayer::Plain(layers[index].id()));
+                if let Some(warning) = clip.blend_mode.approximation() {
+                    approximate(omissions, record, warning);
                 }
                 continue;
             }
@@ -1032,31 +1999,47 @@ pub(super) fn video_layers(
                         .ok_or_else(|| unsupported("video occurrence has no asset ID"))?,
                 ),
             };
-            let record = clip.record();
-            let matte = match clip.track_matte {
-                None => None,
-                Some(matte) => {
-                    match matte_layer(
-                        &scope.item_layers,
-                        matte,
-                        clip.timeline_ticks(),
-                        track_index,
-                        record,
-                        omissions,
-                    ) {
-                        Ok(matte) => Some(matte),
-                        Err(reason) => {
-                            omit(omissions, OmissionScope::Occurrence, record, reason);
-                            continue;
-                        }
-                    }
-                }
-            };
+            if !matches!(
+                source.interpretation,
+                crate::schema::SourceInterpretation::Original
+            ) && project.video_tracks[track_index]
+                .transitions
+                .iter()
+                .any(|transition| {
+                    transition.start_ticks < clip.end_ticks
+                        && transition.end_ticks > clip.start_ticks
+                })
+            {
+                omit(
+                    omissions,
+                    OmissionScope::Occurrence,
+                    record,
+                    "interpreted picture with a transition clock is unsupported",
+                );
+                continue;
+            }
             let matte_shared = clip
                 .track_matte
                 .is_some_and(|matte| matte_consumers[&(matte.track_index, clip.start_ticks)] > 1);
+            let raster_asset = match clip
+                .opacity_mask
+                .as_ref()
+                .and_then(|mask| mask.raster.as_ref())
+            {
+                Some(crate::schema::RasterMask::Prepared(id)) => Some(
+                    asset_ids
+                        .get(id)
+                        .ok_or_else(|| unsupported("recovered Object Mask has no asset ID"))?,
+                ),
+                Some(crate::schema::RasterMask::Saved(_)) => {
+                    omit(omissions, OmissionScope::Occurrence, record, "Object Mask requires source-bound sidecar recovery before editable import; masked occurrence omitted");
+                    continue;
+                }
+                None => None,
+            };
             let root = import_video_clip(
                 VideoClip {
+                    raster_asset,
                     clip,
                     source,
                     picture,
@@ -1072,7 +2055,67 @@ pub(super) fn video_layers(
                 dynamics,
                 omissions,
             )?;
-            if let Some(root) = root {
+            if let Some(mut root) = root {
+                if let Some(index) = layers.iter().position(|layer| layer.id() == root.id()) {
+                    let prepared_sample = if matches!(picture, ClipPicture::Linked)
+                        && super::invert_alpha::admits_linked(
+                            clip,
+                            [project.width, project.height],
+                            source.display_dimensions(),
+                        ) {
+                        // Reuse the linked source importer and its central identity
+                        // allocation, mask-reference rewriting and recursive muting.
+                        // Import just picture, never a second Premiere audio item.
+                        let sample_index = *scope.next_index;
+                        *scope.next_index += 1;
+                        let mut samples = Vec::new();
+                        let sample_root = import_video_clip(
+                            VideoClip {
+                                raster_asset: None,
+                                clip,
+                                source,
+                                picture,
+                                index: sample_index,
+                                track_index,
+                                matte: None,
+                                matte_shared: false,
+                                static_matte: false,
+                            },
+                            project,
+                            &mut scope,
+                            &mut samples,
+                            dynamics,
+                            omissions,
+                        )?;
+                        sample_root.and_then(|root| {
+                            samples.into_iter().find(|layer| layer.id() == root.id())
+                        })
+                    } else {
+                        None
+                    };
+                    layers[index] = super::invert_alpha::lower_with_sample(
+                        clip,
+                        [project.width, project.height],
+                        source.display_dimensions(),
+                        layers[index].clone(),
+                        prepared_sample,
+                        scope.next_index,
+                        omissions,
+                    )?;
+                    layers[index] = super::channel_levels::lower(
+                        clip,
+                        [project.width, project.height],
+                        source.display_dimensions(),
+                        layers[index].clone(),
+                        scope.next_index,
+                        scope.effect_ids,
+                        dynamics,
+                        omissions,
+                    )?;
+                    if layers[index].id() != root.id() {
+                        root = ItemLayer::Plain(layers[index].id());
+                    }
+                }
                 scope.item_layers.insert(item_key, root);
             }
         }
@@ -1086,10 +2129,21 @@ pub(super) fn video_layers(
             omissions,
             progress,
         )?);
+        let handled = super::cross_dissolve::import(
+            project,
+            track_index,
+            &mut scope,
+            &mut layers,
+            media,
+            &matte_consumers,
+            dynamics,
+            omissions,
+        )?;
         import_transitions(
             project,
             &scope,
             track_index,
+            &handled,
             &layers,
             media,
             &matte_consumers,
@@ -1097,7 +2151,21 @@ pub(super) fn video_layers(
             omissions,
         );
     }
+    effects::finish_posterize_time_import(
+        &mut layers,
+        dynamics,
+        scope.parent.is_some(),
+        omissions,
+    )?;
     omit_unconsumed_mattes(project, &scope.item_layers, &mut layers, omissions);
+    super::adjustment_wipe::wrap(
+        project,
+        &adjustment_wipes,
+        &mut scope,
+        &mut layers,
+        dynamics,
+        omissions,
+    )?;
     Ok(layers)
 }
 
@@ -1106,6 +2174,7 @@ fn consumed_matte(layer: &Layer) -> Option<LayerId> {
     match layer.data() {
         LayerData::Video(video) => video.track_matte.as_ref(),
         LayerData::Group(group) => group.track_matte.as_ref(),
+        LayerData::Rect(rect) => rect.track_matte.as_ref(),
         _ => None,
     }
     .map(|matte| matte.layer)
@@ -1230,8 +2299,9 @@ pub(super) fn matte_layer(
 
 /// `layer`, a root layer over a stage group's range, as the group's direct
 /// child: on the group clock, where the group's Motion moves it with the
-/// video. Its keys stay layer-local, and a group keeps its own children.
-fn into_stage(
+/// video, or moves a graphic's content under its clip Motion. Its keys stay
+/// layer-local, and a group keeps its own children.
+pub(super) fn into_stage(
     layer: &Layer,
     group_id: LayerId,
     duration: Duration,
@@ -1259,8 +2329,8 @@ fn into_stage(
         LayerData::Text(text) => (&mut text.parent, &mut text.active_range),
         _ => {
             return Err(unsupported(format!(
-                "a {} layer is not an imported matte",
-                layer.layer_type_name()
+                "{} layer {} cannot be relocated into an editable picture stage; supported layer types are Video, Group, Image, Rect, Shape and Text",
+                layer.layer_type_name(), layer.id()
             )));
         }
     };
@@ -1279,10 +2349,8 @@ enum OpacityDissolve {
     /// The measured default Film Impact Dissolve, on either side of a
     /// physical still, video or linked composition: a smoothstep.
     FilmImpact,
-    /// A default Cross Dissolve (Legacy), only as the incoming-only head of a
-    /// static Color Matte: a linear ramp, because its native curve is
-    /// unmeasured.
-    LegacyMatteHead,
+    /// Cross Dissolve New: a linear, encoded-RGB opacity ramp.
+    CrossDissolve,
 }
 
 impl OpacityDissolve {
@@ -1290,7 +2358,7 @@ impl OpacityDissolve {
     fn key_name(self) -> &'static str {
         match self {
             Self::FilmImpact => "film-impact-dissolve",
-            Self::LegacyMatteHead => "cross-dissolve",
+            Self::CrossDissolve => "cross-dissolve",
         }
     }
 
@@ -1303,7 +2371,7 @@ impl OpacityDissolve {
                 x2: 2.0 / 3.0,
                 y2: 1.0,
             },
-            Self::LegacyMatteHead => PropertyKeyframeEasing::Linear,
+            Self::CrossDissolve => PropertyKeyframeEasing::Linear,
         }
     }
 
@@ -1311,22 +2379,22 @@ impl OpacityDissolve {
     fn approximation(self) -> &'static str {
         match self {
             Self::FilmImpact => "Film Impact default one-sided dissolve retained as editable smoothstep opacity; temporal curve and SDR encoded-value compositing approximate the measured native linear-light fade",
-            Self::LegacyMatteHead => "Cross Dissolve (Legacy) head retained as editable linear opacity from 0 to the Color Matte's static Opacity; the native Legacy curve, frame phase and compositing space are unmeasured",
+            Self::CrossDissolve => "Cross Dissolve New retained as editable linear opacity at the picture boundary; opaque SDR controls follow the measured linear ramp, while alpha and general edited native fidelity remain unmeasured",
         }
     }
 }
 
 /// The two measured Film Impact profiles own separate editable properties:
-/// Dissolve opacity and Pop geometry. A default Cross Dissolve (Legacy)
-/// converts only as the head of a static Color Matte
-/// ([`OpacityDissolve::LegacyMatteHead`]). All remain declared approximations.
+/// Dissolve opacity and Pop geometry. Cross Dissolve New uses linear opacity
+/// for a head or tail; two-sided weighted pictures are handled separately.
 /// `matte_consumers` counts the placements that key each matte item, by the
 /// matte's track and start, as [`video_layers`] counts them.
 #[expect(clippy::too_many_arguments)]
 fn import_transitions(
     project: &PrSequence,
-    scope: &LayerScope<'_, '_, '_>,
+    scope: &LayerScope<'_, '_>,
     track_index: usize,
+    handled: &BTreeSet<usize>,
     layers: &[Layer],
     media: &BTreeMap<MediaId, PrMedia>,
     matte_consumers: &BTreeMap<(usize, i64), usize>,
@@ -1344,7 +2412,10 @@ fn import_transitions(
         dynamics,
         omissions,
     );
-    for transition in &track.transitions {
+    for (index, transition) in track.transitions.iter().enumerate() {
+        if handled.contains(&index) {
+            continue;
+        }
         if transition.kind == PrVideoTransitionKind::FilmImpactPop {
             if transition.outgoing_clip.is_some() && transition.incoming_clip.is_some() {
                 continue;
@@ -1376,7 +2447,7 @@ fn import_transitions(
         }
         let dissolve = match transition.kind {
             PrVideoTransitionKind::FilmImpactDissolve => OpacityDissolve::FilmImpact,
-            PrVideoTransitionKind::CrossDissolve => OpacityDissolve::LegacyMatteHead,
+            PrVideoTransitionKind::CrossDissolve => OpacityDissolve::CrossDissolve,
             // Converted above.
             PrVideoTransitionKind::FilmImpactPop => continue,
         };
@@ -1386,14 +2457,9 @@ fn import_transitions(
                 transition.outgoing_clip.as_deref(),
                 transition.incoming_clip.as_deref(),
             ) {
-                (OpacityDissolve::FilmImpact, Some(id), None) => (id, true),
+                (_, Some(id), None) => (id, true),
                 (_, None, Some(id)) => (id, false),
-                (OpacityDissolve::FilmImpact, ..) => {
-                    return Err(unsupported("only a one-sided dissolve converts"))
-                }
-                (OpacityDissolve::LegacyMatteHead, ..) => {
-                    return Err(unsupported("only an incoming-only head converts"))
-                }
+                _ => return Err(unsupported("requires one linked head or tail picture")),
             };
             let clip = track
                 .items
@@ -1416,16 +2482,17 @@ fn import_transitions(
                             | PrMediaKind::AfterEffectsComposition(_)
                     )
                 ),
-                OpacityDissolve::LegacyMatteHead => {
-                    matches!(source_kind, Some(PrMediaKind::ColorMatte(_)))
-                }
+                OpacityDissolve::CrossDissolve => matches!(
+                    source_kind,
+                    Some(
+                        PrMediaKind::Video { .. }
+                            | PrMediaKind::Still { .. }
+                            | PrMediaKind::ColorMatte(_)
+                            | PrMediaKind::AfterEffectsComposition(_)
+                    )
+                ),
             };
-            if dissolve == OpacityDissolve::LegacyMatteHead {
-                if !picture {
-                    return Err(unsupported(
-                        "only a Color Matte's head converts; the native Legacy curve is unmeasured on other pictures",
-                    ));
-                }
+            if dissolve == OpacityDissolve::CrossDissolve {
                 // A dissolving matte source is unmeasured, and the matte of a
                 // keyed clip that conversion omits is dropped after the
                 // transitions (`omit_unconsumed_mattes`).
@@ -1472,7 +2539,9 @@ fn import_transitions(
                 .transitions
                 .iter()
                 .filter(|other| {
-                    other.kind == transition.kind
+                    (other.kind == transition.kind
+                        || (dissolve == OpacityDissolve::CrossDissolve
+                            && other.kind == PrVideoTransitionKind::FilmImpactDissolve))
                         && (other.outgoing_clip.as_deref() == Some(id)
                             || other.incoming_clip.as_deref() == Some(id))
                 })
@@ -1496,8 +2565,11 @@ fn import_transitions(
                             OpacityDissolve::FilmImpact,
                             LayerData::Image(_) | LayerData::Video(_),
                         )
-                        | (OpacityDissolve::LegacyMatteHead, LayerData::Rect(_)) => true,
-                        (OpacityDissolve::FilmImpact, LayerData::Group(_)) => {
+                        | (
+                            OpacityDissolve::CrossDissolve,
+                            LayerData::Rect(_) | LayerData::Image(_) | LayerData::Video(_),
+                        ) => true,
+                        (_, LayerData::Group(_)) => {
                             matches!(source_kind, Some(PrMediaKind::AfterEffectsComposition(_)))
                                 || matches!(owner, ItemLayer::Stroke(_))
                         }
@@ -1555,7 +2627,7 @@ fn import_transitions(
                 // An unconverted built-in dissolve keeps its detection report.
                 let reason = match dissolve {
                     OpacityDissolve::FilmImpact => reason.to_string(),
-                    OpacityDissolve::LegacyMatteHead => format!(
+                    OpacityDissolve::CrossDissolve => format!(
                         "Cross Dissolve detected; editable transition opacity/topology is not converted: {reason}"
                     ),
                 };
@@ -1586,6 +2658,7 @@ enum ClipPicture<'a> {
 
 /// A video clip to import and the media that it plays.
 struct VideoClip<'a> {
+    raster_asset: Option<&'a fx_schema::AssetId>,
     clip: &'a PrVideoOccurrence,
     source: &'a PrVideoStream,
     picture: ClipPicture<'a>,
@@ -1609,7 +2682,8 @@ struct VideoClip<'a> {
 const UNMEASURED_MATTE_TRANSFORM_REASON: &str = "Transform with Track Matte Key requires a canvas-sized still matte, unshared and at default static Motion, opaque, normal blend and unretimed (measured A4); Transform omitted, existing Track Matte Key retained";
 
 /// Whether the matte that `clip` keys is an unshared canvas-sized still at
-/// default static Motion, the only matte A4 measured a Transform against.
+/// default static Motion, without effects of its own or of its master clip,
+/// the only matte A4 measured a Transform against.
 fn measured_static_matte(
     project: &PrSequence,
     clip: &PrVideoOccurrence,
@@ -1629,6 +2703,7 @@ fn measured_static_matte(
     source.transform == Default::default()
         && source.animations.is_empty()
         && source.effects.is_empty()
+        && source.source_effects.is_none()
         && source.opacity == 100.0
         && source.blend_mode == crate::schema::PrBlendMode::Normal
         && source.playback_rate == 1.0
@@ -1650,12 +2725,13 @@ fn measured_static_matte(
 fn import_video_clip(
     video: VideoClip<'_>,
     project: &PrSequence,
-    scope: &mut LayerScope<'_, '_, '_>,
+    scope: &mut LayerScope<'_, '_>,
     siblings: &mut Vec<Layer>,
     dynamics: &mut AnimationGraph,
     omissions: &mut Vec<Omission>,
 ) -> Result<Option<ItemLayer>> {
     let VideoClip {
+        raster_asset,
         clip,
         source,
         picture,
@@ -1670,6 +2746,27 @@ fn import_video_clip(
     let mut displayed_source = source.clone();
     [displayed_source.width, displayed_source.height] = source.display_dimensions();
     let source = &displayed_source;
+    let effect_scope = match super::effect_mask::native_scope(
+        clip,
+        source.kind,
+        [source.width, source.height],
+        [project.width, project.height],
+        scope.document_canvas,
+    ) {
+        Ok(index) if index.is_none() || source.interpretation == Default::default() => index,
+        result => {
+            let reason = result
+                .err()
+                .unwrap_or_else(|| "effect masks on interpreted media are not converted".into());
+            omit(
+                omissions,
+                OmissionScope::Occurrence,
+                clip.record(),
+                format!("effect mask scope: {reason}; occurrence omitted"),
+            );
+            return Ok(None);
+        }
+    };
     // Deny only the newly measured Transform when the matte is shared or outside A4.
     // Every consumer sees the same remaining clip, so the ordinary matte path
     // keeps its existing ownership, clocks and omission behavior.
@@ -1694,9 +2791,17 @@ fn import_video_clip(
         });
     let clip = without_transform.as_ref().unwrap_or(clip);
     let layer_id = LayerId::new(index as u64 + 1);
-    let boundary = clip
-        .mask_boundary([source.width, source.height], [project.width, project.height])
+    // How the clip's mask converts with `source_effects` source effects on its
+    // picture before it.
+    let boundary = |source_effects| {
+        clip.mask_boundary(
+            [source.width, source.height],
+            [project.width, project.height],
+            source_effects,
+        )
+        .map(|boundary| if effect_scope.is_some() { MaskBoundary::Staged } else { boundary })
         .and_then(|boundary| {
+            let boundary = if raster_asset.is_some() { MaskBoundary::Staged } else { boundary };
             let Some(matte) = matte.as_ref().filter(|_| boundary == MaskBoundary::Staged)
             else {
                 return Ok(boundary);
@@ -1716,7 +2821,47 @@ fn import_video_clip(
                 return Err(STAGED_RETIMED_MATTE_REASON);
             }
             Ok(boundary)
-        });
+        })
+    };
+    // Source effects apply before the clip's whole pipeline, so they stage its
+    // mask as its own effects applied before the mask do. A clip that cannot
+    // take them there usually converts without them. Legacy Luma instead keeps
+    // its stack on the available picture with a diagnosed order approximation;
+    // `retains_coverage` rejects any later failure to carry that enabled key.
+    let source_stack = clip
+        .source_effects
+        .as_ref()
+        .filter(|stack| !stack.effects.is_empty());
+    let (boundary, converts_source) = match (
+        source_stack,
+        boundary(source_stack.map_or(0, |stack| stack.effects.len())),
+    ) {
+        (Some(_), Ok(boundary)) => (Ok(boundary), true),
+        (Some(stack), Err(reason)) => {
+            let without = boundary(0);
+            let retain_key = without.is_ok()
+                && stack
+                    .effects
+                    .iter()
+                    .any(crate::schema::PrEffect::requires_coverage);
+            if without.is_ok() && !retain_key {
+                omit(
+                    omissions,
+                    OmissionScope::Feature,
+                    clip.record(),
+                    format!(
+                        "source effects of {} were not imported: {reason}",
+                        stack.master
+                    ),
+                );
+            }
+            if retain_key {
+                approximate(omissions, clip.record(), format!("Legacy Luma source stack of {} retained on the available picture plane to preserve coverage; native source/mask order is approximate: {reason}", stack.master));
+            }
+            (without, retain_key)
+        }
+        (None, boundary) => (boundary, false),
+    };
     let boundary = match boundary {
         Ok(boundary) => boundary,
         Err(reason) => {
@@ -1744,17 +2889,27 @@ fn import_video_clip(
         source_range,
         source_intrinsic_duration,
         playback,
-    }) = clip_timing(clip, source, boundary, record, omissions)?
+    }) = clip_timing(
+        clip,
+        source,
+        boundary,
+        scope.picture_clocks,
+        record,
+        omissions,
+    )?
     else {
         return Ok(None);
     };
     let retimed_keys = retimed_keys_reason(clip);
-    let transform = clip_transform(
-        &clip.transform,
-        clip.opacity,
-        [source.width, source.height],
-        [project.width, project.height],
-    )?;
+    let transform = source_aspect_transform(
+        clip_transform(
+            &clip.transform,
+            clip.opacity,
+            [source.width, source.height],
+            [project.width, project.height],
+        )?,
+        source,
+    );
     let mut masks = Vec::new();
     let mut guides = Vec::new();
     let mut tracks = Vec::new();
@@ -1817,6 +2972,54 @@ fn import_video_clip(
     let frame_guide = mask_ids
         .filter(|_| group_id.is_none() && (!clip.crop.is_default() || clip.opacity_mask.is_some()))
         .map(|(guide_id, _)| guide_id);
+    // A keyed Mask Path imports as its guide's outline keys, or the clip is
+    // omitted, before it requests anything, rather than shown with its mask
+    // frozen at one outline.
+    let outline_keys = match (&clip.opacity_mask, mask_ids) {
+        (Some(mask), Some((guide_id, _))) if !mask.path_keys.is_empty() => {
+            let track = match mask_path_keys_reason(clip) {
+                Some(reason) => Err(reason.to_owned()),
+                None => {
+                    mask_path_track(mask, guide_id, clip.in_ticks, [source.width, source.height])
+                }
+            };
+            match track {
+                Ok(track) => Some((Property::new(guide_id, PropType::ShapePath), track)),
+                Err(reason) => {
+                    *scope.next_index = first_index;
+                    omit(
+                        omissions,
+                        OmissionScope::Occurrence,
+                        record,
+                        format!(
+                            "track {track_index}, range {}..{} ticks: Mask Path keys were not imported: {reason}; occurrence omitted",
+                            clip.start_ticks, clip.end_ticks
+                        ),
+                    );
+                    return Ok(None);
+                }
+            }
+        }
+        _ => None,
+    };
+    let numeric_tracks = match (&clip.opacity_mask, mask_ids) {
+        (Some(mask), Some((_, mask_id))) if mask.has_numeric_keys() => {
+            let tracks = match mask_path_keys_reason(clip) {
+                Some(reason) => Err(reason.to_owned()),
+                None => super::mask_animation::import_tracks(mask, mask_id, clip.in_ticks),
+            };
+            match tracks {
+                Ok(tracks) => tracks,
+                Err(reason) => {
+                    *scope.next_index = first_index;
+                    omit(omissions, OmissionScope::Occurrence, record,
+                        format!("numeric Opacity mask keys were not imported: {reason}; occurrence omitted"));
+                    return Ok(None);
+                }
+            }
+        }
+        _ => Vec::new(),
+    };
     let mut layer_tracks = Vec::new();
     // A linked clip's Transform blur, which it requests once its picture forms.
     let mut linked_transform_blur = None;
@@ -1868,10 +3071,25 @@ fn import_video_clip(
             ),
         }
     }
+    // Explicit Video playback already warps its own property clock into media
+    // time. Keep the native Rotation times; subtracting In would apply the trim
+    // twice. A staged Motion owner does not share the video's playback clock.
+    let media_clock_rotation = clip.has_media_clock_rotation()
+        && matches!(source.kind, PrMediaKind::Video { .. })
+        && group_id.is_none()
+        && scope.parent.is_none();
     layer_tracks.extend(motion_tracks(
         &clip.animations,
-        clip.in_ticks,
-        retimed_keys,
+        if media_clock_rotation {
+            0
+        } else {
+            clip.in_ticks
+        },
+        if media_clock_rotation {
+            None
+        } else {
+            retimed_keys
+        },
         motion_owner,
         frame_guide,
         [source.width, source.height],
@@ -1880,24 +3098,7 @@ fn import_video_clip(
         omissions,
     ));
     if let (false, Some((guide_id, mask_id))) = (clip.crop.is_default(), mask_ids) {
-        if clip.crop.edge_feather != 0.0 {
-            approximate(
-                omissions,
-                record,
-                "Crop Edge Feather is approximated by an FX mask; Premiere feather visuals are not preserved exactly",
-            );
-        }
-        let source_width = f64::from(source.width);
-        let source_height = f64::from(source.height);
-        let mut rect = black_shape(source.width, source.height);
-        rect.position = [
-            source_width * clip.crop.left / 100.0,
-            source_height * clip.crop.top / 100.0,
-        ];
-        rect.size = [
-            source_width * (100.0 - clip.crop.left - clip.crop.right) / 100.0,
-            source_height * (100.0 - clip.crop.top - clip.crop.bottom) / 100.0,
-        ];
+        masks.push(crop_mask(&clip.crop, mask_id, guide_id, record, omissions));
         guides.push(Layer::from_data(&fx_schema::LayerData::Rect(guide_layer(
             guide_id,
             format!("Premiere Crop guide {}", index + 1),
@@ -1907,15 +3108,8 @@ fn import_video_clip(
             // effect, so the editable guide must share the video's
             // transform, and a flat guide also its Motion keys (above).
             video_transform,
-            rect,
+            crop_rect(&clip.crop, [source.width, source.height]),
         )))?);
-        // FX masks cannot represent negative feather widths. Keep the
-        // crop geometry and report the missing feather above.
-        masks.push(guide_mask(
-            mask_id,
-            guide_id,
-            clip.crop.edge_feather.max(0.0),
-        ));
     }
     if let (Some(wipe), Some((guide_id, mask_id))) = (&clip.linear_wipe, mask_ids) {
         // The classifier stages every wipe whose clip frame moves, so
@@ -1954,31 +3148,104 @@ fn import_video_clip(
         masks.push(guide_mask(mask_id, guide_id, wipe.feather));
         tracks.push((Property::new(guide_id, property_type), track));
     }
-    if let (Some(mask), Some((guide_id, mask_id))) = (&clip.opacity_mask, mask_ids) {
-        if mask.feather != 0.0 {
-            approximate(omissions, record, crate::schema::MASK_FEATHER_APPROXIMATION);
+    let mut raster_matte = None;
+    if let (Some(asset), Some(mask), Some((guide_id, _))) =
+        (raster_asset, &clip.opacity_mask, mask_ids)
+    {
+        let sampled = match crate::numbered_images::sampling::occurrence(
+            clip,
+            source,
+            project.frame_rate,
+        ) {
+            Ok(sampled) => sampled,
+            Err(error) => {
+                *scope.next_index = first_index;
+                omit(omissions, OmissionScope::Occurrence, record, format!("Object Mask sampled coverage could not be retained: {error}; masked occurrence omitted"));
+                return Ok(None);
+            }
+        };
+        let origin = active_range.start.as_millis();
+        let duration = video_range.duration.as_millis();
+        // The source picture keeps its native trim/clock. Translate sampled
+        // boundaries to the existing stage origin; do not shift the video to
+        // the first output sample or independently retime it.
+        let mut frames: Vec<_> = sampled
+            .frames
+            .into_iter()
+            .filter_map(|(index, range)| {
+                let start = sampled.window.start.as_millis() + range.start.as_millis();
+                let end = start + range.duration.as_millis();
+                let left = start.saturating_sub(origin).min(duration);
+                let right = end.saturating_sub(origin).min(duration);
+                (right > left).then_some((
+                    index,
+                    TimeRangeProperty::new(
+                        Time::from_millis(left),
+                        Duration::from_millis(right - left),
+                    ),
+                ))
+            })
+            .collect();
+        if let Some((_, first)) = frames.first_mut() {
+            first.duration =
+                Duration::from_millis(first.start.as_millis() + first.duration.as_millis());
+            first.start = Time::ZERO;
+        } else {
+            *scope.next_index = first_index;
+            omit(
+                omissions,
+                OmissionScope::Occurrence,
+                record,
+                "Object Mask has no sampled coverage in its trim; masked occurrence omitted",
+            );
+            return Ok(None);
         }
-        // The corpus stores the outline in unit fractions of the source frame;
-        // the guide draws it in source pixels, in the
-        // video's frame like the Crop guide.
-        guides.push(Layer::from_data(&fx_schema::LayerData::Shape(
-            shape_guide(
+        let frames =
+            super::timed_images::import_frames(source, asset, guide_id, frames, scope.next_index)?;
+        let mut provider = plain_group(
+            guide_id,
+            "Object Mask supplied matte".to_owned(),
+            video_range,
+            identity_transform(),
+            frames,
+        )?;
+        provider.parent = video_parent;
+        provider.transform.opacity =
+            PercentageProperty::new(mask.opacity).expect("validated mask opacity");
+        guides.push(Layer::from_data(&LayerData::Group(provider))?);
+        raster_matte = Some(TrackMatte {
+            layer: guide_id,
+            mode: if mask.inverted {
+                TrackMatteType::AlphaInverted
+            } else {
+                TrackMatteType::Alpha
+            },
+        });
+    }
+    if let (Some(mask), Some((guide_id, mask_id))) = (&clip.opacity_mask, mask_ids) {
+        if mask.raster.is_none() {
+            // In the video's frame like the Crop guide.
+            let (path_mask, outline) = opacity_mask(
+                mask,
+                mask_id,
                 guide_id,
-                format!("Premiere Opacity mask {}", index + 1),
-                video_parent,
-                video_range,
-                video_transform,
-                scaled_path(
-                    &fx_path(&mask.path),
-                    [f64::from(source.width), f64::from(source.height)],
+                [source.width, source.height],
+                record,
+                omissions,
+            )?;
+            guides.push(Layer::from_data(&fx_schema::LayerData::Shape(
+                shape_guide(
+                    guide_id,
+                    format!("Premiere Opacity mask {}", index + 1),
+                    video_parent,
+                    video_range,
+                    video_transform,
+                    outline,
                 ),
-            ),
-        ))?);
-        let mut path_mask = guide_mask(mask_id, guide_id, mask.feather);
-        path_mask.inverted = mask.inverted;
-        path_mask.opacity = NonNegativeProperty::new(mask.opacity / 100.0)
-            .ok_or_else(|| unsupported("Mask Opacity must be between 0 and 100"))?;
-        masks.push(path_mask);
+            ))?);
+            masks.push(path_mask);
+            tracks.extend(outline_keys);
+        }
     }
     let (video_masks, group_masks) = match group_id {
         Some(_) => (Vec::new(), masks),
@@ -1997,15 +3264,89 @@ fn import_video_clip(
         Some(_) => (BlendMode::Normal, clip.blend_mode.fx_mode()),
         None => (clip.blend_mode.fx_mode(), BlendMode::Normal),
     };
-    let (effects, mut effect_tracks) = effects::import_effects(
-        clip,
-        layer_id,
-        boundary,
-        [source.width, source.height],
-        [project.width, project.height],
-        scope.effect_ids,
-        omissions,
-    );
+    // FX lays a video layer's effects over its media frame, and a group's,
+    // the linked composition's picture, over the document canvas even in a nest.
+    let effects_frame = match picture {
+        ClipPicture::Asset(_) => [source.width, source.height],
+        ClipPicture::Linked => scope.document_canvas,
+    };
+    // The source effects come first in the picture's one stack, on the
+    // clip's clock, as Premiere applies them first there.
+    // Constant-rate video playback is already an explicit FX media-time
+    // remap (including reverse). Its own effects sample that media clock,
+    // unlike a plain unit-speed layer's elapsed clock. Keep ascending source
+    // keys/easing unchanged; playback, not a second key reversal, traverses them.
+    let media_clock_effects = matches!(picture, ClipPicture::Asset(_))
+        && matches!(source.kind, PrMediaKind::Video { .. })
+        && clip.playback_rate != 1.0
+        && clip.time_remap.is_none();
+    let (mut effects, mut effect_tracks) = if converts_source {
+        effects::import_source_effects(
+            clip,
+            layer_id,
+            media_clock_effects,
+            boundary,
+            [source.width, source.height],
+            effects_frame,
+            [project.width, project.height],
+            scope.effect_ids,
+            omissions,
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let source_converted = !effects.is_empty();
+    let (own_effects, own_tracks, scope_children, scope_suffix) = if let Some(native) = effect_scope
+    {
+        match super::effect_mask::import(
+            clip,
+            native,
+            layer_id,
+            group_id.ok_or_else(|| unsupported("effect scope has no group"))?,
+            video_range,
+            scope,
+            omissions,
+        ) {
+            Ok(imported) => (
+                imported.prefix,
+                imported.tracks,
+                imported.children,
+                imported.suffix,
+            ),
+            Err(reason) => {
+                *scope.next_index = first_index;
+                omit(
+                    omissions,
+                    OmissionScope::Occurrence,
+                    record,
+                    format!("effect mask scope: {reason}; occurrence omitted"),
+                );
+                return Ok(None);
+            }
+        }
+    } else {
+        let (effects, tracks) = effects::import_effects(
+            clip,
+            layer_id,
+            media_clock_effects,
+            boundary,
+            scope.parent.is_some(),
+            false,
+            source.kind,
+            [source.width, source.height],
+            effects_frame,
+            [project.width, project.height],
+            scope.effect_ids,
+            omissions,
+        );
+        (effects, tracks, Vec::new(), Vec::new())
+    };
+    effects.extend(own_effects);
+    effect_tracks.extend(own_tracks);
+    if effect_scope.is_none() && !effects::retains_coverage(clip, &effects, omissions) {
+        *scope.next_index = first_index;
+        return Ok(None);
+    }
     // Guide tracks precede the clip's own, which keeps the document's track order.
     tracks.extend(layer_tracks);
     let picture = match picture {
@@ -2023,13 +3364,7 @@ fn import_video_clip(
                 masks: video_masks,
                 corner_radius: None,
                 source_range,
-                playback: match playback {
-                    Some(property) => fx_schema::LayerPlayback::remapped(video_range, property, 0),
-                    None => {
-                        fx_schema::LayerPlayback::linear(video_range, video_range, source_range, 0)
-                    }
-                }
-                .map_err(unsupported)?,
+                playback,
                 preserve_audio_pitch: false,
                 source_intrinsic_duration,
                 volume: Some(LinearGain::ZERO),
@@ -2045,7 +3380,9 @@ fn import_video_clip(
                 }),
                 motion_blur: motion_blur_angle.is_some(),
                 transform: video_transform,
-                source: VideoSource::from_asset(asset_id.clone(), Some(frame), MediaFit::Contain),
+                // Fill the coded frame: contain would also apply the file's
+                // display aspect and letterbox before our saved-PAR scale.
+                source: VideoSource::from_asset(asset_id.clone(), Some(frame), MediaFit::Stretch),
             };
             validate_time_range("playback.inputRange", layer.playback.input_range())?;
             validate_time_range("source_range", layer.source_range)?;
@@ -2067,7 +3404,8 @@ fn import_video_clip(
             // clip group maps the clip clock onto the composition clock, as a
             // video's source range and playback do.
             let canvas = [source.width, source.height];
-            let clock = match playback {
+            let playback_offset_ms = playback.input_offset_ms();
+            let clock = match playback.time_remap().cloned() {
                 Some(playback) => Some(playback),
                 None if source_range.start != Time::ZERO => {
                     Some(constant_time_remap(false, video_range, source_range)?)
@@ -2075,7 +3413,7 @@ fn import_video_clip(
                 None => None,
             };
             let clock = match clock
-                .map(|clock| on_clip_clock(&clock, video_range.start))
+                .map(|clock| on_clip_clock(&clock, video_range.start, playback_offset_ms))
                 .transpose()
             {
                 Ok(clock) => clock,
@@ -2203,25 +3541,23 @@ fn import_video_clip(
         }
     };
     let (picture, stroke_owner) = match (&picture, clip.stroke) {
-        (LayerData::Video(video), Some(profile)) => match stroke::validate(clip, source, scope) {
-            Ok(()) => {
-                approximate(
-                    omissions,
-                    record,
-                    "Film Impact Stroke retained as editable centered prescale with the measured neutral-profile border approximation; general Size and alpha semantics remain unsupported",
-                );
-                (stroke::wrap(video.clone(), profile, source, scope)?, true)
+        (LayerData::Video(video), Some(profile)) => {
+            match stroke::validate(clip, source, scope, source_converted) {
+                Ok(()) => {
+                    approximate(omissions, record, "Film Impact Stroke retained as editable centered prescale with the measured neutral-profile border approximation; general Size and alpha semantics remain unsupported");
+                    (stroke::wrap(video.clone(), profile, source, scope)?, true)
+                }
+                Err(reason) => {
+                    omit(
+                        omissions,
+                        OmissionScope::Feature,
+                        record,
+                        reason.to_string(),
+                    );
+                    (Layer::from_data(&picture)?, false)
+                }
             }
-            Err(reason) => {
-                omit(
-                    omissions,
-                    OmissionScope::Feature,
-                    record,
-                    reason.to_string(),
-                );
-                (Layer::from_data(&picture)?, false)
-            }
-        },
+        }
         (_, Some(_)) => {
             omit(
                 omissions,
@@ -2233,7 +3569,8 @@ fn import_video_clip(
         }
         _ => (Layer::from_data(&picture)?, false),
     };
-    let mut clip_layers = vec![picture];
+    let mut clip_layers = scope_children;
+    clip_layers.push(picture);
     clip_layers.extend(guides);
     let root = group_id.unwrap_or(layer_id);
     let layers = match group_id {
@@ -2264,16 +3601,24 @@ fn import_video_clip(
             }
             let group_transform = match transform_stage {
                 Some((_, effect_transform, TransformOwner::KeyedPicture)) => {
-                    staged_video_transform(effect_transform, [source.width, source.height])?
+                    source_aspect_transform(
+                        staged_video_transform(effect_transform, [source.width, source.height])?,
+                        source,
+                    )
                 }
                 _ => transform,
             };
+            ensure!(
+                raster_matte.is_none() || group_matte.is_none(),
+                "Object Mask raster and ordinary group matte cannot both own the same stage"
+            );
             let group = GroupLayer {
                 is_hidden: !clip.enabled,
                 parent: scope.parent,
                 blend_mode: group_blend,
-                track_matte: group_matte,
+                track_matte: raster_matte.or(group_matte),
                 masks: group_masks,
+                effects: scope_suffix,
                 ..plain_group(
                     group_id,
                     format!(
@@ -2290,8 +3635,9 @@ fn import_video_clip(
             vec![Layer::from_data(&fx_schema::LayerData::Group(group))?]
         }
     };
+    source_aspect_tracks(&mut tracks, source, &[Some(motion_owner), frame_guide])?;
     set_tracks(dynamics, tracks)?;
-    for (target, track) in effect_tracks {
+    for (target, track) in effect_tracks.into_iter().chain(numeric_tracks) {
         dynamics
             .set_property(target, PropertyAnimator::keyframes(track), Vec::new())
             .map_err(map_animation_graph_error)?;
@@ -2299,12 +3645,62 @@ fn import_video_clip(
     if let Some(warning) = clip.blend_mode.approximation() {
         approximate(omissions, record, warning);
     }
+    effects::report_source_effects(clip, source_converted, omissions);
     siblings.extend(layers);
     Ok(Some(if stroke_owner {
         ItemLayer::Stroke(root)
     } else {
         ItemLayer::Plain(root)
     }))
+}
+
+fn source_aspect_transform(mut transform: Transform, source: &PrVideoStream) -> Transform {
+    let scale = source.pixel_scale();
+    transform.scale[0] *= scale[0];
+    transform.scale[1] *= scale[1];
+    transform
+}
+
+fn source_aspect_tracks(
+    tracks: &mut [(Property, PropertyKeyframeTrack)],
+    source: &PrVideoStream,
+    owners: &[Option<LayerId>],
+) -> Result<()> {
+    if source.pixel_aspect.is_square() {
+        return Ok(());
+    }
+    let scale = source.pixel_scale();
+    for (property, track) in tracks {
+        if !owners.contains(&Some(property.layer_id())) {
+            continue;
+        }
+        let factor = match property.property_type() {
+            PropType::ScaleX => scale[0],
+            PropType::ScaleY => scale[1],
+            _ => continue,
+        };
+        if factor == 1.0 {
+            continue;
+        }
+        let keys = track
+            .keyframes()
+            .iter()
+            .map(|key| {
+                let PropertyValue::Float(value) = key.value() else {
+                    return Err(unsupported("source scale key must be numeric"));
+                };
+                Ok(PropertyKeyframe::new(
+                    key.id().clone(),
+                    key.layer_time(),
+                    PropertyValue::Float(*value * factor),
+                    key.easing(),
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        *track = PropertyKeyframeTrack::new(keys)
+            .map_err(|error| unsupported(format!("source pixel aspect scale keys: {error}")))?;
+    }
+    Ok(())
 }
 
 /// The FX transform of a placement's static Motion `transform` and `opacity`,
@@ -2318,6 +3714,20 @@ pub(super) fn clip_transform(
     source: [u32; 2],
     canvas: [u32; 2],
 ) -> Result<Transform> {
+    Ok(Transform {
+        opacity: PercentageProperty::new(opacity)
+            .ok_or_else(|| unsupported("Premiere opacity must be between 0 and 100"))?,
+        ..motion_transform(motion, source, canvas)
+    })
+}
+
+/// The FX transform of the static Motion `motion` of a picture of `source`
+/// pixels in a `canvas`, at full opacity, as [`clip_transform`] maps it.
+pub(super) fn motion_transform(
+    motion: &PrStaticTransform,
+    source: [u32; 2],
+    canvas: [u32; 2],
+) -> Transform {
     let mut transform = identity_transform();
     transform.anchor_point = [
         motion.anchor_point[0] * f64::from(source[0]),
@@ -2329,9 +3739,7 @@ pub(super) fn clip_transform(
     );
     transform.scale = motion.scale;
     transform.rotation = motion.rotation;
-    transform.opacity = PercentageProperty::new(opacity)
-        .ok_or_else(|| unsupported("Premiere opacity must be between 0 and 100"))?;
-    Ok(transform)
+    transform
 }
 
 /// Where an imported clip plays on the FX clocks.
@@ -2343,7 +3751,7 @@ struct ClipTiming {
     video_range: TimeRangeProperty,
     source_range: TimeRangeProperty,
     source_intrinsic_duration: Duration,
-    playback: Option<TimeRemapProperty>,
+    playback: fx_schema::LayerPlayback,
 }
 
 /// The timing of `clip`, which plays `source` and whose mask is at
@@ -2353,10 +3761,71 @@ fn clip_timing(
     clip: &PrVideoOccurrence,
     source: &PrVideoStream,
     boundary: MaskBoundary,
+    picture_clocks: &crate::media::PictureClocks,
     record: &str,
     omissions: &mut Vec<Omission>,
 ) -> Result<Option<ClipTiming>> {
     let active_range = tick_range(clip.start_ticks, clip.end_ticks)?;
+    if !matches!(
+        source.interpretation,
+        crate::schema::SourceInterpretation::Original
+    ) {
+        let imported = || -> Result<ClipTiming> {
+            ensure!(clip.playback_rate == 1.0 && clip.time_remap.is_none()
+                && clip.animations.is_empty() && clip.linear_wipe.is_none()
+                && clip.opacity_mask.is_none() && clip.track_matte.is_none()
+                && clip.effects.iter().all(|effect| effect.animations.is_empty())
+                && clip.source_effects.as_ref().is_none_or(|source|
+                    source.effects.iter().all(|effect| effect.animations.is_empty())),
+                "interpreted picture with speed, remap, reverse, hold, keys or coverage clocks is unsupported");
+            let clock = picture_clocks
+                .get(&clip.media)
+                .ok_or_else(|| unsupported("interpreted picture has no bound physical clock"))?
+                .as_ref()
+                .map_err(|error| unsupported(format!("interpreted picture: {error}")))?;
+            let crate::media::PictureClock::Interpreted(clock) = clock else {
+                return Err(unsupported(
+                    "interpreted picture requires an interpreted physical clock",
+                ));
+            };
+            let (video_range, origin) = match boundary {
+                MaskBoundary::Staged => {
+                    // The stage starts at rounded parent milliseconds. Retain
+                    // the native residual in its child clock, rather than
+                    // making staging an implicit source-origin approximation.
+                    let rounded = timing::ticks_from_time(active_range.start, "stage origin")?;
+                    (
+                        TimeRangeProperty::new(Time::ZERO, active_range.duration),
+                        clip.start_ticks
+                            .checked_sub(rounded)
+                            .ok_or_else(|| unsupported("interpreted stage origin overflows"))?,
+                    )
+                }
+                MaskBoundary::Flat => (active_range, clip.start_ticks),
+            };
+            let (playback, source_range) =
+                timing::interpreted_playback(*clock, video_range, clip.in_ticks, origin)?;
+            Ok(ClipTiming {
+                active_range,
+                video_range,
+                source_range,
+                playback,
+                source_intrinsic_duration: Duration::from_millis(clock.duration_millis()),
+            })
+        };
+        return match imported() {
+            Ok(timing) => Ok(Some(timing)),
+            Err(error) => {
+                omit(
+                    omissions,
+                    OmissionScope::Occurrence,
+                    record,
+                    format!("interpreted picture was not imported: {error}"),
+                );
+                Ok(None)
+            }
+        };
+    }
     // Native validation already bounds the final-frame hold. Unit-speed clips
     // keep equal durations when rounding changes endpoints; retimed clips must
     // retain their distinct source span for editable playback keyframes.
@@ -2377,7 +3846,7 @@ fn clip_timing(
         (clip.in_ticks, clip.out_ticks)
     };
     let source_intrinsic_duration = duration_from_ticks(source.intrinsic_ticks)?;
-    let source_range = if clip.time_remap.is_some() {
+    let mut source_range = if clip.time_remap.is_some() {
         // A native ramp's source keys address the full media clock.
         TimeRangeProperty::new(Time::ZERO, source_intrinsic_duration)
     } else {
@@ -2387,16 +3856,33 @@ fn clip_timing(
         }
         range
     };
+    if let Some(clock) = picture_clocks.get(&clip.media) {
+        let clock = clock
+            .as_ref()
+            .map_err(|error| unsupported(format!("picture clock: {error}")))?;
+        if let crate::media::PictureClock::PresentationOrigin(origin) = clock {
+            ensure!(
+                clip.playback_rate == 1.0 && clip.time_remap.is_none(),
+                "presentation-origin picture requires unit-forward playback"
+            );
+            source_range.start = Time::from_millis(origin.shifted_start(
+                source_range.start.as_millis(),
+                source_range.duration.as_millis(),
+            )?);
+        }
+    }
     // Under a stage group, the video and its mask guide are on the
     // group clock, which starts at the clip start.
     let (video_range, clock_origin) = match boundary {
         MaskBoundary::Staged => (TimeRangeProperty::new(Time::ZERO, active_range.duration), 0),
         MaskBoundary::Flat => (active_range, clip.start_ticks),
     };
-    let playback = if let Some(remap) = &clip.time_remap {
-        // Remap key times are on the parent clock.
-        match time_remap_property(remap, clock_origin) {
-            Ok(playback) => Some(playback),
+    let (playback, playback_offset_ms) = if let Some(remap) = &clip.time_remap {
+        // Remap key times are input ticks after In; `played_time_remap` puts
+        // them on the parent clock, on which the clip starts at
+        // `clock_origin`.
+        match played_time_remap(clip, remap, source, video_range, clock_origin) {
+            Ok((playback, offset)) => (Some(playback), offset),
             // No unit-speed window would show the remapped source frames.
             Err(error) => {
                 omit(
@@ -2409,20 +3895,27 @@ fn clip_timing(
             }
         }
     } else if clip.playback_rate != 1.0 {
-        Some(constant_time_remap(
+        let playback = constant_time_remap(
             clip.playback_rate.is_sign_negative(),
             video_range,
             source_range,
-        )?)
+        )?;
+        (Some(playback), 0)
     } else {
-        None
+        (None, 0)
     };
     Ok(Some(ClipTiming {
         active_range,
         video_range,
         source_range,
         source_intrinsic_duration,
-        playback,
+        playback: match playback {
+            Some(property) => {
+                fx_schema::LayerPlayback::remapped(video_range, property, playback_offset_ms)
+            }
+            None => fx_schema::LayerPlayback::linear(video_range, video_range, source_range, 0),
+        }
+        .map_err(unsupported)?,
     }))
 }
 
@@ -2521,6 +4014,45 @@ pub(super) fn motion_tracks(
     layer_tracks
 }
 
+/// The rectangle of a Crop guide: what `crop` keeps of a picture's own frame
+/// of `source` pixels, which Premiere crops before Motion moves the picture.
+pub(super) fn crop_rect(crop: &PrStaticCrop, source: [u32; 2]) -> RectShape {
+    let [source_width, source_height] = source.map(f64::from);
+    let mut rect = black_shape(source[0], source[1]);
+    // A hidden owner does not consume its mask guide for painting. Keep the
+    // outline available when the owner is re-enabled, but never paint it alone.
+    rect.fill_enabled = false;
+    rect.position = [
+        source_width * crop.left / 100.0,
+        source_height * crop.top / 100.0,
+    ];
+    rect.size = [
+        source_width * (100.0 - crop.left - crop.right) / 100.0,
+        source_height * (100.0 - crop.top - crop.bottom) / 100.0,
+    ];
+    rect
+}
+
+/// The Add mask that the Crop guide `guide_id` of `crop` shapes. FX masks
+/// cannot represent negative feather widths, so the mask keeps the crop
+/// geometry, and a feathered Crop is reported as approximated.
+fn crop_mask(
+    crop: &PrStaticCrop,
+    mask_id: FxItemId,
+    guide_id: LayerId,
+    record: &str,
+    omissions: &mut Vec<Omission>,
+) -> PathMask {
+    if crop.edge_feather != 0.0 {
+        approximate(
+            omissions,
+            record,
+            "Crop Edge Feather is approximated by an FX mask; Premiere feather visuals are not preserved exactly",
+        );
+    }
+    guide_mask(mask_id, guide_id, crop.edge_feather.max(0.0))
+}
+
 /// The guide layer of a clip's Crop or Linear Wipe mask, or of a linked
 /// picture's canvas: a plain rectangle beside the layer that it masks.
 pub(super) fn guide_layer(
@@ -2550,7 +4082,7 @@ pub(super) fn guide_layer(
 
 /// The guide layer of a clip's Opacity mask: its outline, in source pixels,
 /// beside the video. A guide never paints, so it has no fill or stroke.
-fn shape_guide(
+pub(super) fn shape_guide(
     id: LayerId,
     name: String,
     parent: Option<LayerId>,
@@ -2584,6 +4116,32 @@ fn shape_guide(
     }
 }
 
+/// The FX mask of a clip's Opacity mask `mask`, shaped by the guide
+/// `guide_id`, and the guide's outline: the mask's outline, which the corpus
+/// stores in unit fractions of the source frame, in the pixels of that
+/// `frame`.
+pub(super) fn opacity_mask(
+    mask: &PrMask,
+    mask_id: FxItemId,
+    guide_id: LayerId,
+    frame: [u32; 2],
+    record: &str,
+    omissions: &mut Vec<Omission>,
+) -> Result<(PathMask, ShapePath)> {
+    ensure!(
+        mask.raster.is_none(),
+        "Object Mask raster requires source-bound physical-video recovery"
+    );
+    for warning in mask.approximations() {
+        approximate(omissions, record, warning);
+    }
+    let path_mask = opacity_path_mask(mask_id, guide_id, mask)?;
+    Ok((
+        path_mask,
+        scaled_path(&fx_path(&mask.path), frame.map(f64::from)),
+    ))
+}
+
 /// The Add mask whose shape is the guide `guide_id`.
 pub(super) fn guide_mask(id: FxItemId, guide_id: LayerId, feather: f64) -> PathMask {
     PathMask {
@@ -2598,17 +4156,130 @@ pub(super) fn guide_mask(id: FxItemId, guide_id: LayerId, feather: f64) -> PathM
     }
 }
 
+/// The Add mask of a clip's Opacity `mask` over its guide `guide_id`, with
+/// its Feather, Mask Opacity and Inverted.
+pub(super) fn opacity_path_mask(
+    id: FxItemId,
+    guide_id: LayerId,
+    mask: &PrMask,
+) -> Result<PathMask> {
+    let mut path_mask = guide_mask(id, guide_id, mask.feather);
+    path_mask.inverted = mask.inverted;
+    path_mask.expansion = mask.expansion;
+    path_mask.opacity = NonNegativeProperty::new(mask.opacity / 100.0)
+        .ok_or_else(|| unsupported("Mask Opacity must be between 0 and 100"))?;
+    Ok(path_mask)
+}
+
+/// Why the Mask Path keys of `clip` cannot import as its guide's outline keys
+/// ([`mask_path_track`]), if they cannot. Premiere keys a Mask Path on the
+/// clip's source clock and the guide counts its keys from the clip start.
+/// Subtracting the source In preserves a trim, including keys before the
+/// visible window. A changed playback speed needs another clock mapping.
+fn mask_path_keys_reason(clip: &PrVideoOccurrence) -> Option<&'static str> {
+    if clip.playback_rate != 1.0 || clip.time_remap.is_some() {
+        Some("they are on the source clock, which a retimed, reversed, held or time-remapped clip does not play at unit speed from its start")
+    } else {
+        None
+    }
+}
+
+/// The `ShapePath` track of the guide `guide_id` of the keyed outline of
+/// `mask`: one key per native key, drawn in the source `frame`'s pixels as
+/// the static guide is, on the layer clock from `source_in`, as Motion keys
+/// are, each eased as Premiere draws the interval before it
+/// ([`mask_key_easing`]).
+fn mask_path_track(
+    mask: &PrMask,
+    guide_id: LayerId,
+    source_in: i64,
+    frame: [u32; 2],
+) -> std::result::Result<PropertyKeyframeTrack, String> {
+    let paths: Vec<_> = mask
+        .path_keys
+        .iter()
+        .map(|key| scaled_path(&fx_path(&key.path), frame.map(f64::from)))
+        .collect();
+    let mut easings = vec![PropertyKeyframeEasing::Linear];
+    for (keys, paths) in mask.path_keys.windows(2).zip(paths.windows(2)) {
+        easings.push(
+            mask_key_easing((&keys[0].path, &paths[0]), (&keys[1].path, &paths[1])).map_err(
+                |reason| {
+                    format!(
+                        "the Mask Path keys at source ticks {} and {} {reason}",
+                        keys[0].source_ticks, keys[1].source_ticks
+                    )
+                },
+            )?,
+        );
+    }
+    let keys = mask
+        .path_keys
+        .iter()
+        .zip(paths)
+        .zip(easings)
+        .enumerate()
+        .map(|(index, ((key, path), easing))| {
+            let millis = keyframes::layer_millis(key.source_ticks, source_in)
+                .map_err(|error| error.to_string())?;
+            Ok(PropertyKeyframe::new(
+                keyframe_id(guide_id, "mask-path", index),
+                TimeOffset::from_millis(millis),
+                PropertyValue::Path(path),
+                easing,
+            ))
+        })
+        .collect::<std::result::Result<Vec<_>, String>>()?;
+    PropertyKeyframeTrack::new(keys)
+        .map_err(|error| format!("its keyframe times/values cannot be imported: {error}"))
+}
+
+/// The FX easing of the mask outline key `to`, for the interval after the
+/// key `from`, each given as its Premiere outline and FX path, that draws
+/// what Premiere draws there ([`crate::schema::PrMaskPathKey`]), or why FX
+/// cannot: Hold between outlines whose vertex counts differ, which Premiere
+/// holds (FX then shows the later outline from its key, where Premiere's
+/// switch is inferred), and Linear between outlines of one count, which
+/// Premiere moves vertex by vertex and FX command by command, only when their
+/// command kinds match; otherwise FX resamples both by arclength
+/// (`interpolate_path` in `fx_composition`). Both directions use this one
+/// rule.
+pub(super) fn mask_key_easing(
+    (from_outline, from_path): (&PrShapePath, &ShapePath),
+    (to_outline, to_path): (&PrShapePath, &ShapePath),
+) -> std::result::Result<PropertyKeyframeEasing, &'static str> {
+    if from_outline.vertices.len() != to_outline.vertices.len() {
+        return Ok(PropertyKeyframeEasing::Hold);
+    }
+    let kinds = |path: &ShapePath| {
+        path.commands
+            .iter()
+            .map(std::mem::discriminant)
+            .collect::<Vec<_>>()
+    };
+    if kinds(from_path) == kinds(to_path) {
+        Ok(PropertyKeyframeEasing::Linear)
+    } else {
+        Err("draw a segment straight at one key and curved at the other; FX would resample the outline between them")
+    }
+}
+
 /// Reports each font of the converted text once. The document packages media
 /// only, so `tsrct` needs every font imported before it renders the text.
 fn report_unpackaged_fonts(project: &PrSequence, omissions: &mut Vec<Omission>) {
     // `video_items` order is layer order: bottom track first, then timeline order.
-    let mut uses: BTreeMap<&str, (String, usize)> = BTreeMap::new();
+    let mut uses: BTreeMap<String, (String, usize)> = BTreeMap::new();
     for (index, item) in project.video_items().enumerate() {
         let Some(graphic) = item.graphic() else {
             continue;
         };
         for (name, document) in graphic.text_documents() {
-            let (_, count) = uses.entry(document.font.as_str()).or_insert_with(|| {
+            // An empty Text saved without a font takes [`EMPTY_TEXT_FONT`].
+            let font = match document.font.as_str() {
+                "" => EMPTY_TEXT_FONT.join(" "),
+                font => font.to_owned(),
+            };
+            let (_, count) = uses.entry(font).or_insert_with(|| {
                 let name = if name.is_empty() {
                     format!("Premiere text {}", index + 1)
                 } else {
@@ -2630,7 +4301,7 @@ fn report_unpackaged_fonts(project: &PrSequence, omissions: &mut Vec<Omission>) 
             omissions,
             OmissionScope::Feature,
             record,
-            fonts::not_packaged(font, "preview or export"),
+            fonts::not_packaged(&font, "preview or export"),
         );
     }
 }
@@ -2692,11 +4363,75 @@ pub(super) fn set_tracks(
     dynamics: &mut AnimationGraph,
     tracks: Vec<(Property, PropertyKeyframeTrack)>,
 ) -> Result<()> {
-    for (property, track) in tracks {
-        dynamics
-            .set_property(property, PropertyAnimator::keyframes(track), Vec::new())
-            .map_err(map_animation_graph_error)?;
+    if tracks.is_empty() {
+        return Ok(());
     }
+    if tracks.len() == 1 {
+        let (property, track) = tracks
+            .into_iter()
+            .next()
+            .expect("one animation track was checked above");
+        return dynamics
+            .set_property(property, PropertyAnimator::keyframes(track), Vec::new())
+            .map_err(map_animation_graph_error);
+    }
+    let mut raw = dynamics.wire_value().clone();
+    if raw.get("entries").is_none() {
+        raw["entries"] = serde_json::Value::Array(Vec::new());
+    }
+    let mut entries = dynamics.entries().to_vec();
+    let mut inserted = false;
+
+    for (property, track) in tracks {
+        let target = fx_schema::PropertyTarget::from(property);
+        let entry = AnimationGraphEntry {
+            target: target.clone(),
+            animator: PropertyAnimator::keyframes(track),
+            dependencies: Vec::new(),
+            random_seed_target: None,
+            layer_refs: LayerRefMap::default(),
+        };
+        let value = serde_json::to_value(&entry)
+            .map_err(|error| AnimationGraphError::Wire(error.to_string()))
+            .map_err(map_animation_graph_error)?;
+        let mut next_entries = entries.clone();
+        let index = next_entries.iter().position(|entry| entry.target == target);
+        if let Some(index) = index {
+            next_entries[index] = entry;
+        } else {
+            next_entries.push(entry);
+        }
+
+        // Validate every intermediate state, as repeated `set_property` did. On
+        // failure, commit only the preceding valid insertions below, preserving
+        // its first-error and partial-success behavior.
+        let validated = match AnimationGraph::from_entries(next_entries) {
+            Ok(validated) => validated,
+            Err(error) => {
+                if inserted {
+                    let committed: AnimationGraph = serde_json::from_value(raw)
+                        .map_err(|source| AnimationGraphError::Wire(source.to_string()))
+                        .map_err(map_animation_graph_error)?;
+                    *dynamics = committed;
+                }
+                return Err(map_animation_graph_error(error));
+            }
+        };
+        entries = validated.entries().to_vec();
+        let raw_entries = raw["entries"]
+            .as_array_mut()
+            .expect("checked graph entries are an array");
+        if let Some(index) = index {
+            raw_entries[index] = value;
+        } else {
+            raw_entries.push(value);
+        }
+        inserted = true;
+    }
+
+    *dynamics = serde_json::from_value(raw)
+        .map_err(|error| AnimationGraphError::Wire(error.to_string()))
+        .map_err(map_animation_graph_error)?;
     Ok(())
 }
 
@@ -2713,7 +4448,8 @@ fn text_layer_name(text: &PrText, index: usize) -> String {
 /// graphic's range and visibility.
 ///
 /// Converted text keeps Premiere's PostScript font name verbatim as its family
-/// with an empty style; no font catalog is consulted.
+/// with an empty style; no font catalog is consulted. An empty Text saved
+/// without a font takes [`EMPTY_TEXT_FONT`].
 pub(super) fn text_layer(
     graphic: &PrGraphic,
     text: &PrText,
@@ -2741,10 +4477,15 @@ pub(super) fn text_layer(
         PositiveProperty::new(super::text::line_spacing(doc))
             .ok_or_else(|| unsupported("text line spacing must be positive"))?,
     );
+    let [font_family, font_style] = if doc.font.is_empty() {
+        EMPTY_TEXT_FONT
+    } else {
+        [doc.font.as_str(), ""]
+    };
     let source_text = TextDocument {
         text: doc.text.clone(),
-        font_family: Arc::from(doc.font.as_str()),
-        font_style: Arc::from(""),
+        font_family: Arc::from(font_family),
+        font_style: Arc::from(font_style),
         font_size: PositiveProperty::new(size)
             .ok_or_else(|| unsupported("text size must be positive"))?,
         font_variations: None,
@@ -2779,6 +4520,9 @@ pub(super) fn text_layer(
         vertical_align,
     };
     let mut transform = object_transform(&text.transform, "text")?;
+    if let Some(horizontal) = text.horizontal_scale {
+        transform.scale[0] = horizontal;
+    }
     transform.anchor_point[1] += super::text::point_anchor_offset(doc);
     Ok(TextLayer {
         id: layer_id,
@@ -2819,6 +4563,9 @@ pub(super) fn rgba(PrRgb(rgb): PrRgb) -> [f64; 4] {
     [r, g, b, 1.0]
 }
 
+#[cfg(test)]
+#[path = "tests/set_tracks.rs"]
+mod set_tracks_tests;
 #[cfg(test)]
 #[path = "tests/premiere_to_tesseract.rs"]
 mod tests;

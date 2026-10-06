@@ -1,0 +1,26 @@
+{
+  "fixture_sha256": "3b6752111fb1108a582ed260806a976fdfa3f352ced594ec872e2c6bc8cc091a",
+  "native_save_sha256": "0333bd41e0482d48b4886ee0529b51ca912c29d5021894fc12167f955b5b8d83",
+  "normalization": "Media paths relocated to existing public tone for portable CPU tests; private project/cache paths scrubbed. Native reference uses the pinned continuous tone. Control fields unchanged.",
+  "application": "Premiere Pro 26.5.2",
+  "sequence_uid": "03196625-7bd6-57d3-ac85-3640c29c817e",
+  "direction": "outgoing only",
+  "clip_gain": 0.5,
+  "fade_seconds": 2,
+  "reference_pcm_sha256": "6ac6d8d47dec3e453e429488583cdf0684b0f6e8c5d5a5551290a19335b309d3",
+  "reference_duration_seconds": 15,
+  "sample_rate": 48000,
+  "channels": 2,
+  "sample_type": "PCM16",
+  "reference_control_media_sha256": "d241fd5816ae9d82179ea3de0dba0f4a65f216b8183eeb9722dda53f187697b3",
+  "fixture_media_sha256": "8059af68f7e13afb3c8d5e9a7834be80d5cdce6cfb11c291d209bd2848c985b1",
+  "gain_sample_method": "Unshifted 10ms right-channel least-squares windows; fixed half gain, no normalization/resampling/offset compensation. Coordinates are transition progress.",
+  "controls": [
+    {"shape": -23, "outgoing_gain_samples": [[0.2025, 0.38450676395641314], [0.6025, 0.0517673840109552], [0.7025, 0.01973932836900288]]},
+    {"shape": -19, "outgoing_gain_samples": [[0.2025, 0.39962770812338927], [0.6025, 0.06743739179145729], [0.7025, 0.028228257111750404]]},
+    {"shape": -6, "outgoing_gain_samples": [[0.2025, 0.43807258731504917], [0.6025, 0.13413361214107417], [0.7025, 0.07235500555096969]]},
+    {"shape": 0, "outgoing_gain_samples": [[0.2025, 0.45101557161899297], [0.6025, 0.1707879832278842], [0.7025, 0.10138638657412148]]},
+    {"shape": 11, "outgoing_gain_samples": [[0.2025, 0.4685867146790555], [0.6025, 0.2409933212725178], [0.7025, 0.165382398447768]]},
+    {"shape": 29, "outgoing_gain_samples": [[0.2025, 0.48525600957097276], [0.6025, 0.3441554584715707], [0.7025, 0.2788999803365231]]}
+  ]
+}

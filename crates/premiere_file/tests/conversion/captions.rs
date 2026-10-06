@@ -1,3 +1,5 @@
+#![cfg(feature = "ffmpeg-library")]
+
 //! Premiere caption tracks convert to timed editable text layers and export as
 //! Type-tool graphics.
 
@@ -406,7 +408,7 @@ fn pinned_caption_styles_convert_from_each_cues_own_payload_and_no_cue_is_lost()
     assert_eq!(
         omissions.iter().map(|omission| omission.reason.as_str()).collect::<Vec<_>>(),
         [
-            "text background (JRB-1995) not converted",
+            "text background not converted",
             "font \"Arial-BoldMT\" is not packaged in this document; import it with tsrct project import-font before preview or export.",
         ]
     );

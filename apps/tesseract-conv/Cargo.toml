@@ -1,6 +1,6 @@
 [package]
 name = "tsrct-conv"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version.workspace = true
 license.workspace = true
@@ -32,4 +32,5 @@ tesseract_file = { path = "../../crates/tesseract_file" }
 
 [dev-dependencies]
 flate2 = "1"
+roxmltree = { workspace = true }
 zip = { version = "7.2", default-features = false }

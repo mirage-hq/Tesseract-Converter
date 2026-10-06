@@ -1,9 +1,6 @@
-use std::{cell::Cell, path::Path, sync::Arc};
+use std::{cell::Cell, sync::Arc};
 
-use fx_schema::{
-    Duration, ImageLayer, LayerData as FxLayer, LayerId, MediaFit, Time, TimeRangeProperty,
-};
-use sha2::{Digest, Sha256};
+use fx_schema::{Duration, LayerData as FxLayer, LayerId, MediaFit, Time, TimeRangeProperty};
 
 use super::*;
 use crate::{
@@ -72,6 +69,7 @@ fn descriptor(kind: MediaKind) -> MediaDescriptor {
         authored_path: "/authored/source.mov".into(),
         target_is_folder: false,
         relative_location: None,
+        relative_hint_malformed: false,
         sequence_names: Vec::new(),
         kind,
     }
@@ -197,16 +195,6 @@ fn occurrence() -> GroupLayer {
         Some(LayerId::new(1)),
         TimeRangeProperty::new(Time::ZERO, Duration::from_secs(5.0)),
     )
-}
-
-fn collect_images<'a>(layers: &'a [fx_schema::Layer], images: &mut Vec<&'a ImageLayer>) {
-    for layer in layers {
-        match layer.data() {
-            FxLayer::Group(group) => collect_images(&group.layers, images),
-            FxLayer::Image(image) => images.push(image),
-            _ => {}
-        }
-    }
 }
 
 #[test]
@@ -575,125 +563,6 @@ fn invalid_sequence_range_count_and_names_are_contextual_omissions() {
     assert!(padded.layers.is_empty() && padded.assets.is_empty());
     assert_eq!(padded.next_id, 3);
     assert!(padded.warnings[0].contains("filename/path exceeds"));
-}
-
-#[test]
-#[ignore = "requires local licensed AEP_IMAGE_SEQUENCE_SOURCE; source cannot be redistributed"]
-fn local_intro_frame_448_packages_source_frame_22_for_each_nested_copy() {
-    let bytes =
-        std::fs::read(std::env::var_os("AEP_IMAGE_SEQUENCE_SOURCE").expect("licensed source path"))
-            .expect("read pinned Intro source");
-    assert_eq!(
-        format!("{:x}", Sha256::digest(&bytes)),
-        "28bbce1b8c9f9625105d632504a97c598394a4753d6b0d923fb19942e302bb5d"
-    );
-    let project = crate::structure::read_project(&bytes).expect("pinned Intro source parses");
-    let mut requests = Vec::new();
-    let converted =
-        crate::structure_document::to_structural_fx_document_with_media_and_expressions(
-            &project,
-            Some(705),
-            &mut |request| {
-                requests.push(request.clone());
-                if request.kind == MediaAssetKind::SequenceImage {
-                    let source_frame = request
-                        .logical_id
-                        .as_str()
-                        .rsplit('-')
-                        .next()
-                        .unwrap()
-                        .parse::<u32>()
-                        .unwrap();
-                    if source_frame <= 56 {
-                        MediaResolution::AssetDimensions([7_680, 3_200])
-                    } else {
-                        MediaResolution::AssetDimensions([3_840, 1_600])
-                    }
-                } else {
-                    MediaResolution::Asset
-                }
-            },
-            &crate::expression_samples::ExpressionSamples::default(),
-        )
-        .expect("fresh master composition import succeeds");
-
-    let frame_22_requests = requests
-        .iter()
-        .filter(|request| request.logical_id.as_str().ends_with("-sequence-frame-22"))
-        .collect::<Vec<_>>();
-    assert!(
-        frame_22_requests.len() >= 2,
-        "both nested source-comp copies must request source frame 22"
-    );
-    assert!(frame_22_requests.iter().all(|request| {
-        request.logical_id == frame_22_requests[0].logical_id
-            && Path::new(&request.authored_path)
-                .file_name()
-                .is_some_and(|name| name == "Sh06_0022.png")
-    }));
-    let mut images = Vec::new();
-    collect_images(converted.document.composition().layers(), &mut images);
-    let frame_22_copies = images
-        .iter()
-        .filter(|image| {
-            image
-                .source
-                .asset()
-                .is_some_and(|asset| asset.asset_id.as_str().ends_with("-sequence-frame-22"))
-        })
-        .collect::<Vec<_>>();
-    assert!(
-        frame_22_copies.len() >= 2,
-        "master comp 705 must contain both nested comp-1223 sequence copies"
-    );
-    assert!(frame_22_copies.iter().all(|image| {
-        image.active_range.start.as_millis() == 917
-            && image.active_range.duration.as_millis() == 41
-            && image
-                .source
-                .asset()
-                .is_some_and(|asset| asset.fit == MediaFit::Stretch)
-    }));
-    let sequence_requests = requests
-        .iter()
-        .filter(|request| request.kind == MediaAssetKind::SequenceImage)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        sequence_requests
-            .iter()
-            .map(|request| request.logical_id.as_str())
-            .collect::<std::collections::HashSet<_>>()
-            .len(),
-        71
-    );
-    assert_eq!(
-        converted
-            .assets
-            .iter()
-            .filter(|request| request.kind == MediaAssetKind::SequenceImage)
-            .map(|request| request.logical_id.as_str())
-            .collect::<std::collections::HashSet<_>>()
-            .len(),
-        57,
-        "unverified half-size frames must not produce bound assets"
-    );
-    assert!(converted.diagnostics.iter().any(|diagnostic| {
-        diagnostic
-            .message
-            .contains("keeps original 3840x1600 PNG bytes")
-            && diagnostic
-                .message
-                .contains("fixed footage canvas 7680x3200")
-    }));
-    assert!(
-        converted
-            .document
-            .composition()
-            .dynamics()
-            .entries()
-            .iter()
-            .all(|entry| !entry.animator.is_js_script())
-    );
 }
 
 #[test]

@@ -1,6 +1,10 @@
-//! AE winding: Bodymovin's pinned exporter preserves 1/2 and reverses 3.
+//! AE winding: Shape Direction values 1/2 are normal and 3 reverses.
 use super::*;
-use fx_schema::PropertyAnimator;
+use fx_schema::{
+    PropertyAnimator, PropertyValue,
+    animator::{AnimatorData, PropertyKeyframe, PropertyKeyframeTrack},
+};
+use serde::ser::Error as _;
 
 #[cfg(test)]
 mod tests;
@@ -171,6 +175,46 @@ pub(super) fn apply(
                 layer.shape.path.clone(),
             ))?;
             entry.dependencies.clear();
+        } else {
+            // Direction applies to every authored value, not just the static
+            // outline. Keep key identity, timing and animator state intact.
+            let mut data = entry.animator.data().clone();
+            match &mut data {
+                AnimatorData::Constant {
+                    value: PropertyValue::Path(path),
+                } => {
+                    *path = reverse(path).ok_or_else(|| {
+                        serde_json::Error::custom("malformed native direction Path value")
+                    })?;
+                }
+                AnimatorData::Keyframes { track, .. } => {
+                    let keys = track
+                        .keyframes()
+                        .iter()
+                        .map(|key| {
+                            let PropertyValue::Path(path) = key.value() else {
+                                return Ok(key.clone());
+                            };
+                            let path = reverse(path).ok_or_else(|| {
+                                serde_json::Error::custom("malformed native direction Path key")
+                            })?;
+                            Ok(PropertyKeyframe::new(
+                                key.id().clone(),
+                                key.layer_time(),
+                                PropertyValue::Path(path),
+                                key.easing(),
+                            )
+                            .with_spatial_tangents(
+                                key.spatial_in_tangent(),
+                                key.spatial_out_tangent(),
+                            ))
+                        })
+                        .collect::<Result<Vec<_>, serde_json::Error>>()?;
+                    *track = PropertyKeyframeTrack::new(keys).map_err(serde_json::Error::custom)?;
+                }
+                _ => continue,
+            }
+            entry.animator = PropertyAnimator::from_data(&data)?;
         }
     }
     Ok(())

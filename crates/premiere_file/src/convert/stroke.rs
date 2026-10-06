@@ -14,10 +14,14 @@ use fx_schema::{
     Time, TimeRangeProperty, VideoLayer,
 };
 
+/// Admits the measured border approximation of `clip`'s Stroke, which is
+/// measured on a clip's own opaque picture. `source_converted` is whether a
+/// source effect of its master clip converted into that picture's stack.
 pub(super) fn validate(
     clip: &PrVideoOccurrence,
     source: &PrVideoStream,
-    scope: &LayerScope<'_, '_, '_>,
+    scope: &LayerScope<'_, '_>,
+    source_converted: bool,
 ) -> Result<()> {
     // File admission accepts only opaque H.264 or HEVC Main/Main10 video.
     // Still/alpha sources, linked compositions and generators cannot enter here.
@@ -35,6 +39,10 @@ pub(super) fn validate(
             && clip.transform.scale[0] > 0.0
         && clip.animations.iter().all(|a| a.property() == PrAnimatedProperty::Opacity),
         "Film Impact Stroke requires an opaque physical picture with static uniform Motion on the root clock, unit playback and no crop, mask, other effects or frame blending");
+    ensure!(
+        !source_converted,
+        "Film Impact Stroke requires a picture without converted source effects: its border approximation is measured on the clip's own opaque picture"
+    );
     Ok(())
 }
 
@@ -42,7 +50,7 @@ pub(super) fn wrap(
     mut video: VideoLayer,
     profile: PrFilmImpactStroke,
     source: &PrVideoStream,
-    scope: &mut LayerScope<'_, '_, '_>,
+    scope: &mut LayerScope<'_, '_>,
 ) -> Result<Layer> {
     let owner = video.id;
     let transform = video.transform;

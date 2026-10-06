@@ -7,7 +7,11 @@ use crate::format::{invalid, FormatError, Result};
 use crate::schema::{native::Reference, records};
 use roxmltree::{Document, Node, NodeId, ParsingOptions};
 use serde::de::DeserializeOwned;
-use std::{collections::HashMap, fmt};
+use std::{
+    collections::HashMap,
+    fmt,
+    path::{Path, PathBuf},
+};
 
 pub(crate) use sequences::cyclic_sequences;
 pub(crate) use sequences::nested_sequence;
@@ -31,8 +35,8 @@ const BINARY_HASH: &str = "BinaryHash";
 // Premiere 26 accepts and preserves these four unresolved default slots in a
 // from-scratch project, then supplies the effective compile settings
 // internally. This is the only admitted dangling reference shape; every
-// semantic graph edge remains strict. The writer's allocation order produces
-// exactly these IDs (writer/graph.rs).
+// semantic graph edge remains strict. Older exports omitted the settings
+// records at these IDs; retain admission of those files.
 const REGENERATED_PROJECT_DEFAULTS: [(&str, &str); 4] = [
     ("VideoSettings", "12"),
     ("AudioSettings", "13"),
@@ -198,6 +202,8 @@ pub(crate) struct Graph<'a> {
     /// Premiere writes each distinct binary value once; later copies are empty
     /// elements that name the first one by `BinaryHash`.
     binaries: HashMap<String, Binary>,
+    source_dir: Option<PathBuf>,
+    media_relink: std::collections::BTreeMap<String, PathBuf>,
 }
 
 /// The value that the nonempty definitions of one `BinaryHash` store.
@@ -290,7 +296,33 @@ impl<'a> Graph<'a> {
             ids,
             uids,
             binaries,
+            source_dir: None,
+            media_relink: std::collections::BTreeMap::new(),
         })
+    }
+
+    pub(crate) fn with_source_dir(mut self, source_dir: Option<&Path>) -> Self {
+        self.source_dir = source_dir.map(Path::to_path_buf);
+        self
+    }
+
+    pub(crate) fn source_dir(&self) -> Option<&Path> {
+        self.source_dir.as_deref()
+    }
+
+    pub(crate) fn with_media_relink(
+        mut self,
+        relink: Option<&crate::ValidatedMediaRelink>,
+    ) -> crate::error::Result<Self> {
+        if let Some(relink) = relink {
+            self.media_relink = relink.paths_for_graph(&self)?;
+        }
+        Ok(self)
+    }
+
+    pub(crate) fn relinked_media_path(&self, uid: Option<&str>) -> Option<&Path> {
+        uid.and_then(|uid| self.media_relink.get(uid))
+            .map(PathBuf::as_path)
     }
 
     /// The stored text of a deduplicated binary value, or `None` when no element
@@ -340,8 +372,8 @@ impl<'a> Graph<'a> {
                 continue;
             }
             // The audio reader also resolves each track and clip item in its own
-            // loop. Its other links, including the audio transitions it never
-            // reads, stay strict.
+            // loop. Its other links, including a track's audio transitions,
+            // stay strict.
             if audio_members.is_some_and(|members| node.parent() == Some(members.node)) {
                 continue;
             }

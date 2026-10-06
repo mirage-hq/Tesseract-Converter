@@ -4,6 +4,7 @@ pub(super) mod effects;
 pub(super) mod graphic;
 pub(super) mod mask;
 pub(super) mod nested;
+pub(super) mod transitions;
 pub(super) mod video;
 
 use crate::schema::{
@@ -14,7 +15,7 @@ use crate::schema::{
 };
 
 /// The `StartKeyframe` of a scalar parameter whose static value is `value`.
-fn scalar_start_keyframe(value: impl std::fmt::Display) -> String {
+pub(super) fn scalar_start_keyframe(value: impl std::fmt::Display) -> String {
     format!("{},{value},0,0,0,0,0,0", records::STATIC_KEYFRAME_TIME)
 }
 
