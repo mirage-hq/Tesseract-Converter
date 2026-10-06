@@ -1,7 +1,7 @@
 use super::*;
 use crate::{properties, rifx::Chunk};
 
-fn numeric(chunks: &[Chunk], target: &str) -> Option<properties::NumericProperty> {
+pub(super) fn numeric(chunks: &[Chunk], target: &str) -> Option<properties::NumericProperty> {
     if let Ok(runs) = properties::runs(chunks) {
         for (name, run) in runs {
             if name == target {
