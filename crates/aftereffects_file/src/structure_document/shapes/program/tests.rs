@@ -242,6 +242,58 @@ fn number(name: &str, values: &[f64]) -> Vec<Chunk> {
     ]
 }
 
+/// A publishable two-component native key record for structure-level tests.
+fn keyed_pair(name: &str, keys: &[(i32, [f64; 2])]) -> Vec<Chunk> {
+    let mut property = name.as_bytes().to_vec();
+    property.resize(40, 0);
+    let mut meta = vec![0; 124];
+    meta[..2].copy_from_slice(&[0xdb, 0x99]);
+    meta[3] = 2;
+    meta[12..16].copy_from_slice(&1_000_u32.to_be_bytes());
+    meta[68] = 1;
+    let mut header = vec![0; 24];
+    header[10..12].copy_from_slice(&u16::try_from(keys.len()).unwrap().to_be_bytes());
+    header[18..20].copy_from_slice(&88_u16.to_be_bytes());
+    header[23] = 4;
+    let mut items = Vec::new();
+    for (time, [x, y]) in keys {
+        items.extend(time.to_be_bytes());
+        items.extend([2, 2, 0, 0]);
+        // Values, in speeds, in influences, out speeds, out influences.
+        for value in [
+            *x,
+            *y,
+            0.0,
+            0.0,
+            100.0 / 3.0,
+            100.0 / 3.0,
+            0.0,
+            0.0,
+            100.0 / 3.0,
+            100.0 / 3.0,
+        ] {
+            items.extend(value.to_be_bytes());
+        }
+    }
+    vec![
+        Chunk::data(*b"tdmn", property).unwrap(),
+        Chunk::list(
+            *b"tdbs",
+            vec![
+                Chunk::data(*b"tdb4", meta).unwrap(),
+                Chunk::data(*b"tdsb", vec![0, 0, 0, 1]).unwrap(),
+                Chunk::list(
+                    *b"list",
+                    vec![
+                        Chunk::data(*b"lhd3", header).unwrap(),
+                        Chunk::data(*b"ldat", items).unwrap(),
+                    ],
+                ),
+            ],
+        ),
+    ]
+}
+
 #[test]
 fn group_opacity_composites_once_and_paint_opacities_have_separate_targets() {
     use super::super::{Collector, Decorations};
@@ -515,6 +567,238 @@ fn review_shapes_boolean_missing_operand_is_atomic_and_keeps_independent_sibling
             )
         }),
         "the independent following stroke group must survive"
+    );
+    validate(layers, collector.animations);
+}
+
+#[test]
+fn nested_translated_scale_intersection_keeps_painted_alpha_and_independent_clocks() {
+    use std::collections::BTreeSet;
+
+    use super::super::{Collector, Decorations};
+    use fx_schema::{BooleanOp, Position, PropType, PropertyTarget, PropertyValue};
+
+    let rectangle_source = || {
+        entry(
+            "ADBE Vector Shape - Rect",
+            entries(vec![
+                number("ADBE Vector Rect Size", &[1_920.0, 1_080.0]),
+                number("ADBE Vector Rect Position", &[0.0, 0.0]),
+                number("ADBE Vector Rect Roundness", &[0.0]),
+            ]),
+        )
+    };
+    let translation_parent =
+        |child: Vec<Chunk>, anchor: [f64; 2], position: [f64; 2], opacity: Vec<Chunk>| {
+            entry(
+                "ADBE Vector Group",
+                entries(vec![
+                    entry("ADBE Vectors Group", child),
+                    entry(
+                        "ADBE Vector Transform Group",
+                        entries(vec![
+                            number("ADBE Vector Anchor", &anchor),
+                            number("ADBE Vector Position", &position),
+                            number("ADBE Vector Skew Axis", &[47.0]),
+                            opacity,
+                        ]),
+                    ),
+                ]),
+            )
+        };
+    let operand = |anchor_x: f64, keys: &[(i32, [f64; 2])]| {
+        let inner = entry(
+            "ADBE Vector Group",
+            entries(vec![
+                entry(
+                    "ADBE Vectors Group",
+                    entries(vec![rectangle_source(), fill()]),
+                ),
+                entry(
+                    "ADBE Vector Transform Group",
+                    entries(vec![
+                        number("ADBE Vector Anchor", &[anchor_x, 0.0]),
+                        number("ADBE Vector Position", &[anchor_x, 0.0]),
+                        keyed_pair("ADBE Vector Scale", keys),
+                    ]),
+                ),
+            ]),
+        );
+        let keyed_opacity = relabel_scalar(
+            "ADBE Vector Group Opacity",
+            native_keyed_scalar_from(include_bytes!(
+                "../../../../tests/fixtures/properties/property_1D_opacity.aep"
+            )),
+        );
+        let middle = translation_parent(inner, [10.0, 20.0], [610.0, 320.0], keyed_opacity);
+        translation_parent(
+            middle,
+            [-5.0, 15.0],
+            [355.0, 255.0],
+            number("ADBE Vector Group Opacity", &[37.0]),
+        )
+    };
+    let chunks = entries(vec![
+        operand(960.0, &[(1_000, [0.0, 100.0]), (2_000, [100.0, 100.0])]),
+        operand(-960.0, &[(500, [0.0, 100.0]), (1_800, [100.0, 100.0])]),
+        entry(
+            "ADBE Vector Filter - Merge",
+            number("ADBE Vector Merge Type", &[4.0]),
+        ),
+        fill(),
+        group(entries(vec![rectangle_source(), stroke()])),
+    ]);
+    let mut next_id = 2;
+    let mut animation_budget = AnimationBudget::default();
+    let mut collector = Collector {
+        includes_occurrence_pipeline: true,
+        next_id: &mut next_id,
+        animation_budget: &mut animation_budget,
+        animations: Vec::new(),
+        warnings: Vec::new(),
+        frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
+    };
+    let layers = collector.collect_contents(
+        &chunks,
+        "translated intersection",
+        fx_schema::LayerId::new(1),
+        8,
+        &Decorations::default(),
+    );
+
+    let boolean = layers
+        .iter()
+        .find_map(|layer| match layer {
+            fx_schema::LayerData::BooleanOperation(boolean) => Some(boolean),
+            _ => None,
+        })
+        .expect("the painted intersection must survive");
+    assert_eq!(boolean.op, BooleanOp::Intersect);
+    assert_eq!((boolean.layers.len(), boolean.fills.len()), (2, 1));
+    let operands: Vec<_> = boolean
+        .layers
+        .iter()
+        .map(|layer| match layer.data() {
+            fx_schema::LayerData::Shape(shape) => shape,
+            other => panic!("editable Shape operand required, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        operands
+            .iter()
+            .map(|shape| (shape.transform.anchor_point, shape.transform.position))
+            .collect::<Vec<_>>(),
+        vec![
+            ([960.0, 0.0], Position::TwoD([1_920.0, 540.0])),
+            ([-960.0, 0.0], Position::TwoD([0.0, 540.0])),
+        ]
+    );
+    for (shape, expected_times) in operands.iter().zip([[1_000, 2_000], [500, 1_800]]) {
+        let properties: BTreeSet<_> = collector
+            .animations
+            .iter()
+            .filter_map(|entry| entry.target.as_property())
+            .filter(|property| property.layer_id() == shape.id)
+            .map(|property| property.property_type())
+            .collect();
+        assert_eq!(
+            properties,
+            BTreeSet::from([PropType::ScaleX, PropType::ScaleY]),
+            "copied position constants must not overwrite the composed position"
+        );
+        let target = PropertyTarget::layer(shape.id, PropType::ScaleX);
+        let track = collector
+            .animations
+            .iter()
+            .find(|entry| entry.target == target)
+            .and_then(|entry| entry.animator.keyframe_track())
+            .unwrap_or_else(|| {
+                panic!(
+                    "each operand keeps its own editable Scale-X clock; warnings: {:#?}",
+                    collector.warnings
+                )
+            });
+        assert_eq!(
+            track
+                .keyframes()
+                .iter()
+                .map(|key| key.layer_time().as_millis())
+                .collect::<Vec<_>>(),
+            expected_times
+        );
+        assert_eq!(
+            track
+                .keyframes()
+                .iter()
+                .map(|key| key.value())
+                .collect::<Vec<_>>(),
+            vec![&PropertyValue::Float(0.0), &PropertyValue::Float(100.0)]
+        );
+        assert!(shape.active_range.end().as_millis() > 2_500);
+        let [min_x, max_x] = [-960.0, 960.0].map(|x| {
+            (x - shape.transform.anchor_point[0]) + shape.transform.position.xy_array()[0]
+        });
+        let [min_y, max_y] = [-540.0, 540.0].map(|y| {
+            (y - shape.transform.anchor_point[1]) + shape.transform.position.xy_array()[1]
+        });
+        assert_eq!([min_x, max_x, min_y, max_y], [0.0, 1_920.0, 0.0, 1_080.0]);
+    }
+    assert_eq!(
+        collector
+            .animations
+            .iter()
+            .filter(|entry| {
+                entry
+                    .target
+                    .as_property()
+                    .is_some_and(|property| property.property_type() == PropType::Opacity)
+                    && entry.animator.keyframe_track().is_some()
+            })
+            .count(),
+        2,
+        "animated parent opacity is retained on hidden controls but is not geometry"
+    );
+    assert_eq!(
+        collector
+            .warnings
+            .iter()
+            .filter(|warning| warning.contains("2 retained native keyframe tracks copied"))
+            .count(),
+        2,
+        "copy success is reported once each operand's complete track batch commits"
+    );
+    assert!(
+        collector
+            .warnings
+            .iter()
+            .all(|warning| !warning.contains("native child keys copied"))
+    );
+    assert_eq!(
+        layers
+            .iter()
+            .filter(|layer| matches!(layer, fx_schema::LayerData::Shape(shape) if shape.is_hidden))
+            .count(),
+        3,
+        "Boolean operands and the independent sibling source stay concealed"
+    );
+    assert!(
+        !layers.iter().any(|layer| {
+            matches!(layer, fx_schema::LayerData::Shape(shape) if !shape.is_hidden && !shape.shape.fills.is_empty())
+        }),
+        "the repair must not paint an unmasked source rectangle"
+    );
+    assert!(layers.iter().any(|layer| {
+        matches!(layer, fx_schema::LayerData::Group(group) if group.layers.iter().any(|child| {
+            matches!(child.data(), fx_schema::LayerData::Shape(shape) if !shape.shape.strokes.is_empty())
+        }))
+    }), "independent sibling paint must survive");
+    assert!(
+        collector
+            .animations
+            .iter()
+            .all(|entry| !entry.animator.is_js_script())
     );
     validate(layers, collector.animations);
 }
@@ -939,7 +1223,7 @@ fn native_direction_reverses_primitive_winding_and_rectangle_trim_start() {
     }
 }
 
-fn native_keyed_scalar() -> Vec<Chunk> {
+fn native_keyed_scalar_from(bytes: &[u8]) -> Vec<Chunk> {
     fn find(chunks: &[Chunk]) -> Option<Vec<Chunk>> {
         for (_, run) in crate::properties::runs(chunks).ok()? {
             if crate::properties::unique_list(run, *b"tdbs")
@@ -956,10 +1240,7 @@ fn native_keyed_scalar() -> Vec<Chunk> {
         }
         chunks.iter().filter_map(Chunk::children).find_map(find)
     }
-    let project = crate::structure::read_project(include_bytes!(
-        "../../../../tests/fixtures/properties/property_rotation.aep"
-    ))
-    .unwrap();
+    let project = crate::structure::read_project(bytes).unwrap();
     project
         .items
         .iter()
@@ -970,6 +1251,12 @@ fn native_keyed_scalar() -> Vec<Chunk> {
             _ => None,
         })
         .expect("native scalar key records")
+}
+
+fn native_keyed_scalar() -> Vec<Chunk> {
+    native_keyed_scalar_from(include_bytes!(
+        "../../../../tests/fixtures/properties/property_rotation.aep"
+    ))
 }
 
 fn relabel_scalar(name: &str, run: Vec<Chunk>) -> Vec<Chunk> {

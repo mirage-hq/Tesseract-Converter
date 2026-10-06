@@ -40,6 +40,7 @@ mod pr4442_vector_cases;
 mod radial_solid_origin;
 mod reservations;
 mod review_regressions;
+mod root_adjustment_mask_fallback;
 mod selector_index_aliases;
 mod shader_owner;
 mod signed_key_ease;

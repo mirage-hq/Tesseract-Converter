@@ -12,9 +12,9 @@
 //! its own `FormattedTextData`; the track's `CaptionDataTemplateStyle` is only
 //! a default (Adobe-verified: a cue with its own fill draws that fill, and a
 //! cue without a background over a background template draws no box), so a
-//! cue's style is read from its payload and the template is only decoded, to
-//! omit a track whose layout is unknown. Caption content never fails its
-//! sequence; a track or cue that cannot convert is omitted with its reason.
+//! cue's style is read from its payload without decoding the unused template.
+//! Missing or unsupported template metadata is diagnosed. Caption content never
+//! fails its sequence; a track or cue that cannot convert is omitted with its reason.
 //!
 //! `IsMuted=true` on a caption track or cue is read as track output or cue
 //! Enable off, as for video clips, so the cue imports as a hidden layer. This
@@ -50,8 +50,8 @@ use crate::format::{
 use crate::schema::{
     caption::{self, CAPTION_MEDIA_TOKEN},
     native::{
-        Block, CaptionDataClipTrack, CaptionDataClipTrackItem, DataComponentChain, DataMediaSource,
-        DataStream, EncodedValue, MasterClip, Media, Reference, SubClip, TranscriptClip,
+        Block, CaptionDataClipTrackItem, DataComponentChain, DataMediaSource, DataStream,
+        EncodedValue, MasterClip, Media, Reference, SubClip, TranscriptClip,
     },
     records,
     text::{
@@ -309,7 +309,14 @@ fn read_track(
             }
         }
     }
-    let track = graph.decode::<CaptionDataClipTrack>(record)?;
+    // Decode only the consumed track fields: even the template's encoding is
+    // optional metadata, not a dependency of a cue's FormattedTextData.
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct TrackFields {
+        data_clip_track: Option<crate::schema::native::DataClipTrack>,
+    }
+    let track = graph.decode::<TrackFields>(record)?;
     let clip_track = required(
         track.value.data_clip_track.and_then(|data| data.clip_track),
         &identity,
@@ -360,12 +367,22 @@ fn read_track(
         .clip_items
         .and_then(|items| items.track_items)
         .map_or_else(Vec::new, |items| items.items);
-    let style = required(
-        track.value.caption_data_template_style.as_ref(),
-        &identity,
-        "CaptionDataTemplateStyle",
-    )?;
-    decode_payload(graph, style, &identity, "CaptionDataTemplateStyle")?;
+    let template_reason = match root.child("CaptionDataTemplateStyle") {
+        None => Some("missing CaptionDataTemplateStyle"),
+        Some(style) => match style.attribute("Encoding") {
+            None => Some("missing CaptionDataTemplateStyle encoding"),
+            Some(records::ENCODING) => None,
+            Some(_) => Some("unsupported CaptionDataTemplateStyle encoding"),
+        },
+    };
+    if let Some(reason) = template_reason {
+        omit(
+            omissions,
+            OmissionScope::Feature,
+            &identity,
+            format!("caption default template not used: {reason}; each admitted cue uses its own FormattedTextData"),
+        );
+    }
     Ok(CaptionTrack {
         identity,
         index,
@@ -383,6 +400,7 @@ fn read_cue(
     sequence: &PrSequence,
     omissions: &mut Vec<Omission>,
 ) -> Result<PrGraphic> {
+    let mut cue_notes = Vec::new();
     let identity = record.identity();
     let root = record.element();
     report_unknown_children(
@@ -390,7 +408,7 @@ fn read_cue(
         &["DataClipTrackItem", "BlockVector", "LanguageCodeISO"],
         &identity,
         "",
-        omissions,
+        &mut cue_notes,
     );
     let clip_track_item = root
         .child("DataClipTrackItem")
@@ -402,7 +420,7 @@ fn read_cue(
             &["ComponentOwner", "TrackItem", "SubClip", "IsMuted"],
             &identity,
             path,
-            omissions,
+            &mut cue_notes,
         );
         if let Some(owner) = item.child("ComponentOwner") {
             report_unknown_children(
@@ -410,7 +428,7 @@ fn read_cue(
                 &["Components"],
                 &identity,
                 &format!("{path}ComponentOwner/"),
-                omissions,
+                &mut cue_notes,
             );
         }
     }
@@ -454,7 +472,7 @@ fn read_cue(
         &identity,
         end.checked_sub(start),
         sequence.native_frame_rate(),
-        omissions,
+        &mut cue_notes,
     )?;
     let blocks = required(item.value.block_vector.as_ref(), &identity, "BlockVector")?;
     let [block] = blocks.items.as_slice() else {
@@ -475,7 +493,7 @@ fn read_cue(
     let background_reason = {
         for feature in &decoded.omitted {
             if matches!(feature, OmittedTextFeature::RunStyleMetadata { .. }) {
-                approximate(omissions, &identity, feature.to_string());
+                approximate(&mut cue_notes, &identity, feature.to_string());
             }
         }
         match decoded
@@ -503,7 +521,7 @@ fn read_cue(
     };
     if let Some(reason) = background_reason {
         omit(
-            omissions,
+            &mut cue_notes,
             OmissionScope::Feature,
             &identity,
             format!("{label}: text background not converted: {reason}"),
@@ -542,6 +560,7 @@ fn read_cue(
         enabled: enabled && track.visible,
     };
     graphic.validate(sequence.native_frame_rate())?;
+    omissions.extend(cue_notes);
     Ok(graphic)
 }
 

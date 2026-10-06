@@ -60,14 +60,11 @@ pub(super) fn wrap(
     let local_range = TimeRangeProperty::new(Time::ZERO, active_range.duration);
     let video_id = LayerId::new(*scope.next_index as u64 + 1);
     *scope.next_index += 1;
-    let prescale = match profile {
-        PrFilmImpactStroke::Outline100 => 100.0,
-        _ => 99.0,
-    };
+    let prescale = profile.prescale();
     video.id = video_id;
     video.parent = Some(owner);
     video.playback = relocate_playback(&video.playback, local_range)?;
-    video.is_hidden = false;
+    video.is_hidden = profile.hides_source();
     video.transform = identity_transform();
     video.transform.anchor_point = [
         f64::from(source.width) * 0.5,
@@ -84,7 +81,7 @@ pub(super) fn wrap(
         let rect_id = LayerId::new(*scope.next_index as u64 + 1);
         *scope.next_index += 1;
         let mut rect = super::black_shape(source.width, source.height);
-        rect.fill_color = [1.0; 4];
+        rect.fill_color = [1.0, 1.0, 1.0, profile.opacity() / 100.0];
         children.push(Layer::from_data(&LayerData::Rect(RectLayer {
             id: rect_id,
             name: "Premiere Stroke original-bounds border".into(),
@@ -100,6 +97,33 @@ pub(super) fn wrap(
             transform: identity_transform(),
             rect,
         }))?);
+    } else if profile.hides_source() {
+        // The known opaque rectangle permits an independent editable outline.
+        // Hide the source itself; hiding a video with an outline effect would
+        // also hide that outline. No opaque source pixel is shown as fallback.
+        let rect_id = LayerId::new(*scope.next_index as u64 + 1);
+        *scope.next_index += 1;
+        let mut rect = super::black_shape(source.width, source.height);
+        rect.fill_enabled = false;
+        rect.stroke_enabled = true;
+        rect.stroke_color = Some([1.0, 1.0, 1.0, profile.opacity() / 100.0]);
+        rect.stroke_width = NonNegativeProperty::new(0.06 * transform.scale[0])
+            .expect("positive finite Motion validated");
+        children.push(Layer::from_data(&LayerData::Rect(RectLayer {
+            id: rect_id,
+            name: "Premiere Stroke concealed-source outline".into(),
+            description: "Fixed outline approximation; source remains hidden".into(),
+            is_hidden: false,
+            parent: Some(owner),
+            blend_mode: BlendMode::Normal,
+            track_matte: None,
+            masks: Vec::new(),
+            effects: Vec::new(),
+            motion_blur: false,
+            active_range: local_range,
+            transform: video.transform,
+            rect,
+        }))?);
     } else {
         let width = NonNegativeProperty::new(0.06 * transform.scale[0])
             .expect("positive finite static Motion was validated");
@@ -107,9 +131,11 @@ pub(super) fn wrap(
             .effects
             .push(EffectRecord::from_data(&EffectData::Identified {
                 id: scope.effect_ids.take(),
+                compositing_options: None,
+                extensions: Default::default(),
                 enabled: true,
                 effect: EffectPayload::Known(LayerEffect::Stroke(StrokeOutlineStyle::new(
-                    [1.0; 4],
+                    [1.0, 1.0, 1.0, profile.opacity() / 100.0],
                     width,
                     LayerStrokePosition::Outside,
                 ))),

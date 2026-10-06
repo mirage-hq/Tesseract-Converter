@@ -34,9 +34,11 @@ result and any warnings. See [supported features and limitations](docs/formats/R
 
 ## Version and FX schema
 
-| tsrct-conv version | fxSchemaVersion in this source revision |
+| tsrct-conv version | fxSchemaVersion in the release source revision |
 | --- | --- |
+| 0.1.0 | 67 |
 | 0.2.0 | 69 |
+| 0.2.1 | 70 |
 
 `fxSchemaVersion` is the FX schema inventory revision, not the `.tsrct` container
 format version or a compatibility gate. New `.tsrct` files record it in
@@ -45,7 +47,8 @@ Release description report the revision built from their exact source commit.
 New releases use immutable `v<version>` tags; `build.json` inside each ZIP records
 the exact source commit. Older test releases could reuse a Cargo version, so
 check their recorded schema revision rather than assuming identical builds.
-Update this table when changing the converter version or FX schema revision.
+Append an entry when changing the converter version or FX schema revision;
+preserve existing entries as history.
 
 ## Install
 

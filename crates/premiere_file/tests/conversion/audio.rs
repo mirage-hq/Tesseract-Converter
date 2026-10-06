@@ -765,6 +765,184 @@ fn audible_document() -> Value {
 
 #[cfg(feature = "ffmpeg-library")]
 #[test]
+fn authored_sound_tail_beyond_packaged_wav_retains_available_audio_and_siblings() {
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path();
+    let mut music = fs::read(fixture("audio-mono.wav")).unwrap();
+    // 811,328 / 48,000 s is 16,902.666… ms: the native descriptor keeps that
+    // exact sample clock while the editable clip ends at the nearest 16,903 ms.
+    let retained_samples = 811_328_u32;
+    let retained_bytes = retained_samples * 2;
+    let source_pcm = music[44..].to_vec();
+    music.truncate(44);
+    while music.len() < 44 + usize::try_from(retained_bytes).unwrap() {
+        let remaining = 44 + usize::try_from(retained_bytes).unwrap() - music.len();
+        music.extend_from_slice(&source_pcm[..remaining.min(source_pcm.len())]);
+    }
+    let riff_size = u32::try_from(music.len()).unwrap() - 8;
+    music[4..8].copy_from_slice(&riff_size.to_le_bytes());
+    music[40..44].copy_from_slice(&retained_bytes.to_le_bytes());
+    let music_path = root.join("short-music.wav");
+    fs::write(&music_path, &music).unwrap();
+
+    let source = root.join("source.tsrct");
+    let mut document = audible_document();
+    document["duration"] = json!(17.1);
+    let music_layer = &mut document["composition"]["layers"][0];
+    music_layer["playback"] = crate::test_support::linear_playback(
+        json!({"start": 100, "duration": 17_000}),
+        json!({"start": 0, "duration": 17_000}),
+    );
+    music_layer["sourceRange"]["duration"] = json!(17_000);
+    music_layer["sourceIntrinsicDuration"] = json!(17_000);
+    TesseractFileBuilder::from_project_json(&serde_json::to_vec(&document).unwrap())
+        .unwrap()
+        .add_asset(
+            "premiere-video-1",
+            fixture("video-with-audio.mp4"),
+            AssetKind::Video,
+        )
+        .unwrap()
+        .add_asset("music", &music_path, AssetKind::Audio)
+        .unwrap()
+        .write(&source)
+        .unwrap();
+
+    let native = root.join("native");
+    let omissions = tesseract_to_premiere(&source, &native, false).unwrap();
+    assert!(
+        omissions.iter().any(|item| {
+            item.kind == premiere_file::OmissionKind::Approximated
+                && item.record == "layer 3 (\"Music\")"
+                && item
+                    .reason
+                    .contains("retained available source [0,16903) ms on timeline [100,17003) ms")
+                && item.reason.contains("unavailable 97 ms authored tail")
+                && item.reason.contains("no padded samples")
+        }),
+        "{omissions:?}"
+    );
+    assert!(
+        !omissions.iter().any(|item| {
+            item.scope == premiere_file::OmissionScope::Occurrence
+                && item.record == "layer 3 (\"Music\")"
+        }),
+        "{omissions:?}"
+    );
+    let xml = read_xml(&native.join("project.prproj"));
+    assert_eq!(xml.matches("<Sequence ObjectUID=").count(), 1);
+    assert!(xml.contains("<Name>Fresh exact 30</Name>"));
+    assert_eq!(xml.matches("<VideoClipTrackItem ").count(), 1);
+    assert_eq!(xml.matches("<AudioClipTrackItem ").count(), 2);
+    assert_eq!(
+        fs::read(native.join("media/short-music.wav")).unwrap(),
+        music
+    );
+
+    let wire = roxmltree::Document::parse(&xml).unwrap();
+    let work_out = wire
+        .descendants()
+        .filter(|node| node.has_tag_name("MZ.WorkOutPoint"))
+        .map(|node| node.text().unwrap().parse::<i64>().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(work_out, [4_343_673_600_000]); // Authored sequence duration: 17.1 s.
+    fn child<'a, 'input>(
+        node: roxmltree::Node<'a, 'input>,
+        tag: &str,
+    ) -> roxmltree::Node<'a, 'input> {
+        node.children()
+            .find(|child| child.has_tag_name(tag))
+            .unwrap()
+    }
+    let follow = |link: roxmltree::Node<'_, '_>| {
+        let id = link.attribute("ObjectRef");
+        let uid = link.attribute("ObjectURef");
+        let records: Vec<_> = wire
+            .root_element()
+            .children()
+            .filter(|node| {
+                (id.is_some() && node.attribute("ObjectID") == id)
+                    || (uid.is_some() && node.attribute("ObjectUID") == uid)
+            })
+            .collect();
+        assert_eq!(records.len(), 1, "one native reference target");
+        records[0]
+    };
+    let media = wire
+        .root_element()
+        .children()
+        .find(|node| {
+            node.has_tag_name("Media")
+                && node.children().any(|child| {
+                    child.has_tag_name("RelativePath")
+                        && child
+                            .text()
+                            .is_some_and(|path| path.ends_with("short-music.wav"))
+                })
+        })
+        .unwrap();
+    let stream = follow(child(media, "AudioStream"));
+    let ticks = |node: roxmltree::Node<'_, '_>, tag: &str| {
+        child(node, tag).text().unwrap().parse::<i64>().unwrap()
+    };
+    assert_eq!(ticks(stream, "Duration"), 4_293_547_776_000);
+    assert_eq!(ticks(stream, "FrameRate"), 5_292_000);
+    assert_eq!(
+        ticks(stream, "Duration") / ticks(stream, "FrameRate"),
+        811_328
+    );
+    let placements: Vec<_> = wire
+        .root_element()
+        .children()
+        .filter(|node| node.has_tag_name("AudioClipTrackItem"))
+        .filter_map(|item| {
+            let body = child(item, "ClipTrackItem");
+            let clip = follow(child(follow(child(body, "SubClip")), "Clip"));
+            let source = follow(child(child(clip, "Clip"), "Source"));
+            let item_media = follow(child(child(source, "MediaSource"), "Media"));
+            (item_media == media).then_some((body, clip))
+        })
+        .collect();
+    assert_eq!(placements.len(), 1);
+    let (body, clip) = placements[0];
+    let placement = child(body, "TrackItem");
+    let native_clip = child(clip, "Clip");
+    let start = ticks(placement, "Start");
+    let end = ticks(placement, "End");
+    let source_in = ticks(native_clip, "InPoint");
+    let source_out = ticks(native_clip, "OutPoint");
+    assert_eq!(start, 25_401_600_000);
+    assert_eq!(end, 4_319_034_048_000);
+    assert_eq!(source_in, 0);
+    assert_eq!(source_out, 4_293_632_448_000);
+    assert_eq!(end - start, source_out - source_in);
+
+    let reimported = root.join("reimported");
+    premiere_to_tesseract(native.join("project.prproj"), &reimported, None, false).unwrap();
+    let file = TesseractFile::open(first_project(&reimported)).unwrap();
+    // Import follows the last clip, not the longer non-rendering work area.
+    assert_eq!(file.project_json().unwrap()["duration"], 17.003);
+    assert_eq!(
+        editable_layers(&file),
+        json!([
+            {"type": "Video", "activeRange": {"start": 0, "duration": 200},
+             "sourceRange": {"start": 0, "duration": 200}, "volume": 0.0,
+             "source": ["video-with-audio.mp4", "Video"]},
+            {"type": "Audio", "activeRange": {"start": 0, "duration": 200},
+             "sourceRange": {"start": 0, "duration": 200}, "volume": 0.5,
+             "source": ["video-with-audio.mp4", "Video"]},
+            {"type": "Audio", "activeRange": {"start": 100, "duration": 16903},
+             "sourceRange": {"start": 0, "duration": 16903}, "volume": 2.0,
+             "source": ["short-music.wav", "Audio"]},
+            // Import recreates the black canvas through the inferred clip end.
+            {"type": "Rect", "activeRange": {"start": 0, "duration": 17003},
+             "sourceRange": null, "volume": null, "source": null},
+        ])
+    );
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
 fn authored_sound_survives_export_relocation_and_reimport() {
     check_authored_sound_round_trip(false);
 }
@@ -1268,11 +1446,12 @@ fn inactive_audio_enhancement_asset_is_never_read() {
 
 #[cfg(feature = "ffmpeg-library")]
 #[test]
-fn unusable_active_audio_enhancement_output_never_falls_back_to_the_original() {
+fn active_audio_enhancement_output_never_falls_back_to_the_original() {
     // The enhancement is enabled and the original stays valid. As for any
-    // other source sound, a missing or damaged output stops the export, a
-    // six-channel output omits both placements, and an output whose duration
-    // differs from `sourceIntrinsicDuration` rejects. None exports the original.
+    // other source sound, a missing or damaged output stops the export and a
+    // six-channel output omits both placements. A duration declaration that
+    // differs from a longer active output keeps fully available selections.
+    // None of these outcomes falls back to the original.
     let temp = tempfile::tempdir().unwrap();
     let surround = temp.path().join("surround.wav");
     write_surround_wav(&surround);
@@ -1311,15 +1490,35 @@ fn unusable_active_audio_enhancement_output_never_falls_back_to_the_original() {
         );
         assert!(!native.exists(), "{name}");
     }
-    let (result, native) = export("longer", &fixture("feature_audio_tone_right.wav"), None);
-    let error = result.unwrap_err();
-    assert!(
-        error.ends_with(
-            "sourceIntrinsicDuration 200 ms differs from the packaged audio duration 5000 ms of the active audio enhancement output \"music-enhanced\""
-        ),
-        "{error}"
+    let longer = fixture("feature_audio_tone_right.wav");
+    let (result, native) = export("longer", &longer, None);
+    let diagnostics = result.unwrap();
+    assert_eq!(
+        packaged_media(&native),
+        ["feature_audio_tone_right.wav", "video-30fps.mp4"]
     );
-    assert!(!native.exists());
+    assert_eq!(
+        fs::read(native.join("media/feature_audio_tone_right.wav")).unwrap(),
+        fs::read(&longer).unwrap()
+    );
+    let xml = read_xml(&native.join("project.prproj"));
+    assert_eq!(xml.matches("<AudioClipTrackItem ").count(), 2);
+    for record in ["layer 3 (\"Music\")", "layer 4 (\"Music again\")"] {
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.kind == premiere_file::OmissionKind::Approximated
+                && diagnostic.record == record
+                && diagnostic
+                    .reason
+                    .contains("sourceIntrinsicDuration 200 ms differs")
+                && diagnostic
+                    .reason
+                    .contains("retained fully available mapped source")
+        }));
+        assert!(!diagnostics.iter().any(|diagnostic| {
+            diagnostic.scope == premiere_file::OmissionScope::Occurrence
+                && diagnostic.record == record
+        }));
+    }
     let (result, native) = export("surround", &surround, None);
     let omissions = result.unwrap();
     for record in ["layer 3 (\"Music\")", "layer 4 (\"Music again\")"] {
@@ -3793,11 +3992,6 @@ fn embedded_selection_invalid_sound_has_no_fallback_and_checks_each_use() {
             surround,
             "only mono/stereo source audio is supported",
         ),
-        (
-            "longer",
-            fixture("feature_audio_tone_right.wav"),
-            "sourceIntrinsicDuration 200 ms differs from selected sound",
-        ),
         ("silent", fixture("video-30fps.mp4"), "has no sound"),
     ] {
         let root = temp.path().join(name);
@@ -3826,6 +4020,49 @@ fn embedded_selection_invalid_sound_has_no_fallback_and_checks_each_use() {
             "{omissions:?}"
         );
     }
+
+    let root = temp.path().join("longer");
+    fs::create_dir(&root).unwrap();
+    let longer = fixture("feature_audio_tone_right.wav");
+    let archive = write_embedded_archive(
+        &root,
+        &selected_embedded_document(true, true),
+        &longer,
+        None,
+    );
+    let native = root.join("native");
+    let diagnostics = tesseract_to_premiere(&archive, &native, false).unwrap();
+    assert_eq!(
+        packaged_media(&native),
+        ["eye.mp4", "feature_audio_tone_right.wav"]
+    );
+    assert_eq!(
+        fs::read(native.join("media/feature_audio_tone_right.wav")).unwrap(),
+        fs::read(longer).unwrap()
+    );
+    assert_eq!(
+        read_xml(&native.join("project.prproj"))
+            .matches("<AudioClipTrackItem ")
+            .count(),
+        2
+    );
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|item| {
+                item.kind == premiere_file::OmissionKind::Approximated
+                    && item
+                        .reason
+                        .contains("sourceIntrinsicDuration 200 ms differs from selected sound")
+                    && item
+                        .reason
+                        .contains("retained fully available mapped source")
+            })
+            .count(),
+        2,
+        "{diagnostics:?}"
+    );
+
     let root = temp.path().join("per-use");
     fs::create_dir(&root).unwrap();
     let mut document = selected_embedded_document(true, true);
@@ -3852,13 +4089,16 @@ fn embedded_selection_invalid_sound_has_no_fallback_and_checks_each_use() {
         read_xml(&native.join("project.prproj"))
             .matches("<AudioClipTrackItem ")
             .count(),
-        1
+        2
     );
     assert!(
         omissions.iter().any(|item| item.record.contains("layer 3")
             && item
                 .reason
-                .contains("sourceIntrinsicDuration 1000 ms differs from selected sound")),
+                .contains("sourceIntrinsicDuration 1000 ms differs from selected sound")
+            && item
+                .reason
+                .contains("retained fully available mapped source")),
         "{omissions:?}"
     );
 }

@@ -14,10 +14,13 @@ use fx_schema::{
 use super::{
     Converter, LayerContext, LayerPurpose, Limitation, MAX_GROUP_DEPTH, group, remapped_playback,
 };
-use crate::{document::DocumentError, effects::native, properties, structure::Layer};
+use crate::{document::DocumentError, effects::native, properties, rifx::Chunk, structure::Layer};
 
 const MATCH_NAME: &str = "ADBE Posterize Time";
 const RATE: &str = "ADBE Posterize Time-0001";
+// apply_split2 requires native-to-output sibling correspondence. A Posterize
+// hold changes that correspondence before the later stack handler can inspect it.
+const SPLIT_MATCH_NAME: &str = "CC Split 2";
 const MAX_INTERVALS: usize = 16;
 
 #[derive(Debug, PartialEq)]
@@ -28,16 +31,20 @@ struct Interval {
 }
 
 fn schedule(layer: &Layer, duration: f64) -> Result<Option<Vec<Interval>>, String> {
-    let (effects, warnings) = native::read_effects(&layer.content, [1.0, 1.0]);
-    let active: Vec<_> = effects.iter().filter(|effect| effect.enabled).collect();
-    if !layer.record.flags().effects_active
-        || !active.iter().any(|effect| effect.match_name == MATCH_NAME)
-    {
+    let (effects, _) = native::read_effects(&layer.content, [1.0, 1.0]);
+    if !layer.record.flags().effects_active {
         return Ok(None);
     }
-    if active.len() != 1 || !warnings.is_empty() {
-        return Err("requires one valid enabled Posterize Time effect".into());
+    let mut posterize = effects
+        .iter()
+        .filter(|effect| effect.enabled && effect.match_name == MATCH_NAME);
+    let Some(effect) = posterize.next() else {
+        return Ok(None);
+    };
+    if posterize.next().is_some() {
+        return Err("multiple enabled Posterize Time effects are unsupported".into());
     }
+    validate_raw_schedule_identity(layer, effect.index)?;
     if layer.record.start_time() != Some(0.0)
         || layer.record.in_point() != Some(0.0)
         || layer.record.out_point() != Some(duration)
@@ -49,7 +56,6 @@ fn schedule(layer: &Layer, duration: f64) -> Result<Option<Vec<Interval>>, Strin
     {
         return Err("requires an unparented full-span unit-clock Normal adjustment".into());
     }
-    let effect = active[0];
     validate_raw_controls(layer, effect.index)?;
     if effect.parameters.len() != 1 || effect.parameters[0].match_name != RATE {
         return Err("unknown Posterize Time controls".into());
@@ -61,12 +67,51 @@ fn schedule(layer: &Layer, duration: f64) -> Result<Option<Vec<Interval>>, Strin
     intervals(numeric, duration).map(Some)
 }
 
-fn validate_raw_controls(layer: &Layer, index: usize) -> Result<(), String> {
+fn has_enabled_split(layer: &Layer) -> bool {
+    let flags = layer.record.flags();
+    flags.enabled
+        && flags.effects_active
+        && native::read_effects(&layer.content, [1.0, 1.0])
+            .0
+            .iter()
+            .any(|effect| effect.enabled && effect.match_name == SPLIT_MATCH_NAME)
+}
+
+fn raw_effect_instances(layer: &Layer) -> Result<Vec<(&str, &[Chunk])>, String> {
     let roots = properties::root_runs(&layer.content).map_err(|e| e.to_string())?;
     let parade = super::control_links::unique_run(&roots, "ADBE Effect Parade")
         .map_err(|e| e.to_string())?;
     let groups = properties::unique_list(parade, *b"tdgp").map_err(|e| e.to_string())?;
-    let instances = properties::runs(groups).map_err(|e| e.to_string())?;
+    properties::runs(groups).map_err(|e| e.to_string())
+}
+
+fn validate_raw_schedule_identity(layer: &Layer, selected_index: usize) -> Result<(), String> {
+    let mut selected_seen = false;
+    for (offset, (name, run)) in raw_effect_instances(layer)?.into_iter().enumerate() {
+        if name != MATCH_NAME
+            || matches!(
+                properties::unique_list(run, *b"sspc").and_then(properties::group_enabled),
+                Ok(false)
+            )
+        {
+            continue;
+        }
+        let index = offset + 1;
+        if index != selected_index {
+            return Err(
+                "additional enabled or undecodable Posterize Time stage is unsupported".into(),
+            );
+        }
+        selected_seen = true;
+    }
+    if !selected_seen {
+        return Err("selected Posterize Time raw identity is unavailable".into());
+    }
+    Ok(())
+}
+
+fn validate_raw_controls(layer: &Layer, index: usize) -> Result<(), String> {
+    let instances = raw_effect_instances(layer)?;
     let (name, run) = instances
         .get(index.checked_sub(1).ok_or("invalid effect index")?)
         .ok_or("effect instance missing")?;
@@ -328,6 +373,19 @@ impl Converter<'_> {
         }
         let (index, intervals) = found.pop().expect("one schedule");
         let source = &context.comp.layers[source_indices[index]];
+        if source_indices[..index]
+            .iter()
+            .any(|&source_index| has_enabled_split(&context.comp.layers[source_index]))
+        {
+            self.warn(
+                Limitation::Timing,
+                Some(context.comp_id),
+                Some(source.record.id()),
+                "Posterize Time adjustment omitted; original siblings retained: an enabled CC Split 2 stage above requires original sibling correspondence for later Split lowering".into(),
+            );
+            return Ok(());
+        }
+        let same_owner_split = has_enabled_split(source);
         let result = self.posterized_stack(
             context,
             source_indices,
@@ -346,6 +404,14 @@ impl Converter<'_> {
                         || note.message.starts_with("native Adjustment lowered to a direct FX Adjustment sibling"))));
                 self.warn(Limitation::Timing, Some(context.comp_id), Some(source.record.id()),
                     "Full-span Hold Posterize Time adjustment lowered to independent editable visual stacks with static source-zero hold grids and unheld interval gates; native switches round upward to milliseconds. Copies are independently editable; arbitrary submillisecond boundaries and general adjustment clocks remain unsupported".into());
+                if same_owner_split {
+                    self.warn(
+                        Limitation::Properties,
+                        Some(context.comp_id),
+                        Some(source.record.id()),
+                        "CC Split 2 omitted: the enabled Split shares the same Adjustment as Posterize Time, and their combined stage order is not representable by the current editable mappings; the supported Posterize Time hold is retained and the Split loss is explicit".into(),
+                    );
+                }
             }
             Ok(None) => {}
             Err(message) => self.warn(
@@ -370,19 +436,20 @@ impl Converter<'_> {
         let FxLayer::Adjustment(adjustment) = &layers[index] else {
             return Ok(None);
         };
+        if adjustment.effects.len() != 1
+            || !matches!(
+                adjustment.effects[0].data(),
+                EffectData::Identified {
+                    enabled: true,
+                    effect: EffectPayload::Known(LayerEffect::PosterizeTime { .. }),
+                    ..
+                }
+            )
+        {
+            return Err("another editable effect shares the Adjustment and cannot be reordered around the whole-layer Posterize Time approximation".into());
+        }
         if adjustment.is_hidden
             || adjustment.transform.opacity.value() != 100.0
-            || adjustment.effects.iter().any(|effect| {
-                !matches!(
-                    effect.data(),
-                    EffectData::Identified {
-                        enabled: true,
-                        effect: EffectPayload::Known(LayerEffect::PosterizeTime { .. }),
-                        ..
-                    }
-                )
-            })
-            || adjustment.effects.len() != 1
             || !adjustment.masks.is_empty()
             || adjustment.track_matte.is_some()
             || self
@@ -391,7 +458,7 @@ impl Converter<'_> {
                 .any(|entry| entry.target.layer_id() == Some(adjustment.id))
             || index + 1 == layers.len()
         {
-            return Err("masked, styled, animated-opacity or empty adjustment scope".into());
+            return Err("hidden, masked, animated-opacity or empty adjustment scope".into());
         }
         let mut removed = HashSet::from([u64::from(adjustment.id)]);
         for effect in &adjustment.effects {
@@ -588,6 +655,8 @@ impl Converter<'_> {
                         effect: EffectPayload::Known(LayerEffect::PosterizeTime {
                             frame_rate: Some(interval.rate),
                         }),
+                        compositing_options: None,
+                        extensions: Default::default(),
                     })
                     .map_err(|e| e.to_string())?,
                 );

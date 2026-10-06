@@ -9,15 +9,20 @@ use crate::export_document::{AnimationIndex, hierarchy::Bounds};
 
 impl ArchiveFonts {
     /// Keep native Text in the output; only the hierarchy's finite-source proof
-    /// consumes these rectangles. No host font, cached donor layout or text-box
-    /// estimate participates in the proof.
+    /// consumes these rectangles. Unqualified Text remains unknown, so existing
+    /// source/consumer certificates still govern its enclosure. No host font,
+    /// cached donor layout or text-box estimate participates in the proof.
     pub(in crate::export_document) fn bounds_geometry(
         &self,
         group: &GroupLayer,
         dynamics: &AnimationIndex<'_>,
     ) -> Result<GroupLayer, &'static str> {
+        let (layers, has_outlines) = self.project_layers(&group.layers, dynamics)?;
+        if !has_outlines {
+            return Err("No Text has verified embedded-font outline bounds");
+        }
         let mut projected = group.clone();
-        projected.layers = self.project_layers(&group.layers, dynamics)?;
+        projected.layers = layers;
         Ok(projected)
     }
 
@@ -25,12 +30,19 @@ impl ArchiveFonts {
         &self,
         layers: &[Layer],
         dynamics: &AnimationIndex<'_>,
-    ) -> Result<Vec<Layer>, &'static str> {
-        layers
+    ) -> Result<(Vec<Layer>, bool), &'static str> {
+        let mut has_outlines = false;
+        let projected = layers
             .iter()
             .map(|layer| match layer.data() {
                 LayerData::Text(text) => {
-                    let painted_bounds = self.point_bounds(text, dynamics)?;
+                    // An unqualified sibling remains an unknown Text bound. It
+                    // may use an independently certified consumer/source domain;
+                    // it must not erase the verified outlines of other Text.
+                    let Ok(painted_bounds) = self.point_bounds(text, dynamics) else {
+                        return Ok(layer.clone());
+                    };
+                    has_outlines = true;
                     // Whitespace remains native editable Text in the emitted view.
                     // Its hidden classifier proxy contributes no painted enclosure.
                     let bounds = painted_bounds.unwrap_or(Bounds {
@@ -70,13 +82,17 @@ impl ArchiveFonts {
                     .map_err(|_| "Font-derived Text bounds could not be represented")
                 }
                 LayerData::Group(group) => {
-                    let projected = self.bounds_geometry(group, dynamics)?;
+                    let (layers, child_outlines) = self.project_layers(&group.layers, dynamics)?;
+                    has_outlines |= child_outlines;
+                    let mut projected = group.clone();
+                    projected.layers = layers;
                     Layer::from_data(&LayerData::Group(projected))
                         .map_err(|_| "Font-derived Group bounds could not be represented")
                 }
                 _ => Ok(layer.clone()),
             })
-            .collect()
+            .collect::<Result<_, _>>()?;
+        Ok((projected, has_outlines))
     }
 
     fn point_bounds(
@@ -86,9 +102,6 @@ impl ArchiveFonts {
     ) -> Result<Option<Bounds>, &'static str> {
         let document = &text.source_text;
         if document.box_text
-            || document.all_caps
-            || document.apply_stroke
-            || !document.apply_fill
             || document.font_variations.is_some()
             || document.underline
             || document.strikethrough
@@ -103,11 +116,6 @@ impl ArchiveFonts {
                 && !crate::export_document::effects::omitted_shader_adjustment(&text.effects))
             || !text.masks.is_empty()
             || text.track_matte.is_some()
-            || document.text.is_empty()
-            || !document
-                .text
-                .bytes()
-                .all(|byte| byte == b' ' || byte.is_ascii_graphic())
             || dynamics.iter().any(|entry| {
                 entry.target.layer_id() == Some(text.id)
                     && !entry.target.as_property().is_some_and(|target| {
@@ -121,6 +129,11 @@ impl ArchiveFonts {
                                 | PropType::ScaleX
                                 | PropType::ScaleY
                                 | PropType::Rotation
+                                | PropType::TextContent
+                                | PropType::FontFamily
+                                | PropType::FontStyle
+                                | PropType::FontSize
+                                | PropType::Leading
                                 | PropType::Tracking
                                 | PropType::FillColor
                         )
@@ -150,6 +163,22 @@ impl ArchiveFonts {
         &self,
         document: &crate::writer::text::TextDocumentSpec,
     ) -> Result<Option<Bounds>, &'static str> {
+        // Constants and Hold keys may replace the typed base. Qualify each
+        // document actually emitted, not stale text, size, font or paint fields.
+        if document.box_size.is_some()
+            || document.all_caps
+            || document.apply_stroke
+            || !document.apply_fill
+            || !document
+                .text
+                .bytes()
+                .all(|byte| byte == b' ' || byte.is_ascii_graphic())
+        {
+            return Err("Emitted Text document is outside the verified horizontal Point profile");
+        }
+        if document.text.is_empty() {
+            return Ok(None);
+        }
         let tracking = document.tracking;
         if !tracking.is_finite() || tracking != tracking.round() {
             return Err("Font-derived Text bounds require integral native Tracking");

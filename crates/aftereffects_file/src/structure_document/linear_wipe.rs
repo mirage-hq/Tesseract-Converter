@@ -1,4 +1,4 @@
-//! Hard-edge Linear Wipes on a finite editable Solid source plane.
+//! Hard-edge Linear Wipes on a finite editable source or composition-space Shape plane.
 //! Angled projected-canvas normalization and raster edges are approximations.
 use std::collections::HashSet;
 
@@ -12,14 +12,15 @@ use super::{
     stored_layers,
 };
 use crate::{
+    expression_samples::{EvaluatedProperty, ExpressionSamples, PropertyIdentity},
     properties::{self, NumericProperty, NumericValueKind},
     rifx::Chunk,
-    structure::{Layer, ProjectItem},
+    structure::{ItemKind, Layer, ProjectItem},
 };
 use fx_schema::{
     FxItemId, GroupLayer, LayerData, LayerId, NonNegativeProperty, Position, PropType,
     PropertyTarget, ShapeContent, ShapePath, ShapePathCommand, Transform,
-    animator::AnimationGraphEntry,
+    animator::{AnimationGraphEntry, PropertyKeyframeEasing},
     layer::{MaskMode, PathMask, ShapeLayer},
 };
 const WIPE: &str = "ADBE Linear Wipe";
@@ -43,29 +44,51 @@ const GEOMETRY_DEFAULTS: &[(u32, u32, u32)] = &[
 struct Native<'a> {
     name: &'a str,
     display: &'a str,
+    occurrence: u32,
     controls: Vec<(&'a str, &'a [Chunk])>,
 }
-struct Wipe {
-    completion: NumericProperty,
+enum Completion<'a> {
+    Native(NumericProperty),
+    Evaluated(&'a EvaluatedProperty),
+}
+struct Wipe<'a> {
+    completion: Completion<'a>,
     angle: f64,
 }
-struct Profile {
-    wipes: Vec<Wipe>,
+struct Profile<'a> {
+    wipes: Vec<Wipe<'a>>,
     anchor: Option<NumericProperty>,
+}
+pub(super) struct AncestorTransform<'a> {
+    pub layer: &'a Layer,
+    pub transform: Transform,
 }
 pub(super) struct Context<'a> {
     pub source: Option<&'a ProjectItem>,
     pub size: [u16; 2],
     pub depth: usize,
     pub planar: bool,
+    pub composition_id: u32,
+    pub composition_offset: Option<[f64; 2]>,
+    pub ancestors: &'a [AncestorTransform<'a>],
+    pub evaluations: &'a ExpressionSamples,
 }
 pub(super) struct State<'a> {
     pub next: &'a mut u64,
     pub animations: &'a mut AnimationBudget,
     pub shapes: &'a mut OutputBudget,
 }
+pub(super) struct Lowered {
+    pub entries: Vec<AnimationGraphEntry>,
+    pub notes: Vec<String>,
+    pub consumed_trailing_transform: bool,
+}
 
-fn native<'a>(name: &'a str, run: &'a [Chunk]) -> Result<Option<Native<'a>>, String> {
+fn native<'a>(
+    name: &'a str,
+    occurrence: u32,
+    run: &'a [Chunk],
+) -> Result<Option<Native<'a>>, String> {
     let descriptor = properties::unique_list(run, *b"sspc").map_err(|e| e.to_string())?;
     let mut warnings = Vec::new();
     let enabled = properties::group_enabled_or_warn(descriptor, name, &mut warnings);
@@ -78,7 +101,7 @@ fn native<'a>(name: &'a str, run: &'a [Chunk]) -> Result<Option<Native<'a>>, Str
     let defaults = match name {
         WIPE => WIPE_DEFAULTS,
         GEOMETRY => GEOMETRY_DEFAULTS,
-        _ => return Err("only Wipes followed by an optional Transform are admitted".into()),
+        _ => return Err("only Wipes and one adjacent Transform are admitted".into()),
     };
     let table = properties::unique_list(descriptor, *b"parT").map_err(|e| e.to_string())?;
     if !table.is_empty() {
@@ -152,6 +175,7 @@ fn native<'a>(name: &'a str, run: &'a [Chunk]) -> Result<Option<Native<'a>>, Str
     Ok(Some(Native {
         name,
         display,
+        occurrence,
         controls,
     }))
 }
@@ -269,7 +293,7 @@ fn curve(value: &NumericProperty, dimensions: usize, completion: bool) -> Result
         || value.expression_present
         || value.dimensions_separated
         || (!value.animated && (!value.keyframes.is_empty() || !valid(&value.values)))
-        || (value.animated && (value.keyframes.len() < 2 || value.keyframes.len() > 64))
+        || (value.animated && value.keyframes.len() < 2)
         || value.keyframes.iter().any(|k| {
             !valid(&k.values)
                 || !k.time_secs.is_finite()
@@ -311,19 +335,7 @@ fn curve(value: &NumericProperty, dimensions: usize, completion: bool) -> Result
     if completion {
         for index in 1..value.keyframes.len() {
             let mut warnings = Vec::new();
-            if let fx_schema::PropertyKeyframeEasing::CubicBezier { y1, y2, .. } =
-                animation::easing_for_key(
-                    &value.keyframes,
-                    index,
-                    0,
-                    1.,
-                    &mut warnings,
-                    "Completion",
-                )
-                && (!(0. ..=1.).contains(&y1) || !(0. ..=1.).contains(&y2))
-            {
-                return Err("completion easing can leave its bounded source interval".into());
-            }
+            animation::easing_for_key(&value.keyframes, index, 0, 1., &mut warnings, "Completion");
             if !warnings.is_empty() {
                 return Err(warnings.join("; "));
             }
@@ -338,7 +350,38 @@ fn scalar(value: &NumericProperty) -> Result<f64, String> {
     }
     Ok(value.values[0])
 }
-fn profile(layer: &Layer) -> Result<Option<Profile>, String> {
+fn evaluated_completion<'a>(
+    source: &Native<'_>,
+    layer: &Layer,
+    composition_id: u32,
+    evaluations: &'a ExpressionSamples,
+) -> Option<&'a EvaluatedProperty> {
+    evaluations.lookup(
+        composition_id,
+        layer.record.id(),
+        &PropertyIdentity::Effect {
+            index: source.occurrence,
+            match_name: format!("{WIPE}-0001"),
+        },
+    )
+}
+
+fn validate_evaluated_completion(samples: &EvaluatedProperty) -> Result<(), String> {
+    if samples.values().is_empty()
+        || samples.values().iter().any(|values| {
+            !matches!(values.as_slice(), [value] if value.is_finite() && (0. ..=100.).contains(value))
+        })
+    {
+        return Err("evaluated Completion requires finite scalar samples in 0..=100".into());
+    }
+    Ok(())
+}
+
+fn profile<'a>(
+    layer: &Layer,
+    composition_id: u32,
+    evaluations: &'a ExpressionSamples,
+) -> Result<Option<Profile<'a>>, String> {
     if !layer.record.flags().effects_active {
         return Ok(None);
     }
@@ -357,35 +400,64 @@ fn profile(layer: &Layer) -> Result<Option<Profile>, String> {
         return Ok(None);
     }
     let mut sources = Vec::new();
-    for (name, run) in runs {
-        if let Some(source) = native(name, run)? {
+    for (index, (name, run)) in runs.into_iter().enumerate() {
+        let occurrence = u32::try_from(index + 1).map_err(|_| "effect occurrence overflow")?;
+        if let Some(source) = native(name, occurrence, run)? {
             sources.push(source);
         }
     }
     if !sources.iter().any(|source| source.name == WIPE) {
         return Ok(None);
     }
-    let geometry = sources.last().is_some_and(|s| s.name == GEOMETRY);
-    let count = sources.len() - usize::from(geometry);
-    if !(1..=2).contains(&count) || sources[..count].iter().any(|s| s.name != WIPE) {
-        return Err("requires one or two Wipes followed by at most one Transform".into());
+    let leading_geometry = sources
+        .first()
+        .is_some_and(|source| source.name == GEOMETRY);
+    let trailing_geometry =
+        sources.last().is_some_and(|source| source.name == GEOMETRY) && !leading_geometry;
+    let start = usize::from(leading_geometry);
+    let end = sources.len() - usize::from(trailing_geometry);
+    let count = end.saturating_sub(start);
+    if !(1..=2).contains(&count) || sources[start..end].iter().any(|source| source.name != WIPE) {
+        return Err("requires one or two Wipes with at most one adjacent Transform".into());
     }
     let mut wipes = Vec::with_capacity(count);
-    for index in 0..count {
+    for index in start..end {
         if scalar(&resolve(&sources, index, 0)?)? != 0.
             || scalar(&resolve(&sources, index, 3)?)? != 0.
         {
             return Err("requires zero feather and default dummy controls".into());
         }
-        let completion = resolve(&sources, index, 1)?;
-        curve(&completion, 1, true)?;
+        let source = &sources[index];
+        let completion = read(source, 1)?;
+        let completion = if completion.expression_enabled {
+            match resolve(&sources, index, 1) {
+                Ok(completion) => {
+                    curve(&completion, 1, true)?;
+                    Completion::Native(completion)
+                }
+                Err(alias_error) => {
+                    if let Some(samples) =
+                        evaluated_completion(source, layer, composition_id, evaluations)
+                    {
+                        validate_evaluated_completion(samples)?;
+                        Completion::Evaluated(samples)
+                    } else {
+                        return Err(alias_error);
+                    }
+                }
+            }
+        } else {
+            let completion = resolve(&sources, index, 1)?;
+            curve(&completion, 1, true)?;
+            Completion::Native(completion)
+        };
         wipes.push(Wipe {
             completion,
             angle: scalar(&resolve(&sources, index, 2)?)?,
         });
     }
-    let anchor = if geometry {
-        let index = count;
+    let anchor = if trailing_geometry {
+        let index = end;
         for (n, expected) in [
             (0, 0.),
             (3, 100.),
@@ -422,6 +494,308 @@ fn initial(value: &NumericProperty) -> &[f64] {
         .first()
         .map_or(value.values.as_slice(), |k| k.values.as_slice())
 }
+fn initial_completion(completion: &Completion<'_>) -> f64 {
+    match completion {
+        Completion::Native(value) => initial(value)[0],
+        Completion::Evaluated(samples) => samples.values()[0][0],
+    }
+}
+
+fn minimum_completion(completion: &Completion<'_>) -> Result<f64, String> {
+    match completion {
+        Completion::Evaluated(samples) => samples
+            .values()
+            .iter()
+            .map(|values| values[0])
+            .reduce(f64::min)
+            .ok_or_else(|| "evaluated Completion has no values".into()),
+        Completion::Native(value) if !value.animated => Ok(value.values[0]),
+        Completion::Native(value) => {
+            let mut minimum = value.keyframes[0].values[0];
+            for index in 1..value.keyframes.len() {
+                let previous = value.keyframes[index - 1].values[0];
+                let current = value.keyframes[index].values[0];
+                minimum = minimum.min(current);
+                let mut warnings = Vec::new();
+                if let PropertyKeyframeEasing::CubicBezier { y1, y2, .. } =
+                    animation::easing_for_key(
+                        &value.keyframes,
+                        index,
+                        0,
+                        1.0,
+                        &mut warnings,
+                        "Linear Wipe Completion",
+                    )
+                {
+                    for progress in [y1, y2] {
+                        minimum = minimum.min(previous + (current - previous) * progress);
+                    }
+                }
+                if !warnings.is_empty() {
+                    return Err(warnings.join("; "));
+                }
+            }
+            minimum
+                .is_finite()
+                .then_some(minimum)
+                .ok_or_else(|| "Completion curve has a non-finite convex hull".into())
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct InversePlane {
+    a: f64,
+    b: f64,
+    c: f64,
+    d: f64,
+    e: f64,
+    f: f64,
+}
+
+#[derive(Clone, Copy)]
+enum EffectPlane {
+    SourceLocal,
+    Composition {
+        inverse: InversePlane,
+        offset: [f64; 2],
+    },
+}
+
+impl InversePlane {
+    fn from_transform(transform: &Transform) -> Result<Self, String> {
+        let Position::TwoD(position) = transform.position else {
+            return Err("Shape composition-plane Wipe requires a planar Transform".into());
+        };
+        if transform.rotation_x != 0.0
+            || transform.rotation_y != 0.0
+            || transform.orientation != [0.0; 3]
+            || transform
+                .anchor_point
+                .iter()
+                .chain(&position)
+                .chain(&transform.scale)
+                .chain([&transform.rotation, &transform.skew, &transform.skew_axis])
+                .any(|value| !value.is_finite())
+        {
+            return Err("Shape composition-plane Wipe requires a finite 2D Transform".into());
+        }
+        let multiply = |left: [f64; 4], right: [f64; 4]| {
+            [
+                left[0] * right[0] + left[2] * right[1],
+                left[1] * right[0] + left[3] * right[1],
+                left[0] * right[2] + left[2] * right[3],
+                left[1] * right[2] + left[3] * right[3],
+            ]
+        };
+        let rotation = |degrees: f64| {
+            let (sin, cos) = degrees.to_radians().sin_cos();
+            [cos, sin, -sin, cos]
+        };
+        let scale = transform.scale.map(|value| value / 100.0);
+        let matrix = multiply(
+            rotation(transform.rotation - transform.skew_axis),
+            multiply(
+                [
+                    1.0,
+                    0.0,
+                    -transform.skew.clamp(-89.9, 89.9).to_radians().tan(),
+                    1.0,
+                ],
+                multiply(
+                    rotation(transform.skew_axis),
+                    [scale[0], 0.0, 0.0, scale[1]],
+                ),
+            ),
+        );
+        let [a, b, c, d] = matrix;
+        Ok(Self {
+            a,
+            b,
+            c,
+            d,
+            e: position[0] - a * transform.anchor_point[0] - c * transform.anchor_point[1],
+            f: position[1] - b * transform.anchor_point[0] - d * transform.anchor_point[1],
+        })
+    }
+
+    /// Compose `self * child`: apply `child`, then `self`.
+    fn compose(self, child: Self) -> Self {
+        Self {
+            a: self.a * child.a + self.c * child.b,
+            b: self.b * child.a + self.d * child.b,
+            c: self.a * child.c + self.c * child.d,
+            d: self.b * child.c + self.d * child.d,
+            e: self.a * child.e + self.c * child.f + self.e,
+            f: self.b * child.e + self.d * child.f + self.f,
+        }
+    }
+
+    fn inverse(self) -> Result<Self, String> {
+        let determinant = self.a * self.d - self.b * self.c;
+        if determinant == 0.0 || !determinant.is_finite() {
+            return Err("Shape composition-plane Transform chain is singular".into());
+        }
+        let inverse = Self {
+            a: self.d / determinant,
+            b: -self.b / determinant,
+            c: -self.c / determinant,
+            d: self.a / determinant,
+            e: (self.c * self.f - self.d * self.e) / determinant,
+            f: (self.b * self.e - self.a * self.f) / determinant,
+        };
+        [
+            inverse.a, inverse.b, inverse.c, inverse.d, inverse.e, inverse.f,
+        ]
+        .into_iter()
+        .all(f64::is_finite)
+        .then_some(inverse)
+        .ok_or_else(|| "Shape composition-plane inverse Transform is non-finite".into())
+    }
+
+    fn from_owner(owner: &GroupLayer, ancestors: &[AncestorTransform<'_>]) -> Result<Self, String> {
+        if owner.transform.skew != 0.0 {
+            return Err("Shape composition-plane Wipe requires an unskewed owner Transform".into());
+        }
+        let mut plane = Self::from_transform(&owner.transform)?;
+        for ancestor in ancestors {
+            plane = Self::from_transform(&ancestor.transform)?.compose(plane);
+        }
+        plane.inverse()
+    }
+
+    fn point(self, point: [f64; 2]) -> [f64; 2] {
+        [
+            self.a * point[0] + self.c * point[1] + self.e,
+            self.b * point[0] + self.d * point[1] + self.f,
+        ]
+    }
+
+    fn guide(self, mut transform: Transform, offset: [f64; 2]) -> Result<Transform, String> {
+        let Position::TwoD(mut position) = transform.position else {
+            return Err("Linear Wipe guide must remain planar".into());
+        };
+        for (value, delta) in position.iter_mut().zip(offset) {
+            *value += delta;
+        }
+        if position.iter().any(|value| !value.is_finite()) {
+            return Err("Shape composition-plane guide offset is non-finite".into());
+        }
+        let (sin, cos) = transform.rotation.to_radians().sin_cos();
+        let matrix = [
+            self.a * cos + self.c * sin,
+            self.b * cos + self.d * sin,
+            -self.a * sin + self.c * cos,
+            -self.b * sin + self.d * cos,
+        ];
+        let scale_x = matrix[0].hypot(matrix[1]);
+        let determinant = matrix[0] * matrix[3] - matrix[1] * matrix[2];
+        if scale_x == 0.0 || !scale_x.is_finite() || !determinant.is_finite() {
+            return Err("Shape composition-plane guide Transform is singular".into());
+        }
+        let scale_y = determinant / scale_x;
+        if scale_y == 0.0 || !scale_y.is_finite() {
+            return Err("Shape composition-plane guide Transform is singular".into());
+        }
+        let shear = (matrix[0] * matrix[2] + matrix[1] * matrix[3]) / (scale_x * scale_y);
+        transform.position = Position::TwoD(self.point(position));
+        transform.scale = [scale_x * 100.0, scale_y * 100.0];
+        transform.rotation = matrix[1].atan2(matrix[0]).to_degrees();
+        transform.skew = -shear.atan().to_degrees();
+        transform.skew_axis = 0.0;
+        [
+            transform.scale[0],
+            transform.scale[1],
+            transform.rotation,
+            transform.skew,
+        ]
+        .into_iter()
+        .all(f64::is_finite)
+        .then_some(transform)
+        .ok_or_else(|| "Shape composition-plane guide Transform is non-finite".into())
+    }
+}
+
+fn static_plane_transform(layer: &Layer, role: &str) -> Result<(), String> {
+    if layer.record.flags().three_d_layer || layer.record.auto_orient() != 0 {
+        return Err(format!(
+            "Shape composition-plane Wipe requires a planar non-auto-oriented {role}"
+        ));
+    }
+    let transforms = properties::read_transform(&layer.content).map_err(|e| e.to_string())?;
+    if transforms
+        .iter()
+        .filter(|property| property.match_name != "ADBE Opacity")
+        .any(|property| {
+            !property
+                .numeric
+                .as_ref()
+                .is_ok_and(|value| !value.animated && !value.expression_enabled)
+        })
+    {
+        return Err(format!(
+            "Shape composition-plane Wipe requires a static authored {role} Transform"
+        ));
+    }
+    Ok(())
+}
+
+fn source_plane(
+    layer: &Layer,
+    owner: &GroupLayer,
+    source: Option<&ProjectItem>,
+    size: [u16; 2],
+    composition_offset: Option<[f64; 2]>,
+    ancestors: &[AncestorTransform<'_>],
+) -> Result<EffectPlane, String> {
+    if layer.record.layer_type() == 4 && source.is_none() {
+        if size.contains(&0) || !layer.record.flags().collapse_transformation {
+            return Err("requires a finite continuously rasterized Shape composition plane".into());
+        }
+        static_plane_transform(layer, "owner")?;
+        let mut parent_id = layer.record.parent_id();
+        for ancestor in ancestors {
+            if parent_id == 0 || ancestor.layer.record.id() != parent_id {
+                return Err("Shape composition-plane Wipe requires a complete parent chain".into());
+            }
+            static_plane_transform(ancestor.layer, "parent")?;
+            parent_id = ancestor.layer.record.parent_id();
+        }
+        if parent_id != 0 {
+            return Err("Shape composition-plane Wipe requires a complete parent chain".into());
+        }
+        let offset = composition_offset.unwrap_or([0.0; 2]);
+        if offset.iter().any(|value| !value.is_finite()) {
+            return Err("Shape composition-plane Wipe normalization offset is non-finite".into());
+        }
+        return Ok(EffectPlane::Composition {
+            inverse: InversePlane::from_owner(owner, ancestors)?,
+            offset,
+        });
+    }
+    let Some(source) = source else {
+        return Err("requires a decoded finite Solid, composition or Shape source plane".into());
+    };
+    let (source_size, pixel_aspect) = if let Some(Ok(solid)) = source.solid.as_ref() {
+        ([solid.width, solid.height], solid.pixel_aspect)
+    } else if let ItemKind::Composition(composition) = &source.kind {
+        (
+            [composition.width, composition.height],
+            composition.pixel_aspect,
+        )
+    } else {
+        return Err("requires a decoded finite Solid or composition source".into());
+    };
+    if size.contains(&0)
+        || size != source_size
+        || pixel_aspect.0 == 0
+        || pixel_aspect.0 != pixel_aspect.1
+    {
+        return Err("requires a finite square-pixel source plane".into());
+    }
+    Ok(EffectPlane::SourceLocal)
+}
+
 fn guide(size: [u16; 2], angle: f64, completion: f64) -> (Transform, f64) {
     let angle = angle.rem_euclid(360.);
     let d = match angle {
@@ -452,8 +826,16 @@ fn guide(size: [u16; 2], angle: f64, completion: f64) -> (Transform, f64) {
         span,
     )
 }
-fn path(size: [u16; 2]) -> ShapePath {
-    let extent = 2. * f64::from(size[0]).hypot(f64::from(size[1])) + 1.;
+fn path_extent(size: [u16; 2], angle: f64, minimum_completion: f64) -> f64 {
+    let radians = angle.to_radians();
+    let direction = [radians.sin().abs(), radians.cos().abs()];
+    let [width, height] = size.map(f64::from);
+    let travel = direction[0] * width + direction[1] * height;
+    let perpendicular = (direction[1] * width + direction[0] * height) / 2.0;
+    perpendicular.max(travel * (1.0 - minimum_completion / 100.0).max(0.0))
+}
+
+fn path(extent: f64) -> ShapePath {
     let line = |x, y| ShapePathCommand::LineTo {
         x,
         y,
@@ -480,23 +862,27 @@ pub(super) fn apply(
     owner: &mut GroupLayer,
     context: Context<'_>,
     state: State<'_>,
-) -> Result<Option<Vec<AnimationGraphEntry>>, String> {
-    let Some(profile) = profile(layer)? else {
+) -> Result<Option<Lowered>, String> {
+    let Some(profile) = profile(layer, context.composition_id, context.evaluations)? else {
         return Ok(None);
     };
     let flags = layer.record.flags();
-    let Some(Ok(solid)) = context.source.and_then(|s| s.solid.as_ref()) else {
-        return Err("requires a decoded raster Solid source".into());
-    };
+    let plane = source_plane(
+        layer,
+        owner,
+        context.source,
+        context.size,
+        context.composition_offset,
+        context.ancestors,
+    )?;
+    if matches!(plane, EffectPlane::Composition { .. }) && profile.anchor.is_some() {
+        return Err("post-wipe Transform is not mapped through the Shape composition plane".into());
+    }
     if !context.planar
-        || context.size.contains(&0)
-        || context.size != [solid.width, solid.height]
-        || solid.pixel_aspect.0 == 0
-        || solid.pixel_aspect.0 != solid.pixel_aspect.1
-        || layer.record.layer_type() != 0
+        || !matches!(layer.record.layer_type(), 0 | 4)
         || flags.null_layer
         || flags.three_d_layer
-        || flags.collapse_transformation
+        || (flags.collapse_transformation && layer.record.layer_type() != 4)
         || flags.adjustment_layer
         || flags.preserve_transparency
         || flags.motion_blur
@@ -507,8 +893,7 @@ pub(super) fn apply(
         || owner.playback != super::identity_playback(owner.playback.input_range())
     {
         return Err(
-            "requires an isolated planar square-pixel Solid without masks, matte or collapse"
-                .into(),
+            "requires an isolated planar finite source without masks, matte or collapse".into(),
         );
     }
     let roots = properties::root_runs(&layer.content).map_err(|e| e.to_string())?;
@@ -550,29 +935,65 @@ pub(super) fn apply(
         content.parent = Some(masked.id);
         masked.layers = stored_layers(vec![original]).map_err(|e| e.to_string())?;
         let mut entries = Vec::new();
+        let mut notes = Vec::new();
         for (index, wipe) in profile.wipes.iter().enumerate() {
             let guide_id = LayerId::new(first + 1 + 2 * index as u64);
-            let (transform, span) = guide(context.size, wipe.angle, initial(&wipe.completion)[0]);
+            let (transform, span) = guide(
+                context.size,
+                wipe.angle,
+                initial_completion(&wipe.completion),
+            );
+            let transform = match plane {
+                EffectPlane::SourceLocal => transform,
+                EffectPlane::Composition { inverse, offset } => inverse.guide(transform, offset)?,
+            };
+            let extent = path_extent(
+                context.size,
+                wipe.angle,
+                minimum_completion(&wipe.completion)?,
+            );
             let target = NumericAnimationTarget::float(
                 PropertyTarget::layer(guide_id, PropType::AnchorPointX),
                 0,
                 -span / 100.,
             );
-            let (tracks, warnings) = animation::numeric_entries(
-                "Linear Wipe Completion",
-                &wipe.completion,
-                &[target],
-                clock,
-                state.animations,
-            );
-            if !warnings.is_empty() || (wipe.completion.animated && tracks.is_empty()) {
+            let (tracks, warnings, required) = match &wipe.completion {
+                Completion::Native(completion) => {
+                    let (tracks, warnings) = animation::numeric_entries(
+                        "Linear Wipe Completion",
+                        completion,
+                        &[target],
+                        clock,
+                        state.animations,
+                    );
+                    (tracks, warnings, completion.animated)
+                }
+                Completion::Evaluated(samples) => {
+                    let (tracks, warnings) = animation::evaluated_numeric_entries(
+                        "Linear Wipe Completion",
+                        samples,
+                        &[target],
+                        &[],
+                        state.animations,
+                    );
+                    if tracks.is_empty() {
+                        return Err(format!(
+                            "completion animation not admitted: {}",
+                            warnings.join("; ")
+                        ));
+                    }
+                    notes.extend(warnings);
+                    (tracks, Vec::new(), true)
+                }
+            };
+            if !warnings.is_empty() || (required && tracks.is_empty()) {
                 return Err(format!(
                     "completion animation not admitted: {}",
                     warnings.join("; ")
                 ));
             }
             entries.extend(tracks);
-            masked.layers.push(fx_schema::Layer::from_data(&LayerData::Shape(ShapeLayer{id:guide_id,parent:Some(masked.id),name:"Linear Wipe half-plane guide".into(),description:"Editable projected source-canvas half-plane; native angled normalization and antialiasing remain approximate".into(),is_hidden:false,blend_mode:Default::default(),track_matte:None,masks:vec![],active_range:range,effects:vec![],motion_blur:false,transform,shape:ShapeContent{path:path(context.size),fills:vec![],strokes:vec![],round_corners:None,offset_paths:None,trim:None,poly_star:None,ellipse:None}})).map_err(|e|e.to_string())?);
+            masked.layers.push(fx_schema::Layer::from_data(&LayerData::Shape(ShapeLayer{id:guide_id,parent:Some(masked.id),name:"Linear Wipe half-plane guide".into(),description:"Editable projected finite-plane half-plane; continuous-rasterized Shape planes are inverse-mapped through static owner and parent Transforms, with generated-camera correction only on unparented owners; native angled normalization and antialiasing remain approximate".into(),is_hidden:false,blend_mode:Default::default(),track_matte:None,masks:vec![],active_range:range,effects:vec![],motion_blur:false,transform,shape:ShapeContent{path:path(extent),fills:vec![],strokes:vec![],round_corners:None,offset_paths:None,trim:None,poly_star:None,ellipse:None}})).map_err(|e|e.to_string())?);
             masked.masks.push(PathMask {
                 id: FxItemId::new(first + 2 + 2 * index as u64),
                 mode: if index == 0 {
@@ -652,7 +1073,11 @@ pub(super) fn apply(
         }
         *owner = candidate;
         *state.next = cursor;
-        Ok(entries)
+        Ok(Lowered {
+            entries,
+            notes,
+            consumed_trailing_transform: profile.anchor.is_some(),
+        })
     })();
     if built.is_err() {
         state.animations.rollback(checkpoint);

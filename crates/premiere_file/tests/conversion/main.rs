@@ -5,6 +5,7 @@ mod captions;
 mod color_matte;
 mod crop;
 mod effects;
+mod film_impact_pop;
 mod frame_hold;
 mod graphics;
 mod linear_wipe;

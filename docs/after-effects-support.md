@@ -607,9 +607,10 @@ unmeasured, with no new formal feature-proof promotion.
 ## Rust review repairs — structural evidence, native fidelity unmeasured
 
 These corrections retain the current FX model/runtime and existing best-effort
-boundaries. The listed CPU regressions **passed** in shared Rust queue job2655,
-alongside the bounded `review_` panel (102 selected tests across six packages,
-plus seven FFmpeg-library-mode repeats). They are not independent Adobe feature proof. No new native authoring/readback,
+boundaries. Except for later corrections explicitly identified below, the listed
+CPU regressions **passed** in shared Rust queue job2655, alongside the bounded
+`review_` panel (102 selected tests across six packages, plus seven
+FFmpeg-library-mode repeats). They are not independent Adobe feature proof. No new native authoring/readback,
 30fps reference, long-term Asset publication, or RGB/alpha/audio measurement ran.
 A native layer shell with mutated controls or our own reader of an export is
 supplementary evidence, not a new Adobe-authored feature oracle.
@@ -634,15 +635,39 @@ supplementary evidence, not a new Adobe-authored feature oracle.
   editable knots and numerical ramps; the native gradient contributes colors to
   a supplemental mutation only. Simultaneous-event Adobe fidelity is unmeasured.
   Export implementation/proof is unchanged.
-- **Equal-endpoint nonspatial Bezier excursions:** nonzero effective temporal
-  handles cannot be represented by normalized FX easing. The coupled animation
-  target set is omitted with contextual diagnostics, retaining static values and
-  independent convertible siblings, rather than silently erasing motion. Direct
-  easing-helper linear fallbacks also diagnose excursion loss. Linear/Hold,
-  zero-handle and spatial-distance policies remain. No baking is substituted.
-  `review_equal_endpoint_bezier_excursion_is_contextually_omitted` is supplemental
-  numerical evidence in both clock directions, not native feature fidelity.
-  Export implementation/proof is unchanged.
+- **Equal-endpoint nonspatial Bezier excursions (later correction):** nonzero
+  absolute temporal handles cannot be represented by normalized FX easing. An
+  affected coupled numeric segment is sampled on its receiving integer-millisecond clock and
+  reduced to shared editable Linear keys within `0.01` in each target's actual
+  destination unit (percent, pixels, degrees, or normalized color/alpha). Exact
+  source boundary endpoints are retained. This keeps moving sibling components
+  and genuine equal-endpoint excursions together, including paired Rectangle
+  Size/anchor and matte-copy Scale tracks. It replaces native handles and the
+  easing of moving siblings throughout each sampled segment; key density depends
+  on the curve and tolerance and can approach the millisecond sample density.
+  FX import has no smaller fixed key-count limit, while the existing animation
+  budget still owns serialized-size admission. Fractional-millisecond fidelity
+  remains unverified. If one segment cannot be evaluated with the existing
+  clamped-influence and Linear-fallback semantics, its native boundary keys and
+  supported siblings remain; a source-segment diagnostic reports that the
+  equal-endpoint excursion itself is lost. Later atomic target constraints can
+  still omit an otherwise unrepresentable coupled set. Linear/Hold, zero-handle,
+  unaffected native keys and spatial-distance policies remain unchanged. Direct
+  easing users still lose or reject these excursions: Time Remap, expression
+  `value` input through `editable_native_keys`, Audio Levels projection, scalar
+  script lowering and Linear Wipe Completion. Focused regressions are
+  `equal_endpoint_bezier_excursion_becomes_editable_linear_motion`,
+  `one_millisecond_excursion_keeps_splice_boundary_and_neighbor_easing`,
+  `asymmetric_parent_identity_excursion_matches_independent_polynomial_samples`,
+  `unfittable_excursion_keeps_native_siblings_and_reports_source_segment`,
+  `prepared_rect_diagnostic_identifies_original_source_key_after_excursion`,
+  `rectangle_size_and_derived_anchors_keep_one_coupled_excursion_curve`, and
+  `transform_matte_scale_keeps_moving_x_and_equal_endpoint_y_excursion`. They cover
+  exact short-segment splice boundaries, independent polynomial values under
+  asymmetric non-unit clocks, local fallback, prepared-track diagnostic provenance,
+  coupled Rectangle/anchor motion and matte-copy Scale motion. This is
+  numerical/structural evidence, not native render fidelity. Export
+  implementation/proof is unchanged.
 - **Keyed Fast Box Blur owner clock:** existing radius-to-Gaussian keys use
   `start + source_time × stretch` on the receiving parent-identity effect owner.
   Invalid clocks omit the keyed effect atomically without consuming identity or
@@ -1335,7 +1360,7 @@ reopen or the entire catalog. Independent full-duration 30fps render/long-term
 Asset publication, original-project RGB, alpha and audio fidelity remain unproved.
 They remain separate proof requirements, not implied by descriptor equality
 or successful native edits. Existing feature approximations and omissions remain.
-## Mosaic center-sampling normalization — bounded root-canvas export correction
+## Mosaic sampling-domain handling — bounded export correction
 
 **FX → AEP:** FX currently ignores `sharpColors` and samples block centers.
 Export normalizes false to native Sharp Colors on **only** for an ungated,
@@ -1350,12 +1375,35 @@ may be active on the Adjustment; bypassed sibling effects remain in place.
 Existing enclosure arithmetic is used after these exclusions, never as proof
 that native painted/masked/projected bounds equal renderer raw geometry.
 
-All other domains retain the authored checkbox and receive contextual unsupported
-sampling-domain diagnostics. This **does not** make native averaging faithful to
-FX center sampling. Escaped geometry, animation/dependent geometry, shifted or
-nested planes, tilt, unknown Text/media, parents, backgrounds and gated Adjustments
-are not admitted. Counts, count keys/Hold clocks, bypass, effect order, transforms,
-owner bounds and source FX bytes are not rewritten. Premiere admission is unchanged.
+A second bounded path handles an ungated Adjustment over finite raw Shape/Rect
+geometry whose constant raw AABB escapes the source canvas. The exporter requires
+one unchanged domain throughout the Adjustment's active interval, before effect
+paint expansion as the FX renderer does when choosing Mosaic's grid. Rect paint
+lowers to a Shape: an enabled, colored, positive stroke pads the raw path by half
+its constant width. Hidden or unpainted geometry contributes nothing. Moving or
+part-time geometry, temporal effects, gated/matted/3D geometry, skew and rotations
+other than constant quarter turns retain authored controls. Group child clocks
+must be affine; Group-owned transforms must be constant over all time. Any
+composition-wide cross-layer mask, matte, Text Path or custom shader input makes
+consumption unproved, including hidden and unsupported referencers, so no domain
+rewrite is applied. This also protects nested owners from references outside their
+sibling stack. No renderer-consumption or per-frame envelope model is introduced.
+
+For a proved constant domain, existing static and animated integer block counts
+are scaled by native-canvas extent divided by domain extent and rounded within the
+native control bounds. Key times, Hold interpolation, bypass, effect order and
+the authored Sharp Colors checkbox remain unchanged.
+
+Other domains retain the authored counts and checkbox with contextual diagnostics.
+Neither fallback makes native averaging faithful to FX center sampling. Native
+Mosaic has no grid-origin control, so an escaped domain's negative phase remains
+unmatched. Generated/animated Shape geometry, dependent controls, external parents,
+unclockable nested source mappings, gated Groups and unmeasured layer kinds are
+not approximated. Empty static Shape commands do not prove invisibility when a
+generator, modifier or ShapePath animator is present: painted contributors reach
+the existing geometry rejection instead of disappearing from the domain union.
+Hidden, no-paint and plain static empty Shapes remain excluded. Transforms, owner
+bounds and source FX bytes are not rewritten. Premiere admission is unchanged.
 
 **AEP → FX:** unchanged; import retains the saved checkbox and existing
 approximations. No FX block averaging or renderer change is implemented.
@@ -1367,10 +1415,23 @@ profile. It checks normalized native controls, 48→120/27→68 count keys at0/3
 Hold interpolation, source true, bypass and sibling order. This is structural
 export evidence, not a newly independently Adobe-authored eligible Adjustment.
 `mosaic_unproven_leaf_retains_checkbox_counts_clocks_and_scales` checks retained
-false/true controls and unchanged keys across escaped/scaled leaf domains.
-Source-based negative tests cover masked raw escape, tilt, unknown Text, keyed
-escape, gated/background/nested planes and raw cubic control-point escape.
-Four unsupported-domain regression symbols fail before the restriction.
+false/true controls where the escaped-domain profile is unavailable.
+`mosaic_constant_escaped_geometry_scales_count_keys_but_retains_authored_kernel`
+checks a constant 360×200 raw domain and rounded count-key scaling while retaining
+Sharp Colors false.
+`mosaic_escaped_rect_stroke_includes_renderer_half_width_in_count_keys` checks
+370×210 stroked geometry with discriminating 42→104 / 23→58 native keys.
+Supplementary edited-FX tests reject cross-layer inputs (including hidden
+referencers), temporal effects, Group-owned clock ambiguity, skew/non-quarter-turn
+reboxing, moving or part-time geometry, tilt, unknown Text, gates and root backdrop.
+A nested escaped-owner control checks constant count-key scaling. Empty/hidden
+paint and raw cubic control points have focused exclusions.
+`mosaic_generated_empty_path_retains_counts_without_a_complete_domain` adds a
+painted empty-path Ellipse generator beside a measurable escaped Rect and checks
+that authored 48→120 / 27→68 keys are retained; no-paint and plain static empty
+controls preserve the Rect's existing scaling. These tests import the pinned
+native controls and then edit FX geometry; they are not native geometry or visual
+proof.
 `mosaic_root_canvas_rejects_three_d_owner_even_at_zero_depth` checks authored
 checkbox preservation when an escaped declared-above ThreeD Rect can enter the
 backdrop. `mosaic_root_canvas_accepts_inert_nonidentity_two_d_owner_geometry`
@@ -1379,19 +1440,23 @@ These are supplementary converter regressions, not executed FX/native renders.
 The existing Premiere on-control oracle establishes the native center kernel;
 it is not new independent AE export or RGB/alpha evidence.
 
-**Preserved regression:** original Spam's animated escaped domain remains
-unsupported. The unconditional checkbox normalization regressed worst similarity
-0.5419929018→0.5108567485 and mean0.7342052577→0.7336762409; central displaced cells,
-not only outer-edge extension, dominate the visible difference. The restriction
-removes that introduced control change without claiming to solve the animated
-domain mapping or improve measured pixels. Original scores/references are not
-replaced or tuned.
+**Preserved regression:** original Spam's prior unconditional Sharp Colors
+normalization regressed worst similarity 0.5419929018→0.5108567485 and mean
+0.7342052577→0.7336762409; central displaced cells, not only outer-edge extension,
+dominated the visible difference. The escaped-domain approximation therefore does
+not repeat that checkbox change. Actual owner60004 at11.75s lies over animated
+lower geometry and does not qualify for constant-domain scaling. Its authored
+counts and false checkbox are retained; the coarse/dull animated grid remains
+unresolved. Original scores/references are not replaced or tuned, and new
+actual-original pixels remain required.
 
 **Limitations:** even eligible profile export RGB, alpha, audio, independent AE
 open/render acceptance and native editing that changes eligibility are unmeasured.
-An eligible saved false checkbox is normalized with an explicit diagnostic;
-unsupported domains preserve controls, not fidelity. No transformed/animated
-sampling-domain implementation or full-project conformance pass is claimed.
+An eligible proved-root saved false checkbox is normalized with an explicit
+diagnostic. Constant escaped-domain count scaling does not preserve grid origin
+or source center sampling. Animated domains are not scaled; no frame-local domain
+or actual animated60004 restoration is claimed. Unsupported domains preserve controls, not fidelity. No full-project
+conformance pass is claimed.
 
 ## Fractional source endpoints from shifted affine Video windows — bounded export
 
@@ -4514,6 +4579,43 @@ is not native Adobe acceptance or independent render proof. Import RGB/alpha and
 export Adobe/control fidelity remain **unmeasured/unrun**; this does not establish
 that the missing Logo wordmark is fixed.
 
+## Affine self-Scale time ramp — import-only correction
+
+A bounded ordinary-Transform expression can assign an unambiguous local variable from
+Scale X plus `(time - inPoint)` times one finite numeric rate, then return that variable
+for both XY components. The grammar is parsed rather than executed and accepts
+insignificant whitespace and ordinary multi-character names, but rejects JS reserved /
+non-writable names, AE expression-context names and decimal spellings with a possible
+legacy-octal interpretation. Changed axes, clocks, output components, extra statements
+and unrelated programs retain their native fallback.
+
+For one static combined Scale base and a finite positive source clock, the importer
+writes two editable Linear XY Scale keys at the layer's source-local in and out points.
+When that layer is used as a transform parent, the two keys instead cover the receiving
+composition interval translated through the parent's exact start/stretch clock, because
+the transform-only parent copy stays active outside the parent's paint lifetime. Finite
+preparation is never advertised through cross-composition member-alias recursion;
+those consumers retain the existing diagnosed expression fallback. AE expression
+percentage points are converted to native Scale fractions, and the composition-time
+rate includes the exact layer stretch. Authored Scale curves, separated dimensions,
+malformed clocks and non-finite results remain unsupported. The expression linkage,
+future program edits and native Z Scale are not retained. No Slider binding, runtime
+evaluation, script, media flattening or schema change is introduced. Export writes
+ordinary editable Scale keys and does not reconstruct the expression.
+
+The earlier composition-level expression evaluator can still report that its native
+fallback was retained before this later control-link lowering succeeds; the Scale
+lowering success diagnostic supersedes that evaluator diagnostic for the resulting
+editable Scale track. Shared evaluator-diagnostic ownership is unchanged.
+
+`control_links::scale_time::tests` uses a public native layer/clock scaffold and an
+independently synthetic expression. Its nonzero in point and nonunit stretch check exact
+interior/end values and Linear timing. Focused cases also cover the transform-parent
+composition extent, member-alias fallback, unsupported static-base layout, ambiguous or
+reserved bindings, a leading-zero rate, and changed components/clocks/output/trailing
+statements. The licensed source body and project are not shipped. Native Adobe render,
+RGB/alpha equality and reverse-control fidelity are **unmeasured/unrun**.
+
 ## Text selector control expressions — import-only correction
 
 An enabled expression on a Range Selector field or a Text Animator property is lowered only when it is an exact affine function of at most one same-layer Slider curve. Nothing is executed or sampled. The result is a static value or the Slider's own keys, in the same layer clock (no rebasing).
@@ -5222,6 +5324,22 @@ limitations or missing pixel-equivalence proof. Public independently authored fe
 RGB score and alpha proof remain **unrun/unmeasured**. This section does not
 promote the historical Glow import cases or prove general Glow fidelity.
 
+## Cubic vector-paint Color easing — export approximation
+
+**FX → AEP:** animated Fill and Stroke Color tracks retain their authored key
+values and times. Native Color uses one shared temporal ease, whose cubic mapping
+is not established, so each cubic segment is diagnosed and authored as Linear.
+Existing Linear and Hold segments, paint owners, clocks and sibling tracks remain
+unchanged. This preserves exact colors at authored keys but does not claim the
+same between-key color curve. **AEP → FX is unchanged.**
+
+`export_document::tests::paint_opacity::cubic_paint_color_retains_keys_with_linear_approximation_and_sibling`
+checks four editable Color keys, mixed Linear/Hold/cubic timing, independent paint
+and layer opacity, and sibling retention for Fill and Stroke. The test failed
+before the correction because the complete Color track was omitted. It is a CPU
+structural check, not independent Adobe readback, RGB/alpha fidelity or a general
+cubic-easing proof.
+
 ## Static solid vector alpha — export correction
 
 FX → AEP vector programs now multiply a static solid Color's alpha into that
@@ -5241,6 +5359,19 @@ opaque sibling. These are CPU structural regressions, not independent Adobe
 readback, RGB/alpha fidelity or edit-propagation proof. Keyed Color alpha is not
 repaired: combining two varying paint curves is outside this static correction.
 AE → FX import implementation is unchanged; no new import fidelity claim follows.
+
+The singly painted native Rectangle fast path also carries its static RGBA alpha
+on Fill/Stroke Opacity and writes opaque native Color. Previously it stored alpha
+only on Color, so supported translucent rectangles rendered opaque. This uses the
+same established paint mapping as vector programs; layer Opacity, geometry and
+clocks remain separate. Both static and animated Rectangle records use this
+appearance conversion. Other legacy direct-shape paths are unchanged.
+`hybrid::tests::linked_direct_rectangle_keeps_static_paint_alpha_and_layer_opacity`
+derives edited Rect content from the public native Transform fixture and exercises
+ordinary Premiere linked export, asserting native paint/Color controls, independent
+layer Opacity and unchanged editable input. This is CPU structural evidence only:
+independent Adobe opening/readback, rendered occlusion recovery, alpha-channel
+fidelity and edit propagation for this Rectangle correction remain unverified.
 
 ## Single-paint leaf opacity — export normalization
 
@@ -6933,8 +7064,10 @@ The effect name must uniquely match AE's current instance name: an explicit
 rename wins, and an instance that keeps AE's `-_0_/-` placeholder is named by its
 plugin display name (`fnam`). The parameter may be named by display or match
 name. Chains of pure same-effect aliases are followed with cycle detection.
-Captured Adobe expression samples keep precedence. The result is an independent
-editable copy; live linkage is not retained and is diagnosed.
+The exact decoded alias values, keys and easing precede captured or
+converter-evaluated samples; samples remain the fallback for expressions outside
+this exact grammar. The result is an independent editable copy; live linkage is
+not retained and is diagnosed.
 
 Ambiguous or unreadable effect names, references to another effect occurrence,
 missing/ambiguous parameters, cycles, non-scalar or differing value kinds and
@@ -6952,7 +7085,10 @@ composition 326 and `native_static_controls.aep` composition 339 with
 converter-test expressions and renames added. They are not Adobe-authored or
 Adobe-rendered proof of the edited behavior. The derived animated case failed
 before the change (Vertical retained its stale initial value and omitted its keys)
-and passes after it; disabled-expression and fallback controls pass unchanged.
+and passes after it. The explicitly renamed exact alias asserts that evaluator
+fitting did not run, while a renamed arithmetic non-alias expression proves that
+a continuous referenced Integer control emits editable evaluated keys.
+Disabled-expression and fallback controls pass unchanged.
 
 ## Fresh root identity and package staging
 
@@ -7552,6 +7688,43 @@ Executed external-source structural regressions (fixtures remain local):
   prepared-copy hash above. The synthetic duplicate-instance test additionally uses
   different values to guard against cross-instance leakage.
 
+## Nested translated Boolean shared outlines (AE → FX repair)
+
+A bounded import path now keeps a painted Boolean operand when one native Shape
+outline crosses an inner planar transform followed by static 2D translation
+parents. Each parent contributes `position - anchor` to the visible Shape's
+position, and compatible native non-position keys from the inner transform are
+copied to that operand. This uses the existing editable Shape and
+`BooleanOperation` capabilities: it does not flatten the outline, reveal the
+hidden producer, add a script animator or substitute an unmasked full-rectangle
+paint.
+
+The admission boundary is semantic rather than a source-name allowlist. Every
+outer group must have static 2D anchor/position, identity scale/rotation/skew and
+planar orientation. Skew Axis is inert while Skew is zero. Group opacity is not
+part of transported outline geometry, so static or animated parent/inner opacity
+neither admits nor rejects the geometry and is not copied onto the operand. The
+inner transform must be planar without dynamic position; compatible
+anchor/scale/rotation/skew keys remain eligible. Round stages, dynamic geometry
+in a parent, and otherwise non-composable transform chains retain the existing
+diagnosed omission. Hidden source geometry and controls remain in the editable
+document. Because FX has no native reference animator, successfully committed
+key batches are frozen copies and do not follow later edits to those hidden
+controls; the original nested group names/control identity are not retained.
+
+The publishable regression
+`nested_translated_scale_intersection_keeps_painted_alpha_and_independent_clocks`
+uses two 1920×1080 rectangle operands with separate Scale-X clocks, multiple
+nonzero-anchor translation parents, inert Skew Axis, ignored opacity animation,
+a mode-4 intersection and an independent sibling. It asserts one painted
+editable Boolean, two transformed Shape operands with exactly Scale-X/Y targets,
+independent native keys, concealed source geometry, a reachable full-canvas
+nonempty intersection, committed copy diagnostics, no visible standalone filled
+rectangle and sibling retention. This is structural import
+evidence only. No independent Adobe render, RGB/alpha comparison or UI readback
+has run for this repair. FX → AEP export behavior is unchanged and gains no proof
+from the import regression.
+
 ## Feature summary
 
 <!-- Existing fixture/control-appendix links land on current limits, not removed historical journals. -->
@@ -7568,8 +7741,8 @@ Executed external-source structural regressions (fixtures remain local):
 | Layers, clocks, parenting, precomps | Source-local versus parent clocks, bounded remap/stretches, bounded parent/matte chains and precomp instances become editable groups/links. Still images keep their native parent lifetime without a source clock. | Finite compatible clocks, parent references, supported groups/source variants and precomps; identity wrappers normalized. | Repeated instances become independent copies. Unknown bounds, cycles, unsupported remap/keys, parent opacity/visibility and hierarchy combinations diagnosed/omitted; no arbitrary shared identity restoration. | S bounded; source-relative Anchor sidecar repair has synthetic S and user-observed nonblack export, **not** independent sidecar fidelity.  |
 | 2D/3D transforms, camera, blur | Numeric position/anchor/scale/rotation/opacity, compatible keys, stored 3D values, bounded motion blur/frame blend. | Supported native keys/3D sidecars, canonical generated camera, selected shutter/frame-blend settings. | No new general camera/light/material system; quaternion easing, unsupported coupled keys/projection, Pixel Motion and camera combinations differ. | S selected; historical frame-blend RGB mismatch remains measured, not passed.  |
 | Adjustment layers | Direct editable stack scope/order, nested scopes, selected gates, effects, opacity keys and static masks/matte. | Fresh solid-backed Adjustment with native flag, supported guides, effects, clocks and gates. | Parent guide hierarchy flattened; animated/grandparent/3D gates and matte-provider combinations diagnosed. Existing FX wet/dry alpha and feather behavior are not AE-equivalent. | Ten independent native targets: import S 10, measured RGB minima 0.731985–0.988786; export S 10, Adobe open/render 10, native controls 9 matched / 1 partial, measured RGB minima 0.941530–1.0. **Not fidelity passes**. Alpha/audio unverified. [Exact cases](../crates/aftereffects_file/tests/fixtures/adjustment/evidence.json). |
-| Solids, paints, native vector groups | Solids, ordered paint ownership, bounded group transforms, fill/stroke, static outlines and eligible parametric Rect/Ellipse/Star/Polygon. | Solids; eligible single-/bounded two-paint Shapes, separate opacity and selected vector Groups, bounded dash/paint keys. | Shared/cross-scope producers may become independent static copies; unsupported combinations and unknown bounds omit affected paint/subtree with warning. Fractional Star points floor after clamp; non-Hold animated point counts excluded. | S bounded; low-level solid Adobe probes only; broad independent vector/control/render proof incomplete. [Shape cases](../crates/aftereffects_file/tests/fixtures/shapes/README.md). |
-| Boolean Merge Paths | Existing FX BooleanOperation maps bounded native geometry and owned paints. | Bounded Merge modes, transforms and **Rect Size/center/Roundness, Ellipse and PolyStar parameter keys**, including nested operands. | Wrong-kind geometry, unmapped paint/modifier keys, incompatible clocks or Path keys omit Boolean subtree, retain independent siblings. **Not transform-only** for eligible parametric operands. | Export seven focused CPU tests passed after repair; independent animated-Boolean native oracle, Adobe opening/readback and RGB **unrun/unmeasured**.  |
+| Solids, paints, native vector groups | Solids, ordered paint ownership, bounded group transforms, fill/stroke, static outlines and eligible parametric Rect/Ellipse/Star/Polygon. A shared outline under one inner planar transform plus static translation parents can copy compatible native non-position keys onto its visible paint. | Solids; eligible single-/bounded two-paint Shapes, separate opacity and selected vector Groups, bounded dash/paint keys. | Shared/cross-scope producers become independent copies; the translated-parent subset retains committed native non-position key batches, while unsupported combinations and unknown bounds omit the affected paint/subtree with warning. Opacity is not transported outline geometry. Copied keys do not follow later hidden-producer edits. Fractional Star points floor after clamp; non-Hold animated point counts excluded. | S bounded, including the publishable nested translated-intersection import regression; low-level solid Adobe probes only. Independent import alpha/render and broad vector/control proof remain incomplete. [Shape cases](../crates/aftereffects_file/tests/fixtures/shapes/README.md). |
+| Boolean Merge Paths | Existing FX BooleanOperation maps bounded native geometry and owned paints, including the exact translated-parent-chain shared-outline subset above. | Bounded Merge modes, transforms and **Rect Size/center/Roundness, Ellipse and PolyStar parameter keys**, including nested operands. | Wrong-kind geometry, non-composable/dynamic parent geometry, unmapped paint/modifier keys, incompatible clocks or Path keys omit the Boolean subtree and retain independent siblings. **Not transform-only** for eligible parametric operands. | Import translated-intersection structure S; export seven focused CPU tests passed after repair. Independent animated-Boolean native oracle, Adobe opening/readback and RGB/alpha are **unrun/unmeasured**.  |
 | Shape and Mask Path keys | Bounded native keys → typed editable Path tracks, owner clocks, Linear/Hold/zero-speed Bezier. | Fresh parallel timing/contour records for Shape and compatible same-parent Mask guides. | Unequal non-Hold topology, unsupported ease/expressions/compound fusion and incompatible mask clocks diagnosed; no JS or sampled contours. | CPU/native control assertions pass; bounded Adobe Shape/Mask exports and Mask import RGB/alpha pass; Shape FX raster coverage **fails**. [Panel evidence](../crates/aftereffects_file/tests/fixtures/path-keys-proof/README.md). [Exact limits](#native-shape-and-mask-path-keys). |
 | Stroke, gradients, fills | Static fill rules/caps/joins, bounded Hold-only Join keys, strokes/dashes, linear/radial gradients and stops mapped where representable. | Eligible paint controls/keys and static gradient streams; reflected gradient normalized to mirrored linear endpoints/stops. | Variable-width taper/wave, animated gradient stops/axes, midpoint bias, nonstandard gradients, odd/invalid dash patterns and incompatible paint combos omitted/approximated; original linkage lost. | S selected; typed gradient descriptor CPU repair and **user-reported opening**, but no independent gradient score/control readback.  |
 | Text, masks and mattes | COS point/box text, bounded animator tracks, static masks, selected mattes; modern matte ID 0 means no matte; unsupported masks diagnosed. | Fresh point/box text, selected animators, static masks and supported matte relations. | Fonts/layout/baselines, linked parental feather, expression-dependent text and complex selector/path combos may differ; Path keys have the bounded mapping above. | S selected; masked Adjustment cases have bounded Adobe readback/RGB, **not general** text/matte or alpha proof. |
@@ -8048,39 +8221,56 @@ Split 2 export reconstruction remains unsupported.
 ## Full-span Adjustment Posterize Time — import-only checkpoint
 
 A full-composition, zero-start, unit-clock Normal Adjustment with static 100%
-opacity and a sole enabled Posterize Time effect can hold a closed visual stack
-below it. Static rates and strictly ordered Hold keys in the existing 1–60 fps
-range become interval gate Groups containing full-duration static-rate Groups
-anchored at source zero. Gates have explicit identity time mapping and remain
-outside the held clock; the native switch is rounded upward to the first integer
-millisecond on or after it. A native one-third-second switch therefore uses
-334 ms: 333 ms still uses the earlier grid. Arbitrary submillisecond continuous
-boundaries and general Adjustment timing remain unrepresented.
+opacity and one decoded enabled Posterize Time effect can hold a closed visual
+stack below it when every additional raw Posterize identity is confirmed disabled.
+An enabled or undecodable competing Posterize stage retains the original siblings
+with a schedule-loss diagnostic; malformed controls on a confirmed-disabled stage
+stay inactive. Other native effects that the ordinary Adjustment importer already
+omits do not discard this supported time stage: the emitted Adjustment must still
+contain Posterize Time as its sole editable effect, while unrelated control-decode
+and effect-omission diagnostics remain. Posterize admission uses its own raw
+identities, enabled states, control identity and validated rate rather than
+unrelated sibling decode warnings. Static rates and strictly ordered Hold keys in
+the existing 1–60 fps range become interval gate Groups containing
+full-duration static-rate Groups anchored at source zero. Gates have explicit
+identity time mapping and remain outside the held clock; the native switch is
+rounded upward to the first integer millisecond on or after it. A native
+one-third-second switch therefore uses 334 ms: 333 ms still uses the earlier
+grid. Arbitrary submillisecond continuous boundaries and general Adjustment
+timing remain unrepresented.
 
 The first branch retains existing identities, content and keyframes. Later
 branches reconvert the original native sibling indices through the ordinary
 layer, matte, Set Matte and Preserve Underlying Transparency paths, assigning
 fresh identities and references. Copies are independently editable; edits are
 not shared between intervals. Above siblings remain at their live clock and
-composition canvas masks stay outside the held stack. No effect-enabled or
-opacity animation, scripts or per-frame geometry are generated.
+composition canvas masks stay outside the held stack. An enabled CC Split 2
+stage above the Posterize owner needs the original native-to-output sibling
+correspondence, so the special Posterize hold defers and leaves the original
+siblings for the later Split handler. A Split on the same Adjustment cannot be
+combined safely with the whole-layer hold; supported Posterize remains useful
+and the unrepresentable Split loss is explicit. A Split below Posterize can use
+the held branch's native correspondence. No effect-enabled or opacity animation,
+scripts or per-frame geometry are generated.
 
 Only closed visual scopes are admitted. Physical Video/Audio and unknown layer
 kinds in the held stack, crossing parent/matte/mask/text-path/effect/graph
 references, scripts or dependent graph entries, masks/styles on the Adjustment,
-other enabled effects, opacity animation, remap, partial spans, non-Hold rates,
-invalid controls, direct sibling matte helpers allocated after native occurrence
-ownership, and failed depth/identity/animation/shape allowances retain the
-original siblings and an explicit omission. Above physical media remain allowed.
-Failed reconversion restores the importer contexts and accounting atomically.
+other editable effects, opacity animation, remap, partial spans, non-Hold rates,
+invalid Posterize controls, direct sibling matte helpers allocated after
+native occurrence ownership, and failed depth/identity/animation/shape allowances
+retain the original siblings and an explicit cause-specific omission. An omitted native effect
+is not approximated by the hold graph and its placement relative to Posterize
+Time remains a fidelity loss; recovering the independent supported time stage is
+not a whole-chain appearance claim. Above physical media remain allowed. Failed
+reconversion restores the importer contexts and accounting atomically.
 
-The native control excerpt and focused CPU tests establish editable ownership,
-ceiling boundaries and rejection behavior. The private source-backed Cosmic
-check verifies two 954-layer scopes and 202 owned animation entries per branch,
-including layer, effect and FX-item target namespaces; the earlier 74 count
-omitted 128 FX-item entries. Original entries remain unchanged. This is structural
-and clock evidence, not independent Adobe pixel fidelity or native export
-reconstruction proof.
+The existing public Cosmic native control excerpt plus explicitly synthetic
+sibling-effect mutations establish editable ownership, ceiling boundaries,
+unrelated-warning recovery, competing-Posterize rejection, confirmed-disabled
+handling, mapped-effect retention and Split handoff behavior. These CPU
+structural regressions do not establish independent Adobe pixel
+fidelity or native export reconstruction proof.
 
 ## Bounded self-inverse mask stage — import approximation
 
@@ -8679,37 +8869,74 @@ compatibility repairs to existing contracts, without new export feature or
 independent Adobe persistence/fidelity proof.
 
 
-## Hard-edge Linear Wipe Solid / post-Anchor profile — import approximation
+## Hard-edge Linear Wipe finite-source / post-Anchor profile — import approximation
 
 One or two enabled hard-edge Linear Wipes on an isolated finite 2D square-pixel
-raster Solid become editable Shape half-plane masks in source coordinates. The
-first mask adds and the second intersects, preserving sequential wipe order.
-Completion uses the native scalar animation and immediate-parent clock; the
-travel vector is `[sin(angle), cos(angle)]`, with 90 degrees traveling left to
-right, 0 percent complete retaining the canvas and 100 percent removing it.
+raster Solid, dimension-matched composition source, or continuously rasterized
+source-free Shape layer become editable Shape half-plane masks. For a static,
+unskewed, invertible 2D Shape owner with a complete static finite planar parent
+chain, each guide is inverse-mapped through the emitted owner and parent
+Transforms so its boundary reaches the composition-space position after those
+Transforms. For an unparented owner, the generated-camera normalization offset is
+applied to the native composition guide before that inverse; parent wrappers are
+not normalized. The vector paint remains editable beneath
+the mask stage, while the original owner Transform, styles and opacity remain outside.
+Composition children and source identity likewise remain editable; fixed
+precomposition frame clipping remains approximate. The first mask adds and the
+second intersects, preserving sequential wipe order. Completion first preserves
+native scalar animation or resolves the exact direct alias grammar, then falls
+back to existing finite source-frame expression samples. Sampled expressions
+become independent editable keys: Adobe equality between samples and live
+expression linkage are not retained. The native parameter declaration classifies continuous slider/fixed/angle/color/
+point kinds separately from discrete checkbox/popup kinds, including referenced
+controls. Integer leaf storage therefore does not force continuous Completion to
+Hold; unreadable or unknown integer controls retain the conservative Hold gate.
+The travel vector is `[sin(angle), cos(angle)]`, with 90 degrees traveling left
+to right, 0 percent complete retaining the canvas and 100 percent removing it.
 Projected finite-canvas extent supplies an analytical angled normalization;
 Adobe edge antialiasing and exact angled completion normalization are unverified.
-No pixel equivalence is claimed.
+Finite ordered native keys and easing are retained without a local key-count cap
+or easing-handle clamp. Authored Completion key values must remain within 0–100;
+Bezier interpolation may preserve native overshoot between those keys. The
+finite half-plane guide is sized from the easing controls' convex-hull minimum,
+so a representable excursion cannot outrun the guide; this does not claim Adobe
+clamps or pixel equality.
 
-An optional final Geometry2 stage admits only a normalized static or bounded
+An optional final Geometry2 stage on a source-local Solid/composition plane admits
+only a normalized static or bounded
 axis-aligned Anchor curve with centered default Position and all other controls
 at pinned native defaults. Anchor coordinates scale by the decoded source size
 and move the already-masked source, before the original owner transform/styles.
+A leading Geometry2 does not block the independent bounds-defined Wipe mask, but
+current footage owners cannot use the separate post-layer Geometry2 mapping; the
+Geometry2 remains explicitly omitted while the Wipe and source content survive.
+Only a successfully consumed trailing Geometry2 suppresses that separate mapping.
+A trailing Geometry2 is not consumed on an inverse-mapped Shape composition plane.
 Direct same-layer aliases must uniquely refer to a preceding Wipe's complete
 native parameter suffix, with the supported opposed-angle `+180` grammar. They
-become independent values/keys; arbitrary expressions retain their diagnostics.
+become independent values/keys. Expressions without valid converter-evaluated
+Completion samples retain their diagnostics.
 Feather, angle animation, curved/diagonal Anchor motion, conflicting declarations,
-unknown/duplicate controls, masks, mattes, collapse, 3D and mixed effects decline
-atomically, including late animation/output allowance or identity failure.
+unknown/duplicate controls, masks, mattes, 3D, collapsed non-Shape sources and
+nonadjacent or otherwise unrecognized mixed effects decline atomically, including
+late animation/output allowance or identity failure. Non-continuous Shape layers,
+dynamic or auto-oriented owner/parent geometry, incomplete parent chains, skewed
+owners and singular combined planes also retain local omission diagnostics.
 
 The unchanged native Linear Wipe/Anchor fixture records source SHA, envelope
 byte ranges and hashes in `native-linear-wipe-anchor-controls.provenance.json`.
-The source regression failed with no mask stage before the fix. Six focused
-tests retain native Completion/Anchor values and clocks, prove cardinal endpoint
-polarity and alternate angled extents, resolve opposed aliases, preserve reversed
-nonzero clocks, and check rollback. Renamed occurrences and alternate source
-values supply generic controls. This is import-only structural proof, not new
-Adobe playback, export parity or native angled-raster proof.
+The source regression failed with no mask stage before the fix. Focused tests
+retain native and evaluated Completion tracks, composition and Shape
+children/source identity, Completion/Anchor clocks, cardinal endpoint polarity
+and alternate angled extents, exact renamed-alias priority over evaluated samples,
+a renamed non-alias referenced-control expression with emitted editable keys,
+receiving-plane boundaries and paint bounds, generated-camera offset placement,
+static parent-chain inversion including shear, reversed nonzero clocks,
+leading-Geometry2 Wipe retention with an actual Geometry2 omission diagnostic,
+integer-encoded continuous Completion evaluation, true discrete-control Hold
+enforcement, finite easing, more than 64 meaningful keys and atomic rollback.
+Renamed occurrences and alternate source values supply generic controls. This is import-only structural
+proof, not new Adobe playback, export parity or native angled-raster proof.
 
 
 The existing Glow effect retains native threshold/radius/intensity controls,
@@ -8717,8 +8944,8 @@ but current FX raster compositing is premultiplied-over rather than the native
 Add / Behind controls. Native threshold extraction, additive alpha and blur
 kernel remain unverified. No Glow graph replacement was added in this scope;
 source controls, existing approximation and omission diagnostics remain.
-Mixed shadow / Set Matte / Glow / Wipe stacks do not enter the isolated Solid
-Wipe profile, so their previously diagnosed Wipe omissions remain.
+Mixed shadow / Set Matte / Glow / Wipe stacks do not enter the isolated
+finite-source Wipe profile, so their previously diagnosed Wipe omissions remain.
 
 ### Launch Radial Blur export — Zoom selection (structural correction)
 
@@ -9869,13 +10096,27 @@ source changes, shader mapping or pre-rendered replacement are published.
 **Direction:** FX → AEP only; import is unchanged. This follows the embedded
 physical-font classifier projection, without changing FX/runtime or native Text
 layout mappings. Bounds consume the exact Source Text timeline returned by the
-existing writer lowering: unsupported continuous Tracking/FillColor retain their
-original omission diagnostics and typed static base; supported Hold Tracking uses
-an outline union over the emitted documents. Existing native Transform tracks
-still pass through the ordinary hierarchy analyzer. Whitespace-only ASCII Point
+existing writer lowering: continuous Tracking/FillColor authored-time values survive
+as editable Hold documents and use an outline union over the emitted documents.
+Between-key interpolation remains approximated. Actual-original and native fidelity
+for this mapping remain unproved. Existing native Transform tracks still pass through
+the ordinary hierarchy analyzer. Whitespace-only ASCII Point
 Text contributes no painted enclosure but remains an editable native Text layer,
 never a flattened replacement or a guessed/padded rectangle. Text-only source
 Groups may use the same verified outline projection as mixed sources.
+
+Point bounds also consume already-supported Source Text content/font/size/leading
+constants and Hold documents, including an empty typed base. Each emitted document
+must satisfy the existing single-line horizontal outline profile; no new Text
+mapping or font substitution is added. Mixed sources project qualified Point Text
+independently, leaving Box or otherwise unqualified Text unknown. Existing native
+source/consumer-domain certificates may enclose those unknown children; `boxSize`
+is never treated as painted glyph bounds. If independent unknown Text still needs
+omission, Text-only recovery retains qualified Text and restores original Source
+Text instead of emitting classifier rectangles. Regression assertions cover
+retained native Source Text, a mixed Point/Box Bulge source and independent paint
+siblings. These structural assertions do not establish original conversion,
+Adobe open/readback or render fidelity. Import is unchanged.
 
 An already-rejected CustomShader stack contributes no native effect to this
 bounds-only view. Its precise unsupported diagnostic and original owner remain;
@@ -10434,3 +10675,32 @@ evidence; generated controls are inspected offline, not Adobe-accepted output.
 Edited-output Adobe acceptance, independent30fps references/Assets and native
 RGB/alpha/audio comparison remain unmeasured. This is not arbitrary channel
 routing, standalone AEP Channel16 support, or general linked/groupAlpha coverage.
+
+## Root Adjustment refused-mask fallback
+
+**FX → AEP:** a visible, unreferenced root Adjustment whose coverage mask cannot
+lower is omitted instead of applying its effects without that gate. Its root
+Shape mask guides remain consumed, matching source path-mask visibility even
+when native export fails. Ordinary unreferenced paint and editable siblings
+survive. The original unsupported-mask diagnostic remains; neither the omitted
+mask geometry nor the gated grade is reconstructed. This is a diagnosed loss,
+not support for animated occurrence-coordinate masks.
+
+The fallback admits only source-only Shape guides without native parent, matte,
+AI-edit, segment or animation-reference consumers, owned masks/mattes or effects.
+Referenced Adjustment owners, foreign or missing guides, other guide kinds and
+nested owners keep the existing best-effort behavior; their unsupported coverage
+is not qualified by this correction. Hidden owners do not consume failed guides.
+Supported masks and their native controls/keys are unchanged. An unlowerable
+Mask None is not a coverage failure. Failed Text-owner reservation rollback is
+unchanged and cannot undo consumption already reserved by this failed Adjustment.
+
+`root_adjustment_mask_fallback` derives guide geometry from the pinned public
+`masks/import_mask_controls.aep` SHA-256
+`01380c1f8c5ebe486cd068e5dee50447870b86e4864fc842590a99386dd9b417`,
+with explicit current FX edits for root ownership, soft feather and placement
+keys. Fresh AEP assertions cover omitted grade/guide, guide-before-owner order,
+retained editable paint and timing, supported masks/opacity keys, hidden-owner
+visibility, Mask None, native matte dependencies and failed Text rollback.
+These are structural assertions, not independent Adobe acceptance or RGB/alpha
+proof. Import behavior and native mask-mapping certificates are unchanged.

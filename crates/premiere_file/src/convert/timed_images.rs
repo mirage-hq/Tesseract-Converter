@@ -292,6 +292,8 @@ fn export_frames(
 }
 
 /// A fallback nest must not silently clip an image before its Group Motion.
+/// An image that ordinary nested lowering omits before media lookup cannot
+/// require inspected facts or discard otherwise exportable siblings here.
 /// Other host/geometry families retain their existing admission and ownership.
 pub(super) fn oversized_source(group: &GroupLayer, context: &LayerExport<'_, '_>) -> Result<bool> {
     if !group
@@ -301,10 +303,16 @@ pub(super) fn oversized_source(group: &GroupLayer, context: &LayerExport<'_, '_>
     {
         return Ok(false);
     }
+    let canvas = [context.width, context.height];
     for layer in &group.layers {
         let LayerData::Image(image) = layer.data() else {
             continue;
         };
+        if super::tesseract_to_premiere::image_mask(image, &group.layers, context.dynamics, canvas)
+            .is_err()
+        {
+            continue;
+        }
         let ImageSource::Asset(source) = &image.source;
         let Ok(facts) = still_facts(source, context.media_facts)? else {
             continue;

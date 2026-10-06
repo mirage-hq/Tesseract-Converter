@@ -100,6 +100,27 @@ fn legacy_unmapped_character_controls_preserve_text_with_contextual_diagnostics(
 }
 
 #[test]
+fn legacy_run_metadata_is_diagnosed_without_losing_actual_text_or_style() {
+    let expected = read(&legacy_source_text())
+        .unwrap()
+        .uniform()
+        .unwrap()
+        .document;
+    let mut text = legacy_source_text();
+    text["mTextParam"]["mStyleSheet"]["mFontSize"]["unknownControl"] = json!(true);
+
+    let actual = read(&text)
+        .expect("unmapped run metadata must not discard known text styling")
+        .uniform()
+        .unwrap();
+    assert_eq!(actual.document, expected);
+    assert_eq!(actual.omitted.len(), 1);
+    assert!(actual.omitted[0]
+        .to_string()
+        .contains("mFontSize.unknownControl"));
+}
+
+#[test]
 fn legacy_optional_inactive_decoration_fields_do_not_require_a_complete_profile() {
     let expected = read(&legacy_source_text())
         .unwrap()

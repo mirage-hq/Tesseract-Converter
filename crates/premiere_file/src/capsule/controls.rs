@@ -74,6 +74,25 @@ pub(super) fn saved_layout(
     Ok(CapsuleValue::Group { children, expanded })
 }
 
+/// Premiere's native parameter-control code for saved media replacements.
+const MEDIA_DEPENDENCY_PARAMETER_CONTROL_TYPE: &str = "34";
+
+pub(super) fn validate_media_dependency(param: Element<'_>) -> Result<(), String> {
+    let field = |name| param.child(name).and_then(Element::text);
+    if field("ParameterControlType") != Some(MEDIA_DEPENDENCY_PARAMETER_CONTROL_TYPE) {
+        return Err("saved media parameter type does not match its dependency".into());
+    }
+    if field("IsTimeVarying").is_some_and(|value| value != "false")
+        || field("Keyframes").is_some_and(|value| !value.is_empty())
+    {
+        return Err("keyed media replacement is not mapped".into());
+    }
+    if field("StartKeyframePosition").is_some_and(|value| value != records::STATIC_KEYFRAME_TIME) {
+        return Err("unsupported media replacement clock".into());
+    }
+    Ok(())
+}
+
 pub(super) fn saved_numeric(
     param: Element<'_>,
     kind: u32,
@@ -86,7 +105,6 @@ pub(super) fn saved_numeric(
         3 => "5",
         5 => "3",
         6 => "6",
-        11 => return Err("media replacement override is not mapped".into()),
         kind => return Err(format!("unsupported saved controller type {kind}")),
     };
     if field("ParameterControlType") != Some(expected) {

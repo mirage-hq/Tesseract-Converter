@@ -28,6 +28,12 @@ macro_rules! define_effect_instance_schema {
                 /// their payload, stack position, id, and parameter animators.
                 #[serde(default = "default_true")]
                 pub enabled: bool,
+                /// AE Compositing Options; omission preserves the historical effect path.
+                #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_persisted_compositing_options")]
+                pub compositing_options: Option<EffectCompositingOptions>,
+                /// Forward-compatible instance fields retained on writeback.
+                #[serde(default, flatten)]
+                pub extensions: EffectInstanceExtensions,
                 /// The effect this instance applies.
                 #[serde(
                     deserialize_with = "deserialize_persisted_effect",

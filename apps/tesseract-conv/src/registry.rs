@@ -20,10 +20,11 @@ pub(super) enum ConversionOption {
     MediaRelink,
     Fps,
     Sequence,
+    FilmImpactPop,
 }
 
 impl ConversionOption {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::Composition,
         Self::ExpressionSamples,
         Self::AvailableFonts,
@@ -31,6 +32,7 @@ impl ConversionOption {
         Self::MediaRelink,
         Self::Fps,
         Self::Sequence,
+        Self::FilmImpactPop,
     ];
 
     fn is_present(self, request: &ConversionRequest<'_>) -> bool {
@@ -42,6 +44,7 @@ impl ConversionOption {
             Self::MediaRelink => request.media_relink.is_some(),
             Self::Fps => request.fps.is_some(),
             Self::Sequence => request.sequence.is_some(),
+            Self::FilmImpactPop => request.allow_film_impact_pop,
         }
     }
 
@@ -64,6 +67,9 @@ impl ConversionOption {
                 "--fps is only supported for Tesseract to Premiere or After Effects conversion"
             }
             Self::Sequence => "--sequence is only supported for Premiere to Tesseract conversion",
+            Self::FilmImpactPop => {
+                "--allow-film-impact-pop is only supported for Premiere to Tesseract conversion"
+            }
         }
     }
 }
@@ -218,6 +224,7 @@ const AFTER_EFFECTS_IMPORT_OPTIONS: &[ConversionOption] = &[
 ];
 const PREMIERE_IMPORT_OPTIONS: &[ConversionOption] = &[
     ConversionOption::Sequence,
+    ConversionOption::FilmImpactPop,
     ConversionOption::MediaMap,
     ConversionOption::MediaRelink,
 ];
@@ -441,6 +448,7 @@ mod tests {
             input: Path::new("missing.tsrct"),
             output: Path::new("unused-output"),
             sequence: None,
+            allow_film_impact_pop: false,
             composition: Some(1),
             expression_samples: None,
             available_fonts: None,

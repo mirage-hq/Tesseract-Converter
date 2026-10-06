@@ -143,12 +143,28 @@ fn eye_contact_duration_mismatch_names_the_active_output() {
             crate::media::VideoTiming::for_test(FrameRate::Fps30, 2 * crate::schema::TICKS);
         facts
     };
-    let error = export(true, two_second_output()).unwrap_err().to_string();
+    let (project, reports) = export(true, two_second_output()).unwrap();
+    assert_eq!(exported_media(&project), [EYE_CONTACT]);
+    let clip = project
+        .single_sequence()
+        .unwrap()
+        .video_occurrences()
+        .next()
+        .unwrap();
+    assert_eq!((clip.in_ticks, clip.out_ticks), (0, crate::schema::TICKS));
+    assert_eq!(
+        project.media[&clip.media]
+            .video
+            .as_ref()
+            .unwrap()
+            .intrinsic_ticks,
+        2 * crate::schema::TICKS
+    );
     assert!(
-        error.ends_with(
-            "sourceIntrinsicDuration 1000 ms differs from the packaged MP4 duration 2000 ms of the active Eye Contact output \"eye-contact-output\""
-        ),
-        "{error}"
+        reports
+            .iter()
+            .any(|note| note.reason.contains("stale sourceIntrinsicDuration")),
+        "{reports:?}"
     );
     // Disabled, the unused output's duration does not matter.
     let (project, _) = export(false, two_second_output()).unwrap();
@@ -292,21 +308,36 @@ fn active_replacement_keeps_playback_and_wipe_export_and_rejects_retimed_duratio
             10 * crate::schema::TICKS
         );
         video.timing.sample_count += 30;
-        let error = tesseract_to_premiere(
+        let mut notes = Vec::new();
+        let changed = tesseract_to_premiere(
             &document,
             &facts,
             &BTreeMap::new(),
             &BTreeMap::new(),
             crate::format::FrameRate::Fps30,
-            &mut Vec::new(),
+            &mut notes,
         )
-        .unwrap_err()
-        .to_string();
+        .unwrap();
+        let retained = changed
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .next()
+            .unwrap();
+        assert_eq!(retained.media.as_str(), replacement);
+        assert_eq!(
+            changed.media[&retained.media]
+                .video
+                .as_ref()
+                .unwrap()
+                .intrinsic_ticks,
+            11 * crate::schema::TICKS
+        );
         assert!(
-            error.ends_with(&format!(
-                "sourceIntrinsicDuration 10000 ms differs from the packaged MP4 duration 11000 ms of the active Eye Contact output {replacement:?}"
-            )),
-            "{name}: {error}"
+            notes
+                .iter()
+                .any(|note| note.reason.contains("stale sourceIntrinsicDuration")),
+            "{name}: {notes:?}"
         );
     }
 }

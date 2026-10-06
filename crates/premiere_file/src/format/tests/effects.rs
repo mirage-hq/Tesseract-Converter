@@ -960,21 +960,24 @@ fn single_axis_blur_dimensions_are_rejected() {
 }
 
 #[test]
-fn static_value_must_agree_with_a_cached_current_value() {
+fn static_parameter_uses_authored_start_instead_of_cached_current_value() {
     let with_current = |current: &str| {
         blur(20).replace(
             STATIC_BLUR,
             &format!("{STATIC_BLUR}<CurrentValue>{current}</CurrentValue>"),
         )
     };
-    let (occurrence, omissions) = read(&with_effects(&[(20, with_current("25"))]));
-    assert!(omissions.is_empty(), "{omissions:?}");
-    assert_eq!(occurrence.effects, [gaussian_blur(true, 25.0, false)]);
-    let reason = omitted_reason(with_current("7"));
-    assert!(
-        reason.contains("Blurriness CurrentValue \"7\" conflicts with its static value \"25.\""),
-        "{reason}"
-    );
+    // Native static Crop records establish that StartKeyframe is authored
+    // state while CurrentValue can retain an unrelated UI readback.
+    for current in ["25", "7"] {
+        let (occurrence, omissions) = read(&with_effects(&[(20, with_current(current))]));
+        assert!(omissions.is_empty(), "{current}: {omissions:?}");
+        assert_eq!(
+            occurrence.effects,
+            [gaussian_blur(true, 25.0, false)],
+            "{current}"
+        );
+    }
 }
 
 #[test]
@@ -1014,11 +1017,7 @@ fn unexpected_blur_shapes_are_rejected_with_a_precise_reason() {
         ),
         (
             base.replace("<ParameterID>3</ParameterID>", "<ParameterID>2</ParameterID>"),
-            "unexpected parameter \" \" or record type",
-        ),
-        (
-            base.replace("<Name>Blur Dimensions</Name>", "<Name>Direction</Name>"),
-            "unexpected parameter \"Direction\"",
+            "duplicate ParameterID 2",
         ),
         (
             base.replace(
@@ -1535,7 +1534,6 @@ fn unknown_brightness_contrast_forms_are_omitted_with_a_reason() {
     #[rustfmt::skip]
     let records = [
         (third, "expected 2 parameters, found 3"),
-        (base.replace("<Name>Contrast</Name>", "<Name>Contrast (Legacy)</Name>"), "unexpected parameter \"Contrast (Legacy)\" or record type"),
         (base.replace("<ParameterID>2</ParameterID>", "<ParameterID>3</ParameterID>"), "unknown ParameterID 3"),
         (base.replace("</Component>", "</Component><PremiereFilterPrivateData Encoding=\"base64\" BinaryHash=\"c40c6399-6b26-8c2c-feaf-d01b0000000d\">AA==</PremiereFilterPrivateData>"), "PremiereFilterPrivateData is not supported"),
     ];
@@ -1772,7 +1770,6 @@ fn unconvertible_tints_and_black_whites_are_omitted_with_a_reason() {
         (bezier_white, tint_prefix, "Bezier keys are not supported; Premiere's Bezier interpolation between colours is unverified"),
         (base.replace(",100.,", ",150.,"), tint_prefix, "Amount to Tint \"150.\" is not a number from 0 to 100"),
         (tint_26_5_xml(20, [(TINT_DEFAULT_BLACK, ""), (TINT_DEFAULT_WHITE, ""), ("100.", "254016000000,150.,0,0,0,0.16666666666666666,0,0.16666666666666666;")]), tint_prefix, "Amount to Tint key value 150 is outside Premiere's 0 to 100 range"),
-        (base.replace("<Name>Map White To</Name>", "<Name>Map Grey To</Name>"), tint_prefix, "unexpected parameter \"Map Grey To\" or record type"),
         (base.replace("<ParameterID>3</ParameterID>", "<ParameterID>4</ParameterID>"), tint_prefix, "unknown ParameterID 4"),
         (base.replace("<Param Index=\"2\" ObjectRef=\"23\"/>", ""), tint_prefix, "expected 3 parameters, found 2"),
         // A Black & White with a parameter is not the record Premiere saves.
@@ -2088,7 +2085,6 @@ fn unconvertible_ramps_are_omitted_with_a_reason() {
         (base.replace(RAMP_WHITE, "18374966859414961921"), "End Color colour 0xff00ff00ff00ff01 has a nonzero low byte in a channel; only 8-bit colours convert".to_owned()),
         (ramp_26_5_xml(20, RampXml { blend: ("1.5", ""), ..DEFAULT_RAMP }), "Blend With Original \"1.5\" is not a number from 0 to 1".to_owned()),
         (ramp_26_5_xml(20, RampXml { blend: ("0.", "254016000000,2.,0,0,0,0.16666666666666666,0,0.16666666666666666;"), ..DEFAULT_RAMP }), "Blend With Original key value 2 is outside Premiere's 0 to 1 range".to_owned()),
-        (base.replace("<Name>Ramp Scatter</Name>", "<Name>Ramp Spread</Name>"), "unexpected parameter \"Ramp Spread\" or record type".to_owned()),
         (base.replace("<ParameterID>7</ParameterID>", "<ParameterID>8</ParameterID>"), "unknown ParameterID 8".to_owned()),
         (base.replace("<Param Index=\"6\" ObjectRef=\"27\"/>", ""), "expected 7 parameters, found 6".to_owned()),
     ];
@@ -2289,15 +2285,12 @@ fn unconvertible_mosaics_are_omitted_with_a_reason() {
         (mosaic(("10", &keys("5000", "4")), default, "true"), "Horizontal Blocks key value 5000 is outside Premiere's 1 to 4000 range".to_owned()),
         (mosaic(default, default, "yes"), "invalid Sharp Colors value \"yes\"".to_owned()),
         (mosaic(default, default, "true").replace("<ParameterID>3</ParameterID><StartKeyframe>-91445760000000000,true", "<IsTimeVarying>true</IsTimeVarying><ParameterID>3</ParameterID><StartKeyframe>-91445760000000000,true"), "keyframed Sharp Colors is not supported; only static values convert".to_owned()),
-        (mosaic(default, default, "true").replace("<Name>Vertical Blocks</Name>", "<Name>Rows</Name>"), "unexpected parameter \"Rows\" or record type".to_owned()),
-        (corpus_mosaic(20, "<Name>Sharp Colors</Name>"), "unexpected parameter \"Sharp Colors\" or record type".to_owned()),
         (mosaic(default, default, "true").replace("<ParameterID>3</ParameterID>", "<ParameterID>4</ParameterID>"), "unknown ParameterID 4".to_owned()),
     ];
     for (records, expected) in records {
         let reason = omitted_reason(records);
         assert!(
-            (reason.starts_with(prefix) || expected.starts_with("unexpected parameter \"Sharp"))
-                && reason.ends_with(&expected),
+            reason.starts_with(prefix) && reason.ends_with(&expected),
             "{expected}: {reason}"
         );
     }
@@ -2433,7 +2426,6 @@ fn unconvertible_replicates_are_omitted_with_a_reason() {
         (replicate("2", &keys("4", "5")), format!("Count keys are Bézier between source times 1.500 s and 2.500 s{hold_rule}")),
         (replicate("2", &keys("4.5", "4")), format!("Count key value 4.5{whole}")),
         (replicate("2", &keys("17", "4")), "Count key value 17 is outside Premiere's 2 to 16 range".to_owned()),
-        (replicate("2", "").replace("<Name>Count</Name>", "<Name>Copies</Name>"), "unexpected parameter \"Copies\" or record type".to_owned()),
         (replicate("2", "").replace("<ParameterID>1</ParameterID>", "<ParameterID>2</ParameterID>"), "unknown ParameterID 2".to_owned()),
     ];
     for (records, expected) in records {
@@ -2782,7 +2774,6 @@ fn unconvertible_posterizes_are_omitted_with_a_reason() {
         (edited(a, ",2.,", ",2.5,"), format!("Level 2.5{whole}")),
         (edited(a, ",2.,", ",1.,"), "Level \"1.\" is not a number from 2 to 255".to_owned()),
         (edited(a, "<ParameterID>1</ParameterID>", "<ParameterID>2</ParameterID>"), "unknown ParameterID 2".to_owned()),
-        (edited(a, "<Name>Level</Name>", "<Name>Levels</Name>"), "unexpected parameter \"Levels\" or record type".to_owned()),
         (edited(d, "254016000000,3.,4,", "254016000000,3.,0,"), format!("Level keys are Linear between source times 1.000 s and 1.500 s{hold_rule}")),
         (edited(d, "381024000000,8.,4,", "381024000000,8.,5,"), format!("Level keys are Bézier between source times 1.500 s and 2.500 s{hold_rule}")),
         (edited(d, "381024000000,8.,", "381024000000,8.5,"), format!("Level key value 8.5{whole}")),
@@ -3186,6 +3177,130 @@ fn transforms_read_static_and_keyed_values_in_stack_order() {
 }
 
 #[test]
+fn numeric_parameter_id_keeps_transform_keys_when_label_is_renamed() {
+    let mut values = DEFAULT_TRANSFORM;
+    values[2] = ("true", "");
+    let keys = format!("{TICKS},80.,0,0,0,0,0,0;{},120.,0,0,0,0,0,0;", 3 * TICKS);
+    values[3] = ("100.", &keys);
+    let records =
+        transform_26_5_xml(20, values).replace("<Name>Scale Height</Name>", "<Name>Scale</Name>");
+
+    let (occurrence, omissions) = read(&with_effects(&[(20, records)]));
+
+    assert!(omissions.is_empty(), "{omissions:?}");
+    assert_eq!(
+        occurrence.effects,
+        [transform_effect(
+            PrTransform {
+                uniform_scale: true,
+                scale_height: 80.0,
+                ..DEFAULT_PR_TRANSFORM
+            },
+            vec![PrEffectParamAnimation {
+                param: &TRANSFORM_SCALE_HEIGHT,
+                keys: PrEffectParamKeys::Scalar(vec![key(TICKS, 80.0), key(3 * TICKS, 120.0),]),
+            }],
+        )]
+    );
+}
+
+#[test]
+fn ordinary_physical_video_transform_keeps_curved_position_and_committed_warning() {
+    let keys = format!(
+        "0,0.25:0.5,0,0,0,0.16666666666666666,0.1,0.16666666666666666,5,4,0,0,0.05,0.04;{TICKS},0.5:0.25,0,0,0,0.16666666666666666,0.1,0.16666666666666666,5,4,-0.04,-0.03,0.03,0.05;{},0.75:0.5,0,0,0,0.16666666666666666,0.1,0.16666666666666666,5,4,-0.05,0.02,0,0;",
+        2 * TICKS
+    );
+    let mut values = DEFAULT_TRANSFORM;
+    values[1] = ("0.25:0.5", &keys);
+    let xml = with_effects(&[(20, transform_26_5_xml(20, values))]);
+    let (project, mut notes) = inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+    let sequence = project.single_sequence().unwrap();
+    let clip = sequence.video_tracks[0].clip(0);
+    assert_eq!(clip.effects.len(), 1, "{notes:?}");
+
+    let ids = crate::tesseract_output::asset_ids_in_order(sequence, &project.media);
+    let document =
+        crate::convert::premiere_to_tesseract(sequence, &project.media, &ids, &mut notes)
+            .unwrap()
+            .to_json_value()
+            .unwrap();
+    let reports = notes
+        .iter()
+        .filter(|note| {
+            note.kind == OmissionKind::Approximated
+                && note.record == "VideoClipTrackItem:3"
+                && note.reason
+                    == "Transform Position curved spatial path retains editable tangents but FX traverses parametrically rather than native constant-speed distance"
+        })
+        .count();
+    assert_eq!(reports, 1, "{notes:?}");
+
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    let stage = layers
+        .iter()
+        .find(|layer| layer["type"] == "Group")
+        .unwrap();
+    let children = stage["layers"].as_array().unwrap();
+    let videos = children
+        .iter()
+        .filter(|layer| layer["type"] == "Video")
+        .collect::<Vec<_>>();
+    assert_eq!(videos.len(), 1, "physical source picture retained");
+    let video = videos[0];
+
+    let entries = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    for (property, values, incoming, outgoing) in [
+        (
+            "positionX",
+            [480.0, 960.0, 1440.0],
+            [None, Some(-76.8), Some(-96.0)],
+            [Some(96.0), Some(57.6), None],
+        ),
+        (
+            "positionY",
+            [540.0, 270.0, 540.0],
+            [None, Some(-32.4), Some(21.6)],
+            [Some(43.2), Some(54.0), None],
+        ),
+    ] {
+        let entry = entries
+            .iter()
+            .find(|entry| {
+                entry["target"]["layerId"] == video["id"]
+                    && entry["target"]["propertyType"] == property
+            })
+            .unwrap();
+        let keys = entry["animator"]["keyframes"].as_array().unwrap();
+        assert_eq!(keys.len(), 3);
+        for (index, key) in keys.iter().enumerate() {
+            assert_eq!(key["layerTime"], i64::try_from(index).unwrap() * 1000);
+            assert_eq!(key["value"]["value"], values[index]);
+            for (actual, expected) in [
+                (
+                    key.get("spatialInTangent").and_then(|value| value.as_f64()),
+                    incoming[index],
+                ),
+                (
+                    key.get("spatialOutTangent")
+                        .and_then(|value| value.as_f64()),
+                    outgoing[index],
+                ),
+            ] {
+                match (actual, expected) {
+                    (Some(actual), Some(expected)) => {
+                        assert!((actual - expected).abs() < 1e-9)
+                    }
+                    (None, None) => {}
+                    pair => panic!("unpaired spatial tangent {pair:?}"),
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn unconvertible_transforms_are_omitted_with_a_reason() {
     let prefix = "active effect \"Transform\" (match name \"AE.ADBE Geometry\", VideoFilterComponent version 9, Component version 7) at stack position 1";
     let edited = |edit: &dyn Fn(&mut TransformXml<'_>)| {
@@ -3203,8 +3318,6 @@ fn unconvertible_transforms_are_omitted_with_a_reason() {
         (edited(&|values| values[11] = ("2", "")), "invalid Sampling value \"2\"".to_owned()),
         (edited(&|values| values[3] = ("30001.", "")), "Scale Height \"30001.\" is not a number from -30000 to 30000".to_owned()),
         (edited(&|values| values[2] = ("yes", "")), "invalid Uniform Scale value \"yes\"".to_owned()),
-        (edited(&|_| {}).replace("<ParameterID>11</ParameterID>", "<Name>Uniform Scale</Name><ParameterID>11</ParameterID>"), "unexpected parameter \"Uniform Scale\" or record type".to_owned()),
-        (edited(&|_| {}).replace("<Name>Scale Height</Name>", "<Name>Scale</Name>"), "unexpected parameter \"Scale\" or record type".to_owned()),
         (edited(&|_| {}).replace("<ParameterID>12</ParameterID>", "<ParameterID>13</ParameterID>"), "unknown ParameterID 13".to_owned()),
         (corpus_transform(20, "").replace(ACTIVE, BYPASSED), "a bypassed Transform is not converted: Premiere renders the clip without it, and only an active Transform becomes the staged video's transform".to_owned()),
     ];
@@ -3217,19 +3330,21 @@ fn unconvertible_transforms_are_omitted_with_a_reason() {
         assert_eq!(omissions[0].record, format!("VideoFilterComponent:{id}"));
         let reason = &omissions[0].reason;
         assert!(
-            (reason.starts_with(prefix)
-                || expected.starts_with("unexpected parameter")
-                || expected.starts_with("a bypassed"))
+            (reason.starts_with(prefix) || expected.starts_with("a bypassed"))
                 && reason.ends_with(&expected),
             "{expected}: {reason}"
         );
     }
-    // A non-uniform Geometry2 remains outside the measured uniform zoom.
+    // Distinct rendered axis tracks cannot share one Corner Pin point track
+    // without losing one axis's timing or easing.
+    let mut values = DEFAULT_TRANSFORM;
+    values[3] = ("100.", "0,100.,0,0,0,0,0,0;254016000000,80.,0,0,0,0,0,0;");
+    values[4] = ("100.", "0,100.,0,0,0,0,0,0;254016000000,120.,0,0,0,0,0,0;");
     let reason = omitted_reason(
-        transform_26_5_xml(20, DEFAULT_TRANSFORM).replace("AE.ADBE Geometry", "AE.ADBE Geometry2"),
+        transform_26_5_xml(20, values).replace("AE.ADBE Geometry", "AE.ADBE Geometry2"),
     );
     assert!(
-        reason.contains("Geometry2 converts only a positive uniform scale"),
+        reason.contains("independently keyed Scale Height and Scale Width"),
         "{reason}"
     );
 }
@@ -3386,7 +3501,6 @@ fn unconvertible_inverts_are_omitted_with_a_reason() {
         (invert_26_5_xml(20, "0", ("150.", "")), "Blend With Original \"150.\" is not a number from 0 to 100"),
         (invert_26_5_xml(20, "0", ("0.", "381024000000,150.,0,0,0,0.16666666666666666,0,0.16666666666666666;")), "Blend With Original key value 150 is outside Premiere's 0 to 100 range"),
         (third, "expected 2 parameters, found 3"),
-        (base.replace("<Name>Blend With Original</Name>", "<Name>Blend</Name>"), "unexpected parameter \"Blend\" or record type"),
         (base.replace("<ParameterID>2</ParameterID>", "<ParameterID>3</ParameterID>"), "unknown ParameterID 3"),
     ];
     for (changed, expected) in records {
@@ -3897,6 +4011,87 @@ fn premiere_26_5_crop_and_linear_wipe_read_as_saved() {
 }
 
 #[test]
+fn single_animated_crop_edges_use_the_matching_cardinal_reveal_anchor() {
+    for (edge, angle, anchor, property) in [
+        ("Left", 90, [1920.0, 0.0], "scaleX"),
+        ("Top", 0, [0.0, 1080.0], "scaleY"),
+        ("Right", 270, [0.0, 0.0], "scaleX"),
+        ("Bottom", 180, [0.0, 0.0], "scaleY"),
+    ] {
+        let records = top_crop(20).replace(",15.,", ",0.,").replace(
+            "<CurrentValue>15</CurrentValue>",
+            "<CurrentValue>0</CurrentValue>",
+        );
+        let static_fields = format!(
+            "<Name>{edge}</Name><IsTimeVarying>false</IsTimeVarying><ParameterControlType>2</ParameterControlType><StartKeyframe>-91445760000000000,0.,0,0,0,0,0,0</StartKeyframe>"
+        );
+        let animated_fields = format!(
+            "<Name>{edge}</Name><ParameterControlType>2</ParameterControlType><StartKeyframe>-91445760000000000,100.,0,0,0,0,0,0</StartKeyframe><Keyframes>0,100.,0,0,0,0,0,0;254016000000,0.,0,0,0,0,0,0;</Keyframes>"
+        );
+        let records = records.replace(&static_fields, &animated_fields);
+        assert_ne!(records, top_crop(20), "{edge}");
+        let xml = with_second_clip(&with_effects(&[(20, records)]));
+
+        let (clip, omissions) = read(&xml);
+        assert!(omissions.is_empty(), "{edge}: {omissions:?}");
+        assert!(clip.crop.is_default(), "{edge}");
+        let wipe = clip.linear_wipe.as_ref().unwrap();
+        assert_eq!(wipe.initial_completion, 100.0, "{edge}");
+        assert_eq!(wipe.angle_degrees, angle, "{edge}");
+        assert_eq!(
+            wipe.completion
+                .iter()
+                .map(|key| (key.source_ticks, key.value))
+                .collect::<Vec<_>>(),
+            [(0, 100.0), (TICKS, 0.0)],
+            "{edge}"
+        );
+
+        let document = import(&xml);
+        let (masked, _) = masked_and_video(&document);
+        let guide_id = &masked["masks"][0]["layer"];
+        let layers = document["composition"]["layers"].as_array().unwrap();
+        let guide = layers
+            .iter()
+            .find(|layer| &layer["id"] == guide_id)
+            .unwrap();
+        let videos: Vec<_> = layers
+            .iter()
+            .filter(|layer| layer["type"] == "Video")
+            .collect();
+        assert_eq!(videos.len(), 2, "{edge}");
+        let sibling = videos
+            .iter()
+            .find(|layer| layer["sourceRange"]["start"] == 5000)
+            .unwrap();
+        assert!(
+            sibling["masks"].as_array().is_none_or(Vec::is_empty),
+            "{edge}"
+        );
+        assert_eq!(
+            guide["transform"]["anchorPoint"],
+            serde_json::json!(anchor),
+            "{edge}"
+        );
+        assert_eq!(
+            guide["transform"]["position"],
+            serde_json::json!(anchor),
+            "{edge}"
+        );
+        let entry = document["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| &entry["target"]["layerId"] == guide_id)
+            .unwrap();
+        assert_eq!(entry["target"]["propertyType"], property, "{edge}");
+        let keys = entry["animator"]["keyframes"].as_array().unwrap();
+        assert_eq!(keys[0]["value"]["value"], 0.0, "{edge}");
+        assert_eq!(keys[1]["value"]["value"], 100.0, "{edge}");
+    }
+}
+
+#[test]
 fn empty_linear_wipe_completion_requires_a_constant_parameter() {
     let mut wipe = linear_wipe_26_5(20);
     let start = wipe.find("<Keyframes>").unwrap();
@@ -3949,7 +4144,7 @@ fn premiere_26_5_crop_and_linear_wipe_with_a_changed_value_fail_as_today() {
             ),
             "unexpected Crop parameter Left layout",
         ),
-        // A keyed Crop edge.
+        // A keyed Crop edge beside other nonzero edges is not cardinal.
         (
             crop.replace(
                 "<Name>Left</Name>",
@@ -3959,7 +4154,7 @@ fn premiere_26_5_crop_and_linear_wipe_with_a_changed_value_fail_as_today() {
                 "<StartKeyframe>-91445760000000000,20.,0,0,0,0,0,0</StartKeyframe>",
                 "<StartKeyframe>-91445760000000000,20.,0,0,0,0,0,0</StartKeyframe><Keyframes>0,20.,0,0,0,0,0,0;254016000000,30.,0,0,0,0,0,0;</Keyframes>",
             ),
-            "animated or malformed Crop Left is unsupported",
+            "animated Crop requires one edge with every other edge and Edge Feather at zero",
         ),
         // Each layout is exact: the 26.5.1 parameters under the 26.3
         // component flags, and the 26.3 parameters without them.
@@ -5936,8 +6131,8 @@ fn film_impact_20_parameter_layout_reads_its_keyed_amount() {
 #[test]
 fn film_impact_20_parameter_layout_keeps_identity_and_hidden_value_checks() {
     for (id, from, to, reason) in [
-        // A 26.5.1 hidden parameter is no parameter of the 26.2 layout, and
-        // each identity is checked by name as well.
+        // A 26.5.1 hidden parameter is no parameter of the 26.2 layout;
+        // numeric parameter identities must remain unique.
         (
             "9020",
             "<ParameterID>9020</ParameterID>",
@@ -5948,7 +6143,7 @@ fn film_impact_20_parameter_layout_keeps_identity_and_hidden_value_checks() {
             "9042",
             "<ParameterID>9042</ParameterID>",
             "<ParameterID>9041</ParameterID>",
-            "unexpected parameter \"_ Sequence Pixel Ratio\"",
+            "duplicate ParameterID 9041",
         ),
         ("8100", ",false,", ",true,", "hidden ParameterID 8100"),
         ("9040", ",-1.,", ",1920.,", "hidden ParameterID 9040"),
@@ -6628,6 +6823,390 @@ fn native_geometry2_adjustment_zoom_keeps_editable_corner_keys() {
 }
 
 #[test]
+fn native_geometry2_keeps_picture_and_motion_with_a_stale_static_current_value() {
+    let native = include_str!("../../../tests/fixtures/cap2-native-geometry2.xml");
+    let skew_name = "<Name>Skew</Name>";
+    assert_eq!(native.matches(skew_name).count(), 1);
+    let records = native
+        .replace("<PremiereData Version=\"3\">", "")
+        .replace("</PremiereData>", "")
+        .replace("ObjectID=\"407\"", "ObjectID=\"20\"")
+        .replace(
+            skew_name,
+            &format!("{skew_name}<CurrentValue>7.4576416015625</CurrentValue>"),
+        );
+    let xml = with_effects(&[(20, records)]);
+    let (occurrence, omissions) = read(&xml);
+    assert!(omissions.is_empty(), "{omissions:?}");
+    assert_eq!(occurrence.media.as_str(), "Media:ObjectUID:media-1");
+    let [PrEffect {
+        params: PrEffectParams::CornerPin(_),
+        animations,
+        ..
+    }] = occurrence.effects.as_slice()
+    else {
+        panic!("{:?}", occurrence.effects);
+    };
+    assert_eq!(animations.len(), 4);
+
+    let document = import(&xml);
+    let (_, video) = masked_and_video(&document);
+    assert_eq!(video["type"], "Video");
+    assert_eq!(video["source"]["assetId"], "premiere-video-1");
+    assert_eq!(video["effects"][0]["effect"]["type"], "cornerPin");
+    assert_eq!(
+        document["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap()
+            .len(),
+        8
+    );
+}
+
+#[test]
+fn geometry2_width_keys_keep_independent_height_terminal_collapse_and_report_blur() {
+    const FRAME: i64 = TICKS / 25;
+    let width_keys = format!(
+        "0,100.,5,0,0,0,-750,0.33333333333333331;\
+         {FRAME},70.,5,0,-750,0.33333333333333331,375,0.33333333333333331;\
+         {},85.,5,0,375,0.33333333333333331,-2125,0.33333333333333331;\
+         {},0.,0,0,-2125,0.33333333333333331,0,0;",
+        2 * FRAME,
+        3 * FRAME
+    );
+    let mut values = DEFAULT_TRANSFORM;
+    values[3] = ("100.", "");
+    values[4] = ("100.", &width_keys);
+    values[9] = ("true", "");
+    values[10] = ("360.", "");
+    let records = transform_26_5_xml(20, values).replace("AE.ADBE Geometry", "AE.ADBE Geometry2");
+    let xml = with_effects(&[(20, records)]);
+    let (occurrence, omissions) = read(&xml);
+    let [omission] = omissions.as_slice() else {
+        panic!("{omissions:?}");
+    };
+    assert_eq!(omission.kind, OmissionKind::Approximated);
+    assert_eq!(omission.record, "VideoFilterComponent:20");
+    assert!(
+        omission.reason.contains("saved Shutter Angle 360")
+            && omission
+                .reason
+                .contains("Use Composition's Shutter Angle is enabled")
+            && omission.reason.contains("forward one-frame smear"),
+        "{omission:?}"
+    );
+    let [PrEffect {
+        params: PrEffectParams::CornerPin(pin),
+        animations,
+        ..
+    }] = occurrence.effects.as_slice()
+    else {
+        panic!("{:?}", occurrence.effects);
+    };
+    assert_eq!(
+        pin.corners,
+        [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]
+    );
+    assert_eq!(animations.len(), 4);
+    let widths = [100.0, 70.0, 85.0, 0.0];
+    for (corner_index, animation) in animations.iter().enumerate() {
+        let keys = animation.keys.point().unwrap();
+        assert_eq!(
+            keys.iter().map(|key| key.source_ticks).collect::<Vec<_>>(),
+            [0, FRAME, 2 * FRAME, 3 * FRAME]
+        );
+        assert_eq!(keys[0].easing, PrKeyframeEasing::Linear);
+        for key in &keys[1..] {
+            let PrKeyframeEasing::CubicBezier { x1, y1, x2, y2 } = key.easing else {
+                panic!("{:?}", key.easing);
+            };
+            for (actual, expected) in [
+                (x1, 1.0 / 3.0),
+                (y1, 1.0 / 3.0),
+                (x2, 2.0 / 3.0),
+                (y2, 2.0 / 3.0),
+            ] {
+                assert!((actual - expected).abs() < 1e-12, "{actual} {expected}");
+            }
+        }
+        for (key, width) in keys.iter().zip(widths) {
+            let expected_x = if corner_index % 2 == 0 {
+                0.5 - width / 200.0
+            } else {
+                0.5 + width / 200.0
+            };
+            let expected_y = if corner_index < 2 { 0.0 } else { 1.0 };
+            assert_eq!(key.value, [expected_x, expected_y]);
+        }
+    }
+
+    let document = import(&xml);
+    let (_, video) = masked_and_video(&document);
+    assert_eq!(video["source"]["assetId"], "premiere-video-1");
+    assert_eq!(video["effects"][0]["effect"]["type"], "cornerPin");
+    let entries = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    assert_eq!(entries.len(), 8);
+    for entry in entries {
+        let keys = entry["animator"]["keyframes"].as_array().unwrap();
+        assert_eq!(
+            keys.iter()
+                .map(|key| key["layerTime"].as_i64().unwrap())
+                .collect::<Vec<_>>(),
+            [0, 40, 80, 120]
+        );
+    }
+}
+
+#[test]
+fn geometry2_keyed_shutter_reports_one_approximation_and_keeps_scale() {
+    const FRAME: i64 = TICKS / 25;
+    let shutter_keys = format!("0,0.,0,0,0,0,0,0;{FRAME},180.,0,0,0,0,0,0;");
+    let mut values = DEFAULT_TRANSFORM;
+    values[10] = ("0.", &shutter_keys);
+    let records = transform_26_5_xml(20, values).replace("AE.ADBE Geometry", "AE.ADBE Geometry2");
+    let (occurrence, omissions) = read(&with_effects(&[(20, records)]));
+    assert!(matches!(
+        occurrence.effects.as_slice(),
+        [PrEffect {
+            params: PrEffectParams::CornerPin(_),
+            ..
+        }]
+    ));
+    let [omission] = omissions.as_slice() else {
+        panic!("{omissions:?}");
+    };
+    assert_eq!(omission.kind, OmissionKind::Approximated);
+    assert!(
+        omission
+            .reason
+            .contains("keyed Geometry2 motion blur (saved Shutter Angle range 0 to 180"),
+        "{omission:?}"
+    );
+}
+
+#[test]
+fn geometry2_uniform_scale_keeps_height_keys_and_reports_inert_width_keys() {
+    const FRAME: i64 = TICKS / 25;
+    let height_keys = format!("0,100.,0,0,0,0,0,0;{FRAME},80.,0,0,0,0,0,0;");
+    let width_keys = format!("0,100.,0,0,0,0,0,0;{FRAME},0.,0,0,0,0,0,0;");
+    let mut values = DEFAULT_TRANSFORM;
+    values[2] = ("true", "");
+    values[3] = ("100.", &height_keys);
+    values[4] = ("100.", &width_keys);
+    let records = transform_26_5_xml(20, values).replace("AE.ADBE Geometry", "AE.ADBE Geometry2");
+    let (occurrence, omissions) = read(&with_effects(&[(20, records)]));
+    let [omission] = omissions.as_slice() else {
+        panic!("{omissions:?}");
+    };
+    assert_eq!(omission.kind, OmissionKind::Omitted);
+    assert!(
+        omission
+            .reason
+            .contains("Scale Width keys under Uniform Scale were not imported"),
+        "{omission:?}"
+    );
+    let [PrEffect {
+        params: PrEffectParams::CornerPin(_),
+        animations,
+        ..
+    }] = occurrence.effects.as_slice()
+    else {
+        panic!("{:?}", occurrence.effects);
+    };
+    assert_eq!(animations.len(), 4);
+    for (corner_index, animation) in animations.iter().enumerate() {
+        let keys = animation.keys.point().unwrap();
+        assert_eq!(keys.len(), 2);
+        let expected = if corner_index == 0 {
+            [0.1, 0.1]
+        } else if corner_index == 1 {
+            [0.9, 0.1]
+        } else if corner_index == 2 {
+            [0.1, 0.9]
+        } else {
+            [0.9, 0.9]
+        };
+        assert!(
+            keys[1]
+                .value
+                .iter()
+                .zip(expected)
+                .all(|(actual, expected)| (actual - expected).abs() < 1e-12),
+            "{:?} {expected:?}",
+            keys[1].value
+        );
+    }
+}
+
+#[test]
+fn masked_geometry2_admission_follows_its_clip_frame() {
+    let masked_geometry = |values| {
+        transform_26_5_xml(20, values)
+            .replace("AE.ADBE Geometry", "AE.ADBE Geometry2")
+            .replace(
+                "</Component><VideoFilterType>2</VideoFilterType><MatchName>AE.ADBE Geometry2</MatchName>",
+                "</Component><SubComponents Version=\"1\"><SubComponent Index=\"0\" ObjectRef=\"40\"/></SubComponents><VideoFilterType>2</VideoFilterType><MatchName>AE.ADBE Geometry2</MatchName>",
+            ) + &super::mask::mask(40, true)
+    };
+    let mut off_centre = DEFAULT_TRANSFORM;
+    off_centre[0] = ("0.4:0.5", "");
+    off_centre[1] = ("0.6:0.5", "");
+    off_centre[2] = ("true", "");
+    off_centre[3] = ("50.", "");
+
+    // An unrotated sequence-sized owner uses the canvas reader. Keep its
+    // off-centre masked Geometry2 and independent Tint through conversion.
+    let xml = with_effects(&[(20, masked_geometry(off_centre)), (60, tint(60))]);
+    let (occurrence, omissions) = read(&xml);
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let [PrEffect {
+        params: PrEffectParams::Tint(_),
+        mask: None,
+        ..
+    }, PrEffect {
+        params: PrEffectParams::CornerPin(pin),
+        mask: Some(_),
+        ..
+    }] = occurrence.effects.as_slice()
+    else {
+        panic!("{:?}", occurrence.effects);
+    };
+    for (corner, expected) in
+        pin.corners
+            .iter()
+            .zip([[0.4, 0.25], [0.9, 0.25], [0.4, 0.75], [0.9, 0.75]])
+    {
+        assert!(
+            corner
+                .iter()
+                .zip(expected)
+                .all(|(actual, expected)| (actual - expected).abs() < 1e-12),
+            "{corner:?} {expected:?}"
+        );
+    }
+    let (project, omissions) = inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let sequence = &project.sequences[0];
+    let ids = crate::tesseract_output::asset_ids_in_order(sequence, &project.media);
+    let mut omissions = Vec::new();
+    let document =
+        crate::convert::premiere_to_tesseract(sequence, &project.media, &ids, &mut omissions)
+            .unwrap()
+            .to_json_value()
+            .unwrap();
+    assert!(
+        omissions
+            .iter()
+            .all(|omission| omission.kind == OmissionKind::Approximated),
+        "{omissions:?}"
+    );
+    assert!(
+        omissions.iter().any(|omission| omission
+            .reason
+            .contains("effect mask retained on an isolated editable adjustment")),
+        "{omissions:?}"
+    );
+    let scope = &document["composition"]["layers"][0];
+    assert_eq!(scope["type"], "Group");
+    let children = scope["layers"].as_array().unwrap();
+    let video = children
+        .iter()
+        .find(|layer| layer["type"] == "Video")
+        .unwrap();
+    assert_eq!(video["effects"][0]["effect"]["type"], "tintTritone");
+    let masked = children
+        .iter()
+        .find(|layer| layer["name"] == "Premiere masked effect")
+        .unwrap();
+    assert_eq!(masked["type"], "Adjustment");
+    assert_eq!(masked["effects"][0]["effect"]["type"], "cornerPin");
+    assert_eq!(masked["masks"].as_array().unwrap().len(), 1);
+    for (field, expected) in [
+        ("upperLeftX", 0.4),
+        ("upperLeftY", 0.25),
+        ("upperRightX", 0.9),
+        ("upperRightY", 0.25),
+        ("lowerLeftX", 0.4),
+        ("lowerLeftY", 0.75),
+        ("lowerRightX", 0.9),
+        ("lowerRightY", 0.75),
+    ] {
+        let actual = masked["effects"][0]["effect"][field].as_f64().unwrap();
+        assert!((actual - expected).abs() < 1e-12, "{field}: {actual}");
+    }
+
+    let stream = "<FrameRate>8467200000</FrameRate><FrameRect>0,0,1920,1080</FrameRect>";
+    let media = "<FrameRate>8467200000</FrameRate><FrameRect>0,0,1280,720</FrameRect>";
+    let source = with_second_clip(SOURCE).replace(stream, media);
+    let xml = with_chain(&source, DEFAULT_FLAGS, &[(20, masked_geometry(off_centre))]);
+    let (project, omissions) = inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+    let kept: Vec<_> = project.sequences[0]
+        .video_occurrences()
+        .map(|clip| clip.id.as_deref())
+        .collect();
+    assert_eq!(kept, [Some("VideoClipTrackItem:9")]);
+    assert!(
+        omissions.iter().any(|omission| omission.scope == OmissionScope::Occurrence
+            && omission.record == "3"
+            && omission.reason.contains("an off-centre Geometry2 zoom on media that is rotated or not sequence-sized is not converted")),
+        "{omissions:?}"
+    );
+
+    // A centered affine scale remains readable with its mask at the reader.
+    // Size-mismatched media still meets the converter's existing frame rule.
+    let xml = with_effects(&[(20, masked_geometry(DEFAULT_TRANSFORM))]).replace(stream, media);
+    let (occurrence, omissions) = read(&xml);
+    assert!(
+        matches!(occurrence.effects.as_slice(), [effect] if matches!(effect.params, PrEffectParams::CornerPin(_)) && effect.mask.is_some()),
+        "{:?}",
+        occurrence.effects
+    );
+    assert!(
+        !omissions
+            .iter()
+            .any(|omission| omission.scope == OmissionScope::Occurrence),
+        "{omissions:?}"
+    );
+
+    // A clip mask would make `read_effects` discard effects on both sides of
+    // the mask boundary. Omit the unsafe occurrence rather than expose the
+    // picture after its masked Geometry2 reaches zero width; keep its sibling.
+    let collapse_keys = format!("0,100.,0,0,0,0,0,0;{},0.,0,0,0,0,0,0;", TICKS / 25);
+    let mut collapsing = DEFAULT_TRANSFORM;
+    collapsing[4] = ("100.", &collapse_keys);
+    let xml = with_chain(
+        &with_second_clip(SOURCE),
+        DEFAULT_FLAGS,
+        &[
+            (20, masked_geometry(collapsing)),
+            (60, top_crop(60)),
+            (80, tint(80)),
+        ],
+    );
+    let (project, omissions) = inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+    let kept: Vec<_> = project.sequences[0]
+        .video_occurrences()
+        .map(|clip| clip.id.as_deref())
+        .collect();
+    assert_eq!(kept, [Some("VideoClipTrackItem:9")]);
+    assert!(
+        omissions
+            .iter()
+            .any(|omission| omission.scope == OmissionScope::Occurrence
+                && omission.record == "3"
+                && omission
+                    .reason
+                    .contains("masked Geometry2 does not convert on this clip")
+                && omission
+                    .reason
+                    .contains("Crop, Linear Wipe or Track Matte Key")),
+        "{omissions:?}"
+    );
+}
+
+#[test]
 fn geometry2_zoom_about_an_off_centre_anchor_lands_each_corner_there() {
     // A uniform zoom from 100 to 132.7 about an Anchor Point a third of the way
     // down the frame, with its Position 4 px above that point.
@@ -6855,19 +7434,30 @@ fn a_motion_crop_stages_above_an_off_centre_geometry2_zoom() {
 }
 
 #[test]
-fn native_geometry2_rejects_nonpositive_scale_keys_and_keeps_geometry_marker_policy() {
+fn native_geometry2_keeps_nonpositive_scale_keys_and_geometry_marker_policy() {
     let records = include_str!("../../../tests/fixtures/cap2-native-geometry2.xml")
         .replace("<PremiereData Version=\"3\">", "")
         .replace("</PremiereData>", "")
         .replace("ObjectID=\"407\"", "ObjectID=\"20\"");
-    for scale in ["0.", "-118."] {
-        let reason = omitted_reason(records.replace(
+    for scale in [0.0, -118.0] {
+        let changed = records.replace(
             "914545680048000,118.,",
             &format!("914545680048000,{scale},"),
-        ));
-        assert!(
-            reason.contains("Geometry2 Scale Height keys must be positive"),
-            "{reason}"
+        );
+        let (occurrence, omissions) = read(&with_effects(&[(20, changed)]));
+        assert!(omissions.is_empty(), "{omissions:?}");
+        let [PrEffect {
+            params: PrEffectParams::CornerPin(_),
+            animations,
+            ..
+        }] = occurrence.effects.as_slice()
+        else {
+            panic!("{:?}", occurrence.effects);
+        };
+        assert_eq!(animations.len(), 4);
+        assert_eq!(
+            animations[0].keys.point().unwrap().last().unwrap().value[1],
+            0.5 - scale / 200.0
         );
     }
     let reason = omitted_reason(records.replace("AE.ADBE Geometry2", "AE.ADBE Geometry"));
@@ -6998,21 +7588,21 @@ fn interpretation_raw_active_effects_require_proved_static_semantics() {
                 .unwrap()
                 .video_occurrences()
                 .collect();
-            assert_eq!(
-                clips.len(),
-                if retained { 2 } else { 1 },
-                "source={source_chain}: {omissions:?}"
-            );
+            assert_eq!(clips.len(), 2, "source={source_chain}: {omissions:?}");
             assert!(clips
                 .iter()
                 .any(|clip| clip.id.as_deref() == Some("VideoClipTrackItem:9")));
+            let picture = clips
+                .iter()
+                .find(|clip| clip.id.as_deref() == Some("VideoClipTrackItem:3"))
+                .unwrap();
+            assert!(project.media.contains_key(&picture.media));
+            assert_eq!(picture.timeline_ticks(), 0..5 * TICKS);
             if !retained {
                 assert!(
-                    omissions
+                    !omissions
                         .iter()
-                        .any(|o| o.scope == OmissionScope::Occurrence
-                            && o.reason.contains("interpreted picture")
-                            && o.reason.contains("static")),
+                        .any(|o| o.scope == OmissionScope::Occurrence),
                     "{omissions:?}"
                 );
             }

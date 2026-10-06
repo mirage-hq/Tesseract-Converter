@@ -101,6 +101,48 @@ fn still_media_keeps_its_placement_and_synthetic_source_clock() {
 }
 
 #[test]
+fn native_openexr_codec_and_black_matte_alpha_are_preserved() {
+    for alpha in [false, true] {
+        let mut xml = still_xml(alpha)
+            .replace("source.png", "source.exr")
+            .replace(
+                "<CodecType>1380013856</CodecType>",
+                "<CodecType>1281443650</CodecType>",
+            );
+        if alpha {
+            xml = xml.replace("<AlphaType>1</AlphaType>", "<AlphaType>2</AlphaType>");
+        }
+        let project = inspect_project_with_media(&xml, None).unwrap();
+        let clip = project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .next()
+            .unwrap();
+        let media = project.media(clip).unwrap();
+        assert_eq!(
+            media.video.as_ref().unwrap().kind,
+            PrMediaKind::OpenExr {
+                alpha,
+                numbered: false,
+                channels: crate::schema::OpenExrChannels::Unspecified,
+            }
+        );
+        assert!(media.is_still());
+        assert_eq!(media.name(), "source.exr");
+    }
+
+    let wrong_alpha = still_xml(true).replace("source.png", "source.exr").replace(
+        "<CodecType>1380013856</CodecType>",
+        "<CodecType>1281443650</CodecType>",
+    );
+    let error = inspect_project_with_media(&wrong_alpha, None)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("AlphaType \"1\" is unsupported"), "{error}");
+}
+
+#[test]
 fn still_frame_rate_follows_the_still_preference_not_the_sequence_cadence() {
     // A 25 fps still preference (phone_title corpus) on a 30 fps sequence.
     let xml = still_xml(false).replace(
@@ -646,10 +688,36 @@ fn written_still_records_declare_alpha_only_for_transparent_stills_and_read_back
 
 #[test]
 fn writer_rejects_media_with_the_other_kind_of_extension() {
-    let error = project_xml(&still_project(false, "photo.mp4"))
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("PNG/JPEG still media only"), "{error}");
+    for name in ["photo.mp4", "photo.exr"] {
+        let error = project_xml(&still_project(false, name))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("PNG/JPEG/OpenEXR still media only"),
+            "{error}"
+        );
+    }
+
+    let mut project = still_project(false, "photo.png");
+    project
+        .media
+        .values_mut()
+        .next()
+        .unwrap()
+        .video
+        .as_mut()
+        .unwrap()
+        .kind = PrMediaKind::OpenExr {
+        alpha: false,
+        numbered: false,
+        channels: crate::schema::OpenExrChannels::Unspecified,
+    };
+    let error = project_xml(&project).unwrap_err().to_string();
+    assert!(
+        error.contains("PNG/JPEG/OpenEXR still media only"),
+        "{error}"
+    );
+
     let mut project = still_project(false, "photo.png");
     project
         .media
@@ -953,7 +1021,7 @@ fn a_still_keeps_its_placement_and_in_point_when_its_source_span_differs() {
     // placement shows the same picture: F of the unedited Premiere 26.5.1
     // save spans 5 s on its 2 s placement, and a still whose span is two
     // frames short or 3 s long keeps its placement and its InPoint, the
-    // origin of its Motion keys. The same span on a video still omits it.
+    // origin of its Motion keys. A video recovers a diagnosed constant-speed selection.
     // (A unit-speed Out at most one frame off its played end reads as that
     // end for any media, so these spans lie beyond that tolerance.)
     let frame = FrameRate::Fps30.ticks_per_frame();
@@ -964,12 +1032,26 @@ fn a_still_keeps_its_placement_and_in_point_when_its_source_span_differs() {
         xml.replace(&full, &span(in_ticks + 5 * TICKS + out_offset))
     };
     for out_offset in [-2 * frame, 3 * TICKS] {
-        let error = inspect_project(&respan(SOURCE, 0, out_offset), None)
-            .unwrap_err()
-            .to_string();
+        let (video, notes) =
+            crate::format::inspect_project_with_omissions(&respan(SOURCE, 0, out_offset), None)
+                .unwrap();
+        let occurrence = video
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .next()
+            .unwrap();
+        assert_eq!(occurrence.timeline_ticks(), 0..5 * TICKS);
+        assert_eq!(occurrence.source_ticks(), 0..5 * TICKS + out_offset);
+        assert_eq!(
+            occurrence.playback_rate,
+            (5 * TICKS + out_offset) as f64 / (5 * TICKS) as f64
+        );
         assert!(
-            error.contains("source span does not match the constant playback rate"),
-            "{out_offset}: {error}"
+            notes
+                .iter()
+                .any(|loss| loss.reason.contains("constant speed")),
+            "{notes:?}"
         );
         let still = respan(&still_xml(false), STILL_SOURCE_IN_TICKS, out_offset);
         let (project, omissions) =

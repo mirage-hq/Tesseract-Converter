@@ -44,6 +44,7 @@ pub(super) fn records(mask: &PrMask, ids: &MaskIds) -> Result<Vec<Record>> {
             }
             .into(),
         ),
+        media_dependency_map: None,
         sub_components: None,
         match_name: Some(form.match_name.to_owned()),
         video_filter_type: Some("2".to_owned()),

@@ -1,6 +1,8 @@
 //! Ephemeral font identities from hash-verified archive bytes, never host fonts.
 
 mod bounds;
+#[cfg(test)]
+mod retention_tests;
 
 use std::sync::Arc;
 
@@ -701,6 +703,11 @@ mod tests {
         assert!(
             matches!(whitespace_projection.layers[1].data(), fx_schema::LayerData::Rect(rect) if rect.is_hidden)
         );
+        let fx_schema::LayerData::Rect(static_bounds) = whitespace_projection.layers[0].data()
+        else {
+            panic!("Bounds")
+        };
+        let static_width = static_bounds.rect.size[0];
         let track = |property: &str, values: [f64; 2]| {
             serde_json::json!({
                 "target": {"kind": "layer", "layerId": 4900, "propertyType": property},
@@ -728,6 +735,11 @@ mod tests {
         assert!(
             matches!(projected.layers[1].data(), fx_schema::LayerData::Rect(rect) if rect.is_hidden)
         );
+        let fx_schema::LayerData::Rect(continuous_bounds) = projected.layers[0].data() else {
+            panic!("Bounds")
+        };
+        let continuous_width = continuous_bounds.rect.size[0];
+        assert!(continuous_width > static_width);
         let timeline = crate::export_document::text::bounds_documents(
             match group.layers[0].data() {
                 fx_schema::LayerData::Text(text) => text,
@@ -737,8 +749,15 @@ mod tests {
             &fonts,
         )
         .unwrap();
-        assert!(!timeline.keyed);
-        assert_eq!(timeline.keys[0].document.tracking, 20.0);
+        assert!(timeline.keyed);
+        assert_eq!(
+            timeline
+                .keys
+                .iter()
+                .map(|key| (key.time_millis, key.document.tracking))
+                .collect::<Vec<_>>(),
+            vec![(0, 20.0), (2_000, 200.0)]
+        );
         let output = crate::export_document::to_aep_with_document_views_and_media_and_fps(
             crate::export_document::ExportDocumentViews::unchanged(&document).with_fonts(&fonts),
             &Default::default(),
@@ -754,6 +773,12 @@ mod tests {
             message
                 .message
                 .contains("Tracking uses continuous interpolation")
+                && message
+                    .message
+                    .contains("authored-time values were retained as editable Hold document keys")
+                && message
+                    .message
+                    .contains("between-key interpolation is approximated")
         }));
         let native = crate::structure::read_project(&output.bytes).unwrap();
         let imported =
@@ -809,19 +834,25 @@ mod tests {
         else {
             panic!("Group")
         };
-        assert!(
-            fonts
-                .bounds_geometry(
-                    raster_group,
-                    &crate::export_document::AnimationIndex::new(
-                        raster.composition().dynamics().entries()
-                    )
-                )
-                .is_err()
-        );
+        let raster_projection = fonts
+            .bounds_geometry(
+                raster_group,
+                &crate::export_document::AnimationIndex::new(
+                    raster.composition().dynamics().entries(),
+                ),
+            )
+            .unwrap();
+        assert!(matches!(
+            raster_projection.layers[0].data(),
+            fx_schema::LayerData::Text(_)
+        ));
+        assert!(matches!(
+            raster_projection.layers[1].data(),
+            fx_schema::LayerData::Rect(rect) if rect.is_hidden
+        ));
 
-        // Hold Tracking is already supported natively: its outline union must
-        // include the actual second document, not merely the typed static base.
+        // Native Hold Tracking and approximated continuous Tracking emit the
+        // same authored-time documents, so their outline unions must agree.
         fixture["composition"]["dynamics"]["entries"][0]["animator"]["keyframes"][1]["easing"]["type"] =
             "hold".into();
         let held = fx_schema::EditableFxCompositionDocument::from_json_value(fixture).unwrap();
@@ -836,13 +867,10 @@ mod tests {
                 ),
             )
             .unwrap();
-        let fx_schema::LayerData::Rect(base) = projected.layers[0].data() else {
-            panic!("Bounds")
-        };
         let fx_schema::LayerData::Rect(held) = held_projection.layers[0].data() else {
             panic!("Bounds")
         };
-        assert!(held.rect.size[0] > base.rect.size[0]);
+        assert_eq!(held.rect.size[0], continuous_width);
     }
 
     #[test]

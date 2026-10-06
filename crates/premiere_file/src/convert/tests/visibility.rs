@@ -46,6 +46,8 @@ fn convert(
                 format: ImageFormat::Png,
                 width: 1920,
                 height: 1080,
+                pixel_aspect: Default::default(),
+                open_exr_channels: None,
                 alpha: false,
                 icc_profile: false,
             }),
@@ -410,7 +412,7 @@ fn hidden_solid_rectangle_exports_as_a_disabled_color_matte() {
         export_hidden_layer(solid),
         [
             ("premiere-video-1".to_owned(), true),
-            ("color-matte:ff0000".to_owned(), false)
+            ("color-matte:1920x1080:ff0000".to_owned(), false)
         ]
     );
 }

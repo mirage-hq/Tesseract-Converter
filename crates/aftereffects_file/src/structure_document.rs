@@ -29,6 +29,7 @@ mod compositing;
 mod control_links;
 mod directional_plane;
 mod effects;
+mod expression_evaluations;
 mod foreign_inverse_matte;
 mod fractal_blend;
 mod geometry2;
@@ -232,6 +233,48 @@ fn to_structural_fx_document_with_budget(
     destination: Destination<'_>,
     progress: Progress<'_>,
 ) -> Result<StructuralConversion, DocumentError> {
+    convert_with_text_overrides(
+        project,
+        composition_id,
+        media_resolver,
+        animation_budget,
+        expression_samples,
+        destination,
+        progress,
+        &[],
+    )
+}
+
+pub(crate) fn to_graphic_picture(
+    project: &StructuralProject,
+    composition_id: u32,
+    media_resolver: &mut dyn FnMut(&MediaAssetRequest) -> MediaResolution,
+    destination: Destination<'_>,
+    text: &[crate::graphic_template::SavedGraphicText],
+) -> Result<StructuralConversion, DocumentError> {
+    convert_with_text_overrides(
+        project,
+        Some(composition_id),
+        media_resolver,
+        animation_budget::AnimationBudget::default(),
+        &ExpressionSamples::default(),
+        destination,
+        Progress::default(),
+        text,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn convert_with_text_overrides(
+    project: &StructuralProject,
+    composition_id: Option<u32>,
+    media_resolver: &mut dyn FnMut(&MediaAssetRequest) -> MediaResolution,
+    animation_budget: animation_budget::AnimationBudget,
+    expression_samples: &ExpressionSamples,
+    destination: Destination<'_>,
+    progress: Progress<'_>,
+    text: &[crate::graphic_template::SavedGraphicText],
+) -> Result<StructuralConversion, DocumentError> {
     let compositions: Vec<_> = project
         .items
         .iter()
@@ -269,7 +312,12 @@ fn to_structural_fx_document_with_budget(
         } => (parent, first_id, asset_namespace),
     };
     let mut converter = Converter {
+        text_overrides: text
+            .iter()
+            .map(|value| ((value.composition_id, value.layer_id), value))
+            .collect(),
         expression_samples,
+        expression_evaluations: expression_evaluations::ExpressionEvaluations::default(),
         items: project.items.iter().map(|item| (item.id, item)).collect(),
         camera_normalizations,
         diagnostics: Vec::new(),
@@ -458,7 +506,9 @@ fn stored_layers(layers: Vec<FxLayer>) -> Result<Vec<fx_schema::Layer>, serde_js
 }
 
 struct Converter<'a> {
+    text_overrides: HashMap<(u32, u32), &'a crate::graphic_template::SavedGraphicText>,
     expression_samples: &'a ExpressionSamples,
+    expression_evaluations: expression_evaluations::ExpressionEvaluations,
     items: HashMap<u32, &'a ProjectItem>,
     camera_normalizations: HashMap<u32, camera_normalization::CompositionNormalization>,
     diagnostics: Vec<ImportDiagnostic>,
@@ -630,8 +680,7 @@ impl Converter<'_> {
             .filter(|value| value.source_comp_id == item.id)
             .cloned()
             .collect();
-        let has_expression_overrides = !overrides.is_empty();
-        for property_override in overrides {
+        for property_override in &overrides {
             if let crate::essential::OverrideValue::Media { source_id } = &property_override.value
                 && !self.items.get(source_id).is_some_and(|source| {
                     matches!(source.kind, ItemKind::Footage | ItemKind::Composition(_))
@@ -659,7 +708,7 @@ impl Converter<'_> {
                 );
                 continue;
             };
-            let warnings = match crate::essential::apply(layer, &property_override) {
+            let warnings = match crate::essential::apply(layer, property_override) {
                 Ok(warnings) => warnings,
                 Err(warning) => vec![warning],
             };
@@ -715,16 +764,15 @@ impl Converter<'_> {
         }
         self.stack.push(item.id);
         let layer_indices = index_layers(&comp.layers);
-        let mut approximations = Vec::new();
-        let expression_samples = crate::expression_eval::evaluate_occurrence_with_diagnostics(
+        let evaluated = self.expression_evaluations.evaluate(
             &self.items,
             item.id,
             &comp,
             self.expression_samples,
-            has_expression_overrides,
-            &mut approximations,
+            &overrides,
         );
-        for approximation in approximations {
+        let expression_samples = &evaluated.samples;
+        for approximation in &evaluated.approximations {
             for note in &approximation.key_notes {
                 self.warn(
                     Limitation::Properties,
@@ -736,7 +784,7 @@ impl Converter<'_> {
                     ),
                 );
             }
-            for api in approximation.apis {
+            for api in &approximation.apis {
                 self.warn(Limitation::Properties, Some(item.id), Some(approximation.layer_id),
                     format!("{:?}: AE expression {api} approximated with a deterministic random API; random sequence/kernel differs from Adobe; baked source-frame values do not establish native fidelity", approximation.property));
             }
@@ -759,7 +807,7 @@ impl Converter<'_> {
             solo,
             layer_indices: &layer_indices,
             camera_normalization,
-            expression_samples: &expression_samples,
+            expression_samples,
         };
         let mut layers = Vec::new();
         let mut source_indices = Vec::new();
@@ -1485,9 +1533,16 @@ impl Converter<'_> {
         if source.is_some_and(has_source_relative_anchor) {
             normalize_static_solid_anchor(layer, anchor_dimensions, &mut transform, &mut warnings);
         }
-        if let Err(error) = camera_normalization::apply_static(&mut transform, correction) {
-            warnings.push(format!("generated-camera inverse normalization: {error}; affected static Transform component retained without translation"));
-        }
+        let composition_offset = match camera_normalization::apply_static(
+            &mut transform,
+            correction,
+        ) {
+            Ok(()) => correction.position,
+            Err(error) => {
+                warnings.push(format!("generated-camera inverse normalization: {error}; affected static Transform component retained without translation"));
+                None
+            }
+        };
         result.transform = transform;
         if self.stack.len() == 1
             && !self.linked
@@ -1834,7 +1889,7 @@ impl Converter<'_> {
             }
         } else if record.layer_type() == 3 {
             let animation_denials = self.animation_budget.denials();
-            let imported = text::import_in_composition(
+            let mut imported = text::import_in_composition(
                 layer,
                 context.comp,
                 Some((comp_id, expression_samples)),
@@ -1843,6 +1898,22 @@ impl Converter<'_> {
                 &mut self.next_id,
                 &mut self.animation_budget,
             );
+            if let Some(value) = self.text_overrides.get(&(comp_id, layer_id)) {
+                let count = imported
+                    .layers
+                    .iter()
+                    .filter(|layer| matches!(layer, FxLayer::Text(_)))
+                    .count();
+                if count == 1 {
+                    for layer in &mut imported.layers {
+                        if let FxLayer::Text(text) = layer {
+                            text.source_text = value.document.clone();
+                        }
+                    }
+                } else {
+                    imported.warnings.push(format!("controller {} saved Text override could not bind one editable Text paint; template content/animation retained", value.controller_uuid));
+                }
+            }
             self.animations.extend(imported.animations);
             self.warn_animation_denial(animation_denials, comp_id, layer_id, "Text animation");
             content.layers.extend(stored_layers(imported.layers)?);
@@ -1988,16 +2059,84 @@ impl Converter<'_> {
                 ),
             }
         }
+        let wipe_ancestors = if record.layer_type() == 4 && source.is_none() {
+            ancestors
+                .iter()
+                .map(|&parent| {
+                    let parent_source = self.items.get(&parent.record.source_id()).copied();
+                    let parent_size = source_dimensions(parent_source, parent);
+                    let parent_anchor_dimensions = source_anchor_dimensions(parent_source, parent);
+                    let (mut transform, mut warnings) = transform::static_transform_with_sources(
+                        parent,
+                        parent_size,
+                        comp_id,
+                        comp,
+                        &self.items,
+                    );
+                    if parent_source.is_some_and(has_source_relative_anchor) {
+                        normalize_static_solid_anchor(
+                            parent,
+                            parent_anchor_dimensions,
+                            &mut transform,
+                            &mut warnings,
+                        );
+                    }
+                    transform.opacity =
+                        fx_schema::PercentageProperty::new(100.0).expect("100 is valid opacity");
+                    linear_wipe::AncestorTransform {
+                        layer: parent,
+                        transform,
+                    }
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         let mut linear_wipe_lowered = false;
         if purpose.includes_occurrence_pipeline() {
-            match linear_wipe::apply(layer, &mut result, linear_wipe::Context {source,size:native_effect_size,depth:depth+ancestors.len(),planar:ancestors.iter().all(|parent|!parent.record.flags().three_d_layer)}, linear_wipe::State {next:&mut self.next_id,animations:&mut self.animation_budget,shapes:&mut self.shape_budget}) {
-                Ok(Some(entries)) => {
-                    linear_wipe_lowered = true;
-                    self.animations.extend(entries);
-                    self.warn(Limitation::Properties,Some(comp_id),Some(layer_id),"hard Linear Wipes on a finite Solid source approximated by editable projected-canvas half-plane masks and native Completion keys, with optional source-normalized post-wipe Geometry2 Anchor tracks. Same-layer aliases become independent values/keys; owner Transform/styles and source content clocks remain outside/inside their authored stages. Native angled completion normalization and antialiasing are unverified; feather, mixed effect stages and other Transform controls are unsupported".into());
+            match linear_wipe::apply(
+                layer,
+                &mut result,
+                linear_wipe::Context {
+                    source,
+                    size: native_effect_size,
+                    depth: depth + ancestors.len(),
+                    planar: ancestors
+                        .iter()
+                        .all(|parent| !parent.record.flags().three_d_layer),
+                    composition_id: comp_id,
+                    composition_offset,
+                    ancestors: &wipe_ancestors,
+                    evaluations: expression_samples,
+                },
+                linear_wipe::State {
+                    next: &mut self.next_id,
+                    animations: &mut self.animation_budget,
+                    shapes: &mut self.shape_budget,
+                },
+            ) {
+                Ok(Some(lowered)) => {
+                    linear_wipe_lowered = lowered.consumed_trailing_transform;
+                    self.animations.extend(lowered.entries);
+                    self.warn(Limitation::Properties,Some(comp_id),Some(layer_id),"hard Linear Wipes on a finite Solid/composition source plane or a statically inverse-mapped continuous-rasterized Shape composition plane approximated by editable projected half-plane masks and native or source-frame-evaluated Completion tracks. Optional source-normalized trailing Geometry2 Anchor tracks apply only to source-local planes. Same-layer aliases become independent values/keys; owner Transform/styles and source content clocks retain their authored stages. Native angled completion normalization and antialiasing are unverified; feather, dynamic/unrepresentable Shape planes and nonadjacent mixed effect stages remain unsupported".into());
+                    for note in lowered.notes {
+                        self.warn(
+                            Limitation::Properties,
+                            Some(comp_id),
+                            Some(layer_id),
+                            note,
+                        );
+                    }
                 }
-                Ok(None)=>{},
-                Err(error)=>self.warn(Limitation::Properties,Some(comp_id),Some(layer_id),format!("Linear Wipe solid profile not lowered: {error}; original owner and omission diagnostics retained")),
+                Ok(None) => {}
+                Err(error) => self.warn(
+                    Limitation::Properties,
+                    Some(comp_id),
+                    Some(layer_id),
+                    format!(
+                        "Linear Wipe source profile not lowered: {error}; original owner and omission diagnostics retained"
+                    ),
+                ),
             }
         }
         if purpose.includes_occurrence_pipeline() {

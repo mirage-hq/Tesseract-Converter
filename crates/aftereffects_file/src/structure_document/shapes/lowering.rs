@@ -783,19 +783,21 @@ impl Lowering<'_, '_, '_, '_> {
         }
         if let [source_id] = geometry
             && let Some(input) = self.outline_input(*source_id, owner, stage_rounds)
-            && input.transforms.len() <= 1
             && input.rounds.iter().all(Vec::is_empty)
             && let Some(source) = self.sources[source_id.0].as_ref()
+            && let Some(controls) = input
+                .transforms
+                .iter()
+                .map(|id| {
+                    self.controls
+                        .iter()
+                        .flatten()
+                        .find(|control| control.id == *id)
+                })
+                .collect::<Option<Vec<_>>>()
+            && let Some(transport) =
+                bindings::shared_outline_transform(&controls, &self.collector.animations)
         {
-            let transport = input.transforms.first().and_then(|id| {
-                self.controls
-                    .iter()
-                    .flatten()
-                    .find(|control| control.id == *id)
-            });
-            if !input.transforms.is_empty() && transport.is_none() {
-                return Ok(None);
-            }
             let Some(id) = self.collector.allocate() else {
                 return Ok(None);
             };
@@ -813,18 +815,23 @@ impl Lowering<'_, '_, '_, '_> {
                     shape.shape.round_corners = style.round_corners.clone();
                     shape.shape.offset_paths = style.offset_paths;
                     shape.shape.trim = style.trim;
-                    if let Some(control) = transport {
-                        shape.transform = control.transform;
+                    if let Some(transform) = transport.transform {
+                        shape.transform = transform;
                         shape.transform.opacity = identity_transform().opacity;
+                        let detail = if transport.keyframes_only {
+                            "nested static translation parents composed with retained child transform values"
+                        } else {
+                            "one vector-group geometry transform normalized onto its paint"
+                        };
                         self.collector.warnings.push(format!(
-                            "{}: one vector-group geometry transform normalized onto its paint; original group name/control and live shared-source edit identity are not retained",
+                            "{}: {detail}; original group name/control and live shared-source edit identity are not retained",
                             self.name
                         ));
                     }
                     FxLayer::Shape(shape)
                 }
                 Producer::Rect(source) => {
-                    if transport.is_some()
+                    if transport.transform.is_some()
                         || !style.fills.is_empty()
                         || !style.strokes.is_empty()
                         || style.round_corners.is_some()
@@ -858,13 +865,17 @@ impl Lowering<'_, '_, '_, '_> {
                 let entry = &animations[source_index];
                 let property = entry.target.as_property()?;
                 let source_property = property.layer_id() == source_id;
-                let transform_property = transport.is_some_and(|control| {
-                    property.layer_id() == control.id
-                        && property.property_type() != PropType::Opacity
+                let transform_property = transport.producer.is_some_and(|producer| {
+                    property.layer_id() == producer && property.property_type() != PropType::Opacity
                 });
                 if !(source_property || transform_property)
                     || !entry.dependencies.is_empty()
                     || entry.animator.is_js_script()
+                    || (transport.keyframes_only
+                        && !matches!(
+                            entry.animator.data(),
+                            fx_schema::animator::AnimatorData::Keyframes { .. }
+                        ))
                 {
                     return None;
                 }
@@ -874,7 +885,16 @@ impl Lowering<'_, '_, '_, '_> {
                 ))
             });
             match bindings::copy_animators_atomically(candidates, animation_budget) {
-                Ok(Some(copied)) => animations.extend(copied),
+                Ok(Some(copied)) => {
+                    let copied_count = copied.len();
+                    animations.extend(copied);
+                    if transport.keyframes_only && copied_count > 0 {
+                        self.collector.warnings.push(format!(
+                            "{}: {copied_count} retained native keyframe tracks copied to the composed paint after the complete batch committed; copies are independent of hidden controls",
+                            self.name
+                        ));
+                    }
+                }
                 Ok(None) => self.collector.warnings.push(format!(
                     "{}: native geometry animation copy exceeded the generated-animation allowance; the complete copied control batch was omitted and static native geometry retained",
                     self.name

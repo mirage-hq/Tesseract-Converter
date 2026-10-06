@@ -44,6 +44,8 @@ fn record(effect: LayerEffect, ids: &mut EffectIdAllocator) -> Result<EffectReco
     Ok(EffectRecord::from_data(&EffectData::Identified {
         id: ids.take(),
         enabled: true,
+        compositing_options: None,
+        extensions: Default::default(),
         effect: EffectPayload::Known(effect),
     })?)
 }
@@ -150,6 +152,8 @@ pub(super) fn lower(
                     id: old,
                     enabled,
                     effect: payload,
+                    compositing_options,
+                    extensions,
                 } = effect.data()
                 else {
                     unreachable!("fresh effects have ids")
@@ -204,12 +208,16 @@ pub(super) fn lower(
                     id: new,
                     enabled: *enabled,
                     effect: payload.clone(),
+                    compositing_options: compositing_options.clone(),
+                    extensions: extensions.clone(),
                 })?;
             }
         }
         picture_effects(&mut branch).push(EffectRecord::from_data(&EffectData::Identified {
             id: ids.take(),
             enabled: correction.enabled,
+            compositing_options: None,
+            extensions: Default::default(),
             effect: EffectPayload::Known(LayerEffect::Levels {
                 input_black: row[0],
                 input_white: row[1],

@@ -3251,6 +3251,13 @@ fn edited_transforms_survive_export_and_reimport() {
         let start = (*crate::test_support::layer_range(group))["start"]
             .as_i64()
             .unwrap();
+        // Make the edited two-affine-owner contract explicit for B and D.
+        // Their ordinary child controls under a neutral parent do not prove
+        // native Transform origin; that representation keeps a nest/Motion.
+        if matches!(start, 2000 | 6000) {
+            assert_eq!(group["transform"]["rotation"], json!(0.0));
+            group["transform"]["rotation"] = json!(5.0);
+        }
         let transform = &mut group["layers"][0]["transform"];
         match start {
             2000 => {
@@ -3429,10 +3436,11 @@ fn edited_transforms_survive_export_and_reimport() {
         .unwrap()
         .project_json()
         .unwrap();
-    assert_eq!(
-        transform_stages(&reimported),
-        transform_fixture_stages(45.0, [70.0, 50.0], -120.0, [1152.0, 540.0])
-    );
+    let mut expected_stages = transform_fixture_stages(45.0, [70.0, 50.0], -120.0, [1152.0, 540.0]);
+    for start in [2000, 6000] {
+        expected_stages.get_mut(&start).unwrap().0 .1 = 5.0;
+    }
+    assert_eq!(transform_stages(&reimported), expected_stages);
     assert_eq!(
         layer_tracks(&reimported),
         transform_fixture_tracks((1200, 180.0), "cubicBezier")

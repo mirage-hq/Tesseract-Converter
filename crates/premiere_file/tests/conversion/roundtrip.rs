@@ -47,7 +47,7 @@ fn sequence_table(project: &PrProjectFile, sequence: &PrSequence) -> Value {
                 .iter()
                 .filter_map(|item| match item {
                     PrVideoItem::Media(clip) => Some(clip),
-                    PrVideoItem::Graphic(_) => None,
+                    PrVideoItem::Graphic(_) | PrVideoItem::Capsule(_) => None,
                 })
                 .map(move |clip| {
                     let timeline = clip.timeline_ticks();

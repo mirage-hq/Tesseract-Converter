@@ -1429,15 +1429,76 @@ fn exported_source_volume(
     }
 }
 
+/// The sample count proved by an inspected positive whole-sample clock.
+fn audio_sample_count(file_ticks: i64, sample_rate: u32) -> Option<i64> {
+    let rate = i64::from(sample_rate);
+    ((8_000..=192_000).contains(&sample_rate) && crate::schema::TICKS % rate == 0)
+        .then(|| crate::schema::TICKS / rate)
+        .filter(|&sample_ticks| file_ticks > 0 && file_ticks % sample_ticks == 0)
+        .map(|sample_ticks| file_ticks / sample_ticks)
+}
+
 /// Only an inspected positive whole-sample clock establishes the alternate
 /// floor representation. Adjacent millisecond values are not a tolerance.
 fn is_audio_source_floor(authored: u64, file_ticks: i64, sample_rate: u32) -> bool {
-    let rate = i64::from(sample_rate);
-    (8_000..=192_000).contains(&sample_rate)
-        && crate::schema::TICKS % rate == 0
-        && file_ticks > 0
-        && file_ticks % (crate::schema::TICKS / rate) == 0
+    audio_sample_count(file_ticks, sample_rate).is_some()
         && u64::try_from(file_ticks / TICKS_PER_MILLISECOND) == Ok(authored)
+}
+
+/// The available unit-forward part of a source selection. The source and
+/// placement lose the same unavailable tail, so no rate change or synthetic
+/// sample is introduced.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "tail diagnostics retain exact source and omission-boundary context"
+)]
+fn retain_available_audio_tail(
+    active: TimeRangeProperty,
+    mapped: TimeRangeProperty,
+    backwards: bool,
+    file_millis: u64,
+    active_output: &str,
+    duration_note: &str,
+    omission_scope: OmissionScope,
+    record: &str,
+    omissions: &mut dyn OmissionSink,
+) -> Option<(TimeRangeProperty, TimeRangeProperty)> {
+    let source_start = mapped.start.as_millis();
+    if backwards
+        || active.duration != mapped.duration
+        || source_start >= file_millis
+        || mapped.end().as_millis() <= file_millis
+    {
+        omit(
+            omissions,
+            omission_scope,
+            record,
+            format!(
+                "audio selection exceeds the packaged source{active_output}{duration_note}; only a partially available unit-forward tail can be retained without inventing samples, so this sound occurrence was omitted"
+            ),
+        );
+        return None;
+    }
+    let retained_millis = file_millis - source_start;
+    let missing_millis = mapped.end().as_millis() - file_millis;
+    let retained_active = TimeRangeProperty::new(
+        active.start,
+        fx_schema::Duration::from_millis(retained_millis),
+    );
+    let retained_source = TimeRangeProperty::new(
+        mapped.start,
+        fx_schema::Duration::from_millis(retained_millis),
+    );
+    approximate(
+        omissions,
+        record,
+        format!(
+            "packaged audio{active_output} ends at {file_millis} ms{duration_note}; retained available source [{source_start},{file_millis}) ms on timeline [{},{}) ms and omitted the unavailable {missing_millis} ms authored tail; packaged bytes and the exact sample clock are unchanged, with no padded samples",
+            active.start.as_millis(),
+            retained_active.end().as_millis()
+        ),
+    );
+    Some((retained_active, retained_source))
 }
 
 /// Maps one audio layer of the list whose parent is `parent`, with its volume
@@ -1535,18 +1596,16 @@ pub(super) fn layer<'a>(
         }
     };
     (|| {
-        // A sound padded to its picture may carry either the picture duration
-        // that Premiere records or the AAC length; export writes the former.
-        let intrinsic_millis = time_from_ticks(facts.intrinsic_ticks)?.as_millis();
+        // A sound padded to its picture may carry the picture duration in the
+        // native descriptor, but availability still comes from the inspected file.
+        ensure!(
+            audio_sample_count(file_ticks, facts.sample_rate).is_some(),
+            "packaged audio has an invalid positive whole-sample clock"
+        );
         let file_millis = time_from_ticks(file_ticks)?.as_millis();
         let authored = sound.source_intrinsic_duration.as_millis();
-        let source_floor = authored != intrinsic_millis
-            && authored != file_millis
+        let source_floor = authored != file_millis
             && is_audio_source_floor(authored, file_ticks, facts.sample_rate);
-        ensure!(
-            authored == intrinsic_millis || authored == file_millis || source_floor,
-            "sourceIntrinsicDuration {authored} ms differs from the packaged audio duration {file_millis} ms{active_output}"
-        );
         if source_floor {
             approximate(omissions, &record, format!(
                 "sourceIntrinsicDuration {authored} ms is the floor of the packaged audio duration{active_output} (nearest {file_millis} ms); native audio retains its exact sample clock"
@@ -1563,13 +1622,52 @@ pub(super) fn layer<'a>(
         if clock.rounded {
             approximate(omissions, &record, "constant audio source endpoints rounded independently to the nearest editable millisecond; exported rate follows those endpoints");
         }
-        let (mapped, backwards) = (clock.source_range, clock.backwards);
-        let playback_rate = mapped.duration.as_millis() as f64 / sound.playback.input_range().duration.as_millis() as f64 * if backwards { -1.0 } else { 1.0 };
+        let (mut active, mut mapped, backwards) = (
+            sound.playback.input_range(),
+            clock.source_range,
+            clock.backwards,
+        );
         ensure!(mapped.start >= sound.source_range.start && mapped.end() <= sound.source_range.end(),
             "audio playback window extends beyond the authored source selection");
+        if mapped.end().as_millis() > file_millis {
+            let duration_note = if authored != file_millis && !source_floor {
+                format!(
+                    "; sourceIntrinsicDuration {authored} ms differs from packaged duration {file_millis} ms"
+                )
+            } else {
+                String::new()
+            };
+            let Some(retained) = retain_available_audio_tail(
+                active,
+                mapped,
+                backwards,
+                file_millis,
+                &active_output,
+                &duration_note,
+                OmissionScope::Occurrence,
+                &record,
+                omissions,
+            ) else {
+                return Ok(None);
+            };
+            (active, mapped) = retained;
+        } else if authored != file_millis && !source_floor {
+            approximate(
+                omissions,
+                &record,
+                format!(
+                    "sourceIntrinsicDuration {authored} ms differs from the packaged audio duration {file_millis} ms{active_output}; retained fully available mapped source [{},{}) ms with packaged bytes and exact sample clock unchanged",
+                    mapped.start.as_millis(),
+                    mapped.end().as_millis()
+                ),
+            );
+        }
+        let playback_rate = mapped.duration.as_millis() as f64
+            / active.duration.as_millis() as f64
+            * if backwards { -1.0 } else { 1.0 };
         occurrence(
             asset_id,
-            &sound.playback.input_range(),
+            &active,
             &mapped,
             playback_rate,
             |active_range, source_in| {
@@ -1707,20 +1805,41 @@ pub(super) fn embedded<'a>(
         SourceSound::PaddedToPicture { file_ticks, .. } => *file_ticks,
         _ => facts.intrinsic_ticks,
     };
-    let duration_matches = [facts.intrinsic_ticks, file_ticks]
-        .into_iter()
-        .any(|ticks| {
-            time_from_ticks(ticks).is_ok_and(|duration| {
-                duration.as_millis() == video.source_intrinsic_duration.as_millis()
-            })
-        });
-    if !duration_matches {
-        omit(omissions, OmissionScope::Feature, &record,
-            format!("embedded audio was not exported: sourceIntrinsicDuration {} ms differs from selected sound {asset_id:?} duration ({} ticks; file {file_ticks} ticks)",
-                video.source_intrinsic_duration.as_millis(), facts.intrinsic_ticks));
+    if audio_sample_count(file_ticks, facts.sample_rate).is_none() {
+        omit(
+            omissions,
+            OmissionScope::Feature,
+            &record,
+            "embedded audio was not exported: packaged audio has an invalid positive whole-sample clock",
+        );
         return None;
     }
-    let mapped = match super::timing::linear_source_range(&video.playback) {
+    let file_millis = match time_from_ticks(file_ticks) {
+        Ok(duration) => duration.as_millis(),
+        Err(error) => {
+            omit(
+                omissions,
+                OmissionScope::Feature,
+                &record,
+                format!("embedded audio was not exported: {error}"),
+            );
+            return None;
+        }
+    };
+    let authored = video.source_intrinsic_duration.as_millis();
+    let source_floor =
+        authored != file_millis && is_audio_source_floor(authored, file_ticks, facts.sample_rate);
+    if source_floor {
+        approximate(
+            omissions,
+            &record,
+            format!(
+                "sourceIntrinsicDuration {authored} ms is the floor of selected sound {asset_id:?} (nearest {file_millis} ms); native audio retains its exact sample clock"
+            ),
+        );
+    }
+    let mut active = video.playback.input_range();
+    let mut mapped = match super::timing::linear_source_range(&video.playback) {
         Ok(range) => range,
         Err(error) => {
             omit(
@@ -1741,9 +1860,40 @@ pub(super) fn embedded<'a>(
         );
         return None;
     }
+    if mapped.end().as_millis() > file_millis {
+        let duration_note = if authored != file_millis && !source_floor {
+            format!(
+                "; sourceIntrinsicDuration {authored} ms differs from selected sound {asset_id:?} duration {file_millis} ms"
+            )
+        } else {
+            String::new()
+        };
+        let retained = retain_available_audio_tail(
+            active,
+            mapped,
+            false,
+            file_millis,
+            "",
+            &duration_note,
+            OmissionScope::Feature,
+            &record,
+            omissions,
+        )?;
+        (active, mapped) = retained;
+    } else if authored != file_millis && !source_floor {
+        approximate(
+            omissions,
+            &record,
+            format!(
+                "sourceIntrinsicDuration {authored} ms differs from selected sound {asset_id:?} duration {file_millis} ms; retained fully available mapped source [{},{}) ms with packaged bytes and exact sample clock unchanged",
+                mapped.start.as_millis(),
+                mapped.end().as_millis()
+            ),
+        );
+    }
     let exported = occurrence(
         asset_id,
-        &video.playback.input_range(),
+        &active,
         &mapped,
         1.0,
         |active_range, source_in| {

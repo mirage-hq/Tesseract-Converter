@@ -563,11 +563,29 @@ fn scripts_on_every_owner_kind_reach_their_native_bindings() {
             &expect_ramp,
             1,
         ),
-        // A Transform stage's video: its Transform takes the video's keys.
+        // The current one-affine-owner picture keeps an ordinary nest: its
+        // neutral parent cannot establish native Transform origin. The same
+        // editable rotation script uses the child's native Motion binding.
         (
             "feature_transform_strict.prproj",
             vec![(layer_target(3, "rotation"), ramp)],
-            |sequence| effect_keys(clip_at(sequence, 2000), "Rotation"),
+            |sequence| {
+                let nest = sequence
+                    .nest_occurrences()
+                    .find(|nest| nest.start_ticks == 2000 * TICKS_PER_MILLISECOND)
+                    .expect("neutral outer owner retains the current picture boundary");
+                let clip = clip_at(&nest.sequence, 0);
+                assert!(clip.effects.iter().all(|effect| !matches!(
+                    effect.params,
+                    crate::schema::PrEffectParams::Transform(_)
+                )));
+                local(
+                    scalar(&clip.animations, |animation| {
+                        matches!(animation, PrPropertyAnimation::Rotation(_))
+                    }),
+                    clip.in_ticks,
+                )
+            },
             &expect_ramp,
             1,
         ),

@@ -18,6 +18,20 @@
 
 use super::{HdrProfile, PrAfterEffectsComposition, PrColorMatte, VideoCodec, TICKS};
 
+/// Premiere's default channel selection when it first opens an OpenEXR file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OpenExrChannels {
+    Rgb {
+        red: bool,
+        green: bool,
+        blue: bool,
+    },
+    Luma,
+    LumaChroma,
+    /// Native input was classified before its file/import preferences were read.
+    Unspecified,
+}
+
 /// Whether a media record is decoded video, a Premiere still image, a linked
 /// After Effects composition, Color Matte generator media, or the Black Video
 /// generator media of an adjustment layer.
@@ -38,6 +52,13 @@ pub(crate) enum PrMediaKind {
     /// records no alpha fact, so export takes it from the inspected packaged
     /// image.
     Still { alpha: bool },
+    /// Original OpenEXR bytes decoded by Premiere's native `oEXR` importer.
+    /// `numbered` selects its finite image-sequence clock instead of a still.
+    OpenExr {
+        alpha: bool,
+        numbered: bool,
+        channels: OpenExrChannels,
+    },
     /// Consecutive numbered image files on the stream's finite source clock.
     /// The linked filename supplies the first number; Duration/FrameRate the count.
     NumberedStills { alpha: bool },
@@ -52,7 +73,21 @@ pub(crate) enum PrMediaKind {
 
 impl PrMediaKind {
     pub(crate) fn is_still(self) -> bool {
-        matches!(self, Self::Still { .. })
+        matches!(
+            self,
+            Self::Still { .. }
+                | Self::OpenExr {
+                    numbered: false,
+                    ..
+                }
+        )
+    }
+
+    pub(crate) fn is_numbered_stills(self) -> bool {
+        matches!(
+            self,
+            Self::NumberedStills { .. } | Self::OpenExr { numbered: true, .. }
+        )
     }
 
     pub(crate) fn is_adjustment(self) -> bool {
@@ -66,3 +101,7 @@ pub(crate) const STILL_INTRINSIC_TICKS: i64 = 12 * 60 * 60 * TICKS;
 pub(crate) const STILL_CODEC_TYPE: &str = "1380013856";
 /// Native `VideoStream.AlphaType` for a still whose file carries straight alpha.
 pub(crate) const STILL_STRAIGHT_ALPHA_TYPE: &str = "1";
+/// Native `VideoStream.CodecType` from Premiere's bundled OpenEXR importer.
+pub(crate) const OPENEXR_CODEC_TYPE: &str = "1281443650";
+/// The bundled importer reports an EXR A channel as black-matte alpha.
+pub(crate) const OPENEXR_ALPHA_TYPE: &str = "2";

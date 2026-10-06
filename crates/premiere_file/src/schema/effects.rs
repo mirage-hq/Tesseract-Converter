@@ -410,7 +410,8 @@ impl PrTransform {
     /// Premiere's linear light, T6); motion blur
     /// ([`Self::motion_blur_shutter_angle`], FX's blur measured against clip
     /// F's); keyed Shutter Angle with the checkbox off (its first key's value;
-    /// with the checkbox on no angle renders); bicubic Sampling
+    /// ordinary Transform evidence has not measured the checkbox-on form);
+    /// bicubic Sampling
     /// (bilinear); a nonzero Skew with a nonzero Rotation at any time or with
     /// axis scales whose equality at every time is unproved (FX's
     /// composition of skew, rotation and scale; T5 measured the shear at
@@ -495,7 +496,8 @@ impl PrTransform {
     /// Why this Transform, with its keys `animations`, can hide its whole
     /// picture at some time by its geometry; `None` while part of the picture
     /// stays in the clip's frame at every time. Import converts no source
-    /// Transform, and a Geometry2 only as a centered positive zoom, so the
+    /// Transform, and a Geometry2 only through its centered affine-scale
+    /// mapping, so the
     /// reader omits a placement whose picture a left-out one can hide
     /// (`SplitChain::reject_hiding_transforms`).
     ///
@@ -509,8 +511,11 @@ impl PrTransform {
     /// is unmeasured ([`Self::approximations`]), the picture point at the
     /// Anchor Point still lands on the Position, so only an Anchor Point on
     /// the picture with a Position inside the frame at every time keeps part
-    /// of the picture there. The reader keeps no curved Position path and no
-    /// Anchor Point keys for a Transform.
+    /// of the picture there. The reader keeps validated saved-form curved
+    /// Position paths, but no Anchor Point keys for an ordinary Transform.
+    /// The hiding check rereads Transform keys with curve retention disabled,
+    /// so a curved Position never reaches these bounds; [`point_axis_range`]
+    /// does not bound the interior of a spatial curve.
     pub(crate) fn hiding_geometry(&self, animations: &[PrEffectParamAnimation]) -> Option<String> {
         let TransformExtremes {
             scale,
@@ -2269,16 +2274,6 @@ impl EffectSpec {
 }
 
 impl EffectParamSpec {
-    /// Whether a native parameter's `Name` is this parameter's: equal to the
-    /// spec name, or blank or absent for a spec whose name is blank, the
-    /// checkbox forms: Premiere 26.5.1 saves Mosaic's Sharp Colors without
-    /// the element and the corpus Gaussian Blur checkbox has
-    /// `<Name> </Name>`. The writer writes the spec name when it is not empty.
-    pub(crate) fn accepts_name(&self, name: Option<&str>) -> bool {
-        name == Some(self.name)
-            || (self.name.trim().is_empty() && name.is_none_or(|name| name.trim().is_empty()))
-    }
-
     /// Native `LowerBound` to `UpperBound`, when both are numbers.
     pub(crate) fn value_range(&self) -> Option<RangeInclusive<f64>> {
         Some(self.lower_bound.parse().ok()?..=self.upper_bound.parse().ok()?)
@@ -3294,9 +3289,8 @@ pub(crate) const MOSAIC_VERTICAL_BLOCKS: EffectParamSpec =
     mosaic_count(2, "Vertical Blocks", "verticalBlocks");
 
 /// Mosaic Sharp Colors checkbox. Premiere 26.5.1 saves it without a `Name`
-/// element and the corpus records likewise, so its spec name
-/// is empty: the reader accepts a missing name for it
-/// ([`EffectParamSpec::accepts_name`]) and the writer omits the element.
+/// element and the corpus records likewise, so its spec name is empty and
+/// the writer omits the element.
 pub(crate) const MOSAIC_SHARP_COLORS: EffectParamSpec = EffectParamSpec {
     id: 3,
     name: "",
@@ -4055,8 +4049,7 @@ const fn transform_scalar(
 
 /// A Transform checkbox (class `cc12343e`). Premiere saves both without a
 /// `Name` element in 26.5.1 (E11) and in the corpus generations, so the spec
-/// name is empty ([`EffectParamSpec::accepts_name`]) and `label` is the
-/// Effect Controls name.
+/// name is empty for the writer and `label` is the Effect Controls name.
 const fn transform_checkbox(id: usize, label: &'static str) -> EffectParamSpec {
     EffectParamSpec {
         id,
@@ -5427,7 +5420,7 @@ mod tests {
     }
 
     #[test]
-    fn mosaic_layout_binds_counts_and_accepts_the_unnamed_checkbox() {
+    fn mosaic_layout_binds_counts_and_keeps_canonical_writer_names() {
         assert_eq!(
             MOSAIC.bound_param("horizontalBlocks"),
             Some(&MOSAIC_HORIZONTAL_BLOCKS)
@@ -5437,21 +5430,11 @@ mod tests {
             Some(&MOSAIC_VERTICAL_BLOCKS)
         );
         assert_eq!(MOSAIC.bound_param("sharpColors"), None);
-        // A blank spec name accepts a missing or blank native `Name`; a named
-        // parameter accepts only its name, as with Transform.
-        for (spec, name, accepted) in [
-            (&MOSAIC_SHARP_COLORS, None, true),
-            (&MOSAIC_SHARP_COLORS, Some(" "), true),
-            (&MOSAIC_SHARP_COLORS, Some(""), true),
-            (&MOSAIC_SHARP_COLORS, Some("Sharp Colors"), false),
-            (&GAUSSIAN_BLUR_REPEAT_EDGE_PIXELS, Some(" "), true),
-            (&GAUSSIAN_BLUR_REPEAT_EDGE_PIXELS, None, true),
-            (&MOSAIC_HORIZONTAL_BLOCKS, Some("Horizontal Blocks"), true),
-            (&MOSAIC_HORIZONTAL_BLOCKS, None, false),
-            (&MOSAIC_HORIZONTAL_BLOCKS, Some(""), false),
-        ] {
-            assert_eq!(spec.accepts_name(name), accepted, "{} {name:?}", spec.label);
-        }
+        // The writer retains canonical control names and the saved checkbox names.
+        assert_eq!(MOSAIC_SHARP_COLORS.name, "");
+        assert_eq!(GAUSSIAN_BLUR_REPEAT_EDGE_PIXELS.name, " ");
+        assert_eq!(MOSAIC_HORIZONTAL_BLOCKS.name, "Horizontal Blocks");
+        assert_eq!(MOSAIC_VERTICAL_BLOCKS.name, "Vertical Blocks");
         // Whole counts from 1 to 4000, in either message form.
         assert_eq!(PrMosaic::count(&MOSAIC_HORIZONTAL_BLOCKS, "", 16.0), Ok(16));
         assert_eq!(
@@ -5561,7 +5544,7 @@ mod tests {
         for field in ["outputWidth", "outputHeight", "mirrorEdges", "phase"] {
             assert_eq!(REPLICATE.bound_param(field), None, "{field}");
         }
-        assert!(REPLICATE_COUNT.accepts_name(Some("Count")));
+        assert_eq!(REPLICATE_COUNT.name, "Count");
         // Key times on the source clock: 1, 1.5 and 2.5 s.
         let keys = |values: [(f64, PrKeyframeEasing); 3]| {
             vec![PrEffectParamAnimation {
@@ -5700,7 +5683,7 @@ mod tests {
     fn posterize_converts_whole_levels_with_hold_keys_only() {
         use PrKeyframeEasing::{CubicBezier, Hold, Linear};
         assert_eq!(POSTERIZE.bound_param("levels"), Some(&POSTERIZE_LEVEL));
-        assert!(POSTERIZE_LEVEL.accepts_name(Some("Level")));
+        assert_eq!(POSTERIZE_LEVEL.name, "Level");
         // The fixture's Level key times on the source clock: 1, 1.5 and 2.5 s.
         let keys = |values: [(f64, PrKeyframeEasing); 3]| {
             vec![PrEffectParamAnimation {
@@ -5765,7 +5748,7 @@ mod tests {
     }
 
     #[test]
-    fn transform_layout_names_the_staged_properties_and_accepts_the_unnamed_checkboxes() {
+    fn transform_layout_names_the_staged_properties_and_keeps_canonical_writer_names() {
         // The 12 parameters in `Params` order with their `ParameterID`s
         // (`A-static.xml`); the keyed ones name the staged
         // video's layer property, the checkboxes and the static-only
@@ -5798,19 +5781,12 @@ mod tests {
                 (12, "Sampling", None),
             ]
         );
-        // The checkboxes are saved without a `Name` (E11 and the corpus);
-        // the scale axes keep their 26.5.1 names, which Uniform Scale does not
-        // rename (`B-uniform.xml`).
-        for (spec, name, accepted) in [
-            (&TRANSFORM_UNIFORM_SCALE, None, true),
-            (&TRANSFORM_COMPOSITION_SHUTTER_ANGLE, None, true),
-            (&TRANSFORM_UNIFORM_SCALE, Some("Uniform Scale"), false),
-            (&TRANSFORM_SCALE_HEIGHT, Some("Scale Height"), true),
-            (&TRANSFORM_SCALE_HEIGHT, Some("Scale"), false),
-            (&TRANSFORM_SCALE_WIDTH, Some(""), false),
-        ] {
-            assert_eq!(spec.accepts_name(name), accepted, "{} {name:?}", spec.label);
-        }
+        // The writer omits checkbox names (E11 and the corpus) and keeps the
+        // scale axes' canonical 26.5.1 names (`B-uniform.xml`).
+        assert_eq!(TRANSFORM_UNIFORM_SCALE.name, "");
+        assert_eq!(TRANSFORM_COMPOSITION_SHUTTER_ANGLE.name, "");
+        assert_eq!(TRANSFORM_SCALE_HEIGHT.name, "Scale Height");
+        assert_eq!(TRANSFORM_SCALE_WIDTH.name, "Scale Width");
         let bounds: Vec<_> = TRANSFORM
             .params
             .iter()

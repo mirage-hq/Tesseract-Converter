@@ -4,14 +4,19 @@ use super::support::*;
 #[cfg(feature = "ffmpeg-library")]
 use serde_json::json;
 #[cfg(feature = "ffmpeg-library")]
+use std::fs;
+use std::path::Path;
+#[cfg(feature = "ffmpeg-library")]
 use std::path::PathBuf;
-use std::{fs, path::Path};
 #[cfg(feature = "ffmpeg-library")]
 use tesseract_file::TesseractFile;
 
+#[cfg(feature = "ffmpeg-library")]
 const NATIVE_HOLD: &str = include_str!("../fixtures/cap2-native-frame-hold.xml");
+#[cfg(feature = "ffmpeg-library")]
 const TEN_SECONDS: &[u8] = include_bytes!("../fixtures/video-30fps-10s.mp4");
 
+#[cfg(feature = "ffmpeg-library")]
 fn hold_xml(record: &str) -> String {
     let clip = record
         .replace("ObjectID=\"404\"", "ObjectID=\"6\"")
@@ -483,8 +488,11 @@ fn edited_frame_hold_keeps_valid_easing_but_rejects_ineligible_sources() {
     }
 }
 
+// Retained pictures now require physical media admission, unlike the former
+// reader-only rejection case. Keep this publication proof in the FFmpeg lane.
+#[cfg(feature = "ffmpeg-library")]
 #[test]
-fn native_frame_hold_rejects_unknown_incomplete_out_of_bounds_and_combined_forms() {
+fn native_frame_hold_recovers_unknown_incomplete_out_of_bounds_and_combined_forms() {
     for (from, to, reason) in [
         (
             "<FrameHold>4</FrameHold>",
@@ -521,9 +529,37 @@ fn native_frame_hold_rejects_unknown_incomplete_out_of_bounds_and_combined_forms
         let dir = tempfile::tempdir().unwrap();
         let source = fixture(dir.path(), &hold_xml(&NATIVE_HOLD.replace(from, to)));
         fs::write(dir.path().join("media/source.mp4"), TEN_SECONDS).unwrap();
-        let error =
-            premiere_to_tesseract(source, dir.path().join("converted"), None, false).unwrap_err();
-        assert!(error.to_string().contains(reason), "{error}");
+        let output = dir.path().join("converted");
+        let losses = premiere_to_tesseract(source, &output, None, false).unwrap();
+        assert!(
+            losses.iter().any(|loss| loss.reason.contains(reason)),
+            "{losses:?}"
+        );
+        let project = fs::read_dir(&output)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "tsrct")
+            })
+            .unwrap();
+        let file = tesseract_file::TesseractFile::open(project).unwrap();
+        let document = file.project_json().unwrap();
+        let video = document["composition"]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["type"] == "Video")
+            .unwrap();
+        assert_eq!(
+            video["sourceRange"],
+            serde_json::json!({"start":3462,"duration":834})
+        );
+        assert_eq!(video["playback"]["mapping"]["output"], video["sourceRange"]);
+        assert_eq!(
+            video["playback"]["inputRange"],
+            serde_json::json!({"start":14181,"duration":834})
+        );
     }
 }
 

@@ -28,7 +28,7 @@ use super::super::{
     effects::{effect_spec, effect_type, invert_output_partner},
     graphic::{bezier_keys_verified, graphic_objects, source_text_field},
     nested::{unsupported_group_fields, unsupported_nest_depth},
-    tesseract_to_premiere::{mask_guide_ids, source_frame, stage_layers, LINEAR_WIPE_GUIDE_PREFIX},
+    tesseract_to_premiere::{mask_guide_ids, scripted_wipe_axis, source_frame, stage_layers},
     timing::is_plain_group_playback,
     video_data,
 };
@@ -188,7 +188,7 @@ enum Role {
     Text,
     /// A rectangle that a mask uses as its Linear Wipe (`wipe`) or Crop guide.
     Guide {
-        wipe: bool,
+        wipe: Option<PropType>,
     },
     /// A root audio layer.
     Audio,
@@ -263,14 +263,7 @@ impl<'d> Owners<'d> {
             layers: BTreeMap::new(),
             effects: BTreeMap::new(),
         };
-        owners.collect(
-            layers,
-            &Place::Root,
-            None,
-            BTreeSet::new(),
-            dynamics,
-            canvas,
-        );
+        owners.collect(layers, &Place::Root, None, None, dynamics, canvas);
         owners
     }
 
@@ -282,17 +275,22 @@ impl<'d> Owners<'d> {
         layers: &'d [Layer],
         place: &Place,
         inherited_clock: Option<&'static str>,
-        group_guides: BTreeSet<LayerId>,
+        group_owner: Option<&'d GroupLayer>,
         dynamics: &AnimationGraph,
         canvas: [u32; 2],
     ) {
         // The guides that the writer's layer export skips, as in `export_layers`.
         let guides: BTreeSet<_> = mask_guide_ids(layers)
             .into_iter()
-            .chain(group_guides)
+            .chain(
+                group_owner
+                    .into_iter()
+                    .flat_map(|group| group.masks.iter().filter_map(|mask| mask.layer)),
+            )
             .collect();
         for layer in layers {
-            let (role, children) = role(layer, layers, place, &guides, dynamics, canvas);
+            let (role, children) =
+                role(layer, layers, place, &guides, group_owner, dynamics, canvas);
             let clock = inherited_clock.or_else(|| own_clock(layer));
             for effect in layer.effects() {
                 if let EffectData::Identified { id, .. } = effect.data() {
@@ -309,16 +307,14 @@ impl<'d> Owners<'d> {
                 },
             );
             if let Some(child_layers) = layer.child_layers() {
-                let own_guides = match layer.data() {
-                    LayerData::Group(group) => {
-                        group.masks.iter().filter_map(|mask| mask.layer).collect()
-                    }
-                    _ => BTreeSet::new(),
+                let owner = match layer.data() {
+                    LayerData::Group(group) => Some(group),
+                    _ => None,
                 };
                 // Export writes a nest's sequence at the canvas of the sequence
                 // that places it (`nested::export_group`), the only nest canvas
                 // that it supports.
-                self.collect(child_layers, &children, clock, own_guides, dynamics, canvas);
+                self.collect(child_layers, &children, clock, owner, dynamics, canvas);
             }
         }
     }
@@ -359,6 +355,7 @@ fn role(
     layers: &[Layer],
     place: &Place,
     guides: &BTreeSet<LayerId>,
+    group_owner: Option<&GroupLayer>,
     dynamics: &AnimationGraph,
     canvas: [u32; 2],
 ) -> (Role, Place) {
@@ -435,7 +432,7 @@ fn role(
         LayerData::Text(_) => unbound(TEXT_IN_NEST),
         LayerData::Rect(rect) if guides.contains(&rect.id) => (
             Role::Guide {
-                wipe: rect.name.starts_with(LINEAR_WIPE_GUIDE_PREFIX),
+                wipe: scripted_wipe_axis(rect, layers, group_owner, dynamics, canvas),
             },
             inside(UNSUPPORTED_LAYER),
         ),
@@ -616,11 +613,11 @@ fn layer_binding(owner: &Owner<'_>, property: PropType) -> std::result::Result<B
         }
         Role::Text => motion(Some(&TEXT_PARAMS))?,
         // A Linear Wipe's completion is its guide's one Scale track.
-        Role::Guide { wipe: true } => matches!(property, PropType::ScaleX | PropType::ScaleY)
+        Role::Guide { wipe: Some(axis) } => (property == *axis)
             .then(|| Binding::Scalar(Rules::scalar(UNIT_TOLERANCE).within(ValueRange::Percentage))),
         // A Crop guide keeps the frame tracks of its video's Motion.
-        Role::Guide { wipe: false } if property == PropType::Opacity => None,
-        Role::Guide { wipe: false } => motion(None)?,
+        Role::Guide { wipe: None } if property == PropType::Opacity => None,
+        Role::Guide { wipe: None } => motion(None)?,
     };
     binding.ok_or_else(|| format!("{property} has no native key binding on this owner"))
 }

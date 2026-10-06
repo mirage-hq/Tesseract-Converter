@@ -359,8 +359,8 @@ struct ClipVolume {
     unread: bool,
 }
 
-/// Identifies intrinsic gain controls before decoding them; other inserts use
-/// static bypass and the measured Fill Right mapping, or report their identity.
+/// Reads canonical intrinsic Volume and layout-qualified renamed Volume; other
+/// inserts use static bypass and the measured Fill Right mapping, or report their identity.
 /// Amplify failures stay explicit so a saved
 /// ducking envelope cannot turn into an unattenuated sound. Unread Volume
 /// plays at unity unless an independent current Mute or static Level
@@ -390,9 +390,42 @@ fn clip_filter(
             omissions,
         ));
     }
-    // Intrinsic Volume is identified by its Mute/Bypass and Level controls in
-    // clip_volume, not its display name, which varies across Premiere saves.
+    let canonical_volume = [AudioChannels::Mono, AudioChannels::Stereo]
+        .iter()
+        .any(|channels| channels.volume_match_name() == match_name);
     if match_name != records::CHANNEL_VOLUME_MATCH_NAME {
+        // Canonical Volume must keep its unread disposition even when its
+        // parameters fail. Only noncanonical inserts need layout qualification.
+        if !canonical_volume {
+            let params = match graph
+                .decode::<AudioFilterComponent>(record)
+                .and_then(|filter| filter_params(graph, &filter))
+            {
+                Ok(params) => params,
+                Err(error) => {
+                    report_filter_omission(record, error, omissions);
+                    return Some(ClipFilter::Skipped);
+                }
+            };
+            let names: Vec<_> = params
+                .iter()
+                .map(|param| param.value.name.as_deref())
+                .collect();
+            if !matches!(
+                names.as_slice(),
+                [
+                    Some(records::MUTE_NAME | records::BYPASS_NAME),
+                    Some(records::LEVEL_NAME)
+                ]
+            ) {
+                return Some(insert_filter(
+                    graph,
+                    record,
+                    ChainOwner::Placement,
+                    omissions,
+                ));
+            }
+        }
         return Some(ClipFilter::Volume(
             clip_volume(graph, record, omissions)
                 .inspect_err(|error| {
@@ -405,9 +438,6 @@ fn clip_filter(
                 })
                 .ok(),
         ));
-    }
-    if match_name != records::CHANNEL_VOLUME_MATCH_NAME {
-        return None;
     }
     let filter = graph.decode::<AudioFilterComponent>(record).ok()?;
     let params = filter_params(graph, &filter).ok()?;
@@ -441,7 +471,7 @@ fn clip_filter(
         omit(
             omissions,
             OmissionScope::Feature,
-            &filter.identity,
+            record.identity(),
             "clip Channel Volume not converted",
         );
     }

@@ -20,13 +20,17 @@ fn encoded_json(value: &serde_json::Value) -> String {
     )
 }
 
-fn synthetic_components() -> String {
-    let value = serde_json::json!({
+fn synthetic_text_value() -> serde_json::Value {
+    serde_json::json!({
         "capPropFontEdit":false,"capPropFontFauxStyleEdit":false,"capPropFontSizeEdit":false,
         "capPropTextRunCount":1,"fontEditValue":["ArialMT"],"fontSizeEditValue":[24.0],
         "fontTextRunLength":[2],"fontFSAllCapsValue":[false],"fontFSBoldValue":[false],
         "fontFSItalicValue":[false],"fontFSSmallCapsValue":[false],"textEditValue":"🦊"
-    });
+    })
+}
+
+fn synthetic_components() -> String {
+    let value = synthetic_text_value();
     let mut control = value.clone();
     let fields = control.as_object_mut().unwrap();
     fields.insert("capPropAnimatable".into(), false.into());
@@ -45,6 +49,121 @@ fn synthetic_components() -> String {
     </PremiereData>"#,
         records::STATIC_KEYFRAME_TIME
     )
+}
+
+fn media_dependency_components() -> String {
+    let value = synthetic_text_value();
+    let mut text_control = value.clone();
+    let fields = text_control.as_object_mut().unwrap();
+    fields.insert("capPropAnimatable".into(), false.into());
+    fields.insert("capPropDefault".into(), "default".into());
+    fields.insert("capPropMatchName".into(), "text-controller".into());
+    fields.insert("capPropType".into(), 0.into());
+    fields.insert("capPropUIName".into(), "Caption".into());
+    let private = encoded_json(&serde_json::json!({
+        "capsuleparams":{"capParams":[
+            text_control,
+            {"capPropAnimatable":false,"capPropDefault":null,
+             "capPropMatchName":"media-controller","capPropType":11,
+             "capPropUIName":"Replacement"}
+        ]},
+        "framesize":{"size":{"x":320.0,"y":100.0},"topleft":{"x":0.0,"y":0.0}}
+    }));
+    let current = encoded_json(&value);
+    format!(
+        r#"<PremiereData>
+        <VideoFilterComponent ObjectID="1"><Component><Params><Param ObjectRef="3"/><Param ObjectRef="4"/></Params></Component><MediaDependencyMap Version="1"><MediaDependency Version="1" Index="7"><First>1</First><Second ObjectRef="5"/></MediaDependency></MediaDependencyMap><MatchName>AE.ADBE Capsule</MatchName><PremiereFilterPrivateData Encoding="base64">{private}</PremiereFilterPrivateData></VideoFilterComponent>
+        <ArbVideoComponentParam ObjectID="3"><Name>Caption</Name><ParameterControlType>23</ParameterControlType><ParameterID>0</ParameterID><StartKeyframePosition>{time}</StartKeyframePosition><StartKeyframeValue Encoding="base64">{current}</StartKeyframeValue></ArbVideoComponentParam>
+        <ArbVideoComponentParam ObjectID="4"><Name>Replacement</Name><IsTimeVarying>false</IsTimeVarying><ParameterControlType>34</ParameterControlType><ParameterID>1</ParameterID><StartKeyframePosition>{time}</StartKeyframePosition><StartKeyframeValue Encoding="base64"/></ArbVideoComponentParam>
+        <SubClip ObjectID="5"><Clip ObjectRef="6"/><Name>Replacement</Name><OrigChGrp>0</OrigChGrp></SubClip>
+        <VideoClip ObjectID="6"/>
+    </PremiereData>"#,
+        time = records::STATIC_KEYFRAME_TIME
+    )
+}
+
+fn assert_media_dependency_siblings(saved: &SavedCapsule) {
+    assert_eq!(saved.controls.len(), 2);
+    let CapsuleValue::Text(text) = &saved.controls[0].value else {
+        panic!("expected supported text sibling")
+    };
+    assert_eq!(text.text, "🦊");
+    assert!(matches!(
+        saved.controls[1].value,
+        CapsuleValue::Unsupported { kind: 11 }
+    ));
+}
+
+#[test]
+fn capsule_media_dependency_first_binds_saved_parameter_id_not_entry_ordinals() {
+    let saved = SavedCapsule::from_xml(&media_dependency_components(), "1").unwrap();
+    assert_media_dependency_siblings(&saved);
+    assert!(saved
+        .diagnostics
+        .iter()
+        .any(|message| message.contains("media replacement dependency SubClip:5 is not mapped")));
+}
+
+#[test]
+fn capsule_media_dependency_unknown_content_and_ambiguity_stay_local() {
+    let unknown = media_dependency_components()
+        .replace(
+            "<MediaDependencyMap Version=\"1\">",
+            "<MediaDependencyMap Version=\"1\" FutureMapAttribute=\"future\"><FutureMap/>",
+        )
+        .replace(
+            "<MediaDependency Version=\"1\" Index=\"7\">",
+            "<MediaDependency Version=\"1\" Index=\"future\" FutureEntryAttribute=\"future\">",
+        )
+        .replace(
+            "<First>1</First><Second ObjectRef=\"5\"/>",
+            "<First FutureFirstAttribute=\"future\">1</First><Second ObjectRef=\"5\"/><FutureEntry/>",
+        );
+    let saved = SavedCapsule::from_xml(&unknown, "1").unwrap();
+    assert_media_dependency_siblings(&saved);
+    assert!(saved
+        .diagnostics
+        .iter()
+        .any(|message| message.contains("child \"FutureMap\"")));
+    assert!(saved
+        .diagnostics
+        .iter()
+        .any(|message| message.contains("child \"FutureEntry\"")));
+    assert!(saved
+        .diagnostics
+        .iter()
+        .any(|message| message.contains("media replacement dependency SubClip:5 is not mapped")));
+
+    let invalid_control = media_dependency_components().replace(
+        "<ParameterControlType>34</ParameterControlType>",
+        "<ParameterControlType>99</ParameterControlType>",
+    );
+    let saved = SavedCapsule::from_xml(&invalid_control, "1").unwrap();
+    assert_media_dependency_siblings(&saved);
+    assert!(saved.diagnostics.iter().any(|message| message.contains(
+        "saved media parameter type does not match its dependency for media replacement dependency SubClip:5"
+    )));
+
+    let ambiguous = media_dependency_components()
+        .replace(
+            "</MediaDependencyMap>",
+            "<MediaDependency Version=\"1\" Index=\"8\"><First>1</First><Second ObjectRef=\"7\"/></MediaDependency></MediaDependencyMap>",
+        )
+        .replace(
+            "</PremiereData>",
+            "<SubClip ObjectID=\"7\"><Clip ObjectRef=\"8\"/><Name>Other replacement</Name><OrigChGrp>0</OrigChGrp></SubClip><VideoClip ObjectID=\"8\"/></PremiereData>",
+        );
+    let saved = SavedCapsule::from_xml(&ambiguous, "1").unwrap();
+    assert_media_dependency_siblings(&saved);
+    assert!(saved
+        .diagnostics
+        .iter()
+        .any(|message| message.contains("ambiguously targets SubClip:5 and SubClip:7")));
+    assert!(saved
+        .diagnostics
+        .iter()
+        .any(|message| message
+            .contains("media replacement has no supported MediaDependencyMap binding")));
 }
 
 // Supplemental wire-only regression: native type 4 stores a UTF-16 string and

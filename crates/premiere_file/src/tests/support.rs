@@ -211,6 +211,7 @@ pub(crate) fn nest_of(
         opacity_mask: None,
         track_matte: None,
         effects: Vec::new(),
+        geometry2_masks: Default::default(),
         effects_above_mask: 0,
         enabled: true,
         sequence,
@@ -610,7 +611,9 @@ pub(super) fn inspect(xml: &str, sequence_id: Option<&str>) -> Result<PrVideoOcc
     );
     match project.video_tracks[0].items.remove(0) {
         PrVideoItem::Media(clip) => Ok(clip),
-        PrVideoItem::Graphic(_) => Err(unsupported("expected a media occurrence")),
+        PrVideoItem::Graphic(_) | PrVideoItem::Capsule(_) => {
+            Err(unsupported("expected a media occurrence"))
+        }
     }
 }
 

@@ -423,7 +423,9 @@ fn source_text_alias_converter_applies_occurrence_override_without_source_mutati
     let samples = ExpressionSamples::default();
     let mut resolver = |_: &MediaAssetRequest| MediaResolution::Unavailable;
     let mut converter = Converter {
+        text_overrides: Default::default(),
         expression_samples: &samples,
+        expression_evaluations: Default::default(),
         items: project.items.iter().map(|item| (item.id, item)).collect(),
         camera_normalizations: HashMap::new(),
         diagnostics: Vec::new(),

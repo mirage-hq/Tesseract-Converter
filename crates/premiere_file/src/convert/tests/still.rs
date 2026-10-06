@@ -273,6 +273,8 @@ fn packaged_facts() -> BTreeMap<String, MediaFacts> {
             format,
             width: 1920,
             height: 1080,
+            pixel_aspect: Default::default(),
+            open_exr_channels: None,
             alpha,
             icc_profile: false,
         })
@@ -504,9 +506,9 @@ fn edited_image_layer_properties_are_omitted_with_layer_context() {
         .iter()
         .position(|layer| layer["type"] == "Image")
         .unwrap();
-    let omission = |scope, reason: &str| Omission {
+    let report = |kind, scope, reason: &str| Omission {
         scope,
-        kind: OmissionKind::Omitted,
+        kind,
         record: "layer 2 (\"Premiere still 2\")".to_owned(),
         reason: reason.to_owned(),
     };
@@ -515,7 +517,8 @@ fn edited_image_layer_properties_are_omitted_with_layer_context() {
         (
             "description",
             Box::new(|layer| layer["description"] = json!("note")),
-            Some(omission(
+            Some(report(
+                OmissionKind::Omitted,
                 OmissionScope::Feature,
                 "description was not exported",
             )),
@@ -523,23 +526,30 @@ fn edited_image_layer_properties_are_omitted_with_layer_context() {
         (
             "skew",
             Box::new(|layer| layer["transform"]["skew"] = json!(10)),
-            Some(omission(OmissionScope::Feature, "skew was not exported")),
+            Some(report(
+                OmissionKind::Omitted,
+                OmissionScope::Feature,
+                "skew was not exported",
+            )),
         ),
-        // A clip draws a still at its pixel size, which the frame must be.
+        // A clip draws a still at its pixel size. Retain the full image when
+        // the source framing cannot map exactly, and report the approximation.
         (
             "fit",
             Box::new(|layer| layer["source"]["fit"] = json!("cover")),
-            Some(omission(
-                OmissionScope::Occurrence,
-                "still was not exported: its media fit is not Contain",
+            Some(report(
+                OmissionKind::Approximated,
+                OmissionScope::Feature,
+                "media fit Cover was approximated by retaining the full packaged image and existing Motion; framing can differ",
             )),
         ),
         (
             "frame",
             Box::new(|layer| layer["source"]["sourceRect"]["width"] = json!(960)),
-            Some(omission(
-                OmissionScope::Occurrence,
-                "still was not exported: its sourceRect is not the 1920x1080 image at the origin",
+            Some(report(
+                OmissionKind::Approximated,
+                OmissionScope::Feature,
+                "sourceRect was not the 1920x1080 image at the origin; the full packaged image was retained, so crop and placement can differ",
             )),
         ),
         (
@@ -621,7 +631,7 @@ fn a_still_whose_scale_or_rotation_motion_cannot_show_is_omitted() {
             [dimensions.width, dimensions.height],
         )
         .count();
-        assert_eq!(inspected, if reason.is_empty() { 3 } else { 2 }, "{case}");
+        assert_eq!(inspected, 3, "{case}");
         let (exported, omissions) = export(document).unwrap();
         let stills: Vec<_> = exported
             .single_sequence()
@@ -637,24 +647,30 @@ fn a_still_whose_scale_or_rotation_motion_cannot_show_is_omitted() {
             assert_eq!(stills[0].transform.rotation, -32768.0);
             continue;
         }
-        // The still is omitted whole, its keys with it; the others export.
-        let starts: Vec<_> = stills.iter().map(|clip| clip.start_ticks).collect();
-        assert_eq!(starts, [TICKS, 3 * TICKS], "{case}");
-        let mut expected = vec![Omission {
-            scope: OmissionScope::Occurrence,
-            kind: OmissionKind::Omitted,
-            record: "layer 2 (\"Premiere still 2\")".to_owned(),
-            reason: reason.to_owned(),
-        }];
-        if key.is_some() {
-            expected.push(Omission {
-                scope: OmissionScope::Feature,
-                kind: OmissionKind::Omitted,
-                record: "layer 2".to_owned(),
-                reason: "animation on an omitted or unsupported layer was not exported".to_owned(),
-            });
-        }
-        assert_eq!(omissions, expected, "{case}");
+        assert_eq!(
+            stills
+                .iter()
+                .map(|clip| clip.start_ticks)
+                .collect::<Vec<_>>(),
+            [0, TICKS, 3 * TICKS],
+            "{case}"
+        );
+        assert!(stills
+            .iter()
+            .all(|clip| exported.media.contains_key(&clip.media)));
+        assert!(
+            omissions
+                .iter()
+                .any(|item| item.scope == OmissionScope::Feature
+                    && item.record.starts_with("layer 2")),
+            "{omissions:?}"
+        );
+        assert!(stills[0]
+            .transform
+            .scale
+            .iter()
+            .all(|value| (0.0..=10000.0).contains(value)));
+        assert!((-32768.0..=32767.0).contains(&stills[0].transform.rotation));
     }
 }
 

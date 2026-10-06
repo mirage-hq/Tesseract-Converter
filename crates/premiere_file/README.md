@@ -53,6 +53,29 @@ scopes. The library's native export does not perform that cross-format routing.
 See [hybrid export](../../docs/hybrid-adobe-export.md) for the package contract
 and its limits.
 
+## Export source-still isolation
+
+Export verifies archive identity and fully decodes a bounded OpenEXR source before
+reporting it as a native Premiere picture loss. Supported native siblings remain
+available; the CLI can attempt the existing editable linked-AE route. Native-only
+export omits the EXR picture with a source-context diagnostic. This does not prove
+AE colour/alpha fidelity or normalize EXR pixels into PNG.
+
+The checked profile is version-2 single-part scanline RGB/RGBA, HALF/FLOAT,
+unit channel sampling, equal zero-origin data/display windows, increasing ordered
+chunks and uncompressed/ZIPS/ZIP data. Required structural fields are checked and
+are the only attribute identities tracked by preflight, in a fixed-size mask;
+ancillary/custom payload ranges are bounded and their metadata is left to the
+complete decoder, not rejected by a converter allowlist. Pixel aspect,
+gamma/chromaticities, FPS, writer text and
+comments do not supply a clock/profile here. Absent pixel aspect
+uses the locked decoder's `1.0` default, matching the current square-pixel FX/AEP
+model; equivalence for a present non-square value remains unverified. Allocation
+and physical chunk bounds are checked before decoder construction. Sources outside
+this checked profile, failed pixel decodes, contradictory declarations, bad hashes
+and I/O remain errors. PNG/JPEG import behavior is unchanged. Derived-source PNG
+preparation is separate work.
+
 ## Rust API
 
 The convenience functions use a Boolean `check` flag and export at 30 fps:
@@ -128,10 +151,10 @@ describe the detailed mappings and limitations.
 | Stills | Admitted PNG, JPEG and WebP as editable images; bounded Motion, Opacity, effects and masks. | Still media and supported current image edits. |
 | Numbered images | Finite consecutive image sequences with a separate source clock. | Selected timed images as native still placements. |
 | Text and graphics | Supported Source Text, shape/appearance payloads, SubGroups and numeric keys. | Current supported text, shape and group content, not hidden original payload replay. |
-| Color Mattes | Editable full-canvas rectangles, with bounded Opacity, Crop and Track Matte forms. | Supported rectangles as native mattes; other forms may become graphics or be omitted. |
+| Color Mattes | Editable canvas-sized rectangles with supported Motion/Opacity keys, sharp Crop, bounded Track Matte and mapped placement-effect forms. | Supported rectangles as native mattes; other forms may become graphics or be omitted. |
 | Adjustment layers | Editable effect coverage, bounded Opacity and static coverage Motion, and a bounded Geometry2 (Transform) group approximation. | Supported current adjustment content and coverage guides. |
 | Nests | Editable groups with supported placement, clocks, effects and separate audio. | Supported current groups as native nested sequences. |
-| Captions | Supported caption content and presentation. | The supported caption subset; unsupported presentation is diagnosed. |
+| Captions | Supported per-cue content and presentation, independent of the unused default track template. | The supported caption subset; unsupported presentation is diagnosed. |
 | Linked AEP compositions | Editable picture and independent sound selected by file and native composition GUID. | Supplied linked picture scopes through the package coordinator. |
 | Multicam cuts | Bounded unit-speed cuts from the saved selected camera, as ordinary video clips. | Ordinary edited clips, not multicam editing state or unused cameras. |
 | Proxy attachments | Primary media remains the source; preview attachments are not substituted. | Current primary media; attachment and preview-preference state is not reconstructed. |
@@ -176,10 +199,65 @@ name alone does not establish support: its saved parameter layout, values,
 clock, mask and host must also fit the supported form.
 
 Effects beside Crop, Linear Wipe, Opacity masks or Track Matte Key have ordering
-and coverage restrictions. When one FX mask cannot represent the native chain,
+and coverage restrictions. Import retains an unfeathered animation of exactly
+one Crop edge when every other edge stays at zero, using the equivalent cardinal
+editable guide at the Crop's stack boundary and source clock. A 100% edge stays
+fully concealed, partial values move that boundary, and 0% reveals the frame;
+Left/Top anchor at the opposite edge and Right/Bottom at the source origin.
+This cardinal transport inherits the Linear Wipe host gates: sequence-sized
+media, no competing Crop/Opacity/Track Matte mask, no retimed property clock,
+equal-canvas unit-forward matching nests, no still or Color Matte host, and only
+the existing static adjustment-layer subset. Mixed animated/static edges and
+feathered animated Crop remain unsupported, and native export can serialize the
+canonical guide as Linear Wipe rather than restore Crop provenance. When one FX
+mask cannot represent the native chain,
 conversion diagnoses the unsupported combination rather than silently changing
 its processing order. Spatial kernels, edge behavior, noise and colour math can
 differ even when the controls remain editable.
+
+### Local recovery
+
+Import/export keep supported owner media, text, geometry, base controls, usable
+keys and independent children when a detail cannot convert. Unusable retiming
+falls back to a bounded authored source selection at constant speed with a loss
+report; it does not select a different asset. Interpreted sources keep their bound
+physical clock. Scalar-key losses affect that property, not the whole picture.
+Ordinary nested export retains children after failed native stage recognition;
+unsupported Group background/animation details are reported locally. Unmasked
+Group playback can use a bounded native linear remap over the current child
+selection. Nonlinear timing is approximate. Masks, matte ownership and their
+required clocks remain inseparable where no existing carrier can preserve them.
+Recovery tests establish editable structure only, not new Adobe RGB/alpha fidelity.
+
+### Film Impact profiles and Pop consent
+
+Known Film Impact controls are read by identity, not exact UI names, bounds,
+control counts or patch stamps. Decorative/unknown fields and stale caches do
+not remove usable controls. Unsupported animation/control details use known
+base values or template values with contextual loss reports. Ambiguous binding
+and active opaque curve payloads still require a scoped omission or conservative
+coverage handling.
+
+Public import omits Pop by default while retaining pictures and text. Explicit
+CLI `--allow-film-impact-pop` or Rust
+`PremiereImportOptionsWithConsent::allow_film_impact_pop` enables the existing measured
+sampled scale/position approximation on supported hosts in Check and Write via
+`Premiere::import_with_consent_with_progress`. Its `selection` retains the original
+`PremiereImportOptions { sequence: ... }` shape. Original trait/media-map/relink
+entry points remain default-denied; the consent entry supports the same optional
+source-bound map/relink validation and publication checks.
+It does not bypass media admission or nested-host guards, reproduce native
+blur/fade, establish a general spring law, or restore the plugin on export.
+
+Stroke remains import-only. Size/Prescale 6/99, 6/100 and 66/99 retain their
+measured recipes. Other sizes use an explicitly approximated fixed outline,
+while authored centered prescale and border opacity remain editable independently.
+Missing, animated or opaque Hide Source coverage never falls back to visible
+source pixels: an eligible opaque-video host keeps a concealed source and separate
+editable rectangle outline; an inseparable unsupported host loses only its picture,
+not independent siblings/audio. This conservative concealment can omit visible
+portions of the original source. General border geometry, outline alpha and native
+export fidelity remain unproved.
 
 ### Root adjustment Geometry2 suffix
 
@@ -310,6 +388,19 @@ Supported constant speeds, reverse playback and native Time Remapping import as
 editable playback ranges or keys. Frame Blending and Optical Flow are not
 reconstructed. Retimed Motion/effect keys can retain static values with a
 diagnostic when their native clock cannot map to the edited owner.
+
+On original-clock root physical video, unsupported optional Time Remapping
+ClassID/ParameterID bindings or curve semantics retain the saved constant-rate
+placement when its source bounds, rate, intrinsic duration and native grid
+independently validate. Unknown classes are not decoded using a known curve
+layout; consumed graph references and known-record framing remain checked.
+This is diagnosed as a playback approximation, not ramp fidelity; no endpoints
+come from the rejected curve. Existing Motion-key admission and recovery are
+unchanged by this optional binding recovery. If an independently valid saved
+physical-video source span rounds to an empty editable range, import diagnoses
+and omits only that occurrence before creating layers or animators. Invalid
+required clocks or graph records remain rejected. Frame Hold, nested placements,
+stills, generators and interpreted-source clocks do not use this recovery.
 
 Export has a bounded constant-speed representation. Unsupported playback keys,
 held or reversed forms, and nested clock combinations are diagnosed rather than
@@ -444,11 +535,20 @@ is unchanged.
 
 ### Outbound source duration
 
-Audio export accepts the nearest millisecond or the exact floor of the inspected
-positive whole-sample duration. The floor representation has a diagnostic; it
-does not change source samples, ticks, playback windows or gain. This is not a
-general ±1 ms tolerance: genuine clock mismatches remain errors. Validation
-uses the active audio asset, not an inactive original.
+Audio export uses the inspected positive whole-sample clock to classify the
+mapped playback window. A fully available supported window stays unchanged even
+when `sourceIntrinsicDuration` differs, with a diagnostic. A partly available
+unit-forward window loses the same tail from its source and timeline ranges at
+the packaged clock's nearest editable millisecond; source bytes and exact sample
+ticks stay unchanged. A partly available reverse or retimed window, or one with
+no available sample, is omitted locally because it cannot be shortened equally
+without changing playback. The authored source range still bounds the mapping,
+but neither it nor the mapping must end at `sourceIntrinsicDuration`.
+
+The exact floor of the inspected duration remains an accepted declaration. Its
+diagnostic does not change samples, ticks, playback or gain. Malformed sample
+clocks still fail validation. Checks use the active audio asset, not an inactive
+original; conversion never pads an unavailable tail.
 
 ### Audio insert filters
 
@@ -497,9 +597,11 @@ RGB/alpha fidelity and native font delivery for this recovery remain unverified.
 
 ### Saved AE capsule graphics
 
-A bounded saved `.aegraphic` or `.mogrt` capsule can import as independent
-editable Text and Shape objects through the typed AEP reader. Export uses the
-current edited ordinary graphics; it does not replay or restore the capsule.
+Saved `.aegraphic` and `.mogrt` capsules import through the existing full editable
+AEP picture mapper, selected by a real native composition ID, not a Dynamic Link
+GUID. Supported nested Text, Shape, solid and media content, hierarchy, animation
+tracks and assets remain editable. Export operates on edited FX content; it does
+not replay or restore the saved native capsule.
 Ambiguous containers and controller identities remain errors. Saved text,
 scalar/toggle/angle, RGB colour and point overrides use real UUID/property-path
 bindings; unmapped overrides retain the template value with a parameter-local
@@ -508,18 +610,46 @@ supported text/font/size/All Caps while diagnosing unsupported faux styles.
 Saved type-4 strings and type-8 layout groups decode separately from Text: their
 current UTF-16 values retain parameter/UUID bindings, and group members must
 resolve without duplicates or cycles. They are not AEP Source Text overrides.
-Unsupported text animator/style fields do not discard the ordinary editable text;
+Unsupported text animator/style fields do not discard ordinary editable text;
 one supported static all-character stroke-width animator keeps its existing mapping.
 Wire regressions establish decoding, not native opening or render fidelity.
-Responsive layout uses a bounded static estimate, not an expression runtime;
-text edits do not automatically resize the imported shapes. Template animation,
-precomposition/media children and unverified masks remain limited: unsupported
-mask consumers stay hidden, never exposed unmasked. File-backed containers are
-read with seeks: unused media is not buffered or decompressed, and its size/member
-count does not impose a separate admission cap. Directory metadata and each
-consumed AEP/nested-graphic expansion remain bounded to 64 MiB, with path,
-duplicate-target, encryption and consumed CRC checks. Font availability and native
-RGB/alpha fidelity have separate limits.
+Responsive layout uses a bounded static estimate, not an expression runtime, so
+text edits do not automatically resize imported shapes.
+
+Validated saved Text binds by native composition/layer identity, including child
+compositions; numeric edits stay in an instance-only typed template snapshot.
+The full mapper retains its existing capability limits and contextual diagnostics.
+Native expression execution and automatic responsive shape resizing are not added.
+Unsupported Premiere placement Crop/Wipe/Track Matte coverage retains the editable
+consumer hidden, never exposed unmasked. Unusable/out-of-composition source windows
+use a diagnosed bounded linear fallback; fractional/off-grid placement timing does
+not require a native frame-grid match.
+
+A saved `MediaDependencyMap` is admitted as optional raw component metadata so
+new attributes or children cannot by themselves discard a Capsule. For understood
+version-1 entries, `First` is the saved ParameterID and `Second` is the replacement
+`SubClip`; `Index` is only a serialized entry ordinal. The association identifies
+the omission diagnostic but is not written into the converted document. Premiere
+sequence media replacements are not applied to the embedded AEP: the template
+source and animation remain, so output shows the template media instead of the
+Premiere replacement. Unexpected fields, unsupported versions, malformed entries,
+wrong-type existing targets and ambiguous ParameterIDs stay local while other
+unambiguous known bindings and supported template Text, Shape, Image, controls and
+children continue. Global graph validation still requires every serialized native
+reference to resolve, including an optional map's `Second`; dangling references
+remain invalid rather than being guessed. Evidence is standalone synthetic XML
+plus wire mutation of the publishable Capsule picture fixture, not an Adobe-authored
+MediaDependencyMap fixture, Adobe reopening or render comparison.
+
+File-backed containers are read with seeks: unused media is not buffered or
+decompressed, and its size/member count imposes no separate admission cap.
+Directory metadata and each consumed AEP/nested-graphic/media expansion are bounded
+to 64 MiB, with path, duplicate-target, encryption and consumed CRC checks. Media
+uses exact native Collect Files paths, never a basename search. Original container
+and selected source hashes are reverified through publication; owned normalized
+assets stay alive until their packaged bytes are verified. Native-source structure
+and archive regressions are offline evidence, not Adobe opening, rendering or
+RGB/alpha fidelity proof. Font availability and the existing AEP support limits remain.
 
 ## Nested sequences
 
@@ -549,9 +679,30 @@ rotation envelopes; other controls retain their omissions. Physical-video Frame
 Hold children can survive supported unit-forward, matching-rate nested windows
 without admitting held outer composites.
 
+### Ordered nested affine stacks (import only)
+
+An ordered nested Transform/Geometry2 chain retains each supported affine stage
+and mapped pixel effect, including Tint, in native render order. Each affine
+uses the existing source-frame Group transform and its own editable keys;
+pixel effects use the existing nested picture mapping between those Groups.
+Saved-form curved Position keys on nested affine stages and ordinary
+physical-video Transform stages retain their paired editable X/Y tracks and
+scaled spatial tangents. A committed import diagnostic reports that FX traverses
+those cubic handles parametrically rather than using Premiere's saved
+constant-speed distance traversal, so the approximation remains structural and
+native appearance is unmeasured. No affine matrices are collapsed and Tint is
+not moved across a transform. The source guide remains before the first stage;
+external Track Matte
+consumers still reference the whole provider Group. Unsupported optional effects
+are diagnosed locally. Effect-owned masks without a staged mapping still omit the
+occurrence rather than remove coverage. Intermediate raster bounds and native
+edge/alpha fidelity are unmeasured; existing affine approximation reports remain.
+This does not establish export or native-render parity for the stacked form.
+
 ### Import-only same-width taller keyed rotation
 
-A source canvas taller than its same-width parent admits one active, unmasked
+The independent native evidence for a source canvas taller than its same-width
+parent covers one active, unmasked
 Geometry2 with static coincident Anchor/Position, neutral scale/opacity, no skew,
 motion blur or bicubic sampling, and one scalar Rotation track. Linear and
 Bézier Rotation keys remain editable, including their numeric overshoot; they
@@ -568,6 +719,29 @@ recovery, not every animated pose: sparse earlier correspondences and a large
 remaining frame-210 mismatch do not isolate foreground occlusion. Full-scene
 RGB still fails the strict gate. General overflow, transparent-edge and
 independent alpha-output fidelity remain unverified.
+
+### Color Matte Motion
+
+Color Matte occurrences retain static Motion and supported intrinsic Motion/Opacity
+keys on their editable rectangle, using the existing picture-key mappings and
+source-in clock. A sharp Crop guide shares geometric Motion and its keys, never
+the owner's Opacity. Unchanged neutral mattes keep their existing origin pivot.
+Unrepresentable keys diagnose local loss; a provider with unconvertible keys is
+omitted with its dependent consumers rather than freezing concealment coverage.
+Geometric Motion on a Track Matte consumer retains its existing unsupported
+status. Retimed key-clock, unsupported effect and mask limits remain unchanged.
+Public native-derived host regressions establish editable values, keys, handles,
+clocks, Crop and sibling retention; native RGB/alpha fidelity is unmeasured.
+
+An ordinary vector Opacity mask also stays on the editable Color Matte rectangle,
+with a nonpainting Shape guide, saved Feather/Opacity/Expansion/Inverted controls,
+and supported path/numeric keys on the existing unit-forward source clock.
+Geometric Motion moves both owner and guide, never copying owner Opacity to the
+guide. Mixed Crop/Track Matte/effect coverage stages and raster Object Masks
+remain unsupported; required coverage/key failures omit the masked host rather
+than expose it unmasked. Feather is the existing diagnosed visual approximation.
+Public native-derived host tests and original content retention are structural
+proof only; independent masked-matte RGB/alpha fidelity is unmeasured.
 
 ### Unselected Track Matte Key
 
@@ -622,9 +796,30 @@ transparent over lower content. This policy does not establish pixel or alpha
 parity. Timing, duration and layer order remain unchanged.
 
 Default Cross Dissolve has bounded one-sided and two-sided picture mappings.
-Canonical current controls can export native Cross Dissolve records. Other
-transitions and noncanonical edits retain their documented omissions or
-approximations. See the [timeline support table](../../docs/formats/premiere.md#timeline-playback-visibility-and-nesting).
+Two-sided isolation spans the retained picture union on the document clock;
+local fade keys regain that origin on native export. Validated complementary
+ramps export native records. Noncanonical sums retain supported current pictures,
+coverage and clocks through ordinary nested export, using the existing native
+Linear Dodge mapping for Add, not Normal. Native transition reconstruction is
+lost; nesting/rasterization fidelity remains unmeasured. An inseparable unsupported
+clock or mask can still omit its affected owner, never unmask or flatten it.
+Independent safe children/siblings remain.
+See the [timeline support table](../../docs/formats/premiere.md#timeline-playback-visibility-and-nesting).
+
+Dissolve, clip affine-stage and Linear Wipe lowering checks current topology,
+geometry, clocks and controls, not layer labels or key identities. Failed nested
+Transform recognition uses ordinary nesting when current coverage/clocks are
+representable, with additional canvas clipping/rasterization diagnosed. Existing
+adjustment Geometry2 dispatch remains label-sensitive; renaming its stage can
+change routing.
+Neutral ordinary groups retain their nest boundary; direct affine-stage capture
+requires the bounded coded-frame Stretch representation. Ordinary child Motion
+under a neutral outer owner stays nest/Motion content, not asserted Transform
+history; current Transform-only skew/blur has a separate validated path.
+Wipe script ownership
+requires a current cardinal whole-canvas mask and one animated scale axis.
+Serialization preserves editable semantics, not native-origin evidence; erased
+structural relationships cannot recover that origin.
 
 ## Script animation export
 
@@ -666,8 +861,12 @@ An empty loss report is not a capability or fidelity certificate.
 
 Conversion is not a lossless native-project archive. Unknown component layouts,
 unmapped effects, unsupported animation/easing, mask topology, host combinations,
-colour/codec forms and routing can be omitted or approximated. An unsupported
-field does not authorize replaying hidden native bytes, generating geometry
+colour/codec forms and routing can be omitted or approximated. Unsupported fields,
+properties or effects are skipped at the smallest safe scope; retained owner
+content uses its current edits. Empty/overlong nested labels are generated/truncated
+without dropping children. Whole-owner omission requires an inseparable coverage,
+clock, source or native-placement constraint, not an unknown decorative field.
+An unsupported field does not authorize replaying hidden native bytes, generating geometry
 scripts or changing the FX renderer/schema.
 
 Supported siblings survive source-feature omissions. Import omits missing direct
@@ -750,9 +949,17 @@ paragraph and unknown controls get field-specific diagnostics instead of
 omitting the whole text. Active or malformed mask controls remain unsupported
 so recovery cannot expose concealed content. Required framing and consumed
 style bounds remain checked; legacy Source Text keys and mixed actual character
-spans are not added by this repair. Shared admitted-text validation still rejects
-outline-only text (stroke without fill); this decoder repair does not remove
-that separate validation guard or claim recovery of those outlined labels.
+spans are not added by this repair. Ordinary outline-only text retains its
+editable stroke and disabled fill in a Group with an inverted-alpha filled-glyph
+cutout. The common Group owns placement and opacity; both Text children retain
+the glyph layout and Source Text keys. A diagnostic explains that text, font and
+layout edits must update both children; stroke paint edits affect only the
+visible child. A supported text background remains the parent Group's unmasked
+paint and is not part of either glyph operand. Fractional edge coverage and
+native appearance remain unverified. Outline-only Mask with Text providers and
+the content they would reveal remain
+omitted under the existing alpha-coverage restriction. Export keeps its prior
+outline-only rejection.
 
 Gray fill/stroke colors retain their values. An unverified legacy color order
 uses the white editable text default with a diagnostic; stroke-above-fill uses

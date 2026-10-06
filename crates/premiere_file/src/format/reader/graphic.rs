@@ -99,6 +99,21 @@ pub(super) fn graphic_clip(
         })
 }
 
+pub(super) fn is_capsule(source: &GraphicClip) -> bool {
+    source.capsule
+}
+
+pub(super) fn read_capsule(
+    graph: &Graph<'_>,
+    item: Located<VideoClipTrackItem>,
+    source: GraphicClip,
+    frame: [u32; 2],
+    frame_rate: FrameRate,
+    omissions: &mut Vec<Omission>,
+) -> Result<crate::schema::PrCapsule> {
+    capsule::read(graph, item, source, frame, frame_rate, omissions)
+}
+
 /// Read one graphic occurrence. An error omits the occurrence.
 pub(super) fn read_graphic(
     graph: &Graph<'_>,
@@ -131,9 +146,6 @@ pub(super) fn read_graphic(
             ratio.is_square(),
             "{identity}: unsupported graphic geometry: non-square pixels ({ratio})"
         );
-    }
-    if graphic.capsule {
-        return capsule::read(graph, item, graphic, frame, frame_rate, omissions);
     }
     let track_item = required(
         item.value.clip_track_item.as_ref(),
@@ -235,7 +247,7 @@ pub(super) fn read_graphic(
     // Graphic, whose placement keeps only the clip's own Motion and Opacity.
     let (content, clip_motion, clip_opacity, layers) = match &shared {
         Some(content) => {
-            let (motion, opacity) = read_placement_motion(graph, &chain, placed)?;
+            let (motion, opacity) = read_placement_motion(graph, &chain, placed, omissions)?;
             let layers = content
                 .value
                 .component_chain
@@ -507,6 +519,7 @@ fn read_placement_motion<'r>(
     graph: &Graph<'_>,
     chain: &Located<VideoComponentChain>,
     placed: &'r [Reference],
+    omissions: &mut Vec<Omission>,
 ) -> Result<(PrStaticTransform, Option<&'r Reference>)> {
     let mut clip_opacity = None;
     for reference in placed {
@@ -532,11 +545,19 @@ fn read_placement_motion<'r>(
     let MotionAndMasks {
         transform,
         animations,
+        crop,
+        linear_wipe,
+        track_matte,
         ..
-    } = read_video_animations(graph, chain, &components, true)?;
+    } = read_video_animations(graph, chain, &components, true, omissions)?;
     ensure!(
         animations.is_empty(),
         "{}: graphic clip Motion keys are not converted",
+        chain.identity
+    );
+    ensure!(
+        crop.is_default() && linear_wipe.is_none() && track_matte.is_none(),
+        "{}: Motion Crop, Linear Wipe or Track Matte Key on a Source Graphic placement is not converted",
         chain.identity
     );
     Ok((transform, clip_opacity))
@@ -1411,7 +1432,6 @@ fn read_shape_component(
     );
     ensure!(
         body.display_name.as_deref() == Some("Shape")
-            && body.intrinsic.is_none()
             && body.bypass.as_deref().is_none_or(|value| value == "false"),
         "{}: unsupported graphic component",
         component.identity
@@ -1430,12 +1450,12 @@ fn read_shape_component(
         ("1", "Path"),
         shape_payload::decode_path,
     )?;
-    let appearance = binary_param(
+    let (appearance, appearance_notes) = binary_param(
         graph,
         appearance,
         &component.identity,
         ("2", "Appearance"),
-        shape_payload::decode_appearance,
+        shape_payload::decode_appearance_with_notes,
     )?;
     let (transform, animations) = read_params(
         graph,
@@ -1466,6 +1486,9 @@ fn read_shape_component(
     if appearance.stroke.is_some() {
         text::stroke_join(&path, None)
             .map_err(|reason| unsupported(format!("{}: {reason}", component.identity)))?;
+    }
+    for reason in appearance_notes {
+        approximate(omissions, &component.identity, &reason);
     }
     Ok(PrShape {
         name: body.instance_name.clone().unwrap_or_default(),
@@ -1671,6 +1694,7 @@ fn read_params(
         opacity: 100.0,
     };
     let mut animations = Vec::new();
+    let mut current_text_width = None;
     let mut vertical_name = false;
     for (reference, spec) in references.iter().zip(specs) {
         let record = graph.locate(reference, owner)?;
@@ -1802,7 +1826,7 @@ fn read_params(
         {
             ensure!(
                 spec.holds(number(value, owner)?),
-                "{}: legacy graphic scale is outside its native bounds",
+                "{}: graphic scale is outside its native bounds",
                 input.identity
             );
         }
@@ -1834,7 +1858,11 @@ fn read_params(
             GraphicParamRole::Anchor => transform.anchor = point(value, owner)?,
             GraphicParamRole::Scale => transform.scale = number(value, owner)?,
             GraphicParamRole::HorizontalScale => {
-                transform.horizontal_scale = number(value, owner)?;
+                let width = number(value, owner)?;
+                if matches!(component, GraphicComponent::Text) {
+                    current_text_width = Some((input.identity.clone(), width, spec.holds(width)));
+                }
+                transform.horizontal_scale = width;
             }
             GraphicParamRole::Uniform => {
                 transform.uniform = match value {
@@ -1869,13 +1897,23 @@ fn read_params(
         );
     }
     if matches!(component, GraphicComponent::Text) {
+        if let Some((identity, width, in_native_bounds)) = current_text_width {
+            if transform.uniform {
+                if !in_native_bounds {
+                    transform.approximations.push(format!(
+                        "{identity}: inactive Horizontal Scale value {width} is outside native bounds and is discarded because Uniform Scale uses Scale for both axes"
+                    ));
+                }
+            } else {
+                ensure!(
+                    in_native_bounds,
+                    "{identity}: graphic scale is outside its native bounds"
+                );
+            }
+        }
         ensure!(
             !vertical_name || !transform.uniform,
             "{owner}: Vertical Scale requires disabled Uniform Scale"
-        );
-        ensure!(
-            !transform.uniform || transform.horizontal_scale == 100.0,
-            "{owner}: Horizontal Scale under Uniform Scale is unverified"
         );
     }
     Ok((transform, animations))

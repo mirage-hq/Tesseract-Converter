@@ -52,7 +52,7 @@ pub(crate) struct VectorRectSpec {
 pub(crate) struct VectorAppearance {
     pub name: String,
     pub stroke_dashes: StrokeDashes,
-    /// Native paint percentage, independent of Transform opacity and RGBA alpha.
+    /// Native paint percentage, independent of Transform opacity.
     pub paint_opacity: f64,
     pub fill_color: Option<[f64; 4]>,
     pub fill_rule: ShapeFillRule,
@@ -66,13 +66,22 @@ pub(crate) struct VectorAppearance {
 
 impl From<&VectorRectSpec> for VectorAppearance {
     fn from(rect: &VectorRectSpec) -> Self {
+        let mut fill_color = rect.fill_color;
+        let mut stroke_color = rect.stroke_color;
+        let mut paint_opacity = 100.0;
+        // A validated Rectangle has exactly one paint. Native vector Color
+        // does not draw its alpha; use paint Opacity, not layer Opacity.
+        for color in fill_color.iter_mut().chain(&mut stroke_color) {
+            paint_opacity = color[3] * 100.0;
+            color[3] = 1.0;
+        }
         Self {
             name: rect.name.clone(),
             stroke_dashes: rect.stroke_dashes.clone(),
-            paint_opacity: 100.0,
-            fill_color: rect.fill_color,
+            paint_opacity,
+            fill_color,
             fill_rule: ShapeFillRule::NonZeroWinding,
-            stroke_color: rect.stroke_color,
+            stroke_color,
             stroke_cap: ShapeLineCap::Butt,
             stroke_width: rect.stroke_width,
             stroke_join: rect.stroke_join,
@@ -991,6 +1000,11 @@ fn emit_timeline(
                     finalized_transform3d_animations(layer, options, animations, property_clock)?;
                 let mut transform = transform.clone();
                 let source_dimensions = match layer {
+                    // The sidecar replaces the already-normalized footage
+                    // Transform, so its source-space anchor needs the same units.
+                    LayerSpec::Footage(footage, _) => {
+                        Some([footage.transform.width, footage.transform.height])
+                    }
                     LayerSpec::Precomposition(precomposition) => {
                         Some([precomposition.width, precomposition.height])
                     }

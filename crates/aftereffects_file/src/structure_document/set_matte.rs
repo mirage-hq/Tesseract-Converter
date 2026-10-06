@@ -469,6 +469,8 @@ impl Converter<'_> {
                                 id,
                                 enabled: true,
                                 effect: fx_schema::EffectPayload::Known(effect),
+                                compositing_options: None,
+                                extensions: Default::default(),
                             },
                         )?);
                     }

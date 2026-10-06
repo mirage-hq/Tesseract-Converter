@@ -2,6 +2,7 @@
 
 #[path = "pop.rs"]
 mod pop;
+pub(crate) use pop::omit_emulation as omit_pop_emulation;
 #[path = "stroke.rs"]
 mod stroke;
 
@@ -29,15 +30,16 @@ use crate::{
         PrFadeCurve, PrKeyframeEasing, PrLinearWipe, PrMask, PrMatteChannel, PrMediaKind,
         PrNestOccurrence, PrPointKeyframe, PrPropertyAnimation, PrScalarKeyframe, PrStaticCrop,
         PrStaticTransform, PrText, PrTimeRemap, PrTrackMatte, PrTransform, PrVideoStream,
-        PrVolumeKeys, TransformOwner, TICKS_PER_MILLISECOND, TRANSFORM_OPACITY, TRANSFORM_POSITION,
-        TRANSFORM_ROTATION, TRANSFORM_SCALE_HEIGHT, TRANSFORM_SCALE_WIDTH, TRANSFORM_SHUTTER_ANGLE,
+        PrVideoTrack, PrVolumeKeys, TransformOwner, TICKS_PER_MILLISECOND, TRANSFORM_OPACITY,
+        TRANSFORM_POSITION, TRANSFORM_ROTATION, TRANSFORM_SCALE_HEIGHT, TRANSFORM_SCALE_WIDTH,
+        TRANSFORM_SHUTTER_ANGLE,
     },
     {approximate, omit, Omission, OmissionScope},
 };
 use fx_schema::{
     animator::{
-        AnimationGraphEntry, AnimationGraphError, PropertyKeyframe, PropertyKeyframeEasing,
-        PropertyKeyframeTrack,
+        AnimationGraphEntry, AnimationGraphError, AnimatorData, PropertyKeyframe,
+        PropertyKeyframeEasing, PropertyKeyframeTrack,
     },
     AnimationGraph, AssetId, AudioLayer, AudioSource, BlendMode, CompositionId, Dimensions,
     Duration, EditableFxCompositionDocument, FXComposition, FxItemId, GroupLayer, Justification,
@@ -939,7 +941,7 @@ impl CompositionShutter {
 
     /// Records the motion blur that clip `record` requests in `slot`, and
     /// reports the clip when an earlier one set other settings.
-    fn request(
+    pub(super) fn request(
         slot: &mut Option<Self>,
         settings: MotionBlurSettings,
         record: &str,
@@ -983,6 +985,24 @@ impl CompositionShutter {
         };
         approximate(omissions, record, message);
     }
+}
+
+const CURVED_TRANSFORM_POSITION_APPROXIMATION: &str = "Transform Position curved spatial path retains editable tangents but FX traverses parametrically rather than native constant-speed distance";
+
+/// Report the timing difference only for a curved Position that survived the
+/// staged Transform mapping. Callers commit this warning with the stage.
+pub(super) fn curved_transform_position_approximation(effect: &PrEffect) -> Option<&'static str> {
+    effect
+        .animations
+        .iter()
+        .any(|animation| {
+            animation.param.id == TRANSFORM_POSITION.id
+                && animation
+                    .keys
+                    .point()
+                    .is_some_and(|keys| crate::schema::spatial::curved_segment(keys).is_some())
+        })
+        .then_some(CURVED_TRANSFORM_POSITION_APPROXIMATION)
 }
 
 /// The staged video's tracks from the keys of its Transform `effect`, on the
@@ -1477,22 +1497,26 @@ pub(super) fn video_layers(
     // How many placements key each matte, by the matte's track and start: a
     // stage group takes only a matte of its own.
     let mut matte_consumers: BTreeMap<(usize, i64), usize> = BTreeMap::new();
-    for track in &project.video_tracks {
+    for (index, track) in project.video_tracks.iter().enumerate() {
         let keyed = track
             .items
             .iter()
             .filter_map(PrVideoItem::media)
-            .filter_map(|clip| Some((clip.track_matte?, clip.start_ticks)))
+            .filter_map(|clip| Some((clip.track_matte?, clip.timeline_ticks())))
             .chain(
                 track
                     .nests
                     .iter()
-                    .filter_map(|nest| Some((nest.track_matte?, nest.start_ticks))),
+                    .filter_map(|nest| Some((nest.track_matte?, nest.timeline_ticks()))),
             );
-        for (matte, start) in keyed {
-            *matte_consumers
-                .entry((matte.track_index, start))
-                .or_default() += 1;
+        for (matte, range) in keyed {
+            if let Ok(provider) =
+                crate::schema::track_matte_provider(&project.video_tracks, index, range, matte)
+            {
+                *matte_consumers
+                    .entry((matte.track_index, provider.range.start))
+                    .or_default() += 1;
+            }
         }
     }
     // Tracks are visited from the top, so a matte, on a track above its clip,
@@ -1506,6 +1530,26 @@ pub(super) fn video_layers(
             let item_key = (track_index, item.timeline_ticks().start);
             let clip = match item {
                 PrVideoItem::Media(clip) => clip,
+                PrVideoItem::Capsule(capsule) => {
+                    let Some((root, guide)) = super::graphic::import_capsule(
+                        capsule,
+                        project.dimensions(),
+                        layer_id,
+                        index,
+                        &mut scope,
+                        dynamics,
+                        omissions,
+                    )?
+                    else {
+                        continue;
+                    };
+                    scope
+                        .item_layers
+                        .insert(item_key, ItemLayer::Plain(root.id()));
+                    layers.push(root);
+                    layers.extend(guide);
+                    continue;
+                }
                 PrVideoItem::Graphic(graphic) => {
                     let imported = if graphic.clip_motion == PrStaticTransform::default() {
                         super::graphic::import_graphic(
@@ -1549,6 +1593,7 @@ pub(super) fn video_layers(
                 None => None,
                 Some(matte) => match matte_layer(
                     &scope.item_layers,
+                    &project.video_tracks,
                     matte,
                     clip.timeline_ticks(),
                     track_index,
@@ -1612,27 +1657,25 @@ pub(super) fn video_layers(
                             omissions,
                         )
                     } else {
-                        effects::omit_effects(clip, "Color Matte", omissions);
+                        effects::omit_stroke(clip, "Color Matte", omissions);
                         (Vec::new(), Vec::new())
                     };
-                    if carries_key {
-                        let (own, tracks) = effects::import_effects(
-                            clip,
-                            layer_id,
-                            false,
-                            MaskBoundary::Flat,
-                            scope.parent.is_some(),
-                            false,
-                            PrMediaKind::ColorMatte(color),
-                            canvas,
-                            canvas,
-                            canvas,
-                            scope.effect_ids,
-                            omissions,
-                        );
-                        mapped.extend(own);
-                        effect_tracks.extend(tracks);
-                    }
+                    let (own, tracks) = effects::import_effects(
+                        clip,
+                        layer_id,
+                        false,
+                        MaskBoundary::Flat,
+                        scope.parent.is_some(),
+                        false,
+                        PrMediaKind::ColorMatte(color),
+                        canvas,
+                        canvas,
+                        canvas,
+                        scope.effect_ids,
+                        omissions,
+                    );
+                    mapped.extend(own);
+                    effect_tracks.extend(tracks);
                     if !effects::retains_coverage(clip, &mapped, omissions) {
                         continue;
                     }
@@ -1649,14 +1692,91 @@ pub(super) fn video_layers(
                     rect.blend_mode = clip.blend_mode.fx_mode();
                     rect.track_matte = matte;
                     rect.effects = mapped;
-                    for (target, track) in effect_tracks {
-                        dynamics
-                            .set_property(target, PropertyAnimator::keyframes(track), Vec::new())
-                            .map_err(map_animation_graph_error)?;
+                    if clip.transform != PrStaticTransform::default()
+                        || clip
+                            .animations
+                            .iter()
+                            .any(|animation| animation.property() != PrAnimatedProperty::Opacity)
+                    {
+                        rect.transform =
+                            clip_transform(&clip.transform, clip.opacity, canvas, canvas)?;
                     }
                     rect.transform.opacity = PercentageProperty::new(clip.opacity)
                         .ok_or_else(|| unsupported("Premiere opacity must be between 0 and 100"))?;
-                    let guide = if clip.crop.is_default() {
+                    let mut outline_keys = None;
+                    let mut mask_tracks = Vec::new();
+                    let opacity_guide = if let Some(mask) = &clip.opacity_mask {
+                        let guide_id = LayerId::new(*scope.next_index as u64 + 1);
+                        let mask_id = FxItemId::new(*scope.next_index as u64 + 2);
+                        let prepare = || -> Result<_> {
+                            ensure!(
+                                clip.crop.is_default()
+                                    && clip.track_matte.is_none()
+                                    && clip.linear_wipe.is_none()
+                                    && clip.effects.is_empty()
+                                    && clip
+                                        .source_effects
+                                        .as_ref()
+                                        .is_none_or(|source| source.effects.is_empty()
+                                            && source.active_transforms == 0),
+                                "Color Matte Opacity mask has no mixed coverage/effect stage"
+                            );
+                            if !mask.path_keys.is_empty() || mask.has_numeric_keys() {
+                                ensure!(mask_path_keys_reason(clip).is_none(),
+                                    "Color Matte Opacity mask keys require the existing unit-forward source clock");
+                            }
+                            let mut reports = Vec::new();
+                            let (path_mask, path) = opacity_mask(
+                                mask,
+                                mask_id,
+                                guide_id,
+                                canvas,
+                                clip.record(),
+                                &mut reports,
+                            )?;
+                            let keys = if mask.path_keys.is_empty() {
+                                None
+                            } else {
+                                Some((
+                                    Property::new(guide_id, PropType::ShapePath),
+                                    mask_path_track(mask, guide_id, clip.in_ticks, canvas)
+                                        .map_err(unsupported)?,
+                                ))
+                            };
+                            let tracks =
+                                super::mask_animation::import_tracks(mask, mask_id, clip.in_ticks)
+                                    .map_err(unsupported)?;
+                            let mut transform = rect.transform;
+                            transform.opacity = identity_transform().opacity;
+                            let guide = shape_guide(
+                                guide_id,
+                                format!("Premiere Opacity mask {}", index + 1),
+                                rect.parent,
+                                rect.active_range,
+                                transform,
+                                path,
+                            );
+                            Ok((path_mask, guide, keys, tracks, reports))
+                        };
+                        match prepare() {
+                            Ok((path_mask, guide, keys, tracks, reports)) => {
+                                rect.masks.push(path_mask);
+                                outline_keys = keys;
+                                mask_tracks = tracks;
+                                omissions.extend(reports);
+                                *scope.next_index += 2;
+                                Some(guide)
+                            }
+                            Err(error) => {
+                                omit(omissions, OmissionScope::Occurrence, clip.record(),
+                                    format!("Color Matte Opacity mask not converted; masked occurrence omitted: {error}"));
+                                continue;
+                            }
+                        }
+                    } else {
+                        None
+                    };
+                    let mut guide = if clip.crop.is_default() {
                         None
                     } else {
                         let guide_id = LayerId::new(*scope.next_index as u64 + 1);
@@ -1666,10 +1786,49 @@ pub(super) fn video_layers(
                             &mut rect, &clip.crop, canvas, guide_id, mask_id,
                         )?)
                     };
+                    if let Some(guide) = &mut guide {
+                        guide.transform = rect.transform;
+                        guide.transform.opacity = identity_transform().opacity;
+                    }
+                    let mut key_omissions = Vec::new();
+                    let tracks = motion_tracks(
+                        &clip.animations,
+                        clip.in_ticks,
+                        retimed_keys_reason(clip),
+                        layer_id,
+                        guide
+                            .as_ref()
+                            .map(|guide| guide.id)
+                            .or_else(|| opacity_guide.as_ref().map(|guide| guide.id)),
+                        canvas,
+                        canvas,
+                        clip.record(),
+                        &mut key_omissions,
+                    );
+                    if !key_omissions.is_empty()
+                        && (matte_consumers.contains_key(&item_key) || clip.opacity_mask.is_some())
+                    {
+                        for omission in key_omissions {
+                            omit(omissions, OmissionScope::Occurrence, clip.record(),
+                                format!("Color Matte coverage keys cannot be preserved; coverage and dependent consumers omitted: {omission}"));
+                        }
+                        continue;
+                    }
+                    omissions.extend(key_omissions);
+                    set_tracks(dynamics, tracks)?;
+                    set_tracks(dynamics, outline_keys.into_iter().collect())?;
+                    for (target, track) in mask_tracks.into_iter().chain(effect_tracks) {
+                        dynamics
+                            .set_property(target, PropertyAnimator::keyframes(track), Vec::new())
+                            .map_err(map_animation_graph_error)?;
+                    }
                     validate_time_range("active_range", rect.active_range)?;
                     layers.push(Layer::from_data(&fx_schema::LayerData::Rect(rect))?);
                     if let Some(guide) = guide {
                         layers.push(Layer::from_data(&fx_schema::LayerData::Rect(guide))?);
+                    }
+                    if let Some(guide) = opacity_guide {
+                        layers.push(Layer::from_data(&fx_schema::LayerData::Shape(guide))?);
                     }
                     scope
                         .item_layers
@@ -1696,7 +1855,8 @@ pub(super) fn video_layers(
                     PrMediaKind::AfterEffectsComposition(_)
                     | PrMediaKind::Video { .. }
                     | PrMediaKind::Still { .. }
-                    | PrMediaKind::NumberedStills { .. },
+                    | PrMediaKind::NumberedStills { .. }
+                    | PrMediaKind::OpenExr { .. },
                 )
                 | None => {}
             }
@@ -1708,7 +1868,7 @@ pub(super) fn video_layers(
                 approximate(omissions, clip.record(),
                     "source pixel aspect is normalized into editable scale on decoded pixels; source-space spatial effects may differ, and export uses square-pixel interpretation rather than restoring the original override");
             }
-            if matches!(source.kind, PrMediaKind::NumberedStills { .. }) {
+            if source.kind.is_numbered_stills() {
                 if let Some(reason) = crate::numbered_images::unsupported_occurrence(clip) {
                     omit(omissions, OmissionScope::Occurrence, clip.record(), reason);
                     continue;
@@ -1999,28 +2159,20 @@ pub(super) fn video_layers(
                         .ok_or_else(|| unsupported("video occurrence has no asset ID"))?,
                 ),
             };
-            if !matches!(
-                source.interpretation,
-                crate::schema::SourceInterpretation::Original
-            ) && project.video_tracks[track_index]
-                .transitions
-                .iter()
-                .any(|transition| {
-                    transition.start_ticks < clip.end_ticks
-                        && transition.end_ticks > clip.start_ticks
+            let matte_shared = clip.track_matte.is_some_and(|matte| {
+                crate::schema::track_matte_provider(
+                    &project.video_tracks,
+                    track_index,
+                    clip.timeline_ticks(),
+                    matte,
+                )
+                .is_ok_and(|provider| {
+                    provider.range != clip.timeline_ticks()
+                        || matte_consumers
+                            .get(&(matte.track_index, provider.range.start))
+                            .is_some_and(|count| *count > 1)
                 })
-            {
-                omit(
-                    omissions,
-                    OmissionScope::Occurrence,
-                    record,
-                    "interpreted picture with a transition clock is unsupported",
-                );
-                continue;
-            }
-            let matte_shared = clip
-                .track_matte
-                .is_some_and(|matte| matte_consumers[&(matte.track_index, clip.start_ticks)] > 1);
+            });
             let raster_asset = match clip
                 .opacity_mask
                 .as_ref()
@@ -2151,13 +2303,26 @@ pub(super) fn video_layers(
             omissions,
         );
     }
+    restrict_track_matte_consumers(
+        project,
+        &scope.item_layers,
+        &mut layers,
+        dynamics,
+        omissions,
+    )?;
     effects::finish_posterize_time_import(
         &mut layers,
         dynamics,
         scope.parent.is_some(),
         omissions,
     )?;
-    omit_unconsumed_mattes(project, &scope.item_layers, &mut layers, omissions);
+    omit_unconsumed_mattes(
+        project,
+        &scope.item_layers,
+        &mut layers,
+        dynamics,
+        omissions,
+    )?;
     super::adjustment_wipe::wrap(
         project,
         &adjustment_wipes,
@@ -2167,6 +2332,236 @@ pub(super) fn video_layers(
         omissions,
     )?;
     Ok(layers)
+}
+
+/// Keep the authored mappings/keys and provider clock. Only activation is
+/// clipped to known coverage; rounding inward avoids an exposed edge sample.
+fn restrict_track_matte_consumers(
+    project: &PrSequence,
+    item_layers: &ItemLayers,
+    layers: &mut Vec<Layer>,
+    dynamics: &mut AnimationGraph,
+    omissions: &mut Vec<Omission>,
+) -> Result<()> {
+    for (index, track) in project.video_tracks.iter().enumerate() {
+        let keyed = track
+            .items
+            .iter()
+            .filter_map(PrVideoItem::media)
+            .filter_map(|clip| Some((clip.timeline_ticks(), clip.track_matte?, clip.record())))
+            .chain(track.nests.iter().filter_map(|nest| {
+                Some((
+                    nest.timeline_ticks(),
+                    nest.track_matte?,
+                    nest.id.as_deref().unwrap_or("nested placement"),
+                ))
+            }));
+        for (range, matte, record) in keyed {
+            let Ok(provider) = crate::schema::track_matte_provider(
+                &project.video_tracks,
+                index,
+                range.clone(),
+                matte,
+            ) else {
+                continue;
+            };
+            let Some(root) = item_layers.get(&(index, range.start)) else {
+                continue;
+            };
+            let Some(position) = layers.iter().position(|layer| layer.id() == root.id()) else {
+                continue;
+            };
+            if provider.covered_range == range {
+                continue;
+            }
+            for uncovered in [
+                range.start..provider.covered_range.start,
+                provider.covered_range.end..range.end,
+            ] {
+                if uncovered.start < uncovered.end {
+                    omit(omissions, OmissionScope::Feature, record,
+                        format!("Track Matte uncovered interval {}..{} ticks omitted; covered content retained without extending or holding its provider, native outside-provider behavior is unproved", uncovered.start, uncovered.end));
+                }
+            }
+            let ticks = i128::from(TICKS_PER_MILLISECOND);
+            let first = -(-i128::from(provider.covered_range.start)).div_euclid(ticks);
+            let last = i128::from(provider.covered_range.end).div_euclid(ticks);
+            let old = layers[position].active_range();
+            let first = first.max(i128::from(old.start.as_millis()));
+            let last = last.min(i128::from(old.end().as_millis()));
+            if last <= first {
+                let data = layers[position].data();
+                remove_layer_dynamics(dynamics, data)?;
+                layers.remove(position);
+                omit(omissions, OmissionScope::Occurrence, record, "Track Matte covered interval has no representable millisecond window; consumer omitted without exposing uncovered content");
+                continue;
+            }
+            let window = TimeRangeProperty::new(
+                Time::from_millis(
+                    u64::try_from(first)
+                        .map_err(|_| unsupported("negative matte coverage window"))?,
+                ),
+                Duration::from_millis(
+                    u64::try_from(last - first)
+                        .map_err(|_| unsupported("invalid matte coverage duration"))?,
+                ),
+            );
+            let mut data = layers[position].data().clone();
+            if matches!(data, LayerData::Rect(_) | LayerData::Image(_)) {
+                rebase_layer_dynamics(dynamics, &data, old.start, window.start)?;
+            }
+            match &mut data {
+                LayerData::Video(video) => {
+                    video.playback = trimmed_matte_playback(&video.playback, window)?
+                }
+                LayerData::Group(group) => {
+                    group.playback = trimmed_matte_playback(&group.playback, window)?
+                }
+                LayerData::Rect(rect) => rect.active_range = window,
+                LayerData::Image(image) => image.active_range = window,
+                _ => {
+                    remove_layer_dynamics(dynamics, &data)?;
+                    layers.remove(position);
+                    omit(omissions, OmissionScope::Occurrence, record, "Track Matte consumer has no supported bounded activation window; occurrence omitted without exposing uncovered content");
+                    continue;
+                }
+            }
+            layers[position] = Layer::from_data(&data)?;
+        }
+    }
+    Ok(())
+}
+
+/// Narrows only the parent-clock visibility window. `inputOffsetMs` addresses
+/// that parent clock, so retaining it (with the authored mapping) preserves
+/// every source/content sample at the same document time.
+fn trimmed_matte_playback(
+    playback: &fx_schema::LayerPlayback,
+    window: TimeRangeProperty,
+) -> Result<fx_schema::LayerPlayback> {
+    use fx_schema::{LayerPlayback, LayerPlaybackMapping};
+    match playback.mapping() {
+        LayerPlaybackMapping::Linear { input, output } => {
+            LayerPlayback::linear(window, *input, *output, playback.input_offset_ms())
+        }
+        LayerPlaybackMapping::TimeRemap { property } => {
+            LayerPlayback::remapped(window, property.clone(), playback.input_offset_ms())
+        }
+    }
+    .map_err(unsupported)
+}
+
+fn rebase_layer_dynamics(
+    dynamics: &mut AnimationGraph,
+    layer: &LayerData,
+    old_start: Time,
+    new_start: Time,
+) -> Result<()> {
+    let delta = new_start
+        .as_millis()
+        .checked_sub(old_start.as_millis())
+        .and_then(|delta| i64::try_from(delta).ok())
+        .ok_or_else(|| unsupported("Track Matte coverage start exceeds the animation clock"))?;
+    if delta == 0 {
+        return Ok(());
+    }
+    let mut entries = dynamics.entries().to_vec();
+    for entry in &mut entries {
+        if !layer_owns_target(layer, &entry.target) {
+            continue;
+        }
+        let AnimatorData::Keyframes {
+            track,
+            enabled,
+            disabled_value,
+        } = entry.animator.data()
+        else {
+            continue;
+        };
+        let keys = track
+            .keyframes()
+            .iter()
+            .map(|key| {
+                let time = key
+                    .layer_time()
+                    .as_millis()
+                    .checked_sub(delta)
+                    .ok_or_else(|| unsupported("Track Matte animation clock exceeds i64"))?;
+                Ok(PropertyKeyframe::new(
+                    key.id().clone(),
+                    TimeOffset::from_millis(time),
+                    key.value().clone(),
+                    key.easing(),
+                )
+                .with_spatial_tangents(key.spatial_in_tangent(), key.spatial_out_tangent()))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let track =
+            PropertyKeyframeTrack::new(keys).map_err(|error| unsupported(error.to_string()))?;
+        entry.animator = PropertyAnimator::from_data(&AnimatorData::Keyframes {
+            track,
+            enabled: *enabled,
+            disabled_value: disabled_value.clone(),
+        })?;
+    }
+    *dynamics = AnimationGraph::from_entries(entries).map_err(map_animation_graph_error)?;
+    Ok(())
+}
+
+fn remove_layer_dynamics(dynamics: &mut AnimationGraph, layer: &LayerData) -> Result<()> {
+    let mut removed = BTreeSet::new();
+    for entry in dynamics.entries() {
+        if layer_owns_target(layer, &entry.target) {
+            removed.insert(entry.target.clone());
+        }
+    }
+    let mut entries = dynamics.entries().to_vec();
+    loop {
+        let before = entries.len();
+        entries.retain(|entry| {
+            let remove = removed.contains(&entry.target)
+                || entry
+                    .dependencies
+                    .iter()
+                    .any(|target| layer_owns_target(layer, target) || removed.contains(target))
+                || entry.random_seed_target.as_ref().is_some_and(|target| {
+                    layer_owns_target(layer, target) || removed.contains(target)
+                });
+            if remove {
+                removed.insert(entry.target.clone());
+            }
+            !remove
+        });
+        if entries.len() == before {
+            break;
+        }
+    }
+    *dynamics = AnimationGraph::from_entries(entries).map_err(map_animation_graph_error)?;
+    Ok(())
+}
+
+fn layer_owns_target(layer: &LayerData, target: &fx_schema::PropertyTarget) -> bool {
+    if target.layer_id() == Some(layer.id()) {
+        return true;
+    }
+    if target.effect_id().is_some_and(|target_id| {
+        layer.effects().iter().any(|effect| {
+            matches!(
+                effect.data(),
+                fx_schema::EffectData::Identified { id, .. } if *id == target_id
+            )
+        })
+    }) {
+        return true;
+    }
+    let masks = match layer {
+        LayerData::Rect(rect) => rect.masks.as_slice(),
+        LayerData::Image(image) => image.masks.as_slice(),
+        _ => &[],
+    };
+    target
+        .fx_item_id()
+        .is_some_and(|target_id| masks.iter().any(|mask| mask.id == target_id))
 }
 
 /// The layer that `layer`'s track matte consumes.
@@ -2192,8 +2587,9 @@ fn omit_unconsumed_mattes(
     project: &PrSequence,
     item_layers: &ItemLayers,
     layers: &mut Vec<Layer>,
+    dynamics: &mut AnimationGraph,
     omissions: &mut Vec<Omission>,
-) {
+) -> Result<()> {
     // The item's record as its own omissions name it.
     let record_at = |track: usize, start: i64| {
         let track = &project.video_tracks[track];
@@ -2204,6 +2600,7 @@ fn omit_unconsumed_mattes(
             .map(|item| match item {
                 PrVideoItem::Media(clip) => clip.record().to_owned(),
                 PrVideoItem::Graphic(graphic) => graphic.id.clone().unwrap_or_default(),
+                PrVideoItem::Capsule(capsule) => capsule.placement.id.clone().unwrap_or_default(),
             })
             .or_else(|| {
                 track
@@ -2219,20 +2616,29 @@ fn omit_unconsumed_mattes(
             .items
             .iter()
             .filter_map(PrVideoItem::media)
-            .filter_map(|clip| Some((clip.start_ticks, clip.track_matte?)))
+            .filter_map(|clip| Some((clip.timeline_ticks(), clip.track_matte?)))
             .chain(
                 track
                     .nests
                     .iter()
-                    .filter_map(|nest| Some((nest.start_ticks, nest.track_matte?))),
+                    .filter_map(|nest| Some((nest.timeline_ticks(), nest.track_matte?))),
             );
-        for (start, matte) in keyed {
+        for (range, matte) in keyed {
+            let start = range.start;
+            let Ok(provider) = crate::schema::track_matte_provider(
+                &project.video_tracks,
+                track_index,
+                range,
+                matte,
+            ) else {
+                continue;
+            };
             let placed = item_layers
                 .get(&(track_index, start))
                 .is_some_and(|root| layers.iter().any(|layer| layer.id() == root.id()));
             // A matte clip that was not converted left no layer to drop.
             let Some(matte_layer) = item_layers
-                .get(&(matte.track_index, start))
+                .get(&(matte.track_index, provider.range.start))
                 .map(|item| item.id())
             else {
                 continue;
@@ -2244,21 +2650,23 @@ fn omit_unconsumed_mattes(
             {
                 continue;
             }
-            let count = layers.len();
-            layers.retain(|layer| layer.id() != matte_layer);
-            if layers.len() < count {
-                omit(
-                    omissions,
-                    OmissionScope::Occurrence,
-                    record_at(matte.track_index, start),
-                    format!(
-                        "matte source of the omitted clip {} was not converted: Premiere does not draw a track-matte source",
-                        record_at(track_index, start)
-                    ),
-                );
-            }
+            let Some(position) = layers.iter().position(|layer| layer.id() == matte_layer) else {
+                continue;
+            };
+            remove_layer_dynamics(dynamics, layers[position].data())?;
+            layers.remove(position);
+            omit(
+                omissions,
+                OmissionScope::Occurrence,
+                record_at(matte.track_index, provider.range.start),
+                format!(
+                    "matte source of the omitted clip {} was not converted: Premiere does not draw a track-matte source",
+                    record_at(track_index, start)
+                ),
+            );
         }
     }
+    Ok(())
 }
 
 /// Why FX `luma` approximates Matte Luma (fixture G2): reported on the keyed
@@ -2271,19 +2679,21 @@ const LUMA_MATTE_APPROXIMATION: &str = "Matte Luma is approximated: Premiere wei
 /// Or why the placement is omitted: FX would show it whole without its matte.
 pub(super) fn matte_layer(
     item_layers: &ItemLayers,
+    tracks: &[PrVideoTrack],
     matte: PrTrackMatte,
     range: Range<i64>,
     track_index: usize,
     record: &str,
     omissions: &mut Vec<Omission>,
 ) -> std::result::Result<TrackMatte, String> {
+    let provider = crate::schema::track_matte_provider(tracks, track_index, range.clone(), matte)?;
     let layer = item_layers
-        .get(&(matte.track_index, range.start))
+        .get(&(matte.track_index, provider.range.start))
         .map(|item| item.id())
         .ok_or_else(|| {
             format!(
-                "track {track_index}, range {}..{} ticks: the matte clip on track {} was not converted; occurrence omitted",
-                range.start, range.end, matte.track_index
+                "track {track_index}, range {}..{} ticks: native matte provider {} on track {} at {}..{} ticks was not converted; occurrence omitted",
+                range.start, range.end, provider.record.unwrap_or("unnamed"), matte.track_index, provider.range.start, provider.range.end
             )
         })?;
     let mode = match matte.channel {
@@ -2479,6 +2889,10 @@ fn import_transitions(
                     Some(
                         PrMediaKind::Video { .. }
                             | PrMediaKind::Still { .. }
+                            | PrMediaKind::OpenExr {
+                                numbered: false,
+                                ..
+                            }
                             | PrMediaKind::AfterEffectsComposition(_)
                     )
                 ),
@@ -2487,6 +2901,10 @@ fn import_transitions(
                     Some(
                         PrMediaKind::Video { .. }
                             | PrMediaKind::Still { .. }
+                            | PrMediaKind::OpenExr {
+                                numbered: false,
+                                ..
+                            }
                             | PrMediaKind::ColorMatte(_)
                             | PrMediaKind::AfterEffectsComposition(_)
                     )
@@ -2669,8 +3087,8 @@ struct VideoClip<'a> {
     /// The clip's Track Matte Key, naming the matte's root layer, which is
     /// already in the clip's sibling list.
     matte: Option<TrackMatte>,
-    /// Whether another placement keys the same matte, which then stays a
-    /// sibling of every clip that keys it.
+    /// Whether the provider must stay on its independent clock: another
+    /// consumer shares it, or its native placement window differs.
     matte_shared: bool,
     /// A4 measured only an unshared canvas-sized still at default static Motion.
     static_matte: bool,
@@ -2809,7 +3227,15 @@ fn import_video_clip(
             // A stage group moves its matte under itself, where another clip's
             // key could not evaluate it on that clip's clock.
             if matte_shared {
-                return Err("a Track Matte Key whose matte keys another clip too is not converted on a clip that its Motion or effects stage");
+                let independent_window = clip.track_matte.is_some_and(|key| {
+                    crate::schema::track_matte_provider(&project.video_tracks, track_index, clip.timeline_ticks(), key)
+                        .is_ok_and(|provider| provider.range != clip.timeline_ticks())
+                });
+                return Err(if independent_window {
+                    "a Track Matte Key whose provider has an independent placement window is not converted on a clip that its Motion or effects stage; provider clock cannot be rebased"
+                } else {
+                    "a Track Matte Key whose matte keys another clip too is not converted on a clip that its Motion or effects stage"
+                });
             }
             // The matte's playback keys are on the sequence clock; under the
             // group they would read the group clock, which starts at the clip.
@@ -2889,14 +3315,7 @@ fn import_video_clip(
         source_range,
         source_intrinsic_duration,
         playback,
-    }) = clip_timing(
-        clip,
-        source,
-        boundary,
-        scope.picture_clocks,
-        record,
-        omissions,
-    )?
+    }) = clip_timing(clip, source, boundary, scope, project, record, omissions)?
     else {
         return Ok(None);
     };
@@ -3021,6 +3440,7 @@ fn import_video_clip(
         _ => Vec::new(),
     };
     let mut layer_tracks = Vec::new();
+    let mut retained_curved_transform_position = false;
     // A linked clip's Transform blur, which it requests once its picture forms.
     let mut linked_transform_blur = None;
     // Transform keys follow the Motion keys' clock rules, on their measured
@@ -3062,7 +3482,11 @@ fn import_video_clip(
             .map_err(|error| error.to_string()),
         };
         match converted {
-            Ok(tracks) => layer_tracks.extend(tracks),
+            Ok(tracks) => {
+                layer_tracks.extend(tracks);
+                retained_curved_transform_position =
+                    curved_transform_position_approximation(effect).is_some();
+            }
             Err(reason) => omit(
                 omissions,
                 OmissionScope::Feature,
@@ -3548,6 +3972,11 @@ fn import_video_clip(
                     (stroke::wrap(video.clone(), profile, source, scope)?, true)
                 }
                 Err(reason) => {
+                    if profile.hides_source() {
+                        omit(omissions, OmissionScope::Occurrence, record,
+                            format!("Stroke outline cannot be isolated: {reason}; source remains concealed; independent siblings/audio retained"));
+                        return Ok(None);
+                    }
                     omit(
                         omissions,
                         OmissionScope::Feature,
@@ -3558,7 +3987,12 @@ fn import_video_clip(
                 }
             }
         }
-        (_, Some(_)) => {
+        (_, Some(profile)) => {
+            if profile.hides_source() {
+                omit(omissions, OmissionScope::Occurrence, record,
+                    "Stroke source remains concealed on an unsupported host; independent siblings/audio retained");
+                return Ok(None);
+            }
             omit(
                 omissions,
                 OmissionScope::Feature,
@@ -3644,6 +4078,9 @@ fn import_video_clip(
     }
     if let Some(warning) = clip.blend_mode.approximation() {
         approximate(omissions, record, warning);
+    }
+    if retained_curved_transform_position {
+        approximate(omissions, record, CURVED_TRANSFORM_POSITION_APPROXIMATION);
     }
     effects::report_source_effects(clip, source_converted, omissions);
     siblings.extend(layers);
@@ -3755,13 +4192,15 @@ struct ClipTiming {
 }
 
 /// The timing of `clip`, which plays `source` and whose mask is at
-/// `boundary`. `None` omits the clip, with its reason in `omissions`: a time
-/// remap that cannot import.
+/// `boundary`. An unrepresentable optional curve retains independently valid
+/// saved constant playback, with an approximation diagnostic; otherwise `None`
+/// omits the clip with its reason in `omissions`.
 fn clip_timing(
     clip: &PrVideoOccurrence,
     source: &PrVideoStream,
     boundary: MaskBoundary,
-    picture_clocks: &crate::media::PictureClocks,
+    scope: &LayerScope<'_, '_>,
+    project: &PrSequence,
     record: &str,
     omissions: &mut Vec<Omission>,
 ) -> Result<Option<ClipTiming>> {
@@ -3770,15 +4209,9 @@ fn clip_timing(
         source.interpretation,
         crate::schema::SourceInterpretation::Original
     ) {
-        let imported = || -> Result<ClipTiming> {
-            ensure!(clip.playback_rate == 1.0 && clip.time_remap.is_none()
-                && clip.animations.is_empty() && clip.linear_wipe.is_none()
-                && clip.opacity_mask.is_none() && clip.track_matte.is_none()
-                && clip.effects.iter().all(|effect| effect.animations.is_empty())
-                && clip.source_effects.as_ref().is_none_or(|source|
-                    source.effects.iter().all(|effect| effect.animations.is_empty())),
-                "interpreted picture with speed, remap, reverse, hold, keys or coverage clocks is unsupported");
-            let clock = picture_clocks
+        let mut imported = || -> Result<ClipTiming> {
+            let clock = scope
+                .picture_clocks
                 .get(&clip.media)
                 .ok_or_else(|| unsupported("interpreted picture has no bound physical clock"))?
                 .as_ref()
@@ -3803,8 +4236,113 @@ fn clip_timing(
                 }
                 MaskBoundary::Flat => (active_range, clip.start_ticks),
             };
-            let (playback, source_range) =
-                timing::interpreted_playback(*clock, video_range, clip.in_ticks, origin)?;
+            let exact = if clip.playback_rate == 1.0 && clip.time_remap.is_none() {
+                match timing::interpreted_playback(*clock, video_range, clip.in_ticks, origin) {
+                    Ok(mapping) => Some(mapping),
+                    Err(reason) => {
+                        approximate(omissions, record, format!("interpreted affine origin approximated on the existing millisecond source clock: {reason}; physical selection and picture retained"));
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            let (playback, source_range) = if let Some(exact) = exact {
+                exact
+            } else {
+                let (mut start, mut end) = (clip.in_ticks, clip.out_ticks);
+                if let Some(remap) = &clip.time_remap {
+                    // Approximate easing on the consumed input window, not the
+                    // min/max of unused historical source keys.
+                    let at = |time: i64| -> Result<i64> {
+                        let pair = remap
+                            .keys
+                            .windows(2)
+                            .find(|pair| {
+                                pair[0].timeline_ticks <= time && time <= pair[1].timeline_ticks
+                            })
+                            .ok_or_else(|| {
+                                unsupported(
+                                    "interpreted remap does not cover the current input window",
+                                )
+                            })?;
+                        let span =
+                            i128::from(pair[1].timeline_ticks) - i128::from(pair[0].timeline_ticks);
+                        let delta =
+                            i128::from(pair[1].source_ticks) - i128::from(pair[0].source_ticks);
+                        let value = i128::from(pair[0].source_ticks)
+                            + (i128::from(time) - i128::from(pair[0].timeline_ticks)) * delta
+                                / span;
+                        i64::try_from(value)
+                            .map_err(|_| unsupported("interpreted remap endpoint overflows"))
+                    };
+                    (start, end) = (at(0)?, at(clip.out_ticks - clip.in_ticks)?);
+                } else if clip.playback_rate < 0.0 {
+                    let intrinsic = source.interpreted_duration()?;
+                    (start, end) = (intrinsic - end, intrinsic - start);
+                }
+                let (n, d) = clock.ratio();
+                let denominator = d
+                    .checked_mul(i128::from(crate::schema::TICKS_PER_MILLISECOND))
+                    .ok_or_else(|| unsupported("interpreted source clock overflows"))?;
+                let mapped = |ticks: i64| -> Result<u64> {
+                    let value = i128::from(ticks)
+                        .checked_mul(n)
+                        .ok_or_else(|| unsupported("interpreted source clock overflows"))?
+                        / denominator;
+                    u64::try_from(value)
+                        .map_err(|_| unsupported("interpreted selection is negative"))
+                };
+                let physical_start = mapped(start)?;
+                let physical_end = mapped(end)?.min(clock.duration_millis());
+                let held = clip.held_source_ticks().map(mapped).transpose()?;
+                ensure!(
+                    physical_end > physical_start
+                        || held.is_some_and(|time| time < clock.duration_millis()),
+                    "interpreted selection has no physical picture span"
+                );
+                let selection = if held.is_some() {
+                    TimeRangeProperty::new(
+                        Time::ZERO,
+                        Duration::from_millis(clock.duration_millis()),
+                    )
+                } else {
+                    TimeRangeProperty::new(
+                        Time::from_millis(physical_start),
+                        Duration::from_millis(physical_end - physical_start),
+                    )
+                };
+                approximate(omissions, record,
+                    "interpreted TimeRemapping/speed retained as constant playback over the authored physical source selection; non-linear timing and fractional endpoint loss are approximate; owner controls and independent effects retained");
+                let mut mapping =
+                    constant_time_remap(clip.playback_rate < 0.0, video_range, selection)?;
+                if let Some(held) = held {
+                    let keys = mapping
+                        .keyframes()
+                        .iter()
+                        .cloned()
+                        .map(|mut key| {
+                            key.value = Time::from_millis(held);
+                            key
+                        })
+                        .collect();
+                    mapping = TimeRemapProperty::new(
+                        keys,
+                        TimeRemapExtrapolation::Inactive,
+                        TimeRemapExtrapolation::Inactive,
+                    )
+                    .map_err(|error| {
+                        unsupported(format!(
+                            "interpreted held playback cannot be imported: {error}"
+                        ))
+                    })?;
+                }
+                (
+                    fx_schema::LayerPlayback::remapped(video_range, mapping, 0)
+                        .map_err(unsupported)?,
+                    selection,
+                )
+            };
             Ok(ClipTiming {
                 active_range,
                 video_range,
@@ -3826,6 +4364,205 @@ fn clip_timing(
             }
         };
     }
+    // Under a stage group the video uses the group clock, starting at zero.
+    let (video_range, clock_origin) = match boundary {
+        MaskBoundary::Staged => (TimeRangeProperty::new(Time::ZERO, active_range.duration), 0),
+        MaskBoundary::Flat => (active_range, clip.start_ticks),
+    };
+    // Check the bound clock before either curve preparation or constant recovery;
+    // a presentation-origin source cannot acquire a new playback clock.
+    let presentation_origin = match scope.picture_clocks.get(&clip.media) {
+        Some(clock) => {
+            let clock = clock
+                .as_ref()
+                .map_err(|error| unsupported(format!("picture clock: {error}")))?;
+            if let crate::media::PictureClock::PresentationOrigin(origin) = clock {
+                ensure!(
+                    clip.playback_rate == 1.0 && clip.time_remap.is_none(),
+                    "presentation-origin picture requires unit-forward playback"
+                );
+                Some(*origin)
+            } else {
+                None
+            }
+        }
+        None => None,
+    };
+    let constant =
+        || constant_clip_timing(clip, source, active_range, video_range, presentation_origin);
+    let Some(remap) = &clip.time_remap else {
+        let timing = constant()?;
+        // The reader may already have discarded an optional curve after native
+        // base validation. Prepare its rounded source span before any mutation.
+        if scope.parent.is_none()
+            && matches!(source.kind, crate::schema::PrMediaKind::Video { .. })
+            && timing.source_range.duration.as_millis() == 0
+        {
+            omit(
+                omissions,
+                OmissionScope::Occurrence,
+                record,
+                "clip was not imported: saved source span rounds to an empty editable range",
+            );
+            return Ok(None);
+        }
+        return Ok(Some(timing));
+    };
+    // Curve preparation has no shared layer, effect or animator mutation.
+    match played_time_remap(clip, remap, source, video_range, clock_origin) {
+        Ok((property, offset)) => {
+            let source_intrinsic_duration = duration_from_ticks(source.intrinsic_ticks)?;
+            Ok(Some(ClipTiming {
+                active_range,
+                video_range,
+                source_range: TimeRangeProperty::new(Time::ZERO, source_intrinsic_duration),
+                source_intrinsic_duration,
+                playback: fx_schema::LayerPlayback::remapped(video_range, property, offset)
+                    .map_err(unsupported)?,
+            }))
+        }
+        Err(error) => {
+            // Only physical video with an ordinary native curve may discard it.
+            // FrameHold and nonphysical callers keep their existing omission.
+            if scope.parent.is_none()
+                && matches!(source.kind, crate::schema::PrMediaKind::Video { .. })
+                && remap
+                    .held_source_ticks(clip.end_ticks - clip.start_ticks)
+                    .is_none()
+                && clip.validate_time_remap_curve(remap, source).is_ok()
+            {
+                let base = clip.validate_base_on_grid(
+                    project.frame_rate,
+                    project
+                        .native_frame_ticks
+                        .unwrap_or(project.frame_rate.ticks_per_frame()),
+                    source,
+                );
+                let base = base.map_err(crate::error::BuildError::from).and_then(|()| {
+                    let timing = constant()?;
+                    ensure!(
+                        timing.source_range.duration.as_millis() > 0,
+                        "saved source span rounds to an empty editable range"
+                    );
+                    ensure!(
+                        u128::from(timing.source_range.start.as_millis())
+                            + u128::from(timing.source_range.duration.as_millis())
+                            <= u128::try_from(
+                                source.intrinsic_ticks / crate::schema::TICKS_PER_MILLISECOND
+                            )
+                            .map_err(|_| unsupported("negative physical source duration"))?,
+                        "rounded saved source selection reaches beyond the physical clock"
+                    );
+                    Ok(timing)
+                });
+                if let Ok(timing) = base {
+                    approximate(omissions, record, format!(
+                        "TimeRemapping was not imported; saved constant-rate playback retained as an approximation: {error}"
+                    ));
+                    return Ok(Some(timing));
+                }
+                // The existing bounded-selection fallback below still
+                // revalidates coverage/grid before retaining content.
+            }
+            let (source_in, source_out) = if clip.playback_rate < 0.0 {
+                (
+                    source
+                        .intrinsic_ticks
+                        .checked_sub(clip.out_ticks)
+                        .ok_or_else(|| {
+                            unsupported("reverse source out exceeds intrinsic duration")
+                        })?,
+                    source
+                        .intrinsic_ticks
+                        .checked_sub(clip.in_ticks)
+                        .ok_or_else(|| {
+                            unsupported("reverse source in exceeds intrinsic duration")
+                        })?,
+                )
+            } else {
+                (clip.in_ticks, clip.out_ticks)
+            };
+            let end = source_out.min(source.intrinsic_ticks);
+            if source_in < 0 || end <= source_in {
+                omit(
+                    omissions,
+                    OmissionScope::Occurrence,
+                    record,
+                    format!(
+                        "no physical source interval remains after TimeRemapping recovery: {error}"
+                    ),
+                );
+                return Ok(None);
+            }
+            let ms = crate::schema::TICKS_PER_MILLISECOND;
+            let first =
+                u64::try_from((i128::from(source_in) + i128::from(ms) - 1) / i128::from(ms))
+                    .map_err(|_| unsupported("recovered source selection is negative"))?;
+            let last = u64::try_from(end / ms)
+                .map_err(|_| unsupported("recovered source selection is negative"))?;
+            if last <= first {
+                omit(omissions,OmissionScope::Occurrence,record,"no representable physical millisecond span remains after TimeRemapping recovery");
+                return Ok(None);
+            }
+            let mut bounded = clip.clone();
+            bounded.time_remap = None;
+            bounded.out_ticks = clip.out_ticks.min(source.intrinsic_ticks);
+            bounded.playback_rate = ((bounded.out_ticks - bounded.in_ticks) as f64
+                / (clip.end_ticks - clip.start_ticks) as f64)
+                .copysign(clip.playback_rate);
+            if bounded
+                .validate_base_on_grid(
+                    project.frame_rate,
+                    project
+                        .native_frame_ticks
+                        .unwrap_or(project.frame_rate.ticks_per_frame()),
+                    source,
+                )
+                .is_ok()
+            {
+                let selection = TimeRangeProperty::new(
+                    Time::from_millis(first),
+                    Duration::from_millis(last - first),
+                );
+                approximate(omissions,record,format!("TimeRemapping approximated using bounded authored source trim at constant speed: {error}; picture and other controls retained"));
+                return Ok(Some(ClipTiming {
+                    active_range,
+                    video_range,
+                    source_range: selection,
+                    source_intrinsic_duration: duration_from_ticks(source.intrinsic_ticks)?,
+                    playback: fx_schema::LayerPlayback::remapped(
+                        video_range,
+                        constant_time_remap(
+                            clip.playback_rate.is_sign_negative(),
+                            video_range,
+                            selection,
+                        )?,
+                        0,
+                    )
+                    .map_err(unsupported)?,
+                }));
+            }
+            omit(
+                omissions,
+                OmissionScope::Occurrence,
+                record,
+                format!("clip was not imported: {error}"),
+            );
+            Ok(None)
+        }
+    }
+}
+
+/// The existing saved constant/reverse clock, with no endpoints inferred from
+/// a rejected optional curve. The caller validates native bounds before using
+/// this mapping as a fallback.
+fn constant_clip_timing(
+    clip: &PrVideoOccurrence,
+    source: &PrVideoStream,
+    active_range: TimeRangeProperty,
+    video_range: TimeRangeProperty,
+    presentation_origin: Option<crate::media::PresentationOrigin>,
+) -> Result<ClipTiming> {
     // Native validation already bounds the final-frame hold. Unit-speed clips
     // keep equal durations when rounding changes endpoints; retimed clips must
     // retain their distinct source span for editable playback keyframes.
@@ -3846,77 +4583,40 @@ fn clip_timing(
         (clip.in_ticks, clip.out_ticks)
     };
     let source_intrinsic_duration = duration_from_ticks(source.intrinsic_ticks)?;
-    let mut source_range = if clip.time_remap.is_some() {
-        // A native ramp's source keys address the full media clock.
-        TimeRangeProperty::new(Time::ZERO, source_intrinsic_duration)
-    } else {
+    let mut source_range = {
         let mut range = tick_range(source_in, source_out)?;
         if clip.playback_rate == 1.0 {
             range.duration = active_range.duration;
         }
         range
     };
-    if let Some(clock) = picture_clocks.get(&clip.media) {
-        let clock = clock
-            .as_ref()
-            .map_err(|error| unsupported(format!("picture clock: {error}")))?;
-        if let crate::media::PictureClock::PresentationOrigin(origin) = clock {
-            ensure!(
-                clip.playback_rate == 1.0 && clip.time_remap.is_none(),
-                "presentation-origin picture requires unit-forward playback"
-            );
-            source_range.start = Time::from_millis(origin.shifted_start(
-                source_range.start.as_millis(),
-                source_range.duration.as_millis(),
-            )?);
-        }
+    if let Some(origin) = presentation_origin {
+        source_range.start = Time::from_millis(origin.shifted_start(
+            source_range.start.as_millis(),
+            source_range.duration.as_millis(),
+        )?);
     }
-    // Under a stage group, the video and its mask guide are on the
-    // group clock, which starts at the clip start.
-    let (video_range, clock_origin) = match boundary {
-        MaskBoundary::Staged => (TimeRangeProperty::new(Time::ZERO, active_range.duration), 0),
-        MaskBoundary::Flat => (active_range, clip.start_ticks),
-    };
-    let (playback, playback_offset_ms) = if let Some(remap) = &clip.time_remap {
-        // Remap key times are input ticks after In; `played_time_remap` puts
-        // them on the parent clock, on which the clip starts at
-        // `clock_origin`.
-        match played_time_remap(clip, remap, source, video_range, clock_origin) {
-            Ok((playback, offset)) => (Some(playback), offset),
-            // No unit-speed window would show the remapped source frames.
-            Err(error) => {
-                omit(
-                    omissions,
-                    OmissionScope::Occurrence,
-                    record,
-                    format!("clip was not imported: {error}"),
-                );
-                return Ok(None);
-            }
-        }
-    } else if clip.playback_rate != 1.0 {
-        let playback = constant_time_remap(
-            clip.playback_rate.is_sign_negative(),
+    let playback = if clip.playback_rate != 1.0 {
+        fx_schema::LayerPlayback::remapped(
             video_range,
-            source_range,
-        )?;
-        (Some(playback), 0)
+            constant_time_remap(
+                clip.playback_rate.is_sign_negative(),
+                video_range,
+                source_range,
+            )?,
+            0,
+        )
     } else {
-        (None, 0)
-    };
-    Ok(Some(ClipTiming {
+        fx_schema::LayerPlayback::linear(video_range, video_range, source_range, 0)
+    }
+    .map_err(unsupported)?;
+    Ok(ClipTiming {
         active_range,
         video_range,
         source_range,
         source_intrinsic_duration,
-        playback: match playback {
-            Some(property) => {
-                fx_schema::LayerPlayback::remapped(video_range, property, playback_offset_ms)
-            }
-            None => fx_schema::LayerPlayback::linear(video_range, video_range, source_range, 0),
-        }
-        .map_err(unsupported)?,
-    }))
+        playback,
+    })
 }
 
 /// The key tracks of a placement's Motion and Opacity `animations`, whose

@@ -120,6 +120,7 @@ const REFERENCE_SETS_FULL_RANGE: &str = "010160000000b0000000000078f000fcfdf8f80
 const DISPLAY_WINDOW: &str = "01016000000090000000000078f000fcfdf8f800000f03a00001001840010c01ffff016000000300900000030000030078959809a10001002f420101016000000300900000030000030078a003c08010e596566924caf016a0202021e260000003002000000303c1a2000100074401c172b46240";
 #[cfg(feature = "ffmpeg-library")]
 const ACCEPTED_CODECS: &str = "conversion accepts H.264 (avc1), HEVC (hvc1) or Apple ProRes";
+#[cfg(feature = "ffmpeg-library")]
 const PRORES_4444_ALPHA: &[u8] = include_bytes!("../../tests/fixtures/video-prores4444-alpha.mov");
 const ACCEPTED_CONTAINERS: &str = "conversion accepts MP4 or QuickTime MOV video";
 #[cfg(feature = "ffmpeg-library")]

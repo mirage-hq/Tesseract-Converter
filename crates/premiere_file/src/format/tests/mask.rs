@@ -418,6 +418,52 @@ fn bypassed_opacity_mask_keeps_the_clip_and_is_reported() {
 }
 
 #[test]
+fn opacity_mask_saved_bounds_do_not_change_picture_or_path_coverage() {
+    let records = mask(300, true);
+    let (expected, notes) = read(&masked_clip(records.clone(), &[]));
+    assert!(notes.is_empty(), "{notes:?}");
+    assert_eq!(
+        expected.opacity_mask.as_ref().unwrap().path.vertices,
+        pen_path()
+    );
+    let older_bounds = records.replace("5000</", "1000</");
+    let without_bounds = older_bounds
+        .replace(
+            "<LowerBound>0</LowerBound><UpperBound>1000</UpperBound>",
+            "",
+        )
+        .replace(
+            "<LowerBound>-1000</LowerBound><UpperBound>1000</UpperBound>",
+            "",
+        );
+    assert_ne!(older_bounds, records);
+    assert_ne!(without_bounds, older_bounds);
+    for saved in [older_bounds, without_bounds] {
+        let (clip, notes) = read(&masked_clip(saved, &[]));
+        assert!(notes.is_empty(), "{notes:?}");
+        assert_eq!(clip.id, expected.id);
+        assert_eq!(clip.media, expected.media);
+        assert_eq!(
+            (
+                clip.start_ticks,
+                clip.end_ticks,
+                clip.in_ticks,
+                clip.out_ticks
+            ),
+            (
+                expected.start_ticks,
+                expected.end_ticks,
+                expected.in_ticks,
+                expected.out_ticks
+            )
+        );
+        assert_eq!(clip.transform, expected.transform);
+        assert_eq!(clip.opacity, expected.opacity);
+        assert_eq!(clip.opacity_mask, expected.opacity_mask);
+    }
+}
+
+#[test]
 fn opacity_masks_outside_the_supported_form_omit_the_occurrence() {
     let feather = |value: &str| {
         mask(300, true).replace(
@@ -462,11 +508,6 @@ fn opacity_masks_outside_the_supported_form_omit_the_occurrence() {
     let unknown_id = mask(300, true).replace(
         "<ParameterID>15</ParameterID>",
         "<ParameterID>-1</ParameterID>",
-    );
-    // The saved numeric bounds still identify the parameter contract.
-    let v8_v7_bounds = mask(300, true).replace(
-        "<UpperBound>5000</UpperBound><ParameterID>7</ParameterID>",
-        "<UpperBound>1000</UpperBound><ParameterID>7</ParameterID>",
     );
     let two_masks = masked_clip(mask(300, true) + &mask(400, true), &[]).replace(
         "<SubComponent Index=\"0\" ObjectRef=\"300\"/>",
@@ -528,7 +569,7 @@ fn opacity_masks_outside_the_supported_form_omit_the_occurrence() {
             "VideoComponentParam:313: mask control 13 at a value other than 0.5 is not converted",
         ),
         (
-            "feather above the written bound",
+            "feather outside the consumed range",
             masked_clip(feather("3000."), &[]),
             "Feather must be finite and within 0..=1000",
         ),
@@ -546,9 +587,9 @@ fn opacity_masks_outside_the_supported_form_omit_the_occurrence() {
             "VideoFilterComponent:300: unsupported mask parameter layout (MatchName Some(\"AE.ADBE AEMask2\"), 15 parameters)",
         ),
         (
-            "v8 record with v7 bounds",
-            masked_clip(v8_v7_bounds, &[]),
-            "VideoComponentParam:307: unexpected Mask Feather layout",
+            "nonfinite feather",
+            masked_clip(feather("NaN"), &[]),
+            "VideoComponentParam:307: nonfinite initial value",
         ),
         (
             "two masks on Opacity",
@@ -922,8 +963,8 @@ fn premiere_26_5_re_saved_opacity_owner_reads_as_its_static_value() {
         occurrence.opacity_mask.as_ref().map(|mask| mask.opacity),
         Some(50.0)
     );
-    // Keys under `IsTimeVarying` true still import as keys. Optional editor
-    // bounds do not change the saved Opacity or Blend Mode values.
+    // Keys under `IsTimeVarying` true still import as keys. Display bounds
+    // do not change the bound Opacity/Blend Mode values or mask coverage.
     let keyed = owner(&|records| {
         records.replacen(
             "<StartKeyframe>-91445760000000000,100.,0,0,0,0,0,0</StartKeyframe>\n\t\t<LowerBound>0</LowerBound>\n\t\t<UpperBound>100</UpperBound>",
@@ -934,16 +975,55 @@ fn premiere_26_5_re_saved_opacity_owner_reads_as_its_static_value() {
     let (occurrence, omissions) = read(&keyed);
     assert!(omissions.is_empty(), "{omissions:?}");
     assert_eq!(occurrence.animations.len(), 1);
-    let varied_bounds =
+    let changed_bound =
         owner(&|records| edit_start(records, 155, "<UpperBound>26<", "<UpperBound>25<"));
-    let (project, omissions) =
-        inspect_project_with_omissions(&varied_bounds, Some("sequence-1")).unwrap();
-    assert_eq!(project.sequences[0].video_occurrences().count(), 2);
+    let (bounded, omissions) = read(&changed_bound);
     assert!(omissions.is_empty(), "{omissions:?}");
-    let occurrence = project.sequences[0].video_occurrences().next().unwrap();
-    assert_eq!(occurrence.opacity, 100.0);
-    assert_eq!(occurrence.blend_mode, crate::schema::PrBlendMode::Normal);
-    assert_eq!(occurrence.opacity_mask.as_ref().unwrap().opacity, 50.0);
+    assert_eq!(bounded.opacity, occurrence.opacity);
+    assert_eq!(bounded.blend_mode, occurrence.blend_mode);
+    assert_eq!(bounded.opacity_mask, occurrence.opacity_mask);
+    assert!(bounded.animations.is_empty());
+    let (project, omissions) =
+        inspect_project_with_omissions(&changed_bound, Some("sequence-1")).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    assert_eq!(
+        project.sequences[0].video_occurrences().count(),
+        2,
+        "{project:?}"
+    );
+    let retained = project.sequences[0]
+        .video_occurrences()
+        .find(|clip| clip.opacity_mask.is_some())
+        .unwrap();
+    assert!(retained.enabled);
+    assert_eq!(retained.opacity, 100.0);
+    assert_eq!(retained.blend_mode, crate::schema::PrBlendMode::Normal);
+    assert_eq!(retained.opacity_mask.as_ref().unwrap().opacity, 50.0);
+    assert_eq!(
+        retained.opacity_mask.as_ref().unwrap().path,
+        fixture_rectangle()
+    );
+    assert_eq!(retained.effects_above_mask, 0);
+    assert!(retained.animations.is_empty());
+    assert!(project.sequences[0]
+        .video_occurrences()
+        .any(|clip| clip.opacity_mask.is_none() && clip.enabled));
+    assert!(omissions.is_empty(), "{omissions:?}");
+
+    // Consumed alpha still must be representable; only its owner is omitted.
+    let (project, omissions) = inspect_project_with_omissions(
+        &owner(&|records| edit_start(records, 154, ",100.,", ",101.,")),
+        Some("sequence-1"),
+    )
+    .unwrap();
+    assert_eq!(project.sequences[0].video_occurrences().count(), 1);
+    assert!(
+        omissions.iter().any(|omission| {
+            omission.scope == OmissionScope::Occurrence
+                && omission.reason.contains("opacity out of range")
+        }),
+        "{omissions:?}"
+    );
 
     // Actual values still have to be finite integer blend IDs. A malformed
     // value omits its masked occurrence, not its independently valid sibling.
@@ -1082,7 +1162,7 @@ fn a_still_with_mask_path_keys_is_omitted_beside_its_sibling_without_a_guide() {
         panic!("{omissions:?}");
     };
     assert!(
-        reason.contains("Mask Path keys on a still are not converted; only a video clip's Opacity mask converts keyed"),
+        reason.contains("Mask Path keys on a still are not converted; this host has no admitted keyed mask guide"),
         "{reason}"
     );
     let document = crate::convert::premiere_to_tesseract(
@@ -1654,9 +1734,14 @@ fn premiere_26_3_masks_outside_the_saved_profile_omit_the_occurrence() {
             "VideoComponentParam:282: Feather supports only all-Linear keys or zero-speed handles, with temporal flags 0",
         ),
         (
-            "a kept control in another layout",
+            "Feather with the wrong scalar record class",
             masked_clip_26_3(176, |records| {
-                edit_start(records, 282, "<UpperBound>5000<", "<UpperBound>1000<")
+                edit_start(
+                    records,
+                    282,
+                    "ClassID=\"a4ff2d6e-7ac2-44f8-9d52-17d9ca50e542\"",
+                    "ClassID=\"cc12343e-f113-4d3b-ae05-b287db77d461\"",
+                )
             }),
             "VideoComponentParam:282: unexpected Feather layout",
         ),

@@ -77,7 +77,9 @@ fn expression_override_invalidation_is_composition_local() {
         let convert = |override_comp: Option<u32>| {
             let mut resolver = |_: &MediaAssetRequest| MediaResolution::Unavailable;
             let mut converter = Converter {
+                text_overrides: Default::default(),
                 expression_samples: captures,
+                expression_evaluations: Default::default(),
                 items: project.items.iter().map(|item| (item.id, item)).collect(),
                 camera_normalizations: HashMap::new(),
                 diagnostics: Vec::new(),

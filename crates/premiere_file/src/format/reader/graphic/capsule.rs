@@ -4,7 +4,7 @@
 use super::{
     super::{
         animation::{chain_components, read_video_animations, read_video_compositing},
-        integer, require_zero_subclip_time_offset, required, required_integer,
+        integer, required, required_integer,
         video::{playback_rate, report_markers, scale_to_frame_size},
         visibility,
     },
@@ -12,14 +12,12 @@ use super::{
 };
 use crate::{
     approximate,
-    capsule::{decode_template, CapsuleError, SavedCapsule},
-    convert,
+    capsule::{picture::PictureSource, CapsuleError, SavedCapsule},
     error::{ensure, unsupported, BuildError, Result},
     format::{FrameRate, Graph, Located},
     schema::{
         native::{VideoClipTrackItem, VideoComponentChain, VideoFilterComponent},
-        text::PrVectorMotion,
-        PrAnimatedProperty, PrGraphic, PrStaticTransform,
+        PrCapsule, PrGraphic,
     },
     Omission,
 };
@@ -58,16 +56,15 @@ pub(super) fn read(
     item: Located<VideoClipTrackItem>,
     source: GraphicClip,
     frame: [u32; 2],
-    frame_rate: FrameRate,
+    _frame_rate: FrameRate,
     omissions: &mut Vec<Omission>,
-) -> Result<PrGraphic> {
+) -> Result<PrCapsule> {
     let identity = &item.identity;
     let track_item = required(
         item.value.clip_track_item.as_ref(),
         identity,
         "ClipTrackItem",
     )?;
-    require_zero_subclip_time_offset(track_item, identity)?;
     let range = required(track_item.track_item.as_ref(), identity, "TrackItem")?;
     let start = range
         .start
@@ -81,27 +78,18 @@ pub(super) fn read(
         &source.clip.identity,
         "Clip",
     )?;
-    ensure!(
-        clip.is_multicam != Some(true) && clip.selected_track_index.is_none(),
-        "{identity}: multicam selection on a capsule is unsupported"
-    );
     report_markers(graph, clip, &source.clip.identity, omissions);
-    ensure!(
-        playback_rate(clip, identity)? == 1.0
-            && clip.time_remapping.is_none()
-            && !source.clip.value.declares_frame_hold()
-            && !scale_to_frame_size(&source.clip.value, identity)?,
-        "{identity}: capsule retiming/Scale to Frame Size is not converted"
-    );
+    if playback_rate(clip, identity)? != 1.0
+        || clip.time_remapping.is_some()
+        || source.clip.value.declares_frame_hold()
+    {
+        approximate(omissions, identity, "Capsule retiming uses the bounded saved source window as a linear mapping; native template content and animation retained");
+    }
     let source_in = required_integer(clip.in_point.as_deref(), identity, "InPoint")?;
     let source_out = required_integer(clip.out_point.as_deref(), identity, "OutPoint")?;
     ensure!(
         source_in >= 0 && source_out > source_in && start >= 0 && end > start,
         "{identity}: invalid capsule source/timeline ranges"
-    );
-    ensure!(
-        source_out.checked_sub(source_in) == end.checked_sub(start),
-        "{identity}: capsule placement/source ranges differ"
     );
     let reference = required(
         track_item
@@ -130,85 +118,52 @@ pub(super) fn read(
     let id = required(reference.id.as_deref(), identity, "capsule ObjectID")?;
     let saved =
         SavedCapsule::from_graph(graph, id).map_err(|error| capsule_error(identity, error))?;
-    let template = read_template(graph, &source.media.value, identity)?;
-    let (template, composition_id, text, diagnostics) = saved
-        .resolve_instance(&template)
-        .map_err(|error| capsule_error(identity, error))?;
+    let (picture, diagnostics) = read_template(graph, &source.media.value, identity, &saved)?;
     for diagnostic in diagnostics {
         approximate(omissions, &saved.component, diagnostic);
     }
-    let text = top_level_text_overrides(text, composition_id, identity, omissions);
-    let (layers, warnings) = template
-        .editable_layers_in_composition(composition_id, &text)
-        .map_err(|error| unsupported(format!("{identity}: {error}")))?;
-    for warning in warnings {
-        approximate(omissions, identity, warning);
+    let motion = read_video_animations(graph, &chain, &placement, true, omissions)?;
+    let concealed =
+        !motion.crop.is_default() || motion.linear_wipe.is_some() || motion.track_matte.is_some();
+    if concealed {
+        approximate(omissions, identity, "Capsule placement Crop/Wipe/Track Matte coverage is not lowered by this picture bridge; editable consumer retained hidden, never exposed unmasked");
     }
-    let objects = convert::template_objects(&layers, frame, omissions, identity)?;
-    let motion = read_video_animations(graph, &chain, &placement, true)?;
-    ensure!(
-        motion.crop.is_default() && motion.linear_wipe.is_none() && motion.track_matte.is_none(),
-        "{identity}: capsule Motion crop/wipe/matte is not converted"
-    );
     let (opacity, blend_mode, opacity_animation, opacity_mask) =
         read_video_compositing(graph, &chain, &placement, omissions)?;
-    ensure!(
-        opacity_mask.is_none(),
-        "{identity}: capsule Opacity mask frame is unverified"
-    );
-    let transform = motion.transform;
-    let uniform_scale = (transform.scale[0] - transform.scale[1]).abs() < 1e-9;
-    ensure!(
-        uniform_scale,
-        "{identity}: nonuniform capsule clip Motion is not converted"
-    );
-    let mut animations = Vec::new();
-    for animation in motion.animations {
-        if matches!(
-            animation.property(),
-            PrAnimatedProperty::AnchorPoint | PrAnimatedProperty::ScaleWidth
-        ) {
-            approximate(omissions,identity,format!("capsule clip {:?} keys reduced to static value; ordinary Vector Motion has no matching keyed parameter",animation.property()));
-        } else {
-            animations.push(animation);
-        }
+    let mut transform = motion.transform;
+    if scale_to_frame_size(&source.clip.value, identity)? {
+        let fit = (f64::from(frame[0]) / saved.size.x).min(f64::from(frame[1]) / saved.size.y);
+        transform.scale = transform.scale.map(|scale| scale * fit);
     }
-    let vector_motion = PrVectorMotion {
-        position: [
-            transform.position[0] * f64::from(frame[0]),
-            transform.position[1] * f64::from(frame[1]),
-        ],
-        anchor: [
-            transform.anchor_point[0] * saved.size.x + saved.top_left.x,
-            transform.anchor_point[1] * saved.size.y + saved.top_left.y,
-        ],
-        scale: transform.scale[1],
-        rotation: transform.rotation,
-        animations,
-    };
-    approximate(omissions,&saved.component,"saved capsule authoring controllers replaced by independent ordinary editable Text/Shape objects; later text edits do not recompute responsive Shape geometry");
     let graphic = PrGraphic {
         id: Some(item.identity.clone()),
         start_ticks: start,
         end_ticks: end,
         in_ticks: source_in,
-        vector_motion: Some(vector_motion),
-        clip_motion: PrStaticTransform::default(),
+        vector_motion: None,
+        clip_motion: transform,
         opacity,
         blend_mode,
         animations: opacity_animation.into_iter().collect(),
-        opacity_mask: None,
+        opacity_mask,
         effect_loss: None,
-        objects,
-        enabled: !visibility::is_muted(track_item.is_muted.as_deref(), identity)?,
+        objects: Vec::new(),
+        enabled: !concealed && !visibility::is_muted(track_item.is_muted.as_deref(), identity)?,
     };
-    graphic.validate(frame_rate)?;
-    Ok(graphic)
+    let capsule = PrCapsule {
+        placement: graphic,
+        source_out_ticks: source_out,
+        motion_animations: motion.animations,
+        source: picture,
+    };
+    capsule.validate()?;
+    Ok(capsule)
 }
 
 // The static ordinary-graphic consumer cannot apply a child's Text override to
 // the declaring composition. Isolate that optional override here; the public
 // explicit-composition API still rejects mismatched batches and forged bindings.
+#[cfg(test)]
 fn top_level_text_overrides(
     values: Vec<aftereffects_file::graphic_template::SavedGraphicText>,
     composition_id: u32,
@@ -232,7 +187,8 @@ fn read_template(
     graph: &Graph<'_>,
     media: &crate::schema::native::Media,
     identity: &str,
-) -> Result<aftereffects_file::graphic_template::SavedGraphicTemplate> {
+    saved: &SavedCapsule,
+) -> Result<(std::sync::Arc<PictureSource>, Vec<String>)> {
     let mut candidates = Vec::new();
     if let Some(root) = graph.source_dir() {
         candidates.extend(
@@ -252,7 +208,7 @@ fn read_template(
         .map(PathBuf::from),
     );
     let mut seen = BTreeSet::new();
-    let mut container = None;
+    let mut container: Option<(PathBuf, File)> = None;
     for path in candidates {
         let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
             continue;
@@ -283,7 +239,7 @@ fn read_template(
         })?;
         if let Some(previous) = &mut container {
             ensure!(
-                same_container_bytes(previous, &mut current).map_err(|source| {
+                same_container_bytes(&mut previous.1, &mut current).map_err(|source| {
                     BuildError::IoAt {
                         context: context(),
                         source,
@@ -292,15 +248,15 @@ fn read_template(
                 "{identity}: saved container aliases resolve different bytes"
             );
         } else {
-            container = Some(current);
+            container = Some((path, current));
         }
     }
-    let container = container.ok_or_else(|| {
+    let (path, container) = container.ok_or_else(|| {
         BuildError::MissingMedia(format!(
             "{identity}: saved .aegraphic/.mogrt container; relink its media path"
         ))
     })?;
-    decode_template(container).map_err(|error| capsule_error(identity, error))
+    PictureSource::prepare(path, container, saved).map_err(|error| capsule_error(identity, error))
 }
 
 // Distinct native aliases must still identify identical source bytes. Compare

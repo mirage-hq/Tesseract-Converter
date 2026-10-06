@@ -42,21 +42,24 @@ fn reported(omissions: &[Omission], scope: OmissionScope, record: &str) -> bool 
 }
 
 #[test]
-fn omitted_tail_item_still_ends_the_sequence() {
+fn recovered_tail_item_keeps_selection_and_ends_the_sequence() {
     let (project, omissions) =
         inspect_project_with_omissions(&with_omitted_tail_item(10 * TICKS), None).unwrap();
     let sequence = project.single_sequence().unwrap();
-    assert_eq!(sequence.video_occurrences().count(), 1);
-    assert_eq!(sequence.occurrence_end_ticks(), 5 * TICKS);
+    assert_eq!(sequence.video_occurrences().count(), 2);
+    assert_eq!(sequence.occurrence_end_ticks(), 10 * TICKS);
     assert_eq!(sequence.timeline_end_ticks, 10 * TICKS);
-    assert_eq!(sequence.gaps(&project.media), vec![5 * TICKS..10 * TICKS]);
+    assert!(sequence.gaps(&project.media).is_empty());
+    let tail = sequence.video_tracks[1].clip(0);
+    assert_eq!(tail.source_ticks(), 0..5 * TICKS);
+    assert_eq!(tail.playback_rate, 0.5);
     assert!(
         omissions
             .iter()
-            .any(|item| item.scope == OmissionScope::Occurrence
-                && item.record == "9"
-                && item.reason.contains("source span does not match")),
-        "the tail item is reported, not silently replaced by black: {omissions:?}"
+            .any(|item| item.scope == OmissionScope::Feature
+                && item.record == "VideoClipTrackItem:9"
+                && item.reason.contains("constant speed")),
+        "the recovered tail is reported, not silently replaced by black: {omissions:?}"
     );
     assert!(reported(
         &omissions,

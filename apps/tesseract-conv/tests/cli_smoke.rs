@@ -2068,6 +2068,30 @@ fn premiere_hybrid_cli_creates_linked_aep_and_reimports_editable_content() {
             .sum()
     }
     assert_eq!(audio_count(archive.project().composition().layers()), 1);
+    // Premiere import accepts consent even when this linked package has no Pop.
+    // Check and Write must still resolve the same editable AEP picture and sound.
+    let allowed_import = [
+        "convert",
+        "package/project.prproj",
+        "--to",
+        "tesseract",
+        "--allow-film-impact-pop",
+        "-o",
+        "imported-allowed",
+    ];
+    let checked = run(root, &[&allowed_import[..], &["--check"]].concat());
+    assert!(checked.status.success(), "{checked:?}");
+    assert!(!root.join("imported-allowed").exists());
+    let allowed = run(root, &allowed_import);
+    assert!(allowed.status.success(), "{allowed:?}");
+    assert_eq!(checked.stderr, allowed.stderr);
+    assert_eq!(imported.stderr, allowed.stderr);
+    let allowed_archive =
+        tesseract_file::TesseractFile::open(root.join("imported-allowed/project.tsrct")).unwrap();
+    assert_eq!(
+        archive.project_json().unwrap(),
+        allowed_archive.project_json().unwrap()
+    );
     assert_eq!(
         fs::read(root.join("package/media/sound.wav")).unwrap(),
         fs::read(root.join("sound.wav")).unwrap()

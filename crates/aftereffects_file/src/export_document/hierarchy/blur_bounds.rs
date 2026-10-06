@@ -9,7 +9,7 @@ use crate::export_document::AnimationIndex;
 
 pub(super) fn has_dynamics(records: &[EffectRecord], dynamics: &AnimationIndex<'_>) -> bool {
     records.iter().any(|record| {
-        matches!(record.data(), EffectData::Identified { id, enabled: true, effect: EffectPayload::Known(LayerEffect::GaussianBlur { .. }) }
+        matches!(record.data(), EffectData::Identified { id, enabled: true, effect: EffectPayload::Known(LayerEffect::GaussianBlur { .. }), .. }
             if dynamics.iter().any(|entry| matches!(&entry.target,
                 PropertyTarget::EffectProperty(target) if target.effect_id() == *id)))
     })

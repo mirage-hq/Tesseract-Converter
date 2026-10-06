@@ -95,10 +95,13 @@ use std::{
     path::PathBuf,
 };
 pub(crate) use still::{
-    PrMediaKind, STILL_CODEC_TYPE, STILL_INTRINSIC_TICKS, STILL_STRAIGHT_ALPHA_TYPE,
+    OpenExrChannels, PrMediaKind, OPENEXR_ALPHA_TYPE, OPENEXR_CODEC_TYPE, STILL_CODEC_TYPE,
+    STILL_INTRINSIC_TICKS, STILL_STRAIGHT_ALPHA_TYPE,
 };
 pub(crate) use text::PrText;
-pub(crate) use timeline::{check_track_matte, linear_tail_within_media, source_span_matches};
+pub(crate) use timeline::{
+    check_track_matte, linear_tail_within_media, source_span_matches, track_matte_provider,
+};
 
 pub(crate) use timing::{seconds, SourceFrameRate, VideoOrientation, TICKS, TICKS_PER_MILLISECOND};
 pub use timing::{FrameRate, NativeFrameRate};
@@ -303,7 +306,7 @@ impl PrVideoTrack {
     pub(crate) fn clip_mut(&mut self, index: usize) -> &mut PrVideoOccurrence {
         match &mut self.items[index] {
             PrVideoItem::Media(clip) => clip,
-            PrVideoItem::Graphic(_) => panic!("test item is media"),
+            PrVideoItem::Graphic(_) | PrVideoItem::Capsule(_) => panic!("test item is media"),
         }
     }
 }
@@ -315,6 +318,35 @@ pub enum PrVideoItem {
     Media(PrVideoOccurrence),
     /// A Type-tool graphic that holds editable text.
     Graphic(PrGraphic),
+    /// Saved native Capsule content, imported as a full editable FX picture.
+    Capsule(PrCapsule),
+}
+
+/// Capsule placement metadata and its qualified instance-only native source.
+/// This is converter-internal state, never persisted as a replay payload.
+#[derive(Debug, Clone)]
+pub struct PrCapsule {
+    pub(crate) placement: PrGraphic,
+    pub(crate) source_out_ticks: i64,
+    pub(crate) motion_animations: Vec<PrPropertyAnimation>,
+    pub(crate) source: std::sync::Arc<crate::capsule::picture::PictureSource>,
+}
+
+impl PrCapsule {
+    pub(crate) fn validate(&self) -> crate::error::Result<()> {
+        crate::error::ensure!(
+            self.placement.start_ticks >= 0
+                && self.placement.end_ticks > self.placement.start_ticks
+                && self.placement.in_ticks >= 0
+                && self.source_out_ticks > self.placement.in_ticks,
+            "invalid Capsule timeline/source ranges"
+        );
+        self.placement.clip_motion.validate()?;
+        if let Some(mask) = &self.placement.opacity_mask {
+            mask.validate()?;
+        }
+        Ok(())
+    }
 }
 
 impl PrVideoItem {
@@ -323,6 +355,7 @@ impl PrVideoItem {
         match self {
             Self::Media(clip) => clip.id(),
             Self::Graphic(graphic) => graphic.id(),
+            Self::Capsule(capsule) => capsule.placement.id(),
         }
     }
 
@@ -331,20 +364,21 @@ impl PrVideoItem {
         match self {
             Self::Media(clip) => clip.timeline_ticks(),
             Self::Graphic(graphic) => graphic.timeline_ticks(),
+            Self::Capsule(capsule) => capsule.placement.timeline_ticks(),
         }
     }
 
     pub(crate) fn media(&self) -> Option<&PrVideoOccurrence> {
         match self {
             Self::Media(clip) => Some(clip),
-            Self::Graphic(_) => None,
+            Self::Graphic(_) | Self::Capsule(_) => None,
         }
     }
 
     pub(crate) fn graphic(&self) -> Option<&PrGraphic> {
         match self {
             Self::Graphic(graphic) => Some(graphic),
-            Self::Media(_) => None,
+            Self::Media(_) | Self::Capsule(_) => None,
         }
     }
 
@@ -595,12 +629,44 @@ impl PrMedia {
     }
 }
 
-/// Observed static Stroke geometry admitted on an opaque physical picture.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Converter-local Stroke recipe and independently retained controls.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum PrFilmImpactStroke {
     Outline99,
     Outline100,
     Frame99,
+    Approximate {
+        prescale: f64,
+        hide_source: bool,
+        opacity: f64,
+    },
+}
+
+impl PrFilmImpactStroke {
+    pub(crate) fn prescale(self) -> f64 {
+        match self {
+            Self::Outline100 => 100.0,
+            Self::Outline99 | Self::Frame99 => 99.0,
+            Self::Approximate { prescale, .. } => prescale,
+        }
+    }
+
+    pub(crate) fn hides_source(self) -> bool {
+        matches!(
+            self,
+            Self::Approximate {
+                hide_source: true,
+                ..
+            }
+        )
+    }
+
+    pub(crate) fn opacity(self) -> f64 {
+        match self {
+            Self::Approximate { opacity, .. } => opacity,
+            _ => 100.0,
+        }
+    }
 }
 
 /// One supported video occurrence and its referenced source.
@@ -702,10 +768,9 @@ pub(crate) const SOURCE_CHAIN_NOT_CONVERTED: &str = "VideoComponentChain not con
 /// or nest placement: Premiere keys the placement's source frame by one
 /// channel of the output of another video track at the same sequence time,
 /// and does not draw the matte clip while it is consumed (fixture G1). The
-/// matte track holds exactly one enabled item whose timeline range equals the
-/// placement's ([`check_track_matte`]); Premiere shows a longer
-/// matte clip outside the placement's range, which FX never does, so a matte
-/// item with any other range fails closed.
+/// matte track holds one enabled, unambiguous overlapping provider
+/// ([`check_track_matte`]). Import binds its own identity and source clock;
+/// where coverage is partial, only the covered consumer window is retained.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PrTrackMatte {
     /// Index of the matte track, strictly above the placement's own track.

@@ -1408,6 +1408,25 @@ pub(super) fn all_time_layer_bounds(
     }
 }
 
+pub(super) fn mosaic_constant_raw_geometry_in_interval(
+    layers: &[Layer],
+    range: fx_schema::TimeRangeProperty,
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+    canvas: fx_schema::Dimensions,
+    rate: crate::timing::FrameRate,
+    structural_parent: Option<LayerId>,
+) -> Result<Option<Bounds>, &'static str> {
+    let interval = SourceInterval::new(range, rate)
+        .map_err(|_| "Mosaic interval exceeds the native property clock")?;
+    animated_bounds::constant_raw_geometry_union_in_interval(
+        layers,
+        dynamics,
+        canvas,
+        interval,
+        structural_parent,
+    )
+}
+
 fn child_union(
     group: &GroupLayer,
     resolved_media: &BTreeMap<String, media::ResolvedMediaSource>,

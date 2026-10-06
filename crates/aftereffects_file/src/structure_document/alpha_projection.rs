@@ -277,6 +277,7 @@ fn full_gray_tint(effect: &EffectRecord, entries: &[AnimationGraphEntry]) -> boo
                 white_b,
                 amount,
             }),
+        ..
     } = effect.data()
     else {
         return false;
@@ -1142,6 +1143,8 @@ mod tests {
                     white_b: None,
                     amount: Some(amount),
                 }),
+                compositing_options: None,
+                extensions: Default::default(),
             })
             .unwrap()
         };

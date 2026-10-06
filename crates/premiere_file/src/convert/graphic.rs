@@ -50,9 +50,11 @@
 //! calibrated form ([`group_background`]); any other is reported and the text
 //! still exports.
 
+#[cfg(test)]
 mod capsule;
+mod capsule_picture;
+pub(super) use capsule_picture::import_capsule;
 mod contours;
-pub(crate) use capsule::template_objects;
 
 use self::contours::ContourRole;
 use super::{
@@ -70,7 +72,10 @@ use super::{
         rgb, scale_tracks_match, text_document, text_object, unexported_layer_fields, ClipLayer,
         WrittenAnimation,
     },
-    text::{automatic_line_spacing, STROKE_WIDTH_RATIO},
+    text::{
+        automatic_line_spacing, glyph_interior, is_outline_only, OUTLINE_ONLY_GLYPH_CUTOUT,
+        STROKE_WIDTH_RATIO,
+    },
     text_shadow,
 };
 use crate::{
@@ -112,6 +117,14 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Text Scale and Opacity and Vector Motion Scale and Rotation.
 const BEZIER_KEYS_UNVERIFIED: &str =
     "Bezier graphic keys are unsupported until their speed unit is verified";
+
+const OUTLINE_ONLY_MASK_UNSUPPORTED: &str = "outline-only text was not imported as Mask with Text: Premiere's outside stroke and FX's centered doubled-width stroke have different alpha coverage";
+
+fn has_outline_only_document(text: &PrText) -> bool {
+    std::iter::once(&text.document)
+        .chain(text.source_text_keys.iter().map(|key| &key.document))
+        .any(is_outline_only)
+}
 
 /// Whether the parameter of `specs` that keys `property` holds cubic Bezier
 /// easing ([`BEZIER_KEYS_UNVERIFIED`]).
@@ -183,6 +196,8 @@ pub(super) fn import_graphic(
     }
     let motion = graphic.vector_motion.as_ref();
     // Only the caption reader sets a background, on a graphic of one text.
+    // It paints on this outer Group before the object layers. In particular,
+    // an outline child's glyph matte cannot cut holes in the background.
     let background = match graphic.objects.as_slice() {
         [PrGraphicObject::Text(text)] => text.document.background,
         _ => None,
@@ -586,10 +601,28 @@ impl ObjectImport<'_, '_, '_, '_> {
         };
         match object {
             PrGraphicObject::Text(text) => {
-                let mut layer = text_layer(graphic, text, id, self.index)?;
+                let needs_cutout = has_outline_only_document(text) && text.mask_source.is_none();
+                let paint_id = if needs_cutout {
+                    next_layer_id(self.scope)
+                } else {
+                    id
+                };
+                let mut layer = text_layer(graphic, text, paint_id, self.index)?;
                 // What of the text does not import, reported once whether
                 // it can keep a mask is known.
                 let mut parts = Vec::new();
+                if has_outline_only_document(text) {
+                    if text.mask_source.is_some() {
+                        omit(
+                            &mut parts,
+                            OmissionScope::Feature,
+                            record,
+                            OUTLINE_ONLY_MASK_UNSUPPORTED,
+                        );
+                    } else {
+                        approximate(&mut parts, record, OUTLINE_ONLY_GLYPH_CUTOUT);
+                    }
+                }
                 layer.effects.extend(text_shadow::import_text_shadow(
                     text,
                     motion,
@@ -607,12 +640,33 @@ impl ObjectImport<'_, '_, '_, '_> {
                     record,
                     &mut parts,
                 );
-                tracks.extend(source_text_tracks(
-                    text,
-                    graphic.in_ticks,
-                    id,
-                    &mut layer.source_text,
-                )?);
+                let mut text_tracks =
+                    source_text_tracks(text, graphic.in_ticks, paint_id, &mut layer.source_text)?;
+                let cutout = if needs_cutout {
+                    // Point-block alignment belongs to the common placement, not
+                    // just the painted child, when keyed layout moves the baseline.
+                    for (property, _) in &mut text_tracks {
+                        if property.property_type() == PropType::AnchorPointY {
+                            *property = Property::new(id, PropType::AnchorPointY);
+                        }
+                    }
+                    let guide = glyph_interior(text);
+                    let mut guide_layer =
+                        text_layer(graphic, &guide, next_layer_id(self.scope), self.index)?;
+                    let guide_tracks = source_text_tracks(
+                        &guide,
+                        graphic.in_ticks,
+                        guide_layer.id,
+                        &mut guide_layer.source_text,
+                    )?;
+                    tracks.extend(guide_tracks.into_iter().filter(|(property, _)| {
+                        property.property_type() != PropType::AnchorPointY
+                    }));
+                    Some(guide_layer)
+                } else {
+                    None
+                };
+                tracks.extend(text_tracks);
                 if let Some(lost) = lost_mask_parts(text.mask_source, parts, self.omissions) {
                     return Ok(ObjectLayerImport::Unrendered(format!(
                         "{:?}: a Mask with Text draws what did not convert ({lost}), so it would mask differently",
@@ -632,10 +686,12 @@ impl ObjectImport<'_, '_, '_, '_> {
                     &mut layer.is_hidden,
                     &mut layer.active_range,
                 );
-                Ok(ObjectLayerImport::Kept(Box::new((
-                    LayerData::Text(layer),
-                    None,
-                ))))
+                let layer = if let Some(cutout) = cutout {
+                    LayerData::Group(outside_stroke_group(layer, cutout, id)?)
+                } else {
+                    LayerData::Text(layer)
+                };
+                Ok(ObjectLayerImport::Kept(Box::new((layer, None))))
             }
             PrGraphicObject::Shape(shape) => {
                 let mut layer = shape_layer(graphic, shape, id, self.index)?;
@@ -818,6 +874,47 @@ pub(super) fn import_moved_graphic(
     }))?))
 }
 
+/// Keep placement, fades and clocks common to the painted text and its glyph
+/// interior guide. The guide is consumed as a matte, never as visible fill.
+fn outside_stroke_group(
+    mut paint: TextLayer,
+    mut interior: TextLayer,
+    id: LayerId,
+) -> Result<GroupLayer> {
+    let child_range = TimeRangeProperty::new(Time::ZERO, paint.active_range.duration);
+    let transform = std::mem::replace(&mut paint.transform, identity_transform());
+    let mut group = plain_group(
+        id,
+        paint.name.clone(),
+        paint.active_range,
+        transform,
+        Vec::new(),
+    )?;
+    group.parent = paint.parent;
+    group.is_hidden = paint.is_hidden;
+    group.blend_mode = paint.blend_mode;
+    group.motion_blur = paint.motion_blur;
+    group.effects = std::mem::take(&mut paint.effects);
+    interior.name = format!("{} glyph interior", paint.name);
+    paint.track_matte = Some(TrackMatte {
+        layer: interior.id,
+        mode: TrackMatteType::AlphaInverted,
+    });
+    for child in [&mut paint, &mut interior] {
+        child.parent = Some(id);
+        child.is_hidden = false;
+        child.active_range = child_range;
+        child.transform = identity_transform();
+        child.blend_mode = BlendMode::Normal;
+        child.motion_blur = false;
+    }
+    group.layers = vec![
+        Layer::from_data(&LayerData::Text(paint))?,
+        Layer::from_data(&LayerData::Text(interior))?,
+    ];
+    Ok(group)
+}
+
 /// One common owner applies the source object's transform, opacity and shadow
 /// after its independently editable lines have been laid out in local pixels.
 struct TextBlockPlacement {
@@ -880,9 +977,25 @@ fn import_text_lines(
         layer.parent = Some(placement.id);
         layer.is_hidden = false;
         layer.active_range = TimeRangeProperty::new(Time::ZERO, layer.active_range.duration);
-        layers.push(Layer::from_data(&LayerData::Text(layer))?);
+        let layer = if is_outline_only(&object.document) {
+            let id = layer.id;
+            layer.id = next_layer_id(scope);
+            let cutout = text_layer(
+                graphic,
+                &glyph_interior(&object),
+                next_layer_id(scope),
+                line,
+            )?;
+            LayerData::Group(outside_stroke_group(layer, cutout, id)?)
+        } else {
+            LayerData::Text(layer)
+        };
+        layers.push(Layer::from_data(&layer)?);
     }
     let record = graphic.id().unwrap_or("graphic");
+    if text.documents.iter().any(is_outline_only) {
+        approximate(omissions, record, OUTLINE_ONLY_GLYPH_CUTOUT);
+    }
     set_tracks(
         dynamics,
         object_tracks(

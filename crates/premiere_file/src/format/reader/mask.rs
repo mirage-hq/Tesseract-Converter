@@ -108,10 +108,6 @@ pub(super) fn read_opacity_mask(
             if input.value.name.as_deref() == spec.name
                 && input.value.class_id.as_deref() == Some(spec.class_id)
                 && input.value.parameter_control_type.as_deref() == spec.control
-                && (
-                    input.value.lower_bound.clone(),
-                    input.value.upper_bound.clone(),
-                ) == spec.bounds(form)
                 && scalar_start(&input.value.start_keyframe, &input.identity)? == OBJECT_MASK_TYPE
             {
                 object_mask = true;
@@ -254,10 +250,6 @@ pub(super) fn read_opacity_mask(
         ensure!(
             input.value.class_id.as_deref() == Some(spec.class_id)
                 && input.value.parameter_control_type.as_deref() == spec.control
-                && (
-                    input.value.lower_bound.clone(),
-                    input.value.upper_bound.clone()
-                ) == spec.bounds(form)
                 && input.value.lower_ui_bound.as_deref() == spec.lower_ui
                 && input.value.upper_ui_bound.as_deref() == spec.upper_ui,
             "{}: unexpected {label} layout",

@@ -365,3 +365,161 @@ fn capsule_unsupported_numeric_override_retains_native_property_and_binding_guar
             .is_err()
     );
 }
+
+#[test]
+fn capsule_picture_numeric_snapshot_reaches_the_full_editable_mapper() {
+    let template = SavedGraphicTemplate::decode(NATIVE).unwrap();
+    let original = template.source().clone();
+    let opacity = native_controller(&template, "ADBE Opacity");
+    let (mut instance, composition, _) = template.instantiate(&[&opacity.uuid]).unwrap();
+    // This API uses native units: AEP Transform Opacity stores a fraction.
+    instance
+        .apply_numeric(&opacity.uuid, &SavedGraphicNumeric::Scalar(0.37))
+        .unwrap();
+    let mut picture = instance
+        .import_editable_picture(
+            std::path::Path::new("native.aep"),
+            composition,
+            100,
+            "capsule-snapshot",
+            &[],
+        )
+        .unwrap();
+    let document = picture.take_document().unwrap();
+    fn has_opacity(layers: &[fx_schema::Layer]) -> bool {
+        layers.iter().any(|layer| {
+            matches!(layer.data(), fx_schema::LayerData::Group(group)
+            if group.transform.opacity.value() == 37.0 || has_opacity(&group.layers))
+        })
+    }
+    assert!(
+        has_opacity(document.composition().layers()),
+        "picture: {}",
+        serde_json::to_string(&document).unwrap()
+    );
+    assert_eq!(template.source(), &original);
+}
+
+#[test]
+fn capsule_picture_saved_child_text_uses_native_identity_not_layer_names() {
+    // Supplemental typed assembly of two unchanged native fixture payloads.
+    // This tests the validated Text hook, not an independently authored oracle.
+    let mut template = SavedGraphicTemplate::decode(include_bytes!(
+        "../../../tests/fixtures/layers/import_precomp_structure.aep"
+    ))
+    .unwrap();
+    let point = SavedGraphicTemplate::decode(include_bytes!(
+        "../../../tests/fixtures/pr4442_native/sources/text_document_point.aep"
+    ))
+    .unwrap();
+    let ItemKind::Composition(source) = &point
+        .project
+        .items
+        .iter()
+        .find(|item| matches!(&item.kind, ItemKind::Composition(_)))
+        .unwrap()
+        .kind
+    else {
+        panic!()
+    };
+    let text_layer = source
+        .layers
+        .iter()
+        .find(|layer| layer.record.layer_type() == 3)
+        .unwrap()
+        .clone();
+    let layer_id = text_layer.record.id();
+    let ItemKind::Composition(child) = &mut template
+        .project
+        .items
+        .iter_mut()
+        .find(|item| item.id == 1)
+        .unwrap()
+        .kind
+    else {
+        panic!()
+    };
+    child.layers = vec![text_layer];
+    let ItemKind::Composition(parent) = &mut template
+        .project
+        .items
+        .iter_mut()
+        .find(|item| item.id == 31)
+        .unwrap()
+        .kind
+    else {
+        panic!()
+    };
+    parent
+        .essential_properties
+        .values
+        .push(essential::Controller {
+            uuid: "capsule-child-text".into(),
+            controller_type: 6,
+            source_comp_id: Some(1),
+            source_layer_id: Some(layer_id),
+            path: vec![
+                essential::SourcePropertyRef {
+                    match_name: "ADBE Text Properties".into(),
+                    child_index: None,
+                },
+                essential::SourcePropertyRef {
+                    match_name: "ADBE Text Document".into(),
+                    child_index: None,
+                },
+            ],
+        });
+    let mut saved = template.text("capsule-child-text").unwrap();
+    saved
+        .set_value("Saved child 🦊", "ArialMT", 48.0, false)
+        .unwrap();
+    let mut picture = template
+        .import_editable_picture(
+            std::path::Path::new("native.aep"),
+            31,
+            100,
+            "capsule-child",
+            &[saved.clone()],
+        )
+        .unwrap();
+    let document = picture.take_document().unwrap();
+    fn text_count(layers: &[fx_schema::Layer]) -> usize {
+        layers
+            .iter()
+            .map(|layer| match layer.data() {
+                fx_schema::LayerData::Group(group) => text_count(&group.layers),
+                fx_schema::LayerData::Text(text) => {
+                    assert_eq!(text.source_text.text, "Saved child 🦊");
+                    assert_eq!(text.source_text.font_size.value(), 48.0);
+                    1
+                }
+                _ => 0,
+            })
+            .sum()
+    }
+    assert_eq!(text_count(document.composition().layers()), 2);
+    let mut forged = saved.clone();
+    forged.layer_id += 1;
+    assert!(
+        template
+            .import_editable_picture(
+                std::path::Path::new("native.aep"),
+                31,
+                100,
+                "capsule-child",
+                &[forged]
+            )
+            .is_err()
+    );
+    assert!(
+        template
+            .import_editable_picture(
+                std::path::Path::new("native.aep"),
+                31,
+                100,
+                "capsule-child",
+                &[saved.clone(), saved]
+            )
+            .is_err()
+    );
+}

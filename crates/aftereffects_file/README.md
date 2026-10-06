@@ -89,8 +89,9 @@ does not establish font availability or pixel fidelity.
 ## Emitted Point Text bounds
 
 The bounds-only physical-font projection consumes the same Source Text documents
-as native lowering. Already-omitted continuous Tracking/FillColor remain diagnosed
-static-base approximations; supported Hold Tracking uses the emitted outline union.
+as native lowering. Continuous Tracking/FillColor authored-time values survive as
+editable Hold documents and use the emitted outline union. Between-key interpolation
+remains approximated. Actual-original and native fidelity for this mapping remain unproved.
 Unpainted whitespace contributes no enclosure but stays native editable Text.
 Three actual-case camera/Text profiles and a Tracking-edited minimal pair have
 bounded native acceptance and edit response. Candidate RGB scores, full-timeline
@@ -629,13 +630,32 @@ Dynamic/nonuniform placement and nonidentity internal scale retain explicit
 diagnostics. Straight spatial keys with one shared positive speed and zero
 tangents use vector-distance progress, preserving mirrored Position3D timing.
 
-Hard-edge Linear Wipes on finite planar raster Solids become editable projected
-canvas half-plane masks, with native Completion tracks and a bounded optional
-post-wipe normalized Geometry2 Anchor translation. Same-layer direct control
-aliases are copied into independent editable values or keys. Feather, mixed
-effect stacks and nondefault Transform controls remain unsupported. Angled
-completion normalization and edge rasterization are analytical approximations,
-with no native pixel-equivalence claim.
+Hard-edge Linear Wipes on finite planar raster Solids, dimension-matched
+composition sources, or continuously rasterized source-free Shape layers become
+editable projected finite-plane half-plane masks. A static, unskewed, invertible
+2D Shape owner with a complete static finite planar parent chain is inverse-mapped
+so the mask boundary remains on the composition plane after its emitted owner and
+parent Transforms; its vector paint stays under the original owner/style/opacity
+stages. Generated-camera composition normalization offsets apply only to
+unparented owners. Native Completion tracks and exact direct
+aliases are preferred; existing valid source-frame expression samples become
+independent editable keys. Finite native keys and easing are retained without a
+local key-count cap or easing-handle clamp; authored Completion key values must
+remain within 0–100, and the finite guide extent covers the native easing convex
+hull rather than imposing an easing-value cap. Effect declaration kinds, not
+the leaf's Integer storage flag alone, distinguish continuous sliders/fixed/angle/
+color/point controls from discrete checkbox/popups. Integer-encoded continuous
+controls can therefore feed the existing evaluator as either the expression target
+or a referenced dependency; unknown integer controls retain the conservative Hold
+requirement. A bounded trailing Geometry2 Anchor
+translation is consumed after a source-local mask; it remains unsupported for an
+inverse-mapped Shape composition plane. A leading Geometry2 does not block the independent Wipe,
+but its current footage-layer mapping remains separately omitted and diagnosed.
+Feather, nonadjacent mixed stacks, nondefault trailing Transform controls and
+Shape planes with dynamic or auto-oriented owner/parent geometry, incomplete
+parent chains, skewed owners or singular combined planes remain unsupported.
+Composition frame clipping, angled normalization and edge rasterization are
+analytical approximations, with no native pixel-equivalence claim.
 
 The black-composite / Lightness-alpha approximation requires grayscale paint or
 a full-strength grayscale Tint with equal channel tracks. Arbitrary media and
@@ -647,7 +667,7 @@ Existing FX Glow still approximates native Add / Behind with its current
 premultiplied-over halo composition. Native threshold extraction, alpha and
 blur-kernel behavior are not established. No new Glow implementation or full
 neon-title parity is claimed. Mixed shadow/matte
-Wipe stacks remain outside the isolated Solid Wipe profile above.
+Wipe stacks remain outside the isolated finite-source Wipe profile above.
 
 File-footage import now normalizes explicit Anchor XY by native source dimensions,
 using the same path as Solid/Composition anchors, while omitted anchors retain

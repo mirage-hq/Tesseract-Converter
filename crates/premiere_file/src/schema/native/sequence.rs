@@ -290,9 +290,9 @@ pub(crate) struct Sequence {
     pub(crate) persistent_group_container: RetainedOrSkipped<PersistentGroupContainer>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) track_groups: Option<TrackGroups>,
-    // Adobe's numeric local ID is not the ObjectUID used to select a sequence.
+    // Bin-local metadata is not the ObjectUID used to select a sequence.
     #[serde(rename = "ID", default, skip_serializing_if = "Option::is_none")]
-    pub(crate) local_id: Option<u64>,
+    pub(crate) local_id: Option<RetainedOrSkipped<u64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) name: Option<String>,
     #[serde(default, skip_serializing_if = "RetainedOrSkipped::is_skipped")]

@@ -67,6 +67,8 @@ pub(super) fn import(
             id,
             enabled: layer.record.flags().effects_active,
             effect: EffectPayload::Known(effect),
+            compositing_options: None,
+            extensions: Default::default(),
         }) {
             Ok(effect) => {
                 *next_id = candidate_id;

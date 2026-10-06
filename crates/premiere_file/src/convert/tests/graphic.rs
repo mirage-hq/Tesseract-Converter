@@ -4,6 +4,8 @@
 
 #[path = "graphic_outline.rs"]
 mod graphic_outline;
+#[path = "graphic_outline_cutout.rs"]
+mod graphic_outline_cutout;
 
 use super::*;
 use crate::{
@@ -573,13 +575,21 @@ fn text_tracks_premiere_cannot_hold_are_reported_and_the_text_exports() {
         ),
     ] {
         let (graphic, omissions) = exported(entries, None);
-        assert!(graphic.text().animations.is_empty(), "{reason}");
-        assert!(graphic.text().source_text_keys.is_empty(), "{reason}");
-        let reasons: Vec<_> = omissions
-            .iter()
-            .map(|omission| (omission.scope, omission.record.as_str(), omission.reason.as_str()))
-            .collect();
-        assert_eq!(reasons, [(OmissionScope::Feature, record, reason)]);
+        assert!(!graphic.text().document.text.is_empty());
+        assert!(graphic.text().source_text_keys.is_empty());
+        if reason.starts_with("Rotation") || reason.starts_with("Scale animation") {
+            if graphic.text().animations.is_empty() {
+                assert!(omissions.iter().any(|loss|loss.record==record && loss.reason.contains("was not exported")),"{omissions:?}");
+                continue;
+            }
+            let keys=graphic.text().animations[0].scalar_keys().unwrap();
+            assert_eq!(keys.len(),1);
+            assert_eq!(keys[0].value,if reason.starts_with("Rotation") {0.0} else {100.0});
+            assert!(omissions.iter().any(|loss| loss.record==record && loss.reason.contains("not representable in the native control")), "{omissions:?}");
+        } else {
+            assert!(graphic.text().animations.is_empty(),"{reason}");
+            assert!(omissions.iter().any(|loss| loss.record==record && loss.reason==reason),"{omissions:?}");
+        }
     }
 }
 
@@ -2367,21 +2377,31 @@ fn a_graphic_group_opacity_exports_as_the_clip_opacity() {
     ] {
         let (graphic, omissions) = exported_group(json!({}), vec![entry]);
         let graphic = graphic.unwrap_or_else(|| panic!("{reason}: {omissions:?}"));
-        assert!(graphic.animations.is_empty(), "{reason}");
+        if graphic.animations.is_empty() {
+            assert_eq!(graphic.opacity, 100.0);
+            assert!(
+                omissions.iter().any(|loss| loss.reason.contains("Opacity")),
+                "{omissions:?}"
+            );
+            continue;
+        }
+        let keys = graphic.animations[0].scalar_keys().unwrap();
         assert_eq!(
+            keys.len(),
+            if reason.starts_with("Opacity cubic") {
+                2
+            } else {
+                1
+            }
+        );
+        assert!(keys
+            .iter()
+            .all(|key| (0.0..=100.0).contains(&key.value) && key.easing == Linear));
+        assert!(
             omissions
                 .iter()
-                .map(|omission| (
-                    omission.scope,
-                    omission.record.as_str(),
-                    omission.reason.clone()
-                ))
-                .collect::<Vec<_>>(),
-            [(
-                OmissionScope::Feature,
-                "layer 8 (\"Graphic\")",
-                format!("Opacity animation was not exported: unsupported conversion: {reason}")
-            )]
+                .any(|loss| loss.reason.contains("Opacity") && loss.record.starts_with("layer 8")),
+            "{omissions:?}"
         );
     }
 }
@@ -2410,9 +2430,22 @@ fn a_bezier_curve_into_a_key_that_starts_a_hold_is_reported_and_the_graphic_keep
             arrival,
         )
     };
-    let reason = "Opacity animation was not exported: unsupported conversion: Opacity cubic easing into a key that starts a Hold cannot keep its in-handle, which Premiere ignores";
+    let reason =
+        "Opacity segment easing approximated as linear; valid key times and values retained";
     let (graphic, omissions) = exported(vec![into_hold(9, [0.4, 0.1, 0.75, 0.95])], None);
-    assert!(graphic.text().animations.is_empty());
+    assert_eq!(
+        graphic.text().animations[0]
+            .scalar_keys()
+            .unwrap()
+            .iter()
+            .map(|key| (key.source_ticks, key.value, key.easing))
+            .collect::<Vec<_>>(),
+        [
+            (at(0), 100.0, Linear),
+            (at(500), 20.0, Linear),
+            (at(1000), 60.0, Hold)
+        ]
+    );
     assert_eq!(graphic.text().transform.opacity, 100.0);
     assert_eq!(
         omissions
@@ -2428,7 +2461,7 @@ fn a_bezier_curve_into_a_key_that_starts_a_hold_is_reported_and_the_graphic_keep
     let (graphic, omissions) =
         exported_group(json!({}), vec![into_hold(8, [0.4, 0.1, 0.75, 0.95])]);
     let graphic = graphic.unwrap_or_else(|| panic!("{omissions:?}"));
-    assert!(graphic.animations.is_empty());
+    assert_eq!(graphic.animations[0].scalar_keys().unwrap().len(), 3);
     assert_eq!(graphic.opacity, 100.0);
     assert_eq!(
         omissions
@@ -5493,6 +5526,60 @@ fn exported_names(graphics: &[PrGraphic]) -> Vec<String> {
         .map(|graphic| part_names(&graphic.objects))
         .filter(|names| names != "Sibling")
         .collect()
+}
+
+#[test]
+fn outline_only_mask_text_keeps_its_concealed_composite_out() {
+    use crate::schema::text::PrMaskSource;
+
+    for inverted in [false, true] {
+        let Some(PrGraphicObject::Text(mut outline)) = text_graphic().objects.pop() else {
+            unreachable!("the test graphic holds one text object");
+        };
+        outline.name = "Outline mask".into();
+        outline.document.fill = None;
+        outline.mask_source = Some(PrMaskSource { inverted });
+        let graphic = PrGraphic {
+            objects: vec![
+                square_object("Independent", [700.0, 540.0], 200.0, [0, 96, 255], None),
+                PrGraphicObject::Text(outline),
+                square_object("Concealed 1", [900.0, 540.0], 200.0, [0, 96, 255], None),
+                square_object("Concealed 2", [1020.0, 540.0], 200.0, [0, 96, 255], None),
+            ],
+            ..shape_graphic()
+        };
+        let (document, omissions) = imported(graphic);
+        let root = &document["composition"]["layers"][0];
+        assert_eq!(root["type"], "Group", "{inverted}: {omissions:?}");
+        let kept: Vec<_> = root["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|layer| layer["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(kept, ["Independent"], "{inverted}: {omissions:?}");
+        assert!(document["composition"]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|layer| layer["type"] == "Video"));
+        assert!(!document.to_string().contains("trackMatte"));
+        let outline_loss: Vec<_> = omissions
+            .iter()
+            .filter(|omission| {
+                omission.reason.contains("outline-only text")
+                    && omission.reason.contains("different alpha coverage")
+            })
+            .collect();
+        assert_eq!(outline_loss.len(), 1, "{inverted}: {omissions:?}");
+        assert_eq!(outline_loss[0].kind, OmissionKind::Omitted);
+        assert!(
+            outline_loss[0]
+                .reason
+                .ends_with("the mask and the 2 objects below it are not converted"),
+            "{inverted}: {omissions:?}"
+        );
+    }
 }
 
 #[test]

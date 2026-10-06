@@ -554,7 +554,7 @@ fn stale_out_allowance_is_one_frame_of_forward_unit_playback_within_the_media() 
     // played end.
     let empty = unit_span_xml([0, THIRTY_FPS_TICKS, 0, 0, 10 * THIRTY_FPS_TICKS]);
     assert!(
-        reason(&empty).contains("invalid timeline/source ranges"),
+        reason(&empty).contains("no physical source interval remains"),
         "{}",
         reason(&empty)
     );
@@ -580,10 +580,25 @@ fn stale_out_allowance_is_one_frame_of_forward_unit_playback_within_the_media() 
             late.replace("<InPoint>", "<PlayBackwards>true</PlayBackwards><InPoint>"),
         ),
     ] {
-        let reason = reason(&xml);
+        let (project, notes) = inspect_project_with_omissions(&xml, None).unwrap();
+        let clip = project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .next()
+            .unwrap();
+        assert_eq!(clip.timeline_ticks(), start..end, "{case}");
+        assert!(clip.in_ticks >= 0 && clip.out_ticks <= intrinsic);
+        assert!(crate::schema::source_span_matches(
+            end - start,
+            clip.out_ticks - clip.in_ticks,
+            clip.playback_rate
+        ));
         assert!(
-            reason.contains("source span does not match"),
-            "{case}: {reason}"
+            notes
+                .iter()
+                .any(|loss| loss.reason.contains("constant speed")),
+            "{case}: {notes:?}"
         );
     }
     // The played end, not the saved Out, must lie within the media: the

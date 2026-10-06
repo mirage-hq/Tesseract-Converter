@@ -582,7 +582,10 @@ impl ProjectIds {
         for item in sequence.video_items() {
             let occurrence = match item {
                 PrVideoItem::Media(occurrence) => occurrence,
-                PrVideoItem::Graphic(graphic) => {
+                PrVideoItem::Graphic(graphic)
+                | PrVideoItem::Capsule(crate::schema::PrCapsule {
+                    placement: graphic, ..
+                }) => {
                     flat_placements.push(ItemIds::Graphic(GraphicIds::allocate(&mut ids, graphic)));
                     continue;
                 }
@@ -868,9 +871,10 @@ impl SequenceGraphIds {
                     PrVideoItem::Media(occurrence) => {
                         ItemIds::Media(PlacementIds::allocate(ids, occurrence.into()))
                     }
-                    PrVideoItem::Graphic(graphic) => {
-                        ItemIds::Graphic(GraphicIds::allocate(ids, graphic))
-                    }
+                    PrVideoItem::Graphic(graphic)
+                    | PrVideoItem::Capsule(crate::schema::PrCapsule {
+                        placement: graphic, ..
+                    }) => ItemIds::Graphic(GraphicIds::allocate(ids, graphic)),
                 });
             }
             placements.push(track_ids);
@@ -1049,6 +1053,11 @@ pub(super) fn build(
             }
             (PrVideoItem::Graphic(graphic), ItemIds::Graphic(graphic_ids)) => {
                 records.extend(graphic::records(spec, graphic, graphic_ids)?);
+            }
+            (PrVideoItem::Capsule(_), _) => {
+                return Err(crate::format::invalid(
+                    "native Capsule replay/export is unsupported; import as editable FX instead",
+                ))
             }
             _ => unreachable!("ProjectIds allocates identities of each item's own kind"),
         }

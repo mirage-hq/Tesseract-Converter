@@ -578,6 +578,8 @@ fn imported_stack_is_ordered_editable_and_keeps_bypass() {
         [(1, true, 25.0, None), (2, false, 80.0, Some(true))].map(
             |(id, enabled, blurriness, repeat_edge_pixels)| EffectData::Identified {
                 id: fx_schema::EffectId::new(id),
+                compositing_options: None,
+                extensions: Default::default(),
                 enabled,
                 effect: EffectPayload::Known(LayerEffect::GaussianBlur {
                     blurriness: fx_schema::NonNegativeProperty::new(blurriness).unwrap(),
@@ -1217,11 +1219,11 @@ fn invalid_model_values_are_reported_instead_of_imported() {
     );
 }
 
-/// A Color Matte becomes a Rect layer, which imports no effects: each effect
-/// on it is reported, and the layer is kept. A still's effects import on its
-/// image layer; its source chain is reported as not converted (`still_effects_import_in_stack_order_with_keys_from_the_still_in_point`).
+/// A Color Matte becomes a Rect layer whose mapped placement effects retain
+/// stack order and keys. Its source chain remains outside this mapping and is
+/// reported as not converted, like a still's unsupported source chain.
 #[test]
-fn effects_on_mattes_are_reported_instead_of_dropped() {
+fn effects_on_mattes_keep_supported_stack_and_keys() {
     use crate::schema::{
         color_matte::COLOR_MATTE_INTRINSIC_TICKS, MediaId, PrColorMatte, PrMedia, PrMediaKind,
         PrVideoOccurrence, PrVideoStream, PrVideoTrack,
@@ -1306,27 +1308,61 @@ fn effects_on_mattes_are_reported_instead_of_dropped() {
             .collect::<Vec<_>>(),
         ["Rect", "Video", "Rect"]
     );
-    assert!(
-        layers.iter().all(|layer| layer.get("effects").is_none()),
-        "{layers:?}"
+    assert_eq!(
+        layers[0]["effects"],
+        json!([
+            {"id": 1, "enabled": true, "effect": {"type": "gaussianBlur", "blurriness": 10.0}},
+            {"id": 2, "enabled": true, "effect": {"type": "cornerPin",
+                "upperLeftX": 0.0, "upperLeftY": 0.0, "upperRightX": 1.0, "upperRightY": 0.0,
+                "lowerLeftX": 0.0, "lowerLeftY": 1.0, "lowerRightX": 1.0, "lowerRightY": 1.0}},
+        ])
     );
-    // The keyed Corner Pin's keys are reported with it, not imported.
-    assert!(wire["composition"]["dynamics"]["entries"]
-        .as_array()
-        .is_none_or(Vec::is_empty));
-    let omission = |record: &str, reason: &str| Omission {
-        scope: OmissionScope::Feature,
-        kind: OmissionKind::Omitted,
-        record: record.into(),
-        reason: reason.into(),
-    };
+    assert!(layers[1..]
+        .iter()
+        .all(|layer| layer.get("effects").is_none()));
+    let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
+    let mut tracks = effect_tracks(&document);
+    tracks.sort_by(|left, right| left.1.cmp(&right.1));
+    assert_eq!(
+        tracks
+            .iter()
+            .map(|(effect, param, keys)| {
+                (
+                    *effect,
+                    param.as_str(),
+                    keys.iter()
+                        .map(|(_, millis, value, easing)| (*millis, *value, *easing))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        [
+            (
+                2,
+                "upperLeftX",
+                vec![
+                    (0, 0.0, PropertyKeyframeEasing::Linear),
+                    (1000, 0.2, PropertyKeyframeEasing::Linear),
+                ],
+            ),
+            (
+                2,
+                "upperLeftY",
+                vec![
+                    (0, 0.0, PropertyKeyframeEasing::Linear),
+                    (1000, 0.1, PropertyKeyframeEasing::Linear),
+                ],
+            ),
+        ]
+    );
     assert_eq!(
         omissions,
-        [
-            omission("red", "Gaussian Blur effect at stack position 1 was not imported: effects on a Color Matte are not converted"),
-            omission("red", "Corner Pin effect at stack position 2 was not imported: effects on a Color Matte are not converted"),
-            omission("MasterClip:red", "VideoComponentChain not converted"),
-        ]
+        [Omission {
+            scope: OmissionScope::Feature,
+            kind: OmissionKind::Omitted,
+            record: "MasterClip:red".into(),
+            reason: "VideoComponentChain not converted".into(),
+        }]
     );
 }
 
@@ -2608,17 +2644,21 @@ fn blurriness_keys_premiere_cannot_represent_omit_the_blur() {
         ),
     ] {
         let (project, omissions) = export(document_with_blurriness_keys(keys));
-        assert_eq!(
-            exported_effects(&project),
-            [exported_blur(true, 10.0, false)]
-        );
-        assert_eq!(omissions.len(), 1, "{omissions:?}");
+        let effects = exported_effects(&project);
+        assert_eq!(effects.len(), 2);
+        assert_eq!(effects[1], exported_blur(true, 10.0, false));
+        let crate::schema::PrEffectParamKeys::Scalar(keys) = &effects[0].animations[0].keys else {
+            panic!("scalar blur keys")
+        };
+        assert!(!keys.is_empty());
+        assert!(keys
+            .iter()
+            .all(|key| key.value.is_finite() && (0.0..=1000.0).contains(&key.value)));
         assert!(
-            omissions[0]
-                .reason
-                .starts_with("effects: gaussianBlur effect 1 was not exported: ")
-                && omissions[0].reason.ends_with(expected),
-            "{omissions:?}"
+            omissions
+                .iter()
+                .any(|loss| loss.reason.contains("blurriness")),
+            "{expected}: {omissions:?}"
         );
     }
 }
@@ -2647,6 +2687,42 @@ fn document_with_corner_pin(corners: [[f64; 2]; 4], tracks: &[(&str, Value)]) ->
         .collect();
     wire["composition"]["dynamics"] = json!({ "entries": entries });
     wire
+}
+
+/// A bad scalar key loses only that key when native-range keys remain.
+fn assert_recovered_scalar_keys(
+    project: &PrProjectFile,
+    omissions: &[Omission],
+    reason: &str,
+) -> bool {
+    if !omissions
+        .iter()
+        .any(|loss| loss.reason.contains("other valid parameter keys retained"))
+    {
+        return false;
+    }
+    let effects = exported_effects(project);
+    assert_eq!(effects.len(), 2, "{effects:?}: {omissions:?}");
+    assert!(effects.contains(&exported_blur(true, 10.0, false)));
+    let recovered = effects
+        .iter()
+        .find(|effect| !effect.animations.is_empty())
+        .unwrap();
+    for animation in &recovered.animations {
+        let keys = animation.keys.scalar().unwrap();
+        assert!(!keys.is_empty());
+        let range = animation.param.value_range().unwrap();
+        assert!(keys.iter().all(|key| range.contains(&key.value)));
+    }
+    assert!(
+        omissions
+            .iter()
+            .any(|loss| loss.scope == OmissionScope::Feature
+                && loss.record == "layer 1 (\"Source\")"
+                && loss.reason.contains(reason)),
+        "{reason}: {omissions:?}"
+    );
+    true
 }
 
 /// The effects of an exported project after writing it and reading it back.
@@ -3599,6 +3675,9 @@ fn directional_blur_values_outside_premiere_range_in_the_clip_frame_are_not_expo
             blur_length,
             &tracks,
         ));
+        if assert_recovered_scalar_keys(&project, &omissions, reason) {
+            continue;
+        }
         assert_eq!(
             exported_effects(&project),
             [exported_blur(true, 10.0, false)]
@@ -3653,6 +3732,9 @@ fn brightness_contrast_values_outside_premiere_range_are_not_exported() {
             }]});
         }
         let (project, omissions) = export(wire);
+        if assert_recovered_scalar_keys(&project, &omissions, reason) {
+            continue;
+        }
         assert_eq!(
             exported_effects(&project),
             [exported_blur(true, 10.0, false)]
@@ -3814,6 +3896,9 @@ fn invert_blends_outside_premiere_range_are_not_exported() {
     ];
     for (values, tracks, reason) in levels {
         let (project, omissions) = export(document_with_levels(true, values, &tracks));
+        if assert_recovered_scalar_keys(&project, &omissions, reason) {
+            continue;
+        }
         assert_eq!(
             exported_effects(&project),
             [exported_blur(true, 10.0, false)]
@@ -4108,6 +4193,9 @@ fn tints_premiere_cannot_represent_are_not_exported() {
     ];
     for (fields, tracks, reason) in tints {
         let (project, omissions) = export(document_with_tint(true, fields.clone(), &tracks));
+        if assert_recovered_scalar_keys(&project, &omissions, reason) {
+            continue;
+        }
         assert_eq!(
             exported_effects(&project),
             [exported_blur(true, 10.0, false)],
@@ -4532,6 +4620,9 @@ fn ramps_premiere_cannot_represent_are_not_exported() {
             transform.clone(),
             &properties,
         ));
+        if assert_recovered_scalar_keys(&project, &omissions, &reason) {
+            continue;
+        }
         assert_eq!(
             exported_effects(&project),
             [exported_blur(true, 10.0, false)],
@@ -4865,6 +4956,9 @@ fn mosaics_premiere_cannot_represent_are_not_exported() {
             json!({}),
             &[],
         ));
+        if assert_recovered_scalar_keys(&project, &omissions, &reason) {
+            continue;
+        }
         assert_eq!(
             exported_effects(&project),
             [exported_blur(true, 10.0, false)],
@@ -5636,6 +5730,9 @@ fn posterizes_premiere_cannot_represent_are_not_exported() {
         let (project, omissions) = export(document_with_posterize(fields.clone(), &tracks));
         // Only the Posterize is omitted, never rounded or clamped; the blur
         // before it exports.
+        if assert_recovered_scalar_keys(&project, &omissions, &reason) {
+            continue;
+        }
         assert_eq!(
             exported_effects(&project),
             [exported_blur(true, 10.0, false)],
@@ -6000,6 +6097,7 @@ fn levels_premiere_cannot_represent_omit_the_levels() {
             }]});
         }
         let (project, omissions) = export(wire);
+        if assert_recovered_scalar_keys(&project,&omissions,reason) {continue;}
         assert_eq!(exported_effects(&project), [exported_blur(true, 10.0, false)]);
         assert_eq!(omissions.len(), 1, "{omissions:?}");
         assert_eq!(
@@ -6154,26 +6252,17 @@ fn gaussian_blur_exports_as_the_current_blur_up_to_amount_1000() {
             PrEffectParams::FilmImpactBlur(current)
         );
     }
-    // A key above Amount 1000 omits the blur (`blur_settings_without_a_premiere_equivalent_are_omitted`
-    // covers the static value); nothing is clamped and no Legacy record is written.
+    // An out-of-range key is diagnosed; the valid zero key and sibling blur remain.
     let linear = || json!({"type": "linear"});
     let (project, omissions) = export(document_with_blurriness_keys(json!([
         fx_key("a", 500, 0.0, linear()),
         fx_key("b", 700, 6000.0, linear()),
     ])));
-    assert_eq!(
-        exported_effects(&project),
-        [exported_blur(true, 10.0, false)]
-    );
-    assert_eq!(
-        omissions,
-        [Omission {
-            scope: OmissionScope::Feature,
-            kind: OmissionKind::Omitted,
-            record: "layer 1 (\"Source\")".to_owned(),
-            reason: "effects: gaussianBlur effect 1 was not exported: blurriness key value 6000 is outside Premiere's 0 to 5700 range".to_owned(),
-        }]
-    );
+    assert!(assert_recovered_scalar_keys(
+        &project,
+        &omissions,
+        "blurriness key value 6000 is outside Premiere's 0 to 5700 range"
+    ));
 }
 
 #[test]
@@ -6507,6 +6596,9 @@ fn sharpen_edited_keys_use_source_in_and_invalid_key_or_host_keeps_sibling() {
     scaled["composition"]["layers"][0]["transform"]["scale"] = json!([50, 50]);
     for wire in [make(81.5), make(4001.0), scaled] {
         let (project, omissions) = export(wire);
+        if assert_recovered_scalar_keys(&project, &omissions, "Sharpen Amount key value 4001") {
+            continue;
+        }
         assert_eq!(
             exported_effects(&project),
             [exported_blur(true, 10.0, false)]

@@ -2202,6 +2202,68 @@ fn graphic_objects_read_in_chain_order_and_one_object_composes_a_static_vector_m
 }
 
 #[test]
+fn nonintrinsic_shape_host_metadata_keeps_editable_path_and_fill() {
+    let xml = shape_xml(r#"<Component Index="0" ObjectRef="80"/>"#, FILL).replace(
+        "<DisplayName>Shape</DisplayName>",
+        "<Intrinsic>false</Intrinsic><Bypass>false</Bypass><DisplayName>Shape</DisplayName>",
+    );
+    let (project, mut omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let sequence = project.single_sequence().unwrap();
+    let graphic = graphic(&xml);
+    let [PrGraphicObject::Shape(shape)] = graphic.objects.as_slice() else {
+        panic!("expected the ordinary shape to survive");
+    };
+    assert_eq!(shape.name, "Box");
+    assert_eq!(shape.path.vertices.len(), 4);
+    assert_eq!(
+        shape.appearance.fill,
+        Some(PrFill::Solid(PrRgb([0, 96, 255])))
+    );
+
+    let document = crate::convert::premiere_to_tesseract(
+        sequence,
+        &project.media,
+        &crate::tesseract_output::asset_ids_in_order(sequence, &project.media),
+        &mut omissions,
+    )
+    .unwrap()
+    .to_json_value()
+    .unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let layer = &document["composition"]["layers"][0];
+    assert_eq!(layer["type"], "Shape");
+    assert_eq!(layer["name"], "Box");
+    assert_eq!(
+        layer["shape"]["path"]["commands"].as_array().unwrap().len(),
+        5
+    );
+    assert_eq!(
+        layer["shape"]["fills"][0]["paint"]["color"],
+        serde_json::json!([0.0, 96.0 / 255.0, 1.0, 1.0])
+    );
+}
+
+#[test]
+fn bypassed_nonintrinsic_shape_host_metadata_still_omits_the_shape() {
+    let xml = shape_xml(r#"<Component Index="0" ObjectRef="80"/>"#, FILL).replace(
+        "<DisplayName>Shape</DisplayName>",
+        "<Intrinsic>false</Intrinsic><Bypass>true</Bypass><DisplayName>Shape</DisplayName>",
+    );
+    let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+    let sequence = project.single_sequence().unwrap();
+    assert_eq!(sequence.video_items().count(), 1);
+    assert_eq!(sequence.video_occurrences().count(), 1);
+    assert!(omissions.iter().any(|omission| {
+        omission.scope == OmissionScope::Occurrence
+            && omission.record == "20"
+            && omission
+                .reason
+                .contains("VideoFilterComponent:80: a bypassed graphic object is unsupported")
+    }));
+}
+
+#[test]
 fn a_gradient_shape_reads_under_any_transform_and_with_its_shadow() {
     use crate::format::shape_payload::{decode_appearance, encode_appearance};
     use crate::schema::{
@@ -2443,6 +2505,116 @@ fn unequal_graphic_spans_reject_each_animation_clock() {
 }
 
 #[test]
+fn modern_static_text_inactive_width_keeps_uniform_scale_and_active_width() {
+    // The binary Source Text payload and complete parameter layout select the
+    // current Text profile. Keep a supported Scale animation to prove that an
+    // unrelated static width does not flatten the object's editable controls.
+    let scale = 80.0;
+    let width = 94.791_671_752_93;
+    let uniform = keyed(
+        &text_only_xml()
+            .replace(
+                "<ParameterID>4</ParameterID><StartKeyframe>-91445760000000000,100.,",
+                &format!("<ParameterID>4</ParameterID><StartKeyframe>-91445760000000000,{scale},"),
+            )
+            .replace(
+                "<ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,100.,",
+                &format!("<ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,{width},"),
+            ),
+        44,
+        TWO_SCALAR_KEYS,
+    );
+    let expected_document = decode(&STANDARD.decode(BEFORE).unwrap()).unwrap().document;
+    let assert_text = |input: &str,
+                       expected_width: Option<f64>,
+                       expected_scale: [f64; 2],
+                       expected_approximation: Option<&str>| {
+        let (project, mut omissions) = inspect_project_with_omissions(input, None).unwrap();
+        if let Some(expected) = expected_approximation {
+            assert_eq!(omissions.len(), 1, "{omissions:?}");
+            assert_eq!(omissions[0].kind, OmissionKind::Approximated);
+            assert_eq!(omissions[0].scope, OmissionScope::Feature);
+            assert!(omissions[0].reason.contains(expected), "{omissions:?}");
+        } else {
+            assert!(omissions.is_empty(), "{omissions:?}");
+        }
+        let sequence = project.single_sequence().unwrap();
+        let text = sequence
+            .video_items()
+            .find_map(PrVideoItem::graphic)
+            .unwrap()
+            .text();
+        assert_eq!(text.name, "Before label");
+        assert_eq!(text.document, expected_document);
+        assert_eq!(text.horizontal_scale, expected_width);
+        assert_eq!(text.transform.position, [1440.0, 540.0]);
+        assert_eq!(text.transform.scale, scale);
+        let [PrPropertyAnimation::UniformScale(keys)] = text.animations.as_slice() else {
+            panic!(
+                "expected the supported Scale keys, got {:?}",
+                text.animations
+            );
+        };
+        assert_eq!(
+            keys.iter().map(|key| key.value).collect::<Vec<_>>(),
+            [100.0, 120.0]
+        );
+
+        let document = crate::convert::premiere_to_tesseract(
+            sequence,
+            &project.media,
+            &crate::tesseract_output::asset_ids_in_order(sequence, &project.media),
+            &mut omissions,
+        )
+        .unwrap()
+        .to_json_value()
+        .unwrap();
+        assert_eq!(
+            omissions.len(),
+            1 + usize::from(expected_approximation.is_some()),
+            "{omissions:?}"
+        );
+        assert!(
+            omissions.iter().any(|omission| {
+                omission.scope == OmissionScope::Feature
+                    && omission
+                        .reason
+                        .contains("font \"OpenSans-Bold\" is not packaged")
+            }),
+            "{omissions:?}"
+        );
+        let layer = &document["composition"]["layers"][0];
+        assert_eq!(layer["type"], "Text");
+        assert_eq!(layer["name"], "Before label");
+        assert_eq!(
+            layer["transform"]["position"],
+            serde_json::json!([1440.0, 540.0])
+        );
+        assert_eq!(
+            layer["transform"]["scale"],
+            serde_json::json!(expected_scale)
+        );
+    };
+
+    assert_text(&uniform, None, [scale, scale], None);
+    let inactive_out_of_range = uniform.replace(
+        &format!("<ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,{width},"),
+        "<ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,4000.5,",
+    );
+    assert_text(
+        &inactive_out_of_range,
+        None,
+        [scale, scale],
+        Some("inactive Horizontal Scale value 4000.5 is outside native bounds and is discarded"),
+    );
+    let nonuniform = uniform.replace(
+        "<ParameterID>6</ParameterID><StartKeyframe>-91445760000000000,true,",
+        "<ParameterID>6</ParameterID><StartKeyframe>-91445760000000000,false,",
+    );
+    assert_text(&nonuniform, Some(width), [width, scale], None);
+}
+
+#[test]
 fn unsupported_graphics_are_omitted_without_losing_other_occurrences() {
     let legacy = "AgAAAAAAAAB7AH0A";
     // Leading below -0.4 em spaces lines closer than the FX renderer can render.
@@ -2597,11 +2769,16 @@ fn unsupported_graphics_are_omitted_without_losing_other_occurrences() {
             "MasterClip:graphic-master: multiple source clips unsupported",
         ),
         (
-            graphic_xml(BEFORE).replace(
-                "<Name>Horizontal Scale</Name><ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,100.,",
-                "<Name>Horizontal Scale</Name><ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,80.,",
-            ),
-            "Horizontal Scale under Uniform Scale is unverified",
+            graphic_xml(BEFORE)
+                .replace(
+                    "<Name>Horizontal Scale</Name><ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,100.,",
+                    "<Name>Horizontal Scale</Name><ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,4000.5,",
+                )
+                .replace(
+                    "<Name> </Name><ParameterID>6</ParameterID><StartKeyframe>-91445760000000000,true,",
+                    "<Name> </Name><ParameterID>6</ParameterID><StartKeyframe>-91445760000000000,false,",
+                ),
+            "graphic scale is outside its native bounds",
         ),
         (
             graphic_xml(BEFORE).replace(
@@ -3743,13 +3920,6 @@ fn legacy_static_text_admission_keeps_layout_scale_animation_and_fixed_guards() 
             "modern short layout",
             text_only_xml().replace(r#"<Param Index="21" ObjectRef="62"/>"#, ""),
         ),
-        (
-            "modern nondefault width",
-            text_only_xml().replace(
-                "<ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,100.,",
-                "<ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,37.5,",
-            ),
-        ),
     ];
     for id in [2, 10, 11, 12, 15, 16, 17, 18, 19, 20, 21] {
         let old = format!("<ParameterID>{id}</ParameterID><StartKeyframe>-91445760000000000,");
@@ -3967,6 +4137,100 @@ fn legacy_layout_and_unmapped_styles_keep_editable_text_paint_and_video_sibling(
         .unwrap()
         .to_string()
         .contains("JsScript"));
+}
+
+#[test]
+fn legacy_outline_only_text_clips_glyph_interior_and_keeps_editable_stroke_and_sibling() {
+    use crate::tests::support::{legacy_run, legacy_source_text, legacy_source_text_payload};
+    use serde_json::json;
+
+    // A reduced public native-record scaffold with the same enabled white
+    // width-3 stroke and disabled fill as the affected legacy labels.
+    let mut text = legacy_source_text();
+    let style = &mut text["mTextParam"]["mStyleSheet"];
+    style["mFillVisible"] = legacy_run(json!(false));
+    style["mStrokeVisible"] = legacy_run(json!(true));
+    style["mStrokeColor"] = legacy_run(json!(0xff_ffff));
+    style["mStrokeWidth"] = legacy_run(json!(3));
+    let xml = graphic_xml(&STANDARD.encode(legacy_source_text_payload(&text.to_string())))
+        .replace(TWO_COMPONENTS, r#"<Component Index="0" ObjectRef="40"/>"#);
+    let (project, mut omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+    let sequence = project.single_sequence().unwrap();
+    let native = sequence
+        .video_items()
+        .find_map(PrVideoItem::graphic)
+        .unwrap()
+        .text();
+    assert_eq!(native.document.fill, None);
+    assert_eq!(native.document.stroke.unwrap().width, 3.0);
+
+    let document = crate::convert::premiere_to_tesseract(
+        sequence,
+        &project.media,
+        &crate::tesseract_output::asset_ids_in_order(sequence, &project.media),
+        &mut omissions,
+    )
+    .unwrap()
+    .to_json_value()
+    .unwrap();
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    assert!(layers.iter().any(|layer| layer["type"] == "Video"));
+    let group = layers
+        .iter()
+        .find(|layer| layer["type"] == "Group")
+        .unwrap();
+    assert_eq!(
+        group["playback"]["inputRange"],
+        json!({"start": 1000, "duration": 2000})
+    );
+    let children = group["layers"].as_array().unwrap();
+    assert_eq!(children.len(), 2);
+    let outline = &children[0];
+    let interior = &children[1];
+    assert_eq!(outline["type"], "Text");
+    assert_eq!(outline["trackMatte"]["mode"], "alphaInverted");
+    assert_eq!(outline["trackMatte"]["layer"], interior["id"]);
+    assert_eq!(
+        outline["activeRange"],
+        json!({"start": 0, "duration": 2000})
+    );
+    assert_eq!(outline["activeRange"], interior["activeRange"]);
+    assert_eq!(outline["parent"], group["id"]);
+    assert_eq!(interior["parent"], group["id"]);
+    assert_eq!(outline["transform"], interior["transform"]);
+    assert_eq!(outline["transform"]["opacity"], 100.0);
+    assert_eq!(interior["sourceText"]["applyFill"], true);
+    assert_eq!(interior["sourceText"]["applyStroke"], false);
+    for field in [
+        "text",
+        "fontFamily",
+        "fontSize",
+        "boxSize",
+        "leading",
+        "tracking",
+    ] {
+        assert_eq!(outline["sourceText"][field], interior["sourceText"][field]);
+    }
+    assert_eq!(
+        outline["sourceText"]["text"],
+        "Night\nMarket \u{2713} \u{1f525}"
+    );
+    assert_eq!(outline["sourceText"]["applyFill"], false);
+    assert_eq!(outline["sourceText"]["applyStroke"], true);
+    assert_eq!(outline["sourceText"]["strokeWidth"], 6.0);
+    assert_eq!(
+        outline["sourceText"]["strokeColor"],
+        json!([1.0, 1.0, 1.0, 1.0])
+    );
+    assert!(omissions.iter().any(|omission| {
+        omission.kind == OmissionKind::Approximated
+            && omission.reason.contains("filled-glyph cutout")
+            && omission.reason.contains("both Text children")
+    }));
+    assert!(!omissions
+        .iter()
+        .any(|omission| omission.record == "20" && omission.kind == OmissionKind::Omitted));
+    assert!(!document.to_string().contains("JsScript"));
 }
 
 #[test]

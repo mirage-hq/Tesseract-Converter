@@ -1,19 +1,29 @@
 //! Saved-profile metadata must not remove native SDR matte consumers.
 
+#[cfg(feature = "ffmpeg-library")]
 use crate::{Premiere, PremiereImportOptions};
+#[cfg(feature = "ffmpeg-library")]
 use fx_conv::{ConversionMode, ImportToTesseract};
-use serde_json::{json, Value};
+#[cfg(feature = "ffmpeg-library")]
+use serde_json::json;
+use serde_json::Value;
+#[cfg(feature = "ffmpeg-library")]
 use std::{fs, path::Path};
+#[cfg(feature = "ffmpeg-library")]
 use tesseract_file::TesseractFile;
 
+#[cfg(feature = "ffmpeg-library")]
 const FIXTURE: &str = "feature_track_matte_key_26_5_strict.prproj";
+#[cfg(feature = "ffmpeg-library")]
 const TARGET: &str = "3776e3eb-791f-4e6a-a2bb-7e77eff235ef";
 const PROFILE: &str = r#"{"baseColorProfile":{"colorProfileData":"AQAAAGQAAAA=","colorProfileName":"BT.709 RGB Full"},"baseProfileType":1,"colorSpaceMetadata":{"peakLuminance":100}}"#;
 
+#[cfg(feature = "ffmpeg-library")]
 fn fixtures() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures"))
 }
 
+#[cfg(feature = "ffmpeg-library")]
 fn inline_layers(layers: &[Value]) -> Vec<&Value> {
     let mut all = Vec::new();
     for layer in layers {
@@ -25,6 +35,7 @@ fn inline_layers(layers: &[Value]) -> Vec<&Value> {
     all
 }
 
+#[cfg(feature = "ffmpeg-library")]
 #[test]
 fn saved_sequence_sdr_profile_retains_native_alpha_and_luma_consumers() {
     // The native clips, keys, track IDs and media are the pinned public Adobe

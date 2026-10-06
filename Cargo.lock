@@ -1955,6 +1955,7 @@ dependencies = [
  "anyhow",
  "base64",
  "boa_engine",
+ "exr",
  "flatbuffers",
  "flate2",
  "fx_conv",
@@ -2887,7 +2888,7 @@ dependencies = [
 
 [[package]]
 name = "tsrct-conv"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "aftereffects_file",
  "anyhow",

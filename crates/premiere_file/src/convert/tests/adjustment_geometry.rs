@@ -1142,7 +1142,7 @@ fn adjustment_geometry2_generated_nest_name_checks_writer_bound() {
         assert_eq!(
             reports
                 .iter()
-                .any(|report| report.reason.contains("name must have 1 to 255 characters")),
+                .any(|report| report.reason.contains("sequence label")),
             length == 228,
             "{reports:?}"
         );
@@ -1152,7 +1152,20 @@ fn adjustment_geometry2_generated_nest_name_checks_writer_bound() {
                 .unwrap()
                 .nest_occurrences()
                 .count(),
-            usize::from(length == 227)
+            1
+        );
+        assert_eq!(
+            project
+                .single_sequence()
+                .unwrap()
+                .nest_occurrences()
+                .next()
+                .unwrap()
+                .sequence
+                .name
+                .chars()
+                .count(),
+            (length + 28).min(255)
         );
         written(project);
     }

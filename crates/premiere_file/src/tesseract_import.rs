@@ -37,26 +37,27 @@ impl TesseractImport {
         Self::convert_with_progress(input, output, selection, Progress::default())
     }
 
-    pub(crate) fn convert_with_media_map(
-        input: &Path,
-        output: &Path,
-        selection: Option<&str>,
-        media_map: &ValidatedMediaMap,
-        progress: Progress<'_>,
-    ) -> Result<Self> {
-        Self::convert_with_options(input, output, selection, Some(media_map), None, progress)
-    }
-
+    #[cfg(test)]
     pub(crate) fn convert_with_progress(
         input: &Path,
         output: &Path,
         selection: Option<&str>,
         progress: Progress<'_>,
     ) -> Result<Self> {
-        Self::convert_with_options(input, output, selection, None, None, progress)
+        Self::convert_with_options(
+            input,
+            output,
+            &crate::PremiereImportOptions {
+                sequence: selection.map(str::to_owned),
+            },
+            false,
+            None,
+            None,
+            progress,
+        )
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "ffmpeg-library"))]
     pub(crate) fn convert_with_media_relink(
         input: &Path,
         output: &Path,
@@ -67,6 +68,7 @@ impl TesseractImport {
         Self::convert_with_media_relink_and_map(input, output, selection, relink, None, progress)
     }
 
+    #[cfg(all(test, feature = "ffmpeg-library"))]
     pub(crate) fn convert_with_media_relink_and_map(
         input: &Path,
         output: &Path,
@@ -75,13 +77,24 @@ impl TesseractImport {
         media_map: Option<&ValidatedMediaMap>,
         progress: Progress<'_>,
     ) -> Result<Self> {
-        Self::convert_with_options(input, output, selection, media_map, Some(relink), progress)
+        Self::convert_with_options(
+            input,
+            output,
+            &crate::PremiereImportOptions {
+                sequence: selection.map(str::to_owned),
+            },
+            false,
+            media_map,
+            Some(relink),
+            progress,
+        )
     }
 
-    fn convert_with_options(
+    pub(crate) fn convert_with_options(
         input: &Path,
         output: &Path,
-        selection: Option<&str>,
+        options: &crate::PremiereImportOptions,
+        allow_film_impact_pop: bool,
         media_map: Option<&ValidatedMediaMap>,
         media_relink: Option<&crate::ValidatedMediaRelink>,
         progress: Progress<'_>,
@@ -108,10 +121,13 @@ impl TesseractImport {
         // before publishing the staged archive.
         let original_hash = hash(&input)?;
         progress.stage("reading Premiere project");
-        let (project, mut omissions) =
-            PrProjectFile::load_import_with_media_relink(&input, selection, media_relink)?;
+        let (project, mut omissions) = PrProjectFile::load_import_with_media_relink(
+            &input,
+            options.sequence.as_deref(),
+            media_relink,
+        )?;
         let (mut sequences, media) = project.into_parts();
-        let sequence = sequences
+        let mut sequence = sequences
             .pop()
             .ok_or_else(|| unsupported("selected timeline is unavailable"))?;
         ensure!(
@@ -137,6 +153,9 @@ impl TesseractImport {
             media_relink,
         )?;
         crate::tesseract_output::require_import_video_admission(&native_preflight, &input)?;
+        if !allow_film_impact_pop {
+            crate::convert::omit_pop_emulation(&mut sequence, &mut omissions);
+        }
         let converted = if let Some(media_map) = media_map {
             convert_premiere_sequence_with_media_map(
                 &input,

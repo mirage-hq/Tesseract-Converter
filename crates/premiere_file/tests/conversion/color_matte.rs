@@ -3,6 +3,11 @@
 //! Other rectangles export as editable graphic Shapes.
 
 use super::support::*;
+
+#[cfg(feature = "ffmpeg-library")]
+mod mask;
+#[cfg(feature = "ffmpeg-library")]
+mod motion;
 use premiere_file::PrProjectFile;
 #[cfg(feature = "ffmpeg-library")]
 use premiere_file::{PrSequence, PrVideoItem};
@@ -32,7 +37,7 @@ fn placements(project: &PrProjectFile, sequence: &PrSequence) -> Vec<(usize, i64
             items.iter().map(move |item| {
                 let name = match item {
                     PrVideoItem::Media(clip) => project.media(clip).unwrap().name().to_owned(),
-                    PrVideoItem::Graphic(_) => "graphic".to_owned(),
+                    PrVideoItem::Graphic(_) | PrVideoItem::Capsule(_) => "graphic".to_owned(),
                 };
                 let range = item.timeline_ticks();
                 (track, range.start / TICKS, range.end / TICKS, name)

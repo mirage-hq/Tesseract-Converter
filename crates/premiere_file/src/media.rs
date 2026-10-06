@@ -59,9 +59,11 @@ impl MediaContainer {
     fn admits(self, kind: Option<PrMediaKind>) -> bool {
         match kind {
             Some(PrMediaKind::Video { .. }) => self.holds_video(),
-            Some(PrMediaKind::Still { .. } | PrMediaKind::NumberedStills { .. }) => {
-                matches!(self, Self::Image(_))
-            }
+            Some(
+                kind @ (PrMediaKind::Still { .. }
+                | PrMediaKind::NumberedStills { .. }
+                | PrMediaKind::OpenExr { .. }),
+            ) => matches!(self, Self::Image(format) if format.matches_media_kind(kind)),
             // Generators have no file; linked AEPs are not renderable FX assets.
             Some(
                 PrMediaKind::ColorMatte(_)
@@ -84,6 +86,13 @@ impl MediaContainer {
         }
     }
 
+    pub(crate) fn matches_content_type(self, content_type: &str) -> bool {
+        match self {
+            Self::Image(format) => format.matches_content_type(content_type),
+            _ => content_type == self.content_type(),
+        }
+    }
+
     /// The Tesseract asset kind that export requires for this container.
     pub(crate) fn asset_kind(self) -> AssetKind {
         match self {
@@ -96,7 +105,7 @@ impl MediaContainer {
 
 /// The container of the file named `file` that holds `media`, or `None` when
 /// conversion does not accept that file type for the media's kind: MP4/MOV
-/// video, PNG/JPEG stills, and MP4/MOV/M4A/WAV/MP3 sound-only sources.
+/// video, PNG/JPEG/OpenEXR stills, and MP4/MOV/M4A/WAV/MP3 sound-only sources.
 /// Import and asset package binding use this rule. The writer separately
 /// validates linked AEP paths, which must never become ordinary FX assets.
 pub(crate) fn admitted_container(media: &PrMedia, file: &Path) -> Option<MediaContainer> {
@@ -118,22 +127,33 @@ impl PrMedia {
 }
 
 /// Inspected facts for one media record, routed by the kind its native or
-/// document record declares. A still record must name a PNG/JPEG file and a
-/// video record must name an MP4/MOV; a mismatch is unsupported.
+/// document record declares. Native stills name PNG/JPEG/OpenEXR and native
+/// video names MP4/MOV. Export can also retain a structurally valid EXR that
+/// Premiere's importer cannot expose as a local picture loss for the editable
+/// After Effects fallback.
 #[derive(Debug)]
 pub(crate) enum MediaFacts {
     Video(VideoMedia),
     Still(ValidatedImage),
+    UnsupportedStill(UnsupportedStillMedia),
     /// Physical picture validated for export, but never admitted to the native
     /// writer. Its layer-owned loss can select the existing editable AE route.
     UnsupportedVideo(UnsupportedVideoMedia),
 }
 
 #[derive(Debug)]
+pub(crate) struct UnsupportedStillMedia {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) reason: &'static str,
+}
+
+#[derive(Debug)]
 pub(crate) struct UnsupportedVideoMedia {
     pub(crate) width: u32,
     pub(crate) height: u32,
-    pub(crate) timing: VideoTiming,
+    /// Absent when validated source presentation has no native picture clock.
+    pub(crate) timing: Option<VideoTiming>,
     pub(crate) reason: String,
 }
 
@@ -142,6 +162,7 @@ impl MediaFacts {
         match self {
             Self::Video(video) => (video.width, video.height),
             Self::Still(image) => (image.width, image.height),
+            Self::UnsupportedStill(image) => (image.width, image.height),
             Self::UnsupportedVideo(video) => (video.width, video.height),
         }
     }
@@ -153,6 +174,7 @@ impl MediaFacts {
         match self {
             Self::Video(video) => video.validate_source(source),
             Self::Still(_) => Ok(()),
+            Self::UnsupportedStill(image) => Err(unsupported(image.reason)),
             Self::UnsupportedVideo(video) => Err(unsupported(&video.reason)),
         }
     }
@@ -207,7 +229,9 @@ pub(crate) fn inspect_media(
             }
             Ok(MediaFacts::Video(video))
         }
-        PrMediaKind::Still { .. } | PrMediaKind::NumberedStills { .. } => inspect_image_media(reader).map(MediaFacts::Still),
+        PrMediaKind::Still { .. }
+        | PrMediaKind::NumberedStills { .. }
+        | PrMediaKind::OpenExr { .. } => inspect_image_media(reader).map(MediaFacts::Still),
         PrMediaKind::AfterEffectsComposition(_) => Err(unsupported(
             "linked After Effects composition requires editable AEP resolution; it is not a decoded video asset",
         )),
@@ -502,6 +526,10 @@ pub(crate) struct VideoTiming {
     /// Whether the edit list keeps only part of the source presentation, so
     /// only proved selected intervals import.
     pub(crate) partial_timeline: bool,
+    /// Export keeps presentation edits in the original bytes, so the native
+    /// source descriptor must use the document's authored duration instead of
+    /// treating the physical packet endpoint as the presented source duration.
+    pub(crate) authored_source_duration: bool,
     /// Original MDHD endpoint when it declares an unsupported terminal tail.
     /// The sample clock remains authoritative; only proved interior uses import.
     pub(crate) declared_media_end: Option<u64>,
@@ -551,6 +579,10 @@ impl VideoTiming {
     /// Exact listed CFR descriptor for consumers that require one (including
     /// audio padding). Irregular native export uses `source_clock` instead.
     pub(crate) fn supported(&self) -> Result<(FrameRate, i64)> {
+        ensure!(
+            !self.authored_source_duration,
+            "edited presentation has no packet-only picture duration"
+        );
         let SampleClock::Constant { sample_duration } = self.clock else {
             return Err(unsupported(match self.clock {
                 SampleClock::Irregular { .. } => {
@@ -651,6 +683,7 @@ impl VideoTiming {
                 edit_duration: None,
             },
             partial_timeline: false,
+            authored_source_duration: false,
             declared_media_end: None,
             legacy_signed_ctts: false,
         }
@@ -731,6 +764,15 @@ fn packet_time_in_track_units(
     Ok(numerator / denominator)
 }
 
+// Physical packet facts do not imply an editable destination source clock.
+struct PhysicalPresentation {
+    clock: SampleClock,
+    first_presentation: i128,
+    last_start: i128,
+    final_presentation_interval: u64,
+    declared_media_end: Option<u64>,
+}
+
 fn validate_media_timing(
     stream: &media_transcode::inspect::StreamInfo,
     packets: &[media_transcode::inspect::PacketInfo],
@@ -739,6 +781,59 @@ fn validate_media_timing(
     file_size: u64,
     usage: Option<&VideoUse>,
 ) -> Result<VideoTiming> {
+    let presentation = validate_packet_presentation(stream, packets, track, file_size, usage)?;
+    admit_media_presentation(presentation, track, movie_timescale, usage)
+}
+
+fn validate_export_media_timing(
+    stream: &media_transcode::inspect::StreamInfo,
+    packets: &[media_transcode::inspect::PacketInfo],
+    track: &crate::media_metadata::TrackMetadata,
+    movie_timescale: u32,
+    file_size: u64,
+) -> Result<VideoTiming> {
+    let presentation = validate_packet_presentation(stream, packets, track, file_size, None)?;
+    validate_export_edits(&presentation, track, movie_timescale)?;
+    let authored_source_duration =
+        full_source_edit_rejection(&presentation, track, movie_timescale).is_some();
+    let mut timing = if authored_source_duration {
+        let sample_timing = track
+            .sample_timing
+            .as_ref()
+            .expect("validated physical sample timing");
+        // Export passes the original edit list to Premiere. Packet timing still
+        // establishes the source rate, but it cannot replace the document's
+        // independently authored presentation duration.
+        VideoTiming {
+            clock: presentation.clock,
+            timescale: track.timescale,
+            sample_count: sample_timing.sample_count,
+            window: VideoWindow {
+                presentation_origin: None,
+                last_start: presentation.last_start,
+                timescale: track.timescale,
+                edit_duration: None,
+            },
+            partial_timeline: false,
+            authored_source_duration: true,
+            declared_media_end: None,
+            legacy_signed_ctts: sample_timing.legacy_signed_ctts,
+        }
+    } else {
+        admit_media_presentation(presentation, track, movie_timescale, None)?
+    };
+    timing.authored_source_duration = authored_source_duration;
+    timing.source_clock()?;
+    Ok(timing)
+}
+
+fn validate_packet_presentation(
+    stream: &media_transcode::inspect::StreamInfo,
+    packets: &[media_transcode::inspect::PacketInfo],
+    track: &crate::media_metadata::TrackMetadata,
+    file_size: u64,
+    usage: Option<&VideoUse>,
+) -> Result<PhysicalPresentation> {
     ensure!(
         stream.time_base_num > 0 && stream.time_base_den > 0 && track.timescale > 0,
         "packaged MP4 has an invalid video time base"
@@ -912,48 +1007,134 @@ fn validate_media_timing(
     } else {
         u64::from(last_duration)
     };
-    let edit = track.edit.as_deref();
-    // Whole-source/export callers retain the original full-duration contract.
-    let full_edit = (|| -> Result<()> {
-        if let Some(edit) = edit {
-            if movie_timescale == 0 || edit.len() != 1 {
-                return Err(unsupported(
-                    "MP4 edit list must contain one full-duration playback segment",
-                ));
-            }
-            let entry = &edit[0];
-            // Keep sample timing authoritative. A full-duration edit can round up
-            // in the movie time base by less than one movie tick, or end inside
-            // the last frame: IMG_2439 (iPhone) edits 1208/600 s of 49 frames of
-            // 25/600 s, and Premiere 26.5.1 saves all 49 frames as its Duration.
-            // No edit may hide an entire frame, have zero length, or shift the origin.
-            let segment = u128::from(entry.segment_duration) * u128::from(timescale);
-            let samples = u128::from(media_end) * u128::from(movie_timescale);
-            let duration_error = segment.abs_diff(samples);
-            if i128::from(entry.media_time) != first_presentation
-                || entry.media_rate != 1
-                || entry.media_rate_fraction != 0
-                || entry.segment_duration == 0
-                || (segment > samples && duration_error >= u128::from(timescale))
-                || duration_error
-                    >= u128::from(final_presentation_interval) * u128::from(movie_timescale)
-            {
-                return Err(unsupported(
-                    "MP4 edit list changes the full source presentation timeline",
-                ));
-            }
-        } else if first_presentation != 0 {
-            return Err(unsupported(
-                "MP4 presentation origin requires an explicit full-duration edit list",
-            ));
-        }
+    Ok(PhysicalPresentation {
+        clock,
+        first_presentation,
+        last_start,
+        final_presentation_interval,
+        declared_media_end,
+    })
+}
 
-        Ok(())
-    })();
-    let partial_timeline = full_edit.is_err() || declared_media_end.is_some();
-    if usage.is_none() {
-        full_edit?;
+fn full_source_edit_rejection(
+    presentation: &PhysicalPresentation,
+    track: &crate::media_metadata::TrackMetadata,
+    movie_timescale: u32,
+) -> Option<&'static str> {
+    if let Some(edit) = track.edit.as_deref() {
+        if movie_timescale == 0 || edit.len() != 1 {
+            return Some("MP4 edit list must contain one full-duration playback segment");
+        }
+        let entry = &edit[0];
+        // Keep the established native full-source tail-rounding policy. An
+        // edit may round by less than a movie tick, but not hide a whole frame:
+        // Premiere keeps all 49 frames of IMG_2439's 1208/600 s playback edit.
+        let segment = u128::from(entry.segment_duration) * u128::from(track.timescale);
+        let samples = u128::from(
+            track
+                .sample_timing
+                .as_ref()
+                .expect("validated physical sample timing")
+                .media_end,
+        ) * u128::from(movie_timescale);
+        let duration_error = segment.abs_diff(samples);
+        if i128::from(entry.media_time) != presentation.first_presentation
+            || entry.media_rate != 1
+            || entry.media_rate_fraction != 0
+            || entry.segment_duration == 0
+            || (segment > samples && duration_error >= u128::from(track.timescale))
+            || duration_error
+                >= u128::from(presentation.final_presentation_interval)
+                    * u128::from(movie_timescale)
+        {
+            return Some("MP4 edit list changes the full source presentation timeline");
+        }
+    } else if presentation.first_presentation != 0 {
+        return Some("MP4 presentation origin requires an explicit full-duration edit list");
     }
+    None
+}
+
+fn validate_export_edits(
+    presentation: &PhysicalPresentation,
+    track: &crate::media_metadata::TrackMetadata,
+    movie_timescale: u32,
+) -> Result<()> {
+    let Some(edits) = track.edit.as_deref() else {
+        return Ok(());
+    };
+    ensure!(
+        movie_timescale > 0 && !edits.is_empty(),
+        "invalid MP4 playback edit clock or version"
+    );
+    let source_end = presentation
+        .first_presentation
+        .checked_add(i128::from(track.duration))
+        .ok_or_else(|| unsupported("MP4 presentation endpoint overflows"))?;
+    let mut has_playback = false;
+    for edit in edits {
+        ensure!(
+            edit.segment_duration > 0
+                && edit.media_time >= -1
+                && edit.media_rate == 1
+                && edit.media_rate_fraction == 0,
+            "MP4 playback edits must have positive duration and unit rate with a valid media origin"
+        );
+        if edit.media_time == -1 {
+            continue;
+        }
+        has_playback = true;
+        let start = i128::from(edit.media_time);
+        ensure!(
+            start >= presentation.first_presentation && start < source_end,
+            "MP4 playback edit selects outside the physical presentation timeline"
+        );
+        // The bounded i64 media origin lies inside first + u64 duration, so
+        // this remaining interval and its u32 movie-scale product fit i128.
+        let available = (source_end - start) * i128::from(movie_timescale);
+        let selected = i128::from(edit.segment_duration) * i128::from(track.timescale);
+        ensure!(
+            selected <= available || selected - available < i128::from(track.timescale),
+            "MP4 playback edit exceeds the physical presentation endpoint"
+        );
+    }
+    ensure!(
+        has_playback,
+        "MP4 edit list has no picture playback segment"
+    );
+    Ok(())
+}
+
+fn admit_media_presentation(
+    presentation: PhysicalPresentation,
+    track: &crate::media_metadata::TrackMetadata,
+    movie_timescale: u32,
+    usage: Option<&VideoUse>,
+) -> Result<VideoTiming> {
+    let full_edit = full_source_edit_rejection(&presentation, track, movie_timescale);
+    let declared_media_end = presentation.declared_media_end;
+    let partial_timeline = full_edit.is_some() || declared_media_end.is_some();
+    if usage.is_none() {
+        if let Some(reason) = full_edit {
+            return Err(unsupported(reason));
+        }
+    }
+    let PhysicalPresentation {
+        clock,
+        first_presentation,
+        last_start,
+        ..
+    } = presentation;
+    let timing = track
+        .sample_timing
+        .as_ref()
+        .expect("validated physical sample timing");
+    let timescale = track.timescale;
+    let media_end = timing.media_end;
+    let sample_count = timing.sample_count;
+    let constant = timing.constant_duration.is_some();
+    let legacy_signed_ctts = timing.legacy_signed_ctts;
+    let edit = track.edit.as_deref();
     let mut presentation_origin = None;
     let edit_duration = if let Some(edit) = edit {
         ensure!(
@@ -1029,6 +1210,7 @@ fn validate_media_timing(
         sample_count,
         window,
         partial_timeline,
+        authored_source_duration: false,
         declared_media_end,
         legacy_signed_ctts,
     })

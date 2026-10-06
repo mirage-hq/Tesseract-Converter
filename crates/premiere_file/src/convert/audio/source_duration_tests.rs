@@ -3,17 +3,33 @@ use super::*;
 use crate::schema::{AudioChannels, TICKS};
 use serde_json::json;
 
-fn sound(authored_millis: u64) -> AudioLayer {
+fn sound_with_mapping(
+    authored_millis: u64,
+    active_millis: u64,
+    source_start: u64,
+    source_millis: u64,
+    mapping: serde_json::Value,
+) -> AudioLayer {
     serde_json::from_value(json!({
-        "id":1, "name":"Sound", "activeRange":{"start":0,"duration":100},
-        "sourceRange":{"start":20,"duration":100},
-        "playback":{"type":"windowed", "inputRange":{"start":0,"duration":100},
-            "mapping":{"type":"linear", "input":{"start":0,"duration":100},
-                "output":{"start":20,"duration":100}}, "inputOffsetMs":0},
+        "id":1, "name":"Sound", "activeRange":{"start":0,"duration":active_millis},
+        "sourceRange":{"start":source_start,"duration":source_millis},
+        "playback":{"type":"windowed", "inputRange":{"start":0,"duration":active_millis},
+            "mapping":mapping, "inputOffsetMs":0},
         "sourceIntrinsicDuration":authored_millis,
         "source":{"assetId":"original"}, "volume":0.75
     }))
     .unwrap()
+}
+
+fn sound(authored_millis: u64) -> AudioLayer {
+    sound_with_mapping(
+        authored_millis,
+        100,
+        20,
+        100,
+        json!({"type":"linear", "input":{"start":0,"duration":100},
+            "output":{"start":20,"duration":100}}),
+    )
 }
 
 fn stream(samples: i64) -> PrAudioStream {
@@ -84,43 +100,163 @@ fn audio_duration_nearest_and_padded_picture_representations_are_unchanged() {
         assert_eq!(measured, &picture);
         assert_eq!(written.out_ticks, 120 * TICKS_PER_MILLISECOND);
     }
-    // A picture's floor is not a newly admitted audio-file representation.
-    assert!(layer(&sound(8_866), None, None, &padded, &mut Vec::new()).is_err());
+    // An unrelated picture-clock declaration does not veto the fully
+    // available source window or replace the padded native descriptor.
+    let mut diagnostics = Vec::new();
+    let (written, measured) = layer(&sound(8_866), None, None, &padded, &mut diagnostics)
+        .unwrap()
+        .unwrap();
+    assert_eq!(measured, &picture);
+    assert_eq!(written.out_ticks, 120 * TICKS_PER_MILLISECOND);
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .reason
+            .contains("sourceIntrinsicDuration 8866 ms differs")
+            && diagnostic
+                .reason
+                .contains("retained fully available mapped source")
+    }));
 }
 
 #[test]
-fn audio_duration_rejects_integer_boundary_near_misses_and_invalid_sample_clocks() {
-    for (measured, authored) in [
-        (stream(425_065), 8_854),
-        (stream(425_065), 8_857),
-        (stream(425_088), 8_855), // Exact 8856 ms does not admit 8855 ms.
-        (stream(425_063), 8_856), // 8855.479... rounds down, not up.
+fn audio_duration_declaration_does_not_reject_available_playback() {
+    let forward = sound(750);
+    let fast = sound_with_mapping(
+        750,
+        100,
+        20,
+        200,
+        json!({"type":"linear", "input":{"start":0,"duration":100},
+            "output":{"start":20,"duration":200}}),
+    );
+    let reverse = sound_with_mapping(
+        750,
+        100,
+        20,
+        100,
+        json!({"type":"timeRemap", "property":{
+            "keyframes":[
+                {"id":"start", "time":0, "value":120, "easing":{"type":"linear"}},
+                {"id":"end", "time":100, "value":20, "easing":{"type":"linear"}}
+            ], "before":"inactive", "after":"inactive"}}),
+    );
+    let facts = BTreeMap::from([("original".into(), SourceSound::Supported(stream(48_000)))]);
+    for (sound, expected_rate) in [(forward, 1.0), (fast, 2.0), (reverse, -1.0)] {
+        let mut diagnostics = Vec::new();
+        let (written, _) = layer(&sound, None, None, &facts, &mut diagnostics)
+            .unwrap()
+            .unwrap();
+        assert_eq!(written.playback_rate, expected_rate);
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.kind == crate::OmissionKind::Approximated
+                && diagnostic
+                    .reason
+                    .contains("sourceIntrinsicDuration 750 ms differs")
+                && diagnostic
+                    .reason
+                    .contains("retained fully available mapped source")
+                && diagnostic.reason.contains("exact sample clock unchanged")
+        }));
+    }
+}
+
+#[test]
+fn unavailable_audio_is_omitted_locally_unless_unit_forward() {
+    let forward = sound_with_mapping(
+        400,
+        200,
+        0,
+        200,
+        json!({"type":"linear", "input":{"start":0,"duration":200},
+            "output":{"start":0,"duration":200}}),
+    );
+    let fast = sound_with_mapping(
+        400,
+        100,
+        0,
+        200,
+        json!({"type":"linear", "input":{"start":0,"duration":100},
+            "output":{"start":0,"duration":200}}),
+    );
+    let reverse = sound_with_mapping(
+        400,
+        100,
+        0,
+        200,
+        json!({"type":"timeRemap", "property":{
+            "keyframes":[
+                {"id":"start", "time":0, "value":200, "easing":{"type":"linear"}},
+                {"id":"end", "time":100, "value":0, "easing":{"type":"linear"}}
+            ], "before":"inactive", "after":"inactive"}}),
+    );
+    let unavailable = sound_with_mapping(
+        400,
+        100,
+        200,
+        100,
+        json!({"type":"linear", "input":{"start":0,"duration":100},
+            "output":{"start":200,"duration":100}}),
+    );
+    let facts = BTreeMap::from([("original".into(), SourceSound::Supported(stream(4_928)))]);
+    let mut diagnostics = Vec::new();
+    let (written, _) = layer(&forward, None, None, &facts, &mut diagnostics)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
         (
-            PrAudioStream {
-                sample_rate: 0,
-                ..stream(425_065)
-            },
-            8_855,
+            written.start_ticks / TICKS_PER_MILLISECOND,
+            written.end_ticks / TICKS_PER_MILLISECOND,
+            written.in_ticks / TICKS_PER_MILLISECOND,
+            written.out_ticks / TICKS_PER_MILLISECOND,
         ),
-        (
-            PrAudioStream {
-                sample_rate: 48_001,
-                ..stream(425_065)
-            },
-            8_855,
-        ),
-        (
-            PrAudioStream {
-                intrinsic_ticks: stream(425_065).intrinsic_ticks + 1,
-                ..stream(425_065)
-            },
-            8_855,
-        ),
-        (stream(0), 0),
-        (stream(-1), 0),
+        (0, 103, 0, 103)
+    );
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .reason
+            .contains("retained available source [0,103) ms")
+            && diagnostic
+                .reason
+                .contains("unavailable 97 ms authored tail")
+    }));
+
+    for sound in [fast, reverse, unavailable] {
+        let mut diagnostics = Vec::new();
+        assert!(layer(&sound, None, None, &facts, &mut diagnostics)
+            .unwrap()
+            .is_none());
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.scope == OmissionScope::Occurrence
+                && diagnostic
+                    .reason
+                    .contains("only a partially available unit-forward tail")
+        }));
+    }
+}
+
+#[test]
+fn audio_duration_rejects_invalid_sample_clocks() {
+    for measured in [
+        PrAudioStream {
+            sample_rate: 0,
+            ..stream(425_065)
+        },
+        PrAudioStream {
+            sample_rate: 48_001,
+            ..stream(425_065)
+        },
+        PrAudioStream {
+            intrinsic_ticks: stream(425_065).intrinsic_ticks + 1,
+            ..stream(425_065)
+        },
+        stream(0),
+        stream(-1),
     ] {
         let facts = BTreeMap::from([("original".into(), SourceSound::Supported(measured))]);
-        assert!(layer(&sound(authored), None, None, &facts, &mut Vec::new()).is_err());
+        let error = layer(&sound(8_855), None, None, &facts, &mut Vec::new()).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("invalid positive whole-sample clock"));
     }
 }
 
@@ -144,10 +280,20 @@ fn audio_duration_floor_checks_the_active_replacement_not_the_original() {
         .unwrap()
         .unwrap();
     sound.source.enhancement.as_mut().unwrap().enabled = true;
-    let error = layer(&sound, None, None, &facts, &mut Vec::new()).unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("active audio enhancement output"));
+    let mut diagnostics = Vec::new();
+    let (written, measured) = layer(&sound, None, None, &facts, &mut diagnostics)
+        .unwrap()
+        .unwrap();
+    assert_eq!(written.media.0, "replacement");
+    assert_eq!(measured.intrinsic_ticks, stream(425_113).intrinsic_ticks);
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .reason
+            .contains("active audio enhancement output")
+            && diagnostic
+                .reason
+                .contains("retained fully available mapped source")
+    }));
     sound.source_intrinsic_duration = fx_schema::Duration::from_millis(8_856);
     let (written, measured) = layer(&sound, None, None, &facts, &mut Vec::new())
         .unwrap()

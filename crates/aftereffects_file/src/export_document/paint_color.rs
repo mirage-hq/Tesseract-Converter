@@ -1,4 +1,4 @@
-//! Preserve vector paint owners when the native shared Color ease is unsupported.
+//! Preserve vector paint colors when native shared Color easing is unsupported.
 
 use super::{ExportDiagnostic, KeyframeEasing, LayerId, LayerSpec, VectorContent, VectorPaintSpec};
 
@@ -53,17 +53,22 @@ fn normalize_contents(
                     VectorPaintSpec::Fill { animations, .. } => ("Fill", animations),
                     VectorPaintSpec::Stroke { animations, .. } => ("Stroke", animations),
                 };
-                if animations.color.as_ref().is_some_and(|track| {
-                    track.keys.iter().any(|key| {
-                        key.easing
-                            .iter()
-                            .any(|ease| matches!(ease, KeyframeEasing::CubicBezier { .. }))
-                    })
-                }) {
-                    animations.color = None;
+                let approximated = animations.color.as_mut().is_some_and(|track| {
+                    let mut approximated = false;
+                    for key in &mut track.keys {
+                        for easing in &mut key.easing {
+                            if matches!(easing, KeyframeEasing::CubicBezier { .. }) {
+                                *easing = KeyframeEasing::Linear;
+                                approximated = true;
+                            }
+                        }
+                    }
+                    approximated
+                });
+                if approximated {
                     diagnostics.push(ExportDiagnostic {
                         layer_id: owner,
-                        message: format!("Cubic paint color animation omitted for {kind}: native shared Color easing is not established; authored paint base, owner and other supported tracks retained."),
+                        message: format!("Cubic paint color easing approximated as Linear for {kind}: authored color keys, times, owner and other supported tracks retained."),
                     });
                 }
             }

@@ -14,6 +14,7 @@ ffmpeg-library = ["media_transcode/ffmpeg-library", "aftereffects_file/ffmpeg-li
 aftereffects_file = { path = "../aftereffects_file", default-features = false }
 base64 = { workspace = true }
 boa_engine = { version = "0.21.1", default-features = false, features = ["js"] }
+exr = { version = "1.74.2", default-features = false }
 flatbuffers = "25.12.19"
 flate2 = "1"
 # Zero-tail read-slack proof is source-pinned: upgrades require a new audit and guard/ASan runs.

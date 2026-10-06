@@ -1,7 +1,7 @@
 //! Export-only physical admission. Unsupported encoding never becomes a native
 //! picture: retain a typed media result so lowering can record its source boundary.
 
-use super::{validate_media_timing, MediaFacts, UnsupportedVideoMedia, VideoMedia};
+use super::{validate_export_media_timing, MediaFacts, UnsupportedVideoMedia, VideoMedia};
 use crate::{
     error::{ensure, Result},
     media_metadata::{read_export_movie_metadata, ColourDescription, SampleDescription},
@@ -67,17 +67,11 @@ pub(crate) fn inspect_export_video_media(
             == (u32::from(description.width), u32::from(description.height)),
         "MP4 sample-entry dimensions must match the decoded stream dimensions"
     );
-    // Timing and byte-range failures remain fatal even for an encoding that
-    // cannot be represented by the native writer. Never retry generic errors.
-    let timing = validate_media_timing(
-        stream,
-        &inspection.packets,
-        track,
-        metadata.timescale,
-        size,
-        None,
-    )?;
-    timing.source_clock()?;
+    // Required packet and edit facts remain fatal. Export keeps coherent
+    // presentation edits in the original bytes and uses their physical clock
+    // only for facts that the native source descriptor requires.
+    let timing =
+        validate_export_media_timing(stream, &inspection.packets, track, metadata.timescale, size)?;
     let unsupported = match &description.entry {
         b"avc1" => {
             let (depth, colour, aspect) =
@@ -117,22 +111,27 @@ pub(crate) fn inspect_export_video_media(
         }
         _ => None,
     };
+    // Validate an unsupported codec's physical payload before returning a
+    // local loss. A presentation edit must not hide malformed media.
+    let format = if unsupported.is_none() {
+        Some(crate::video_format::validate_codec(
+            stream.codec_tag,
+            &stream.extradata,
+            description,
+            &mut metadata_reader,
+        )?)
+    } else {
+        None
+    };
     if let Some(reason) = unsupported {
         return Ok(MediaFacts::UnsupportedVideo(UnsupportedVideoMedia {
             width: stream.width,
             height: stream.height,
-            timing,
+            timing: Some(timing),
             reason,
         }));
     }
-    // The ordinary codec/profile validator is still authoritative for every
-    // native picture; export inspection is not an expanded native allowlist.
-    let format = crate::video_format::validate_codec(
-        stream.codec_tag,
-        &stream.extradata,
-        description,
-        &mut metadata_reader,
-    )?;
+    let format = format.expect("validated native codec");
     Ok(MediaFacts::Video(VideoMedia {
         pixel_aspect: format.pixel_aspect,
         codec: format.codec,

@@ -640,7 +640,8 @@ fn subtitle_tracks_reject_in_both_directions() {
         .find(|&at| &captioned[at..at + 4] == b"tmcd")
         .unwrap();
     captioned[handler..handler + 4].copy_from_slice(b"text");
-    let expected = "subtitle or caption tracks (text) are unsupported";
+    let expected_import = "subtitle or caption tracks (text) are unsupported";
+    let expected_export = "subtitle or caption tracks are unsupported";
 
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("package");
@@ -654,7 +655,7 @@ fn subtitle_tracks_reject_in_both_directions() {
         let error = premiere_to_tesseract(root.join(HDR_PROJECT), &output, Some(SEQUENCE), check)
             .unwrap_err()
             .to_string();
-        assert!(error.contains(expected), "{error}");
+        assert!(error.contains(expected_import), "{error}");
         assert!(!output.exists());
     }
 
@@ -667,10 +668,7 @@ fn subtitle_tracks_reject_in_both_directions() {
     let error = tesseract_to_premiere(&archive, export_root.join("native"), true)
         .unwrap_err()
         .to_string();
-    assert!(
-        error.contains("subtitle or caption tracks are unsupported"),
-        "{error}"
-    );
+    assert!(error.contains(expected_export), "{error}");
 }
 
 #[test]

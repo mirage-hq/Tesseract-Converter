@@ -188,6 +188,7 @@ pub(super) fn records(
             }
             .into(),
         ),
+        media_dependency_map: None,
         sub_components: None,
         match_name: Some("AE.ADBE Motion".to_owned()),
         video_filter_type: Some("2".to_owned()),
@@ -292,6 +293,7 @@ pub(super) fn opacity_records(
             intrinsic: Some("true".to_owned()),
         }),
         premiere_filter_private_data: None,
+        media_dependency_map: None,
         sub_components: ids
             .mask
             .as_ref()
@@ -348,6 +350,7 @@ pub(super) fn crop_records(crop: PrStaticCrop, ids: &CropIds) -> Vec<Record> {
             intrinsic: Some("false".to_owned()),
         }),
         premiere_filter_private_data: None,
+        media_dependency_map: None,
         sub_components: None,
         match_name: Some("AE.ADBE AECrop".to_owned()),
         video_filter_type: Some("2".to_owned()),
@@ -408,6 +411,7 @@ pub(super) fn linear_wipe_records(wipe: &PrLinearWipe, ids: &LinearWipeIds) -> R
                 intrinsic: Some("false".to_owned()),
             }),
             premiere_filter_private_data: None,
+            media_dependency_map: None,
             sub_components: None,
             match_name: Some("AE.ADBE Linear Wipe".to_owned()),
             video_filter_type: Some("2".to_owned()),
@@ -499,6 +503,7 @@ pub(super) fn track_matte_records(matte: PrTrackMatte, ids: &TrackMatteIds) -> V
             intrinsic: Some("false".to_owned()),
         }),
         premiere_filter_private_data: None,
+        media_dependency_map: None,
         sub_components: None,
         match_name: Some(TRACK_MATTE_KEY.match_name.to_owned()),
         video_filter_type: Some(TRACK_MATTE_KEY.filter_type.to_owned()),

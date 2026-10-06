@@ -1,3 +1,6 @@
+#[path = "color_matte_motion.rs"]
+mod motion;
+
 use crate::{
     convert::tesseract_to_premiere,
     format::{FrameRate, MediaId, PrMedia, PrProjectFile, PrVideoOccurrence},
@@ -471,7 +474,13 @@ fn mattes_round_trip_as_solid_rectangles_distinct_from_gaps_and_the_canvas() {
         })
         .map(|id| id.as_str().to_owned())
         .collect();
-    assert_eq!(matte_ids, ["color-matte:000000", "color-matte:ff0000"]);
+    assert_eq!(
+        matte_ids,
+        [
+            "color-matte:1920x1080:000000",
+            "color-matte:1920x1080:ff0000"
+        ]
+    );
 }
 
 #[test]
@@ -668,27 +677,44 @@ fn solid_export(document: Value) -> (Result<PrShape, String>, Vec<(OmissionKind,
 }
 
 #[test]
-fn a_video_asset_spelled_like_a_matte_id_does_not_merge_into_the_matte() {
-    // With the matte's 12 h duration, only the media kind tells them apart.
-    // The inspected facts list every packaged asset, so the solid rejects
-    // above or below the video.
-    let mut document = solid_fill_document();
-    let video = &mut document["composition"]["layers"][1];
-    video["source"]["assetId"] = json!("color-matte:ff0000");
-    video["sourceIntrinsicDuration"] = json!(12 * 60 * 60 * 1000);
-    let mut below = document.clone();
-    below["composition"]["layers"]
-        .as_array_mut()
-        .unwrap()
-        .swap(0, 1);
-    for document in [document, below] {
-        let error = export(document).unwrap_err().to_string();
-        assert!(
-            error.contains(
-                "layer 3 (\"Red solid\"): unsupported conversion: asset color-matte:ff0000 names both a packaged asset and a Color Matte solid fill"
-            ),
-            "{error}"
-        );
+fn a_video_asset_spelled_like_a_generator_id_does_not_merge_into_the_generator() {
+    // Matching dimensions and duration must not rebind a physical source,
+    // whichever occurrence is visited first.
+    for (id, kind, reason) in [
+        (
+            "color-matte:1920x1080:ff0000",
+            "Rect",
+            "a Color Matte solid fill",
+        ),
+        (
+            "adjustment-layer:1920x1080",
+            "Adjustment",
+            "an adjustment layer",
+        ),
+    ] {
+        let mut document = solid_fill_document();
+        if kind == "Adjustment" {
+            let generator = &mut document["composition"]["layers"][0];
+            generator["type"] = json!(kind);
+            generator.as_object_mut().unwrap().remove("rect");
+        }
+        let video = &mut document["composition"]["layers"][1];
+        video["source"]["assetId"] = json!(id);
+        video["sourceIntrinsicDuration"] = json!(12 * 60 * 60 * 1000);
+        let mut below = document.clone();
+        below["composition"]["layers"]
+            .as_array_mut()
+            .unwrap()
+            .swap(0, 1);
+        for document in [document, below] {
+            let error = export(document).unwrap_err().to_string();
+            assert!(
+                error.contains(&format!(
+                    "asset {id} names both a packaged asset and {reason}"
+                )),
+                "{error}"
+            );
+        }
     }
 }
 
@@ -1117,7 +1143,8 @@ fn rectangles_other_than_color_mattes_export_as_one_shape_or_with_the_shape_reas
 
 #[test]
 fn animated_motion_or_opacity_omits_the_solid_instead_of_exporting_a_static_matte() {
-    // A keyed solid is no static Color Matte, and graphic Shapes export static.
+    // A noncanonical keyed solid is no static Color Matte. Keep opacity away
+    // from the zero edge ramp that can export as an equivalent Cross Dissolve.
     for property in [
         "opacity",
         "rotation",
@@ -1127,10 +1154,11 @@ fn animated_motion_or_opacity_omits_the_solid_instead_of_exporting_a_static_matt
         "positionY",
     ] {
         let mut document = solid_fill_document();
+        let start = if property == "opacity" { 10.0 } else { 0.0 };
         document["composition"]["dynamics"] = json!({"entries": [{
             "target": {"kind": "layer", "layerId": 3, "propertyType": property},
             "animator": {"type": "keyframes", "enabled": true, "keyframes": [
-                {"id": "start", "layerTime": 0, "value": {"type": "float", "value": 0.0}, "easing": {"type": "linear"}},
+                {"id": "start", "layerTime": 0, "value": {"type": "float", "value": start}, "easing": {"type": "linear"}},
                 {"id": "end", "layerTime": 500, "value": {"type": "float", "value": 90.0}, "easing": {"type": "linear"}}
             ]}
         }]});

@@ -5,7 +5,8 @@ use crate::format::Located;
 use crate::schema::{
     adjustment,
     native::{Media, VideoStream},
-    EditKind, OccurrenceEdit, PrMediaKind, PrVideoOccurrence, STILL_STRAIGHT_ALPHA_TYPE,
+    EditKind, OccurrenceEdit, PrMediaKind, PrVideoOccurrence, OPENEXR_ALPHA_TYPE,
+    OPENEXR_CODEC_TYPE, STILL_STRAIGHT_ALPHA_TYPE,
 };
 use crate::{omit, Omission, OmissionScope};
 
@@ -59,7 +60,7 @@ pub(super) fn media_kind(
     }
     if let Some(code) = generator_code(&media.value) {
         return Err(unsupported(format!(
-            "{}: synthetic still media {code} (a generated matte, title, or graphic rather than an image file) is unsupported; only PNG/JPEG file stills convert",
+            "{}: synthetic still media {code} (a generated matte, title, or graphic rather than an image file) is unsupported; only PNG/JPEG/OpenEXR file stills convert",
             media.identity
         )));
     }
@@ -89,12 +90,14 @@ pub(super) fn media_kind(
             stream.identity
         );
     }
+    let open_exr = stream.value.codec_type.as_deref() == Some(OPENEXR_CODEC_TYPE);
     let alpha = match stream.value.alpha_type.as_deref() {
         None => false,
-        Some(STILL_STRAIGHT_ALPHA_TYPE) => true,
+        Some(STILL_STRAIGHT_ALPHA_TYPE) if !open_exr => true,
+        Some(OPENEXR_ALPHA_TYPE) if open_exr => true,
         Some(other) => {
             return Err(unsupported(format!(
-                "{}: still AlphaType {other:?} is unsupported; only absent (opaque) or 1 (straight alpha) stills convert",
+                "{}: still AlphaType {other:?} is unsupported for its codec",
                 stream.identity
             )))
         }
@@ -104,7 +107,13 @@ pub(super) fn media_kind(
         "{}: still with IgnoreAlpha would flatten its transparency",
         stream.identity
     );
-    Ok(if numbered {
+    Ok(if open_exr {
+        PrMediaKind::OpenExr {
+            alpha,
+            numbered,
+            channels: crate::schema::OpenExrChannels::Unspecified,
+        }
+    } else if numbered {
         PrMediaKind::NumberedStills { alpha }
     } else {
         PrMediaKind::Still { alpha }
@@ -142,7 +151,7 @@ pub(super) fn keep_occurrence(
 ) -> bool {
     let (media, picture) = match kind {
         PrMediaKind::Video { .. } | PrMediaKind::AfterEffectsComposition(_) => return true,
-        PrMediaKind::NumberedStills { .. } => {
+        PrMediaKind::NumberedStills { .. } | PrMediaKind::OpenExr { numbered: true, .. } => {
             if let Some(reason) = crate::numbered_images::unsupported_occurrence(clip) {
                 omit(omissions, OmissionScope::Occurrence, clip.record(),
                     format!("track {track_index}, range {}..{} ticks: {reason}; numbered-image occurrence omitted", clip.start_ticks, clip.end_ticks));
@@ -150,7 +159,10 @@ pub(super) fn keep_occurrence(
             }
             return true;
         }
-        PrMediaKind::Still { .. } => ("a still image", Some("a still")),
+        PrMediaKind::Still { .. }
+        | PrMediaKind::OpenExr {
+            numbered: false, ..
+        } => ("a still image", Some("a still")),
         PrMediaKind::ColorMatte(_) => ("a Color Matte", Some("a solid")),
         PrMediaKind::Adjustment => ("an adjustment layer", None),
     };
@@ -169,6 +181,17 @@ pub(super) fn keep_occurrence(
             .is_none_or(|source| source.effects.is_empty() && source.active_transforms == 0)
         && clip.track_matte.is_none()
         && clip.opacity_mask.is_none();
+    // One ordinary vector mask uses the rectangle's source-frame guide. Mixed
+    // coverage/effect stages retain their existing admission restrictions.
+    let ordinary_matte_mask = clip.opacity_mask.is_some()
+        && clip.crop.is_default()
+        && clip.track_matte.is_none()
+        && clip.linear_wipe.is_none()
+        && clip.effects.is_empty()
+        && clip
+            .source_effects
+            .as_ref()
+            .is_none_or(|source| source.effects.is_empty() && source.active_transforms == 0);
     let omitting = edits.iter().find(|edit| match kind {
         PrMediaKind::Adjustment => {
             !(adjustment::retains_edit(**edit)
@@ -176,17 +199,36 @@ pub(super) fn keep_occurrence(
                     && adjustment::supports_motion_coverage(clip)
                 || **edit == OccurrenceEdit::LinearWipe && adjustment::supports_wipe_coverage(clip))
         }
-        PrMediaKind::Still { .. } => matches!(
+        PrMediaKind::Still { .. }
+        | PrMediaKind::OpenExr {
+            numbered: false, ..
+        } => matches!(
             **edit,
             OccurrenceEdit::LinearWipe | OccurrenceEdit::TrackMatte
         ),
-        // A neutral Color Matte carries either its existing sibling matte or
-        // one sharp Crop guide, without standard/source effect staging.
-        _ => {
-            !(matches!(**edit, OccurrenceEdit::Opacity | OccurrenceEdit::TrackMatte)
+        // A Color Matte's rectangle and sharp Crop guide share Motion. A
+        // Track Matte consumer still has no staged geometric Motion owner.
+        PrMediaKind::ColorMatte(_) => {
+            !(matches!(
+                **edit,
+                OccurrenceEdit::Opacity | OccurrenceEdit::OpacityKeys | OccurrenceEdit::TrackMatte
+            ) || clip.track_matte.is_none()
+                && matches!(
+                    **edit,
+                    OccurrenceEdit::MotionKeys
+                        | OccurrenceEdit::Position
+                        | OccurrenceEdit::AnchorPoint
+                        | OccurrenceEdit::Scale
+                        | OccurrenceEdit::Rotation
+                )
                 || **edit == OccurrenceEdit::Crop && sharp_matte_crop
+                || **edit == OccurrenceEdit::OpacityMask && ordinary_matte_mask
                 || clip.track_matte.is_none() && edit.kind() == EditKind::Clock)
         }
+        PrMediaKind::Video { .. }
+        | PrMediaKind::AfterEffectsComposition(_)
+        | PrMediaKind::NumberedStills { .. }
+        | PrMediaKind::OpenExr { numbered: true, .. } => unreachable!("returned above"),
     });
     if let Some(edit) = omitting {
         let feature = edit.label();
@@ -276,25 +318,32 @@ mod tests {
         assert!(keep_occurrence(&plain, matte, 0, &mut omissions));
         assert!(omissions.is_empty());
         type EditOccurrence = fn(&mut PrVideoOccurrence);
-        let cases: [(&str, EditOccurrence); 10] = [
-            ("Crop", |clip| clip.crop.edge_feather = 12.0),
-            ("Motion Position", |clip| {
-                clip.transform.position = [0.25, 0.5]
-            }),
-            ("Motion keyframes", |clip| {
+        let supported: [EditOccurrence; 3] = [
+            |clip| clip.transform.position = [0.25, 0.5],
+            |clip| {
                 clip.animations = vec![PrPropertyAnimation::Rotation(vec![PrScalarKeyframe {
                     source_ticks: 0,
                     value: 15.0,
                     easing: PrKeyframeEasing::Linear,
                 }])]
-            }),
-            ("Opacity keyframes", |clip| {
+            },
+            |clip| {
                 clip.animations = vec![PrPropertyAnimation::Opacity(vec![PrScalarKeyframe {
                     source_ticks: 0,
                     value: 50.0,
                     easing: PrKeyframeEasing::Linear,
                 }])]
-            }),
+            },
+        ];
+        for edit in supported {
+            let mut clip = plain.clone();
+            edit(&mut clip);
+            let mut omissions = Vec::new();
+            assert!(keep_occurrence(&clip, matte, 0, &mut omissions));
+            assert!(omissions.is_empty());
+        }
+        let cases: [(&str, EditOccurrence); 7] = [
+            ("Crop", |clip| clip.crop.edge_feather = 12.0),
             ("Linear Wipe", |clip| {
                 clip.linear_wipe = Some(PrLinearWipe {
                     initial_completion: 50.0,

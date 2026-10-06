@@ -802,7 +802,7 @@ fn overlapping_overrange_paints_keep_post_composite_layer_opacity() {
 }
 
 #[test]
-fn cubic_paint_color_retains_base_owner_opacity_and_sibling() {
+fn cubic_paint_color_retains_keys_with_linear_approximation_and_sibling() {
     use fx_schema::animator::{
         KeyframeId, PropertyAnimator, PropertyKeyframe, PropertyKeyframeTrack,
     };
@@ -820,25 +820,34 @@ fn cubic_paint_color_retains_base_owner_opacity_and_sibling() {
                 .push(rect(&imported(), 901));
             let values = [
                 (0, PropertyValue::Color([1.0, 0.0, 0.0, 1.0])),
-                (500, PropertyValue::Color([0.0, 1.0, 0.0, 1.0])),
+                (250, PropertyValue::Color([0.0, 1.0, 0.0, 1.0])),
+                (500, PropertyValue::Color([0.0, 0.0, 1.0, 1.0])),
+                (750, PropertyValue::Color([1.0, 1.0, 1.0, 1.0])),
+            ];
+            let easings = [
+                PropertyKeyframeEasing::Linear,
+                PropertyKeyframeEasing::CubicBezier {
+                    x1: 0.25,
+                    y1: 0.0,
+                    x2: 0.75,
+                    y2: 1.0,
+                },
+                PropertyKeyframeEasing::Hold,
+                PropertyKeyframeEasing::Linear,
             ];
             let mut entry = keyed_entry(LayerId::new(400), property, values.clone());
             entry.animator = PropertyAnimator::keyframes(
                 PropertyKeyframeTrack::new(
                     values
                         .into_iter()
+                        .zip(easings)
                         .enumerate()
-                        .map(|(index, (time, value))| {
+                        .map(|(index, ((time, value), easing))| {
                             PropertyKeyframe::new(
                                 KeyframeId::new(format!("paint-cubic-{index}")),
                                 fx_schema::TimeOffset::from_millis(time),
                                 value,
-                                PropertyKeyframeEasing::CubicBezier {
-                                    x1: 0.25,
-                                    y1: 0.0,
-                                    x2: 0.75,
-                                    y2: 1.0,
-                                },
+                                easing,
                             )
                         })
                         .collect(),
@@ -865,8 +874,20 @@ fn cubic_paint_color_retains_base_owner_opacity_and_sibling() {
                 },
             )
             .unwrap();
-            assert_eq!(color.values, vec![0.2, 0.4, 0.6, 1.0]);
-            assert!(!color.animated);
+            assert!(color.animated);
+            let expected = [
+                (0.0, vec![1.0, 0.0, 0.0, 1.0], 1, 1),
+                (0.25, vec![0.0, 1.0, 0.0, 1.0], 1, 3),
+                (0.5, vec![0.0, 0.0, 1.0, 1.0], 3, 1),
+                (0.75, vec![1.0, 1.0, 1.0, 1.0], 1, 1),
+            ];
+            assert_eq!(color.keyframes.len(), expected.len());
+            for (key, (time, values, incoming, outgoing)) in color.keyframes.iter().zip(expected) {
+                assert_eq!(key.time_secs, time);
+                assert_eq!(key.values, values);
+                assert_eq!(key.in_interpolation, incoming);
+                assert_eq!(key.out_interpolation, outgoing);
+            }
             assert_eq!(
                 numeric(
                     &owner.content,
@@ -878,8 +899,8 @@ fn cubic_paint_color_retains_base_owner_opacity_and_sibling() {
                 )
                 .unwrap()
                 .values,
-                [20.0],
-                "omitted color animation retains the authored static paint alpha"
+                [50.0],
+                "color keys leave paint opacity independent of the unused static color alpha"
             );
             assert_eq!(
                 numeric(&owner.content, "ADBE Opacity")
@@ -893,13 +914,11 @@ fn cubic_paint_color_retains_base_owner_opacity_and_sibling() {
                     .iter()
                     .any(|layer| layer.name.as_ref() == "Current solid 901")
             );
-            assert!(
-                output
-                    .diagnostics
-                    .iter()
-                    .any(|d| d.layer_id == Some(LayerId::new(400))
-                        && d.message.contains("Cubic paint color animation omitted"))
-            );
+            assert!(output.diagnostics.iter().any(|d| {
+                d.layer_id == Some(LayerId::new(400))
+                    && d.message
+                        .contains("Cubic paint color easing approximated as Linear")
+            }));
         }
     }
 }

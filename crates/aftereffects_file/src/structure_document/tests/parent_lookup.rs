@@ -8,7 +8,9 @@ fn converter<'a>(
     resolver: &'a mut dyn FnMut(&MediaAssetRequest) -> MediaResolution,
 ) -> Converter<'a> {
     Converter {
+        text_overrides: Default::default(),
         expression_samples: samples,
+        expression_evaluations: Default::default(),
         items: HashMap::new(),
         camera_normalizations: HashMap::new(),
         diagnostics: Vec::new(),

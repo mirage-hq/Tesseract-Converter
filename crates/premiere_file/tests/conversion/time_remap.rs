@@ -311,27 +311,109 @@ fn native_retimed_rotation_keeps_keys_on_the_media_clock() {
 }
 
 #[test]
-fn native_trimmed_speed_time_remap_edits_omit_only_their_placement() {
+fn native_trimmed_speed_time_remap_edits_recover_picture_selection_and_sibling() {
+    use premiere_file::{OmissionKind, OmissionScope};
+    use serde_json::json;
+    use sha2::{Digest, Sha256};
+
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-    let native = read_xml(&fixtures.join(FIXTURE));
-    // Each edit of one clip omits only its placement; the other converts.
-    // Reverse playback, a speed that In to Out does not match, and In 2.4 s
-    // to Out 4 s, which at 0.8x plays only the segment from the key at input
-    // 2 s to the curve's media-end key.
-    for (clip, from, to, reason, kept) in [
+    let source = fixtures.join(FIXTURE);
+    let media = fs::read(fixtures.join("feature_timecoded_source.mp4")).unwrap();
+    assert_eq!(
+        format!("{:x}", Sha256::digest(fs::read(&source).unwrap())),
+        "b370546ee11c8cf81395a0fb9acbe7bb0c469aae8733a9f85de96fa6729cd58a"
+    );
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&media)),
+        "4256ae026cb923ee0498374a1def4dd8c0e51078099a9f415726935e198ac0fe"
+    );
+    let native = read_xml(&source);
+    let control_dir = tempfile::tempdir().unwrap();
+    let control_output = control_dir.path().join("converted");
+    premiere_to_tesseract(&source, &control_output, Some(SEQUENCE), false).unwrap();
+    let control = TesseractFile::open(first_project(&control_output))
+        .unwrap()
+        .project_json()
+        .unwrap();
+    let controls = video_layers(&control);
+    assert_eq!(controls.len(), 2);
+    // Pin the healthy sibling's actual key clock and easing, then require its
+    // complete playback to survive each source-derived edit unchanged.
+    for (start, offset, times) in [
+        (0, 500, [0, 217, 277, 434, 605, 761, 1029, 2500, 13259]),
+        (
+            2000,
+            0,
+            [2000, 2217, 2277, 2434, 2605, 2761, 3029, 4500, 15259],
+        ),
+    ] {
+        let layer = controls
+            .iter()
+            .find(|layer| layer["playback"]["inputRange"]["start"] == start)
+            .unwrap();
+        let playback = &layer["playback"];
+        assert_eq!(
+            playback["inputRange"],
+            json!({"start": start, "duration": 2000})
+        );
+        assert_eq!(playback["inputOffsetMs"], offset);
+        assert_eq!(playback["mapping"]["type"], "timeRemap");
+        let property = &playback["mapping"]["property"];
+        assert_eq!(property["before"], "continue");
+        assert_eq!(property["after"], "continue");
+        let keys = property["keyframes"].as_array().unwrap();
+        assert_eq!(
+            keys.iter()
+                .map(|key| (
+                    key["time"].as_u64().unwrap(),
+                    key["value"].as_u64().unwrap()
+                ))
+                .collect::<Vec<_>>(),
+            times
+                .into_iter()
+                .zip([0, 174, 254, 547, 776, 900, 1040, 1393, 10000])
+                .collect::<Vec<_>>()
+        );
+        for (index, key) in keys.iter().enumerate() {
+            let expected = match index {
+                2 => Some((0.199_600_798_4, 0.532_934_131_8)),
+                4 => Some((0.467_065_868_3, 0.800_399_201_6)),
+                6 => Some((0.512_820_512_8, 0.846_153_846_2)),
+                _ => None,
+            };
+            let easing = &key["easing"];
+            if let Some((y1, y2)) = expected {
+                assert_eq!(easing["type"], "cubicBezier");
+                assert!((easing["x1"].as_f64().unwrap() - 1.0 / 3.0).abs() < 1e-12);
+                assert!((easing["x2"].as_f64().unwrap() - 2.0 / 3.0).abs() < 1e-12);
+                assert!((easing["y1"].as_f64().unwrap() - y1).abs() < 1e-9);
+                assert!((easing["y2"].as_f64().unwrap() - y2).abs() < 1e-9);
+            } else {
+                assert_eq!(easing, &json!({"type": "linear"}));
+            }
+        }
+    }
+
+    // Valid saved reverse and media-end-segment clocks retain diagnosed
+    // constant playback. Only the mismatched 0.5x source span loses a placement.
+    for (clip, from, to, reason, kept, fallback, rejected_curve) in [
         (
             "94",
             "<PlaybackSpeed>0.8</PlaybackSpeed>",
             "<PlaybackSpeed>0.8</PlaybackSpeed><PlayBackwards>true</PlayBackwards>",
-            "VideoClipTrackItem:63: reverse playback combined with TimeRemapping is unsupported",
+            "reverse playback combined with TimeRemapping is unsupported",
             2000,
+            Some((0, 8000, 9600, 8000)),
+            false,
         ),
         (
             "95",
             "<PlaybackSpeed>0.8</PlaybackSpeed>",
             "<PlaybackSpeed>0.5</PlaybackSpeed>",
-            "TimeRemapping In to Out must match the clip's forward playback rate",
+            "source span does not match",
             0,
+            Some((2000, 0, 0, 1600)),
+            false,
         ),
         (
             "95",
@@ -339,6 +421,17 @@ fn native_trimmed_speed_time_remap_edits_omit_only_their_placement() {
             "<InPoint>609638400000</InPoint>\n\t\t\t<OutPoint>1016064000000</OutPoint>",
             "TimeRemapping from a source In or at another speed plays past the key before the curve's media-end key",
             0,
+            Some((2000, 2400, 2400, 4000)),
+            false,
+        ),
+        (
+            "94",
+            "<PlaybackSpeed>0.8</PlaybackSpeed>\n\t\t\t<InPoint>101606400000</InPoint>\n\t\t\t<OutPoint>508032000000</OutPoint>",
+            "<PlaybackSpeed>0.0001</PlaybackSpeed>\n\t\t\t<InPoint>0</InPoint>\n\t\t\t<OutPoint>50803200</OutPoint>",
+            "saved source span rounds to an empty editable range",
+            2000,
+            None,
+            true,
         ),
     ] {
         let dir = tempfile::tempdir().unwrap();
@@ -347,34 +440,142 @@ fn native_trimmed_speed_time_remap_edits_omit_only_their_placement() {
             &mut xml,
             &format!("<VideoClip ObjectID=\"{clip}\""),
             "</VideoClip>",
-            |record| record.replace(from, to),
+            |record| {
+                assert_eq!(record.matches(from).count(), 1);
+                record.replace(from, to)
+            },
         );
+        if rejected_curve {
+            // Native 0.2 ms is a valid saved span for 2 s at 0.0001x.
+            // Reject only this decoded curve, before the mapper sees it.
+            edit_record(
+                &mut xml,
+                "<TimeComponentParam ObjectID=\"108\"",
+                "</TimeComponentParam>",
+                |record| {
+                    let start=record.find("<Keyframes>").unwrap();
+                    let end=start+record[start..].find("</Keyframes>").unwrap()+"</Keyframes>".len();
+                    let mut changed=record.to_owned();
+                    changed.replace_range(start..end,"<Keyframes></Keyframes>");
+                    changed
+                },
+            );
+        }
         let source = dir.path().join(FIXTURE);
         write_prproj(&source, &xml);
-        fs::copy(
-            fixtures.join("feature_timecoded_source.mp4"),
-            dir.path().join("feature_timecoded_source.mp4"),
-        )
-        .unwrap();
+        fs::write(dir.path().join("feature_timecoded_source.mp4"), &media).unwrap();
+        if rejected_curve {
+            let (_, reader_omissions) = premiere_file::PrProjectFile::load(&source).unwrap();
+            assert!(reader_omissions.iter().any(|omission| {
+                omission.kind == OmissionKind::Approximated
+                    && omission.reason.contains("fewer than two usable keys")
+            }));
+            assert!(!reader_omissions
+                .iter()
+                .any(|omission| omission.scope == OmissionScope::Occurrence));
+        }
         let output = dir.path().join("converted");
         let omissions = premiere_to_tesseract(&source, &output, Some(SEQUENCE), false).unwrap();
         let occurrences: Vec<_> = omissions
             .iter()
-            .filter(|omission| omission.scope == premiere_file::OmissionScope::Occurrence)
+            .filter(|omission| omission.scope == OmissionScope::Occurrence)
             .collect();
-        assert!(
-            matches!(occurrences[..], [omission] if omission.reason.contains(reason)),
-            "{reason}: {omissions:?}"
-        );
-        let document = TesseractFile::open(first_project(&output))
-            .unwrap()
-            .project_json()
-            .unwrap();
+        let approximations: Vec<_> = omissions
+            .iter()
+            .filter(|omission| omission.kind == OmissionKind::Approximated)
+            .collect();
+        let affected = if clip == "94" {
+            "VideoClipTrackItem:63"
+        } else {
+            "VideoClipTrackItem:64"
+        };
+        if fallback.is_some() {
+            assert!(occurrences.is_empty(), "{reason}: {omissions:?}");
+            assert!(
+                approximations.iter().any(|omission|omission.scope==OmissionScope::Feature && omission.record==affected && omission.reason.contains(reason))
+                    && approximations.iter().all(|omission|omission.scope==OmissionScope::Feature && omission.record==affected && (omission.reason.contains("saved constant-rate playback") || omission.reason.contains("bounded authored source trim") || omission.reason.contains("bounded constant-speed recovery"))),
+                "{reason}: {omissions:?}"
+            );
+        } else {
+            if rejected_curve {
+                assert!(
+                    matches!(approximations[..], [omission]
+                        if omission.record == affected
+                            && omission.reason.contains("fewer than two usable keys")),
+                    "{reason}: {omissions:?}"
+                );
+            } else {
+                assert!(approximations.is_empty(), "{reason}: {omissions:?}");
+            }
+            assert!(
+                matches!(occurrences[..], [omission]
+                    if omission.kind == OmissionKind::Omitted
+                        && omission.record == if clip == "94" { "VideoClipTrackItem:63" } else { "64" }
+                        && omission.reason.contains(reason)),
+                "{reason}: {omissions:?}"
+            );
+        }
+        let archive = TesseractFile::open(first_project(&output)).unwrap();
+        let document = archive.project_json().unwrap();
         let layers = video_layers(&document);
-        assert_eq!(layers.len(), 1, "{reason}");
         assert_eq!(
-            layers[0]["playback"]["inputRange"]["start"], kept,
+            layers.len(),
+            if fallback.is_some() { 2 } else { 1 },
             "{reason}"
         );
+        let sibling = layers
+            .iter()
+            .find(|layer| layer["playback"]["inputRange"]["start"] == kept)
+            .unwrap();
+        let control = controls
+            .iter()
+            .find(|layer| layer["playback"]["inputRange"]["start"] == kept)
+            .unwrap();
+        assert_eq!(sibling["playback"], control["playback"], "{reason}");
+        assert_eq!(sibling["source"], control["source"], "{reason}");
+        assert_eq!(sibling["sourceRange"], json!({"start": 0, "duration": 10000}));
+        assert_eq!(sibling["sourceIntrinsicDuration"], 10000);
+        assert_eq!(archive.metadata().assets.len(), 1);
+        for layer in &layers {
+            let asset_id = layer["source"]["assetId"].as_str().unwrap();
+            assert_eq!(
+                archive
+                    .asset(asset_id)
+                    .unwrap()
+                    .read_verified_bytes(media.len() as u64)
+                    .unwrap(),
+                media,
+                "{reason}"
+            );
+        }
+        if let Some((start, source_start, first, last)) = fallback {
+            let retained = layers
+                .iter()
+                .find(|layer| layer["playback"]["inputRange"]["start"] == start)
+                .unwrap();
+            assert_eq!(retained["source"], sibling["source"]);
+            assert_eq!(retained["sourceIntrinsicDuration"], 10000);
+            assert_eq!(
+                retained["sourceRange"],
+                json!({"start": source_start, "duration": 1600})
+            );
+            let playback = &retained["playback"];
+            assert_eq!(
+                playback["inputRange"],
+                json!({"start": start, "duration": 2000})
+            );
+            assert_eq!(playback["inputOffsetMs"], 0);
+            assert_eq!(playback["mapping"]["type"], "timeRemap");
+            let property = &playback["mapping"]["property"];
+            assert_eq!(property["before"], "inactive");
+            assert_eq!(property["after"], "inactive");
+            let keys = property["keyframes"].as_array().unwrap();
+            assert_eq!(keys.len(), 2);
+            for (key, (time, value)) in keys.iter().zip([(start, first), (start + 2000, last)]) {
+                assert_eq!(key["time"], time);
+                assert_eq!(key["value"], value);
+                assert_eq!(key["easing"], json!({"type": "linear"}));
+            }
+        }
     }
 }

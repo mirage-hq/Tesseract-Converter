@@ -1106,9 +1106,8 @@ fn adobe_graphic_clip_opacity_keys_stay_editable_in_both_directions() {
     };
     let curve = json!({"type": "cubicBezier", "x1": 0.4, "y1": 0.1, "x2": 0.75, "y2": 0.95});
 
-    // A Bezier curve into a key that starts a Hold cannot be written: Premiere
-    // ignores that key's in-handle. So moving the Hold key and easing into it
-    // exports the clip Opacity's static value and reports its keys.
+    // Premiere ignores the in-handle of a key that starts a Hold. Recover the
+    // editable times/values and report the segment's linear approximation.
     let mut into_hold = document.clone();
     let opacity = track_mut(&mut into_hold, &group, "opacity");
     opacity["animator"]["keyframes"][1]["layerTime"] = json!(1250);
@@ -1120,20 +1119,31 @@ fn adobe_graphic_clip_opacity_keys_stay_editable_in_both_directions() {
         .collect();
     assert_eq!(
         reasons,
-        ["Opacity animation was not exported: unsupported conversion: Opacity cubic easing into a key that starts a Hold cannot keep its in-handle, which Premiere ignores"]
+        ["Opacity segment easing approximated as linear; valid key times and values retained"]
     );
     let (defaults, components) = graphic_chain(&read_xml(&native.join("project.prproj")));
-    assert_eq!(
-        defaults,
-        [
-            "DefaultMotion",
-            "DefaultOpacity",
-            "DefaultMotionComponentID",
-            "DefaultOpacityComponentID"
-        ]
-    );
-    assert_eq!(components, ["AE.ADBE Text"]);
-
+    assert_eq!(defaults, ["DefaultMotion", "DefaultMotionComponentID"]);
+    assert_eq!(components, ["AE.ADBE Opacity", "AE.ADBE Text"]);
+    let recovered = root.join("recovered-hold");
+    premiere_to_tesseract(native.join("project.prproj"), &recovered, None, false).unwrap();
+    let file = TesseractFile::open(first_project(&recovered)).unwrap();
+    let wire = file.project_json().unwrap();
+    let recovered_keys = wire["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["target"]["propertyType"] == "opacity")
+        .unwrap()["animator"]["keyframes"]
+        .as_array()
+        .unwrap();
+    let authored = track_mut(&mut into_hold, &group, "opacity")["animator"]["keyframes"]
+        .as_array()
+        .unwrap();
+    assert_eq!(recovered_keys.len(), authored.len());
+    for (actual, expected) in recovered_keys.iter().zip(authored) {
+        assert_eq!(actual["layerTime"], expected["layerTime"]);
+        assert_eq!(actual["value"], expected["value"]);
+    }
     // Edit the current document: move the Hold key earlier, change the last
     // value and turn the Hold after it into a Bezier curve that ends on the
     // last key, which is written Linear and converts on the clip Opacity.
@@ -1502,16 +1512,16 @@ fn adobe_source_text_hold_keys_stay_editable_in_both_directions() {
         .map(|omission| omission.reason.as_str())
         .collect();
     // Three ID-only TrackItem Nodes come from the Premiere 26.5.1 saves. C
-    // and D are the gradient probe's shapes, saved with the unmeasured
-    // Appearance slot 8; each omits its own occurrence.
+    // and D are the gradient probe's shapes. Their unmeasured Appearance
+    // slot 8 is diagnosed while their supported paint remains editable.
     assert_eq!(
         reasons,
         [
             "ClipTrackItem/TrackItem/Node not converted",
             "ClipTrackItem/TrackItem/Node not converted",
             "ClipTrackItem/TrackItem/Node not converted",
-            "unsupported conversion: ArbVideoComponentParam:171: unsupported Appearance slot 8",
-            "unsupported conversion: ArbVideoComponentParam:189: unsupported Appearance slot 8",
+            "optional Appearance slot 8 not converted; supported paint retained",
+            "optional Appearance slot 8 not converted; supported paint retained",
             FONT_NOT_PACKAGED,
         ]
     );
@@ -1533,13 +1543,21 @@ fn adobe_source_text_hold_keys_stay_editable_in_both_directions() {
     assert_eq!(
         names,
         [
+            ("Shape", "D"),
             ("Text", "A"),
             ("Text", "B"),
+            ("Shape", "C"),
             ("Video", "Premiere video 1"),
             ("Rect", "Premiere black canvas"),
         ]
     );
-    let (a, b) = (&layers[0], &layers[1]);
+    let layer = |name: &str| {
+        layers
+            .iter()
+            .find(|layer| layer["name"] == name)
+            .unwrap_or_else(|| panic!("layer {name}"))
+    };
+    let (a, b) = (layer("A"), layer("B"));
     // A on V2 at 1-4 s from In 3601 s: keys TWO at 3601.5 s and THREE at
     // 3602.5 s hold the text; the first key's document is the text before
     // it (Premiere renders TWO from the first frame, not the saved
@@ -1602,8 +1620,18 @@ fn adobe_source_text_hold_keys_stay_editable_in_both_directions() {
         json!("FOUR");
     track_mut(&mut document, b, "strokeEnabled")["animator"]["keyframes"][1]["layerTime"] =
         json!(1000);
-    document["composition"]["layers"][1]["transform"]["position"] = json!([768.0, 540.0]);
-    let asset_id = layers[2]["source"]["assetId"].as_str().unwrap().to_owned();
+    let b_index = layers
+        .iter()
+        .position(|layer| layer["name"] == "B")
+        .unwrap();
+    document["composition"]["layers"][b_index]["transform"]["position"] = json!([768.0, 540.0]);
+    let asset_id = layers
+        .iter()
+        .find(|layer| layer["type"] == "Video")
+        .unwrap()["source"]["assetId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let edited = root.join("edited.tsrct");
     TesseractFileBuilder::from_project_json(&serde_json::to_vec(&document).unwrap())
         .unwrap()
@@ -1774,9 +1802,16 @@ fn adobe_source_text_hold_keys_export_with_a_shadow_beside_siblings() {
         .collect();
     assert_eq!(
         names,
-        ["A", "B", "Premiere video 1", "Premiere black canvas"]
+        [
+            "D",
+            "A",
+            "B",
+            "C",
+            "Premiere video 1",
+            "Premiere black canvas",
+        ]
     );
-    let a = &layers[0];
+    let a = layers.iter().find(|layer| layer["name"] == "A").unwrap();
     let [effect] = a["effects"].as_array().unwrap().as_slice() else {
         panic!("A keeps one effect: {a}");
     };
@@ -1799,7 +1834,8 @@ fn adobe_source_text_hold_keys_export_with_a_shadow_beside_siblings() {
             held(&[(500, json!("TWO")), (1500, json!("THREE"))])
         )]
     );
-    assert!(layers[1].get("effects").is_none(), "B has no shadow");
+    let b = layers.iter().find(|layer| layer["name"] == "B").unwrap();
+    assert!(b.get("effects").is_none(), "B has no shadow");
 }
 
 /// The warning of a gradient with opacity stops, in both directions.

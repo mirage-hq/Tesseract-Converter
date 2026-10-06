@@ -26,6 +26,7 @@ fn with_lowerer(document: &EditableFxCompositionDocument, check: impl FnOnce(&mu
             })
             .map(Layer::id)
             .collect(),
+        mosaic_cross_layer_inputs: super::super::mosaic_domain::has_cross_layer_inputs(roots),
         resolved_media: &resolved_media,
         fonts: None,
         composition_options: composition_options::from_motion_blur(

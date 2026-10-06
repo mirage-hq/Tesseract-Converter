@@ -134,6 +134,7 @@ pub(in crate::format::writer) fn records(
                     (PrVideoItem::Graphic(item), ItemIds::Graphic(graphic_ids)) => {
                         output.extend(graphic::records(inner, item, graphic_ids)?);
                     }
+                    (PrVideoItem::Capsule(_), _) => return Err(crate::format::invalid("native Capsule replay/export is unsupported; import as editable FX instead")),
                     _ => unreachable!("ProjectIds allocates identities of each item's own kind"),
                 }
             }

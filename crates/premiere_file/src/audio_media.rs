@@ -722,8 +722,10 @@ impl PictureClock {
     pub(crate) fn of(facts: &crate::media::MediaFacts) -> Option<Self> {
         let timing = match facts {
             crate::media::MediaFacts::Video(video) => &video.timing,
-            crate::media::MediaFacts::UnsupportedVideo(video) => &video.timing,
-            crate::media::MediaFacts::Still(_) => return None,
+            crate::media::MediaFacts::UnsupportedVideo(video) => video.timing.as_ref()?,
+            crate::media::MediaFacts::Still(_) | crate::media::MediaFacts::UnsupportedStill(_) => {
+                return None;
+            }
         };
         let (rate, duration_ticks) = timing.supported().ok()?;
         Some(Self {

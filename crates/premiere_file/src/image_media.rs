@@ -1,13 +1,21 @@
 //! Inspect one still-image source with the `image` decoders the renderer uses.
 //!
-//! Only headers are decoded: format, pixel dimensions, alpha, and whether an
-//! ICC profile is embedded. Decoder errors reject malformed, truncated,
+//! PNG/JPEG inspection decodes headers: format, pixel dimensions, alpha, and
+//! whether an ICC profile is embedded. OpenEXR inspection retains the original
+//! compressed source for Premiere's native importer after validating its
+//! headers, offset tables and compressed chunks without decoding pixels.
+//! Decoder errors reject malformed, truncated,
 //! IDAT-less, 12-bit, lossless, and arithmetic-coded files; an Exif orientation
 //! other than 1 (the renderer rotates the pixels) and APNG reject too. CMYK/YCCK
 //! JPEG, unreadable Exif (drawn as orientation 1), and PNG `cICP` (not exposed
 //! by the decoder) convert as the renderer draws them; Premiere parity is inferred.
 
-use crate::error::{unsupported, BuildError, Result};
+mod exr;
+
+use crate::{
+    error::{unsupported, BuildError, Result},
+    media::{MediaFacts, UnsupportedStillMedia},
+};
 use image::{
     codecs::{jpeg::JpegDecoder, png::PngDecoder},
     metadata::Orientation,
@@ -20,6 +28,7 @@ use std::io::{BufReader, ErrorKind, Read, Seek};
 pub(crate) enum ImageFormat {
     Jpeg,
     Png,
+    OpenExr,
 }
 
 impl ImageFormat {
@@ -30,6 +39,7 @@ impl ImageFormat {
         match extension.to_ascii_lowercase().as_str() {
             "png" => Some(Self::Png),
             "jpg" | "jpeg" => Some(Self::Jpeg),
+            "exr" | "sxr" | "mxr" => Some(Self::OpenExr),
             _ => None,
         }
     }
@@ -38,6 +48,30 @@ impl ImageFormat {
         match self {
             Self::Jpeg => "image/jpeg",
             Self::Png => "image/png",
+            Self::OpenExr => "image/x-exr",
+        }
+    }
+
+    pub(crate) fn matches_content_type(self, content_type: &str) -> bool {
+        match self {
+            Self::OpenExr => matches!(
+                content_type,
+                "image/x-exr" | "image/exr" | "application/x-exr" | "image/unknown"
+            ),
+            _ => content_type == self.content_type(),
+        }
+    }
+
+    /// Whether this file format matches the native still importer that the
+    /// media record declares.
+    pub(crate) fn matches_media_kind(self, kind: crate::schema::PrMediaKind) -> bool {
+        match kind {
+            crate::schema::PrMediaKind::Still { .. }
+            | crate::schema::PrMediaKind::NumberedStills { .. } => {
+                matches!(self, Self::Jpeg | Self::Png)
+            }
+            crate::schema::PrMediaKind::OpenExr { .. } => self == Self::OpenExr,
+            _ => false,
         }
     }
 }
@@ -48,7 +82,9 @@ pub(crate) struct ValidatedImage {
     pub(crate) format: ImageFormat,
     pub(crate) width: u32,
     pub(crate) height: u32,
-    /// A PNG alpha channel or `tRNS` chunk (see `declaration_mismatch`).
+    pub(crate) pixel_aspect: crate::schema::records::PixelAspectRatio,
+    pub(crate) open_exr_channels: Option<crate::schema::OpenExrChannels>,
+    /// A PNG alpha channel, `tRNS` chunk, or selected OpenEXR A channel.
     pub(crate) alpha: bool,
     /// An embedded ICC profile; the renderer converts only a Display-P3 one.
     pub(crate) icc_profile: bool,
@@ -60,11 +96,12 @@ impl ValidatedImage {
     ///
     /// The package content type follows the extension, so PNG bytes under a
     /// `.jpg` name reject. Alpha must agree both ways: Premiere would draw an
-    /// undeclared alpha channel opaque, and declared straight alpha needs an
-    /// alpha channel. `AlphaType` `1` with RGBA PNG (`cinemagraph`,
-    /// `phone_title`) and its absence with JPEG are observed; the grey+alpha,
-    /// `tRNS` and opaque-PNG declarations are inferred, so this check can omit
-    /// such a still on import but never import one whose file contradicts it.
+    /// undeclared alpha channel opaque, and declared alpha needs an alpha
+    /// channel. `AlphaType` `1` with RGBA PNG (`cinemagraph`, `phone_title`),
+    /// `AlphaType` `2` with RGBA OpenEXR, and the absent declarations for JPEG
+    /// and RGB OpenEXR are observed. The grey+alpha, `tRNS` and opaque-PNG
+    /// declarations are inferred, so this check can omit such a still on import
+    /// but never import one whose file contradicts it.
     pub(crate) fn declaration_mismatch(
         &self,
         extension: Option<&str>,
@@ -112,11 +149,36 @@ pub(crate) fn inspect_image_media(reader: impl Read + Seek) -> Result<ValidatedI
             }
             decoded_facts(ImageFormat::Png, decoder)
         }
+        Some(image::ImageFormat::OpenExr) => match exr::inspect(reader.into_inner(), None)? {
+            exr::Inspection::Native(image) => Ok(image),
+            exr::Inspection::PremiereUnsupported { reason, .. } => Err(unsupported(reason)),
+        },
         other => Err(unsupported(format!(
-            "still image must be a PNG or JPEG file; {} data is unsupported",
+            "still image must be a PNG, JPEG, or OpenEXR file; {} data is unsupported",
             other.map_or("unrecognized image", |format| format.to_mime_type())
         ))),
     }
+}
+
+/// Inspect an export source and verify that its archived byte count is stable.
+pub(crate) fn inspect_export_image_media(
+    reader: impl Read + Seek,
+    size: u64,
+) -> Result<MediaFacts> {
+    let reader = ImageReader::new(BufReader::new(reader)).with_guessed_format()?;
+    if reader.format() == Some(image::ImageFormat::OpenExr) {
+        return Ok(match exr::inspect(reader.into_inner(), Some(size))? {
+            exr::Inspection::Native(image) => MediaFacts::Still(image),
+            exr::Inspection::PremiereUnsupported { image, reason } => {
+                MediaFacts::UnsupportedStill(UnsupportedStillMedia {
+                    width: image.width,
+                    height: image.height,
+                    reason,
+                })
+            }
+        });
+    }
+    inspect_image_media(reader.into_inner()).map(MediaFacts::Still)
 }
 
 /// PNG pHYs stores pixels per unit, so pixel width/height is Y/X. The PNG
@@ -162,6 +224,8 @@ fn decoded_facts(format: ImageFormat, mut decoder: impl ImageDecoder) -> Result<
         format,
         width,
         height,
+        pixel_aspect: crate::schema::records::PixelAspectRatio::SQUARE,
+        open_exr_channels: None,
         alpha: decoder.color_type().has_alpha(),
         icc_profile: decoder.icc_profile().map_err(undecodable)?.is_some(),
     })

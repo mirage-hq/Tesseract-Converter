@@ -398,6 +398,8 @@ pub(super) fn apply(
     provider.effects.push(
         EffectRecord::from_data(&EffectData::Identified {
             id: EffectId::new(first + 8),
+            compositing_options: None,
+            extensions: Default::default(),
             enabled: true,
             effect: EffectPayload::Known(LayerEffect::LumaKey {
                 threshold: Some((profile.threshold - 0.5) / 255.),
@@ -434,6 +436,8 @@ pub(super) fn apply(
         branch.effects.push(
             EffectRecord::from_data(&EffectData::Identified {
                 id: EffectId::new(effect_id),
+                compositing_options: None,
+                extensions: Default::default(),
                 enabled: true,
                 effect: EffectPayload::Known(LayerEffect::SimpleChoker { choke: Some(choke) }),
             })

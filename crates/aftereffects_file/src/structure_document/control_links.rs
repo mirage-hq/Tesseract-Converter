@@ -2,7 +2,7 @@
 //!
 //! Supports identical-component Slider Scale vectors, complete Slider references
 //! for pixel-unit properties, bounded equal-stretch Angle/Slider offsets for
-//! Rotation/X Position, bounded Scale sums, one delayed-Position rig, the
+//! Rotation/X Position, bounded Scale sums and self-time ramps, one delayed-Position rig, the
 //! Source Text Slider percent binding and pure same-effect scalar aliases.
 //! A bounded posterizeTime/wiggle Position profile retains native base keys with
 //! explicit jitter/sampling omissions. Other expressions retain captured-sample fallback.
@@ -24,6 +24,7 @@ mod property_alias;
 mod rotation;
 mod rotation_offset_loop;
 mod scale_offset;
+mod scale_time;
 mod sibling_rotation;
 mod slider;
 
@@ -336,6 +337,39 @@ fn read_layer_transform_inner<'a>(
                 Err(error) => warnings.push(format!(
                     "{}: cross-composition Transform alias not lowered ({error}); original expression retained",
                     property.match_name
+                )),
+            }
+        }
+    }
+    // A member alias may observe this finite preparation outside the receiving
+    // composition. Keep its original diagnosed expression fallback instead.
+    if only_member.is_none()
+        && let Some(property) = properties.iter_mut().find(|property| {
+            property.match_name == "ADBE Scale"
+                && property
+                    .numeric
+                    .as_ref()
+                    .is_ok_and(|numeric| numeric.expression_enabled)
+        })
+    {
+        let base = property
+            .numeric
+            .as_ref()
+            .expect("filtered successful Scale property");
+        if let Some(lowered) = scale_time::lower(layer, composition, base) {
+            match lowered {
+                Ok(value) => {
+                    property.numeric = Ok(value);
+                    warnings.retain(|warning| {
+                        !warning.starts_with("ADBE Scale: control link not lowered")
+                    });
+                    warnings.push(
+                        "ADBE Scale: same-property affine time ramp lowered to independent editable Linear keys; live expression linkage not retained"
+                            .into(),
+                    );
+                }
+                Err(error) => warnings.push(format!(
+                    "ADBE Scale: affine time ramp not lowered ({error}); retained native fallback"
                 )),
             }
         }

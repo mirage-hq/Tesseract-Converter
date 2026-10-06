@@ -44,7 +44,6 @@ pub(crate) use audio::embedded_sound_asset;
 pub(crate) use background::identity_transform;
 #[cfg(test)]
 pub(crate) use effects::LINKED_SOURCE_EDITING_REASON;
-pub(crate) use graphic::template_objects;
 pub(crate) use replacement::active_asset_id;
 pub(crate) use video_data::video_data;
 
@@ -56,7 +55,7 @@ pub use packing::{
     AfterEffectsPicture, PictureContainer, PictureContainerToken, PicturePackingId,
     PicturePackingRecipe, PictureReplacement, PictureSourceBoundary, SourceBoundaryToken,
 };
-pub(crate) use premiere_to_tesseract::sequence_document_with_progress;
+pub(crate) use premiere_to_tesseract::{omit_pop_emulation, sequence_document_with_progress};
 #[cfg(test)]
 pub(crate) use premiere_to_tesseract::{premiere_to_tesseract, sequence_document};
 #[cfg(test)]

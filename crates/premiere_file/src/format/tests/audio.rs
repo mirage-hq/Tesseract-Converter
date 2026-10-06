@@ -1945,8 +1945,6 @@ fn interpreted_picture_rejections_preserve_independently_placed_sound() {
         "<IsFrameRateOverridden>true</IsFrameRateOverridden>",
         "<IsFrameRateOverridden>true</IsFrameRateOverridden><OveriddenFrameRate>0</OveriddenFrameRate>",
         "<IsFrameRateOverridden>true</IsFrameRateOverridden><OveriddenFrameRate>-1</OveriddenFrameRate>",
-        // Deliberately unverified alternate intrinsic OriginalDuration.
-        "<IsFrameRateOverridden>true</IsFrameRateOverridden><OveriddenFrameRate>16934400000</OveriddenFrameRate>",
     ] {
         let changed = with_children(&xml, "<VideoStream ObjectID=\"112\"", fields);
         let (project, omissions) = inspect_project_with_omissions(&changed, None).unwrap();
@@ -1956,6 +1954,28 @@ fn interpreted_picture_rejections_preserve_independently_placed_sound() {
         assert!(omissions.iter().any(|item| item.reason.contains("interpretation")
             || item.reason.contains("OveriddenFrameRate")), "{omissions:?}");
     }
+    let changed = with_children(&xml, "<VideoStream ObjectID=\"112\"",
+        "<IsFrameRateOverridden>true</IsFrameRateOverridden><OveriddenFrameRate>16934400000</OveriddenFrameRate>");
+    let (recovered, losses) = inspect_project_with_omissions(&changed, None).unwrap();
+    assert!(
+        recovered
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .count()
+            > 0,
+        "{losses:?}"
+    );
+    assert_eq!(
+        format!("{:?}", recovered.single_sequence().unwrap().audio),
+        format!("{:?}", control.audio)
+    );
+    assert!(
+        losses
+            .iter()
+            .any(|loss| loss.reason.contains("OriginalDuration cache")),
+        "{losses:?}"
+    );
     // A saved inactive value is not an active interpretation.
     let changed = with_children(&xml, "<VideoStream ObjectID=\"112\"",
         "<IsFrameRateOverridden>false</IsFrameRateOverridden><OveriddenFrameRate>16934400000</OveriddenFrameRate>");

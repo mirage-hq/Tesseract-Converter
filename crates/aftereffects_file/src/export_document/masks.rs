@@ -38,6 +38,8 @@ pub(crate) struct LoweredMasks {
     pub text_path_index: Option<u16>,
     /// Static guide layers consumed into same-layer native masks.
     pub consumed_guides: BTreeSet<LayerId>,
+    /// An omitted coverage gate must not become an unmasked Adjustment effect.
+    pub has_omitted_gating_mask: bool,
     pub diagnostics: Vec<String>,
 }
 
@@ -52,6 +54,7 @@ pub(crate) fn lower(
 ) -> LoweredMasks {
     let mut output = LoweredMasks::default();
     if owner.source_size.contains(&0) {
+        output.has_omitted_gating_mask = masks.iter().any(|mask| mask.mode != MaskMode::None);
         if !masks.is_empty() || text_path.is_some() {
             output
                 .diagnostics
@@ -95,10 +98,13 @@ pub(crate) fn lower(
                             .diagnostics
                             .push(format!("Mask {}: {diagnostic}", position + 1));
                     }
-                    Err(reason) => output.diagnostics.push(format!(
-                        "Mask {} omitted: {message}; positive compound fallback: {reason}",
-                        position + 1
-                    )),
+                    Err(reason) => {
+                        output.has_omitted_gating_mask |= mask.mode != MaskMode::None;
+                        output.diagnostics.push(format!(
+                            "Mask {} omitted: {message}; positive compound fallback: {reason}",
+                            position + 1
+                        ));
+                    }
                 }
             }
         }

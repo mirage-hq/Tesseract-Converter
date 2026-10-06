@@ -69,17 +69,17 @@ pub(super) fn lower_at_rate(
     size: [f64; 2],
     rate: crate::timing::FrameRate,
 ) -> LoweredEffects {
-    lower_at_rate_with_mosaic_canvas(records, dynamics, size, rate, None)
+    lower_at_rate_with_mosaic_domain(records, dynamics, size, rate, None)
 }
 
-pub(super) fn lower_at_rate_with_mosaic_canvas(
+pub(super) fn lower_at_rate_with_mosaic_domain(
     records: &[EffectRecord],
     dynamics: &[AnimationGraphEntry],
     size: [f64; 2],
     rate: crate::timing::FrameRate,
-    mosaic_canvas: Option<&super::mosaic_domain::RootCanvas>,
+    mosaic_domain: Option<&super::mosaic_domain::MosaicDomain>,
 ) -> LoweredEffects {
-    let mut result = lower_with_rate(records, dynamics, size, rate, mosaic_canvas);
+    let mut result = lower_with_rate(records, dynamics, size, rate, mosaic_domain);
     validate_color_clocks(&mut result, rate);
     result
 }
@@ -130,7 +130,7 @@ fn lower_with_rate(
     dynamics: &[AnimationGraphEntry],
     size: [f64; 2],
     rate: crate::timing::FrameRate,
-    mosaic_canvas: Option<&super::mosaic_domain::RootCanvas>,
+    mosaic_domain: Option<&super::mosaic_domain::MosaicDomain>,
 ) -> LoweredEffects {
     let mut result = LoweredEffects {
         effects: Vec::new(),
@@ -144,6 +144,7 @@ fn lower_with_rate(
                 id,
                 enabled,
                 effect,
+                ..
             } => (Some(*id), *enabled, effect),
             EffectData::Legacy(effect) => (None, true, effect),
         };
@@ -422,7 +423,7 @@ fn lower_with_rate(
                     .map(|warning| format!("Effect {kind}: {warning}")),
             );
             if let Some(warning) =
-                super::mosaic_domain::lower_checkbox(effect, &mut native, mosaic_canvas)
+                super::mosaic_domain::lower(effect, &mut native, size, mosaic_domain)
             {
                 result.warnings.push(warning);
             }

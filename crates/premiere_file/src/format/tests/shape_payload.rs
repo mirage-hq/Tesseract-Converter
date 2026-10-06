@@ -1,7 +1,7 @@
 //! Shape Path and Appearance payloads from native calibration controls:
 //! Premiere 26.5.1 saved `C1`, `C2` and `K1` byte-identically, and AME
-//! rendered them and the payload-swapped copies `C4`-`C6`. Round trips and
-//! fail-closed slots.
+//! rendered them and the payload-swapped copies `C4`-`C6`. Editable recovery of
+//! optional Appearance data keeps required path, paint and concealment checks.
 
 use super::*;
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -45,6 +45,122 @@ fn bytes(base64: &str) -> Vec<u8> {
 
 const BLUE: PrRgb = PrRgb([0, 96, 255]);
 const GREEN: PrRgb = PrRgb([0, 255, 64]);
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn native_appearance_optional_details_keep_published_shape_geometry() {
+    use crate::tests::support::{legacy_appearance, legacy_json};
+    use std::{fs, io::Read, path::Path};
+    use tesseract_file::TesseractFile;
+
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let mut xml = String::new();
+    flate2::read::GzDecoder::new(
+        fs::File::open(fixtures.join("feature_graphic_shapes_26_5_strict.prproj")).unwrap(),
+    )
+    .read_to_string(&mut xml)
+    .unwrap();
+    let document = roxmltree::Document::parse(&xml).unwrap();
+    // The first native Rectangle's Appearance; its unchanged Path is param 176.
+    let value = document
+        .descendants()
+        .find(|node| node.attribute("ObjectID") == Some("177"))
+        .unwrap()
+        .children()
+        .find(|node| node.has_tag_name("StartKeyframeValue"))
+        .unwrap();
+    let saved = STANDARD
+        .decode(value.text().unwrap().split_whitespace().collect::<String>())
+        .unwrap();
+    let mut missing_layout = saved.clone();
+    let word = |at: usize| u32::from_le_bytes(saved[at..at + 4].try_into().unwrap()) as usize;
+    let root = 12 + word(12);
+    let root_vtable = root - word(root);
+    let style_slot = root
+        + usize::from(u16::from_le_bytes(
+            saved[root_vtable + 4..root_vtable + 6].try_into().unwrap(),
+        ));
+    let style = style_slot + word(style_slot);
+    let vtable = style - word(style);
+    missing_layout[vtable + 4 + 34 * 2..vtable + 6 + 34 * 2].fill(0);
+    let legacy = legacy_appearance(&legacy_json(&[
+        ("mIsMask", Some("false")),
+        ("mIsMaskInverted", Some("false")),
+        ("mFillColorType", Some("0")),
+        ("mAdditionalStrokes", Some("[]")),
+        (
+            "mGradientInfo",
+            Some(r#"{"mColorStops":[],"mOpacityStops":[]}"#),
+        ),
+        ("mShadowSize", Some("0")),
+        ("mFutureLayout", Some(r#"{"size":12}"#)),
+    ]));
+    for (name, payload, expected_color, diagnosed) in [
+        ("legacy", legacy, [128.0 / 255.0; 3], true),
+        (
+            "missing-layout",
+            missing_layout,
+            [0.0, 96.0 / 255.0, 1.0],
+            false,
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        fs::copy(
+            fixtures.join("video-30fps-10s.mp4"),
+            dir.path().join("video-30fps-10s.mp4"),
+        )
+        .unwrap();
+        let replacement = value
+            .text()
+            .map(|old| xml[value.range()].replace(old, &STANDARD.encode(payload)))
+            .unwrap();
+        let mut changed = xml.clone();
+        changed.replace_range(value.range(), &replacement);
+        let input = dir.path().join("project.prproj");
+        fs::write(&input, changed).unwrap();
+        let output = dir.path().join("converted");
+        let omissions = crate::premiere_to_tesseract(
+            &input,
+            &output,
+            Some("c8acf9c1-34b2-4086-9f55-d528950a7059"),
+            false,
+        )
+        .unwrap();
+        let archive = fs::read_dir(output)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let file = TesseractFile::open(archive).unwrap();
+        let project = file.project_json().unwrap();
+        let layers = project["composition"]["layers"].as_array().unwrap();
+        assert_eq!(layers.len(), 11, "{name}: {project}");
+        let rectangle = &layers[0]["layers"][1];
+        assert_eq!(rectangle["type"], "Shape", "{name}: {project}");
+        assert_eq!(rectangle["name"], "Rectangle");
+        assert_eq!(
+            rectangle["shape"]["path"]["commands"][1],
+            serde_json::json!({"type":"lineTo", "x":100.0, "y":-90.0})
+        );
+        assert_eq!(
+            rectangle["shape"]["fills"][0]["paint"]["color"],
+            serde_json::json!([expected_color[0], expected_color[1], expected_color[2], 1.0])
+        );
+        assert_eq!(layers[0]["layers"][0]["type"], "Text");
+        assert_eq!(
+            layers[2]["layers"][1]["shape"]["path"]["commands"][1]["type"],
+            "cubicTo"
+        );
+        assert_eq!(
+            omissions
+                .iter()
+                .any(|omission| omission.reason.contains("optional Appearance")),
+            diagnosed,
+            "{name}: {omissions:?}"
+        );
+    }
+}
 
 #[test]
 fn native_path_past_the_former_payload_quota_round_trips() {
@@ -158,7 +274,7 @@ fn the_writer_stores_the_calibrated_slots_and_reads_back() {
 }
 
 #[test]
-fn appearance_slots_decode_only_at_values_that_rendered_like_the_base() {
+fn optional_appearance_slots_do_not_discard_known_paint() {
     let base = appearance_fields(&PrAppearance {
         mask_source: None,
         fill: Some(PrFill::Solid(BLUE)),
@@ -187,46 +303,36 @@ fn appearance_slots_decode_only_at_values_that_rendered_like_the_base() {
             (31, Some(Field::U32(position))),
         ]
     };
-    // Values that calibration-2 rendered like the base decode.
+    // Calibration values and absent/unknown optional metadata retain the fill.
     for changes in [
         vec![(13, Some(Field::U8(2)))],
         vec![(34, Some(Field::U8(2)))],
         vec![(23, Some(Field::U32(0)))],
         vec![(23, Some(Field::U32(2)))],
         vec![(24, Some(Field::F32(390.0))), (25, Some(Field::F32(500.0)))],
+        vec![(8, Some(Field::U8(0)))],
+        vec![(26, Some(Field::U32(16)))],
+        vec![(15, Some(Field::U8(1)))],
+        vec![(13, Some(Field::U8(3)))],
+        vec![(23, Some(Field::U32(3)))],
+        vec![(23, None)],
+        vec![(34, None)],
+        vec![(34, Some(Field::U8(0)))],
+        vec![(23, Some(Field::U32(2))), (24, Some(Field::F32(390.0)))],
+        vec![(24, None)],
+        vec![(28, Some(Field::Table(&[(1, Field::F32(1.0))])))],
     ] {
-        let decoded = decode_appearance(&with(&changes));
-        assert!(decoded.is_ok(), "{changes:?}: {decoded:?}");
+        let (decoded, _) = decode_appearance_with_notes(&with(&changes)).unwrap();
+        assert_eq!(decoded.fill, Some(PrFill::Solid(BLUE)), "{changes:?}");
+        assert_eq!(decoded.mask_source, None);
     }
+    let (_, notes) = decode_appearance_with_notes(&with(&[(26, Some(Field::U32(16)))])).unwrap();
+    assert!(notes
+        .iter()
+        .any(|note| note.contains("optional Appearance slot 26")));
     let unrendered = "holds a value that no render covers";
     for (changes, reason) in [
         (vec![(1, Some(Field::U8(1)))], unrendered),
-        (
-            vec![(8, Some(Field::U8(0)))],
-            "unsupported Appearance slot 8",
-        ),
-        (
-            vec![(26, Some(Field::U32(16)))],
-            "unsupported Appearance slot 26",
-        ),
-        (
-            vec![(15, Some(Field::U8(1)))],
-            "unsupported Appearance slot 15",
-        ),
-        (vec![(13, Some(Field::U8(3)))], unrendered),
-        (vec![(23, Some(Field::U32(3)))], unrendered),
-        (vec![(23, None)], unrendered),
-        (vec![(34, Some(Field::U8(0)))], unrendered),
-        // Only 23 = 1 frees the layout slots; they stay typed and present.
-        (
-            vec![(23, Some(Field::U32(2))), (24, Some(Field::F32(390.0)))],
-            unrendered,
-        ),
-        (vec![(24, None)], unrendered),
-        (
-            vec![(28, Some(Field::Table(&[(1, Field::F32(1.0))])))],
-            unrendered,
-        ),
         (stroke(1).to_vec(), "shape strokes inside the outline"),
         (stroke(2).to_vec(), "shape strokes outside the outline"),
         (
@@ -337,7 +443,7 @@ fn legacy_json_appearance_v1_reads_a_gray_fill_and_the_fill_switch() {
 }
 
 #[test]
-fn legacy_json_appearance_fails_closed_outside_its_v1_form() {
+fn legacy_json_appearance_keeps_required_framing_paint_and_mask_guards() {
     use crate::tests::support::{legacy_appearance, legacy_json};
     let payload = |changes: &[(&str, Option<&str>)]| legacy_appearance(&legacy_json(changes));
     let gray = payload(&[]);
@@ -373,14 +479,37 @@ fn legacy_json_appearance_fails_closed_outside_its_v1_form() {
             legacy_appearance(&format!("{}{{}}", legacy_json(&[]))),
             "trailing characters".into(),
         ),
-        // A field of unknown meaning, such as a mask, is never dropped.
         (
             payload(&[("mMaskSource", Some("1"))]),
-            "unknown field `mMaskSource`".into(),
+            "unsupported mask fields".into(),
         ),
         (
-            legacy_appearance(&legacy_json(&[]).replacen('{', r#"{"mName":"Box","#, 1)),
-            "unknown field `mName`".into(),
+            payload(&[("mIsMask", Some("true"))]),
+            "unsupported mask fields".into(),
+        ),
+        (
+            payload(&[("mIsMaskInverted", Some("true"))]),
+            "unsupported mask fields".into(),
+        ),
+        (
+            payload(&[("mIsMask", Some("null"))]),
+            "invalid type: null, expected a boolean".into(),
+        ),
+        (
+            legacy_appearance(&legacy_json(&[]).replacen('{', r#"{"mIsMask":true,"#, 1)),
+            "unsupported mask fields".into(),
+        ),
+        (
+            legacy_appearance(&legacy_json(&[]).replacen('{', r#"{"mIsMaskInverted":true,"#, 1)),
+            "unsupported mask fields".into(),
+        ),
+        (
+            payload(&[("mFillColorType", Some("1"))]),
+            "active fill type 1 is unsupported".into(),
+        ),
+        (
+            payload(&[("mAdditionalStrokes", Some("[{}]"))]),
+            "additional strokes are unsupported".into(),
         ),
         (
             legacy_appearance(
@@ -405,16 +534,8 @@ fn legacy_json_appearance_fails_closed_outside_its_v1_form() {
             "invalid type: null, expected a boolean".into(),
         ),
         (
-            legacy_appearance(&legacy_json(&[]).replace(r#""mVersion":1"#, r#""mVersion":2"#)),
-            "version 2 is unsupported".into(),
-        ),
-        (
             payload(&[("mFillColor", Some("33554431"))]),
             "mFillColor 0x1ffffff is outside the 24-bit color form".into(),
-        ),
-        (
-            payload(&[("mStrokeColor", Some("4294967295"))]),
-            "mStrokeColor 0xffffffff is outside the 24-bit color form".into(),
         ),
         // Only gray reads alike in either channel order.
         (
@@ -446,6 +567,45 @@ fn legacy_json_appearance_fails_closed_outside_its_v1_form() {
         })
         .collect();
     assert!(unmet.is_empty(), "{unmet:#?}");
+}
+
+#[test]
+fn legacy_optional_appearance_fields_keep_gray_paint_and_report_saved_details() {
+    use crate::tests::support::{legacy_appearance, legacy_json};
+    let json = legacy_json(&[
+        ("mIsMask", Some("false")),
+        ("mIsMaskInverted", Some("false")),
+        ("mFillColorType", Some("0")),
+        ("mAdditionalStrokes", Some("[]")),
+        (
+            "mGradientInfo",
+            Some(r#"{"mColorStops":[],"mOpacityStops":[]}"#),
+        ),
+        ("mLineJoinType", Some("0")),
+        ("mShadowSize", Some("0")),
+        ("mFutureLayout", Some("17")),
+        ("mStrokeColor", Some("4294967295")),
+        ("mStrokeWidth", None),
+    ])
+    .replace(r#""mVersion":1"#, r#""mVersion":2,"mName":"Box""#);
+    let (appearance, notes) = decode_appearance_with_notes(&legacy_appearance(&json)).unwrap();
+    assert_eq!(appearance.fill, Some(PrFill::Solid(PrRgb([128; 3]))));
+    assert_eq!(appearance.mask_source, None);
+    assert_eq!(appearance.stroke, None);
+    assert_eq!(appearance.shadow, None);
+    for field in [
+        "mName",
+        "mGradientInfo",
+        "mLineJoinType",
+        "mShadowSize",
+        "mFutureLayout",
+        "version 2",
+    ] {
+        assert!(
+            notes.iter().any(|note| note.contains(field)),
+            "{field}: {notes:?}"
+        );
+    }
 }
 
 #[test]
@@ -627,7 +787,7 @@ fn gradient_form<'a>(
 }
 
 #[test]
-fn gradient_appearances_decode_only_in_the_form_the_fixture_rendered() {
+fn gradient_appearance_keeps_active_paint_guards_but_not_optional_layout_guards() {
     use crate::schema::text::OPAQUE_OPACITY_STOPS;
     let blue = Field::Color([0, 96, 254]);
     let first = [(0, blue), (2, Field::F32(0.5))];
@@ -645,6 +805,16 @@ fn gradient_appearances_decode_only_in_the_form_the_fixture_rendered() {
     let moved_stops = [GRADIENT_ALPHA_STOPS[0], &moved];
     let late_stops = [GRADIENT_ALPHA_STOPS[0], &late];
     let saved = gradient_of(&stops, &GRADIENT_ALPHA_STOPS, &[]);
+    for changes in [
+        vec![(23, Some(Field::U32(1)))],
+        vec![(34, Some(Field::U8(2)))],
+        vec![(28, None)],
+    ] {
+        let (decoded, _) = decode_appearance_with_notes(&gradient_form(&saved, &changes)).unwrap();
+        assert!(matches!(decoded.fill, Some(PrFill::Gradient(_))));
+    }
+    let decoded = decode_appearance(&encode_fields(&[(0, blue), (2, blue)]).unwrap()).unwrap();
+    assert_eq!(decoded.fill, Some(PrFill::Solid(PrRgb([0, 96, 254]))));
     // Opacity stops read at any position; an absent value is full.
     let moved = gradient_of(&stops, &moved_stops, &[]);
     let decoded = decode_appearance(&gradient_form(&moved, &[])).unwrap();
@@ -696,21 +866,7 @@ fn gradient_appearances_decode_only_in_the_form_the_fixture_rendered() {
             gradient_form(&saved, &[(1, Some(Field::U8(0)))]),
             format!("{} (0)", unrendered(1)),
         ),
-        (
-            gradient_form(&saved, &[(23, Some(Field::U32(1)))]),
-            unrendered(23),
-        ),
-        (
-            gradient_form(&saved, &[(34, Some(Field::U8(2)))]),
-            unrendered(34),
-        ),
-        (gradient_form(&saved, &[(28, None)]), unrendered(28)),
         (gradient_form(&saved, &[(20, None)]), unrendered(20)),
-        // Only a fill color alone reads without the calibration slots.
-        (
-            encode_fields(&[(0, blue), (2, blue)]).unwrap(),
-            unrendered(23),
-        ),
     ] {
         let error = decode_appearance(&payload).unwrap_err().to_string();
         assert!(error.contains(&reason), "{reason}: {error}");
