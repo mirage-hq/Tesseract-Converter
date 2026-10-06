@@ -823,8 +823,6 @@ fn malformed_mp4_boxes_fail_check_and_execution_without_outputs() {
         (b"stsz", 16, u32::MAX),
         (b"stsc", 12, 0),
         (b"stsc", 16, 0),
-        (b"\xa9nam", 4, 8),
-        (b"\xa9nam", 4, 15),
     ] {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
@@ -867,6 +865,62 @@ fn malformed_mp4_boxes_fail_check_and_execution_without_outputs() {
 
 #[cfg(feature = "ffmpeg-library")]
 #[test]
+fn unused_mp4_title_payload_keeps_editable_video_and_exact_bytes() {
+    // Invalid descriptive data-box lengths do not invalidate the movie's
+    // sample tables. Required table corruption is tested separately above.
+    for value in [8_u32, 15] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let doc = document(root);
+        let mut bytes = MEDIA.to_vec();
+        let title = bytes.windows(4).position(|s| s == b"\xa9too").unwrap();
+        bytes[title..title + 4].copy_from_slice(b"\xa9nam");
+        bytes[title + 4..title + 8].copy_from_slice(&value.to_be_bytes());
+        fs::create_dir(root.join("media")).unwrap();
+        let media = root.join("media/source.mp4");
+        fs::write(&media, &bytes).unwrap();
+        let edited = archive(root, &doc, &media);
+        let native = root.join("project.prproj");
+        write_prproj(&native, &one_second());
+
+        for check in [true, false] {
+            let imported = root.join(format!("import-{check}"));
+            let omissions = premiere_to_tesseract(&native, &imported, None, check).unwrap();
+            assert!(omissions.is_empty(), "{omissions:?}");
+            let exported = root.join(format!("export-{check}"));
+            tesseract_to_premiere(&edited, &exported, check).unwrap();
+            if check {
+                assert!(!imported.exists());
+                assert!(!exported.exists());
+                continue;
+            }
+
+            let roundtrip = root.join("roundtrip.tsrct");
+            build_tesseract_file(&exported.join("project.prproj"), &roundtrip, None).unwrap();
+            for path in [first_project(&imported), roundtrip] {
+                let file = TesseractFile::open(path).unwrap();
+                let document = file.project_json().unwrap();
+                let videos = video_layers(&document);
+                assert_eq!(videos.len(), 1);
+                assert_eq!(
+                    videos[0]["sourceRange"],
+                    json!({"start": 0, "duration": 1000})
+                );
+                let id = videos[0]["source"]["assetId"].as_str().unwrap();
+                assert_eq!(
+                    file.asset(id)
+                        .unwrap()
+                        .read_verified_bytes(bytes.len() as u64)
+                        .unwrap(),
+                    bytes
+                );
+            }
+        }
+    }
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
 fn repeated_media_still_validates_each_occurrences_source_duration() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -901,7 +955,7 @@ fn archive_media_validation_still_rejects_wrong_kind_and_container() {
         (
             "source.mp4",
             AssetKind::Audio,
-            "writer requires packaged media with a matching kind",
+            "packaged video kind or content type conflicts with its container",
         ),
         (
             "source.mkv",
@@ -921,10 +975,14 @@ fn archive_media_validation_still_rejects_wrong_kind_and_container() {
             .unwrap()
             .write(&input)
             .unwrap();
-        let output = root.join("output");
-        let error = tesseract_to_premiere(&input, &output, true).unwrap_err();
-        assert!(error.to_string().contains(expected), "{error}");
-        assert!(!output.exists());
+        for check in [false, true] {
+            let output = root.join(format!("output-{check}"));
+            let error = tesseract_to_premiere(&input, &output, check).unwrap_err();
+            assert!(error.is_unsupported(), "{error}");
+            assert!(error.to_string().contains(expected), "{error}");
+            assert!(error.to_string().contains("premiere-video-1"), "{error}");
+            assert!(!output.exists());
+        }
     }
 }
 
@@ -943,27 +1001,42 @@ fn web_project_file_is_not_an_editable_document_archive() {
 #[cfg(feature = "ffmpeg-library")]
 #[test]
 fn container_color_profiles_are_validated_in_both_directions() {
-    for (payload, error) in [
-        (b"nclc\x00\x01\x00\x01\x00\x01".as_slice(), None),
-        (b"nclx\x00\x01\x00\x01\x00\x01\x00", None),
-        (b"nclx\x00\x01\x00\x01\x00\x01\x80", Some("full-range")),
-        (b"nclx\x00\x01\x00\x01\x00\x01\x01", Some("reserved")),
-        // BT.2020 PQ passes through; BT.601 has no pass-through table entry.
-        (b"nclx\x00\x09\x00\x10\x00\x09\x00", None),
+    for (payload, export_error, import_error) in [
+        (b"nclc\x00\x01\x00\x01\x00\x01".as_slice(), None, None),
+        (b"nclx\x00\x01\x00\x01\x00\x01\x00", None, None),
+        (
+            b"nclx\x00\x01\x00\x01\x00\x01\x80",
+            Some("full-range"),
+            Some("full-range"),
+        ),
+        (
+            b"nclx\x00\x01\x00\x01\x00\x01\x01",
+            Some("reserved"),
+            Some("reserved"),
+        ),
+        // BT.2020 PQ passes through. Unmapped BT.601 tags recover on import
+        // with a warning and unchanged bytes; export admission stays strict.
+        (b"nclx\x00\x09\x00\x10\x00\x09\x00", None, None),
         (
             b"nclx\x00\x05\x00\x06\x00\x06\x00",
             Some("colour metadata 5/6/6 is unsupported"),
+            None,
         ),
-        (b"prof\x00\x01\x00\x01\x00\x01", Some("color profile")),
+        (
+            b"prof\x00\x01\x00\x01\x00\x01",
+            Some("color profile"),
+            Some("color profile"),
+        ),
     ] {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let doc = document(root);
         let media = root.join("source.mp4");
-        fs::write(&media, with_container_color(payload)).unwrap();
+        let bytes = with_container_color(payload);
+        fs::write(&media, &bytes).unwrap();
         let path = archive(root, &doc, &media);
         let output = root.join("native");
-        if let Some(expected) = error {
+        if let Some(expected) = export_error {
             let error = tesseract_to_premiere(&path, &output, false).unwrap_err();
             assert!(error.to_string().contains(expected), "{error}");
             assert!(!output.exists());
@@ -976,7 +1049,8 @@ fn container_color_profiles_are_validated_in_both_directions() {
             )
             .unwrap();
         }
-        // Also check unsupported declarations on the native premiere_to_tesseract path.
+        // Import has a separate admission policy, without relaxing structural
+        // or range checks or silently claiming colour-management fidelity.
         fs::create_dir(root.join("media")).unwrap();
         fs::copy(&media, root.join("media/source.mp4")).unwrap();
         let xml = XML
@@ -984,13 +1058,49 @@ fn container_color_profiles_are_validated_in_both_directions() {
             .replace("2540160000000", "254016000000");
         let native = root.join("project.prproj");
         write_prproj(&native, &xml);
-        let destination = root.join("tesseract_output.tsrct");
-        let result = build_tesseract_file(&native, &destination, None);
-        if let Some(expected) = error {
+        let destination = root.join("tesseract_output");
+        let result = premiere_to_tesseract(&native, &destination, None, false);
+        if let Some(expected) = import_error {
             assert!(result.unwrap_err().to_string().contains(expected));
             assert!(!destination.exists());
         } else {
-            result.unwrap();
+            let omissions = result.unwrap();
+            if export_error.is_some() {
+                let warnings: Vec<_> = omissions
+                    .iter()
+                    .filter(|note| note.reason.contains("unmapped video colour metadata"))
+                    .collect();
+                assert_eq!(warnings.len(), 1, "{omissions:?}");
+                assert_eq!(warnings[0].kind, premiere_file::OmissionKind::Approximated);
+                assert!(warnings[0]
+                    .reason
+                    .contains("original bytes retained without a colour transform"));
+            } else if payload == b"nclx\x00\x09\x00\x10\x00\x09\x00" {
+                assert_eq!(omissions.len(), 1, "{omissions:?}");
+                assert_eq!(omissions[0].kind, premiere_file::OmissionKind::Approximated);
+                assert!(omissions[0]
+                    .reason
+                    .contains("video colour BT.2020/PQ/BT.2020nc passes through unchanged"));
+            } else {
+                assert!(omissions.is_empty(), "{omissions:?}");
+            }
+            let imported = TesseractFile::open(first_project(&destination)).unwrap();
+            let document = imported.project_json().unwrap();
+            let videos = video_layers(&document);
+            assert_eq!(videos.len(), 1);
+            assert_eq!(
+                videos[0]["sourceRange"],
+                json!({"start": 0, "duration": 1000})
+            );
+            let id = videos[0]["source"]["assetId"].as_str().unwrap();
+            assert_eq!(
+                imported
+                    .asset(id)
+                    .unwrap()
+                    .read_verified_bytes(bytes.len() as u64)
+                    .unwrap(),
+                bytes
+            );
         }
     }
 }

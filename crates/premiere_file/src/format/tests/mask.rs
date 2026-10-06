@@ -922,8 +922,8 @@ fn premiere_26_5_re_saved_opacity_owner_reads_as_its_static_value() {
         occurrence.opacity_mask.as_ref().map(|mask| mask.opacity),
         Some(50.0)
     );
-    // Keys under `IsTimeVarying` true still import as keys; a bound other
-    // than 26 or 27 still fails closed.
+    // Keys under `IsTimeVarying` true still import as keys. Optional editor
+    // bounds do not change the saved Opacity or Blend Mode values.
     let keyed = owner(&|records| {
         records.replacen(
             "<StartKeyframe>-91445760000000000,100.,0,0,0,0,0,0</StartKeyframe>\n\t\t<LowerBound>0</LowerBound>\n\t\t<UpperBound>100</UpperBound>",
@@ -934,21 +934,51 @@ fn premiere_26_5_re_saved_opacity_owner_reads_as_its_static_value() {
     let (occurrence, omissions) = read(&keyed);
     assert!(omissions.is_empty(), "{omissions:?}");
     assert_eq!(occurrence.animations.len(), 1);
-    let (project, omissions) = inspect_project_with_omissions(
-        &owner(&|records| edit_start(records, 155, "<UpperBound>26<", "<UpperBound>25<")),
-        Some("sequence-1"),
-    )
-    .unwrap();
-    assert_eq!(project.sequences[0].video_occurrences().count(), 1);
-    assert!(
-        omissions
-            .iter()
-            .any(|omission| omission.scope == OmissionScope::Occurrence
-                && omission
-                    .reason
-                    .contains("VideoComponentParam:155: unexpected Opacity parameter layout")),
-        "{omissions:?}"
-    );
+    let varied_bounds =
+        owner(&|records| edit_start(records, 155, "<UpperBound>26<", "<UpperBound>25<"));
+    let (project, omissions) =
+        inspect_project_with_omissions(&varied_bounds, Some("sequence-1")).unwrap();
+    assert_eq!(project.sequences[0].video_occurrences().count(), 2);
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let occurrence = project.sequences[0].video_occurrences().next().unwrap();
+    assert_eq!(occurrence.opacity, 100.0);
+    assert_eq!(occurrence.blend_mode, crate::schema::PrBlendMode::Normal);
+    assert_eq!(occurrence.opacity_mask.as_ref().unwrap().opacity, 50.0);
+
+    // Actual values still have to be finite integer blend IDs. A malformed
+    // value omits its masked occurrence, not its independently valid sibling.
+    for value in ["-1", "0.5", "256"] {
+        let invalid = owner(&|records| {
+            edit_start(
+                records,
+                155,
+                ",18,0,0,0,0,0,0</StartKeyframe>",
+                &format!(",{value},0,0,0,0,0,0</StartKeyframe>"),
+            )
+        });
+        let (project, omissions) =
+            inspect_project_with_omissions(&invalid, Some("sequence-1")).unwrap();
+        assert_eq!(
+            project.sequences[0].video_occurrences().count(),
+            1,
+            "{value}"
+        );
+        assert!(project.sequences[0]
+            .video_occurrences()
+            .next()
+            .unwrap()
+            .opacity_mask
+            .is_none());
+        assert!(
+            omissions
+                .iter()
+                .any(|omission| omission.scope == OmissionScope::Occurrence
+                    && omission
+                        .reason
+                        .contains("VideoComponentParam:155: invalid blend mode")),
+            "{value}: {omissions:?}"
+        );
+    }
 }
 
 #[test]

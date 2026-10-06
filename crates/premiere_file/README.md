@@ -149,15 +149,16 @@ render-fidelity claim.
 
 ### Intrinsic Opacity metadata
 
-Import accepts the saved legacy Blend Mode enumeration bounds 26 and 27,
-and exact paired full-type bounds: ±3.4028234663852886e+38 for alpha,
--2147483648 to 2147483647 for both blend parameters. These metadata variants
-never widen supported values: alpha remains 0–100, and blend values use the
-existing mapping and diagnostics. Parameter identity and control checks remain.
+Import reads saved Opacity and Blend Mode values independently of optional
+editor bounds, ClassID and control-type metadata. These descriptive fields never
+widen supported values: alpha remains 0–100, and blend IDs must be integers in
+0–255 before using the existing mapping and diagnostics. Parameter identities,
+names, bypass state and animation consistency checks remain.
 
-Public native-fixture mutations cover admission and invalid-bound, control-type
-and out-of-range-alpha rejection. Historical private-source checks established
-editable Screen and alpha keys; this is structural evidence, not new Adobe
+Public native-fixture mutations cover metadata-independent retention of editable
+values, masks and siblings, plus invalid blend-ID and out-of-range-alpha rejection.
+Historical private-source checks established editable Screen and alpha keys;
+this is structural evidence, not new Adobe
 opening, UI inspection or alpha/RGB fidelity proof. Export is unchanged.
 
 ### Effect stacks
