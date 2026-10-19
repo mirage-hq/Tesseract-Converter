@@ -92,6 +92,8 @@ jobs:
           install: make diffutils patch nasm
       - name: Set up optional compiler cache
         id: sccache
+        # Windows rustc command lines for ffmpeg-sys-next exceed sccache's spawn limit.
+        if: runner.os != 'Windows'
         uses: Mozilla-Actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
         with:
           version: v0.18.0
