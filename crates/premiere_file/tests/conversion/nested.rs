@@ -198,13 +198,20 @@ fn reverse_nested_public_import_publishes_child_assets_and_decreasing_playback()
     assert_eq!(file.metadata().assets.len(), 2);
     let document = file.project_json().unwrap();
     let layers = document["composition"]["layers"].as_array().unwrap();
-    for (owner, first, last) in [(&layers[0], 5000, 2000), (&layers[1], 6000, 0)] {
+    // The 30fps source windows are [2, 5)s and [0, 6)s: reverse starts on frames 149 and 179.
+    for (owner, first, last, duration) in
+        [(&layers[0], 4967, 2000, 3000), (&layers[1], 5967, 0, 6000)]
+    {
         let picture = &owner["layers"][0];
         let keys = picture["playback"]["mapping"]["property"]["keyframes"]
             .as_array()
             .unwrap();
         assert_eq!(keys[0]["value"], first);
+        assert_eq!(keys[0]["time"], 0);
         assert_eq!(keys[1]["value"], last);
+        assert_eq!(keys[1]["time"], duration - 33);
+        assert_eq!(keys[2]["value"], last);
+        assert_eq!(keys[2]["time"], duration);
         let videos = picture["layers"]
             .as_array()
             .unwrap()

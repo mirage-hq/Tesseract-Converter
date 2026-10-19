@@ -7,6 +7,50 @@ use super::{
 };
 
 #[test]
+fn export_builder_preserves_document_properties_and_rejects_collisions() {
+    use super::TesseractExportBuilder;
+    use serde_json::json;
+    let composition = json!({"id": "main", "layers": []});
+    let builder =
+        || TesseractExportBuilder::new(&composition, 64, 32, 1.234, Default::default()).unwrap();
+    let extras = BTreeMap::from([(
+        "future".into(),
+        json!({"assetId": "opaque", "nested": [null, 1]}),
+    )]);
+    let writer = builder()
+        .with_document_properties(Some([2.0, 0.0, 0.5, 0.4]), Some(203.0), &extras)
+        .unwrap();
+    let document: serde_json::Value = serde_json::from_slice(&writer.project_bytes).unwrap();
+    assert_eq!(document["backgroundColor"], json!([2.0, 0.0, 0.5, 0.4]));
+    assert_eq!(document["hdrGraphicsWhiteNits"], json!(203.0));
+    assert_eq!(document["future"], extras["future"]);
+    assert_eq!(document["duration"], json!(1.234));
+    let legacy: serde_json::Value = serde_json::from_slice(&builder().project_bytes).unwrap();
+    assert!(legacy.get("backgroundColor").is_none());
+    assert!(legacy.get("hdrGraphicsWhiteNits").is_none());
+    for key in [
+        "$schema",
+        "formatVersion",
+        "dimensions",
+        "duration",
+        "composition",
+        "colorManagement",
+        "backgroundColor",
+        "hdrGraphicsWhiteNits",
+    ] {
+        assert!(builder()
+            .with_document_properties(None, None, &BTreeMap::from([(key.into(), json!(null))]))
+            .is_err());
+    }
+    assert!(builder()
+        .with_document_properties(Some([65.0, 0.0, 0.0, 1.0]), None, &extras)
+        .is_err());
+    assert!(builder()
+        .with_document_properties(None, Some(f64::NAN), &extras)
+        .is_err());
+}
+
+#[test]
 fn document_snapshot_preserves_exact_bytes() {
     let bytes = b"{\"name\":\"project\"}";
     assert_eq!(
@@ -139,5 +183,6 @@ fn metadata(assets: BTreeMap<String, AssetDescriptor>) -> TesseractFileMetadata 
         },
         assets,
         fonts: BTreeMap::new(),
+        unknown_fields: BTreeMap::new(),
     }
 }

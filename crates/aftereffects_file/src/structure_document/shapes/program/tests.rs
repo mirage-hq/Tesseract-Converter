@@ -1,6 +1,8 @@
 use super::*;
 use crate::structure_document::animation_budget::AnimationBudget;
 
+mod ellipse_scale;
+
 fn entry(name: &str, children: Vec<Chunk>) -> Vec<Chunk> {
     let mut bytes = name.as_bytes().to_vec();
     bytes.resize(40, 0);
@@ -71,6 +73,7 @@ fn disabled_operations_do_not_affect_live_siblings_or_export_group_geometry() {
     let mut next_id = 2;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -123,6 +126,7 @@ fn converter_gives_each_paint_an_independent_editable_target() {
     let mut next_id = 2;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -295,6 +299,381 @@ fn keyed_pair(name: &str, keys: &[(i32, [f64; 2])]) -> Vec<Chunk> {
 }
 
 #[test]
+fn outer_ellipse_stroke_keeps_width_and_dashes_outside_inner_scale() {
+    use super::super::{Collector, Decorations};
+    use fx_schema::animator::AnimatorData;
+    use fx_schema::{LayerData, LayerId, PropType, PropertyTarget, PropertyValue};
+
+    for animated in [false, true] {
+        let scale = if animated {
+            keyed_pair(
+                "ADBE Vector Scale",
+                &[(0, [0.0, 0.0]), (1_000, [400.0, 400.0])],
+            )
+        } else {
+            number("ADBE Vector Scale", &[400.0, 400.0])
+        };
+        let chunks = entries(vec![
+            entry(
+                "ADBE Vector Group",
+                entries(vec![
+                    entry(
+                        "ADBE Vectors Group",
+                        entry(
+                            "ADBE Vector Shape - Ellipse",
+                            entries(vec![
+                                number("ADBE Vector Ellipse Size", &[100.0, 80.0]),
+                                number("ADBE Vector Ellipse Position", &[0.0, 0.0]),
+                            ]),
+                        ),
+                    ),
+                    entry("ADBE Vector Transform Group", scale),
+                ]),
+            ),
+            entry(
+                "ADBE Vector Graphic - Stroke",
+                entries(vec![
+                    number("ADBE Vector Stroke Width", &[10.0]),
+                    number("ADBE Vector Stroke Line Cap", &[2.0]),
+                    entry(
+                        "ADBE Vector Stroke Dashes",
+                        entries(vec![
+                            number("ADBE Vector Stroke Dash 1", &[20.0]),
+                            number("ADBE Vector Stroke Gap 1", &[12.0]),
+                        ]),
+                    ),
+                ]),
+            ),
+        ]);
+        let mut next_id = 2;
+        let mut animation_budget = AnimationBudget::default();
+        let mut collector = Collector {
+            source_items: None,
+            includes_occurrence_pipeline: true,
+            next_id: &mut next_id,
+            animation_budget: &mut animation_budget,
+            animations: Vec::new(),
+            warnings: Vec::new(),
+            frame_fade_lowered: false,
+            evaluated_shapes: Default::default(),
+            mapped_expressions: Vec::new(),
+        };
+        let layers = collector.collect_contents(
+            &chunks,
+            "outer stroke",
+            LayerId::new(1),
+            8,
+            &Decorations::default(),
+        );
+        let paint = layers
+            .iter()
+            .find_map(|layer| match layer {
+                LayerData::Shape(shape) if !shape.is_hidden && !shape.shape.strokes.is_empty() => {
+                    Some(shape)
+                }
+                _ => None,
+            })
+            .expect("outer painted ellipse");
+        assert_eq!(
+            paint.transform.scale,
+            [100.0, 100.0],
+            "geometry scale must not scale outer paint"
+        );
+        let stroke = &paint.shape.strokes[0];
+        assert_eq!(stroke.width.value(), 10.0);
+        assert_eq!(
+            stroke
+                .dashes
+                .iter()
+                .map(|length| length.value())
+                .collect::<Vec<_>>(),
+            [20.0, 12.0]
+        );
+        assert_eq!(stroke.cap, fx_schema::ShapeLineCap::Round);
+        assert!(!collector.animations.iter().any(|entry| {
+            entry.target.layer_id() == Some(paint.id)
+                && matches!(
+                    entry.target.as_property().unwrap().property_type(),
+                    PropType::ScaleX | PropType::ScaleY
+                )
+        }));
+        let size = collector
+            .animations
+            .iter()
+            .find(|entry| entry.target == PropertyTarget::layer(paint.id, PropType::EllipseSize))
+            .expect("independently editable size");
+        if animated {
+            let AnimatorData::Keyframes { track, .. } = size.animator.data() else {
+                panic!("size keys")
+            };
+            assert_eq!(track.keyframes().len(), 2);
+            assert_eq!(
+                track.keyframes()[0].value(),
+                &PropertyValue::Vector2([0.0, 0.0])
+            );
+            assert_eq!(
+                track.keyframes()[1].value(),
+                &PropertyValue::Vector2([400.0, 320.0])
+            );
+            assert_eq!(track.keyframes()[1].layer_time().as_millis(), 1_000);
+        } else {
+            assert_eq!(paint.shape.ellipse.as_ref().unwrap().size, [400.0, 320.0]);
+            assert!(matches!(
+                size.animator.data(),
+                AnimatorData::Constant {
+                    value: PropertyValue::Vector2([400.0, 320.0])
+                }
+            ));
+        }
+        assert!(
+            collector
+                .animations
+                .iter()
+                .all(|entry| !entry.animator.is_js_script())
+        );
+        validate(layers, collector.animations);
+    }
+}
+
+#[test]
+fn compound_ellipses_keep_native_geometry_and_independent_position_keys() {
+    use super::super::{Collector, Decorations};
+    let ellipse = |end| {
+        entry(
+            "ADBE Vector Shape - Ellipse",
+            entries(vec![
+                number("ADBE Vector Ellipse Size", &[26.0, 26.0]),
+                keyed_pair(
+                    "ADBE Vector Ellipse Position",
+                    &[(480, [0.0, 194.0]), (3440, [0.0, end])],
+                ),
+            ]),
+        )
+    };
+    let chunks = entries(vec![
+        ellipse(-29.0),
+        ellipse(479.0),
+        entry(
+            "ADBE Vector Filter - Trim",
+            number("ADBE Vector Trim End", &[75.0]),
+        ),
+        stroke(),
+    ]);
+    let mut next_id = 2;
+    let mut animation_budget = AnimationBudget::default();
+    let mut collector = Collector {
+        source_items: None,
+        includes_occurrence_pipeline: true,
+        next_id: &mut next_id,
+        animation_budget: &mut animation_budget,
+        animations: Vec::new(),
+        warnings: Vec::new(),
+        frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
+    };
+    let layers = collector.collect_contents(
+        &chunks,
+        "compound ellipses",
+        fx_schema::LayerId::new(1),
+        8,
+        &Decorations::default(),
+    );
+    let paint = layers
+        .iter()
+        .find_map(|layer| match layer {
+            fx_schema::LayerData::BooleanOperation(paint) if !paint.is_hidden => Some(paint),
+            _ => None,
+        })
+        .expect("compound ellipses must retain a visible shared paint");
+    assert_eq!(paint.op, fx_schema::BooleanOp::Union);
+    assert_eq!(paint.strokes.len(), 1);
+    assert_eq!(paint.trim.unwrap().end, 75.0);
+    assert_eq!(paint.layers.len(), 2);
+    for (child, end) in paint.layers.iter().zip([-29.0, 479.0]) {
+        let fx_schema::LayerData::Shape(shape) = child.data() else {
+            panic!("each operand must remain a native editable ellipse")
+        };
+        assert_eq!(shape.shape.ellipse.as_ref().unwrap().size, [26.0, 26.0]);
+        assert!(shape.shape.path.commands.is_empty());
+        assert!(shape.shape.strokes.is_empty());
+        assert!(shape.shape.trim.is_none(), "shared Trim must not run twice");
+        let track = collector
+            .animations
+            .iter()
+            .find(|entry| {
+                entry.target
+                    == fx_schema::PropertyTarget::layer(
+                        shape.id,
+                        fx_schema::PropType::EllipsePosition,
+                    )
+            })
+            .unwrap();
+        let fx_schema::animator::AnimatorData::Keyframes { track, .. } = track.animator.data()
+        else {
+            panic!("native position keys must not be frozen")
+        };
+        assert_eq!(track.keyframes().len(), 2);
+        assert_eq!(track.keyframes()[0].layer_time(), 480.into());
+        assert_eq!(track.keyframes()[1].layer_time(), 3440.into());
+        assert_eq!(
+            track.keyframes()[1].value(),
+            &fx_schema::PropertyValue::Vector2([0.0, end])
+        );
+    }
+    assert!(
+        collector
+            .animations
+            .iter()
+            .all(|entry| !entry.animator.is_js_script())
+    );
+    assert!(
+        collector
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("Ellipse Union approximation"))
+    );
+    validate(layers, collector.animations);
+}
+
+#[test]
+fn compound_ellipses_keep_shared_rigid_ancestor_trim() {
+    use super::super::{Collector, Decorations};
+
+    use fx_schema::{LayerData as FxLayer, LayerId, layer::BooleanOperationLayer};
+
+    fn find_paint(layer: &FxLayer) -> Option<&BooleanOperationLayer> {
+        match layer {
+            FxLayer::BooleanOperation(paint) if !paint.is_hidden => Some(paint),
+            FxLayer::Group(group) => group
+                .layers
+                .iter()
+                .find_map(|child| find_paint(child.data())),
+            _ => None,
+        }
+    }
+
+    for scale in [100.0, 50.0] {
+        let chunks = entries(vec![
+            entry(
+                "ADBE Vector Group",
+                entries(vec![
+                    entry(
+                        "ADBE Vectors Group",
+                        entries(vec![
+                            entry("ADBE Vector Shape - Ellipse", vec![]),
+                            entry("ADBE Vector Shape - Ellipse", vec![]),
+                            stroke(),
+                        ]),
+                    ),
+                    entry(
+                        "ADBE Vector Transform Group",
+                        entries(vec![
+                            number("ADBE Vector Position", &[-429.0, -248.0]),
+                            number("ADBE Vector Scale", &[scale, scale]),
+                        ]),
+                    ),
+                ]),
+            ),
+            entry(
+                "ADBE Vector Filter - Trim",
+                number("ADBE Vector Trim End", &[75.0]),
+            ),
+        ]);
+        let mut next_id = 2;
+        let mut animation_budget = AnimationBudget::default();
+        let mut collector = Collector {
+            source_items: None,
+            includes_occurrence_pipeline: true,
+            next_id: &mut next_id,
+            animation_budget: &mut animation_budget,
+            animations: Vec::new(),
+            warnings: Vec::new(),
+            frame_fade_lowered: false,
+            evaluated_shapes: Default::default(),
+            mapped_expressions: Vec::new(),
+        };
+        let layers = collector.collect_contents(
+            &chunks,
+            "ancestor ellipse trim",
+            LayerId::new(1),
+            8,
+            &Decorations::default(),
+        );
+        if scale == 100.0 {
+            let paint = layers
+                .iter()
+                .find_map(find_paint)
+                .expect("rigid ancestor Trim must retain ellipse paint");
+            assert_eq!(paint.layers.len(), 2);
+            assert_eq!(paint.strokes.len(), 1);
+            assert_eq!(paint.trim.unwrap().end, 75.0);
+            for child in &paint.layers {
+                let FxLayer::Shape(shape) = child.data() else {
+                    panic!("operands must retain editable Ellipses")
+                };
+                assert!(shape.shape.ellipse.is_some());
+                assert!(shape.shape.trim.is_none());
+                assert!(shape.shape.strokes.is_empty());
+            }
+        } else {
+            assert!(
+                layers.iter().find_map(find_paint).is_none(),
+                "nonrigid scope remains unsupported"
+            );
+        }
+        validate(layers, collector.animations);
+    }
+}
+
+#[test]
+fn compound_ellipses_reject_partial_differing_and_repeated_trim_stages() {
+    use super::super::{Collector, Decorations};
+    let ellipse = || entry("ADBE Vector Shape - Ellipse", vec![]);
+    let trim = |end| {
+        entry(
+            "ADBE Vector Filter - Trim",
+            number("ADBE Vector Trim End", &[end]),
+        )
+    };
+    for operations in [
+        vec![ellipse(), trim(75.0), ellipse(), stroke()],
+        vec![ellipse(), trim(75.0), ellipse(), trim(50.0), stroke()],
+        vec![ellipse(), ellipse(), trim(75.0), trim(50.0), stroke()],
+    ] {
+        let chunks = entries(operations);
+        let mut next_id = 2;
+        let mut animation_budget = AnimationBudget::default();
+        let mut collector = Collector {
+            source_items: None,
+            includes_occurrence_pipeline: true,
+            next_id: &mut next_id,
+            animation_budget: &mut animation_budget,
+            animations: Vec::new(),
+            warnings: Vec::new(),
+            frame_fade_lowered: false,
+            evaluated_shapes: Default::default(),
+            mapped_expressions: Vec::new(),
+        };
+        let layers = collector.collect_contents(
+            &chunks,
+            "scoped ellipse trims",
+            fx_schema::LayerId::new(1),
+            8,
+            &Decorations::default(),
+        );
+        assert!(
+            !collector
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("Ellipse Union approximation")),
+            "non-shared or repeated Trim must retain the existing graph fallback"
+        );
+        validate(layers, collector.animations);
+    }
+}
+
+#[test]
 fn group_opacity_composites_once_and_paint_opacities_have_separate_targets() {
     use super::super::{Collector, Decorations};
     let children = entries(vec![
@@ -321,6 +700,7 @@ fn group_opacity_composites_once_and_paint_opacities_have_separate_targets() {
     let mut next_id = 2;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -385,6 +765,7 @@ fn offset_and_trim_controls_are_shared_between_paints() {
         let mut next_id = 2;
         let mut animation_budget = AnimationBudget::default();
         let mut collector = Collector {
+            source_items: None,
             includes_occurrence_pipeline: true,
             next_id: &mut next_id,
             animation_budget: &mut animation_budget,
@@ -427,12 +808,273 @@ fn offset_and_trim_controls_are_shared_between_paints() {
 }
 
 #[test]
+fn ancestor_trim_reaches_simultaneous_identity_group_paints() {
+    use super::super::{Collector, Decorations};
+    let chunks = entries(vec![
+        group(entries(vec![rectangle(), fill(), stroke()])),
+        group(entries(vec![rectangle(), rectangle(), fill(), stroke()])),
+        entry(
+            "ADBE Vector Filter - Trim",
+            number("ADBE Vector Trim Start", &[100.0]),
+        ),
+    ]);
+    let mut next_id = 2;
+    let mut animation_budget = AnimationBudget::default();
+    let mut collector = Collector {
+        source_items: None,
+        includes_occurrence_pipeline: true,
+        next_id: &mut next_id,
+        animation_budget: &mut animation_budget,
+        animations: Vec::new(),
+        warnings: Vec::new(),
+        frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
+    };
+    let layers = collector.collect_contents(
+        &chunks,
+        "ancestor trim",
+        fx_schema::LayerId::new(1),
+        8,
+        &Decorations::default(),
+    );
+    fn assert_paints(
+        layers: &[fx_schema::Layer],
+        animations: &[fx_schema::animator::AnimationGraphEntry],
+    ) -> usize {
+        layers
+            .iter()
+            .map(|layer| match layer.data() {
+                fx_schema::LayerData::Group(group) => assert_paints(&group.layers, animations),
+                fx_schema::LayerData::Shape(shape)
+                    if !shape.is_hidden
+                        && (!shape.shape.fills.is_empty() || !shape.shape.strokes.is_empty()) =>
+                {
+                    let trim = shape
+                        .shape
+                        .trim
+                        .expect("ancestor Trim must reach visible paint");
+                    assert_eq!((trim.start, trim.end), (100.0, 100.0));
+                    assert!(animations.iter().any(|entry| entry.target
+                        == fx_schema::PropertyTarget::layer(
+                            shape.id,
+                            fx_schema::PropType::TrimStart
+                        )
+                        && !entry.animator.is_js_script()));
+                    1
+                }
+                _ => 0,
+            })
+            .sum()
+    }
+    let stored = crate::structure_document::stored_layers(layers.clone()).unwrap();
+    assert_eq!(assert_paints(&stored, &collector.animations), 4);
+    assert!(
+        !collector
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("cannot preserve its scope"))
+    );
+    validate(layers, collector.animations);
+}
+
+#[test]
+fn ancestor_trim_reaches_translated_rotating_fading_group_paints() {
+    use super::super::{Collector, Decorations};
+    let rotation = relabel_scalar("ADBE Vector Rotation", native_keyed_scalar());
+    let opacity = relabel_scalar("ADBE Vector Group Opacity", native_keyed_scalar());
+    let chunks = entries(vec![
+        entry(
+            "ADBE Vector Group",
+            entries(vec![
+                entry("ADBE Vectors Group", entries(vec![rectangle(), stroke()])),
+                entry(
+                    "ADBE Vector Transform Group",
+                    entries(vec![
+                        number("ADBE Vector Position", &[-125.0, -7.0]),
+                        rotation,
+                        opacity,
+                    ]),
+                ),
+            ]),
+        ),
+        entry(
+            "ADBE Vector Filter - Trim",
+            number("ADBE Vector Trim End", &[25.0]),
+        ),
+    ]);
+    let mut next_id = 2;
+    let mut animation_budget = AnimationBudget::default();
+    let mut collector = Collector {
+        source_items: None,
+        includes_occurrence_pipeline: true,
+        next_id: &mut next_id,
+        animation_budget: &mut animation_budget,
+        animations: Vec::new(),
+        warnings: Vec::new(),
+        frame_fade_lowered: false,
+        evaluated_shapes: Default::default(),
+        mapped_expressions: Vec::new(),
+    };
+    let layers = collector.collect_contents(
+        &chunks,
+        "rigid ancestor trim",
+        fx_schema::LayerId::new(1),
+        8,
+        &Decorations::default(),
+    );
+    let group = layers
+        .iter()
+        .find_map(|layer| match layer {
+            fx_schema::LayerData::Group(group) => Some(group),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        group.transform.position,
+        fx_schema::Position::TwoD([-125.0, -7.0])
+    );
+    assert!(collector.animations.iter().any(|entry| entry.target
+        == fx_schema::PropertyTarget::layer(group.id, fx_schema::PropType::Rotation)
+        && entry.animator.keyframe_track().is_some()));
+    assert!(collector.animations.iter().any(|entry| entry.target
+        == fx_schema::PropertyTarget::layer(group.id, fx_schema::PropType::Opacity)
+        && entry.animator.keyframe_track().is_some()));
+    let shape = group
+        .layers
+        .iter()
+        .find_map(|layer| match layer.data() {
+            fx_schema::LayerData::Shape(shape)
+                if !shape.is_hidden && !shape.shape.strokes.is_empty() =>
+            {
+                Some(shape)
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        shape
+            .shape
+            .trim
+            .expect("rigid ancestor Trim must reach paint")
+            .end,
+        25.0
+    );
+    assert!(collector.animations.iter().any(|entry| entry.target
+        == fx_schema::PropertyTarget::layer(shape.id, fx_schema::PropType::TrimEnd)
+        && !entry.animator.is_js_script()));
+    assert!(
+        !collector
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("cannot preserve its scope"))
+    );
+    validate(layers, collector.animations);
+}
+
+#[test]
+fn ancestor_trim_keeps_unsupported_scope_guards() {
+    use super::super::{Collector, Decorations};
+    let scaled_group = entry(
+        "ADBE Vector Group",
+        entries(vec![
+            entry("ADBE Vectors Group", entries(vec![rectangle(), stroke()])),
+            entry(
+                "ADBE Vector Transform Group",
+                number("ADBE Vector Scale", &[200.0, 100.0]),
+            ),
+        ]),
+    );
+    let guarded_group = |transform| {
+        entry(
+            "ADBE Vector Group",
+            entries(vec![
+                entry("ADBE Vectors Group", entries(vec![rectangle(), stroke()])),
+                entry("ADBE Vector Transform Group", transform),
+            ]),
+        )
+    };
+    for (nested, mode) in [
+        (scaled_group.clone(), 1.0),
+        (scaled_group, 2.0),
+        (guarded_group(number("ADBE Vector Skew", &[20.0])), 1.0),
+        (
+            guarded_group(keyed_pair(
+                "ADBE Vector Scale",
+                &[(0, [100.0, 100.0]), (10, [200.0, 100.0])],
+            )),
+            1.0,
+        ),
+        (
+            group(entries(vec![rectangle(), rectangle(), stroke()])),
+            2.0,
+        ),
+    ] {
+        let chunks = entries(vec![
+            nested,
+            entry(
+                "ADBE Vector Filter - Trim",
+                entries(vec![
+                    number("ADBE Vector Trim Start", &[100.0]),
+                    number("ADBE Vector Trim Type", &[mode]),
+                ]),
+            ),
+        ]);
+        let mut next_id = 2;
+        let mut animation_budget = AnimationBudget::default();
+        let mut collector = Collector {
+            source_items: None,
+            includes_occurrence_pipeline: true,
+            next_id: &mut next_id,
+            animation_budget: &mut animation_budget,
+            animations: Vec::new(),
+            warnings: Vec::new(),
+            frame_fade_lowered: false,
+            evaluated_shapes: Default::default(),
+            mapped_expressions: Vec::new(),
+        };
+        let layers = collector.collect_contents(
+            &chunks,
+            "unsupported ancestor trim",
+            fx_schema::LayerId::new(1),
+            8,
+            &Decorations::default(),
+        );
+        fn assert_untrimmed(layers: &[fx_schema::Layer]) -> usize {
+            layers
+                .iter()
+                .map(|layer| match layer.data() {
+                    fx_schema::LayerData::Group(group) => assert_untrimmed(&group.layers),
+                    fx_schema::LayerData::Shape(shape)
+                        if !shape.is_hidden && !shape.shape.strokes.is_empty() =>
+                    {
+                        assert!(shape.shape.trim.is_none());
+                        1
+                    }
+                    _ => 0,
+                })
+                .sum()
+        }
+        let stored = crate::structure_document::stored_layers(layers.clone()).unwrap();
+        assert_eq!(assert_untrimmed(&stored), 1);
+        assert!(
+            collector
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("cannot preserve its scope"))
+        );
+        validate(layers, collector.animations);
+    }
+}
+
+#[test]
 fn shape_budget_rejects_large_paint_without_dangling_entries_and_keeps_smaller_sibling() {
     use super::super::{Collector, OutputBudget};
     fn cost(chunks: &[Chunk]) -> usize {
         let mut next_id = 2;
         let mut animation_budget = AnimationBudget::default();
         let mut collector = Collector {
+            source_items: None,
             includes_occurrence_pipeline: true,
             next_id: &mut next_id,
             animation_budget: &mut animation_budget,
@@ -469,6 +1111,7 @@ fn shape_budget_rejects_large_paint_without_dangling_entries_and_keeps_smaller_s
     let mut next_id = 2;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -528,6 +1171,7 @@ fn review_shapes_boolean_missing_operand_is_atomic_and_keeps_independent_sibling
     let mut next_id = 2;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -651,6 +1295,7 @@ fn nested_translated_scale_intersection_keeps_painted_alpha_and_independent_cloc
     let mut next_id = 2;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -813,6 +1458,7 @@ fn review_shapes_hidden_helper_is_charged_once() {
     let mut next_id = 2;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -857,6 +1503,7 @@ fn review_shapes_failed_group_budget_transaction_keeps_following_sibling() {
     let mut baseline_next_id = 100;
     let mut baseline_animation_budget = AnimationBudget::default();
     let mut baseline = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut baseline_next_id,
         animation_budget: &mut baseline_animation_budget,
@@ -924,6 +1571,7 @@ fn review_shapes_failed_group_budget_transaction_keeps_following_sibling() {
     let mut following_next_id = 500;
     let mut following_animation_budget = AnimationBudget::default();
     let mut following_baseline = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut following_next_id,
         animation_budget: &mut following_animation_budget,
@@ -953,6 +1601,7 @@ fn review_shapes_failed_group_budget_transaction_keeps_following_sibling() {
     let mut next_id = 100;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -1084,6 +1733,7 @@ fn review_shapes_invalid_static_enums_diagnose_and_keep_paints() {
         let mut next_id = 2;
         let mut animation_budget = AnimationBudget::default();
         let mut collector = Collector {
+            source_items: None,
             includes_occurrence_pipeline: true,
             next_id: &mut next_id,
             animation_budget: &mut animation_budget,
@@ -1125,6 +1775,7 @@ fn compound_commands_above_former_quota_keep_a_paint_consumer() {
     let mut next_id = 2;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -1180,6 +1831,7 @@ fn native_direction_reverses_primitive_winding_and_rectangle_trim_start() {
             let mut next_id = 2;
             let mut animation_budget = AnimationBudget::default();
             let mut collector = Collector {
+                source_items: None,
                 includes_occurrence_pipeline: true,
                 next_id: &mut next_id,
                 animation_budget: &mut animation_budget,
@@ -1300,6 +1952,7 @@ fn shared_native_keys_keep_unique_ids_across_geometry_groups_and_modifiers() {
     let mut next_id = 2;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -1369,6 +2022,7 @@ fn native_star_roundess_tracks_use_shared_source_targets() {
     let mut next_id = 2;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -1416,6 +2070,7 @@ fn gradient_stroke_miter_limit_keeps_numeric_animation() {
     let mut next_id = 2;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -1472,6 +2127,7 @@ fn native_star_roundess_names_keep_shared_editable_controls() {
     let mut next_id = 2;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -1555,6 +2211,7 @@ fn shape_group_and_each_paint_own_their_blend_modes() {
     let mut next_id = 2;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -1617,6 +2274,7 @@ fn long_append_chains_and_boolean_depth_are_bounded() {
         let mut next_id = 2;
         let mut animation_budget = AnimationBudget::default();
         let mut collector = Collector {
+            source_items: None,
             includes_occurrence_pipeline: true,
             next_id: &mut next_id,
             animation_budget: &mut animation_budget,
@@ -1679,6 +2337,7 @@ fn bounded_boolean_keeps_native_rectangle_operands_and_typed_keys() {
     let mut next_id = 2;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -1770,6 +2429,7 @@ fn nested_boolean_crosses_only_static_identity_vector_scopes() {
         let mut next_id = 2;
         let mut animation_budget = AnimationBudget::default();
         let mut collector = Collector {
+            source_items: None,
             includes_occurrence_pipeline: true,
             next_id: &mut next_id,
             animation_budget: &mut animation_budget,
@@ -1839,6 +2499,7 @@ fn groups_and_append_are_not_reinterpreted_as_boolean_rectangle_operands() {
         let mut next_id = 2;
         let mut animation_budget = AnimationBudget::default();
         let mut collector = Collector {
+            source_items: None,
             includes_occurrence_pipeline: true,
             next_id: &mut next_id,
             animation_budget: &mut animation_budget,
@@ -1920,6 +2581,7 @@ fn reversed_and_intermediate_modified_rectangles_keep_diagnosed_shape_fallbacks(
         let mut next_id = 2;
         let mut animation_budget = AnimationBudget::default();
         let mut collector = Collector {
+            source_items: None,
             includes_occurrence_pipeline: true,
             next_id: &mut next_id,
             animation_budget: &mut animation_budget,
@@ -1987,6 +2649,7 @@ fn typed_rectangle_boolean_budget_failure_rolls_back_owned_tracks() {
     let mut next_id = 2;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -2043,6 +2706,7 @@ fn budget_failed_boolean_helper_copy_rolls_back_and_keeps_later_paint() {
     let mut baseline_next_id = 2;
     let mut baseline_animation_budget = AnimationBudget::default();
     let mut baseline = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut baseline_next_id,
         animation_budget: &mut baseline_animation_budget,
@@ -2078,6 +2742,7 @@ fn budget_failed_boolean_helper_copy_rolls_back_and_keeps_later_paint() {
     let mut next_id = 2;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -2139,6 +2804,7 @@ fn malformed_shared_operation_is_reported_once_per_native_operation() {
     let mut next_id = 2;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -2188,6 +2854,7 @@ fn append_does_not_reorder_trim_before_round_corners() {
     let mut next_id = 2;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -2240,6 +2907,7 @@ fn partial_modifier_does_not_leak_to_later_geometry() {
     let mut next_id = 2;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -2319,6 +2987,7 @@ fn round_corners_remains_shared_by_independent_paints() {
     let mut next_id = 2;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -2509,6 +3178,7 @@ fn native_composite_order_uses_ae_plugin_ordinals_and_preserves_groups() {
     let mut next_id = 2;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = super::super::Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,

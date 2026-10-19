@@ -18,7 +18,7 @@ use crate::{
     error::{ensure, unsupported, Result},
     export_loss::{omit_field, with_context, ExportContext, ExportField, OmissionSink},
     format::{PrMedia, PrVideoOccurrence},
-    image_media::ValidatedImage,
+    image_media::{ImageFormat, ValidatedImage},
     media::MediaFacts,
     omit,
     schema::{MediaId, PrBlendMode, PrMediaKind, STILL_INTRINSIC_TICKS},
@@ -49,6 +49,7 @@ pub(super) fn image_layer(
     ))
     .ok_or_else(|| unsupported("still dimensions must be positive"))?;
     Ok(ImageLayer {
+        render_domain: None,
         id: layer_id,
         name,
         description: String::new(),
@@ -316,6 +317,45 @@ pub(super) fn export_image_layer(
         record,
         omissions,
     );
+    // Native Motion resizes stills bicubically; the linked picture path can
+    // retain the Image's bilinear sampling and editable source transform.
+    if context.depth == 0
+        && image.transform.scale != [100.0; 2]
+        && image.transform.rotation == 0.0
+        && image.masks.is_empty()
+        && image.effects.is_empty()
+        && source
+            .frame_rect
+            .is_none_or(|rect| rect.get() == image_rect)
+        && matches!(source.fit, MediaFit::Contain | MediaFit::None)
+        && animations
+            .iter()
+            .all(|animation| matches!(animation, crate::schema::PrPropertyAnimation::Opacity(_)))
+    {
+        omit_field(omissions, image.id, ExportField::Placement, record,
+            "bilinear still resampling was not exported by native Motion, which resizes bicubically; linked AE picture preserves the editable bilinear scale");
+    }
+    if facts.format == ImageFormat::Png && (facts.width % 2 != 0 || facts.height % 2 != 0) {
+        if image.masks.is_empty()
+            && image.effects.is_empty()
+            && facts.pixel_aspect.is_square()
+            && animations.iter().all(|animation| {
+                matches!(animation, crate::schema::PrPropertyAnimation::Opacity(_))
+            })
+        {
+            // Premiere's odd raster centre is half a source pixel above/left of FX's.
+            for (anchor, pixels) in transform
+                .anchor_point
+                .iter_mut()
+                .zip([facts.width, facts.height])
+            {
+                *anchor -= f64::from(pixels % 2) * 0.5 / f64::from(pixels);
+            }
+        } else {
+            approximate(omissions, record,
+                "odd PNG raster origin compensation is limited to square-pixel unmasked pictures without effects or geometric Motion keys; the existing Motion was retained and subpixel placement can differ");
+        }
+    }
     let effects = if opacity_mask.is_some() {
         omit_unexported_effects(
             &image.effects,

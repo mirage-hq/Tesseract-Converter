@@ -30,6 +30,382 @@ fn scalar_keys(points: &[(i64, f64, PropertyKeyframeEasing)]) -> PropertyKeyfram
 }
 
 #[test]
+fn separated_planar_group_keeps_null_parent_and_child_blends() {
+    let mut value = imported();
+    let mut group = value["composition"]["layers"][0].clone();
+    group["id"] = json!(8100);
+    group["name"] = json!("Planar controls");
+    group["parent"] = Value::Null;
+    group["effects"] = json!([]);
+    group["masks"] = json!([]);
+    group["fills"] = json!([]);
+    group["trackMatte"] = Value::Null;
+    group["transform"] = serde_json::to_value(identity_fx_transform()).unwrap();
+    group["playback"] = fixture_linear_playback(
+        json!({"start":0,"duration":30000}),
+        json!({"start":0,"duration":30000}),
+    );
+    let mut screen = rect(&value, 8101);
+    screen["parent"] = json!(8100);
+    screen["blendMode"] = json!("screen");
+    let mut normal = rect(&value, 8102);
+    normal["parent"] = json!(8100);
+    group["layers"] = json!([screen, normal]);
+    value["duration"] = json!(30.0);
+    value["composition"]["layers"] = json!([group]);
+    // Independent axis knots and different interpolation require separated
+    // Position followers, but do not make this a projected 3D Group.
+    let mut y = keyed_entry(
+        LayerId::new(8100),
+        PropType::PositionY,
+        [
+            (0, PropertyValue::Float(20.0)),
+            (700, PropertyValue::Float(40.0)),
+        ],
+    );
+    y.animator = fx_schema::animator::PropertyAnimator::keyframes(scalar_keys(&[
+        (0, 20.0, PropertyKeyframeEasing::Linear),
+        (700, 40.0, PropertyKeyframeEasing::Hold),
+    ]));
+    value["composition"]["dynamics"]["entries"] = json!([
+        keyed_entry(
+            LayerId::new(8100),
+            PropType::PositionX,
+            [
+                (0, PropertyValue::Float(10.0)),
+                (500, PropertyValue::Float(30.0))
+            ],
+        ),
+        y,
+    ]);
+    let output = export(value);
+    assert!(
+        output.omitted_layer_ids.is_empty(),
+        "{:?}",
+        output.diagnostics
+    );
+    let native = read_project(&output.bytes).unwrap();
+    let controls = layers(&native)
+        .iter()
+        .find(|layer| layer.name.as_ref() == "Planar controls")
+        .unwrap();
+    assert!(
+        controls.record.flags().null_layer,
+        "2D keys must not isolate child blending"
+    );
+    assert!(!controls.record.flags().three_d_layer);
+    for (id, blend) in [(8101, 6), (8102, 2)] {
+        let child = layers(&native)
+            .iter()
+            .find(|layer| layer.name.as_ref() == format!("Current solid {id}"))
+            .unwrap();
+        assert_eq!(child.record.parent_id(), controls.record.id());
+        assert_eq!(child.record.blend_mode(), blend);
+    }
+    for (name, times, values) in [
+        ("ADBE Position_0", [0.0, 0.5], [10.0, 30.0]),
+        ("ADBE Position_1", [0.0, 0.7], [20.0, 40.0]),
+    ] {
+        let property = super::stroke_keys::numeric(&controls.content, name).unwrap();
+        assert_eq!(property.keyframes.len(), 2, "{name}");
+        for ((key, time), value) in property.keyframes.iter().zip(times).zip(values) {
+            assert!((key.time_secs - time).abs() < 1e-4);
+            assert_eq!(key.values, [value]);
+        }
+    }
+}
+
+#[test]
+fn separated_planar_group_opacity_requires_a_composite_source() {
+    for animated in [false, true] {
+        let mut value = imported();
+        let mut group = value["composition"]["layers"][0].clone();
+        group["id"] = json!(8100);
+        group["name"] = json!("Composite controls");
+        group["parent"] = Value::Null;
+        group["effects"] = json!([]);
+        group["masks"] = json!([]);
+        group["fills"] = json!([]);
+        group["trackMatte"] = Value::Null;
+        group["transform"] = serde_json::to_value(identity_fx_transform()).unwrap();
+        group["transform"]["opacity"] = json!(if animated { 100.0 } else { 37.5 });
+        group["playback"] = fixture_linear_playback(
+            json!({"start":0,"duration":30000}),
+            json!({"start":0,"duration":30000}),
+        );
+        let mut first = rect(&value, 8101);
+        first["parent"] = json!(8100);
+        let mut second = rect(&value, 8102);
+        second["parent"] = json!(8100);
+        group["layers"] = json!([first, second]);
+        value["duration"] = json!(30.0);
+        value["composition"]["layers"] = json!([group]);
+        let mut entries = vec![
+            keyed_entry(
+                LayerId::new(8100),
+                PropType::PositionX,
+                [
+                    (0, PropertyValue::Float(10.0)),
+                    (500, PropertyValue::Float(30.0)),
+                ],
+            ),
+            keyed_entry(
+                LayerId::new(8100),
+                PropType::PositionY,
+                [
+                    (0, PropertyValue::Float(20.0)),
+                    (700, PropertyValue::Float(40.0)),
+                ],
+            ),
+        ];
+        if animated {
+            entries.push(keyed_entry(
+                LayerId::new(8100),
+                PropType::Opacity,
+                [
+                    (0, PropertyValue::Float(0.0)),
+                    (1000, PropertyValue::Float(100.0)),
+                ],
+            ));
+        }
+        value["composition"]["dynamics"]["entries"] = json!(entries);
+        let output = export(value);
+        assert!(
+            output.omitted_layer_ids.is_empty(),
+            "{:?}",
+            output.diagnostics
+        );
+        let native = read_project(&output.bytes).unwrap();
+        let controls = layers(&native)
+            .iter()
+            .find(|layer| layer.name.as_ref() == "Composite controls")
+            .unwrap();
+        assert!(
+            !controls.record.flags().null_layer,
+            "Null opacity cannot gate children"
+        );
+        let ItemKind::Composition(source) = &native.item(controls.record.source_id()).unwrap().kind
+        else {
+            panic!("composite source");
+        };
+        assert_eq!(source.layers.len(), 2);
+        let opacity = super::stroke_keys::numeric(&controls.content, "ADBE Opacity").unwrap();
+        if animated {
+            assert_eq!(opacity.keyframes.len(), 2);
+            for ((key, time), value) in opacity.keyframes.iter().zip([0.0, 1.0]).zip([0.0, 1.0]) {
+                assert!((key.time_secs - time).abs() < 1e-4);
+                assert_eq!(key.values, [value]);
+            }
+        } else {
+            assert_eq!(opacity.values, [0.375]);
+        }
+        for name in ["ADBE Position_0", "ADBE Position_1"] {
+            assert_eq!(
+                super::stroke_keys::numeric(&controls.content, name)
+                    .unwrap()
+                    .keyframes
+                    .len(),
+                2
+            );
+        }
+    }
+}
+
+#[test]
+fn root_image_composite_applies_geometry_before_rasterization() {
+    assert_root_image_composite(30000, false);
+}
+
+#[test]
+fn shorter_root_image_composite_applies_geometry_before_rasterization() {
+    assert_root_image_composite(15000, false);
+}
+
+#[test]
+fn shorter_explicitly_parented_root_image_composite_applies_geometry_before_rasterization() {
+    assert_root_image_composite(15000, true);
+}
+
+fn assert_root_image_composite(duration_ms: u64, explicit_parent: bool) {
+    use crate::writer::footage::{NativeFrameRate, NativeSourceFormat, RelativeMediaPath};
+    use std::collections::BTreeMap;
+
+    let mut value = imported();
+    let mut group = value["composition"]["layers"][0].clone();
+    group["id"] = json!(8100);
+    group["name"] = json!("Image composite");
+    group["parent"] = Value::Null;
+    group["effects"] = json!([]);
+    group["masks"] = json!([]);
+    group["fills"] = json!([]);
+    group["trackMatte"] = Value::Null;
+    group["motionBlur"] = json!(false);
+    group["transform"] = serde_json::to_value(identity_fx_transform()).unwrap();
+    group["transform"]["scale"] = json!([53.0, 128.0]);
+    group["transform"]["opacity"] = json!(37.5);
+    group["playback"] = fixture_linear_playback(
+        json!({"start":0,"duration":duration_ms}),
+        json!({"start":0,"duration":duration_ms}),
+    );
+    group["layers"] = json!([{
+        "type":"Image", "id":8101, "name":"Editable image",
+        "parent": explicit_parent.then_some(8100),
+        "activeRange":{"start":0,"duration":duration_ms},
+        "source":{"assetId":"image", "fit":"contain"},
+        "transform":identity_fx_transform()
+    }]);
+    value["duration"] = json!(30.0);
+    value["composition"]["layers"] = json!([group]);
+    value["composition"]["dynamics"]["entries"] = json!([
+        keyed_entry(
+            LayerId::new(8100),
+            PropType::PositionX,
+            [
+                (0, PropertyValue::Float(10.0)),
+                (500, PropertyValue::Float(30.0))
+            ]
+        ),
+        keyed_entry(
+            LayerId::new(8100),
+            PropType::PositionY,
+            [
+                (0, PropertyValue::Float(20.0)),
+                (700, PropertyValue::Float(40.0))
+            ]
+        ),
+    ]);
+    let document = EditableFxCompositionDocument::from_json_value(value).unwrap();
+    let source = media::ResolvedMediaSource {
+        asset_id: fx_schema::AssetId::new("image").unwrap(),
+        path: RelativeMediaPath::new("media/image.png").unwrap(),
+        native_duration: None,
+        format: NativeSourceFormat::PngRgba,
+        dimensions: [1024, 1024],
+        duration_millis: 0,
+        duration_millis_floor: 0,
+        duration_native_ticks: None,
+        frame_rate: NativeFrameRate::integer(0),
+        audio_sample_rate: 0.0,
+        wave_metadata: None,
+    };
+    let resolved = BTreeMap::from([("image".into(), source)]);
+    let output = to_aep_with_media(&document, &resolved).unwrap();
+    assert!(
+        output.omitted_layer_ids.is_empty(),
+        "{:?}",
+        output.diagnostics
+    );
+    let native = read_project(&output.bytes).unwrap();
+    let owner = layers(&native)
+        .iter()
+        .find(|layer| layer.name.as_ref() == "Image composite")
+        .unwrap();
+    let scale = super::stroke_keys::numeric(&owner.content, "ADBE Scale").unwrap();
+    assert_eq!(
+        scale.values,
+        [1.0, 1.0, 1.0],
+        "the composite must not resample transformed pixels"
+    );
+    let opacity = super::stroke_keys::numeric(&owner.content, "ADBE Opacity").unwrap();
+    assert_eq!(opacity.values, [0.375]);
+    let ItemKind::Composition(source) = &native.item(owner.record.source_id()).unwrap().kind else {
+        panic!("image composite source");
+    };
+    assert_eq!(source.record.dimensions(), (1920, 1080));
+    let parent = source
+        .layers
+        .iter()
+        .find(|layer| layer.record.flags().null_layer)
+        .unwrap();
+    let image = source
+        .layers
+        .iter()
+        .find(|layer| layer.name.as_ref() == "Editable image")
+        .unwrap();
+    assert_eq!(image.record.parent_id(), parent.record.id());
+    let scale = super::stroke_keys::numeric(&parent.content, "ADBE Scale").unwrap();
+    assert_eq!(scale.values, [0.53, 1.28, 1.0]);
+    for name in ["ADBE Position_0", "ADBE Position_1"] {
+        assert_eq!(
+            super::stroke_keys::numeric(&parent.content, name)
+                .unwrap()
+                .keyframes
+                .len(),
+            2
+        );
+    }
+    let oracle = native_scale_oracle();
+    let ItemKind::Composition(controls) = &oracle.item(17).unwrap().kind else {
+        panic!("native scale oracle");
+    };
+    assert!(controls.layers.iter().any(|layer| {
+        super::stroke_keys::numeric(&layer.content, "ADBE Scale").is_some_and(|scale| {
+            scale
+                .keyframes
+                .iter()
+                .any(|key| key.values.starts_with(&[0.53, 1.28]))
+        })
+    }));
+
+    let mut adjusted = document.to_json_value().unwrap();
+    adjusted["composition"]["layers"].as_array_mut().unwrap().insert(0, json!({
+        "type":"Adjustment", "id":8200, "name":"Spatial consumer", "parent":null,
+        "activeRange":{"start":0,"duration":30000},
+        "effects":[{"id":8201,"enabled":true,"effect":{"type":"gaussianBlur","blurriness":7}}],
+        "transform":identity_fx_transform()
+    }));
+    let mut blurred = document.to_json_value().unwrap();
+    blurred["composition"]["layers"][0]["layers"][0]["motionBlur"] = json!(true);
+    let mut external = document.to_json_value().unwrap();
+    let mut consumer = external["composition"]["layers"][0]["layers"][0].clone();
+    consumer["id"] = json!(8400);
+    consumer["parent"] = json!(8100);
+    external["composition"]["layers"]
+        .as_array_mut()
+        .unwrap()
+        .push(consumer);
+    for input in [adjusted, blurred, external] {
+        let input = EditableFxCompositionDocument::from_json_value(input).unwrap();
+        let output = to_aep_with_media(&input, &resolved).unwrap();
+        let native = read_project(&output.bytes).unwrap();
+        let owner = layers(&native)
+            .iter()
+            .find(|layer| layer.name.as_ref() == "Image composite")
+            .unwrap();
+        assert_eq!(
+            super::stroke_keys::numeric(&owner.content, "ADBE Scale")
+                .unwrap()
+                .values,
+            [0.53, 1.28, 1.0],
+            "spatial consumers and child motion blur must retain the source domain"
+        );
+    }
+    let mut unrelated = document.to_json_value().unwrap();
+    let mut sibling = unrelated["composition"]["layers"][0]["layers"][0].clone();
+    sibling["id"] = json!(8300);
+    sibling["parent"] = Value::Null;
+    sibling["motionBlur"] = json!(true);
+    unrelated["composition"]["layers"]
+        .as_array_mut()
+        .unwrap()
+        .push(sibling);
+    let unrelated = EditableFxCompositionDocument::from_json_value(unrelated).unwrap();
+    let output = to_aep_with_media(&unrelated, &resolved).unwrap();
+    let native = read_project(&output.bytes).unwrap();
+    let owner = layers(&native)
+        .iter()
+        .find(|layer| layer.name.as_ref() == "Image composite")
+        .unwrap();
+    assert_eq!(
+        super::stroke_keys::numeric(&owner.content, "ADBE Scale")
+            .unwrap()
+            .values,
+        [1.0, 1.0, 1.0],
+        "unrelated sibling motion blur does not inherit the geometry parent"
+    );
+}
+
+#[test]
 fn paired_scale_native_hold_and_cubic_owners_survive_fresh_export() {
     let native = native_scale_oracle();
     let document = to_structural_fx_document(&native, Some(17))
@@ -47,16 +423,17 @@ fn paired_scale_native_hold_and_cubic_owners_survive_fresh_export() {
     let restored = to_structural_fx_document(&exported, Some(1))
         .unwrap()
         .document;
+    // The oracle's final Hold boundary is below 1650ms on its native tick clock.
     for (property, times, values, ease) in [
         (
             PropType::ScaleX,
-            [250, 1100, 1650],
+            [250, 1100, 1649],
             [38.0, 151.0, 82.0],
             "hold",
         ),
         (
             PropType::ScaleY,
-            [250, 1100, 1650],
+            [250, 1100, 1649],
             [142.0, 64.0, 123.0],
             "hold",
         ),

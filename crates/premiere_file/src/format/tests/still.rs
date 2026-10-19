@@ -61,6 +61,82 @@ pub(in crate::format) fn still_xml(alpha: bool) -> String {
 }
 
 #[test]
+fn still_off_grid_end_retains_editable_picture_on_fractional_sequence_clock() {
+    use crate::{
+        format::inspect_project_with_omissions, tests::support::project_document_with_media,
+    };
+    use serde_json::json;
+
+    for rate in [FrameRate::Fps30000Over1001, FrameRate::Fps60000Over1001] {
+        let frame = rate.ticks_per_frame();
+        let end = 15 * TICKS;
+        let snapped = (end + frame / 2) / frame * frame;
+        let xml = still_xml(false)
+            .replace(
+                "<FrameRate>8467200000</FrameRate>",
+                &format!("<FrameRate>{frame}</FrameRate>"),
+            )
+            .replace("<End>1270080000000</End>", &format!("<End>{end}</End>"));
+        let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+        let sequence = project.single_sequence().unwrap();
+        let clip = sequence.video_occurrences().next().unwrap();
+        assert_eq!(clip.timeline_ticks(), 0..snapped);
+        assert_eq!(
+            clip.source_ticks(),
+            STILL_SOURCE_IN_TICKS..STILL_SOURCE_IN_TICKS + 5 * TICKS
+        );
+        assert_eq!(clip.playback_rate, 1.0);
+        assert_eq!(sequence.timeline_end_ticks, snapped);
+        assert!(
+            omissions
+                .iter()
+                .any(|note| note.record == "VideoClipTrackItem:3"
+                    && note.reason.contains("still timeline end snapped")),
+            "{omissions:?}"
+        );
+        let document = project_document_with_media(sequence, &project.media);
+        let image = &document["composition"]["layers"][0];
+        assert_eq!(image["type"], "Image");
+        let millis = (snapped + TICKS / 2000) / (TICKS / 1000);
+        assert_eq!(
+            image["activeRange"],
+            json!({"start": 0, "duration": millis})
+        );
+        assert_eq!(image["transform"]["scale"], json!([100.0, 100.0]));
+    }
+}
+
+#[test]
+fn still_endpoint_recovery_does_not_admit_bad_starts_or_finite_video_clocks() {
+    let frame = FrameRate::Fps30000Over1001.ticks_per_frame();
+    for xml in [
+        still_xml(false).replace(
+            "<End>1270080000000</End>",
+            "<Start>1</Start><End>1270080000000</End>",
+        ),
+        still_xml(false).replace("<End>1270080000000</End>", "<End>1</End>"),
+        SOURCE.to_owned(),
+    ] {
+        let xml = xml.replace(
+            "<FrameRate>8467200000</FrameRate>",
+            &format!("<FrameRate>{frame}</FrameRate>"),
+        );
+        assert!(inspect_project_with_media(&xml, None).is_err());
+    }
+}
+
+#[test]
+fn still_nonpositive_track_frame_grid_returns_an_import_error() {
+    for frame in [0_i64, -8467200000] {
+        let xml = still_xml(false).replace(
+            "<FrameRate>8467200000</FrameRate>",
+            &format!("<FrameRate>{frame}</FrameRate>"),
+        );
+        assert!(inspect_project_with_media(&xml, None).is_err());
+    }
+}
+
+#[test]
 fn still_media_keeps_its_placement_and_synthetic_source_clock() {
     // Premiere writes IsOverridenImageOrientationType=true on many stills; it is accepted.
     for (alpha, overridden) in [(false, false), (true, true)] {
@@ -170,6 +246,86 @@ fn still_frame_rate_follows_the_still_preference_not_the_sequence_cadence() {
 }
 
 #[test]
+fn scale_to_frame_video_retains_editable_fitted_picture() {
+    use crate::{
+        format::inspect_project_with_omissions, tests::support::project_document_with_media,
+    };
+    use serde_json::json;
+
+    for (setting, enabled) in [
+        ("<ScaleToFramePolicy>1</ScaleToFramePolicy>", true),
+        ("<ScaleToFrameSize>true</ScaleToFrameSize>", true),
+        ("<ScaleToFramePolicy>0</ScaleToFramePolicy>", false),
+        ("<ScaleToFrameSize>false</ScaleToFrameSize>", false),
+        ("", false),
+    ] {
+        for (width, height, scale) in [(1280, 720, 150.0), (3840, 2160, 50.0), (1920, 1440, 75.0)] {
+            let xml = SOURCE
+                .replace(
+                    "<VideoStream ObjectID=\"8\"><Duration>",
+                    "<VideoStream ObjectID=\"8\"><OriginalPAR>1,1</OriginalPAR><Duration>",
+                )
+                .replace(
+                    "<FrameRate>8467200000</FrameRate><FrameRect>0,0,1920,1080</FrameRect></VideoStream>",
+                    &format!("<FrameRate>8467200000</FrameRate><FrameRect>0,0,{width},{height}</FrameRect></VideoStream>"),
+                )
+                .replace("</Clip></VideoClip>", &format!("</Clip>{setting}</VideoClip>"));
+            let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+            let scale = if enabled { scale } else { 100.0 };
+            let sequence = project.single_sequence().unwrap();
+            let clip = sequence.video_occurrences().next().unwrap();
+            assert_eq!(clip.transform.scale, [scale, scale]);
+            assert_eq!(clip.source_ticks(), 0..5 * TICKS);
+            assert_eq!(clip.timeline_ticks(), 0..5 * TICKS);
+            let document = project_document_with_media(sequence, &project.media);
+            let video = &document["composition"]["layers"][0];
+            assert_eq!(video["type"], "Video");
+            assert_eq!(video["transform"]["scale"], json!([scale, scale]));
+            assert_eq!(video["source"]["fit"], "stretch");
+            assert_eq!(
+                omissions
+                    .iter()
+                    .any(|note| note.reason.contains("Scale to Frame Size")),
+                enabled,
+                "{omissions:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn scale_to_frame_video_keeps_non_square_and_keyed_motion_guards() {
+    let setting = "<ScaleToFramePolicy>1</ScaleToFramePolicy>";
+    let non_square = SOURCE
+        .replace(
+            "<Duration>2540160000000</Duration>",
+            "<OriginalPAR>2,1</OriginalPAR><Duration>2540160000000</Duration>",
+        )
+        .replace(
+            "</Clip></VideoClip>",
+            &format!("</Clip>{setting}</VideoClip>"),
+        );
+    let keyed = super::animation::animation_fixture::animated_xml("")
+        .replace(
+            "<Name>Scale</Name>",
+            "<Name>Scale</Name><Keyframes>0,100,0,0,0,0,0,0;254016000000,200,0,0,0,0,0,0;</Keyframes>",
+        )
+        .replace(
+            "</Clip></VideoClip>",
+            &format!("</Clip>{setting}</VideoClip>"),
+        );
+    for xml in [non_square, keyed] {
+        let error = inspect_project(&xml, None).unwrap_err().to_string();
+        assert!(
+            error.contains(
+                "Scale to Frame Size requires unrotated square-pixel video with static Motion"
+            ),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn still_record_variants_reject_precisely() {
     // Corpus generator media: a decimal four-character code in FilePath and no RelativePath.
     let generator = |file_path: &str| {
@@ -216,17 +372,13 @@ fn still_record_variants_reject_precisely() {
         ),
         (generator("1129270354"), "synthetic still media COLR "),
         (generator("1112293707"), "synthetic still media BLAK "),
-        (generator("1414091852"), "synthetic still media TITL "),
+        (generator("1414091852"), "Media:media-1: missing ImporterPrefs"),
         (generator("1196574294"), "synthetic still media GRFV "),
         (generator("1414680150"), "synthetic still media TRNV "),
         (generator("7"), "synthetic still media 7 "),
         (
             scale_to_frame(&still_xml(false), "1"),
             "VideoClip:6: Scale to Frame Size on a still is not converted",
-        ),
-        (
-            scale_to_frame(SOURCE, "1"),
-            "VideoClip:6: Scale to Frame Size on a video clip is not converted",
         ),
         (
             scale_to_frame(&still_xml(false), "2"),
@@ -292,10 +444,6 @@ fn legacy_clip_settings_map_or_reject_like_their_modern_fields() {
         );
     }
     for (settings, expected) in [
-        (
-            format!("{INERT}<ScaleToFrameSize>true</ScaleToFrameSize>"),
-            "VideoClip:6: Scale to Frame Size on a video clip is not converted",
-        ),
         (
             format!("{INERT}<ScaleToFrameSize>maybe</ScaleToFrameSize>"),
             "VideoClip:6: invalid ScaleToFrameSize \"maybe\"",
@@ -613,6 +761,7 @@ fn still_project(alpha: bool, name: &str) -> PrProjectFile {
     };
     PrProjectFile::from_sequences(
         vec![PrSequence {
+            hdr: None,
             native_frame_ticks: None,
             audio: Vec::new(),
             id: None,
@@ -620,6 +769,7 @@ fn still_project(alpha: bool, name: &str) -> PrProjectFile {
             top_level: Some(true),
             video_tracks: vec![PrVideoTrack::media([occurrence(0), occurrence(4 * TICKS)])],
             timeline_end_ticks: 7 * TICKS,
+            adjustment_only_template: false,
             frame_rate: FrameRate::Fps30,
             width: 1920,
             height: 1080,

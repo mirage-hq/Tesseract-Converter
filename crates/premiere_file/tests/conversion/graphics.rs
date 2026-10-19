@@ -145,6 +145,79 @@ fn modern_run_style_metadata_publishes_meaningful_editable_native_text() {
 
 #[cfg(feature = "ffmpeg-library")]
 #[test]
+fn straight_position_speed_limits_preserve_editable_native_keys() {
+    let original = read_xml(&fixture(
+        "feature_graphic_bezier_position_rotation_26_5_strict.prproj",
+    ));
+    // Increase the native horizontal segment's speeds, leaving its clock and path intact.
+    let outgoing = "0.59999999999999998,0.5,0,0,0,0,0,0";
+    let incoming = "0.20000000000000001,0.25,0.5,0.5";
+    assert_eq!(original.matches(outgoing).count(), 1);
+    assert_eq!(original.matches(incoming).count(), 1);
+    let xml = original
+        .replace(outgoing, "1,0.5,0,0,0,0,0,0")
+        .replace(incoming, "2,0.25,0.5,0.5");
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::copy(
+        fixture("video-30fps-10s.mp4"),
+        dir.path().join("video-30fps-10s.mp4"),
+    )
+    .unwrap();
+    let source = dir.path().join("position.prproj");
+    write_prproj(&source, &xml);
+    let output = dir.path().join("converted");
+    let omissions = premiere_to_tesseract(&source, &output, Some(SEQUENCE), false).unwrap();
+    assert!(
+        !omissions
+            .iter()
+            .any(|omission| omission.scope == premiere_file::OmissionScope::Occurrence),
+        "{omissions:?}"
+    );
+    let document = TesseractFile::open(first_project(&output))
+        .unwrap()
+        .project_json()
+        .unwrap();
+    let (group, text) = graphic(&document);
+    assert_eq!(text["parent"], group["id"]);
+    assert_eq!(text["sourceText"]["text"], "py");
+    let entries = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    for (property, values) in [
+        ("positionX", [576.0, 1344.0, 1344.0]),
+        ("positionY", [540.0, 540.0, 864.0]),
+    ] {
+        let entry = entries
+            .iter()
+            .find(|entry| {
+                entry["target"]["layerId"] == text["id"]
+                    && entry["target"]["propertyType"] == property
+            })
+            .unwrap();
+        let keys = entry["animator"]["keyframes"].as_array().unwrap();
+        assert_eq!(keys.len(), 3);
+        for ((key, time), value) in keys.iter().zip([500, 1700, 2900]).zip(values) {
+            assert_eq!(key["layerTime"], time);
+            assert!((key["value"]["value"].as_f64().unwrap() - value).abs() < 1e-9);
+        }
+        // The path is 0.4 units over 1.2 s: influence <= distance / (speed * duration).
+        for (field, expected) in [
+            ("x1", 1.0 / 3.0),
+            ("y1", 1.0),
+            ("x2", 5.0 / 6.0),
+            ("y2", 0.0),
+        ] {
+            let actual = keys[1]["easing"][field].as_f64().unwrap();
+            assert!(
+                (actual - expected).abs() < 1e-9,
+                "{property}/{field}: {actual}"
+            );
+        }
+    }
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
 fn adobe_measured_graphic_bezier_keys_import_on_the_generator_clock() {
     // C1: unchanged Premiere 26.5.1 save, independently rendered in AME.
     // Assert the saved speeds: Premiere rewrote Rotation's out speed to 15.

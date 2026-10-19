@@ -91,6 +91,16 @@ fn center(layer: &Layer, effect: &DecodedEffect, size: [u16; 2]) -> Result<[f64;
         {
             return Ok([values[0], values[1]]);
         }
+        if effect.parameters.iter().any(|parameter| {
+            parameter.match_name == "ADBE Radial Wipe-0003"
+                && parameter
+                    .declared_kind
+                    .as_ref()
+                    .is_ok_and(|kind| kind.is_none())
+        }) {
+            // Missing instance declarations already use the source-sized catalog default.
+            return Ok([values[0], values[1]]);
+        }
         // PF_Point defaults are signed 16:16 PERCENTAGES, unlike the explicit
         // point's normalized coordinates. Keep this correction local to the
         // independently proved Radial Wipe profile, not other effect mappings.
@@ -300,6 +310,8 @@ pub(super) fn apply(
     *next_id = candidate_id;
     Ok(Some(animations))
 }
+
+pub(super) mod sectors;
 
 #[cfg(test)]
 mod tests;

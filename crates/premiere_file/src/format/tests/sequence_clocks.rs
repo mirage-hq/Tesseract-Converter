@@ -301,8 +301,9 @@ fn fractional_sequence_clock_retains_reverse_child_text_and_source_keys() {
         keys.iter()
             .map(|key| key["value"].as_i64().unwrap())
             .collect::<Vec<_>>(),
-        [2002, 0]
+        [1969, 0, 0]
     );
+    assert_eq!(keys[2]["time"], 2002);
     let text = &picture["layers"][0];
     assert_eq!(text["type"], "Text");
     assert!(!text["sourceText"]["text"].as_str().unwrap().is_empty());

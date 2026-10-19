@@ -298,7 +298,9 @@ macro_rules! define_audio_layer_schema {
             #[serde(default, skip_serializing_if = "Option::is_none")]
             #[ts(optional)]
             pub caption_presentation: Option<DonorCaptionPresentation>,
-            /// Source-audio span, independent of the visible playback window.
+            /// Authored source-audio selection, independent of the visible playback
+            /// window. Trims and splits keep it whole, so it is not the span that
+            /// plays: `playback` maps the visible window onto the source.
             pub source_range: TimeRangeProperty,
             /// Parent-clock window and editable source mapping.
             pub playback: LayerPlayback,

@@ -267,8 +267,8 @@ pub(super) fn records(media: &BoundMedia<'_>, ids: &MediaIds) -> Vec<Record> {
             PrMediaKind::OpenExr {
                 alpha, numbered, ..
             } => still::open_exr_video_stream(video, alpha, numbered, ids),
-            PrMediaKind::AfterEffectsComposition(_) => {
-                super::after_effects::video_stream(video, ids)
+            PrMediaKind::AfterEffectsComposition(source) => {
+                super::after_effects::video_stream(video, source, ids)
             }
             // Every corpus matte stream has the still fields and no alpha.
             PrMediaKind::ColorMatte(_) => still::video_stream(video, false, ids),

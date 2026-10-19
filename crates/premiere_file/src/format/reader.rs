@@ -26,6 +26,7 @@ mod dissolve;
 mod effects;
 mod film_impact;
 mod graphic;
+mod hdr;
 mod load;
 mod mask;
 mod native_media;
@@ -184,11 +185,8 @@ fn frame_rate(ticks_per_frame: i64, context: &str) -> Result<FrameRate> {
     })
 }
 
-/// Rejects a placement whose native `OriginalSubClipTimeOffset` is not `0`.
-///
-/// Only Premiere 9.x/10.x saves write it: 31 corpus placements in
-/// `free_quotes` and `5_ink_transitions`, all `0`. What another value encodes
-/// is unknown, so reading the placement's own In/Out could select other frames.
+/// Requires a verified zero offset where the nested-picture approximation
+/// does not apply; nonzero offsets have no established media/audio clock.
 fn require_zero_subclip_time_offset(item: &ClipTrackItem, identity: &str) -> Result<()> {
     let Some(value) = item.original_sub_clip_time_offset.as_deref() else {
         return Ok(());

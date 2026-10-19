@@ -22,13 +22,14 @@ pub(crate) mod text;
 pub(crate) mod text_shadow;
 mod timeline;
 mod timing;
+pub(crate) mod ultra_key;
 pub(crate) mod video_codec;
 
 pub(crate) use audio::{
     AudioChannels, CustomFadeShape, PrAudioFade, PrAudioOccurrence, PrAudioSourceChannel,
     PrAudioStream, PrFadeCurve, PrVolumeKeys, PrVolumeLayout, RUNTIME_PITCH_RATES,
 };
-pub(crate) use color::{ColorSpace, HdrProfile, ToneMapSettings};
+pub(crate) use color::{ColorSpace, HdrProfile, SequenceHdr, ToneMapSettings};
 pub(crate) use color_matte::PrColorMatte;
 pub(crate) use crop::{PrStaticCrop, CROP_PARAMS, CROP_PARAMS_26_5, CROP_PARAM_COUNT};
 pub(crate) use effects::{
@@ -70,6 +71,7 @@ pub(crate) use effects::{
 };
 pub(crate) use effects::{PrReplicate, REPLICATE, REPLICATE_COUNT};
 pub(crate) use effects::{PrSharpen, SHARPEN, SHARPEN_AMOUNT};
+pub(crate) use effects::{DROP_SHADOW, PROC_AMP, PROC_AMP_BRIGHTNESS};
 pub(crate) use effects::{
     MODERN_NOISE, NOISE, NOISE_AMOUNT, NOISE_APPROXIMATION, NOISE_CLIPPING, NOISE_COLOR,
 };
@@ -85,8 +87,8 @@ pub(crate) use mask::{
 pub(crate) use mask::{decode_mask_path, MASK_FEATHER_APPROXIMATION};
 pub(crate) use motion::{MotionParamSpec, MOTION_PARAMS, MOTION_PARAMS_26_5, MOTION_PARAM_COUNT};
 pub(crate) use nested::{
-    nested_transform_canvas_reason, nested_transform_import_canvas_reason, PrNestOccurrence,
-    MAX_NEST_DEPTH,
+    nested_transform_canvas_reason, nested_transform_import_canvas_reason,
+    nested_transform_static_canvas_approximation, PrNestOccurrence, MAX_NEST_DEPTH,
 };
 pub(crate) use opacity::{PrBlendMode, OPACITY_PARAMS, OPACITY_PARAMS_26_5, OPACITY_PARAM_COUNT};
 pub(crate) use records::VIDEO_MEDIA;
@@ -184,6 +186,7 @@ impl PrProjectFile {
 /// One supported Premiere sequence.
 #[derive(Debug, Clone)]
 pub struct PrSequence {
+    pub(crate) hdr: Option<SequenceHdr>,
     pub(crate) id: Option<String>,
     pub(crate) name: String,
     pub(crate) top_level: Option<bool>,
@@ -196,10 +199,13 @@ pub struct PrSequence {
     pub(crate) native_frame_ticks: Option<i64>,
     pub(crate) width: u32,
     pub(crate) height: u32,
-    /// The last native video item end on input, including omitted items, or the
+    /// The last native video/audio item end on input, including omitted items, or the
     /// document end on output. `end_ticks` also includes the exact converted audio
     /// end; a longer document tail snaps to the sequence frame grid.
     pub(crate) timeline_end_ticks: i64,
+    /// Native membership is adjustment-only, even if unsupported adjustments were omitted.
+    /// Allows a positive-duration import canvas, never recovery of lost ordinary media.
+    pub(crate) adjustment_only_template: bool,
 }
 
 impl PrSequence {
@@ -228,6 +234,25 @@ impl PrSequence {
     /// Returns media and graphic items in track-major order, from the bottom track upward.
     pub(crate) fn video_items(&self) -> impl DoubleEndedIterator<Item = &PrVideoItem> {
         self.video_tracks.iter().flat_map(|track| &track.items)
+    }
+
+    /// Media and graphic items this sequence's picture can show: its own
+    /// tracks and, recursively, those of its nested-sequence placements.
+    /// Sequences that are not placed in this one are never included.
+    pub(crate) fn reachable_video_items(&self) -> Vec<&PrVideoItem> {
+        let mut items = Vec::new();
+        let mut pending = vec![self];
+        while let Some(sequence) = pending.pop() {
+            items.extend(sequence.video_items());
+            pending.extend(
+                sequence
+                    .video_tracks
+                    .iter()
+                    .flat_map(|track| &track.nests)
+                    .map(|nest| &nest.sequence),
+            );
+        }
+        items
     }
 
     /// Returns media occurrences in track-major order, from the bottom track upward.
@@ -392,6 +417,8 @@ impl PrVideoItem {
 /// editable; the synthetic generator media behind it carries no source facts.
 #[derive(Debug, Clone)]
 pub struct PrGraphic {
+    /// Actual generator RGB working domain, never inferred from its sequence.
+    pub(crate) hdr: Option<fx_conv::HdrTransfer>,
     pub(crate) id: Option<String>,
     pub(crate) start_ticks: i64,
     pub(crate) end_ticks: i64,
@@ -403,20 +430,19 @@ pub struct PrGraphic {
     /// would take the object outside its native ranges or move it before a
     /// retained Ramp; a graphic with several objects keeps it here.
     pub(crate) vector_motion: Option<text::PrVectorMotion>,
-    /// The clip's own static Motion (`AE.ADBE Motion`), which moves the whole
-    /// graphic after its Vector Motion. Only a Source Graphic placement, whose
-    /// objects its master clip holds, reads one other than the default; other
-    /// graphics keep the default. Export keeps the default, the only Motion
-    /// that the graphic writer writes.
+    /// Clip Motion (`AE.ADBE Motion`) moves the whole graphic after Vector
+    /// Motion. Import stages it outside the editable content; export's native
+    /// graphic writer keeps its existing default Motion.
     pub(crate) clip_motion: PrStaticTransform,
+    /// Clip Motion keys on the generator clock, applied after Vector Motion.
+    pub(crate) clip_motion_animations: Vec<PrPropertyAnimation>,
     /// The clip's own Opacity (`AE.ADBE Opacity`), over the whole graphic: 100
     /// under `DefaultOpacity` `true`. A chain with neither a `DefaultOpacity`
     /// nor an Opacity component also reads as 100; that reading is inferred,
     /// the shared video reader's fallback, not seen in the Adobe evidence.
     pub(crate) opacity: f64,
     pub(crate) blend_mode: PrBlendMode,
-    /// Keys on the clip Opacity, on the generator clock like the text keys.
-    /// The clip's Motion has no keys, so no other property is keyed.
+    /// Keys on clip Opacity, on the generator clock like the text keys.
     pub(crate) animations: Vec<PrPropertyAnimation>,
     /// The one mask on the clip Opacity (`SubComponents`), its outline
     /// in unit fractions of the sequence frame. Premiere applies it to the
@@ -432,14 +458,19 @@ pub struct PrGraphic {
     pub(crate) enabled: bool,
 }
 
-/// Native Ramp coverage still unproved on a graphic. An editable replacement
+/// Native graphic effect coverage remains unproved. An editable replacement
 /// may retain its controls, but cannot certify native alpha or matte luma.
 #[derive(Debug, Clone)]
 pub(crate) struct PrGraphicEffectLoss {
-    pub(crate) ramp_component: String,
-    /// Leading, representable Ramps, in native chain order. Other Ramp parts
-    /// remain diagnosed losses; this transport does not clear coverage admission.
-    pub(crate) mapped_ramps: Vec<PrEffect>,
+    pub(crate) effect_component: String,
+    pub(crate) effect_name: &'static str,
+    /// Leading, representable effects, in native chain order.
+    pub(crate) mapped_effects: Vec<PrEffect>,
+    /// At least one active effect could not retain its original scope/controls.
+    /// Mapped siblings alone cannot establish a complete matte replacement.
+    pub(crate) has_unmapped_effects: bool,
+    /// A legacy single-face title can retain alpha independently of its RGB paint.
+    pub(crate) plain_title_alpha: bool,
 }
 
 impl PrGraphic {
@@ -609,7 +640,7 @@ impl PrMedia {
     /// Reading this identity does not import the linked composition into FX.
     pub fn after_effects_composition(&self) -> Option<PrAfterEffectsComposition> {
         match self.video.as_ref()?.kind {
-            PrMediaKind::AfterEffectsComposition(composition) => Some(composition),
+            PrMediaKind::AfterEffectsComposition(source) => Some(source.composition),
             _ => None,
         }
     }
@@ -885,6 +916,8 @@ pub(crate) enum PrPropertyAnimation {
     /// Motion Scale Width keys, which scale the horizontal axis alone: Uniform
     /// Scale is off, so they never accompany [`Self::UniformScale`].
     ScaleWidth(Vec<PrScalarKeyframe>),
+    /// Motion Scale keys with Uniform Scale off, driving only the vertical axis.
+    ScaleHeight(Vec<PrScalarKeyframe>),
 }
 
 impl PrPropertyAnimation {
@@ -896,6 +929,7 @@ impl PrPropertyAnimation {
             Self::Rotation(_) => PrAnimatedProperty::Rotation,
             Self::UniformScale(_) => PrAnimatedProperty::UniformScale,
             Self::ScaleWidth(_) => PrAnimatedProperty::ScaleWidth,
+            Self::ScaleHeight(_) => PrAnimatedProperty::ScaleHeight,
         }
     }
 
@@ -904,7 +938,8 @@ impl PrPropertyAnimation {
             Self::Opacity(keys)
             | Self::Rotation(keys)
             | Self::UniformScale(keys)
-            | Self::ScaleWidth(keys) => Some(keys),
+            | Self::ScaleWidth(keys)
+            | Self::ScaleHeight(keys) => Some(keys),
             Self::Position(_) | Self::AnchorPoint(_) => None,
         }
     }
@@ -912,15 +947,19 @@ impl PrPropertyAnimation {
     pub(crate) fn point_keys(&self) -> Option<&[PrPointKeyframe]> {
         match self {
             Self::Position(keys) | Self::AnchorPoint(keys) => Some(keys),
-            Self::Opacity(_) | Self::Rotation(_) | Self::UniformScale(_) | Self::ScaleWidth(_) => {
-                None
-            }
+            Self::Opacity(_)
+            | Self::Rotation(_)
+            | Self::UniformScale(_)
+            | Self::ScaleWidth(_)
+            | Self::ScaleHeight(_) => None,
         }
     }
 
     /// Why these keys are outside the one form that Adobe evidence measured
-    /// for their property, if they are. Anchor Point and Scale Width keys
-    /// convert Linear only, and Anchor Point keys without spatial tangents:
+    /// for their property, if they are. Export admits Anchor Point and Scale
+    /// Width keys Linear only, and Anchor Point keys without spatial tangents.
+    /// The Motion reader separately admits straight Anchor Point paths with
+    /// temporal easing and reports their unmeasured native fidelity:
     /// AME's render of such keys in `feature_motion_anchor_scale_width_probe`
     /// is Position plus each axis's Scale times the source pixel less the
     /// source-normalized anchor, within 0.8 px at every frame. The first key's
@@ -945,7 +984,7 @@ impl PrPropertyAnimation {
                 .enumerate()
                 .any(|(index, key)| curved(index, key.easing))
                 .then_some("only Linear Scale Width keys convert; Premiere's other Scale Width keys are unmeasured"),
-            Self::Opacity(_) | Self::Position(_) | Self::Rotation(_) | Self::UniformScale(_) => {
+            Self::Opacity(_) | Self::Position(_) | Self::Rotation(_) | Self::UniformScale(_) | Self::ScaleHeight(_) => {
                 None
             }
         }
@@ -959,7 +998,8 @@ impl PrPropertyAnimation {
             Self::Opacity(keys)
             | Self::Rotation(keys)
             | Self::UniformScale(keys)
-            | Self::ScaleWidth(keys) => keys.len(),
+            | Self::ScaleWidth(keys)
+            | Self::ScaleHeight(keys) => keys.len(),
         };
         crate::format::ensure_valid!(count > 0, "animation must have at least one key");
         let valid = match self {
@@ -977,7 +1017,8 @@ impl PrPropertyAnimation {
             Self::Opacity(keys)
             | Self::Rotation(keys)
             | Self::UniformScale(keys)
-            | Self::ScaleWidth(keys) => {
+            | Self::ScaleWidth(keys)
+            | Self::ScaleHeight(keys) => {
                 keys.iter().all(|key| key.value.is_finite())
                     && keys
                         .windows(2)
@@ -1006,6 +1047,7 @@ pub(crate) enum PrAnimatedProperty {
     Rotation,
     UniformScale,
     ScaleWidth,
+    ScaleHeight,
 }
 
 #[derive(Debug, Clone)]

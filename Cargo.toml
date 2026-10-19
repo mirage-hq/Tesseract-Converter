@@ -13,7 +13,7 @@ members = [
 default-members = ["apps/tesseract-conv"]
 
 [workspace.package]
-rust-version = "1.92.0"
+rust-version = "1.99.0"
 license = "MIT"
 
 [workspace.dependencies]

@@ -20,7 +20,7 @@ use super::{
 
 const MILLIS_PER_SECOND: i128 = 1_000;
 
-/// Exact nominal clock, independent native visibility, and optional authored Remap.
+/// Exact nominal clock, independent native visibility, and optional source Remap.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SourceClockPlan {
     pub(crate) record: FreshLayerClockFields,
@@ -350,19 +350,8 @@ impl SourceClockPlan {
                 "authored Time Remap visibility must retain its original clock",
             ));
         }
-        let shift = |value: NativeRational| {
-            // All inputs are bounded i32/u32 fields; the three-factor products
-            // fit i128. Parent half a millisecond maps to 1/(2000 * stretch)
-            // source seconds, including non-unit positive stretches.
-            let scale = 2_000 * i128::from(self.record.stretch.numerator);
-            NativeRational::new(
-                i128::from(value.numerator) * scale
-                    - i128::from(self.record.stretch.denominator) * i128::from(value.denominator),
-                i128::from(value.denominator) * scale,
-            )
-        };
-        let in_point = shift(self.record.in_point)?;
-        let out_point = shift(self.record.out_point)?;
+        let in_point = self.rounded_millisecond_boundary(self.record.in_point)?;
+        let out_point = self.rounded_millisecond_boundary(self.record.out_point)?;
         if in_point.numerator < 0 {
             return Err(AepWriteError::Invalid(
                 "rounded-millisecond visibility would require a negative source in-point",
@@ -374,6 +363,96 @@ impl SourceClockPlan {
             ..self.record
         });
         Ok(())
+    }
+
+    /// Correct only a rounded root lifetime end, retaining the nominal source start.
+    pub(crate) fn apply_rounded_millisecond_end_visibility(&mut self) -> Result<(), AepWriteError> {
+        if self.has_time_remap() {
+            return Err(AepWriteError::Invalid(
+                "authored Time Remap visibility must retain its original clock",
+            ));
+        }
+        let out_point = self.rounded_millisecond_boundary(self.record.out_point)?;
+        self.visibility_record = Some(FreshLayerClockFields {
+            out_point,
+            ..self.record
+        });
+        Ok(())
+    }
+
+    /// Integral-second Remap keys avoid native key-tick phase error. The returned
+    /// empty source tail bounds the ramp without changing any visible child clock.
+    pub(crate) fn apply_rounded_millisecond_start_preroll(
+        &mut self,
+        rate: crate::timing::FrameRate,
+    ) -> Result<crate::timing::Duration24, AepWriteError> {
+        if self.has_time_remap()
+            || self.record.stretch != NativeRational::new(1, 1)?
+            || self.record.in_point.numerator != 0
+            || self.active_range.start.as_millis() == 0
+        {
+            return Err(AepWriteError::Invalid(
+                "rounded Group pre-roll requires an unremapped unit-rate source-zero clock",
+            ));
+        }
+        let seconds = self.source_duration_millis.div_ceil(1_000);
+        let ticks = seconds
+            .checked_mul(24_576)
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or(AepWriteError::Invalid(
+                "Group pre-roll source duration exceeds native range",
+            ))?;
+        let duration = rate.enclosing_duration(crate::timing::Duration24::from_ticks(ticks)?)?;
+        let endpoint = i64::try_from(seconds)
+            .ok()
+            .and_then(|value| value.checked_add(1))
+            .and_then(|value| value.checked_mul(1_000))
+            .ok_or(AepWriteError::Invalid(
+                "Group pre-roll key endpoint overflows",
+            ))?;
+        let native = self.native_record();
+        let visibility = FreshLayerClockFields {
+            start_time: NativeRational::milliseconds(
+                i128::from(self.active_range.start.as_millis()) - 1_000,
+            )?,
+            in_point: NativeRational::new(1_999, 2_000)?,
+            out_point: NativeRational::new(
+                i128::from(native.out_point.numerator) + i128::from(native.out_point.denominator),
+                i128::from(native.out_point.denominator),
+            )?,
+            ..native
+        };
+        let key = |time_millis, value| NumericKeyframe {
+            time_millis,
+            values: vec![value],
+            easing: vec![KeyframeEasing::Linear],
+            spatial_in: Vec::new(),
+            spatial_out: Vec::new(),
+        };
+        let candidate = Self {
+            time_remap: Some(NumericTrack {
+                keys: vec![key(0, 0.0), key(1_000, 0.0), key(endpoint, seconds as f64)],
+            }),
+            visibility_record: Some(visibility),
+            source_duration_millis: seconds * 1_000,
+            ..self.clone()
+        };
+        candidate.validate_time_remap_at_rate(rate)?;
+        *self = candidate;
+        Ok(duration)
+    }
+
+    fn rounded_millisecond_boundary(
+        &self,
+        value: NativeRational,
+    ) -> Result<NativeRational, AepWriteError> {
+        // Bounded i32/u32 record fields keep the three-factor products in i128.
+        let scale = 2_000 * i128::from(self.record.stretch.numerator);
+        NativeRational::new(
+            i128::from(value.numerator) * scale
+                - i128::from(self.record.stretch.denominator) * i128::from(value.denominator),
+            i128::from(value.denominator) * scale,
+        )
     }
 
     /// Only the native visible envelope uses the correction; property rebasing
@@ -622,7 +701,7 @@ impl SourceClockPlan {
 }
 
 impl NativeRational {
-    fn new(numerator: i128, denominator: i128) -> Result<Self, AepWriteError> {
+    pub(super) fn new(numerator: i128, denominator: i128) -> Result<Self, AepWriteError> {
         if denominator <= 0 {
             return Err(AepWriteError::Invalid(
                 "native source-clock rational has a nonpositive denominator",
@@ -640,7 +719,7 @@ impl NativeRational {
         })
     }
 
-    fn milliseconds(milliseconds: i128) -> Result<Self, AepWriteError> {
+    pub(super) fn milliseconds(milliseconds: i128) -> Result<Self, AepWriteError> {
         Self::new(milliseconds, MILLIS_PER_SECOND)
     }
 }
@@ -729,6 +808,39 @@ mod tests {
             TimeRemapExtrapolation::Inactive,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn rounded_start_preroll_validates_native_key_range_before_changing_the_clock() {
+        let mut plan = SourceClockPlan::affine(
+            TimeRangeProperty::new(Time::from_millis(667), Duration::from_millis(36_000_000)),
+            Time::ZERO,
+            Time::from_millis(36_000_000),
+            36_000_000,
+        )
+        .unwrap();
+        let original = plan.clone();
+        assert!(
+            plan.apply_rounded_millisecond_start_preroll(
+                crate::timing::FrameRate::new(60.0).unwrap()
+            )
+            .is_err()
+        );
+        assert_eq!(plan, original);
+        for fps in [24.0, 30.0, 60.0, 29.97] {
+            let mut plan = SourceClockPlan::affine(
+                TimeRangeProperty::new(Time::from_millis(667), Duration::from_millis(333)),
+                Time::ZERO,
+                Time::from_millis(333),
+                333,
+            )
+            .unwrap();
+            let nominal = plan.record;
+            let rate = crate::timing::FrameRate::new(fps).unwrap();
+            plan.apply_rounded_millisecond_start_preroll(rate).unwrap();
+            assert_eq!(plan.record, nominal);
+            assert_eq!(plan.validate_time_remap_at_rate(rate).unwrap(), 0.0);
+        }
     }
 
     #[test]
@@ -1219,7 +1331,9 @@ mod tests {
                 let bytes = chunk.data_payload().unwrap();
                 keys.extend(
                     bytes
-                        .chunks_exact(48)
+                        .as_chunks::<48>()
+                        .0
+                        .iter()
                         .map(|item| i32::from_be_bytes(item[..4].try_into().unwrap())),
                 );
             }

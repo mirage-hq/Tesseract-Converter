@@ -385,7 +385,28 @@ impl Analyzer<'_> {
         for layer in layers.iter().rev() {
             let next = match layer.data() {
                 LayerData::Adjustment(adjustment) => self.adjustment_bounds(adjustment, result)?,
-                _ => self.layer_bounds(layer)?,
+                _ => self.layer_bounds(layer).or_else(|reason| {
+                    let LayerData::Group(group) = layer.data() else {
+                        return Err(reason);
+                    };
+                    if reason != "Text/font glyph bounds are not known from the FX text box" {
+                        return Err(reason);
+                    }
+                    let bounds = super::super::sibling_rect_mask_bounds(
+                        group,
+                        layers,
+                        self.dynamics,
+                        self.canvas,
+                    )
+                    .ok_or(reason)?;
+                    validate_masked_source(group, self.dynamics, self.resolved_media, self.canvas)?;
+                    Analyzer {
+                        source_interval: None,
+                        ..*self
+                    }
+                    .transform_bounds(bounds, group.id, &group.transform)
+                    .map(Some)
+                })?,
             };
             if let Some(next) = next {
                 match &mut result {
@@ -662,6 +683,15 @@ impl Analyzer<'_> {
         if adjustment.is_hidden {
             return Ok(None);
         }
+        if adjustment
+            .effects
+            .iter()
+            .all(super::root_viewport::pointwise_adjustment)
+        {
+            // Certified pointwise effects do not enlarge the already-enclosed
+            // lower stack. This is bounds-only; native export keeps the effects.
+            return Ok(None);
+        }
         let mut enabled_effects =
             adjustment
                 .effects
@@ -822,7 +852,14 @@ impl Analyzer<'_> {
                         + super::blur_bounds::shape_reach(shape, self.dynamics),
                 )?;
                 self.transform_bounds(bounds, shape.id, &shape.transform)
-                    .map(Some)
+                    .map(|bounds| {
+                        Some(super::shape_glow_bounds(
+                            bounds,
+                            shape,
+                            self.dynamics,
+                            self.canvas,
+                        ))
+                    })
             }
             LayerData::Group(group) => {
                 if group.is_hidden {
@@ -907,10 +944,12 @@ impl Analyzer<'_> {
         transform: &Transform,
     ) -> Result<Option<Bounds>, &'static str> {
         let request = media::request(layer).ok_or("Visual media has no archive request")?;
-        let source = self
-            .resolved_media
-            .get(request.asset_id.as_str())
-            .ok_or("Visual media archive source was not resolved for animated bounds")?;
+        let Some(source) = self.resolved_media.get(request.asset_id.as_str()) else {
+            // Match actual emission: the missing source is diagnosed and
+            // omitted, not painted. Keep proving the remaining siblings rather
+            // than promoting this local omission to the containing Group.
+            return Ok(None);
+        };
         // Visibility, blend and matte live on the native occurrence wrapper;
         // they do not enlarge the decoded media plane. Use the same content
         // view as emission, retaining the original transform for its geometry.
@@ -2400,7 +2439,8 @@ mod tests {
                 "upper-sentinel-37x23",
                 "nested-local-adjustment",
                 "lower-amber-83x117",
-                "lower-cobalt-127x71"
+                "lower-cobalt-127x71",
+                "Composition canvas guide"
             ]
         );
 

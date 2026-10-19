@@ -30,7 +30,7 @@ mod export;
 mod fonts;
 pub(crate) mod graphic_picture;
 mod linked_import;
-mod media;
+pub(crate) mod media;
 mod publication;
 
 pub use export::{
@@ -67,11 +67,16 @@ pub struct AfterEffectsExportOptions {
     /// Requested nominal frames per second; defaults to 24 for legacy callers.
     /// FX scripts are sampled at four times this rate, plus owner endpoints.
     pub fps: f64,
+    /// Explicit native PQ/HLG target; default export remains legacy SDR.
+    pub hdr: Option<fx_conv::HdrTransfer>,
 }
 
 impl Default for AfterEffectsExportOptions {
     fn default() -> Self {
-        Self { fps: 24.0 }
+        Self {
+            fps: 24.0,
+            hdr: None,
+        }
     }
 }
 

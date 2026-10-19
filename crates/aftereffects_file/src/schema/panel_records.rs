@@ -14,7 +14,7 @@ impl PanelSlots {
     fn from_slots(sort_key: u16, slots: &[(u16, u16, u32)]) -> Self {
         let mut data = [0; 1872];
         data[..2].copy_from_slice(&sort_key.to_be_bytes());
-        for (slot, (id, width, flags)) in data[24..].chunks_exact_mut(88).zip(slots) {
+        for (slot, (id, width, flags)) in data[24..].as_chunks_mut::<88>().0.iter_mut().zip(slots) {
             slot[..2].copy_from_slice(&id.to_be_bytes());
             slot[2..4].copy_from_slice(&width.to_be_bytes());
             slot[68..72].copy_from_slice(&flags.to_be_bytes());
@@ -89,7 +89,7 @@ impl EmptyListHeader {
         data[..4].copy_from_slice(&0x00d00bee_u32.to_be_bytes());
         data[12..16].copy_from_slice(&1_u32.to_be_bytes());
         data[16..20].copy_from_slice(&stride.to_be_bytes());
-        for (slot, value) in data[20..32].chunks_exact_mut(4).zip(layout) {
+        for (slot, value) in data[20..32].as_chunks_mut::<4>().0.iter_mut().zip(layout) {
             slot.copy_from_slice(&value.to_be_bytes());
         }
         Self(data)

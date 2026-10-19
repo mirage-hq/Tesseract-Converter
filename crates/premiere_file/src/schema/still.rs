@@ -16,7 +16,7 @@
 //! unit forward rate; lengthening uses checked In plus placement duration
 //! for the media-end bound. Other rates keep the source-span rule ([`PrVideoOccurrence::validate`](super::PrVideoOccurrence::validate)).
 
-use super::{HdrProfile, PrAfterEffectsComposition, PrColorMatte, VideoCodec, TICKS};
+use super::{after_effects::PrAfterEffectsSource, HdrProfile, PrColorMatte, VideoCodec, TICKS};
 
 /// Premiere's default channel selection when it first opens an OpenEXR file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,7 +63,7 @@ pub(crate) enum PrMediaKind {
     /// The linked filename supplies the first number; Duration/FrameRate the count.
     NumberedStills { alpha: bool },
     /// Editable AEP-backed source; never inspect it as an ordinary video file.
-    AfterEffectsComposition(PrAfterEffectsComposition),
+    AfterEffectsComposition(PrAfterEffectsSource),
     /// Generator media with no file, paths or asset (`schema/color_matte.rs`).
     ColorMatte(PrColorMatte),
     /// Black Video generator media that every placement flags as an

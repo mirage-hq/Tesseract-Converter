@@ -8,6 +8,93 @@ pub(super) mod animation_fixture;
 use animation_fixture::{animated_xml, SOURCE};
 
 #[test]
+fn comma_separated_static_motion_points_keep_editable_picture() {
+    // Supplemental wire regression, not an Adobe-authored fixture: older saves
+    // store X and Y in separate comma fields instead of one colon-paired field.
+    let xml = animated_xml("")
+        .replace("<Name>Position</Name><ParameterID>1</ParameterID><StartKeyframe>-91445760000000000,0.5:0.5,", "<Name>Position</Name><ParameterID>1</ParameterID><StartKeyframe>-91445760000000000,0.75,0.25,")
+        .replace("<Name>Anchor Point</Name><ParameterID>6</ParameterID><StartKeyframe>-91445760000000000,0.5:0.5,", "<Name>Anchor Point</Name><ParameterID>6</ParameterID><StartKeyframe>-91445760000000000,0.125,0.75,");
+    let parsed = crate::format::inspect_project_with_media(&xml, Some("sequence-1")).unwrap();
+    let sequence = parsed.single_sequence().unwrap();
+    let clips: Vec<_> = sequence.video_occurrences().collect();
+    assert_eq!(clips.len(), 1);
+    assert_eq!(clips[0].transform.position, [0.75, 0.25]);
+    assert_eq!(clips[0].transform.anchor_point, [0.125, 0.75]);
+    assert!(clips[0].animations.is_empty());
+    let document = crate::tests::support::project_document_with_media(sequence, &parsed.media);
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    let picture = layers
+        .iter()
+        .find(|layer| layer["type"] == "Video")
+        .unwrap();
+    assert_eq!(
+        picture["transform"]["position"],
+        serde_json::json!([1440.0, 270.0])
+    );
+    assert_eq!(
+        picture["transform"]["anchorPoint"],
+        serde_json::json!([240.0, 810.0])
+    );
+}
+
+#[test]
+fn stationary_position_interval_ignores_saved_speed_and_keeps_editable_picture() {
+    // Synthetic wire regression: a pause between independently eased moves.
+    // Saved speed belongs to distance traversal, not displacement on a path
+    // whose endpoints and spatial handles all coincide.
+    let keys = format!(
+        "0,1:0.5,5,0,0,0.3,0,0.4,5,4,0,0,0,0;{t},0.5:0.5,5,0,0,0.3,0.6,0.4,5,4,0,0,0,0;{t2},0.5:0.5,5,0,0.7,0.3,0,0.4,5,4,0,0,0,0;{t3},0.5:0,0,0,0,0.3,0,0.4,5,4,0,0,0,0;",
+        t = TICKS,
+        t2 = 2 * TICKS,
+        t3 = 3 * TICKS,
+    );
+    let xml = animated_xml("").replace(
+        "<Name>Position</Name>",
+        &format!("<Name>Position</Name><Keyframes>{keys}</Keyframes>"),
+    );
+    let parsed = crate::format::inspect_project_with_media(&xml, Some("sequence-1")).unwrap();
+    let sequence = parsed.single_sequence().unwrap();
+    let clips: Vec<_> = sequence.video_occurrences().collect();
+    assert_eq!(clips.len(), 1);
+    let position = clips[0]
+        .animations
+        .iter()
+        .find(|animation| animation.property() == PrAnimatedProperty::Position)
+        .unwrap();
+    let points = position.point_keys().unwrap();
+    assert_eq!(points.len(), 4);
+    assert_eq!(points[2].source_ticks, 2 * TICKS);
+    assert_eq!(points[1].value, points[2].value);
+    assert_eq!(points[2].easing, crate::schema::PrKeyframeEasing::Linear);
+    for index in [1, 3] {
+        assert_eq!(
+            points[index].easing,
+            crate::schema::PrKeyframeEasing::CubicBezier {
+                x1: 0.4,
+                y1: 0.0,
+                x2: 0.7,
+                y2: 1.0,
+            }
+        );
+    }
+    let document = crate::tests::support::project_document_with_media(sequence, &parsed.media);
+    let entries = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    for property in ["positionX", "positionY"] {
+        let entry = entries
+            .iter()
+            .find(|entry| entry["target"]["propertyType"] == property)
+            .unwrap();
+        let keys = entry["animator"]["keyframes"].as_array().unwrap();
+        assert_eq!(keys.len(), 4);
+        assert_eq!(keys[2]["layerTime"], 2000);
+        assert_eq!(keys[1]["value"], keys[2]["value"]);
+        assert_eq!(keys[2]["easing"]["type"], "linear");
+    }
+}
+
+#[test]
 fn position_path_preserves_coordinates_timing_easing_and_paired_tangents() {
     let keys = format!(
         "0,0.25:0.5,5,0,0,0.2,0.375,0.4,5,4,0,0,0.1,-0.05;{},0.75:0.75,0,0,0.5,0.2,0,0,5,4,-0.1,0.05,0,0;",
@@ -85,6 +172,28 @@ fn position_path_preserves_coordinates_timing_easing_and_paired_tangents() {
 
 #[test]
 fn mode_five_spatial_flags_two_keep_native_position_keys_and_supported_video() {
+    straight_native_position_with_spatial_form(",5,2,");
+}
+
+#[test]
+fn linear_spatial_saved_handles_keep_native_position_keys_and_supported_video() {
+    for form in [",0,0,", ",0,2,", ",0,4,"] {
+        straight_native_position_with_spatial_form(form);
+    }
+}
+
+#[test]
+fn linear_spatial_inactive_handles_do_not_drop_or_curve_picture() {
+    for form in [",0,0,", ",0,2,", ",0,4,"] {
+        native_position_with_spatial_form(form, true);
+    }
+}
+
+fn straight_native_position_with_spatial_form(form: &str) {
+    native_position_with_spatial_form(form, false);
+}
+
+fn native_position_with_spatial_form(form: &str, inactive_handles: bool) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/feature_motion_position_path_strict.prproj");
     let xml = crate::format::read_xml(&path).unwrap();
@@ -110,12 +219,50 @@ fn mode_five_spatial_flags_two_keep_native_position_keys_and_supported_video() {
             .to_owned()
     };
     assert_eq!(wire.matches(",5,4,").count(), 2);
-    let flags_two = wire.replace(",5,4,", ",5,2,");
+    let flags_two = wire.replace(",5,4,", form);
+    let flags_two = if inactive_handles {
+        flags_two
+            .replace("0.06640624987582365,-7.0642541261101152e-09", "0,0.125")
+            .replace("-0.06640624987582365,7.0642541261101152e-09", "0,-0.125")
+    } else {
+        flags_two
+    };
+    if inactive_handles {
+        assert!(flags_two.contains(",0,0.125;"));
+        assert!(flags_two.contains(",0,-0.125,0,0;"));
+    }
     let xml = xml.replacen(
         &format!("<Keyframes>{wire}</Keyframes>"),
         &format!("<Keyframes>{flags_two}</Keyframes>"),
         1,
     );
+    let imported = inactive_handles.then(|| {
+        use fx_conv::{ConversionMode, ImportToTesseract};
+
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.prproj");
+        std::fs::write(&source, &xml).unwrap();
+        std::fs::copy(
+            path.parent().unwrap().join("feature_timecoded_source.mp4"),
+            directory.path().join("feature_timecoded_source.mp4"),
+        )
+        .unwrap();
+        let output = directory.path().join("converted");
+        crate::Premiere
+            .import_to_tesseract(
+                &source,
+                &output,
+                &crate::PremiereImportOptions {
+                    sequence: Some("c8acf9c1-34b2-4086-9f55-d528950a7059".into()),
+                },
+                ConversionMode::Write,
+            )
+            .unwrap();
+        tesseract_file::TesseractFile::open(output.join("project.tsrct"))
+            .unwrap()
+            .project_json()
+            .unwrap()
+    });
     let parsed = crate::format::inspect_project_with_media(
         &xml,
         Some("c8acf9c1-34b2-4086-9f55-d528950a7059"),
@@ -138,17 +285,24 @@ fn mode_five_spatial_flags_two_keep_native_position_keys_and_supported_video() {
     assert_eq!(keys[1].source_ticks, 7 * TICKS / 2);
     assert_eq!(keys[0].value, [-0.028645824640989304, 0.7314815521240234]);
     assert_eq!(keys[1].value, [0.36979167461395257, 0.7314815097384987]);
-    assert_eq!(
-        keys[0].spatial_out_tangent,
-        Some([0.06640624987582365, -7.064254126110115e-9])
-    );
-    assert_eq!(
-        keys[1].spatial_in_tangent,
-        Some([-0.06640624987582365, 7.064254126110115e-9])
-    );
+    if form.starts_with(",0,") {
+        assert_eq!(keys[0].spatial_out_tangent, None);
+        assert_eq!(keys[1].spatial_in_tangent, None);
+    } else {
+        assert_eq!(
+            keys[0].spatial_out_tangent,
+            Some([0.06640624987582365, -7.064254126110115e-9])
+        );
+        assert_eq!(
+            keys[1].spatial_in_tangent,
+            Some([-0.06640624987582365, 7.064254126110115e-9])
+        );
+    }
     assert!(crate::schema::spatial::curved_segment(keys).is_none());
 
-    let document = crate::tests::support::project_document_with_media(sequence, &parsed.media);
+    let document = imported.unwrap_or_else(|| {
+        crate::tests::support::project_document_with_media(sequence, &parsed.media)
+    });
     let layers = document["composition"]["layers"].as_array().unwrap();
     assert_eq!(
         layers
@@ -165,6 +319,23 @@ fn mode_five_spatial_flags_two_keep_native_position_keys_and_supported_video() {
         entry["target"]["propertyType"].as_str(),
         Some("positionX" | "positionY")
     )));
+    if inactive_handles {
+        for entry in entries {
+            let expected = match entry["target"]["propertyType"].as_str().unwrap() {
+                "positionX" => [-0.028645824640989304 * 1920.0, 0.36979167461395257 * 1920.0],
+                "positionY" => [0.7314815521240234 * 1080.0, 0.7314815097384987 * 1080.0],
+                property => panic!("unexpected property {property}"),
+            };
+            for (key, expected) in entry["animator"]["keyframes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .zip(expected)
+            {
+                assert!((key["value"]["value"].as_f64().unwrap() - expected).abs() < 1e-9);
+            }
+        }
+    }
     let editable = fx_schema::EditableFxCompositionDocument::from_json_value(document).unwrap();
     let position_tracks = editable.composition().dynamics().entries();
     assert_eq!(position_tracks.len(), 2);
@@ -176,12 +347,14 @@ fn mode_five_spatial_flags_two_keep_native_position_keys_and_supported_video() {
         assert_eq!(track.keyframes().len(), 2);
         assert_eq!(track.keyframes()[0].layer_time().as_millis(), 500);
         assert_eq!(track.keyframes()[1].layer_time().as_millis(), 3500);
-        // These native handles lie on their chord, so the existing mapping
-        // keeps temporal traversal by dropping them from the editable track.
         assert!(!track.has_spatial_tangents());
     }
 
-    let unknown = xml.replacen(",5,2,", ",5,3,", 1);
+    let unknown = xml.replacen(
+        &format!("<Keyframes>{flags_two}</Keyframes>"),
+        &format!("<Keyframes>{}</Keyframes>", wire.replace(",5,4,", ",5,3,")),
+        1,
+    );
     let error = crate::format::inspect_project_with_media(
         &unknown,
         Some("c8acf9c1-34b2-4086-9f55-d528950a7059"),
@@ -264,6 +437,61 @@ fn linear_spatial_flags_two_keep_editable_position_values_easing_and_clip_clock(
         assert_eq!(track.keyframes()[0].layer_time().as_millis(), -500);
         assert_eq!(track.keyframes()[1].layer_time().as_millis(), 1000);
         assert!(!track.has_spatial_tangents());
+    }
+}
+
+#[test]
+fn linear_spatial_flags_four_keep_stationary_and_moving_editable_picture() {
+    for endpoint in ["0.5:0.5", "0.75:0.25"] {
+        let keys = format!(
+            "0,0.5:0.5,0,0,0,0.16666666666666666,0,0.16666666666666666,0,2,0,0,0,0;{TICKS},{endpoint},5,0,0,0.33333333,0,0.16666666667,0,4,-0,-0,0,0;"
+        );
+        let xml = animated_xml("").replace(
+            "<Name>Position</Name>",
+            &format!("<Name>Position</Name><Keyframes>{keys}</Keyframes>"),
+        );
+        let parsed = crate::format::inspect_project_with_media(&xml, Some("sequence-1")).unwrap();
+        let sequence = parsed.single_sequence().unwrap();
+        let clip = sequence.video_occurrences().next().unwrap();
+        let points = clip.animations[0].point_keys().unwrap();
+        assert_eq!(points.len(), 2);
+        assert_eq!(points[1].source_ticks, TICKS);
+        let expected = if endpoint == "0.5:0.5" {
+            [0.5, 0.5]
+        } else {
+            [0.75, 0.25]
+        };
+        assert_eq!(points[1].value, expected);
+        assert_eq!(points[1].easing, crate::schema::PrKeyframeEasing::Linear);
+        let document = crate::tests::support::project_document_with_media(sequence, &parsed.media);
+        assert!(document["composition"]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|layer| layer["type"] == "Video"));
+        let entries = document["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap();
+        assert_eq!(entries.len(), 2);
+        for (property, value) in [
+            ("positionX", expected[0] * 1920.0),
+            ("positionY", expected[1] * 1080.0),
+        ] {
+            let entry = entries
+                .iter()
+                .find(|entry| entry["target"]["propertyType"] == property)
+                .unwrap();
+            let keys = entry["animator"]["keyframes"].as_array().unwrap();
+            assert_eq!(keys.len(), 2);
+            assert_eq!(keys[1]["layerTime"], 1000);
+            assert_eq!(keys[1]["value"]["value"], value);
+            assert!(keys[1].get("spatialInTangent").is_none());
+            assert!(keys[1].get("spatialOutTangent").is_none());
+        }
+        fx_schema::EditableFxCompositionDocument::from_json_value(document).unwrap();
+        let invalid = xml.replace(",0,4,-0,-0,0,0;", ",0,3,0,0,0,0;");
+        assert_ne!(invalid, xml);
+        assert!(crate::format::inspect_project_with_media(&invalid, Some("sequence-1")).is_err());
     }
 }
 
@@ -743,8 +971,8 @@ fn inactive_scale_width_preserves_key_integrity_rejections() {
     let scale = format!("0,0.,0,0,0,0,0,0;{TICKS},75.,0,0,0,0,0,0;");
     for (width, expected) in [
         (
-            scale.replace("0,0.,0,", "0,0.,4,"),
-            "only Linear Scale Width keys convert",
+            scale.replace("0,0.,0,", "0,0.,6,"),
+            "unsupported interpolation mode 6",
         ),
         (scale.replace("75.", "invalid"), "invalid"),
         (scale.replace("75.", "NaN"), "nonfinite key value"),
@@ -1391,6 +1619,10 @@ fn legacy_motion_passive_crop_rejects_active_values_or_missing_identity() {
 #[test]
 fn motion_numeric_binding_preserves_picture_without_display_labels() {
     let xml = legacy_motion_with_passive_crop_xml()
+        .replace(
+            "<DisplayName>Motion</DisplayName>",
+            "<DisplayName>运动</DisplayName>",
+        )
         .replace("<Name>Crop Left</Name>", "")
         .replace("<Name>Scale</Name>", "<Name>Localized scale label</Name>");
     let parsed = crate::format::inspect_project_with_media(&xml, Some("sequence-1")).unwrap();
@@ -1403,7 +1635,7 @@ fn motion_numeric_binding_preserves_picture_without_display_labels() {
 }
 
 #[test]
-fn uniform_scale_off_keeps_independent_axes_and_rejects_animated_scale() {
+fn uniform_scale_off_keeps_independent_axes_and_animated_height() {
     // S6 of the 26.5 fixture: Uniform Scale off, Scale (height) 50, Scale Width 80.
     let xml = premiere_26_5_edit(&[
         (
@@ -1428,19 +1660,28 @@ fn uniform_scale_off_keeps_independent_axes_and_rejects_animated_scale() {
         height,
         &format!("{height}<Keyframes>0,50.,0,0,0,0,0,0;{TICKS},70.,0,0,0,0,0,0;</Keyframes>"),
     );
-    let error = inspect_project(&keyed, Some("sequence-1"))
-        .unwrap_err()
-        .to_string();
-    assert!(
-        error.contains(
-            "VideoFilterComponent:10: animated Scale Height without Uniform Scale is unsupported"
-        ),
-        "{error}"
+    let parsed = crate::format::inspect_project_with_media(&keyed, Some("sequence-1")).unwrap();
+    let sequence = parsed.single_sequence().unwrap();
+    let clip = sequence.video_occurrences().next().unwrap();
+    assert_eq!(clip.transform.scale, [80.0, 50.0]);
+    let document = crate::tests::support::project_document_with_media(sequence, &parsed.media);
+    let entries = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["target"]["propertyType"], "scaleY");
+    let keys = entries[0]["animator"]["keyframes"].as_array().unwrap();
+    assert_eq!(keys.len(), 2);
+    assert_eq!(keys[0]["value"]["value"], 50.0);
+    assert_eq!(keys[1]["value"]["value"], 70.0);
+    assert_eq!(
+        keys[1]["layerTime"].as_i64().unwrap() - keys[0]["layerTime"].as_i64().unwrap(),
+        1000
     );
 }
 
 #[test]
-fn premiere_26_5_layout_reads_only_linear_anchor_point_and_scale_width_keys() {
+fn premiere_26_5_layout_reads_motion_and_rejects_curved_anchor() {
     use crate::schema::{PrKeyframeEasing, PrPointKeyframe, PrPropertyAnimation, PrScalarKeyframe};
     let width = "<Name>Scale Width</Name><ParameterID>3</ParameterID><UpperUIBound>200</UpperUIBound><StartKeyframe>-91445760000000000,100.,0,0,0,0,0,0</StartKeyframe>";
     let anchor = "<Name>Anchor Point</Name><ParameterID>6</ParameterID><StartKeyframe>-91445760000000000,0.5:0.5,0,0,0,0,0,0,5,4,0,0,0,0</StartKeyframe>";
@@ -1507,19 +1748,26 @@ fn premiere_26_5_layout_reads_only_linear_anchor_point_and_scale_width_keys() {
         uniform_clip.animations[0].property(),
         PrAnimatedProperty::AnchorPoint
     );
-    // Active Width Hold, Anchor Bezier and spatial forms stay unsupported.
+    // Width Hold uses the scalar reader; curved Anchor spatial paths stay unsupported.
     let hold_width = format!("0,100.,4,0,0,0,0,0;{TICKS},50.,0,0,0,0,0,0;");
     let bezier_anchor = format!(
-        "0,0.5:0.5,5,0,0,0.16666666666666666,0.3,0.33333333333333331,0,0,0,0,0,0;{TICKS},0.25:0.75,0,0,0.3,0.33333333333333331,0,0.16666666666666666,0,0,0,0,0,0;"
+        "0,0.5:0.5,5,0,0,0.16666666666666666,0.3,0.33333333333333331,5,4,0,0,0.1,0;{TICKS},0.25:0.75,0,0,0.3,0.33333333333333331,0,0.16666666666666666,5,4,-0.1,0,0,0;"
     );
     let spatial_anchor = format!(
         "0,0.5:0.5,0,0,0,0,0,0,5,0,0,0,0.1,0;{TICKS},0.25:0.75,0,0,0,0,0,0,5,0,-0.1,0,0,0;"
     );
-    let width_rule = "VideoComponentParam:32: only Linear Scale Width keys convert";
-    let anchor_rule =
-        "PointComponentParam:35: only Linear Anchor Point keys without spatial tangents convert";
+    let held = inspect_project(
+        &keyed(&hold_width, &linear_anchor, "false"),
+        Some("sequence-1"),
+    )
+    .unwrap();
+    let held_clip = held.video_occurrences().next().unwrap();
+    assert_eq!(
+        held_clip.animations[0].keys()[1].easing,
+        PrKeyframeEasing::Hold
+    );
+    let anchor_rule = "PointComponentParam:35: curved Anchor Point spatial paths are not converted";
     for (width_keys, anchor_keys, uniform_value, expected) in [
-        (&hold_width, &linear_anchor, "false", width_rule),
         (&linear_width, &bezier_anchor, "false", anchor_rule),
         (&linear_width, &spatial_anchor, "false", anchor_rule),
     ] {
@@ -1530,6 +1778,86 @@ fn premiere_26_5_layout_reads_only_linear_anchor_point_and_scale_width_keys() {
         .unwrap_err()
         .to_string();
         assert!(error.contains(expected), "{expected}: {error}");
+    }
+}
+
+#[test]
+fn straight_anchor_point_keys_retain_picture_and_editable_temporal_easing() {
+    use crate::schema::{PrKeyframeEasing, PrPropertyAnimation};
+
+    // Portable saved-record shape, not licensed corpus bytes. Automatic spatial
+    // handles are collinear, so distance traversal follows temporal easing alone.
+    for (mode, expected) in [
+        (0, PrKeyframeEasing::Linear),
+        (4, PrKeyframeEasing::Hold),
+        (
+            5,
+            PrKeyframeEasing::CubicBezier {
+                x1: 0.25,
+                y1: 0.0,
+                x2: 0.75,
+                y2: 1.0,
+            },
+        ),
+    ] {
+        let wire = format!(
+            "0,0.75:0.5,{mode},0,0,0.25,0,0.25,5,4,0,0,-0.125,0;{TICKS},0.25:0.5,0,0,0,0.25,0,0.25,5,4,0.125,0,0,0;"
+        );
+        let xml = premiere_26_5_xml()
+            .replace(
+                "<Name>Anchor Point</Name>",
+                &format!("<Name>Anchor Point</Name><Keyframes>{wire}</Keyframes>"),
+            )
+            .replace(
+                "<FrameRect>0,0,1920,1080</FrameRect></VideoStream>",
+                "<FrameRect>0,0,1280,720</FrameRect></VideoStream>",
+            );
+        let (parsed, reports) = inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+        let sequence = parsed.single_sequence().unwrap();
+        assert_eq!(sequence.video_occurrences().count(), 1);
+        let clip = sequence.video_occurrences().next().unwrap();
+        let PrPropertyAnimation::AnchorPoint(keys) = &clip.animations[0] else {
+            panic!("expected editable Anchor Point keys");
+        };
+        assert_eq!(keys[1].easing, expected);
+        let document = crate::tests::support::project_document_with_media(sequence, &parsed.media);
+        assert_eq!(document["composition"]["layers"][0]["type"], "Video");
+        let entries = document["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap();
+        for (property, values) in [
+            ("anchorPointX", [960.0, 320.0]),
+            ("anchorPointY", [360.0, 360.0]),
+        ] {
+            let entry = entries
+                .iter()
+                .find(|entry| entry["target"]["propertyType"] == property)
+                .unwrap();
+            let output = entry["animator"]["keyframes"].as_array().unwrap();
+            assert_eq!(output.len(), 2);
+            for (index, value) in values.into_iter().enumerate() {
+                assert_eq!(output[index]["layerTime"], index * 1000);
+                assert_eq!(output[index]["value"]["value"], value);
+                assert!(output[index].get("spatialInTangent").is_none());
+                assert!(output[index].get("spatialOutTangent").is_none());
+            }
+            let expected_easing = match mode {
+                0 => serde_json::json!({"type": "linear"}),
+                4 => serde_json::json!({"type": "hold"}),
+                5 => {
+                    serde_json::json!({"type": "cubicBezier", "x1": 0.25, "y1": 0.0, "x2": 0.75, "y2": 1.0})
+                }
+                _ => unreachable!(),
+            };
+            assert_eq!(output[1]["easing"], expected_easing);
+        }
+        assert!(
+            reports
+                .iter()
+                .any(|report| report.reason.contains("Anchor Point")
+                    && report.reason.contains("native fidelity is unmeasured")),
+            "{reports:?}"
+        );
     }
 }
 
@@ -1845,7 +2173,7 @@ fn empty_blend_stopwatches_keep_screen_video_and_source_identity() {
     assert_eq!(clip.transform.scale, [100.0, 100.0]);
 
     let document = crate::tests::support::project_document_with_media(sequence, &project.media);
-    let video = &document["composition"]["layers"][0];
+    let video = &crate::tests::support::picture_composition(&document)["layers"][0];
     assert_eq!(video["type"], "Video");
     assert_eq!(video["blendMode"], "screen");
     assert_eq!(video["transform"]["opacity"], 100.0);
@@ -1919,7 +2247,7 @@ fn empty_motion_stopwatches_keep_video_and_supported_controls() {
     assert!(clip.animations.is_empty());
 
     let document = crate::tests::support::project_document_with_media(sequence, &project.media);
-    let video = &document["composition"]["layers"][0];
+    let video = &crate::tests::support::picture_composition(&document)["layers"][0];
     assert_eq!(video["type"], "Video");
     assert_eq!(video["blendMode"], "screen");
     assert_eq!(video["transform"]["opacity"], 100.0);

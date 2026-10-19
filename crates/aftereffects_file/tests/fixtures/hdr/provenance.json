@@ -1,0 +1,138 @@
+{
+  "pq": {
+    "source_sha256": "756fff6d075cde6c4169ac31460c2a3b9df0e07e2aed2ec9fa728dc91cc0fb96",
+    "source_bytes": 13357719,
+    "author_job": "e14c14b740224ae98754f4c5ed950aec",
+    "native_readback": {
+      "all_geometry_coverage_checked": true,
+      "bpc": 32,
+      "chromatic_rgb": [
+        [
+          0.75,
+          0,
+          0
+        ],
+        [
+          0,
+          0.75,
+          0
+        ],
+        [
+          0,
+          0,
+          0.75
+        ],
+        [
+          0.75,
+          0.75,
+          0
+        ],
+        [
+          0,
+          0.75,
+          0.75
+        ],
+        [
+          0.75,
+          0,
+          0.75
+        ]
+      ],
+      "composition_id": "14",
+      "distinct_native_ramp_levels": 1024,
+      "duration": 1,
+      "dynamic_link_guid": "0000000e-0000-0000-0000-000000000000",
+      "editable_solids": 1030,
+      "fps": 30,
+      "height": 256,
+      "linear_blending": false,
+      "linearize": false,
+      "name": "eng2019-chromatic-ramp-pq-owned-v1",
+      "width": 4096,
+      "working_space": "Jerboa BT.2100 PQ BT.2020 D65 W203 v2"
+    },
+    "status": "native author/save/reopen verified; independent renders retained privately; render fidelity not established",
+    "render_reference_status": "Independent 30fps ProRes references exist privately (jobs5057\u20135060); required public MP4 delivery incomplete, visual equality not claimed",
+    "file": "chromatic-pq.aep.gz",
+    "sha256": "756fff6d075cde6c4169ac31460c2a3b9df0e07e2aed2ec9fa728dc91cc0fb96",
+    "bytes": 13357719
+  },
+  "hlg": {
+    "source_sha256": "e76b7168970626fd436860769de2dbe016502b3cd69a5ee99de371f2714c98a3",
+    "source_bytes": 31485089,
+    "author_job": "7652c8953a31464fa931cf4d3fa08541",
+    "native_readback": {
+      "all_geometry_coverage_checked": true,
+      "bpc": 32,
+      "chromatic_rgb": [
+        [
+          0.75,
+          0,
+          0
+        ],
+        [
+          0,
+          0.75,
+          0
+        ],
+        [
+          0,
+          0,
+          0.75
+        ],
+        [
+          0.75,
+          0.75,
+          0
+        ],
+        [
+          0,
+          0.75,
+          0.75
+        ],
+        [
+          0.75,
+          0,
+          0.75
+        ]
+      ],
+      "composition_id": "14",
+      "distinct_native_ramp_levels": 1024,
+      "duration": 1,
+      "dynamic_link_guid": "0000000e-0000-0000-0000-000000000000",
+      "editable_solids": 1030,
+      "fps": 30,
+      "height": 256,
+      "linear_blending": false,
+      "linearize": false,
+      "name": "eng2019-chromatic-ramp-hlg-owned-v1",
+      "width": 4096,
+      "working_space": "Jerboa BT.2100 HLG BT.2020 D65 W203 v2"
+    },
+    "status": "native author/save/reopen verified; independent renders retained privately; render fidelity not established",
+    "render_reference_status": "Independent 30fps ProRes references exist privately (jobs5057\u20135060); required public MP4 delivery incomplete, visual equality not claimed",
+    "file": "chromatic-hlg.aep.gz",
+    "sha256": "e76b7168970626fd436860769de2dbe016502b3cd69a5ee99de371f2714c98a3",
+    "bytes": 31485089
+  },
+  "ingamut_chromatic_pq_v1": {
+    "file": "ingamut-chromatic-pq-v1.aep.gz",
+    "sha256": "9ebe1a704e756c77674191dfde0313c54806f3f9382aa53d23670fab947c6d9b",
+    "bytes": 224193,
+    "composition_id": 14,
+    "case_id": "eng2019-ingamut-pq-v1",
+    "feature_assertion": "native_ingamut_chromatic_import_preserves_saturation_headroom_and_geometry",
+    "evidence": "ingamut-chromatic-provenance-v1.json",
+    "status": "native author/save/reopen verified; editable import5102/full5107 passed; all30 interior frames measured, strict patch gates FAIL; public native HDR MP4 missing"
+  },
+  "ingamut_chromatic_hlg_v1": {
+    "file": "ingamut-chromatic-hlg-v1.aep.gz",
+    "sha256": "b3d2f9e3ba8e3d29bcd2ce2ec0b75fc06b9fa7927e8ad85ec8895d2d7d9c8c75",
+    "bytes": 18351561,
+    "composition_id": 14,
+    "case_id": "eng2019-ingamut-hlg-v1",
+    "feature_assertion": "native_ingamut_chromatic_import_preserves_saturation_headroom_and_geometry",
+    "evidence": "ingamut-chromatic-provenance-v1.json",
+    "status": "native author/save/reopen verified; editable import5102/full5107 passed; all30 interior frames measured, strict patch gates FAIL; public native HDR MP4 missing"
+  }
+}

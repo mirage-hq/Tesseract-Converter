@@ -131,11 +131,30 @@ pub(super) fn read_opacity_mask(
     for reference in &params.items {
         let record = graph.locate(reference, &mask.identity)?;
         let identity = record.identity();
-        let (id, spec) = record
+        let saved_id = record
             .element()
             .child("ParameterID")
-            .and_then(Element::text)
+            .and_then(Element::text);
+        // Older AEMask records leave these four inactive controls unassigned.
+        // Resolve only their known serialized slots, never Path or coverage
+        // controls. Their ordinary type/default checks still apply below.
+        let unassigned_id = if saved_id == Some("-1")
+            && form.match_name == "AE.ADBE AEMask"
+            && form.param_count == 15
+        {
+            match reference.index.as_deref() {
+                Some("4") => Some(14),
+                Some("5") => Some(15),
+                Some("13") => Some(12),
+                Some("14") => Some(13),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let (id, spec) = saved_id
             .and_then(|id| id.parse::<usize>().ok())
+            .or(unassigned_id)
             .and_then(|id| {
                 form.params()
                     .iter()
@@ -247,6 +266,19 @@ pub(super) fn read_opacity_mask(
             MaskParamRole::Control(control) => control,
         };
         let input = graph.decode::<VideoComponentParam>(record)?;
+        if unassigned_id.is_some() {
+            ensure!(
+                input.value.keyframes.as_deref().is_none_or(str::is_empty)
+                    && input.value.is_time_varying.as_deref() == Some("false"),
+                "{identity}: unassigned mask control must be static"
+            );
+            omit(
+                omissions,
+                OmissionScope::Feature,
+                &identity,
+                "unassigned inactive mask control uses its saved slot and validated default; tracking controller state is not retained",
+            );
+        }
         ensure!(
             input.value.class_id.as_deref() == Some(spec.class_id)
                 && input.value.parameter_control_type.as_deref() == spec.control

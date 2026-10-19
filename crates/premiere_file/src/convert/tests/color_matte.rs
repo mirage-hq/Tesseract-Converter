@@ -297,7 +297,7 @@ fn layer_names_at(document: &Value, millis: i64) -> Vec<&str> {
 /// Inspected facts for every video asset the document names: 1920×1080 at
 /// 30 fps, as long as the layer's `sourceIntrinsicDuration` claims.
 fn video_facts(document: &Value) -> BTreeMap<String, MediaFacts> {
-    document["composition"]["layers"]
+    crate::tests::support::picture_composition(document)["layers"]
         .as_array()
         .unwrap()
         .iter()
@@ -344,9 +344,7 @@ fn export(document: Value) -> crate::error::Result<PrProjectFile> {
 
 /// The kinds of every exported occurrence, bottom track first.
 fn track_kinds(project: &PrProjectFile) -> Vec<Vec<PrMediaKind>> {
-    project
-        .single_sequence()
-        .unwrap()
+    crate::tests::support::picture_sequence(project)
         .video_tracks()
         .map(|track| {
             track
@@ -499,7 +497,7 @@ fn a_blended_matte_stays_a_color_matte_with_its_blend_both_ways() {
         .unwrap()
         .to_json_value()
         .unwrap();
-    let rect = &document["composition"]["layers"][0];
+    let rect = &crate::tests::support::picture_composition(&document)["layers"][0];
     assert_eq!(
         (&rect["type"], &rect["blendMode"]),
         (&json!("Rect"), &json!("darkerColor"))
@@ -523,9 +521,7 @@ fn a_blended_matte_stays_a_color_matte_with_its_blend_both_ways() {
             vec![PrMediaKind::ColorMatte(RED)],
         ]
     );
-    let matte = project
-        .single_sequence()
-        .unwrap()
+    let matte = crate::tests::support::picture_sequence(&project)
         .video_tracks()
         .nth(1)
         .unwrap()[0]
@@ -598,6 +594,79 @@ fn fullscreen_solid_document(color: [f64; 4]) -> EditableFxCompositionDocument {
         }
     }))
     .unwrap()
+}
+
+#[test]
+fn translucent_fullscreen_solid_exports_native_matte_with_fill_alpha_as_opacity() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/feature_opacity_normal_static_50_strict.prproj");
+    let xml = crate::format::read_xml(&path).unwrap();
+    let native = crate::format::inspect_project_with_media(
+        &xml,
+        Some("c8acf9c1-34b2-4086-9f55-d528950a7059"),
+    )
+    .unwrap();
+    let native_opacity = native
+        .single_sequence()
+        .unwrap()
+        .video_occurrences()
+        .map(|clip| clip.opacity)
+        .find(|opacity| *opacity == 50.0)
+        .expect("Adobe-saved fixture contains a 50% intrinsic Opacity");
+
+    for alpha in [0.0, 0.5, 0.75] {
+        let document = fullscreen_solid_document([0.0, 0.0, 0.0, alpha]);
+        let mut omissions = Vec::new();
+        let project = tesseract_to_premiere(
+            &document,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            FrameRate::Fps30,
+            &mut omissions,
+        )
+        .unwrap();
+        assert!(omissions.is_empty(), "{omissions:?}");
+        let clips: Vec<_> = project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .collect();
+        assert_eq!(clips.len(), 1, "alpha={alpha}");
+        assert_eq!(clips[0].opacity, alpha * 100.0);
+        if alpha == 0.5 {
+            assert_eq!(clips[0].opacity, native_opacity);
+        }
+        assert_eq!(clips[0].blend_mode, crate::schema::PrBlendMode::Normal);
+        assert_eq!(clips[0].timeline_ticks(), 0..2 * TICKS);
+        assert_eq!(
+            project
+                .media(clips[0])
+                .unwrap()
+                .video
+                .as_ref()
+                .unwrap()
+                .kind,
+            PrMediaKind::ColorMatte(BLACK)
+        );
+        assert!(clips[0].animations.is_empty());
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("translucent.prproj");
+        crate::format::PremiereProjectXml::new(&project)
+            .unwrap()
+            .write_new(&path)
+            .unwrap();
+        let (reread, omissions) = PrProjectFile::load(&path).unwrap();
+        assert!(omissions.is_empty(), "{omissions:?}");
+        let again = reread
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .next()
+            .unwrap();
+        assert_eq!(again.opacity, alpha * 100.0);
+        assert_eq!(again.timeline_ticks(), clips[0].timeline_ticks());
+    }
 }
 
 #[test]
@@ -768,6 +837,7 @@ fn rectangles_other_than_color_mattes_export_as_one_shape_or_with_the_shape_reas
         },
         transform,
         horizontal_scale: None,
+        animations: Vec::new(),
         mask: None,
     };
     let placed = |position, anchor, scale, rotation, opacity| PrTextTransform {
@@ -841,6 +911,7 @@ fn rectangles_other_than_color_mattes_export_as_one_shape_or_with_the_shape_reas
     let magenta = PrShapeStroke {
         color: PrRgb([255, 0, 255]),
         width: 10.0,
+        join: None,
     };
     let shape_layer = "shape layer was not exported: unsupported conversion";
     // Red to green along the bar's top edge up to `end` px, over the bar's red
@@ -942,6 +1013,7 @@ fn rectangles_other_than_color_mattes_export_as_one_shape_or_with_the_shape_reas
                 Some(PrShapeStroke {
                     color: PrRgb([0, 255, 0]),
                     width: 6.0,
+                    join: None,
                 }),
                 placed([960.0, 200.0], [0.0, 0.0], 100.0, 0.0, 100.0),
             )),
@@ -1015,9 +1087,13 @@ fn rectangles_other_than_color_mattes_export_as_one_shape_or_with_the_shape_reas
             )),
         ),
         (
-            vec![("/0/rect/fillColor", json!([1, 0, 0, 0.5]))],
+            [
+                &bar[..],
+                &[("/0/rect/fillColor", json!([1, 0, 0, 0.5]))],
+            ]
+            .concat(),
             Err(format!(
-                "{shape_layer}: shape fill must be an opaque color with channels in 0..=1"
+                "{shape_layer}: shape fill must be opaque with finite RGB in 0..=64"
             )),
         ),
         (

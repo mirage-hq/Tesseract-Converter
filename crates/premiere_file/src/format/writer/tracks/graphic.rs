@@ -47,8 +47,12 @@ pub(in crate::format::writer) fn records(
             placed_in
         ))
     })?;
-    let color_space = serde_json::to_string(&ColorSpace::sequence_sdr())
-        .expect("native graphic color fields serialize");
+    let color_space = serde_json::to_string(
+        &graphic
+            .hdr
+            .map_or_else(ColorSpace::sequence_sdr, ColorSpace::rgb_hdr),
+    )
+    .expect("native graphic color fields serialize");
     let tone_map =
         serde_json::to_string(&ToneMapSettings::DEFAULT).expect("native tone-map fields serialize");
     let components = chain_components(&graphic.objects, &ids.objects)?;

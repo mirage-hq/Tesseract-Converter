@@ -109,6 +109,19 @@ pub(super) fn records(effects: &[PrEffect], ids: &[EffectIds]) -> Result<Vec<Rec
         }
         // Static values in the native `Params` order of `spec`.
         let values = match &effect.params {
+            PrEffectParams::DropShadow { .. } => {
+                return Err(crate::format::invalid(
+                    "native Drop Shadow import replacement has no native writer",
+                ));
+            }
+            PrEffectParams::ProcAmpBrightness(_) => {
+                return Err(crate::format::invalid(
+                    "ProcAmp replacement must export edited Exposure through the linked-AEP route",
+                ))
+            }
+            PrEffectParams::UltraKey(_) => {
+                return Err(crate::format::invalid("Ultra Key surrogate is import-only"));
+            }
             PrEffectParams::Offset(_) => {
                 return Err(crate::format::invalid(
                     "Offset replacement must export edited MotionTile through the linked-AEP route",
@@ -203,13 +216,13 @@ pub(super) fn records(effects: &[PrEffect], ids: &[EffectIds]) -> Result<Vec<Rec
                 "true".to_owned(),
                 crate::schema::PrColour::BLACK.native().to_string(),
             ],
-            // A linear ramp without scatter, the only form that converts.
+            // Scatter has no retained FX control.
             PrEffectParams::Ramp(ramp) => vec![
                 format!("{}:{}", ramp.start[0], ramp.start[1]),
                 ramp.start_colour.native().to_string(),
                 format!("{}:{}", ramp.end[0], ramp.end[1]),
                 ramp.end_colour.native().to_string(),
-                RAMP_SHAPE_LINEAR.to_owned(),
+                if ramp.radial { "1" } else { RAMP_SHAPE_LINEAR }.to_owned(),
                 native_number(0.0),
                 native_number(ramp.blend),
             ],

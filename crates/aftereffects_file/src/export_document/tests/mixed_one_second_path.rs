@@ -120,7 +120,7 @@ fn mixed_one_second_path_full_export_uses_explicit_owner_local_keys_and_edited_g
 }
 
 #[test]
-fn mixed_one_second_path_native_source_clock_is_characterized_without_import_repair() {
+fn mixed_one_second_path_native_source_clock_is_retained_during_import() {
     let bytes = include_bytes!("../../../tests/fixtures/path-animation/mixed_one_second.aep");
     assert_eq!(
         format!("{:x}", Sha256::digest(bytes)),
@@ -157,16 +157,18 @@ fn mixed_one_second_path_native_source_clock_is_characterized_without_import_rep
         source.record.start_time().unwrap() + keys[1].time_secs,
         3.25
     );
-    // Preserve the independently authored source's stored clock, including the
-    // earlier RED1663. Import admission/clock equivalence is deliberately unchanged.
+    // Duration-independent import admission must not alter the source clock.
     let imported = crate::structure_document::to_structural_fx_document(&native, Some(1)).unwrap();
     assert!(
         imported
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.message.contains("mixed"))
+            .all(|diagnostic| !diagnostic.message.contains("Path animation omitted"))
     );
-    assert!(imported.document.composition().dynamics().entries().iter().all(|entry| {
-        !matches!(&entry.target, fx_schema::PropertyTarget::LayerProperty(property) if property.property_type() == PropType::ShapePath)
-    }));
+    assert_eq!(
+        imported.document.composition().dynamics().entries().iter().filter(|entry| {
+            matches!(&entry.target, fx_schema::PropertyTarget::LayerProperty(property) if property.property_type() == PropType::ShapePath)
+        }).count(),
+        4
+    );
 }

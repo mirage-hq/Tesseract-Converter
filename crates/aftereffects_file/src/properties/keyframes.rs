@@ -152,8 +152,10 @@ fn doubles(bytes: &[u8], count: usize) -> Result<Vec<f64>, PropertyError> {
         .get(..count * 8)
         .ok_or(PropertyError::Layout("short keyframe value"))?;
     let result: Vec<f64> = bytes
-        .chunks_exact(8)
-        .map(|b| f64::from_be_bytes(b.try_into().expect("eight-byte chunk")))
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|b| f64::from_be_bytes(*b))
         .collect();
     if result.iter().any(|v| !v.is_finite()) {
         return Err(PropertyError::NonFinite);
@@ -175,7 +177,7 @@ mod tests {
         header[18..20].copy_from_slice(&48_u16.to_be_bytes());
         header[23] = 4;
         let mut bytes = vec![0; usize::from(COUNT) * 48];
-        for (index, item) in bytes.chunks_exact_mut(48).enumerate() {
+        for (index, item) in bytes.as_chunks_mut::<48>().0.iter_mut().enumerate() {
             item[..4].copy_from_slice(&(i32::try_from(index).unwrap() * 1024).to_be_bytes());
             item[8..16].copy_from_slice(&(index as f64).to_be_bytes());
         }

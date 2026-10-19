@@ -11,6 +11,7 @@ default = ["ffmpeg-library"]
 ffmpeg-library = ["media_transcode/ffmpeg-library"]
 
 [dependencies]
+base64.workspace = true
 fx_conv = { path = "../fx_conv" }
 tesseract_file = { path = "../tesseract_file" }
 tempfile = "3"
@@ -33,6 +34,5 @@ image = { workspace = true, features = ["exr"] }
 media_transcode = { path = "../media_transcode", default-features = false }
 
 [dev-dependencies]
-base64.workspace = true
 roxmltree.workspace = true
 flate2 = "1"

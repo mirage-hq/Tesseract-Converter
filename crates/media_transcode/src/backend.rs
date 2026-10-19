@@ -1022,7 +1022,9 @@ mod tests {
         for descriptor in crate::tests::native_quarter_turn_descriptors() {
             let text = descriptor
                 .display_matrix
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .enumerate()
                 .map(|(row, values)| {
                     format!("{row:08}: {} {} {}\n", values[0], values[1], values[2])

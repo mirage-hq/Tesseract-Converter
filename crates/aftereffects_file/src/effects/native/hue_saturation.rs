@@ -69,8 +69,10 @@ pub(super) fn read(
         return Err(PropertyError::Layout("unknown channel-range record size"));
     }
     let values: Vec<_> = bytes
-        .chunks_exact(4)
-        .map(|bytes| i32::from_be_bytes(bytes.try_into().expect("four-byte integer chunk")))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|bytes| i32::from_be_bytes(*bytes))
         .collect();
     let master = [values[0], values[1], values[2]];
     // Master Hue is an angle, not a signed-180-degree slider. Bound its
@@ -87,7 +89,7 @@ pub(super) fn read(
     {
         return Err(PropertyError::Layout("invalid Master saturation/lightness"));
     }
-    for (index, channel) in values[3..].chunks_exact(7).enumerate() {
+    for (index, channel) in values[3..].as_chunks::<7>().0.iter().enumerate() {
         if channel[..4].iter().any(|value| !(0..360).contains(value))
             || channel[5..]
                 .iter()

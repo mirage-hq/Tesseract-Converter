@@ -17,8 +17,8 @@ use super::{
 use crate::{
     convert::{
         active_asset_id, apply_empty_root_picture, apply_replacements, exported_video_layers,
-        lower_document_with_progress, no_native_content, video_data, AfterEffectsPicture,
-        BakedDocument, PicturePackingRecipe, PictureReplacement,
+        lower_document_with_hdr, no_native_content, video_data, AfterEffectsPicture, BakedDocument,
+        PicturePackingRecipe, PictureReplacement,
     },
     error::{unsupported, BuildError, Result},
     export_loss::LossCollector,
@@ -170,7 +170,7 @@ pub(super) fn prepare_with_progress<'a>(
     let resolved = resolve_natural_video_frames(baked.document(), &media, &mut natural_frames)?;
     let native_document = resolved.as_ref().unwrap_or_else(|| baked.document());
     let audio = inspect_audio(archive, native_document, &media)?;
-    let lowered = lower_document_with_progress(
+    let lowered = lower_document_with_hdr(
         native_document,
         &natural_frames,
         &media,
@@ -179,6 +179,7 @@ pub(super) fn prepare_with_progress<'a>(
         options.frame_rate.unwrap_or(FrameRate::Fps30),
         &mut collector,
         progress,
+        options.hdr,
     )?;
     // Ordinary export historically fails before the discarded-key summary when
     // no project survives. Preserve that error while retaining full inspection.

@@ -21,7 +21,10 @@ fn edited_group_document(parent: &Path) -> Value {
     let mut video = document["composition"]["layers"][0].clone();
     let mut effects = video.as_object_mut().unwrap().remove("effects").unwrap();
     assert_eq!(effects.as_array().unwrap().len(), 6);
-    assert_eq!(effects[0]["effect"]["exposure"], 1.0);
+    // 1 stop divided by 2.2 (the Lumetri display-code approximation), as stored.
+    assert_eq!(effects[0]["effect"]["exposure"], 0.454545455);
+    assert_eq!(effects[0]["effect"]["offset"], 0.0);
+    assert_eq!(effects[0]["effect"]["gammaCorrection"], 1.0);
     assert_eq!(effects[2]["effect"]["saturation"], 30.0);
     assert_eq!(effects[3]["effect"]["temperature"], 0.0);
     assert_eq!(effects[4]["effect"]["tint"], 0.0);
@@ -267,6 +270,7 @@ fn human_lumetri_fractional_and_ae_fallback_report_replacement_omissions() {
         let report = export(
             &request(&input, &output, ConversionMode::Write),
             &PremiereExportOptions {
+                hdr: None,
                 frame_rate: Some(rate),
             },
         )

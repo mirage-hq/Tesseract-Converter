@@ -2,6 +2,60 @@
 use super::*;
 use crate::structure::{ItemKind, read_project};
 
+#[test]
+fn shape_adjustment_retains_editable_alpha_coverage() {
+    // Supplemental switch mutation of an existing public native Shape fixture.
+    // This is not independent Adobe-authored Adjustment or render evidence.
+    let mut project = read_project(include_bytes!(
+        "../../../tests/fixtures/shapes/import_rectangle_controls.aep"
+    ))
+    .unwrap();
+    let item = project.items.iter_mut().find(|item| item.id == 1).unwrap();
+    let id = item.id;
+    let ItemKind::Composition(comp) = &mut item.kind else {
+        unreachable!()
+    };
+    let shape = comp
+        .layers
+        .iter_mut()
+        .find(|layer| layer.record.layer_type() == 4)
+        .unwrap();
+    shape.record = shape.record.clone().with_adjustment_layer(true).unwrap();
+    let imported =
+        crate::structure_document::to_structural_fx_document(&project, Some(id)).unwrap();
+    let json = imported.document.to_json_value().unwrap();
+    let layers = json["composition"]["layers"][0]["layers"]
+        .as_array()
+        .unwrap();
+    let adjustment = layers
+        .iter()
+        .find(|layer| layer["type"] == "Adjustment")
+        .unwrap();
+    let matte_id = adjustment["trackMatte"]["layer"]
+        .as_u64()
+        .expect("Shape adjustment needs an alpha coverage guide, not full-canvas effects");
+    assert_eq!(adjustment["trackMatte"]["mode"], "alpha");
+    let guide = layers
+        .iter()
+        .find(|layer| layer["id"].as_u64() == Some(matte_id))
+        .unwrap();
+    assert_eq!(guide["type"], "Group");
+    fn contains_rect(layer: &serde_json::Value) -> bool {
+        layer["type"] == "Rect"
+            || layer["layers"]
+                .as_array()
+                .is_some_and(|children| children.iter().any(contains_rect))
+    }
+    assert!(contains_rect(guide), "guide retains an editable Rect node");
+    assert!(!guide.to_string().contains("JsScript"));
+    assert!(
+        imported
+            .diagnostics
+            .iter()
+            .any(|note| note.message.contains("Shape Adjustment coverage"))
+    );
+}
+
 fn numeric_property_mut<'a>(chunks: &'a mut [Chunk], name: &str) -> Option<&'a mut Chunk> {
     let start = chunks.iter().position(|chunk| {
         chunk.id() == *b"tdmn"

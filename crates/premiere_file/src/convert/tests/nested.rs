@@ -159,6 +159,60 @@ fn ms(millis: i64) -> i64 {
 }
 
 #[test]
+fn nested_numbered_images_retain_trimmed_editable_frame_choices() {
+    let (outer, mut media) = nested_sequence();
+    let source = media
+        .get_mut(&MediaId("timecoded".into()))
+        .unwrap()
+        .video
+        .as_mut()
+        .unwrap();
+    source.kind = PrMediaKind::NumberedStills { alpha: true };
+    let mut omissions = Vec::new();
+    let document = premiere_to_tesseract(
+        &outer,
+        &media,
+        &asset_ids_in_order(&outer, &media),
+        &mut omissions,
+    )
+    .unwrap()
+    .to_json_value()
+    .unwrap();
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    let nests: Vec<_> = layers
+        .iter()
+        .filter(|layer| layer["type"] == "Group")
+        .collect();
+    assert_eq!(nests.len(), 2);
+    for (nest, count, first) in [(nests[0], 90, 30), (nests[1], 120, 0)] {
+        let group = &nest["layers"][0];
+        assert_eq!(group["type"], "Group");
+        assert_eq!(crate::test_support::layer_range(group)["start"], 0);
+        let frames = group["layers"].as_array().unwrap();
+        assert_eq!(frames.len(), count);
+        for (index, frame) in frames.iter().enumerate() {
+            assert_eq!(frame["type"], "Image");
+            assert_eq!(frame["parent"], group["id"]);
+            assert_eq!(
+                frame["source"]["assetId"],
+                format!("premiere-video-2-frame-{}", first + index)
+            );
+            let range = crate::test_support::layer_range(frame);
+            assert_eq!(
+                range["start"],
+                ((index as f64 / 30.0) * 1000.0).round() as u64
+            );
+        }
+    }
+    assert!(omissions.iter().any(|omission| omission
+        .to_string()
+        .contains("numbered images use the containing sequence's local sample grid")));
+    assert!(!omissions
+        .iter()
+        .any(|omission| omission.kind == OmissionKind::Omitted));
+}
+
+#[test]
 fn placements_become_groups_of_clipped_inline_copies() {
     let (outer, _) = nested_sequence();
     let document = import(&outer);
@@ -207,6 +261,35 @@ fn placements_become_groups_of_clipped_inline_copies() {
 }
 
 #[test]
+fn a_normal_nest_with_a_blended_child_is_isolated_from_output_black() {
+    let (mut outer, media) = nested_sequence();
+    let nest = &mut outer.video_tracks[1].nests[0];
+    assert_eq!(nest.blend_mode, crate::schema::PrBlendMode::Normal);
+    nest.sequence.video_tracks[0].clip_mut(0).blend_mode = crate::schema::PrBlendMode::DarkerColor;
+    let mut omissions = Vec::new();
+    let document = premiere_to_tesseract(
+        &outer,
+        &media,
+        &asset_ids_in_order(&outer, &media),
+        &mut omissions,
+    )
+    .unwrap()
+    .to_json_value()
+    .unwrap();
+    let roots = document["composition"]["layers"].as_array().unwrap();
+    let isolated = &roots[0];
+    assert_eq!(isolated["masks"].as_array().unwrap().len(), 1);
+    let children = &isolated["layers"];
+    assert_eq!(isolated["masks"][0]["layer"], children[1]["id"]);
+    let pictures = &children[0];
+    let nest = &pictures["layers"][0];
+    assert_eq!(nest["blendMode"], "normal");
+    assert_eq!(nest["parent"], pictures["id"]);
+    assert_eq!(nest["layers"][0]["blendMode"], "darkerColor");
+    assert_eq!(roots.last().unwrap()["name"], "Premiere black canvas");
+}
+
+#[test]
 fn a_blended_nest_and_its_blended_clip_keep_their_blend_both_ways() {
     use crate::schema::PrBlendMode;
     // The first placement of Inner blends as Darker Color over the red clip;
@@ -231,7 +314,7 @@ fn a_blended_nest_and_its_blended_clip_keep_their_blend_both_ways() {
     .unwrap()
     .to_json_value()
     .unwrap();
-    let layers = &document["composition"]["layers"];
+    let layers = &crate::tests::support::picture_composition(&document)["layers"];
     let blend = |layer: &Value| {
         (
             layer["blendMode"].clone(),
@@ -240,6 +323,8 @@ fn a_blended_nest_and_its_blended_clip_keep_their_blend_both_ways() {
     };
     let screen = || (json!("screen"), json!(50.0));
     assert_eq!(blend(&layers[0]), (json!("darkerColor"), json!(100.0)));
+    assert!(layers[0]["masks"].is_null());
+    assert_eq!(layers[1]["masks"].as_array().unwrap().len(), 1);
     assert_eq!(blend(&layers[1]), (json!("normal"), json!(100.0)));
     assert_eq!(blend(&layers[0]["layers"][0]), screen());
     assert_eq!(blend(&layers[1]["layers"][0]), screen());
@@ -247,9 +332,7 @@ fn a_blended_nest_and_its_blended_clip_keep_their_blend_both_ways() {
         blend(&layers[1]["layers"][1]),
         (json!("normal"), json!(100.0))
     );
-    // The Darker Color nest reports its formula; the Normal one, whose group
-    // passes its Screen clip through, reports that. Screen itself converts
-    // as its measured formula.
+    // Only Darker Color reports its formula; both nests isolate their children.
     let reports = |omissions: &[Omission]| -> Vec<(OmissionKind, String, String)> {
         omissions
             .iter()
@@ -268,32 +351,26 @@ fn a_blended_nest_and_its_blended_clip_keep_their_blend_both_ways() {
     let inner = "nested sequence \"Inner\"".to_owned();
     assert_eq!(
         reports(&omissions),
-        [
-            (
-                OmissionKind::Approximated,
-                inner.clone(),
-                PrBlendMode::DarkerColor.approximation().unwrap()
-            ),
-            (
-                OmissionKind::Approximated,
-                inner,
-                super::PASS_THROUGH_APPROXIMATION.to_owned()
-            ),
-        ]
+        [(
+            OmissionKind::Approximated,
+            inner,
+            PrBlendMode::DarkerColor.approximation().unwrap()
+        )]
     );
 
-    // Export repeats both reports on the groups.
-    let group = |layer: &Value| format!("layer {} (\"Inner\")", layer["id"]);
     let expected = [
         (
             OmissionKind::Approximated,
-            group(&layers[1]),
-            super::PASS_THROUGH_APPROXIMATION.to_owned(),
+            format!("layer {} (\"Inner\")", layers[0]["id"]),
+            PrBlendMode::DarkerColor.approximation().unwrap(),
         ),
         (
             OmissionKind::Approximated,
-            group(&layers[0]),
-            PrBlendMode::DarkerColor.approximation().unwrap(),
+            format!(
+                "layer {} (\"Premiere sequence pictures\")",
+                crate::tests::support::picture_composition(&document)["id"]
+            ),
+            super::PASS_THROUGH_APPROXIMATION.to_owned(),
         ),
     ];
     let (mut project, omissions) = export(document);
@@ -314,9 +391,7 @@ fn a_blended_nest_and_its_blended_clip_keep_their_blend_both_ways() {
         .unwrap();
     let (reloaded, _) = PrProjectFile::load(&path).unwrap();
     for project in [&project, &reloaded] {
-        let nests: Vec<_> = project
-            .single_sequence()
-            .unwrap()
+        let nests: Vec<_> = crate::tests::support::picture_sequence(project)
             .nest_occurrences()
             .map(|nest| {
                 let inner: Vec<_> = nest
@@ -1410,6 +1485,87 @@ fn nested_boundaries_round_once_like_top_level_boundaries() {
 }
 
 #[test]
+fn nested_origin_rounding_keeps_unit_speed_and_editable_keys() {
+    use crate::schema::{PrEffectParamAnimation, PrEffectParamKeys, GAUSSIAN_BLUR_BLURRINESS};
+
+    let leaf = sequence_of(
+        "Leaf",
+        vec![PrVideoTrack::media([clip_of("timecoded", 0..TICKS, 0)])],
+    );
+    let mut inner = nest_of(leaf, 0..TICKS, 0);
+    inner.animations = vec![PrPropertyAnimation::Opacity(vec![
+        linear_key(0, 100.0),
+        linear_key(TICKS / 2, 25.0),
+    ])];
+    let mut effect = blur(25.0);
+    effect.animations.push(PrEffectParamAnimation {
+        param: &GAUSSIAN_BLUR_BLURRINESS,
+        keys: PrEffectParamKeys::Scalar(vec![linear_key(0, 25.0), linear_key(TICKS / 2, 0.0)]),
+    });
+    inner.effects.push(effect);
+    let mid = sequence_of(
+        "Mid",
+        vec![PrVideoTrack {
+            transitions: Vec::new(),
+            items: Vec::new(),
+            nests: vec![inner],
+        }],
+    );
+    let outer = sequence_of(
+        "Outer",
+        vec![PrVideoTrack {
+            transitions: Vec::new(),
+            items: Vec::new(),
+            nests: vec![nest_of(mid, 2 * FRAME..2 * FRAME + TICKS, 0)],
+        }],
+    );
+    let (_, media) = nested_sequence();
+    let mut omissions = Vec::new();
+    let document = premiere_to_tesseract(
+        &outer,
+        &media,
+        &asset_ids_in_order(&outer, &media),
+        &mut omissions,
+    )
+    .unwrap()
+    .to_json_value()
+    .unwrap();
+    assert!(
+        !omissions.iter().any(|note| note.reason.contains("retimed")),
+        "{omissions:?}"
+    );
+    let owner = &document["composition"]["layers"][0]["layers"][0];
+    let mapping = &owner["playback"]["mapping"];
+    assert_eq!(mapping["input"]["duration"], mapping["output"]["duration"]);
+    let stage = &owner["layers"][0];
+    let entries = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    let opacity = entries
+        .iter()
+        .find(|entry| {
+            entry["target"]["layerId"] == owner["id"]
+                && entry["target"]["propertyType"] == "opacity"
+        })
+        .unwrap();
+    let blur = entries
+        .iter()
+        .find(|entry| {
+            entry["target"]["effectId"] == stage["effects"][0]["id"]
+                && entry["target"]["paramName"] == "blurriness"
+        })
+        .unwrap();
+    for (entry, values) in [(opacity, [100.0, 25.0]), (blur, [25.0, 0.0])] {
+        let keys = entry["animator"]["keyframes"].as_array().unwrap();
+        assert_eq!(keys.len(), 2);
+        for (key, (time, value)) in keys.iter().zip([(0, values[0]), (500, values[1])]) {
+            assert_eq!(key["layerTime"], time);
+            assert_eq!(key["value"]["value"], value);
+        }
+    }
+}
+
+#[test]
 fn plain_groups_export_as_nests_played_from_inner_time_zero() {
     // Independent editable input: export must not rely on import's IDs or names.
     let mut document = crate::test_support::editable_document();
@@ -1615,6 +1771,49 @@ fn inner_clip_effects_stay_on_the_group_child() {
     assert_eq!(layers[2]["effects"], effects(3, 10.0));
 }
 
+#[test]
+fn nested_drop_shadow_clips_source_before_expanding_silhouette() {
+    let (mut outer, media) = nested_sequence();
+    let nest = &mut outer.video_tracks[1].nests[0];
+    nest.transform.position = [0.5, 0.25];
+    nest.effects = vec![PrEffect {
+        enabled: true,
+        mask: None,
+        params: PrEffectParams::DropShadow {
+            color: crate::schema::PrColour {
+                rgb: [15, 232, 214],
+            },
+            opacity: 255.0,
+            direction: 180.0,
+            distance: 120.0,
+            softness: 0.0,
+        },
+        animations: Vec::new(),
+    }];
+    let mut omissions = Vec::new();
+    let converted = premiere_to_tesseract(
+        &outer,
+        &media,
+        &asset_ids_in_order(&outer, &media),
+        &mut omissions,
+    )
+    .unwrap();
+    let wire = converted.to_json_value().unwrap();
+    let motion = &wire["composition"]["layers"][0];
+    assert_eq!(motion["transform"]["position"], json!([960.0, 270.0]));
+    let effects = &motion["layers"][0];
+    assert_eq!(effects["effects"][0]["effect"]["type"], "dropShadow");
+    assert!(effects["masks"].as_array().is_none_or(Vec::is_empty));
+    let picture = &effects["layers"][0];
+    assert!(picture["effects"].as_array().is_none_or(Vec::is_empty));
+    let mask = &picture["masks"][0];
+    let children = picture["layers"].as_array().unwrap();
+    assert!(children
+        .iter()
+        .any(|layer| layer["id"] == mask["layer"] && layer["name"] == "Nested sequence frame"));
+    assert!(children.iter().any(|layer| layer["type"] == "Video"));
+}
+
 /// Supplementary model/edit/writer coverage; the native host regression is
 /// `coeditor_native_nested_lumetri_keeps_occurrence_and_editable_effects`.
 #[test]
@@ -1800,12 +1999,115 @@ fn load_nested_effect_project(xml: &str) -> (PrProjectFile, Vec<Omission>) {
     PrProjectFile::load(&path).unwrap()
 }
 
+/// Supplementary model proof of the source-frame/document-frame conjugation.
+#[test]
+fn nested_corner_pin_normalizes_different_canvas_and_preserves_keys() {
+    use crate::schema::{PrCornerPin, PrEffectParamAnimation, PrEffectParamKeys, CORNER_PIN};
+    let (mut outer, media) = nested_sequence();
+    let nest = &mut outer.video_tracks[1].nests[0];
+    nest.sequence.width = 960;
+    nest.sequence.height = 720;
+    let key = |source_ticks, value| PrPointKeyframe {
+        source_ticks,
+        value,
+        easing: PrKeyframeEasing::Linear,
+        spatial_in_tangent: None,
+        spatial_out_tangent: None,
+    };
+    nest.effects = vec![PrEffect {
+        mask: None,
+        enabled: true,
+        params: PrEffectParams::CornerPin(PrCornerPin {
+            corners: [[0.2, 0.1], [0.8, 0.2], [0.1, 0.9], [0.9, 0.8]],
+        }),
+        animations: vec![PrEffectParamAnimation {
+            param: &CORNER_PIN.params[0],
+            keys: PrEffectParamKeys::Point(vec![
+                key(TICKS, [0.2, 0.1]),
+                key(2 * TICKS, [0.3, 0.15]),
+            ]),
+        }],
+    }];
+    let mut notes = Vec::new();
+    let document = premiere_to_tesseract(
+        &outer,
+        &media,
+        &asset_ids_in_order(&outer, &media),
+        &mut notes,
+    )
+    .unwrap()
+    .to_json_value()
+    .unwrap();
+    let owner = &document["composition"]["layers"][0];
+    let pin = &owner["layers"][0];
+    let normalized = &pin["layers"][0];
+    assert_eq!(
+        pin["transform"]["scale"],
+        json!([50.0, 100.0 * 720.0 / 1080.0])
+    );
+    assert_eq!(normalized["transform"]["scale"], json!([200.0, 150.0]));
+    assert_eq!(normalized["parent"], pin["id"]);
+    assert_eq!(pin["parent"], owner["id"]);
+    assert_eq!(normalized["layers"][0]["type"], "Video");
+    assert!(
+        normalized.get("masks").is_some(),
+        "source frame clips before normalization"
+    );
+    let effect = &pin["effects"][0];
+    assert_eq!(effect["effect"]["upperLeftX"], 0.2);
+    let entries: Vec<_> = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["target"]["effectId"] == effect["id"])
+        .collect();
+    assert_eq!(entries.len(), 2);
+    for entry in entries {
+        assert_eq!(entry["animator"]["keyframes"][0]["layerTime"], 0);
+        assert_eq!(entry["animator"]["keyframes"][1]["layerTime"], 1000);
+    }
+    assert!(
+        notes
+            .iter()
+            .all(|note| note.kind == OmissionKind::Approximated),
+        "{notes:?}"
+    );
+    // A required pin key that collides on the editable ms clock must not expose
+    // its children unwarped. The second nest and red backdrop stay convertible.
+    let nest = &mut outer.video_tracks[1].nests[0];
+    nest.effects[0].animations[0].keys =
+        PrEffectParamKeys::Point(vec![key(TICKS, [0.2, 0.1]), key(TICKS + 1, [0.3, 0.15])]);
+    let mut notes = Vec::new();
+    let document = premiere_to_tesseract(
+        &outer,
+        &media,
+        &asset_ids_in_order(&outer, &media),
+        &mut notes,
+    )
+    .unwrap()
+    .to_json_value()
+    .unwrap();
+    assert!(
+        notes
+            .iter()
+            .any(|note| note.scope == OmissionScope::Occurrence
+                && note
+                    .reason
+                    .contains("Corner Pin keys could not be retained")),
+        "{notes:?}"
+    );
+    assert_eq!(
+        document["composition"]["layers"].as_array().unwrap().len(),
+        3
+    );
+}
+
 #[test]
 fn nested_occurrence_frame_effect_omission_keeps_supported_stack_and_picture() {
     let (mut outer, media) = nested_sequence();
     let mut repeated = blur(10.0);
-    repeated.params = PrEffectParams::GaussianBlur(PrGaussianBlur {
-        blurriness: 10.0,
+    repeated.params = PrEffectParams::FilmImpactBlur(crate::schema::PrFilmImpactBlur {
+        amount: 10.0,
         repeat_edge_pixels: true,
     });
     outer.video_tracks[1].nests[0].effects = vec![repeated, blur(25.0)];
@@ -1827,6 +2129,232 @@ fn nested_occurrence_frame_effect_omission_keeps_supported_stack_and_picture() {
     assert_eq!(picture["effects"].as_array().unwrap().len(), 1);
     assert_eq!(picture["effects"][0]["effect"]["blurriness"], 25.0);
     assert_eq!(picture["layers"][0]["type"], "Video");
+}
+
+#[test]
+fn nested_static_linear_ramp_keeps_native_pixels_colors_and_blend_under_motion() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/feature_ramp_strict.prproj");
+    let (native, _) =
+        PrProjectFile::load_selected(&path, Some("2d806b19-f9dc-479f-a77d-faba4ed7e2bb")).unwrap();
+    let effect = native.sequences[0]
+        .video_items()
+        .filter_map(|item| match item {
+            PrVideoItem::Media(clip) => Some(&clip.effects),
+            _ => None,
+        })
+        .flatten()
+        .find(|effect| matches!(effect.params, PrEffectParams::Ramp(ramp) if ramp.start == [0.2, 0.5]))
+        .unwrap();
+    let PrEffectParams::Ramp(ramp) = effect.params else {
+        unreachable!()
+    };
+    assert!(!ramp.radial);
+    assert!(effect.animations.is_empty());
+    assert_eq!(ramp.end, [0.8, 0.5]);
+    assert_eq!(ramp.start_colour.rgb, [200, 40, 40]);
+    assert_eq!(ramp.end_colour.rgb, [40, 40, 200]);
+    assert_eq!(ramp.blend, 0.300000011921);
+
+    for (size, enabled) in [([1920, 1080], true), ([960, 540], false)] {
+        let (mut outer, media) = nested_sequence();
+        let nest = &mut outer.video_tracks[1].nests[0];
+        [nest.sequence.width, nest.sequence.height] = size;
+        nest.transform.position = [0.4, 0.6];
+        nest.transform.scale = [75.0; 2];
+        nest.transform.rotation = 20.0;
+        nest.animations = vec![PrPropertyAnimation::UniformScale(vec![
+            PrScalarKeyframe {
+                source_ticks: TICKS,
+                value: 75.0,
+                easing: PrKeyframeEasing::Linear,
+            },
+            PrScalarKeyframe {
+                source_ticks: 2 * TICKS,
+                value: 100.0,
+                easing: PrKeyframeEasing::Linear,
+            },
+        ])];
+        let mut ramp_effect = effect.clone();
+        ramp_effect.enabled = enabled;
+        nest.effects = vec![blur(10.0), ramp_effect, blur(25.0)];
+        let mut omissions = Vec::new();
+        let wire = premiere_to_tesseract(
+            &outer,
+            &media,
+            &asset_ids_in_order(&outer, &media),
+            &mut omissions,
+        )
+        .unwrap()
+        .to_json_value()
+        .unwrap();
+        assert!(omissions.is_empty(), "{omissions:?}");
+        let owner = &wire["composition"]["layers"][0];
+        let picture = &owner["layers"][0];
+        assert_eq!(owner["transform"]["rotation"], 20.0);
+        assert_eq!(
+            picture["transform"],
+            json!({
+                "anchorPoint": [0.0, 0.0], "position": [0.0, 0.0],
+                "scale": [100.0, 100.0], "rotation": 0.0, "opacity": 100.0,
+                "rotationX": 0.0, "rotationY": 0.0, "orientation": [0.0, 0.0, 0.0],
+                "skew": 0.0, "skewAxis": 0.0
+            })
+        );
+        let effects = picture["effects"].as_array().unwrap();
+        assert_eq!(effects.len(), 3);
+        assert_eq!(effects[0]["effect"]["blurriness"], 10.0);
+        assert_eq!(effects[2]["effect"]["blurriness"], 25.0);
+        assert_eq!(effects[1]["enabled"], enabled);
+        assert_eq!(
+            effects[1]["effect"],
+            json!({
+                "type": "gradientOverlay", "enabled": true,
+                "opacity": 1.0 - 0.300000011921,
+                "gradientType": "linear", "blendMode": "normal",
+                "start": [0.2 * f64::from(size[0]), 0.5 * f64::from(size[1])],
+                "end": [0.8 * f64::from(size[0]), 0.5 * f64::from(size[1])],
+                "stops": [
+                    {"offset": 0.0, "color": [200.0/255.0, 40.0/255.0, 40.0/255.0, 1.0]},
+                    {"offset": 1.0, "color": [40.0/255.0, 40.0/255.0, 200.0/255.0, 1.0]}
+                ]
+            })
+        );
+        assert_eq!(picture["layers"][0]["type"], "Video");
+        assert_eq!(picture["parent"], owner["id"]);
+        assert!(picture["masks"]
+            .as_array()
+            .is_some_and(|masks| !masks.is_empty()));
+        let entries = wire["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap();
+        for axis in ["scaleX", "scaleY"] {
+            let track = entries
+                .iter()
+                .find(|entry| {
+                    entry["target"]["layerId"] == owner["id"]
+                        && entry["target"]["propertyType"] == axis
+                })
+                .unwrap();
+            assert_eq!(track["animator"]["keyframes"][0]["layerTime"], 0);
+            assert_eq!(track["animator"]["keyframes"][0]["value"]["value"], 75.0);
+            assert_eq!(track["animator"]["keyframes"][1]["layerTime"], 1000);
+            assert_eq!(track["animator"]["keyframes"][1]["value"]["value"], 100.0);
+        }
+    }
+
+    for radial in [false, true] {
+        let (mut outer, media) = nested_sequence();
+        let nest = &mut outer.video_tracks[1].nests[0];
+        let mut unsupported = effect.clone();
+        if radial {
+            let PrEffectParams::Ramp(ramp) = &mut unsupported.params else {
+                unreachable!()
+            };
+            ramp.radial = true;
+        } else {
+            unsupported
+                .animations
+                .push(crate::schema::PrEffectParamAnimation {
+                    param: &crate::schema::RAMP_BLEND,
+                    keys: crate::schema::PrEffectParamKeys::Scalar(vec![
+                        PrScalarKeyframe {
+                            source_ticks: TICKS,
+                            value: 0.5,
+                            easing: PrKeyframeEasing::Linear,
+                        },
+                        PrScalarKeyframe {
+                            source_ticks: 2 * TICKS,
+                            value: 0.0,
+                            easing: PrKeyframeEasing::Linear,
+                        },
+                    ]),
+                });
+        }
+        nest.effects = vec![unsupported, blur(25.0)];
+        let mut omissions = Vec::new();
+        let wire = premiere_to_tesseract(
+            &outer,
+            &media,
+            &asset_ids_in_order(&outer, &media),
+            &mut omissions,
+        )
+        .unwrap()
+        .to_json_value()
+        .unwrap();
+        assert_eq!(omissions.len(), 1, "{omissions:?}");
+        assert!(omissions[0]
+            .reason
+            .contains("Ramp effect at stack position 1 was not imported"));
+        let picture = &wire["composition"]["layers"][0]["layers"][0];
+        assert_eq!(picture["effects"].as_array().unwrap().len(), 1);
+        assert_eq!(picture["effects"][0]["effect"]["blurriness"], 25.0);
+        assert_eq!(picture["layers"][0]["type"], "Video");
+    }
+}
+
+#[test]
+fn nested_gaussian_repeat_edges_retains_source_bounds_and_blurriness_keys() {
+    for [width, height] in [[1920, 1080], [960, 540]] {
+        let (mut outer, media) = nested_sequence();
+        let nest = &mut outer.video_tracks[1].nests[0];
+        nest.sequence.width = width;
+        nest.sequence.height = height;
+        // Native 26.5 Gaussian controls in format::tests::effects::blur_26_5.
+        let mut repeated = blur(40.0);
+        repeated.params = PrEffectParams::GaussianBlur(PrGaussianBlur {
+            blurriness: 40.0,
+            repeat_edge_pixels: true,
+        });
+        repeated.animations = vec![crate::schema::PrEffectParamAnimation {
+            param: &crate::schema::GAUSSIAN_BLUR_BLURRINESS,
+            keys: crate::schema::PrEffectParamKeys::Scalar(vec![
+                linear_key(TICKS, 40.0),
+                linear_key(2 * TICKS, 5.0),
+            ]),
+        }];
+        nest.effects = vec![repeated, blur(25.0)];
+        let mut omissions = Vec::new();
+        let document = premiere_to_tesseract(
+            &outer,
+            &media,
+            &asset_ids_in_order(&outer, &media),
+            &mut omissions,
+        )
+        .unwrap()
+        .to_json_value()
+        .unwrap();
+        assert!(omissions.is_empty(), "{omissions:?}");
+        let picture = &document["composition"]["layers"][0]["layers"][0];
+        assert_eq!(picture["effects"].as_array().unwrap().len(), 2);
+        let effect = &picture["effects"][0];
+        assert_eq!(effect["effect"]["blurriness"], 40.0);
+        assert_eq!(effect["effect"]["repeatEdgePixels"], true);
+        assert_eq!(
+            effect["effect"]["layerSize"],
+            json!([f64::from(width), f64::from(height)])
+        );
+        assert_eq!(picture["effects"][1]["effect"]["blurriness"], 25.0);
+        assert!(picture["effects"][1]["effect"].get("layerSize").is_none());
+        assert_eq!(picture["layers"][0]["type"], "Video");
+        assert!(picture["masks"]
+            .as_array()
+            .is_some_and(|masks| masks.len() == 1));
+        let entries = document["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap();
+        let track = entries
+            .iter()
+            .find(|entry| entry["target"]["effectId"] == effect["id"])
+            .unwrap();
+        assert_eq!(track["target"]["paramName"], "blurriness");
+        let keys = track["animator"]["keyframes"].as_array().unwrap();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0]["layerTime"], 0);
+        assert_eq!(keys[0]["value"]["value"], 40.0);
+        assert_eq!(keys[1]["layerTime"], 1000);
+        assert_eq!(keys[1]["value"]["value"], 5.0);
+    }
 }
 
 #[test]
@@ -2340,6 +2868,47 @@ fn an_unmoved_nest_group_takes_its_opacity_and_keys() {
 }
 
 #[test]
+fn neutral_nest_blends_keep_a_source_frame_isolation_boundary() {
+    use crate::schema::PrBlendMode;
+
+    let (mut outer, media) = nested_sequence();
+    outer.video_tracks[1].nests[0].sequence.video_tracks[0]
+        .clip_mut(0)
+        .blend_mode = PrBlendMode::Screen;
+    let mut omissions = Vec::new();
+    let document = premiere_to_tesseract(
+        &outer,
+        &media,
+        &asset_ids_in_order(&outer, &media),
+        &mut omissions,
+    )
+    .unwrap()
+    .to_json_value()
+    .unwrap();
+    let group = &crate::tests::support::picture_composition(&document)["layers"][0];
+    let masks = group["masks"].as_array().expect("isolated native nest");
+    assert_eq!(masks.len(), 1);
+    assert_eq!(masks[0]["mode"], "add");
+    assert_eq!(masks[0]["opacity"], 1.0);
+    assert_eq!(masks[0]["feather"], json!([0.0, 0.0]));
+    assert_eq!(masks[0]["inverted"], false);
+    let guide = group["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["id"] == masks[0]["layer"])
+        .expect("source-frame guide");
+    assert_eq!(guide["type"], "Rect");
+    assert_eq!(guide["rect"]["size"], json!([1920.0, 1080.0]));
+    assert_eq!(guide["rect"]["position"], json!([0.0, 0.0]));
+    assert_eq!(group["layers"][0]["blendMode"], "screen");
+    assert_eq!(group["transform"]["opacity"], 100.0);
+    assert!(!omissions
+        .iter()
+        .any(|item| item.reason.contains("passes the blend modes")));
+}
+
+#[test]
 fn a_nest_whose_opacity_keys_do_not_convert_is_omitted_beside_its_sibling() {
     // The first nest plays Inner 1-4 s over 0-3 s and fades from full at In
     // to 0 one native tick later: both keys fall at 0 ms of its group clock,
@@ -2385,7 +2954,7 @@ fn a_nest_whose_opacity_keys_do_not_convert_is_omitted_beside_its_sibling() {
 }
 
 #[test]
-fn a_mixed_rate_nest_keys_its_opacity_and_reports_its_pass_through_on_its_inner_clock() {
+fn a_mixed_rate_nest_keys_its_opacity_and_isolates_blends_on_its_inner_clock() {
     use crate::schema::PrBlendMode;
     // With Inner at 25 fps, the first nest plays it on its inner clock from
     // In 1 s, so its group shows inner 1-4 s. Its Opacity falls from full at
@@ -2409,13 +2978,14 @@ fn a_mixed_rate_nest_keys_its_opacity_and_reports_its_pass_through_on_its_inner_
     .unwrap()
     .to_json_value()
     .unwrap();
-    // So no pass-through is reported, and the unmoved group has no frame
-    // mask.
     assert!(omissions.is_empty(), "{omissions:?}");
-    let group = &document["composition"]["layers"][0];
-    assert!(
-        group["masks"].as_array().is_none_or(Vec::is_empty),
-        "{group}"
+    let group = &crate::tests::support::picture_composition(&document)["layers"][0];
+    assert_eq!(group["masks"].as_array().unwrap().len(), 1);
+    let guide = group["layers"].as_array().unwrap().last().unwrap();
+    assert_eq!(group["masks"][0]["layer"], guide["id"]);
+    assert_eq!(
+        guide["activeRange"],
+        json!({"start": 1000, "duration": 3000})
     );
     let range = |start: u64, duration: u64| json!({"start": start, "duration": duration});
     assert_eq!(
@@ -2430,13 +3000,8 @@ fn a_mixed_rate_nest_keys_its_opacity_and_reports_its_pass_through_on_its_inner_
     );
 }
 
-/// Import reports the pass-through of the group that it builds for a nest
-/// with the export rule, at the group's Opacity and keys, and export of that
-/// group repeats it: FX draws a Normal group without masks or a matte
-/// straight into its parent, passing the blend modes of its layers through,
-/// at the frames where it is at full Opacity (`tree_renderer::walk`).
 #[test]
-fn a_nest_group_reports_its_pass_through_at_its_opacity_with_the_export_rule() {
+fn native_nest_blends_stay_isolated_across_opacity_keys() {
     use crate::schema::PrBlendMode;
     let eased = |seconds: i64, value: f64, easing: PrKeyframeEasing| PrScalarKeyframe {
         source_ticks: seconds * TICKS,
@@ -2451,46 +3016,29 @@ fn a_nest_group_reports_its_pass_through_at_its_opacity_with_the_export_rule() {
         y2,
     };
     let fade = |keys: Vec<PrScalarKeyframe>| vec![PrPropertyAnimation::Opacity(keys)];
-    let (full, possible) = (
-        Some(super::PASS_THROUGH_APPROXIMATION),
-        Some(super::POSSIBLE_PASS_THROUGH_APPROXIMATION),
-    );
-    // Each row: the second nest's Opacity, its keys and its group's report.
-    // The nest plays Inner 0-6 s over 5-11 s, so its keys are at source
-    // seconds on the group clock.
-    type Row = (
-        &'static str,
-        f64,
-        Vec<PrPropertyAnimation>,
-        Option<&'static str>,
-    );
-    let rows: [Row; 7] = [
-        ("full Opacity", 100.0, Vec::new(), full),
-        ("half Opacity", 50.0, Vec::new(), None),
-        ("Opacity 0", 0.0, Vec::new(), None),
+    let rows = [
+        ("full Opacity", 100.0, Vec::new()),
+        ("half Opacity", 50.0, Vec::new()),
+        ("Opacity 0", 0.0, Vec::new()),
         (
             "keys that reach full Opacity",
             100.0,
             fade(vec![key(1, 100.0), key(3, 40.0)]),
-            full,
         ),
         (
             "keys below full Opacity",
             100.0,
             fade(vec![key(0, 90.0), key(2, 40.0)]),
-            None,
         ),
         (
             "an ease that passes its keys",
             100.0,
             fade(vec![key(0, 90.0), eased(1, 95.0, ease(0.0, 5.0))]),
-            possible,
         ),
         (
             "full Opacity only after the nest ends",
             100.0,
             fade(vec![key(0, 60.0), key(6, 60.0), key(7, 100.0)]),
-            None,
         ),
     ];
     let reported = |omissions: &[Omission]| -> Vec<String> {
@@ -2500,7 +3048,7 @@ fn a_nest_group_reports_its_pass_through_at_its_opacity_with_the_export_rule() {
             .map(|omission| omission.reason.clone())
             .collect()
     };
-    for (row, opacity, animations, report) in rows {
+    for (row, opacity, animations) in rows {
         let (mut outer, media) = nested_sequence();
         let nest = &mut outer.video_tracks[1].nests[1];
         (nest.opacity, nest.animations) = (opacity, animations);
@@ -2513,17 +3061,19 @@ fn a_nest_group_reports_its_pass_through_at_its_opacity_with_the_export_rule() {
             &mut omissions,
         )
         .unwrap();
-        let expected: Vec<String> = report.map(str::to_owned).into_iter().collect();
-        assert_eq!(reported(&omissions), expected, "{row}: {omissions:?}");
-        // Export writes the group back as a nest and repeats the report.
-        let (_, exported) = export(document.to_json_value().unwrap());
+        assert!(reported(&omissions).is_empty(), "{row}: {omissions:?}");
+        let document = document.to_json_value().unwrap();
+        let group = &crate::tests::support::picture_composition(&document)["layers"][1];
+        assert_eq!(group["transform"]["opacity"], opacity, "{row}");
+        assert_eq!(group["masks"].as_array().unwrap().len(), 1, "{row}");
+        let (_, exported) = export(document);
         assert!(
             !exported
                 .iter()
                 .any(|omission| omission.reason.starts_with("group was not exported")),
             "{row}: {exported:?}"
         );
-        assert_eq!(reported(&exported), expected, "{row}, exported");
+        assert!(reported(&exported).is_empty(), "{row}: {exported:?}");
     }
 }
 
@@ -4364,10 +4914,14 @@ fn reverse_nest_separates_occurrence_keys_from_authored_descendant_clocks() {
     let keys = crate::tests::support::playback_keys(picture);
     assert_eq!(
         (keys[0]["time"].clone(), keys[0]["value"].clone()),
-        (json!(0), json!(6000))
+        (json!(0), json!(5967))
     );
     assert_eq!(
         (keys[1]["time"].clone(), keys[1]["value"].clone()),
+        (json!(5967), json!(0))
+    );
+    assert_eq!(
+        (keys[2]["time"].clone(), keys[2]["value"].clone()),
         (json!(6000), json!(0))
     );
     assert_eq!(
@@ -4412,6 +4966,27 @@ fn reverse_nest_separates_occurrence_keys_from_authored_descendant_clocks() {
 }
 
 #[test]
+fn reverse_nest_one_frame_holds_the_selected_source_sample() {
+    let (mut outer, media) = nested_sequence();
+    let nest = &mut outer.video_tracks[1].nests[1];
+    nest.playback_rate = -1.0;
+    nest.reverse_source_duration = Some(12 * TICKS);
+    nest.in_ticks = 12 * TICKS - FRAME;
+    nest.out_ticks = 12 * TICKS;
+    nest.end_ticks = nest.start_ticks + FRAME;
+    let document = project_document_with_media(&outer, &media);
+    let owner = &document["composition"]["layers"][1];
+    let picture = &owner["layers"][0];
+    let keys = crate::tests::support::playback_keys(picture);
+    assert_eq!(keys.len(), 2);
+    assert_eq!(keys[0]["time"], 0);
+    assert_eq!(keys[0]["value"], 0);
+    assert_eq!(keys[1]["time"], 33);
+    assert_eq!(keys[1]["value"], 0);
+    assert_eq!(videos(&picture["layers"]).len(), 2);
+}
+
+#[test]
 fn reverse_nest_keeps_unmasked_effect_parameters_and_keys_on_occurrence_clock() {
     use crate::schema::{PrEffectParamAnimation, PrEffectParamKeys, GAUSSIAN_BLUR_BLURRINESS};
     let (mut outer, media) = nested_sequence();
@@ -4451,7 +5026,7 @@ fn reverse_nest_keeps_unmasked_effect_parameters_and_keys_on_occurrence_clock() 
     let picture = &stage["layers"][0];
     assert_eq!(
         crate::tests::support::playback_keys(picture)[0]["value"],
-        6000
+        5967
     );
     assert_eq!(crate::tests::support::playback_keys(picture)[1]["value"], 0);
     let effect_id = stage["effects"][0]["id"].clone();
@@ -4518,7 +5093,7 @@ fn reverse_nest_keeps_content_and_other_keys_when_one_motion_parameter_is_unrepr
     let picture = &owner["layers"][0];
     assert_eq!(
         crate::tests::support::playback_keys(picture)[0]["value"],
-        6000
+        5967
     );
     assert_eq!(picture["layers"][0]["type"], "Video");
     let entries = document["composition"]["dynamics"]["entries"]
@@ -4571,7 +5146,7 @@ fn reverse_nest_does_not_expose_masked_occurrence_content_to_unmapped_effects() 
         }
         let error = nest.validate(frame_rate, &media).unwrap_err().to_string();
         let reason = if masked {
-            "nested Opacity mask requires a static vector outline, a unit-forward matching clock"
+            "nested Opacity mask requires a vector outline, a unit-forward matching clock"
         } else {
             "masked occurrence effect/coverage clocks"
         };
@@ -4912,6 +5487,60 @@ fn a_retimed_nest_inside_a_trimmed_nest_keeps_its_rate() {
             "premiere-video-1".to_owned()
         )]
     );
+}
+
+#[test]
+fn nested_slow_picture_with_collapsed_source_span_keeps_held_playback_and_siblings() {
+    let ms = crate::schema::TICKS_PER_MILLISECOND;
+    for reverse in [false, true] {
+        let (mut outer, media) = nested_sequence();
+        let inner = &mut outer.video_tracks[1].nests[0].sequence;
+        let clip = inner.video_tracks[0].clip_mut(0);
+        clip.id = Some("slow-picture".into());
+        clip.start_ticks = 2 * TICKS;
+        clip.end_ticks = clip.start_ticks + 26 * FRAME;
+        let start = 1000 * ms + 3 * ms / 5;
+        let end = start + (clip.end_ticks - clip.start_ticks) / 1000;
+        (clip.in_ticks, clip.out_ticks) = if reverse {
+            (10 * TICKS - end, 10 * TICKS - start)
+        } else {
+            (start, end)
+        };
+        clip.playback_rate = if reverse { -0.001 } else { 0.001 };
+        let mut omissions = Vec::new();
+        let document = premiere_to_tesseract(
+            &outer,
+            &media,
+            &asset_ids_in_order(&outer, &media),
+            &mut omissions,
+        )
+        .unwrap()
+        .to_json_value()
+        .unwrap();
+        let layers = &document["composition"]["layers"];
+        let slow = &layers[0]["layers"][0];
+        assert_eq!(slow["type"], "Video");
+        assert_eq!(slow["sourceRange"], json!({"start": 1001, "duration": 1}));
+        assert_eq!(slow["sourceIntrinsicDuration"], 10000);
+        assert_eq!(
+            *crate::test_support::layer_range(slow),
+            json!({"start": 1000, "duration": 867})
+        );
+        let keys = crate::tests::support::playback_keys(slow);
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0]["time"], 1000);
+        assert_eq!(keys[1]["time"], 1867);
+        assert!(keys.iter().all(|key| key["value"] == 1001));
+        assert_eq!(slow["source"]["assetId"], "premiere-video-2");
+        assert_eq!(layers[1]["type"], "Group");
+        assert_eq!(layers[1]["layers"][0]["type"], "Video");
+        assert_eq!(layers[2]["type"], "Video");
+        assert_eq!(omissions.len(), 1, "{omissions:?}");
+        assert_eq!(omissions[0].kind, OmissionKind::Approximated);
+        assert_eq!(omissions[0].record, "slow-picture");
+        assert!(omissions[0].reason.contains("held picture"));
+        EditableFxCompositionDocument::from_json_value(document).unwrap();
+    }
 }
 
 #[test]

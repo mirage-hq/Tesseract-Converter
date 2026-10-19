@@ -37,7 +37,10 @@ fn staged_output(value: Value) -> (Vec<u8>, Vec<String>) {
             &archive,
             archive.project(),
             parent.path(),
-            &AfterEffectsExportOptions { fps: 30.0 },
+            &AfterEffectsExportOptions {
+                fps: 30.0,
+                ..Default::default()
+            },
         )
         .unwrap();
     let bytes = fs::read(staged.directory().join("project.aep")).unwrap();
@@ -73,7 +76,10 @@ fn viewport_approximation_picture_only_and_selected_writers_retain_content_by_de
         .write(parent.path().join("picture.tsrct"))
         .unwrap();
     for selected in [false, true] {
-        let options = AfterEffectsExportOptions { fps: 30.0 };
+        let options = AfterEffectsExportOptions {
+            fps: 30.0,
+            ..Default::default()
+        };
         let staged = if selected {
             AfterEffects.stage_picture_layers(
                 &archive,

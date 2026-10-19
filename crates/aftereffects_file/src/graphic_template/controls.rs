@@ -160,6 +160,7 @@ fn effect_default(
     layer: &Layer,
     path: &[essential::SourcePropertyRef],
     size: [f64; 2],
+    effect_definitions: &[Chunk],
 ) -> Result<Option<NativeNumericSource>, GraphicTemplateError> {
     let [parade, instance, property] = path else {
         return Ok(None);
@@ -188,7 +189,36 @@ fn effect_default(
         .iter()
         .filter(|parameter| parameter.match_name == property.match_name);
     let Some(parameter) = candidates.next() else {
-        return Ok(None);
+        // Sparse instances can omit the value and its declaration together.
+        // Resolve the exact file-bound declaration, not a guessed point/alpha.
+        // Essential Properties independently checks this same path on write.
+        let table = essential::file_effect_declarations(effect_definitions, &effect.match_name)
+            .map_err(|warning| error(warning.message))?;
+        let declarations = properties::runs(table).map_err(|source| error(source.to_string()))?;
+        let mut matches = declarations
+            .iter()
+            .enumerate()
+            .filter(|(_, (name, _))| *name == property.match_name);
+        let Some((index, (_, declaration))) = matches.next() else {
+            return Ok(None);
+        };
+        if matches.next().is_some()
+            || property
+                .child_index
+                .is_some_and(|expected| usize::try_from(expected).ok() != Some(index))
+        {
+            return Err(error(
+                "ambiguous or mismatched source effect parameter declaration",
+            ));
+        }
+        let kind = crate::effects::native::declaration_kind(declaration)
+            .map_err(|source| error(format!("source effect declaration not decoded: {source}")))?;
+        let numeric = crate::effects::native::default_numeric(declaration, size)
+            .map_err(|source| error(format!("source effect default not decoded: {source}")))?;
+        return Ok(Some(NativeNumericSource {
+            numeric,
+            effect_point: kind == 6,
+        }));
     };
     if candidates.next().is_some() {
         return Err(error("ambiguous source effect parameter"));
@@ -288,7 +318,12 @@ pub(super) fn apply_numeric(
             numeric,
             effect_point,
         }),
-        None => effect_default(layer, &controller.path, size)?,
+        None => effect_default(
+            layer,
+            &controller.path,
+            size,
+            &template.project.effect_definitions,
+        )?,
     };
     let effect_point = source.as_ref().is_some_and(|source| source.effect_point);
     let numeric = source.as_ref().map(|source| &source.numeric);
@@ -384,14 +419,18 @@ pub(super) fn apply_numeric(
             )],
         },
     };
-    let mut warnings = essential::apply(layer, &replacement)
-        .map(|warnings| {
-            warnings
-                .into_iter()
-                .map(|warning| warning.message)
-                .collect::<Vec<_>>()
-        })
-        .map_err(|warning| error(warning.message))?;
+    let mut warnings = essential::apply_with_definitions(
+        layer,
+        &replacement,
+        &template.project.effect_definitions,
+    )
+    .map(|warnings| {
+        warnings
+            .into_iter()
+            .map(|warning| warning.message)
+            .collect::<Vec<_>>()
+    })
+    .map_err(|warning| error(warning.message))?;
     if colour {
         warnings.push(
             "saved Capsule colour alpha override is not mapped; known template alpha retained"

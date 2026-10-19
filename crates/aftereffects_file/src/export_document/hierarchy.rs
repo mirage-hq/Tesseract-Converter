@@ -10,6 +10,7 @@ mod blur_bounds_tests;
 mod collapsed;
 #[cfg(test)]
 mod collapsed_tests;
+mod composite_transform;
 mod demand;
 mod effect_support;
 mod root_viewport;
@@ -314,17 +315,6 @@ pub(super) fn validate_masked_source(
     animated_bounds::validate_masked_source(group, dynamics, resolved_media, canvas)
 }
 
-pub(super) fn has_active_shadow(records: &[fx_schema::EffectRecord]) -> bool {
-    records.iter().any(|record| {
-        let payload = match record.data() {
-            fx_schema::EffectData::Identified { enabled: false, .. } => return false,
-            fx_schema::EffectData::Identified { effect, .. }
-            | fx_schema::EffectData::Legacy(effect) => effect,
-        };
-        matches!(payload, fx_schema::EffectPayload::Known(fx_schema::LayerEffect::DropShadow(shadow)) if shadow.enabled)
-    })
-}
-
 pub(super) fn static_shadow_stack(
     records: &[fx_schema::EffectRecord],
     dynamics: &crate::export_document::AnimationIndex<'_>,
@@ -338,6 +328,74 @@ pub(super) fn static_shadow_stack(
         dynamics,
     )
     .is_ok()
+}
+
+pub(super) fn shape_glow_working_plane(
+    shape: &fx_schema::ShapeLayer,
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+) -> bool {
+    let transform = &shape.transform;
+    if !matches!(transform.position, Position::TwoD(_))
+        || transform.scale != [100.0; 2]
+        || transform.rotation != 0.0
+        || transform.skew != 0.0
+        || transform.skew_axis != 0.0
+        || transform.rotation_x != 0.0
+        || transform.rotation_y != 0.0
+        || transform.orientation != [0.0; 3]
+        || dynamics.for_layer(shape.id).any(|entry| {
+            entry.target.as_property().is_none_or(|target| {
+                !matches!(
+                    target.property_type(),
+                    fx_schema::PropType::PositionX
+                        | fx_schema::PropType::PositionY
+                        | fx_schema::PropType::Opacity
+                )
+            })
+        })
+    {
+        return false;
+    }
+    let mut glow = false;
+    for record in &shape.effects {
+        let payload = match record.data() {
+            fx_schema::EffectData::Identified { enabled: false, .. } => continue,
+            fx_schema::EffectData::Identified { id, effect, .. } => {
+                if dynamics.iter().any(|entry| {
+                    matches!(&entry.target,
+                    fx_schema::PropertyTarget::EffectProperty(target) if target.effect_id() == *id)
+                }) {
+                    return false;
+                }
+                effect
+            }
+            fx_schema::EffectData::Legacy(effect) => effect,
+        };
+        match payload {
+            fx_schema::EffectPayload::Known(fx_schema::LayerEffect::Glow { .. }) if !glow => {
+                glow = true
+            }
+            _ => return false,
+        }
+    }
+    glow
+}
+
+fn shape_glow_bounds(
+    mut bounds: Bounds,
+    shape: &fx_schema::ShapeLayer,
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+    canvas: fx_schema::Dimensions,
+) -> Bounds {
+    if shape_glow_working_plane(shape, dynamics) {
+        // Retain the logical output plane, not a guessed finite Glow reach or
+        // permission to crop its input. Off-plane halo remains approximate.
+        bounds.include(Bounds {
+            min: [0.0; 2],
+            max: [f64::from(canvas.width), f64::from(canvas.height)],
+        });
+    }
+    bounds
 }
 
 fn group_effect_bounds(
@@ -631,6 +689,7 @@ pub(super) struct PrecompositionPlan {
     transform: SolidTransform,
     transform_animations: TransformAnimations,
     inner_parent: Option<skew::Lowering>,
+    composite_parent: Option<(LayerId, NullLayerSpec)>,
 }
 
 /// Selects the narrow exact hierarchy representation. Native parenting is
@@ -828,7 +887,7 @@ fn classify_inner(
     let spatial = subtree_needs_projection(&group.layers, dynamics);
     let parenting_eligible = inner_parent.is_none()
         && !force_precomposition
-        && !spatial
+        && !parenting_needs_projection(&group.layers, dynamics, composition_end)
         && parenting_eligible(group)
         && transform_animations.opacity.is_none();
     // Childless controls have no painted extent, even when their occurrence
@@ -910,7 +969,12 @@ fn classify_inner(
             }));
         }
         Ok(None) => return Err("Precomposition has no finite visual child render bounds"),
-        Err(_) if !spatial && inner_parent.is_none() && collapsed::text_only(group, dynamics) => {
+        Err(_)
+            if !spatial
+                && inner_parent.is_none()
+                && !finite_canvas.is_some_and(|canvas| canvas.source_mask)
+                && collapsed::text_only(group, dynamics) =>
+        {
             // Only Text lacks bounds here; the root canvas is a nominal source
             // size that collapse does not clip, never a guessed glyph extent.
             return Ok(HierarchyPlan::Precomposition(PrecompositionPlan {
@@ -926,6 +990,7 @@ fn classify_inner(
                 transform,
                 transform_animations,
                 inner_parent: None,
+                composite_parent: None,
             }));
         }
         Err("Text/font glyph bounds are not known from the FX text box")
@@ -1098,6 +1163,7 @@ fn classify_inner(
         transform,
         transform_animations,
         inner_parent,
+        composite_parent: None,
     }))
 }
 
@@ -1121,6 +1187,12 @@ impl ParentPlan {
 }
 
 impl PrecompositionPlan {
+    pub(super) fn extend_empty_tail(&mut self, duration: Duration24) {
+        if duration.ticks() > self.duration.ticks() {
+            self.duration = duration;
+        }
+    }
+
     pub(super) const fn consumer_viewport(&self) -> bool {
         self.consumer_3d
     }
@@ -1142,6 +1214,26 @@ impl PrecompositionPlan {
         composition_options: Option<CompositionOptions>,
     ) -> Result<LayerSpec, crate::writer::AepWriteError> {
         let offset = [-self.origin[0], -self.origin[1]];
+        if let Some((id, parent)) = self.composite_parent {
+            for child in &mut children {
+                child.assign_root_parent(id)?;
+            }
+            let mut parent_options = skew::helper_options(id);
+            // Move geometry out of the occurrence before source-crop anchor conjugation.
+            parent_options.transform_3d =
+                options
+                    .transform_3d
+                    .take()
+                    .map(|(mut transform, mut animations)| {
+                        transform.opacity = 1.0;
+                        animations.opacity = None;
+                        (transform, animations)
+                    });
+            children.push(LayerSpec::Options(
+                Box::new(LayerSpec::Null(parent)),
+                parent_options,
+            ));
+        }
         if let Some(lowering) = self.inner_parent {
             for child in &mut children {
                 child.assign_root_parent(lowering.helper_id)?;
@@ -1189,6 +1281,23 @@ impl PrecompositionPlan {
             options,
         ))
     }
+}
+
+pub(super) fn picture_only_clock(
+    layers: &[Layer],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+) -> bool {
+    layers.iter().all(|layer| match layer.data() {
+        LayerData::Audio(_) | LayerData::Media(_) => false,
+        LayerData::Video(video) => video.volume.is_none_or(|gain| {
+            matches!(
+                super::audio::exactly_silent(dynamics, video.id, gain.as_f64()),
+                Ok(true)
+            )
+        }),
+        LayerData::Group(group) => picture_only_clock(&group.layers, dynamics),
+        _ => true,
+    })
 }
 
 pub(super) fn audio_only(layers: &[Layer]) -> bool {
@@ -1329,7 +1438,7 @@ fn native_transform(
     Ok((transform, animations))
 }
 
-fn subtree_needs_projection(
+pub(super) fn subtree_needs_projection(
     layers: &[Layer],
     dynamics: &crate::export_document::AnimationIndex<'_>,
 ) -> bool {
@@ -1337,6 +1446,27 @@ fn subtree_needs_projection(
         super::mask_and_transform(layer).is_some_and(|(transform, _, _)| {
             super::transform3d::requires_native_3d(dynamics, transform, layer.id())
         }) || matches!(layer.data(), LayerData::Group(group) if subtree_needs_projection(&group.layers, dynamics))
+    })
+}
+
+fn parenting_needs_projection(
+    layers: &[Layer],
+    dynamics: &crate::export_document::AnimationIndex<'_>,
+    composition_end: Time,
+) -> bool {
+    layers.iter().any(|layer| {
+        if super::mask_and_transform(layer).is_some_and(|(transform, _, _)| {
+            super::transform3d::requires_native_3d(dynamics, transform, layer.id())
+        }) {
+            return true;
+        }
+        let LayerData::Group(group) = layer.data() else {
+            return false;
+        };
+        // A checked nonidentity clock forces an uncollapsed source occurrence;
+        // its internal projection cannot cross an outer planar Null.
+        super::group_has_root_identity_clock(group, composition_end)
+            && parenting_needs_projection(&group.layers, dynamics, composition_end)
     })
 }
 
@@ -1567,7 +1697,14 @@ fn layer_bounds(
                         &crate::export_document::AnimationIndex::new(&[]),
                     ),
             )?;
-            transform_bounds(bounds, &shape.transform).map(Some)
+            transform_bounds(bounds, &shape.transform).map(|bounds| {
+                Some(shape_glow_bounds(
+                    bounds,
+                    shape,
+                    &crate::export_document::AnimationIndex::new(&[]),
+                    canvas,
+                ))
+            })
         }
         LayerData::Group(group) => {
             if group.is_hidden {
@@ -1595,9 +1732,12 @@ fn layer_bounds(
                 return Ok(None);
             }
             let request = media::request(layer).ok_or("Visual media has no archive request")?;
-            let source = resolved_media
-                .get(request.asset_id.as_str())
-                .ok_or("Visual media archive source was not resolved for bounds")?;
+            let Some(source) = resolved_media.get(request.asset_id.as_str()) else {
+                // Emission omits this unprepared source with its own diagnostic.
+                // It paints nothing in the generated source, so it must not
+                // invalidate the enclosure of independently editable siblings.
+                return Ok(None);
+            };
             let content = super::media_matte_content_view(layer)
                 .map_err(|_| "Media matte content view could not be constructed")?;
             let spec = media::lower(&content, source, canvas)?;

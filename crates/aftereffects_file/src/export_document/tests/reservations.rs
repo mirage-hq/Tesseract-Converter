@@ -10,6 +10,7 @@ fn with_lowerer(document: &EditableFxCompositionDocument, check: impl FnOnce(&mu
     let precompositions = source_variant_precompositions(document, roots, &resolved_media).unwrap();
     let preflight = source_variants::preflight_layers(document, roots, &precompositions).unwrap();
     let mut lowerer = Lowerer {
+        hdr: None,
         rate,
         duration,
         end: Time::ZERO.saturating_add(document.duration()),
@@ -38,6 +39,7 @@ fn with_lowerer(document: &EditableFxCompositionDocument, check: impl FnOnce(&mu
         source_variants: preflight.decisions,
         consumed_guides: id_reservations::IdReservations::new(BTreeSet::new()),
         inside_precomposition: false,
+        unit_rate_ancestors: true,
         layers: Vec::new(),
         diagnostics: Vec::new(),
         omitted_layer_ids: BTreeSet::new(),

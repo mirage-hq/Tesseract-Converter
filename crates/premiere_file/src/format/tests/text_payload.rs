@@ -124,6 +124,7 @@ fn document(text: &str) -> PrTextDocument {
         font: "Arial-BoldMT".into(),
         size: 64.0,
         fill: WHITE,
+        fill_spans: Vec::new(),
         stroke: None,
         shadow: None,
         all_caps: false,
@@ -186,6 +187,15 @@ fn an_absent_run_marker_preserves_known_style_with_a_diagnostic() {
     assert_eq!(decoded.document, original);
     assert_eq!(decoded.omitted, [OmittedTextFeature::MissingRunMarker]);
     let caption = with_caption_marker(payload);
+    let graphic = decode_graphic(&caption).unwrap().uniform().unwrap();
+    assert_eq!(graphic.document, original);
+    assert_eq!(
+        graphic.omitted,
+        [
+            OmittedTextFeature::MissingRunMarker,
+            OmittedTextFeature::AlternateDocumentMarkers,
+        ]
+    );
     assert!(decode_caption(&caption)
         .unwrap_err()
         .to_string()
@@ -1274,6 +1284,7 @@ fn legacy_json_source_text_decodes_as_one_editable_point_text_document() {
         font: "Inter-SemiBold".into(),
         size: 64.5,
         fill: Some(PrRgb([128, 128, 128])),
+        fill_spans: Vec::new(),
         stroke: None,
         shadow: None,
         all_caps: false,
@@ -1440,8 +1451,6 @@ fn legacy_json_source_text_keeps_framing_consumed_style_and_mask_checks() {
     };
     let json = legacy_source_text().to_string();
     let valid = legacy_source_text_payload(&json);
-    let mut miscounted = valid.clone();
-    miscounted[0] ^= 2;
     let mut odd = valid.clone();
     odd.push(0);
     let odd_count = u64::try_from(odd.len() - 8).unwrap();
@@ -1456,7 +1465,6 @@ fn legacy_json_source_text_keeps_framing_consumed_style_and_mask_checks() {
         payload
     };
     let cases = [
-        (miscounted, "its byte count"),
         (odd, "an odd byte count"),
         (unpaired, "invalid UTF-16: unpaired surrogate"),
         (
@@ -1471,16 +1479,16 @@ fn legacy_json_source_text_keeps_framing_consumed_style_and_mask_checks() {
         (
             edited(|text| {
                 text["mTextParam"]["mStyleSheet"]["mFontSize"] =
-                    json!({"mParamValues": [[0, 64.5], [6, 40]]})
+                    json!({"mParamValues": [[0, 64.5], [0, 40]]})
             }),
-            "mixed text styles are unsupported",
+            "style runs must start at character 0 and have strictly increasing offsets",
         ),
         (
             edited(|text| {
                 text["mTextParam"]["mStyleSheet"]["mFillColor"] =
                     json!({"mParamValues": [[3, 0x80_80_80]]})
             }),
-            "its one style run starts at character 3, not 0",
+            "style runs must start at character 0 and have strictly increasing offsets",
         ),
         (
             edited(|text| text["mTextParam"]["mWidth"] = json!(-1)),

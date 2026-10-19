@@ -82,12 +82,41 @@ fn stills_over_video() -> (crate::format::PrSequence, BTreeMap<MediaId, PrMedia>
 }
 
 fn image_layers(document: &Value) -> Vec<&Value> {
-    document["composition"]["layers"]
+    crate::tests::support::picture_composition(document)["layers"]
         .as_array()
         .unwrap()
         .iter()
         .filter(|layer| layer["type"] == "Image")
         .collect()
+}
+
+#[test]
+fn color_management_aces_export_is_explicitly_unsupported() {
+    let (sequence, media) = stills_over_video();
+    let mut value = project_document_with_media(&sequence, &media);
+    assert_eq!(
+        value["colorManagement"],
+        json!({"workingSpace":"legacyDisplay"})
+    );
+    for compositing in ["footageOnly", "wholeProgram", "perClip"] {
+        value["colorManagement"] =
+            json!({"workingSpace":"acescct","outputTransform":"aces2.0","compositing":compositing});
+        let document = EditableFxCompositionDocument::from_json_value(value.clone()).unwrap();
+        let mut collector = crate::export_loss::LossCollector::default();
+        let error = crate::convert::lower_document(
+            &document,
+            &packaged_facts(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            FrameRate::Fps30,
+            &mut collector,
+        )
+        .err()
+        .expect("ACES must not be exported as legacy");
+        assert!(error
+            .to_string()
+            .contains("acescct color management cannot be exported"));
+    }
 }
 
 #[test]
@@ -212,9 +241,7 @@ fn a_blended_still_keeps_its_blend_and_opacity_both_ways() {
             .all(|omission| !omission.reason.contains("blend mode (using normal)")),
         "{omissions:?}"
     );
-    let stills: Vec<_> = project
-        .single_sequence()
-        .unwrap()
+    let stills: Vec<_> = crate::tests::support::picture_sequence(&project)
         .video_occurrences()
         .filter(|clip| project.media(clip).is_some_and(PrMedia::is_still))
         .map(|clip| (clip.blend_mode, clip.opacity))
@@ -313,6 +340,66 @@ fn export(document: Value) -> crate::error::Result<(crate::format::PrProjectFile
         &mut omissions,
     )?;
     Ok((project, omissions))
+}
+
+#[test]
+fn plain_png_motion_compensates_the_odd_raster_origin() {
+    for (width, height) in [(300, 240), (301, 240), (300, 241), (301, 241)] {
+        let (sequence, media) = stills_over_video();
+        let mut wire = project_document_with_media(&sequence, &media);
+        wire["duration"] = json!(3.0);
+        let layers = wire["composition"]["layers"].as_array_mut().unwrap();
+        layers.retain(|layer| layer["source"]["assetId"] == "premiere-image-3");
+        let image = &mut layers[0];
+        image["source"]["sourceRect"] = json!({"x": 0, "y": 0, "width": width, "height": height});
+        let anchor = if width % 2 != 0 && height % 2 != 0 {
+            [0.0; 2]
+        } else {
+            [31.0, 47.0]
+        };
+        image["transform"]["anchorPoint"] = json!(anchor);
+        image["transform"]["position"] = json!([111.0, 153.0]);
+        image["transform"]["scale"] = json!([137.0, 83.0]);
+        image["transform"]["rotation"] = json!(17.0);
+        let mut facts = packaged_facts();
+        let MediaFacts::Still(still) = facts.get_mut("premiere-image-3").unwrap() else {
+            panic!("PNG facts must be a still");
+        };
+        (still.width, still.height) = (width, height);
+        let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
+        let mut omissions = Vec::new();
+        let project = tesseract_to_premiere(
+            &document,
+            &facts,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            FrameRate::Fps30,
+            &mut omissions,
+        )
+        .unwrap();
+        assert!(omissions.is_empty(), "{omissions:?}");
+        let clip = project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .next()
+            .unwrap();
+        for (axis, (pixels, anchor)) in [width, height].into_iter().zip(anchor).enumerate() {
+            let expected = (anchor - f64::from(pixels % 2) * 0.5) / f64::from(pixels);
+            assert!(
+                (clip.transform.anchor_point[axis] - expected).abs() < 1e-12,
+                "{width}x{height}, axis {axis}: {:?}",
+                clip.transform
+            );
+        }
+        assert_eq!(clip.transform.position, [111.0 / 1920.0, 153.0 / 1080.0]);
+        assert_eq!(clip.transform.scale, [137.0, 83.0]);
+        assert_eq!(clip.transform.rotation, 17.0);
+        assert!(clip.effects.is_empty());
+        assert_eq!(clip.media.as_str(), "premiere-image-3");
+        assert_eq!(clip.start_ticks, TICKS);
+        assert_eq!(clip.end_ticks, 3 * TICKS);
+    }
 }
 
 #[test]
@@ -753,6 +840,100 @@ fn a_still_lengthened_past_its_source_span_shows_for_its_placement_on_its_source
         .map(|key| (key["layerTime"].clone(), key["value"]["value"].clone()))
         .collect();
     assert_eq!(keys, [(json!(0), json!(100.0)), (json!(8000), json!(40.0))]);
+}
+
+#[test]
+fn keyed_still_cross_dissolve_preserves_motion_opacity_and_spatial_handles() {
+    use crate::schema::{
+        PrKeyframeEasing, PrPointKeyframe, PrPropertyAnimation, PrScalarKeyframe, PrVideoTrack,
+        PrVideoTransition, PrVideoTransitionKind,
+    };
+    let mut sequence = video_sequence();
+    let pictures = [("outgoing", 1, 2), ("incoming", 3, 3)].map(|(id, start, duration)| {
+        let mut clip = still_occurrence("photo", start, duration);
+        clip.id = Some(id.into());
+        clip.animations = vec![
+            PrPropertyAnimation::Position(
+                [([0.5, 0.5], 0), ([0.6, 0.7], 1)]
+                    .map(|(value, seconds)| PrPointKeyframe {
+                        source_ticks: clip.in_ticks + seconds * TICKS,
+                        value,
+                        easing: PrKeyframeEasing::CubicBezier {
+                            x1: 0.3,
+                            y1: 0.1,
+                            x2: 0.7,
+                            y2: 0.9,
+                        },
+                        spatial_in_tangent: Some([-0.01, -0.02]),
+                        spatial_out_tangent: Some([0.02, 0.01]),
+                    })
+                    .to_vec(),
+            ),
+            PrPropertyAnimation::Opacity(
+                [(0, 80.0), (1, 50.0)]
+                    .map(|(seconds, value)| PrScalarKeyframe {
+                        source_ticks: clip.in_ticks + seconds * TICKS,
+                        value,
+                        easing: PrKeyframeEasing::Hold,
+                    })
+                    .to_vec(),
+            ),
+        ];
+        clip
+    });
+    sequence.video_tracks = vec![PrVideoTrack::media(pictures)];
+    sequence.timeline_end_ticks = 6 * TICKS;
+    let media = BTreeMap::from([(MediaId("photo".into()), still_media("photo.jpg", false))]);
+    let cut = project_document_with_media(&sequence, &media);
+    sequence.video_tracks[0]
+        .transitions
+        .push(PrVideoTransition {
+            id: "still-dissolve".into(),
+            kind: PrVideoTransitionKind::CrossDissolve,
+            start_ticks: 5 * TICKS / 2,
+            cut_ticks: 3 * TICKS,
+            end_ticks: 7 * TICKS / 2,
+            outgoing_clip: Some("outgoing".into()),
+            incoming_clip: Some("incoming".into()),
+        });
+    let dissolved = project_document_with_media(&sequence, &media);
+    let group = dissolved["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Group")
+        .expect("editable dissolve");
+    for (index, fade) in group["layers"].as_array().unwrap()[..2].iter().enumerate() {
+        let image = &fade["layers"][0];
+        assert_eq!(image["type"], "Image");
+        assert_eq!(image["source"], image_layers(&cut)[index]["source"]);
+        assert_eq!(
+            image["activeRange"],
+            if index == 0 {
+                json!({"start": 1000, "duration": 2500})
+            } else {
+                json!({"start": 2500, "duration": 3500})
+            }
+        );
+        let entries_for = |wire: &Value| {
+            wire["composition"]["dynamics"]["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|entry| entry["target"]["layerId"] == image["id"])
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let mut expected = entries_for(&cut);
+        assert_eq!(expected.len(), 3);
+        for entry in &mut expected {
+            for key in entry["animator"]["keyframes"].as_array_mut().unwrap() {
+                key["layerTime"] =
+                    json!(key["layerTime"].as_i64().unwrap() + if index == 0 { 0 } else { 500 });
+            }
+        }
+        assert_eq!(entries_for(&dissolved), expected);
+    }
 }
 
 #[test]

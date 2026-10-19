@@ -20,7 +20,7 @@ impl GraphDependencies {
         };
         let mut backdrop_component_started = false;
         for (root, layer) in roots.iter().enumerate() {
-            graph.references(layer, root, owners)?;
+            graph.references(layer, root, owners, false)?;
             let needs_backdrop = needs_backdrop(layer);
             debug_assert!(
                 !matches!(layer.data(), LayerData::Audio(_)) || !needs_backdrop,
@@ -107,8 +107,17 @@ impl GraphDependencies {
         self.neighbors[b].insert(a);
     }
 
-    fn references(&mut self, layer: &Layer, root: usize, owners: &Owners) -> anyhow::Result<()> {
-        if let Some(parent) = layer.parent_id() {
+    fn references(
+        &mut self,
+        layer: &Layer,
+        root: usize,
+        owners: &Owners,
+        structurally_nested: bool,
+    ) -> anyhow::Result<()> {
+        // FX uses the structural container ahead of the stored parent address.
+        // That container is already in this root; a copied child's stale parent
+        // must neither reject conversion nor absorb an unrelated picture scope.
+        if let Some(parent) = layer.parent_id().filter(|_| !structurally_nested) {
             self.connect(root, owners.layer(parent)?);
         }
         if let Some(matte) = compositing(layer).1 {
@@ -133,9 +142,65 @@ impl GraphDependencies {
             }
         }
         for child in layer.child_layers().into_iter().flatten() {
-            self.references(child, root, owners)?;
+            self.references(child, root, owners, true)?;
         }
         Ok(())
+    }
+
+    /// Close references and intervals in both FX and native packing order.
+    /// Premiere defers matte providers, so a contiguous FX interval can still
+    /// straddle independent pictures in the retained packing recipe.
+    pub(super) fn scopes(
+        &self,
+        seeds: &BTreeSet<usize>,
+        packing_order: &[usize],
+    ) -> Vec<BTreeSet<usize>> {
+        let mut scopes: Vec<BTreeSet<usize>> = Vec::new();
+        for &seed in seeds {
+            let mut scope = self.connected_scope(seed, packing_order);
+            // A later matte scope can absorb an earlier independent seed. Plan
+            // all intervals before staging so no boundary is replaced twice.
+            loop {
+                let previous_len = scope.len();
+                scopes.retain(|existing| {
+                    if existing.is_disjoint(&scope) {
+                        true
+                    } else {
+                        scope.extend(existing);
+                        false
+                    }
+                });
+                if scope.len() == previous_len {
+                    break;
+                }
+            }
+            // Overlapping closed intervals have a closed union in both orders.
+            scopes.push(scope);
+        }
+        scopes.sort_by_key(|scope| scope.first().copied());
+        scopes
+    }
+
+    fn connected_scope(&self, seed: usize, packing_order: &[usize]) -> BTreeSet<usize> {
+        let mut result = self.connected(seed);
+        loop {
+            let previous_len = result.len();
+            let first = *result.first().expect("scope contains its seed");
+            let last = *result.last().expect("scope contains its seed");
+            result.extend(first..=last);
+            let first_slot = packing_order.iter().position(|root| result.contains(root));
+            let last_slot = packing_order.iter().rposition(|root| result.contains(root));
+            if let (Some(first_slot), Some(last_slot)) = (first_slot, last_slot) {
+                result.extend(&packing_order[first_slot..=last_slot]);
+            }
+            let roots: Vec<_> = result.iter().copied().collect();
+            for root in roots {
+                result.extend(self.connected(root));
+            }
+            if result.len() == previous_len {
+                return result;
+            }
+        }
     }
 
     pub(super) fn connected(&self, seed: usize) -> BTreeSet<usize> {
@@ -163,6 +228,45 @@ fn needs_backdrop(layer: &Layer) -> bool {
         || layer
             .child_layers()
             .is_some_and(|children| children.iter().any(needs_backdrop))
+}
+
+/// Owners whose native parent or matte depends on rejected media sources.
+pub(super) fn media_dependents(
+    layers: &[Layer],
+    sources: &BTreeSet<fx_schema::LayerId>,
+) -> BTreeSet<fx_schema::LayerId> {
+    fn visit(
+        layers: &[Layer],
+        affected: &mut BTreeSet<fx_schema::LayerId>,
+        parent_affected: bool,
+        structurally_nested: bool,
+    ) {
+        for layer in layers {
+            if parent_affected
+                || layer
+                    .parent_id()
+                    .filter(|_| !structurally_nested)
+                    .is_some_and(|id| affected.contains(&id))
+                || compositing(layer)
+                    .1
+                    .is_some_and(|matte| affected.contains(&matte.layer))
+            {
+                affected.insert(layer.id());
+            }
+            if let Some(children) = layer.child_layers() {
+                let parent_affected = affected.contains(&layer.id());
+                visit(children, affected, parent_affected, true);
+            }
+        }
+    }
+    let mut affected = sources.clone();
+    loop {
+        let count = affected.len();
+        visit(layers, &mut affected, false, false);
+        if affected.len() == count {
+            return affected;
+        }
+    }
 }
 
 fn compositing(layer: &Layer) -> (BlendMode, Option<&fx_schema::layer::TrackMatte>) {
@@ -244,6 +348,35 @@ mod tests {
     }
 
     #[test]
+    fn rejected_media_dependencies_follow_mattes_parents_and_structural_children() {
+        let mut matte = rect(2, "normal");
+        matte["trackMatte"] = json!({"layer":1,"mode":"alpha"});
+        let mut consumer = group(3, vec![rect(4, "normal")]);
+        consumer["trackMatte"] = json!({"layer":2,"mode":"alpha"});
+        let mut parented = rect(5, "normal");
+        parented["parent"] = json!(4);
+        let mut unrelated = rect(6, "normal");
+        unrelated["parent"] = json!(1);
+        let document = document(
+            vec![
+                parented,
+                consumer,
+                matte,
+                rect(1, "normal"),
+                group(7, vec![unrelated]),
+            ],
+            vec![],
+        );
+        assert_eq!(
+            media_dependents(
+                document.composition().layers(),
+                &BTreeSet::from([fx_schema::LayerId::new(1)])
+            ),
+            (1..=5).map(fx_schema::LayerId::new).collect()
+        );
+    }
+
+    #[test]
     fn normal_group_child_screen_needs_external_picture_backdrop_not_audio() {
         let mut child = rect(2, "screen");
         child["parent"] = json!(1);
@@ -309,6 +442,32 @@ mod tests {
     }
 
     #[test]
+    fn structural_parents_override_stale_nested_parent_addresses() {
+        for stale_parent in [99, 3] {
+            let mut child = rect(2, "normal");
+            child["parent"] = json!(stale_parent);
+            let mut nested = group(4, vec![child]);
+            nested["parent"] = json!(stale_parent);
+            assert_eq!(
+                closure(vec![group(1, vec![nested]), rect(3, "normal")], vec![]),
+                BTreeSet::from([0]),
+                "nested parent {stale_parent} is superseded by its structural container"
+            );
+        }
+        let mut root = rect(1, "normal");
+        root["parent"] = json!(3);
+        assert_eq!(
+            closure(vec![root, rect(3, "normal")], vec![]),
+            BTreeSet::from([0, 1])
+        );
+        let mut dangling_root = rect(1, "normal");
+        dangling_root["parent"] = json!(99);
+        let document = document(vec![dangling_root], vec![]);
+        let owners = Owners::new(document.composition().layers()).unwrap();
+        assert!(GraphDependencies::new(&document, &owners).is_err());
+    }
+
+    #[test]
     fn normal_children_do_not_absorb_unrelated_backdrop() {
         let mut child = rect(2, "normal");
         child["parent"] = json!(1);
@@ -357,7 +516,7 @@ mod tests {
                 neighbors: vec![BTreeSet::new(); ROOTS],
             };
             for (root, layer) in document.composition().layers().iter().enumerate() {
-                dense.references(layer, root, &owners).unwrap();
+                dense.references(layer, root, &owners, false).unwrap();
                 if needs_backdrop(layer) {
                     for (below, backdrop) in document
                         .composition()
@@ -394,6 +553,52 @@ mod tests {
         assert_eq!(
             graph.neighbors.iter().map(BTreeSet::len).sum::<usize>(),
             2 * (count - 1)
+        );
+    }
+
+    #[test]
+    fn deferred_matte_scope_closes_packing_and_new_source_dependencies() {
+        // FX order: two foreground edges, matte, consumer, backdrop.
+        // Native order: backdrop, consumer, edges, deferred matte.
+        let mut consumer = rect(4, "normal");
+        consumer["trackMatte"] = json!({"mode": "alpha", "layer": 3});
+        let document = document(
+            vec![
+                rect(1, "normal"),
+                rect(2, "normal"),
+                rect(3, "normal"),
+                consumer,
+                rect(5, "normal"),
+            ],
+            vec![],
+        );
+        let owners = Owners::new(document.composition().layers()).unwrap();
+        let graph = GraphDependencies::new(&document, &owners).unwrap();
+        assert_eq!(
+            graph.connected_scope(3, &[4, 3, 1, 0, 2]),
+            BTreeSet::from([0, 1, 2, 3])
+        );
+
+        // The foreground seed is planned first but must not be replaced twice.
+        assert_eq!(
+            graph.scopes(&BTreeSet::from([0, 3, 4]), &[4, 3, 1, 0, 2]),
+            vec![BTreeSet::from([0, 1, 2, 3]), BTreeSet::from([4])]
+        );
+
+        // An edge's external parent must also be captured after interval growth.
+        let mut roots = document
+            .composition()
+            .layers()
+            .iter()
+            .map(|layer| serde_json::to_value(layer).unwrap())
+            .collect::<Vec<_>>();
+        roots[0]["parent"] = json!(5);
+        let document = self::document(roots, vec![]);
+        let owners = Owners::new(document.composition().layers()).unwrap();
+        let graph = GraphDependencies::new(&document, &owners).unwrap();
+        assert_eq!(
+            graph.connected_scope(3, &[4, 3, 1, 0, 2]),
+            BTreeSet::from([0, 1, 2, 3, 4])
         );
     }
 

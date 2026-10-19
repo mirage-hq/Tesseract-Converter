@@ -105,6 +105,7 @@ fn native_high_rate_scopes_keep_composition_media_and_key_clocks() {
         let archive = imported.join("project.tsrct");
         let output = parent.path().join(format!("export-{id}"));
         let options = PremiereExportOptions {
+            hdr: None,
             frame_rate: Some(rate),
         };
         let checked = export(&request(&archive, &output, ConversionMode::Check), &options).unwrap();
@@ -214,6 +215,7 @@ fn fractional_scope_rate_retains_native_picture_sound_and_diagnostics() {
     archive(&document_value(), &input);
     let output = parent.path().join("output");
     let options = PremiereExportOptions {
+        hdr: None,
         frame_rate: Some(FrameRate::Fps30000Over1001),
     };
     let checked = export(&request(&input, &output, ConversionMode::Check), &options).unwrap();

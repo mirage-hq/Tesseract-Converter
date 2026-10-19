@@ -332,7 +332,9 @@ pub(super) fn assemble(
 }
 
 /// Create exclusively, then link/copy only declared files; never rename over a
-/// raced destination. Rollback removes only paths created by this call.
+/// raced destination. Rollback checks retained identities before removing paths
+/// created by this call. The identity check and unlink are not atomic: this is
+/// not isolation against a hostile filesystem changing paths between operations.
 pub(super) fn publish(
     assembly: &Path,
     output: &Path,
@@ -340,14 +342,29 @@ pub(super) fn publish(
     source: &Path,
     source_hash: &[u8],
 ) -> anyhow::Result<()> {
+    publish_with_directory_identity(assembly, output, artifacts, source, source_hash, |path| {
+        same_file::Handle::from_path(path)
+    })
+}
+
+fn publish_with_directory_identity(
+    assembly: &Path,
+    output: &Path,
+    artifacts: &[Artifact],
+    source: &Path,
+    source_hash: &[u8],
+    mut capture: impl FnMut(&Path) -> std::io::Result<same_file::Handle>,
+) -> anyhow::Result<()> {
     unchanged(source, source_hash)?;
-    fs::create_dir(output).context("create fresh hybrid package")?;
     let mut installed = Installation {
         files: Vec::new(),
-        directories: vec![output.to_owned()],
+        directories: Vec::new(),
         committed: false,
     };
     let result = (|| {
+        installed
+            .create_directory(output, &mut capture)
+            .context("create fresh hybrid package")?;
         let mut parents = BTreeSet::new();
         for artifact in artifacts {
             for parent in artifact
@@ -363,8 +380,7 @@ pub(super) fn publish(
         parents.sort_by_key(|path| path.components().count());
         for parent in parents {
             let directory = output.join(parent);
-            fs::create_dir(&directory)?;
-            installed.directories.push(directory);
+            installed.create_directory(&directory, &mut capture)?;
         }
         for artifact in artifacts {
             let destination = output.join(&artifact.path);
@@ -394,17 +410,59 @@ fn install_file(
     installed: &mut Installation,
     link: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
 ) -> anyhow::Result<()> {
+    install_file_with_identity(
+        source,
+        destination,
+        installed,
+        link,
+        same_file::Handle::from_file,
+    )
+}
+
+fn install_file_with_identity(
+    source: &Path,
+    destination: &Path,
+    installed: &mut Installation,
+    link: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+    capture: impl FnOnce(File) -> std::io::Result<same_file::Handle>,
+) -> anyhow::Result<()> {
+    // Retain the source inode before linking; looking up the destination after
+    // linking could capture a replacement instead. Keeping handles alive also
+    // prevents inode reuse from making a replacement appear owned.
+    let identity =
+        same_file::Handle::from_path(source).context("retain publication source identity")?;
+    let identity = FileIdentity::retain(identity, source)?;
     if link(source, destination).is_ok() {
-        installed.files.push(destination.to_owned());
+        installed.files.push(InstalledPath {
+            path: destination.to_owned(),
+            identity: Some(identity),
+        });
         return Ok(());
     }
-    // Filesystems without hard links use an exclusive, tracked copy. Track it
-    // immediately so a read/write/hash error also removes a partially copied file.
-    let mut output = File::create_new(destination)?;
-    installed.files.push(destination.to_owned());
+    drop(identity);
+    // Filesystems without hard links use an exclusive, tracked copy. Register
+    // before fallible capture; verified partial files can be removed, while an
+    // unverified path must be preserved and reported for manual cleanup.
+    let output = File::create_new(destination)?;
+    installed.files.push(InstalledPath {
+        path: destination.to_owned(),
+        identity: None,
+    });
+    let entry = installed
+        .files
+        .last_mut()
+        .context("created file not tracked")?;
+    entry.identity = Some(FileIdentity::Handle(capture(output)?));
+    let output = entry
+        .identity
+        .as_mut()
+        .context("copied file identity missing")?
+        .handle_mut()
+        .context("copied file handle missing")?
+        .as_file_mut();
     let expected = sha256(source)?;
     let mut input = File::open(source)?;
-    std::io::copy(&mut input, &mut output)?;
+    std::io::copy(&mut input, output)?;
     output.set_permissions(input.metadata()?.permissions())?;
     output.sync_all()?;
     ensure!(
@@ -414,23 +472,122 @@ fn install_file(
     Ok(())
 }
 
+enum FileIdentity {
+    Handle(same_file::Handle),
+    Link(tempfile::TempDir),
+}
+
+impl FileIdentity {
+    fn retain(handle: same_file::Handle, source: &Path) -> anyhow::Result<Self> {
+        let Ok(anchor) = tempfile::Builder::new()
+            .prefix(".publication-identity-")
+            .tempdir_in(
+                source
+                    .parent()
+                    .context("publication source parent missing")?,
+            )
+        else {
+            return Ok(Self::Handle(handle));
+        };
+        let path = anchor.path().join("inode");
+        if fs::hard_link(source, &path).is_err() {
+            return Ok(Self::Handle(handle));
+        }
+        ensure!(
+            same_file::Handle::from_path(&path)? == handle,
+            "publication source identity changed"
+        );
+        // The private link prevents inode reuse without retaining a descriptor
+        // for every packaged file. Filesystems without links keep the handle.
+        Ok(Self::Link(anchor))
+    }
+
+    fn handle_mut(&mut self) -> Option<&mut same_file::Handle> {
+        match self {
+            Self::Handle(handle) => Some(handle),
+            Self::Link(_) => None,
+        }
+    }
+
+    fn matches(&self, path: &Path) -> std::io::Result<bool> {
+        let current = same_file::Handle::from_path(path)?;
+        match self {
+            Self::Handle(handle) => Ok(&current == handle),
+            Self::Link(anchor) => {
+                Ok(current == same_file::Handle::from_path(anchor.path().join("inode"))?)
+            }
+        }
+    }
+}
+
+struct InstalledPath {
+    path: PathBuf,
+    identity: Option<FileIdentity>,
+}
+
+impl InstalledPath {
+    fn check_identity(&self) -> anyhow::Result<()> {
+        let identity = self
+            .identity
+            .as_ref()
+            .context("ownership unverified; manual inspection and cleanup required")?;
+        // Handle::from_path follows symlinks, so reject them even if they point
+        // at the inode we own.
+        ensure!(
+            !fs::symlink_metadata(&self.path)?.file_type().is_symlink(),
+            "installed path replaced by a symlink"
+        );
+        ensure!(
+            identity.matches(&self.path)?,
+            "installed path identity changed"
+        );
+        Ok(())
+    }
+}
+
 struct Installation {
-    files: Vec<PathBuf>,
-    directories: Vec<PathBuf>,
+    files: Vec<InstalledPath>,
+    directories: Vec<InstalledPath>,
     committed: bool,
 }
 
 impl Installation {
+    fn create_directory(
+        &mut self,
+        path: &Path,
+        capture: &mut impl FnMut(&Path) -> std::io::Result<same_file::Handle>,
+    ) -> anyhow::Result<()> {
+        fs::create_dir(path)?;
+        // Creation and capture are not atomic. Register first so a capture
+        // failure reports the unverified path instead of silently abandoning it.
+        self.directories.push(InstalledPath {
+            path: path.to_owned(),
+            identity: None,
+        });
+        let entry = self
+            .directories
+            .last_mut()
+            .context("created directory not tracked")?;
+        entry.identity = Some(FileIdentity::Handle(capture(path)?));
+        Ok(())
+    }
+
     fn rollback(&mut self) -> anyhow::Result<()> {
         let mut errors = Vec::new();
-        for path in self.files.drain(..).rev() {
-            if let Err(error) = fs::remove_file(&path) {
-                errors.push(format!("{}: {error}", path.display()));
+        for entry in self.files.drain(..).rev() {
+            if let Err(error) = entry
+                .check_identity()
+                .and_then(|()| fs::remove_file(&entry.path).map_err(anyhow::Error::from))
+            {
+                errors.push(format!("{}: {error}", entry.path.display()));
             }
         }
-        for path in self.directories.drain(..).rev() {
-            if let Err(error) = fs::remove_dir(&path) {
-                errors.push(format!("{}: {error}", path.display()));
+        for entry in self.directories.drain(..).rev() {
+            if let Err(error) = entry
+                .check_identity()
+                .and_then(|()| fs::remove_dir(&entry.path).map_err(anyhow::Error::from))
+            {
+                errors.push(format!("{}: {error}", entry.path.display()));
             }
         }
         ensure!(errors.is_empty(), "{}", errors.join("; "));

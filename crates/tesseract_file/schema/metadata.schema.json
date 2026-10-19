@@ -4,7 +4,6 @@
   "title": "Tesseract file metadata v2",
   "description": "Metadata for a portable .tsrct ZIP file. Semantic archive-entry validation is also enforced by the tesseract_file reader.",
   "type": "object",
-  "additionalProperties": false,
   "required": [
     "$schema",
     "format",

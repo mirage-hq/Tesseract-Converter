@@ -107,7 +107,9 @@ fn media_item(
 
 fn project(items: Vec<crate::structure::ProjectItem>) -> crate::structure::StructuralProject {
     crate::structure::StructuralProject {
+        color: crate::structure::ProjectColorContext::Legacy,
         format_version: 0,
+        effect_definitions: Vec::new(),
         items,
     }
 }

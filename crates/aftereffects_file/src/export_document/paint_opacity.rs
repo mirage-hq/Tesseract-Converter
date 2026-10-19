@@ -8,9 +8,11 @@ use fx_schema::layer::ShapePaint;
 
 use crate::writer::{KeyframeEasing, NumericTrack, VectorContent, VectorPaintSpec};
 
+mod saturation;
+
 pub(super) const SATURATION_DIAGNOSTIC: &str = "Overrange paint opacity was combined with solid alpha and clamped to native paint Opacity. Layer opacity remains post-composite; antialiased saturation fidelity remains unverified.";
 
-pub(super) const NORMALIZATION_DIAGNOSTIC: &str = "Single-paint Shape overrange opacity was transferred to static or upper-bounded scalar layer Opacity (including cubic keys with negative troughs) before native clamping to preserve the FX leaf paint/layer product. Both FX and native layer opacity clip negative values to zero; upper overshoot is not admitted. Paint and layer controls are normalized; independent Adobe RGB/alpha fidelity remains unverified.";
+pub(super) const NORMALIZATION_DIAGNOSTIC: &str = "Single-paint Shape overrange opacity was transferred to native layer Opacity to preserve the FX leaf paint/layer product. Bounded curves, including negative troughs, retain their handles; opaque monotone ramps above native range are split into saturated plateaus and editable unsaturated segments with integer-millisecond crossing times. Other upper overshoot retains fallback. Paint and layer controls are normalized; antialiased saturation and independent Adobe RGB/alpha fidelity remain unverified.";
 
 /// FX leaf tessellation multiplies paint opacity by layer opacity before
 /// drawing. Clamping the paint first loses this product (100 × 0.999% becomes
@@ -19,7 +21,8 @@ pub(super) const NORMALIZATION_DIAGNOSTIC: &str = "Single-paint Shape overrange 
 /// Linear/Hold tracks cannot overshoot their endpoints; cubic segments are
 /// admitted when their upper control hull stays in range. Negative cubic
 /// interiors are safe because both FX and native layer opacity clip at zero:
-/// factor * max(0, x) == max(0, factor * x) for positive factors. Native layer keys
+/// factor * max(0, x) == max(0, factor * x) for positive factors. Opaque monotone
+/// saturating ramps additionally split at the native upper bound. Native layer keys
 /// use fractions, unlike the static percentage; when keyed, the writer's static
 /// base is ignored, so use the first scaled key for its representable base.
 /// The caller excludes compositing/effect boundaries and paths that reconstruct
@@ -28,23 +31,26 @@ pub(super) fn normalize_single_paint(
     contents: &mut [VectorContent],
     layer_opacity: f64,
     opacity_track: Option<&mut NumericTrack>,
+    layer_blend_mode: fx_schema::BlendMode,
 ) -> Option<f64> {
     let mut paints = contents.iter_mut().filter_map(|content| match content {
         VectorContent::Paint(VectorPaintSpec::Fill {
+            paint,
             opacity,
             blend_mode,
             animations,
             ..
         })
         | VectorContent::Paint(VectorPaintSpec::Stroke {
+            paint,
             opacity,
             blend_mode,
             animations,
             ..
-        }) => Some((opacity, blend_mode, animations)),
+        }) => Some((paint, opacity, blend_mode, animations)),
         _ => None,
     });
-    let (opacity, blend_mode, animations) = paints.next()?;
+    let (paint, opacity, blend_mode, animations) = paints.next()?;
     if paints.next().is_some()
         || *blend_mode != Default::default()
         || animations.opacity.is_some()
@@ -55,13 +61,32 @@ pub(super) fn normalize_single_paint(
         return None;
     }
     let factor = *opacity / 100.0;
+    let mut replacement = None;
     let product = if let Some(track) = opacity_track.as_deref() {
         if !bounded_opacity_track(track, factor) {
-            return None;
+            // Add keeps only exact factor transfer, not rounded saturation crossings.
+            if layer_blend_mode == fx_schema::BlendMode::Add {
+                return None;
+            }
+            let opaque = match paint {
+                ShapePaint::Solid { color } => color[3] == 1.0,
+                ShapePaint::Gradient { stops, .. } => {
+                    !stops.is_empty() && stops.iter().all(|stop| stop.color[3] == 1.0)
+                }
+            };
+            if !opaque {
+                return None;
+            }
+            replacement = Some(saturation::clipped(track, factor)?);
         }
         // Animated native Opacity reads keys, not the FX static base. A base of
         // 100% must not prevent scaling keys that all remain within 0..100%.
-        track.keys[0].values[0] * factor * 100.0
+        replacement
+            .as_ref()
+            .map_or(track.keys[0].values[0] * factor, |track| {
+                track.keys[0].values[0]
+            })
+            * 100.0
     } else {
         layer_opacity * factor
     };
@@ -71,8 +96,12 @@ pub(super) fn normalize_single_paint(
     // Validate the entire track before changing either paint or keys so a
     // rejected curve retains its original diagnosed fallback, atomically.
     if let Some(track) = opacity_track {
-        for key in &mut track.keys {
-            key.values[0] *= factor;
+        if let Some(replacement) = replacement {
+            *track = replacement;
+        } else {
+            for key in &mut track.keys {
+                key.values[0] *= factor;
+            }
         }
     }
     *opacity = 100.0;

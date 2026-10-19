@@ -151,6 +151,101 @@ fn package(path: &Path, document: &Value, assets: &[(String, PathBuf, AssetKind)
     builder.write(path).unwrap();
 }
 
+/// Supplementary generated RGB8 PSD preview, not an Adobe-native oracle.
+fn psd_preview(image: &image::RgbaImage) -> Vec<u8> {
+    let mut bytes = b"8BPS\0\x01\0\0\0\0\0\0".to_vec();
+    bytes.extend_from_slice(&4_u16.to_be_bytes());
+    bytes.extend_from_slice(&image.height().to_be_bytes());
+    bytes.extend_from_slice(&image.width().to_be_bytes());
+    bytes.extend_from_slice(&8_u16.to_be_bytes());
+    bytes.extend_from_slice(&3_u16.to_be_bytes());
+    bytes.extend_from_slice(&0_u32.to_be_bytes()); // Color mode data.
+    bytes.extend_from_slice(&0_u32.to_be_bytes()); // Image resources.
+    bytes.extend_from_slice(&6_u32.to_be_bytes()); // Layer/mask section.
+    bytes.extend_from_slice(&2_u32.to_be_bytes()); // Layer-info section.
+    bytes.extend_from_slice(&(-1_i16).to_be_bytes()); // Merged alpha marker.
+    bytes.extend_from_slice(&0_u16.to_be_bytes()); // Raw composite planes.
+    for channel in 0..4 {
+        bytes.extend(image.pixels().map(|pixel| pixel[channel]));
+    }
+    bytes
+}
+
+#[test]
+fn psd_still_preview_retains_editable_placement_and_packaged_pixels() {
+    assert_psd_still_preview(true);
+}
+
+#[test]
+fn psd_still_native_straight_alpha_without_layer_marker_retains_pixels() {
+    assert_psd_still_preview(false);
+}
+
+fn assert_psd_still_preview(merged_marker: bool) {
+    let dir = tempfile::tempdir().unwrap();
+    let source = staged_fixture(dir.path());
+    let expected = image::open(dir.path().join(PNG)).unwrap().to_rgba8();
+    let mut psd = psd_preview(&expected);
+    if !merged_marker {
+        // A flattened PSD has no layer-count sign to identify its fourth plane.
+        psd.splice(34..44, 0_u32.to_be_bytes());
+    }
+    let native_xml = read_xml(&source);
+    assert!(native_xml.contains("<AlphaType>1</AlphaType>"));
+    assert!(expected.pixels().any(|pixel| pixel[3] == 0));
+    assert!(expected.pixels().any(|pixel| pixel[3] == 255));
+    fs::write(dir.path().join("feature_still_transparent.psd"), &psd).unwrap();
+    let xml = read_xml(&source).replace(
+        "feature_still_transparent.png",
+        "feature_still_transparent.psd",
+    );
+    write_prproj(&source, &xml);
+    let (baseline, _) = imported(dir.path());
+    let output = dir.path().join("psd-import");
+    let omissions = premiere_to_tesseract(&source, &output, Some(SEQUENCE), false).unwrap();
+    let file = TesseractFile::open(&project_files(&output)[0]).unwrap();
+    let layers = layers_of(&file.project_json().unwrap(), "Image");
+    let original = layers_of(&baseline, "Image");
+    assert_eq!(layers.len(), original.len(), "{omissions:?}");
+    for (actual, expected_layer) in layers.iter().zip(&original) {
+        for field in [
+            "transform",
+            "playback",
+            "activeRange",
+            "dynamics",
+            "sourceRange",
+        ] {
+            assert_eq!(actual[field], expected_layer[field], "{field}");
+        }
+    }
+    let id = asset_named(&file, JPEG);
+    assert_eq!(
+        asset_bytes(&file, &id),
+        fs::read(fixtures().join(JPEG)).unwrap()
+    );
+    let normalized_id = file
+        .metadata()
+        .assets
+        .iter()
+        .find(|(_, asset)| asset.path.contains("premiere-psd-"))
+        .unwrap()
+        .0;
+    let pixels = image::load_from_memory(&asset_bytes(&file, normalized_id))
+        .unwrap()
+        .to_rgba8();
+    assert_eq!(pixels, expected);
+    assert_eq!(
+        fs::read(dir.path().join("feature_still_transparent.psd")).unwrap(),
+        psd
+    );
+    assert!(omissions
+        .iter()
+        .any(|item| item.reason.contains("PSD stored merged preview")));
+    assert!(!omissions
+        .iter()
+        .any(|item| item.scope == OmissionScope::Occurrence));
+}
+
 #[test]
 fn derived_still_fixture_imports_editable_image_layers_and_packages_original_images() {
     let dir = tempfile::tempdir().unwrap();
@@ -321,7 +416,7 @@ fn still_files_that_contradict_their_native_record_omit_only_their_occurrence() 
                     fs::write(root.join("feature_still_transparent.psd"), b"8BPS\0\x01").unwrap();
                 })
             },
-            "still media must match its native PNG, JPEG, or OpenEXR kind",
+            "malformed PSD: truncated section",
         ),
     ];
     for (name, alter, expected) in cases {
@@ -421,6 +516,96 @@ fn embedded_icc_profile_is_reported_in_both_directions_and_the_still_kept() {
     let feature = |record: &str| vec![(OmissionScope::Feature, record.to_owned())];
     assert_eq!(notes(imported), feature("VideoClipTrackItem:153"));
     assert_eq!(notes(exported), feature("layer 2 (\"Premiere still 2\")"));
+}
+
+#[test]
+fn missing_still_par_override_recovers_jfif_density_and_keeps_editable_images() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let source = staged_fixture(root);
+    let original_xml = read_xml(&source);
+    let baseline = root.join("baseline");
+    premiere_to_tesseract(&source, &baseline, Some(SEQUENCE), false).unwrap();
+    let original = TesseractFile::open(&project_files(&baseline)[0]).unwrap();
+    let xml = original_xml.replace(
+        "<IsStill>true</IsStill>",
+        "<IsStill>true</IsStill><IsPAROverridden>true</IsPAROverridden>",
+    );
+    assert_ne!(xml, original_xml);
+    write_prproj(&source, &xml);
+    let output = root.join("recovered");
+    let notes = premiere_to_tesseract(&source, &output, Some(SEQUENCE), false).unwrap();
+    let file = TesseractFile::open(&project_files(&output)[0]).unwrap();
+    // Square JFIF density restores the exact editable placements, clocks,
+    // Motion/Opacity and the independent video sibling, not a baked picture.
+    assert_eq!(
+        file.project_json().unwrap(),
+        original.project_json().unwrap()
+    );
+    assert_eq!(layers_of(&file.project_json().unwrap(), "Image").len(), 2);
+    let id = asset_named(&file, JPEG);
+    assert_eq!(asset_bytes(&file, &id), fs::read(root.join(JPEG)).unwrap());
+    assert!(notes.iter().any(|note| {
+        note.scope == OmissionScope::Feature
+            && note.reason.contains("missing OverriddenPAR")
+            && note.reason.contains("JFIF density")
+            && note.reason.contains("1:1")
+    }));
+}
+
+#[test]
+fn unmapped_still_source_color_keeps_editable_images_and_original_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let source = staged_fixture(root);
+    let original_xml = read_xml(&source);
+    let baseline = root.join("baseline");
+    premiere_to_tesseract(&source, &baseline, Some(SEQUENCE), false).unwrap();
+    let original = TesseractFile::open(&project_files(&baseline)[0]).unwrap();
+
+    // Public native-derived still fixture, with only its saved color metadata
+    // changed. A profile name is not authority to infer an ICC transform.
+    for (index, name) in ["sRGB IEC61966-2.1", "Unmapped RGB profile"]
+        .iter()
+        .enumerate()
+    {
+        let profile = json!({
+            "baseColorProfile": {"colorProfileName": name, "colorProfileData": "AQID"},
+            "baseProfileType": 2
+        });
+        let xml = original_xml.replace(
+            "<IsStill>true</IsStill>",
+            &format!("<IsStill>true</IsStill><OriginalColorSpace>{profile}</OriginalColorSpace>"),
+        );
+        assert_ne!(xml, original_xml);
+        write_prproj(&source, &xml);
+        let output = root.join(format!("profile-{index}"));
+        let notes = premiere_to_tesseract(&source, &output, Some(SEQUENCE), false).unwrap();
+        let file = TesseractFile::open(&project_files(&output)[0]).unwrap();
+        // Exact document equality checks placement, source windows, Motion,
+        // Opacity and the independent video sibling, not just image count.
+        assert_eq!(
+            file.project_json().unwrap(),
+            original.project_json().unwrap()
+        );
+        assert_eq!(layers_of(&file.project_json().unwrap(), "Image").len(), 2);
+        for image in [JPEG, PNG] {
+            let id = asset_named(&file, image);
+            assert_eq!(asset_bytes(&file, &id), fs::read(root.join(image)).unwrap());
+        }
+        let color_notes: Vec<_> = notes
+            .iter()
+            .filter(|note| note.reason.contains("unmapped still OriginalColorSpace"))
+            .collect();
+        assert_eq!(color_notes.len(), 2, "{notes:?}");
+        assert!(color_notes.iter().all(|note| {
+            note.scope == OmissionScope::Feature
+                && note.record.starts_with("VideoStream:")
+                && note
+                    .reason
+                    .contains("native colour interpretation is not restored")
+        }));
+    }
 }
 
 #[test]
@@ -1769,6 +1954,165 @@ fn import_images_nests(root: &Path, xml: &str) -> (PathBuf, Vec<Omission>) {
     let omissions =
         premiere_to_tesseract(&source, &imported, Some(IMAGES_NESTS_SEQUENCE), false).unwrap();
     (imported, omissions)
+}
+
+/// Two unchanged native 50%/90° hard-wipe records, with one saved-value edit.
+fn static_wipe_pair() -> String {
+    let donor = read_xml(&fixtures().join("feature_adjustment_motion_wipe_26_5_strict.prproj"));
+    let dom = roxmltree::Document::parse(&donor).unwrap();
+    let mut records = String::new();
+    for id in ["126", "178", "179", "180"] {
+        let record = dom
+            .root_element()
+            .children()
+            .find(|node| node.attribute("ObjectID") == Some(id))
+            .unwrap();
+        records.push_str(&donor[record.range()]);
+    }
+    let reindex = |base: u32| {
+        let mut result = records.clone();
+        for (old, new) in [
+            (126, base),
+            (178, base + 1),
+            (179, base + 2),
+            (180, base + 3),
+        ] {
+            result = result
+                .replace(
+                    &format!("ObjectID=\"{old}\""),
+                    &format!("ObjectID=\"{new}\""),
+                )
+                .replace(
+                    &format!("ObjectRef=\"{old}\""),
+                    &format!("ObjectRef=\"{new}\""),
+                );
+        }
+        result
+    };
+    let first = reindex(9600);
+    let second = reindex(9700)
+        .replace(",50.,0,0,0,0,0,0", ",20.,0,0,0,0,0,0")
+        .replace(",90.,0,0,0,0,0,0", ",-90.,0,0,0,0,0,0");
+    format!("{first}{second}")
+}
+
+fn nested_static_wipes(wipes: &str, interleaved: bool) -> String {
+    let mut xml = read_xml(&fixtures().join(IMAGES_NESTS));
+    let extra = if interleaved {
+        r#"<VideoFilterComponent ObjectID="9800"><Component><DisplayName>Unknown</DisplayName><Bypass>false</Bypass><Intrinsic>false</Intrinsic></Component><MatchName>Unknown</MatchName></VideoFilterComponent>"#
+    } else {
+        ""
+    };
+    xml = xml.replace("</PremiereData>", &format!("{wipes}{extra}</PremiereData>"));
+    let components = if interleaved {
+        r#"<Components><Component Index="0" ObjectRef="9600"/><Component Index="1" ObjectRef="9800"/><Component Index="2" ObjectRef="9700"/></Components>"#
+    } else {
+        r#"<Components><Component Index="0" ObjectRef="9600"/><Component Index="1" ObjectRef="9700"/></Components>"#
+    };
+    edit_record(
+        &mut xml,
+        r#"<VideoComponentChain ObjectID="137""#,
+        "</VideoComponentChain>",
+        |record| {
+            record.replace(
+                "</ComponentChain>",
+                &format!("{components}</ComponentChain>"),
+            )
+        },
+    );
+    xml
+}
+
+#[test]
+fn consecutive_static_wipes_import_the_exact_rectangular_intersection() {
+    let dir = tempfile::tempdir().unwrap();
+    let xml = nested_static_wipes(&static_wipe_pair(), false);
+    let (imported, omissions) = import_images_nests(dir.path(), &xml);
+    assert!(
+        !omissions
+            .iter()
+            .any(|note| note.scope == OmissionScope::Occurrence && note.record == "116"),
+        "{omissions:?}"
+    );
+    let file = TesseractFile::open(&project_files(&imported)[0]).unwrap();
+    let document = file.project_json().unwrap();
+    let group = inner_group(&document);
+    let mask = &group["masks"][0];
+    assert_eq!(mask["feather"], json!([0.0, 0.0]));
+    let guide = group["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["id"] == mask["layer"])
+        .expect("intersection guide retained");
+    assert_eq!(guide["rect"]["position"], json!([960.0, 0.0]));
+    assert_eq!(guide["rect"]["size"], json!([576.0, 1080.0]));
+    assert_eq!(guide["rect"]["fillEnabled"], false);
+    assert!(group["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|layer| layer["type"] == "Video"));
+    assert_eq!(
+        group["playback"]["inputRange"],
+        json!({"start": 10000, "duration": 4000})
+    );
+}
+
+#[test]
+fn static_wipe_intersections_keep_axis_and_strongest_edge() {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, records, position, size) in [
+        (
+            "vertical",
+            static_wipe_pair()
+                .replace(",90.,", ",0.,")
+                .replace(",-90.,", ",180.,"),
+            json!([0.0, 540.0]),
+            json!([1920.0, 324.0]),
+        ),
+        (
+            "same-edge",
+            static_wipe_pair().replace(",-90.,", ",90.,"),
+            json!([960.0, 0.0]),
+            json!([960.0, 1080.0]),
+        ),
+    ] {
+        let (imported, _) = import_images_nests(
+            &dir.path().join(name),
+            &nested_static_wipes(&records, false),
+        );
+        let file = TesseractFile::open(&project_files(&imported)[0]).unwrap();
+        let group = inner_group(&file.project_json().unwrap());
+        let guide = group["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["id"] == group["masks"][0]["layer"])
+            .unwrap();
+        assert_eq!(guide["rect"]["position"], position, "{name}");
+        assert_eq!(guide["rect"]["size"], size, "{name}");
+    }
+}
+
+#[test]
+fn unsupported_wipe_intersections_omit_only_the_masked_nest() {
+    let dir = tempfile::tempdir().unwrap();
+    let records = static_wipe_pair();
+    for (name, edited, interleaved) in [
+        ("feathered", records.replace(",0.,0,0,0,0,0,0", ",5.,0,0,0,0,0,0"), false),
+        ("noncardinal", records.replace(",-90.,", ",45.,"), false),
+        ("empty", records.replace(",20.,", ",50.,"), false),
+        ("animated", records.replace("<ParameterID>1</ParameterID>", "<ParameterID>1</ParameterID><Keyframes>0,20.,0,0,0,0,0,0;254016000000,30.,0,0,0,0,0,0;</Keyframes>"), false),
+        ("interleaved", records, true),
+    ] {
+        let (imported, omissions) = import_images_nests(&dir.path().join(name), &nested_static_wipes(&edited, interleaved));
+        assert!(omissions.iter().any(|note| note.scope == OmissionScope::Occurrence && note.record == "116"), "{name}: {omissions:?}");
+        let file = TesseractFile::open(&project_files(&imported)[0]).unwrap();
+        let document = file.project_json().unwrap();
+        assert!(!layers_of(&document, "Group").iter().any(|layer| layer["name"] == "Inner"), "{name}");
+        assert!(!layers_of(&document, "Video").is_empty(), "{name}: independent picture retained");
+    }
 }
 
 /// N's group, which is visible.

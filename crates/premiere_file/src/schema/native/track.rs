@@ -384,9 +384,8 @@ pub(crate) struct ClipTrackItem {
     /// has the field.
     #[serde(rename = "IsMuted", skip_serializing_if = "Option::is_none")]
     pub(crate) is_muted: Option<String>,
-    /// Native `OriginalSubClipTimeOffset`, written last by Premiere 9.x/10.x
-    /// saves. The reader accepts only an absent or zero value; the writer
-    /// never sets it.
+    /// Native historical subclip offset. Nonzero values require a source-specific
+    /// reader fallback; the writer never sets it.
     #[serde(
         rename = "OriginalSubClipTimeOffset",
         skip_serializing_if = "Option::is_none"

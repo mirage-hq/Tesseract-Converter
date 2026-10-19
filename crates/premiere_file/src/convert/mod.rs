@@ -33,6 +33,7 @@ mod text_shadow;
 mod time_remap;
 mod timed_images;
 mod timing;
+mod ultra_key;
 mod video_data;
 mod video_fitting;
 #[cfg(test)]
@@ -69,4 +70,4 @@ pub(crate) use tesseract_to_premiere::export_document;
 pub(crate) use tesseract_to_premiere::lower_document;
 #[cfg(test)]
 pub(crate) use tesseract_to_premiere::tesseract_to_premiere;
-pub(crate) use tesseract_to_premiere::{lower_document_with_progress, no_native_content};
+pub(crate) use tesseract_to_premiere::{lower_document_with_hdr, no_native_content};

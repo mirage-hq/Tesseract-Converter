@@ -24,6 +24,11 @@ pub use primary_grade::{
 
 /// Phase-0 display-referred working/output encoding.
 pub const SDR_REC709_DISPLAY_ENCODING_ID: &str = "jerboa:sdr-rec709-display:v1";
+/// ACEScct (S-2016-001, AP1 primaries): the encoding of an ACES Look
+/// Modification Transform. A Look Transform declaring it on both sides maps
+/// ACES values to ACES values and applies only inside an ACES scene color
+/// domain (ENG-1948).
+pub const ACESCCT_ENCODING_ID: &str = "aces:acescct:v1";
 /// Stable semantic identifier for a source-owned Input Transform.
 pub const INPUT_TRANSFORM_SEMANTIC_ID: &str = "color.inputTransform.v1";
 /// Stable semantic identifier for an ordered Look Transform.
@@ -187,10 +192,27 @@ impl ColorTransform {
     }
 }
 
+impl InputColorTransform {
+    /// Build a strict v1 3D-LUT Input Transform representation.
+    #[must_use]
+    pub fn lut3d(
+        asset_id: AssetId,
+        input_encoding: ColorEncodingId,
+        output_encoding: ColorEncodingId,
+    ) -> Self {
+        Self::Lut3d {
+            asset_id,
+            input_encoding,
+            output_encoding,
+            interpolation: ColorLutInterpolation::Trilinear,
+        }
+    }
+}
+
 impl InputTransform {
     /// Build a semantic-version-1 Input Transform.
     #[must_use]
-    pub const fn v1(transform: ColorTransform) -> Self {
+    pub const fn v1(transform: InputColorTransform) -> Self {
         Self {
             semantic_version: ColorTransformSemanticVersion::V1,
             transform,

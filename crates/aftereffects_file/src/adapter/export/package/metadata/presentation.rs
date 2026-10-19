@@ -34,7 +34,7 @@ pub(super) fn origin(sample_atoms: &[Atom<'_>], timing: Timing) -> Result<u64, M
     let mut intervals = Vec::with_capacity((payload.len() - 8) / 8);
     let mut sample_count = 0_u64;
     let mut decode_time = 0_u64;
-    for entry in payload[8..].chunks_exact(8) {
+    for entry in payload[8..].as_chunks::<8>().0.iter() {
         let samples = read_u32(entry, 0, "QuickTime ctts sample count is truncated")?;
         let offset = read_u32(entry, 4, "QuickTime ctts offset is truncated")?;
         if samples == 0 {

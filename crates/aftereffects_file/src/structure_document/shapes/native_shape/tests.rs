@@ -115,6 +115,7 @@ fn ellipse_with_fill_and_stroke_keeps_independent_static_paint_opacity() {
     let mut next_id = 2;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,

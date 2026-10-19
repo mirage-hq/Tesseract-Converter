@@ -251,6 +251,7 @@ fn native_black_video_imports_editably_and_exports_current_content_as_color_matt
                 &archive,
                 &package,
                 &PremiereExportOptions {
+                    hdr: None,
                     frame_rate: Some(FrameRate::Fps30000Over1001),
                 },
                 ConversionMode::Write,

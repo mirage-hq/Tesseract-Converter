@@ -896,14 +896,10 @@ fn tolerance_cap(target: &PropertyTarget) -> f64 {
         return f64::INFINITY;
     };
     match property.property_type() {
-        PropType::PositionX
-        | PropType::PositionY
-        | PropType::PositionZ
-        | PropType::AnchorPointX
-        | PropType::AnchorPointY => 0.5,
+        // Independent fit errors compound through source bounds and ancestor transforms.
+        PropType::PositionX | PropType::PositionY | PropType::ScaleX | PropType::ScaleY => 0.0,
+        PropType::PositionZ | PropType::AnchorPointX | PropType::AnchorPointY => 0.5,
         PropType::Opacity
-        | PropType::ScaleX
-        | PropType::ScaleY
         | PropType::Rotation
         | PropType::RotationX
         | PropType::RotationY

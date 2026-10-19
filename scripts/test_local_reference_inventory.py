@@ -3,6 +3,7 @@
 No network, Asset ID, or separate checksum manifest is needed to run these tests.
 """
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -29,7 +30,7 @@ def test_adobe_import_export_references_are_local():
     references = [composition["reference"] for source in manifest["sources"]
                   for composition in source["compositions"]
                   if composition.get("reference", {}).get("path")]
-    assert len(references) == 678
+    assert len(references) == 683
     for record in references:
         assert_committed_reference(record)
 
@@ -47,6 +48,19 @@ def test_audio_adjustment_and_alpha_references_are_local():
     assert len(path_keys["references"]) == 8
     for record in path_keys["references"].values():
         assert_committed_reference(record)
+
+
+def test_public_canvas_alpha_references_keep_hashes_without_private_xmp():
+    evidence = load("docs/after-effects-evidence/canvas-transparency-results.json")
+    for record in evidence["native_renders"]:
+        path = ROOT / record["rgba_movie_path"]
+        assert path.resolve().is_relative_to((FIXTURES / "canvas/rgba").resolve())
+        assert path.is_file() and not path.is_symlink()
+        data = path.read_bytes()
+        assert hashlib.sha256(data).hexdigest() == record["rgba_movie_sha256"]
+        assert record["original_rgba_movie_sha256"] != record["rgba_movie_sha256"]
+        assert b"XMP_" not in data
+        assert b"/Users/" not in data and b"/home/" not in data
 
 
 def test_strict_premiere_references_and_font_are_local():

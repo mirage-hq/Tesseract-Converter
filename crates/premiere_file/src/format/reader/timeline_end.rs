@@ -16,11 +16,11 @@
 
 use crate::format::{graph::Element, Graph, Record};
 
-/// The last track item end in the video track `group`, snapped to the sequence
-/// frame grid, or 0 when no item range can be read.
+/// The last track item end in a video or audio track `group`, snapped to the
+/// supplied `frame` grid, or 0 when no item range can be read. Audio callers use
+/// one tick to retain exact audio-clock endpoints instead of snapping to video.
 ///
-/// Converted audio extends this end exactly in `PrSequence::end_ticks`; omitted
-/// audio does not extend it.
+/// Converted audio also extends this end exactly in `PrSequence::end_ticks`.
 pub(super) fn read_sequence_end(graph: &Graph<'_>, group: Record<'_>, frame: i64) -> i64 {
     group
         .track_references()
@@ -66,6 +66,20 @@ fn ticks(element: Element<'_>) -> Option<i64> {
 }
 
 /// The nearest multiple of `frame` to a positive tick count, ties forward.
-fn nearest_frame_boundary(ticks: i64, frame: i64) -> Option<i64> {
+/// Nonpositive grids and overflowing boundaries have no valid selection.
+pub(super) fn nearest_frame_boundary(ticks: i64, frame: i64) -> Option<i64> {
+    if frame <= 0 {
+        return None;
+    }
     (ticks.checked_add(frame / 2)? / frame).checked_mul(frame)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn nonpositive_frame_grid_cannot_select_a_boundary() {
+        for frame in [0, -1, i64::MIN] {
+            assert_eq!(super::nearest_frame_boundary(100, frame), None);
+        }
+    }
 }

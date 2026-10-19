@@ -30,7 +30,8 @@ fn fitted_value_at(curve: &FittedCurve, time: f64, segment: &mut usize) -> f64 {
     let Some(next) = curve.keys.get(*segment + 1) else {
         return first.value;
     };
-    if time >= next.offset_ms as f64 && *segment + 2 == curve.keys.len() {
+    // Hold interpolation excludes the destination key, whose authored value wins.
+    if time >= next.offset_ms as f64 {
         return next.value;
     }
     let progress = (time - first.offset_ms as f64) / (next.offset_ms - first.offset_ms) as f64;
@@ -307,7 +308,21 @@ pub(in crate::structure_document) fn evaluated_numeric_entries(
                 .filter_map(|entry| entry.animator.keyframe_track())
                 .map(|track| track.keyframes().len())
                 .sum();
-            let provenance = if samples.frame_sampled {
+            let compound_kind = targets.first().and_then(|target| match target.value {
+                NumericTargetValue::Color { .. } => Some("Color"),
+                NumericTargetValue::Vector2 { .. } => Some("Vector2"),
+                _ => None,
+            });
+            let provenance = if let Some(kind) = compound_kind {
+                let origin = if samples.frame_sampled {
+                    "converter"
+                } else {
+                    "AE"
+                };
+                format!(
+                    "{name}: {origin}-evaluated expression lowered into {keys} editable {kind} keys; Linear/Hold fit within {FIT_TOLERANCE} FX units at rounded integer-millisecond observations; fractional-time and Adobe oracle equality unverified; live expression linkage is lost"
+                )
+            } else if samples.frame_sampled {
                 format!(
                     "{name}: converter-evaluated expression lowered into {keys} editable scalar keys; actual-time constraints verified at every source-frame timestamp (1e-8 native-unit numerical equality criterion); Adobe oracle equality pending; unsampled behavior and live expression linkage are not preserved"
                 )
@@ -340,11 +355,53 @@ fn convert_numeric(
     if targets.is_empty() {
         return Err("AE-evaluated expression has no supported FX scalar target".into());
     }
+    // Rectangle Size and its center anchor share samples but use different FX value kinds.
+    if targets.iter().any(|target| {
+        std::mem::discriminant(&target.value) != std::mem::discriminant(&targets[0].value)
+    }) {
+        let checkpoint = budget.checkpoint();
+        let mut entries = Vec::with_capacity(targets.len());
+        for (index, target) in targets.iter().enumerate() {
+            let offset = offsets.get(index).copied().unwrap_or(0.0);
+            match convert_numeric(samples, std::slice::from_ref(target), &[offset], budget) {
+                Ok(converted) => entries.extend(converted),
+                Err(error) => {
+                    budget.rollback(checkpoint);
+                    return Err(error);
+                }
+            }
+        }
+        return Ok(entries);
+    }
     if targets
         .iter()
         .all(|target| matches!(target.value, NumericTargetValue::Vector2 { .. }))
     {
-        return convert_vector2(samples, targets, budget);
+        return convert_compound(
+            samples,
+            targets,
+            budget,
+            |target| match target.value {
+                NumericTargetValue::Vector2 { components, scale } => Ok((components, scale)),
+                _ => Err("AE-evaluated expression requires an existing Vector2 FX target".into()),
+            },
+            PropertyValue::Vector2,
+        );
+    }
+    if targets
+        .iter()
+        .all(|target| matches!(target.value, NumericTargetValue::Color { .. }))
+    {
+        return convert_compound(
+            samples,
+            targets,
+            budget,
+            |target| match target.value {
+                NumericTargetValue::Color { components, scale } => Ok((components, scale)),
+                _ => Err("AE-evaluated expression requires an existing Color FX target".into()),
+            },
+            PropertyValue::Color,
+        );
     }
     let (start_ms, sample_count) = fitting_grid(samples)?;
     let curves = targets
@@ -424,14 +481,16 @@ fn convert_numeric(
     Ok(entries)
 }
 
-/// One Vector2 FX track shares key times and easing across both components, so
-/// it cannot reuse the per-scalar cubic fitter. The shared typed-value reducer
-/// keeps Linear keys at source observations (rounded to the integer FX
+/// Compound FX tracks share key times and easing across their components, so
+/// they cannot reuse the per-scalar cubic fitter. The shared typed-value reducer
+/// keeps Linear/Hold keys at source observations (rounded to the integer FX
 /// millisecond clock) within the scalar fit tolerance.
-fn convert_vector2(
+fn convert_compound<const N: usize>(
     samples: &EvaluatedProperty,
     targets: &[NumericAnimationTarget],
     budget: &mut AnimationBudget,
+    mapping: impl Fn(&NumericAnimationTarget) -> Result<([usize; N], [f64; N]), String>,
+    property_value: fn([f64; N]) -> PropertyValue,
 ) -> Result<Vec<AnimationGraphEntry>, String> {
     use fx_keyframe_bake::value_curve::fit_sampled_value_curve;
     let times: Vec<f64> = if samples.sample_times_seconds.is_empty() {
@@ -460,10 +519,8 @@ fn convert_vector2(
     let mut reservations = Vec::with_capacity(targets.len());
     let mut tracks = Vec::with_capacity(targets.len());
     for target in targets {
-        let NumericTargetValue::Vector2 { components, scale } = target.value else {
-            return Err("AE-evaluated expression requires an existing Vector2 FX target".into());
-        };
-        let value_at = |value: &Vec<f64>| -> Result<[f64; 2], String> {
+        let (components, scale) = mapping(target)?;
+        let value_at = |value: &Vec<f64>| -> Result<[f64; N], String> {
             let pick = |axis: usize| {
                 value
                     .get(components[axis])
@@ -473,9 +530,13 @@ fn convert_vector2(
                         "AE-evaluated expression dimensions do not match the FX target".to_owned()
                     })
             };
-            Ok([pick(0)?, pick(1)?])
+            let mut result = [0.0; N];
+            for (axis, component) in result.iter_mut().enumerate() {
+                *component = pick(axis)?;
+            }
+            Ok(result)
         };
-        let by_offset: std::collections::HashMap<u64, [f64; 2]> = observations
+        let by_offset: std::collections::HashMap<u64, [f64; N]> = observations
             .iter()
             .map(|(ms, value)| value_at(value).map(|v| (*ms, v)))
             .collect::<Result<_, _>>()?;
@@ -484,15 +545,15 @@ fn convert_vector2(
             FIT_TOLERANCE,
             usize::from(u16::MAX),
             |ms| by_offset.get(&ms).copied().ok_or(()),
-            |a: &[f64; 2], b: &[f64; 2], actual: &[f64; 2], t: f64| {
+            |a: &[f64; N], b: &[f64; N], actual: &[f64; N], t: f64| {
                 Some(
-                    (0..2)
+                    (0..N)
                         .map(|axis| (a[axis] + (b[axis] - a[axis]) * t - actual[axis]).abs())
                         .fold(0.0, f64::max),
                 )
             },
         )
-        .map_err(|error| format!("evaluated Vector2 expression fit failed: {error}"))?;
+        .map_err(|error| format!("evaluated compound expression fit failed: {error}"))?;
         let keys = keys
             .iter()
             .enumerate()
@@ -500,7 +561,7 @@ fn convert_vector2(
                 PropertyKeyframe::new(
                     KeyframeId::new(format!("aep-evaluated-{}-{index}", target.target)),
                     TimeOffset::from_millis(i64::try_from(key.offset_ms).unwrap_or(i64::MAX)),
-                    PropertyValue::Vector2(key.value),
+                    property_value(key.value),
                     if index == 0 || key.linear {
                         PropertyKeyframeEasing::Linear
                     } else {

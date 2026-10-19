@@ -51,18 +51,21 @@ fn cue_shadow_with(field: &str, value: f32) -> PrTextShadow {
 
 fn shadowed_graphic(shadow: PrTextShadow) -> PrGraphic {
     PrGraphic {
+        hdr: None,
         id: Some(RECORD.into()),
         start_ticks: 0,
         end_ticks: TICKS,
         in_ticks: crate::format::FrameRate::Fps30.generator_in_ticks(),
         vector_motion: None,
         clip_motion: crate::schema::PrStaticTransform::default(),
+        clip_motion_animations: Vec::new(),
         opacity: 100.0,
         blend_mode: crate::schema::PrBlendMode::Normal,
         animations: Vec::new(),
         opacity_mask: None,
         effect_loss: None,
         objects: vec![PrGraphicObject::Text(PrText {
+            mask: None,
             horizontal_scale: None,
             mask_source: None,
             name: "Caption".into(),
@@ -71,6 +74,7 @@ fn shadowed_graphic(shadow: PrTextShadow) -> PrGraphic {
                 font: "MinionPro-Regular".into(),
                 size: 48.0,
                 fill: Some(PrRgb([255, 255, 255])),
+                fill_spans: Vec::new(),
                 stroke: None,
                 shadow: Some(shadow),
                 all_caps: false,

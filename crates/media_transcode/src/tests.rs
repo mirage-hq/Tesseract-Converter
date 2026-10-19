@@ -285,6 +285,34 @@ fn edit_list_free_clock_rejects_reordering_offsets_missing_packets_and_subtick_d
     assert!(!exact_frame_time(None, 0, &time_base, &rate));
 }
 
+#[test]
+fn ae_subframe_origin_is_bounded_to_video_only_complete_frame_windows() {
+    let mut source = video_info("mp4", "h264");
+    source.video.as_mut().unwrap().start_seconds = 0.02;
+    assert_eq!(ae_subframe_origin(&source), Some(0.02));
+    for start in [0.0, -0.01, 1.0 / 30.0, 1.0, f64::NAN, f64::INFINITY] {
+        source.video.as_mut().unwrap().start_seconds = start;
+        assert!(ae_subframe_origin(&source).is_none(), "{start}");
+    }
+    source.video.as_mut().unwrap().start_seconds = 0.02;
+    source.video.as_mut().unwrap().duration_seconds = 1.1;
+    assert!(ae_subframe_origin(&source).is_none());
+    source.video.as_mut().unwrap().duration_seconds = 1.0;
+    source.timecode = Some("00:00:00:00".into());
+    assert!(ae_subframe_origin(&source).is_none());
+    source.timecode = None;
+    source.audio = Some(model::AudioInfo {
+        codec: "pcm_s16le".into(),
+        sample_format: "s16".into(),
+        sample_rate: 48_000,
+        channels: 2,
+        channel_layout: "stereo".into(),
+        start_seconds: 0.0,
+        duration_seconds: 1.0,
+    });
+    assert!(ae_subframe_origin(&source).is_none());
+}
+
 #[cfg(feature = "ffmpeg-library")]
 #[test]
 fn ae_destination_remux_preserves_the_checked_fractional_source_clock() {
@@ -585,6 +613,86 @@ fn canonical_container_requires_a_recognized_major_brand() {
     assert_eq!(model::detected_container(raw, Some("unknown")), raw);
     assert_eq!(model::detected_container(raw, None), raw);
     assert_eq!(model::detected_container("wav", Some("isom")), "wav");
+}
+
+#[test]
+fn hdr_preparation_is_copy_only_before_backend_capability_queries() {
+    for (primaries, transfer) in [
+        ("bt2020", "smpte2084"),
+        ("bt2020", "arib-std-b67"),
+        ("smpte431", "bt709"),
+        ("smpte432", "iec61966-2-1"),
+    ] {
+        let mut source = video_info("mov", "hevc");
+        source.video.as_mut().unwrap().color = model::ColorInfo {
+            primaries: primaries.into(),
+            transfer: transfer.into(),
+            space: "bt2020nc".into(),
+            range: "tv".into(),
+        };
+        validate_source(&source, false, Destination::General).unwrap();
+        let cancelled = AtomicBool::new(false);
+        let copy = plan(
+            &Backend::Library,
+            Path::new("copy.mov"),
+            &source,
+            &cancelled,
+        )
+        .unwrap();
+        assert_eq!(copy.operation, Operation::Copy);
+        assert!(matches!(
+            plan(&Backend::Library, Path::new("remux.mp4"), &source, &cancelled),
+            Err(TranscodeError::Policy(message)) if message.contains("byte copy")
+        ));
+        source.video.as_mut().unwrap().codec = "qtrle".into();
+        assert!(matches!(
+            plan(&Backend::Library, Path::new("encode.mov"), &source, &cancelled),
+            Err(TranscodeError::Policy(message)) if message.contains("byte copy")
+        ));
+    }
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn hdr_preparation_copies_pinned_hlg_source_bytes_and_metadata() {
+    // Existing publishable source-byte fixture, not independent HDR render proof.
+    let bytes = include_bytes!("../../premiere_file/tests/fixtures/feature_hdr_hlg_hvc1.mov");
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("source.mov");
+    let output = directory.path().join("prepared.mov");
+    fs::write(&input, bytes).unwrap();
+    let cancelled = AtomicBool::new(false);
+    let result = run(
+        TranscodeRequest {
+            input: &input,
+            output: &output,
+            backend: Backend::Library,
+            cancelled: &cancelled,
+        },
+        &mut |_| {},
+    )
+    .unwrap();
+    assert_eq!(result.operation, Operation::Copy);
+    assert_eq!(result.input_sha256, result.output_sha256);
+    assert_eq!(fs::read(&output).unwrap().as_slice(), bytes.as_slice());
+    let video = result.media.video.as_ref().unwrap();
+    assert_eq!(video.pixel_format, "yuv420p10le");
+    assert_eq!(video.color.primaries, "bt2020");
+    assert_eq!(video.color.transfer, "arib-std-b67");
+    assert_eq!(result.source.video.as_ref().unwrap().color, video.color);
+    assert!(result
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("not reconstructed")));
+    let ae_output = directory.path().join("ae.mov");
+    assert!(matches!(
+        run_for_after_effects(
+            TranscodeRequest { input: &input, output: &ae_output, backend: Backend::Library, cancelled: &cancelled },
+            &mut |_| {},
+        ),
+        Err(TranscodeError::Policy(message)) if message.contains("byte copy")
+    ));
+    assert!(!ae_output.exists());
 }
 
 #[test]
@@ -1224,7 +1332,7 @@ fn quarter_turn_display_matrix_policy_and_output_preservation() {
     video.height = 1080;
     video.display_matrix = [0, 65_536, 0, -65_536, 0, 0, 70_778_880, 0, 1 << 30];
     video.rotation_degrees = -90.0;
-    validate_source(&source, false).unwrap();
+    validate_source(&source, false, Destination::General).unwrap();
     validate_output(Profile::RemuxVideo, &source, &source).unwrap();
     let mut output = source.clone();
     output.video.as_mut().unwrap().display_matrix[6] = 0;
@@ -1233,7 +1341,7 @@ fn quarter_turn_display_matrix_policy_and_output_preservation() {
     output.video.as_mut().unwrap().rotation_degrees = 0.0;
     assert!(validate_output(Profile::RemuxVideo, &source, &output).is_err());
     source.video.as_mut().unwrap().rotation_degrees = f64::NAN;
-    assert!(validate_source(&source, false).is_err());
+    assert!(validate_source(&source, false, Destination::General).is_err());
 }
 
 #[test]
@@ -1314,7 +1422,7 @@ fn after_effects_preparation_keeps_unrotated_contract() {
     let video = source.video.as_mut().unwrap();
     video.display_matrix = [0, 65_536, 0, -65_536, 0, 0, 0, 0, 1 << 30];
     video.rotation_degrees = -90.0;
-    validate_source(&source, false).unwrap();
+    validate_source(&source, false, Destination::General).unwrap();
     let input = Path::new("/not-opened.mp4");
     let request = TranscodeRequest {
         input,

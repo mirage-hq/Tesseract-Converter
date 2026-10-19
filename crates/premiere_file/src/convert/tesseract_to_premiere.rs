@@ -288,6 +288,50 @@ pub(super) fn export_position_keys(
     Ok(keys)
 }
 
+/// Lift a single keyed Position axis into Premiere's point control without
+/// animating the other axis. Reuse paired-key validation and native easing;
+/// missing spatial partners are not inferred.
+fn export_single_axis_position_keys(
+    track: &PropertyKeyframeTrack,
+    axis: usize,
+    static_position: [f64; 2],
+    source_in: i64,
+    dimensions: [u32; 2],
+) -> Result<Vec<PrPointKeyframe>> {
+    use fx_schema::animator::PropertyKeyframe;
+
+    if track.has_spatial_tangents() {
+        return Err(unsupported(
+            "single-axis Position spatial tangents require a paired axis",
+        ));
+    }
+    let other = 1 - axis;
+    let constant = PropertyKeyframeTrack::new(
+        track
+            .keyframes()
+            .iter()
+            .map(|key| {
+                PropertyKeyframe::new(
+                    key.id().clone(),
+                    key.layer_time(),
+                    PropertyValue::Float(static_position[other] * f64::from(dimensions[other])),
+                    key.easing(),
+                )
+            })
+            .collect(),
+    )
+    .map_err(|error| {
+        unsupported(format!(
+            "Position static partner cannot be exported: {error}"
+        ))
+    })?;
+    if axis == 0 {
+        export_position_keys(track, &constant, source_in, dimensions)
+    } else {
+        export_position_keys(&constant, track, source_in, dimensions)
+    }
+}
+
 /// The native keys of `track`, counted from `source_in`. A first key after
 /// the source In exports as it is: Premiere holds it before its time, as FX
 /// does, so the static value written as `StartKeyframe` never shows.
@@ -2544,6 +2588,7 @@ impl WrittenAnimation {
                 }
                 PrPropertyAnimation::UniformScale(_) => &[PropType::ScaleX, PropType::ScaleY],
                 PrPropertyAnimation::ScaleWidth(_) => &[PropType::ScaleX],
+                PrPropertyAnimation::ScaleHeight(_) => &[PropType::ScaleY],
             };
             for property in properties {
                 self.record(layer, *property);
@@ -2697,6 +2742,7 @@ pub(crate) fn lower_document(
     )
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn lower_document_with_progress(
     document: &EditableFxCompositionDocument,
@@ -2708,6 +2754,50 @@ pub(crate) fn lower_document_with_progress(
     omissions: &mut dyn OmissionSink,
     progress: fx_conv::Progress<'_>,
 ) -> Result<LoweredDocument> {
+    lower_document_with_hdr(
+        document,
+        natural_frames,
+        media_facts,
+        audio_facts,
+        fonts,
+        frame_rate,
+        omissions,
+        progress,
+        None,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "explicit export target is converter-local, not persisted FX policy"
+)]
+pub(crate) fn lower_document_with_hdr(
+    document: &EditableFxCompositionDocument,
+    natural_frames: &BTreeSet<LayerId>,
+    media_facts: &BTreeMap<String, MediaFacts>,
+    audio_facts: &BTreeMap<String, crate::audio_media::SourceSound>,
+    fonts: &BTreeMap<String, FontAssetProperties>,
+    frame_rate: FrameRate,
+    omissions: &mut dyn OmissionSink,
+    progress: fx_conv::Progress<'_>,
+    hdr: Option<fx_conv::HdrTransfer>,
+) -> Result<LoweredDocument> {
+    let hdr_bridge = hdr
+        .map(|transfer| fx_conv::HdrColorBridge::new(transfer, document.hdr_graphics_white_nits()))
+        .transpose()
+        .map_err(|error| unsupported(error.to_string()))?;
+    let hdr_settings = hdr.map(|transfer| crate::schema::SequenceHdr {
+        transfer,
+        graphics_white: document.hdr_graphics_white_nits().unwrap_or(609.0),
+    });
+    if hdr.is_some() {
+        approximate(omissions, "document HDR", "Native PQ/HLG target explicitly selected; graphics-white intent retained. Color Matte rectangles normalize to editable Graphic Shapes because no HDR matte source interpretation is proved. Graphic/text RGB storage remains native 8-bit and cannot prove a >=1024-level ramp. Nonlinear interpolation, blends/effects and source working-space interpretation are unproved; no native precision claim.");
+    }
+    if !document.color_management().is_legacy() {
+        return Err(unsupported(
+            "acescct color management cannot be exported to Premiere yet",
+        ));
+    }
     let composition = document.composition();
     for key in document.unknown_field_names() {
         omit(
@@ -2904,7 +2994,8 @@ pub(crate) fn lower_document_with_progress(
     let mut media: BTreeMap<MediaId, PrMedia> = BTreeMap::new();
     let mut audio = Vec::new();
     let mut written = WrittenAnimation::default();
-    let mut packer = PicturePacker::new(&sequence_name, [width, height], frame_rate, 0);
+    let mut packer =
+        PicturePacker::new(&sequence_name, [width, height], frame_rate, 0).with_hdr(hdr_settings);
     let root_container = packer.root();
     let mut motion_blur_written = false;
     let mut unmapped_group_motion_blur = Vec::new();
@@ -2914,6 +3005,8 @@ pub(crate) fn lower_document_with_progress(
         layers,
         None,
         &mut LayerExport {
+            hdr: hdr_bridge,
+            hdr_settings,
             nest_scale: Some(1.0),
             dynamics: composition.dynamics(),
             property_tracks: &mut property_tracks,
@@ -2987,6 +3080,7 @@ pub(crate) fn lower_document_with_progress(
             frame_ticks_from_time(document_end, frame_rate, "document.duration")?
         };
     let mut sequence = PrSequence {
+        hdr: hdr_settings,
         native_frame_ticks: None,
         id: None,
         name: sequence_name,
@@ -2997,6 +3091,7 @@ pub(crate) fn lower_document_with_progress(
         width,
         height,
         timeline_end_ticks: document_end_ticks,
+        adjustment_only_template: false,
     };
     // A trailing tail exports as the sequence work area and stays black in the
     // sequence. Occurrences are never extended or trimmed to the document end;
@@ -4199,6 +4294,24 @@ pub(super) fn export_video_clip(
         }
     }
     let motion_animated = animates_motion(&animations);
+    // Native Motion resizes bicubically; linked AE retains FX's bilinear sampling.
+    if context.depth == 0
+        && matches!(clip, ClipLayers::Video(_))
+        && t.scale != [100.0; 2]
+        && t.rotation == 0.0
+        && mask.is_none()
+        && video.effects.is_empty()
+        && source.frame_rect.is_none_or(|rect| {
+            rect.get() == fx_schema::RectBounds::from_size(facts.width.into(), facts.height.into())
+        })
+        && facts.pixel_aspect.is_square()
+        && matches!(source.fit, MediaFit::Contain | MediaFit::None)
+        && playback_rate == 1.0
+        && !motion_animated
+    {
+        omit_field(omissions, video.id, ExportField::Placement, record,
+            "bilinear video resampling was not exported by native Motion, which resizes bicubically; linked AE picture preserves the editable bilinear scale");
+    }
     // A wipe that cannot convert stops the export: no clip exports without its wipe.
     let linear_wipe = if let Some(CanonicalMask::LinearWipe(wipe)) = &mask {
         let reason = retimed_keys.or_else(|| {
@@ -5002,8 +5115,26 @@ pub(super) fn export_motion_keys(
     }
     let position_x = tracks.remove(&PropType::PositionX);
     let position_y = tracks.remove(&PropType::PositionY);
-    match (position_x, position_y) {
-        (Some(x), Some(y)) => match export_position_keys(x, y, source_in, [width, height]) {
+    let position_keys = match (position_x, position_y) {
+        (Some(x), Some(y)) => Some(export_position_keys(x, y, source_in, [width, height])),
+        (Some(track), None) => Some(export_single_axis_position_keys(
+            track,
+            0,
+            native_transform.position,
+            source_in,
+            [width, height],
+        )),
+        (None, Some(track)) => Some(export_single_axis_position_keys(
+            track,
+            1,
+            native_transform.position,
+            source_in,
+            [width, height],
+        )),
+        (None, None) => None,
+    };
+    if let Some(position_keys) = position_keys {
+        match position_keys {
             Ok(keys) => {
                 if let Some(first) = keys.first() {
                     native_transform.position = first.value;
@@ -5014,12 +5145,7 @@ pub(super) fn export_motion_keys(
                 omissions,
                 format!("Position animation was not exported: {error}"),
             ),
-        },
-        (None, None) => {}
-        _ => reject(
-            omissions,
-            "unpaired Position keyframes were not exported".to_owned(),
-        ),
+        }
     }
     let anchor_x = tracks.remove(&PropType::AnchorPointX);
     let anchor_y = tracks.remove(&PropType::AnchorPointY);
@@ -5765,6 +5891,18 @@ pub(super) fn text_object(
     omissions: &mut dyn OmissionSink,
     record: &str,
 ) -> Result<PrText> {
+    text_object_with_hdr(layer, group, font, dynamics, omissions, record, None)
+}
+
+pub(super) fn text_object_with_hdr(
+    layer: &TextLayer,
+    group: Option<LayerId>,
+    font: String,
+    dynamics: &AnimationGraph,
+    omissions: &mut dyn OmissionSink,
+    record: &str,
+    hdr: Option<fx_conv::HdrColorBridge>,
+) -> Result<PrText> {
     let transform = &layer.transform;
     let shared = unexported_layer_fields(ClipLayer::Text(layer), group, false);
     for (changed, detail) in shared.into_iter().chain([
@@ -5797,8 +5935,16 @@ pub(super) fn text_object(
         ));
     }
     let source_text = super::graphic::stroke_width_source(layer, dynamics)?;
-    let (document, box_origin) = text_document(&source_text, font)?;
+    if hdr.is_none()
+        && std::iter::once(&source_text.fill_color)
+            .chain(source_text.stroke_color.iter())
+            .any(|color| color[..3].iter().any(|channel| *channel > 1.0))
+    {
+        approximate(omissions, record, "Extended-sRGB text RGB above 1 was clamped to native 0..=1; HDR brightness and channel ratios are not retained. Existing opaque-text restrictions are unchanged.");
+    }
+    let (document, box_origin) = text_document_with_hdr(&source_text, font, hdr)?;
     Ok(PrText {
+        mask: None,
         horizontal_scale: (transform.scale[0] != transform.scale[1]).then_some(transform.scale[0]),
         mask_source: None,
         name: layer.name.clone(),
@@ -5823,9 +5969,10 @@ pub(super) fn text_object(
 /// Map one FX text document, with the PostScript `font` of its family and
 /// style, to a native Source Text document and the origin of its box, or
 /// the reason it cannot become single-style graphic text.
-pub(super) fn text_document(
+pub(super) fn text_document_with_hdr(
     doc: &TextDocument,
     font: String,
+    hdr: Option<fx_conv::HdrColorBridge>,
 ) -> Result<(PrTextDocument, [f64; 2])> {
     if doc.font_variations.is_some()
         || doc.baseline_shift != 0.0
@@ -5840,12 +5987,12 @@ pub(super) fn text_document(
     let native_size = native_float(doc.font_size.value(), "font size")?;
     let fill = doc
         .apply_fill
-        .then(|| rgb(doc.fill_color, "text fill"))
+        .then(|| rgb_with_hdr(doc.fill_color, "text fill", hdr))
         .transpose()?;
     let stroke = match (doc.apply_stroke, doc.stroke_color) {
         // The FX renderer draws no stroke without a color.
         (true, Some(color)) => Some(PrTextStroke {
-            color: rgb(color, "text stroke")?,
+            color: rgb_with_hdr(color, "text stroke", hdr)?,
             width: native_float(
                 doc.stroke_width.value() / STROKE_WIDTH_RATIO,
                 "stroke width",
@@ -5906,6 +6053,7 @@ pub(super) fn text_document(
             font,
             size: native_size,
             fill,
+            fill_spans: Vec::new(),
             stroke,
             shadow: None,
             all_caps: doc.all_caps,
@@ -5934,12 +6082,17 @@ pub(super) fn graphic_of(
 ) -> Result<PrGraphic> {
     let active = active_range_ticks(range, context)?;
     Ok(PrGraphic {
+        hdr: context
+            .hdr_settings
+            .filter(|_| context.hdr.is_some())
+            .map(|settings| settings.transfer),
         id: None,
         start_ticks: active.start,
         end_ticks: active.end,
         in_ticks: context.frame_rate.generator_in_ticks(),
         vector_motion: None,
         clip_motion: PrStaticTransform::default(),
+        clip_motion_animations: Vec::new(),
         opacity: 100.0,
         blend_mode: PrBlendMode::Normal,
         animations: Vec::new(),
@@ -5952,14 +6105,31 @@ pub(super) fn graphic_of(
 
 /// Premiere text and shape paints are opaque 8-bit RGB; channels round to
 /// the nearest step.
+#[cfg(test)]
 pub(super) fn rgb(color: [f64; 4], paint: &str) -> Result<PrRgb> {
-    if color[3] != 1.0 || !color.iter().all(|channel| (0.0..=1.0).contains(channel)) {
+    rgb_with_hdr(color, paint, None)
+}
+
+pub(super) fn rgb_with_hdr(
+    color: [f64; 4],
+    paint: &str,
+    hdr: Option<fx_conv::HdrColorBridge>,
+) -> Result<PrRgb> {
+    if color[3] != 1.0 || !fx_schema::has_valid_extended_color(&color) {
         return Err(unsupported(format!(
-            "{paint} must be an opaque color with channels in 0..=1"
+            "{paint} must be opaque with finite RGB in 0..=64"
         )));
     }
+    let color = match hdr {
+        Some(bridge) => bridge.to_native(color).map_err(|error| {
+            unsupported(format!(
+                "{paint}: HDR point colour cannot be represented: {error}"
+            ))
+        })?,
+        None => color,
+    };
     Ok(PrRgb(
-        [color[0], color[1], color[2]].map(|channel| (channel * 255.0).round() as u8),
+        [color[0], color[1], color[2]].map(|channel| (channel.min(1.0) * 255.0).round() as u8),
     ))
 }
 

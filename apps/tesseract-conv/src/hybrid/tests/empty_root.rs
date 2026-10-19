@@ -52,6 +52,7 @@ fn empty_root_exports_source_composition_and_full_length_link_without_authored_l
     ] {
         let output = root.path().join(format!("output-{rate}"));
         let options = PremiereExportOptions {
+            hdr: None,
             frame_rate: Some(rate),
         };
         let checked = export(&request(&input, &output, ConversionMode::Check), &options).unwrap();
@@ -186,6 +187,7 @@ fn empty_root_rejects_unrepresentable_clock_and_background_without_publication()
         assert!(export(
             &request(&input, &output, ConversionMode::Write),
             &PremiereExportOptions {
+                hdr: None,
                 frame_rate: Some(rate)
             }
         )

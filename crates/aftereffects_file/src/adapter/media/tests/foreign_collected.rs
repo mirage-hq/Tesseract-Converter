@@ -85,6 +85,69 @@ fn foreign_collected_raster_uses_only_native_hierarchy_and_not_host_spelling() {
 
 #[test]
 #[cfg(not(windows))]
+fn adjacent_foreign_raster_requires_unique_contained_directory_suffix() {
+    let root = tempfile::tempdir().unwrap();
+    let input = root.path().join("input.aep");
+    let spelling = r"C:\original\Footage\badge.png";
+    let project = project(vec![raster_item(2, None, spelling)]);
+    let request = raster_request("image", 2, spelling);
+    let local = root.path().join("Footage/badge.png");
+    png(&local);
+    let mut resolver = MediaPreflight::with_project(&input, None, &project);
+    assert!(resolver.available(&request));
+    let canonical = fs::canonicalize(&local).unwrap();
+    assert_eq!(packaged(&resolver, &request), Some(canonical.as_path()));
+    assert!(
+        resolver
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("unverified"))
+    );
+
+    png(&root.path().join("original/Footage/badge.png"));
+    let mut resolver = MediaPreflight::with_project(&input, None, &project);
+    assert!(
+        !resolver.available(&request),
+        "multiple suffix matches are ambiguous"
+    );
+}
+
+#[test]
+#[cfg(not(windows))]
+fn adjacent_foreign_raster_never_uses_basenames_or_conflicting_sources() {
+    let root = tempfile::tempdir().unwrap();
+    let input = root.path().join("input.aep");
+    let spelling = r"C:\original\Footage\badge.png";
+    png(&root.path().join("badge.png"));
+    let sources = project(vec![raster_item(2, None, spelling)]);
+    let request = raster_request("image", 2, spelling);
+    let mut resolver = MediaPreflight::with_project(&input, None, &sources);
+    assert!(!resolver.available(&request));
+    png(&root.path().join("Footage/badge.png"));
+    let sources = project(vec![
+        raster_item(2, None, spelling),
+        raster_item(3, None, r"D:\other\Footage\badge.png"),
+    ]);
+    let mut resolver = MediaPreflight::with_project(&input, None, &sources);
+    assert!(!resolver.available(&request));
+}
+
+#[test]
+#[cfg(unix)]
+fn adjacent_foreign_raster_rejects_symlink_escape() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    png(&outside.path().join("badge.png"));
+    std::os::unix::fs::symlink(outside.path(), root.path().join("Footage")).unwrap();
+    let input = root.path().join("input.aep");
+    let spelling = r"C:\old\Footage\badge.png";
+    let project = project(vec![raster_item(2, None, spelling)]);
+    let mut resolver = MediaPreflight::with_project(&input, None, &project);
+    assert!(!resolver.available(&raster_request("image", 2, spelling)));
+}
+
+#[test]
+#[cfg(not(windows))]
 fn foreign_collected_rejects_unsafe_spellings_and_non_raster_admission() {
     let root = tempfile::tempdir().unwrap();
     let input = root.path().join("input.aep");

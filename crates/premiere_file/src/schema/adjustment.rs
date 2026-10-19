@@ -26,19 +26,19 @@ pub(crate) const ADJUSTMENT_LAYER_NAME: &str = "Adjustment Layer";
 /// Premiere applies an adjustment's Opacity as a mix of the effected composite
 /// over the untouched one, which the FX adjustment layer's opacity gate also
 /// does, so Opacity and its keys convert. Bounded static Motion coverage is
-/// admitted separately by [`supports_motion_coverage`], and static Wipe by
-/// [`supports_wipe_coverage`]. Other Crop, Motion keys and clock edits remain
-/// omitted.
+/// admitted separately by [`supports_motion_coverage`], and hard Wipe by
+/// [`supports_wipe_coverage`]. Static Crop-only rectangles use
+/// [`supports_crop_coverage`]; Motion keys and clock edits remain omitted.
 /// Omitting them changes the picture: Premiere renders the cropped region of a
 /// Crop-only adjustment black (26.5.1 fixture, G4), not the composite beneath.
 pub(crate) fn retains_edit(edit: OccurrenceEdit) -> bool {
     matches!(edit, OccurrenceEdit::Opacity | OccurrenceEdit::OpacityKeys)
 }
 
-/// A static, hard-edge Wipe at unit coverage clips the effected lower
+/// A hard-edge Wipe at unit coverage clips the effected lower
 /// composite. Keep that order with the original adjustment in a masked group.
 /// Feather would also soften the group's boundary outside the Wipe interval.
-pub(crate) fn supports_wipe_coverage(clip: &PrVideoOccurrence) -> bool {
+pub(crate) fn supports_wipe_coverage(clip: &PrVideoOccurrence, at_sequence_end: bool) -> bool {
     clip.enabled
         && clip.transform == PrStaticTransform::default()
         && clip.opacity == 100.0
@@ -47,20 +47,56 @@ pub(crate) fn supports_wipe_coverage(clip: &PrVideoOccurrence) -> bool {
         && clip.playback_rate == 1.0
         && clip.time_remap.is_none()
         && clip.crop.is_default()
-        && clip
-            .linear_wipe
-            .as_ref()
-            .is_some_and(|wipe| wipe.completion.is_empty() && wipe.feather == 0.0)
+        && clip.linear_wipe.as_ref().is_some_and(|wipe| {
+            wipe.feather == 0.0
+                && (wipe.completion.is_empty()
+                    || (wipe
+                        .completion
+                        .first()
+                        .is_some_and(|key| key.source_ticks >= clip.in_ticks)
+                        && wipe.completion.last().is_some_and(|key| {
+                            at_sequence_end || key.source_ticks < clip.out_ticks
+                        })))
+        })
         && clip.opacity_mask.is_none()
         && clip.track_matte.is_none()
         && clip.active_transforms == 0
-        && clip.effects_above_mask == clip.effects.len()
+        && (clip.effects_above_mask == 0 || clip.effects_above_mask == clip.effects.len())
+}
+
+/// A static hard rectangle clips the lower composite, rather than limiting
+/// where an adjustment mixes its effects. Keep mixed effect stacks separate.
+pub(crate) fn supports_crop_coverage(clip: &PrVideoOccurrence) -> bool {
+    let crop = &clip.crop;
+    clip.enabled
+        && clip.transform == PrStaticTransform::default()
+        && clip.opacity == 100.0
+        && clip.blend_mode == PrBlendMode::Normal
+        && clip.animations.is_empty()
+        && clip.playback_rate == 1.0
+        && clip.time_remap.is_none()
+        && clip.linear_wipe.is_none()
+        && crop.edge_feather == 0.0
+        && [crop.left, crop.top, crop.right, crop.bottom]
+            .into_iter()
+            .all(|edge| (0.0..=100.0).contains(&edge))
+        && crop.left + crop.right <= 100.0
+        && crop.top + crop.bottom <= 100.0
+        && clip.opacity_mask.is_none()
+        && clip.track_matte.is_none()
+        && clip.active_transforms == 0
+        && clip.effects.is_empty()
+        && clip
+            .source_effects
+            .as_ref()
+            .is_none_or(|source| source.effects.is_empty() && source.active_transforms == 0)
 }
 
 /// The measured axis-aligned Motion coverage of A3: moving or uniformly
 /// scaling a canvas-sized adjustment changes which pixels its effects reach,
 /// without moving those pixels. Only no effect or static full RGB Invert is
-/// admitted; spatial effects, mixing and animation remain unmeasured here.
+/// admitted. Offset also keeps this coverage as a diagnosed approximation;
+/// other spatial effects, mixing and Motion animation remain unmeasured here.
 pub(crate) fn supports_motion_coverage(clip: &PrVideoOccurrence) -> bool {
     clip.transform.anchor_point == PrStaticTransform::default().anchor_point
         && clip.transform.rotation == 0.0
@@ -81,7 +117,8 @@ pub(crate) fn supports_motion_coverage(clip: &PrVideoOccurrence) -> bool {
             .iter()
             .filter(|effect| effect.enabled)
             .all(|effect| {
-                matches!(effect.params, PrEffectParams::Invert(invert) if invert.blend == 0.0)
-                    && effect.animations.is_empty()
+                matches!(effect.params, PrEffectParams::Offset(_))
+                    || matches!(effect.params, PrEffectParams::Invert(invert) if invert.blend == 0.0)
+                        && effect.animations.is_empty()
             })
 }

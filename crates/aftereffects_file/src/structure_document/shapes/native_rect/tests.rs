@@ -5,6 +5,85 @@ use crate::structure_document::shapes::{OutputBudget, program};
 use fx_schema::BlendMode;
 
 #[test]
+fn singleton_rectangle_paint_blends_against_transparent_not_other_layers() {
+    fn paint_blend(chunks: &mut [Chunk], ordinal: f64) -> usize {
+        let mut changed = 0;
+        for index in 0..chunks.len() {
+            if chunks[index].id() == *b"tdmn"
+                && chunks[index].data_payload().is_some_and(|bytes| {
+                    bytes.split(|byte| *byte == 0).next()
+                        == Some(b"ADBE Vector Graphic - Stroke".as_slice())
+                })
+            {
+                let leaves = chunks[index + 1].children_mut().unwrap();
+                let mut marker = b"ADBE Vector Blend Mode".to_vec();
+                marker.resize(40, 0);
+                let mut metadata = vec![0; 124];
+                metadata[..4].copy_from_slice(&[0xdb, 0x99, 0, 1]);
+                leaves.extend([
+                    Chunk::data(*b"tdmn", marker).unwrap(),
+                    Chunk::list(
+                        *b"tdbs",
+                        vec![
+                            Chunk::data(*b"tdb4", metadata).unwrap(),
+                            Chunk::data(*b"tdsb", vec![0, 0, 0, 1]).unwrap(),
+                            Chunk::data(*b"cdat", ordinal.to_be_bytes().to_vec()).unwrap(),
+                        ],
+                    ),
+                ]);
+                changed += 1;
+            } else if let Some(children) = chunks[index].children_mut() {
+                changed += paint_blend(children, ordinal);
+            }
+        }
+        changed
+    }
+    fn rectangle(layers: &[fx_schema::Layer]) -> Option<&fx_schema::RectLayer> {
+        layers.iter().find_map(|layer| match layer.data() {
+            FxLayer::Rect(rect) if rect.name == "shape_rect" => Some(rect),
+            FxLayer::Group(group) => rectangle(&group.layers),
+            _ => None,
+        })
+    }
+    // The native probe pins the 100x50 singleton Stroke. Blend ordinals are
+    // supplemental mutations, not independently Adobe-rendered blend evidence.
+    for ordinal in [1.0, 4.0, 11.0, 15.0] {
+        let mut project = read_project(include_bytes!(
+            "../../../../tests/fixtures/geometry/geometry_probe.aep"
+        ))
+        .unwrap();
+        let item = project.items.iter_mut().find(|item| item.id == 14).unwrap();
+        let ItemKind::Composition(comp) = &mut item.kind else {
+            panic!("native probe composition")
+        };
+        let source = comp
+            .layers
+            .iter_mut()
+            .find(|layer| layer.record.id() == 40)
+            .unwrap();
+        assert_eq!(paint_blend(&mut source.content, ordinal), 1);
+        let converted =
+            crate::structure_document::to_structural_fx_document(&project, Some(14)).unwrap();
+        let rect = rectangle(converted.document.composition().layers()).expect("editable Rect");
+        assert_eq!(rect.rect.size, [100.0, 50.0]);
+        assert!(rect.rect.stroke_enabled);
+        assert!(!rect.rect.fill_enabled);
+        assert_eq!(
+            rect.blend_mode,
+            BlendMode::Normal,
+            "paint ordinal {ordinal}"
+        );
+        if ordinal != 1.0 {
+            assert!(
+                converted.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.message.contains("transparent native backdrop")
+                })
+            );
+        }
+    }
+}
+
+#[test]
 fn paired_rect_miter_and_geometry_keys_keep_rect_and_group_ownership() {
     // Supplemental native-record construction with relabelled keys from the
     // pinned Scale fixture; this is not independent Adobe feature proof.
@@ -96,6 +175,7 @@ fn paired_rect_miter_and_geometry_keys_keep_rect_and_group_ownership() {
     let mut next_id = 500;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -283,6 +363,7 @@ fn animated_vector_group_preserves_native_rectangle_and_separate_targets() {
     let mut next_id = 500;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -449,6 +530,7 @@ fn native_shapes_keep_identity_group_blend_boundaries() {
                 let mut next_id = 2;
                 let mut animation_budget = AnimationBudget::default();
                 let mut collector = Collector {
+                    source_items: None,
                     includes_occurrence_pipeline: true,
                     next_id: &mut next_id,
                     animation_budget: &mut animation_budget,
@@ -597,6 +679,7 @@ fn native_rectangle_keys_drive_size_and_center_anchor_without_js() {
     let mut next_id = 500;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,
@@ -808,6 +891,7 @@ fn native_gradient_fill_preserves_editable_rectangle_controls() {
     let mut next_id = 500;
     let mut animation_budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut next_id,
         animation_budget: &mut animation_budget,

@@ -108,6 +108,69 @@ fn premiere_to_tesseract_rejects_duration_drift_and_invalid_sequence_or_source_c
     }
 }
 
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn selected_picture_with_last_sample_endpoint_keeps_editable_trim() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut xml = one_second();
+    for (open, close) in [
+        ("<VideoMediaSource ObjectID=", "</VideoMediaSource>"),
+        ("<VideoStream ObjectID=", "</VideoStream>"),
+    ] {
+        edit_record(&mut xml, open, close, |record| {
+            record.replace("254016000000", "245548800000")
+        });
+    }
+    xml = xml
+        .replace("<End>254016000000</End>", "<End>127008000000</End>")
+        .replace(
+            "<OutPoint>254016000000</OutPoint>",
+            "<OutPoint>127008000000</OutPoint>",
+        );
+    fixture(root, &xml);
+    let output = root.join("selected");
+    let notes = premiere_to_tesseract(root.join("project.prproj"), &output, None, false).unwrap();
+    assert!(
+        notes.iter().any(|note| note
+            .reason
+            .contains("native CFR duration ends at the last physical sample start")),
+        "{notes:?}"
+    );
+    let file = TesseractFile::open(first_project(&output)).unwrap();
+    let document = file.project_json().unwrap();
+    let videos = video_layers(&document);
+    assert_eq!(videos.len(), 1);
+    assert_eq!(
+        videos[0]["sourceRange"],
+        json!({"start": 0, "duration": 500})
+    );
+    assert_eq!(videos[0]["sourceIntrinsicDuration"], json!(967));
+    assert_eq!(
+        crate::test_support::layer_range(videos[0]),
+        &json!({"start": 0, "duration": 500})
+    );
+    let id = videos[0]["source"]["assetId"].as_str().unwrap();
+    assert_eq!(
+        file.asset(id)
+            .unwrap()
+            .read_verified_bytes(MEDIA.len() as u64)
+            .unwrap(),
+        MEDIA
+    );
+
+    // No endpoint tolerance may extend playback beyond the native duration.
+    let beyond = xml.replace("127008000000", "254016000000");
+    fixture(root, &beyond);
+    assert!(premiere_to_tesseract(
+        root.join("project.prproj"),
+        root.join("beyond"),
+        None,
+        false
+    )
+    .is_err());
+}
+
 /// The direct `FrameRect` of every native record `tag` in `xml`.
 #[cfg(feature = "ffmpeg-library")]
 fn frames<'a>(xml: &'a roxmltree::Document<'_>, tag: &str) -> Vec<&'a str> {
@@ -166,7 +229,8 @@ fn custom_canvas_premiere_build_writes_the_document_size_and_reimports_it() {
     let checked = tesseract_to_premiere(&source, root.join("checked"), true).unwrap();
     assert!(!root.join("checked").exists());
     let written = tesseract_to_premiere(&source, root.join("native"), false).unwrap();
-    assert!(written.is_empty(), "{written:?}");
+    assert_eq!(written.len(), 1, "{written:?}");
+    assert_eq!(written[0].reason, "bilinear video resampling was not exported by native Motion, which resizes bicubically; linked AE picture preserves the editable bilinear scale");
     assert_eq!(checked, written);
 
     let native = root.join("native/project.prproj");

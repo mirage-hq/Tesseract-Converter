@@ -789,15 +789,15 @@ fn native_still_occurrences(
             ItemKind::Composition(_) if layer.record.layer_type() == 0 => {
                 native_still_occurrences(project, source_id, stack, output);
             }
-            ItemKind::Footage if layer.record.layer_type() == 0 => {
-                if source
-                    .media
-                    .as_ref()
-                    .and_then(|descriptor| descriptor.as_ref().ok())
-                    .is_some_and(|descriptor| descriptor.kind == MediaKind::StillImage)
-                {
-                    output.push(source_id);
-                }
+            ItemKind::Footage
+                if layer.record.layer_type() == 0
+                    && source
+                        .media
+                        .as_ref()
+                        .and_then(|descriptor| descriptor.as_ref().ok())
+                        .is_some_and(|descriptor| descriptor.kind == MediaKind::StillImage) =>
+            {
+                output.push(source_id);
             }
             _ => {}
         }

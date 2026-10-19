@@ -2,10 +2,12 @@
 
 mod animation_index;
 mod audio;
+mod blending_intervals;
 mod composition_options;
 mod directional_plane;
 pub(crate) mod effects;
 pub(crate) mod fonts;
+mod hdr_color;
 mod hierarchy;
 mod hierarchy_clock;
 mod id_reservations;
@@ -23,6 +25,7 @@ mod radial_solid_origin;
 mod radial_wipe;
 mod rect_dashes;
 mod rect_geometry;
+mod root_composite;
 mod source_variants;
 mod takeover;
 mod text;
@@ -97,6 +100,7 @@ pub(crate) struct ExportDocumentViews<'a> {
     original_roots: &'a [Layer],
     selected: bool,
     fonts: Option<&'a fonts::ArchiveFonts>,
+    hdr: Option<fx_conv::HdrTransfer>,
 }
 
 impl<'a> ExportDocumentViews<'a> {
@@ -111,6 +115,7 @@ impl<'a> ExportDocumentViews<'a> {
             original_roots: original.composition().layers(),
             selected: false,
             fonts: None,
+            hdr: None,
         }
     }
 
@@ -126,6 +131,11 @@ impl<'a> ExportDocumentViews<'a> {
 
     pub(crate) fn with_fonts(mut self, fonts: &'a fonts::ArchiveFonts) -> Self {
         self.fonts = Some(fonts);
+        self
+    }
+
+    pub(crate) fn with_hdr(mut self, hdr: Option<fx_conv::HdrTransfer>) -> Self {
+        self.hdr = hdr;
         self
     }
 
@@ -419,9 +429,24 @@ fn to_aep_with_media_fps_and_audio_mode(
 ) -> Result<ExportedDocument, AepWriteError> {
     progress.stage("prepare AE layers");
     let document = documents.prepared();
+    if !document.color_management().is_legacy() {
+        return Err(AepWriteError::InvalidDocument(
+            "acescct color management cannot be exported to After Effects yet".into(),
+        ));
+    }
+    let hdr = documents
+        .hdr
+        .map(|transfer| fx_conv::HdrColorBridge::new(transfer, document.hdr_graphics_white_nits()))
+        .transpose()
+        .map_err(|error| AepWriteError::InvalidDocument(error.to_string()))?;
     let rate = crate::timing::FrameRate::new(fps)?;
     let dimensions = document.dimensions();
-    let root_layers = documents.roots;
+    let interval_roots =
+        match blending_intervals::isolated_root_occurrences(document, documents.roots)? {
+            Some(roots) => Some(roots),
+            None => blending_intervals::nested_occurrences(document, documents.roots)?,
+        };
+    let root_layers = interval_roots.as_deref().unwrap_or(documents.roots);
     let source_layer_ids = composition_layer_ids(root_layers);
     let mut selected_source_ids = BTreeSet::new();
     collect_source_layer_ids(documents.original_roots(), &mut selected_source_ids);
@@ -452,6 +477,7 @@ fn to_aep_with_media_fps_and_audio_mode(
             .map_err(|error| AepWriteError::InvalidDocument(error.to_string()))?;
     let animation_index = AnimationIndex::new(document.composition().dynamics().entries());
     let mut lowerer = Lowerer {
+        hdr,
         rate,
         duration,
         end: Time::ZERO.saturating_add(document.duration()),
@@ -475,11 +501,15 @@ fn to_aep_with_media_fps_and_audio_mode(
         source_variants: source_variants.decisions,
         consumed_guides: id_reservations::IdReservations::new(BTreeSet::new()),
         inside_precomposition: false,
+        unit_rate_ancestors: true,
         layers: Vec::new(),
         diagnostics: Vec::new(),
         omitted_layer_ids: BTreeSet::new(),
     };
-    lowerer.warn(None, format!("Experimental fresh native Solid/vector/Text/footage export: Adobe open/render acceptance is unverified. Root output uses {}fps and square pixels; generated precompositions inherit the selected root frame rate. Current integral motion-blur/shutter settings are authored on root and generated precompositions. Other FX document metadata is not restored. Solid RGB narrows to native f32 precision.", rate.fps()));
+    if interval_roots.is_some() {
+        lowerer.warn(None, "Isolated mixed-speed Video uses non-overlapping editable occurrences: FrameMix is enabled only on nonstationary slow intervals; source remap values and key times are retained.");
+    }
+    lowerer.warn(None, format!("Experimental fresh native Solid/vector/Text/footage export: Adobe open/render acceptance is unverified. Root output uses {}fps and square pixels; generated precompositions inherit the selected root frame rate and pad only their empty container tail to frame cadence, retaining child clocks and occurrence windows. Native subframe and motion-blur tail fidelity remain unverified. Current integral motion-blur/shutter settings are authored on root and generated precompositions. Other FX document metadata is not restored. Solid RGB narrows to native f32 precision.", rate.fps()));
     if (rate.fps() - fps).abs() > f64::EPSILON {
         lowerer.warn(
             None,
@@ -552,6 +582,13 @@ fn to_aep_with_media_fps_and_audio_mode(
         &mut lowerer.layers,
         crate::writer::NativeCameraSpec::root(u32::from(width), u32::from(height)),
     )?;
+    if let Some(bridge) = hdr {
+        hdr_color::bind(&mut lowerer.layers, bridge, &mut lowerer.diagnostics);
+        lowerer.warn(None, "HDR point-colours explicitly converted from FX display-sRGB/BT.709 to the owned native BT.2100 working profile at graphics-white gain. Native readback/render/precision acceptance unproved; endpoint/effect/footage limitations apply.");
+        if documents.hdr == Some(fx_conv::HdrTransfer::Hlg) {
+            lowerer.warn(None, "HLG owned profile requires ICC v4 floating-point D2B/B2D support for full-range PCS. CMMs selecting the conventional XYZ16 fallback clip graphics above approximately 406 nits and negative adapted XYZ; native profile selection and color fidelity require independent proof.");
+        }
+    }
     crate::writer::validate_layers(&lowerer.layers, duration, rate)?;
     let retained_media_paths = emitted_media_paths(&lowerer.layers);
     let emitted_font_names = fonts::emitted_font_names(&lowerer.layers);
@@ -559,7 +596,7 @@ fn to_aep_with_media_fps_and_audio_mode(
         OutputAudioMode::Preserve => write_composition_at_rate,
         OutputAudioMode::DisableAllNativeSwitches => write_picture_only_composition_at_rate,
     };
-    let written = write(
+    let mut written = write(
         document.composition().name(),
         width,
         height,
@@ -568,6 +605,9 @@ fn to_aep_with_media_fps_and_audio_mode(
         duration,
         Some(lowerer.composition_options),
     )?;
+    if let Some(transfer) = documents.hdr {
+        crate::hdr::configure_project(&mut written, transfer)?;
+    }
     lowerer
         .omitted_layer_ids
         .retain(|id| selected_source_ids.contains(id));
@@ -588,6 +628,7 @@ fn to_aep_with_media_fps_and_audio_mode(
 }
 
 struct Lowerer<'a> {
+    hdr: Option<fx_conv::HdrColorBridge>,
     rate: crate::timing::FrameRate,
     duration: crate::timing::Duration24,
     end: Time,
@@ -605,6 +646,7 @@ struct Lowerer<'a> {
     source_variants: BTreeMap<LayerId, source_variants::SourceVariantDecision>,
     consumed_guides: id_reservations::IdReservations,
     inside_precomposition: bool,
+    unit_rate_ancestors: bool,
     layers: Vec<LayerSpec>,
     diagnostics: Vec<ExportDiagnostic>,
     omitted_layer_ids: BTreeSet<LayerId>,
@@ -655,6 +697,7 @@ impl Lowerer<'_> {
 
     fn probe_consumed_guides(&self, root_layers: &[Layer]) -> BTreeSet<LayerId> {
         let mut probe = Self {
+            hdr: self.hdr,
             rate: self.rate,
             duration: self.duration,
             end: self.end,
@@ -671,6 +714,7 @@ impl Lowerer<'_> {
             source_variants: self.source_variants.clone(),
             consumed_guides: id_reservations::IdReservations::new(BTreeSet::new()),
             inside_precomposition: false,
+            unit_rate_ancestors: true,
             layers: Vec::new(),
             diagnostics: Vec::new(),
             omitted_layer_ids: BTreeSet::new(),
@@ -1137,10 +1181,13 @@ impl Lowerer<'_> {
                     paint_color::retain_supported_tracks(
                         &mut self.layers[start..],
                         &mut self.diagnostics,
+                        self.hdr.is_some(),
                     );
-                    for output in &self.layers[start..] {
-                        crate::writer::validate_layer_payload(output, self.duration, self.rate)
-                            .map_err(|error| error.to_string())?;
+                    if self.hdr.is_none() {
+                        for output in &self.layers[start..] {
+                            crate::writer::validate_layer_payload(output, self.duration, self.rate)
+                                .map_err(|error| error.to_string())?;
+                        }
                     }
                     Ok(())
                 });
@@ -1208,10 +1255,16 @@ impl Lowerer<'_> {
         }
         .map_err(str::to_owned)
         .and_then(|()| {
-            paint_color::retain_supported_tracks(&mut self.layers[start..], &mut self.diagnostics);
-            for output in &self.layers[start..] {
-                crate::writer::validate_layer_payload(output, self.duration, self.rate)
-                    .map_err(|error| error.to_string())?;
+            paint_color::retain_supported_tracks(
+                &mut self.layers[start..],
+                &mut self.diagnostics,
+                self.hdr.is_some(),
+            );
+            if self.hdr.is_none() {
+                for output in &self.layers[start..] {
+                    crate::writer::validate_layer_payload(output, self.duration, self.rate)
+                        .map_err(|error| error.to_string())?;
+                }
             }
             Ok(())
         });
@@ -1626,6 +1679,11 @@ impl Lowerer<'_> {
                 }
             }
             LayerData::Shape(shape) => {
+                if self.inside_precomposition
+                    && hierarchy::shape_glow_working_plane(shape, self.dynamics)
+                {
+                    self.warn(Some(shape.id), "Shape Glow source bounds include the logical composition working plane instead of only the paint hull; off-plane halo and native kernel fidelity remain approximate. No finite Glow input-crop certificate is inferred.");
+                }
                 let selected = choose_transform(
                     inherited,
                     &shape.transform,
@@ -2361,6 +2419,14 @@ impl Lowerer<'_> {
             }
             None => media::lower(&content, resolved, self.dimensions)?,
         };
+        // A translated unit-rate ancestor preserves the local playback derivative.
+        if self.unit_rate_ancestors
+            && let Some(reason) =
+                media::video_blending_approximation(&content, !self.inside_precomposition)
+        {
+            footage.frame_blending = crate::writer::footage::NativeFrameBlending::Disabled;
+            self.warn(Some(layer.id()), reason);
+        }
         // Imported still primitives may be effectively unbounded: their
         // enclosing source composition owns the finite reachable interval.
         // Only unrepresentable native outpoints need this intersection. Keep
@@ -2389,7 +2455,9 @@ impl Lowerer<'_> {
         if let crate::writer::footage::FootageClock::Source(clock) = &footage.clock {
             self.validate_source_clock(layer.id(), clock)?;
         }
-        if footage.kind == crate::writer::footage::FootageKind::Video
+        // Group-mapped samples floor their local milliseconds, unlike the root clock.
+        if !self.inside_precomposition
+            && footage.kind == crate::writer::footage::FootageKind::Video
             && !footage.audio_enabled
             && footage.static_source_time_secs.is_none()
             && let crate::writer::footage::FootageClock::Source(clock) = &mut footage.clock
@@ -2469,13 +2537,51 @@ impl Lowerer<'_> {
         // its editable gain tracks, just like Audio. A container's eye switch
         // alone does not mute its source composition's audio in AE.
         footage.audio_enabled &= output_visible;
+        let keyed_remap_video = matches!(layer.data(), LayerData::Video(_))
+            && footage.static_source_time_secs.is_none()
+            && matches!(
+                &footage.clock,
+                crate::writer::footage::FootageClock::Source(clock) if clock.has_time_remap()
+            );
+        let animated_mosaic = keyed_remap_video
+            && options.effects.iter().any(|effect| {
+                effect.enabled
+                    && effect.match_name == "ADBE Mosaic"
+                    && effect
+                        .properties
+                        .iter()
+                        .any(|property| property.animation.is_some())
+            });
         if footage.time_remap_requires_source_owned_transform && animations.opacity.is_some() {
             if effective_parent(layer, parent) != parent {
                 return Err(
-                    "Source-clock Opacity plane has an unproved non-containment transform parent",
+                    "Source-clock control plane has an unproved non-containment transform parent",
                 );
             }
-            return self.emit_remapped_opacity_source_plane(layer, footage, animations, options);
+            return self.emit_remapped_source_control_plane(layer, footage, animations, options);
+        }
+        if footage.time_remap_requires_source_owned_transform && animated_mosaic {
+            let layers_before = self.layers.len();
+            let diagnostics_before = self.diagnostics.len();
+            let occupied_ids_before = self.occupied_ids.checkpoint();
+            let result = if effective_parent(layer, parent) != parent {
+                Err("Source-clock control plane has an unproved non-containment transform parent")
+            } else {
+                self.emit_remapped_source_control_plane(
+                    layer,
+                    footage.clone(),
+                    animations.clone(),
+                    options.clone(),
+                )
+            };
+            if let Err(reason) = result {
+                self.layers.truncate(layers_before);
+                self.diagnostics.truncate(diagnostics_before);
+                self.occupied_ids.rollback(occupied_ids_before);
+                self.warn(Some(layer.id()), format!("{reason}; animated Mosaic controls remain editable on the occurrence clock as an approximation. The movie and any native audio are retained through the direct path; effect timing can differ from source-remapped FX."));
+            } else {
+                return Ok(());
+            }
         }
         media::validate_native(&footage)
             .map_err(|_| "Native footage validation rejected current media semantics")?;
@@ -2487,9 +2593,9 @@ impl Lowerer<'_> {
     }
 
     /// A bounded source-clock plane: only full-canvas, silent 2D Video with
-    /// source-owned Opacity (and Mosaic) crosses this branch. The general writer
-    /// still rejects remapped occurrence Transform keys.
-    fn emit_remapped_opacity_source_plane(
+    /// source-owned Opacity or animated Mosaic crosses this branch. The general
+    /// writer still rejects remapped occurrence Transform keys.
+    fn emit_remapped_source_control_plane(
         &mut self,
         layer: &Layer,
         mut footage: crate::writer::footage::FootageSpec,
@@ -2497,7 +2603,12 @@ impl Lowerer<'_> {
         mut options: NativeLayerOptions,
     ) -> Result<(), &'static str> {
         let LayerData::Video(video) = layer.data() else {
-            return Err("Source-clock Opacity plane requires explicit Video");
+            return Err("Source-clock control plane requires explicit Video");
+        };
+        let retained_controls = match (animations.opacity.is_some(), video.effects.is_empty()) {
+            (true, false) => "Opacity and Mosaic",
+            (true, true) => "Opacity",
+            (false, _) => "Mosaic",
         };
         let full_canvas = footage.source.dimensions.map(u32::from)
             == [self.dimensions.width, self.dimensions.height]
@@ -2570,14 +2681,14 @@ impl Lowerer<'_> {
                 })
         {
             return Err(
-                "Source-clock Opacity plane has unproved geometry, audio, effects or dependencies",
+                "Source-clock control plane has unproved geometry, audio, effects or dependencies",
             );
         }
         let crate::writer::footage::FootageClock::Source(occurrence_clock) = &footage.clock else {
-            return Err("Source-clock Opacity plane has no source clock");
+            return Err("Source-clock control plane has no source clock");
         };
         if !occurrence_clock.has_time_remap() {
-            return Err("Source-clock Opacity plane requires keyed Time Remap");
+            return Err("Source-clock control plane requires keyed Time Remap");
         }
         self.validate_source_clock(layer.id(), occurrence_clock)?;
         let source_millis = footage.source.duration_millis;
@@ -2587,10 +2698,10 @@ impl Lowerer<'_> {
         let (_, normalized_duration) =
             self.rate
                 .authored_duration(source_millis as f64 / 1000.0)
-                .map_err(|_| "Source-clock Opacity plane native duration is invalid")?;
+                .map_err(|_| "Source-clock control plane native duration is invalid")?;
         let normalized_millis = u64::from(normalized_duration.ticks()) * 1000 / 24_576;
         let remap = playback_time_remap(&video.playback)
-            .ok_or("Source-clock Opacity plane requires explicit keyed playback")?;
+            .ok_or("Source-clock control plane requires explicit keyed playback")?;
         crate::writer::source_clock::SourceClockPlan::time_remap_with_offset(
             occurrence_clock.active_range,
             remap,
@@ -2598,11 +2709,11 @@ impl Lowerer<'_> {
             video.playback.input_offset_ms(),
         )
         .map_err(
-            |_| "Source-clock Opacity plane remap exceeds the native frame-aligned container",
+            |_| "Source-clock control plane remap exceeds the native frame-aligned container",
         )?;
         options.source_clock = Some(occurrence_clock.clone());
         let source_duration = hierarchy_clock::duration24(source_millis)
-            .map_err(|_| "Source-clock Opacity plane duration exceeds native bounds")?;
+            .map_err(|_| "Source-clock control plane duration exceeds native bounds")?;
         let source_span = TimeRangeProperty {
             start: Time::ZERO,
             duration: fx_schema::Duration::from_millis(source_millis),
@@ -2614,13 +2725,13 @@ impl Lowerer<'_> {
                 Time::from_millis(source_millis),
                 source_millis,
             )
-            .map_err(|_| "Source-clock Opacity plane cannot preserve unit source timing")?,
+            .map_err(|_| "Source-clock control plane cannot preserve unit source timing")?,
         );
         footage.time_remap_requires_source_owned_transform = false;
         footage.name = format!("{} source controls", layer.data().name());
         footage.transform.name = footage.name.clone();
         media::validate_native(&footage)
-            .map_err(|_| "Source-clock Opacity plane footage validation failed")?;
+            .map_err(|_| "Source-clock control plane footage validation failed")?;
         let child_id = self.available_generated_id(layer.id())?;
         let mut child_options = native_layer_options(layer)?;
         child_options.fx_id = child_id;
@@ -2632,9 +2743,9 @@ impl Lowerer<'_> {
             footage.source.dimensions[1],
             source_duration,
         )
-        .map_err(|_| "Source-clock Opacity plane composition record failed")?;
+        .map_err(|_| "Source-clock control plane composition record failed")?;
         crate::writer::apply_composition_options(&mut record, self.composition_options)
-            .map_err(|_| "Source-clock Opacity plane composition options failed")?;
+            .map_err(|_| "Source-clock control plane composition options failed")?;
         let width = footage.source.dimensions[0];
         let height = footage.source.dimensions[1];
         self.occupied_ids.insert(child_id);
@@ -2655,7 +2766,7 @@ impl Lowerer<'_> {
             })),
             options,
         ));
-        self.warn(Some(layer.id()), "Video source-owned Opacity and Mosaic remain editable in a noncollapsed full-canvas source-clock precomposition; the original occurrence owns Time Remap and visibility. Continuous FX source-frame selection and between-sample script fidelity remain approximate.");
+        self.warn(Some(layer.id()), format!("Video source-owned control plane ({retained_controls}) remains editable in a noncollapsed full-canvas source-clock precomposition; the original occurrence owns Time Remap and visibility. Continuous FX source-frame selection and between-sample script fidelity remain approximate."));
         Ok(())
     }
 
@@ -2982,6 +3093,9 @@ impl Lowerer<'_> {
         };
         let hierarchy_dynamics = hierarchy_dynamics.as_ref().unwrap_or(self.dynamics);
         let source_mask_bounds = source_rect_mask_bounds(group, self.dynamics, self.dimensions)
+            .or_else(|| {
+                sibling_rect_mask_bounds(group, parent_siblings, self.dynamics, self.dimensions)
+            })
             .or_else(|| logical_bulge_source_bounds(group, self.dynamics, self.logical_dimensions))
             .or_else(|| {
                 (!options
@@ -3139,10 +3253,8 @@ impl Lowerer<'_> {
         // a crop certificate. Nested occurrences use the same physical outlines.
         let font_source = clock.as_ref().map_or(&geometry, |clock| clock.geometry());
         let font_geometry = if skew_helper_id.is_none()
-            // The static-shadow exception encloses the source plane before
-            // applying the occurrence's existing native 3D transform. It does
-            // not certify projected child Text or bypass near-plane checks.
-            && (!spatial_occurrence || hierarchy::has_active_shadow(&group.effects))
+            // Enclose the source plane before the occurrence's native 3D
+            // transform; the classifier still validates projection/near planes.
             && masks.is_empty()
             && radial.is_none()
             && hierarchy::static_shadow_stack(&group.effects, self.dynamics)
@@ -3281,7 +3393,19 @@ impl Lowerer<'_> {
                         .and_then(|range| hierarchy::SourceInterval::new(range, self.rate).ok()),
                 )?
             } else if masks.is_empty()
-            && options.transform_3d.is_none()
+            // Independent planar Position followers share the Transform3d
+            // sidecar, but still support Null parenting. Do not introduce an
+            // isolated precomposition just because X/Y have different curves.
+            && options
+                .transform_3d
+                .as_ref()
+                .is_none_or(|(transform, animations)| {
+                    // Sidecar opacity was removed from hierarchy geometry;
+                    // a Null cannot apply it to the child composite.
+                    !transform.is_three_d
+                        && transform.opacity == 1.0
+                        && animations.opacity.is_none()
+                })
             // A Null parent cannot supply the composite alpha sampled by a
             // sibling's track matte; its children would paint independently.
             && !self
@@ -3519,7 +3643,43 @@ impl Lowerer<'_> {
                     clock.source_duration,
                 )
             });
-        if let Some(clock) = clock {
+        if let Some(mut clock) = clock {
+            if !self.inside_precomposition
+                && !group.motion_blur
+                && !group.layers.is_empty()
+                && hierarchy::picture_only_clock(&group.layers, self.dynamics)
+                && matches!(plan, hierarchy::HierarchyPlan::Precomposition(_))
+            {
+                let active = playback_active_range(&group.playback);
+                let end_ms = active.end().as_millis() as f64;
+                let last_frame = (end_ms * self.rate.fps() / 1_000.0).ceil() - 1.0;
+                // A root sample rounds before its lifetime test; nested samples floor.
+                if (last_frame * 1_000.0 / self.rate.fps()).round() >= end_ms {
+                    match clock.occurrence_clock.apply_rounded_millisecond_end_visibility() {
+                        Ok(()) => self.warn(Some(group.id), "Root Group out-point uses the rounded-millisecond lifetime boundary; nominal source start, stretch and property clocks are retained."),
+                        Err(error) => self.warn(Some(group.id), format!("Root Group rounded-millisecond out-point cannot be represented: {error}; nominal lifetime retained.")),
+                    }
+                }
+                let start_ms = active.start.as_millis() as f64;
+                let first_frame = ((start_ms - 0.5) * self.rate.fps() / 1_000.0).ceil();
+                let first_sample_ms = first_frame * 1_000.0 / self.rate.fps();
+                if first_sample_ms < start_ms
+                    && first_sample_ms.round() >= start_ms
+                    && !has_entries_for(self.dynamics, group.id)
+                    && group.masks.is_empty()
+                    && group.effects.is_empty()
+                {
+                    match clock.occurrence_clock.apply_rounded_millisecond_start_preroll(self.rate) {
+                        Ok(duration) => {
+                            if let hierarchy::HierarchyPlan::Precomposition(source) = &mut plan {
+                                source.extend_empty_tail(duration);
+                            }
+                            self.warn(Some(group.id), "Root Group rounded-millisecond pre-roll holds source zero through the nominal start, then retains the authored unit-rate content clock. Integral-second native Remap keys use an invisible empty source tail; occurrence properties are static.");
+                        },
+                        Err(error) => self.warn(Some(group.id), format!("Root Group rounded-millisecond pre-roll cannot be represented: {error}; nominal start retained.")),
+                    }
+                }
+            }
             options.source_clock = Some(clock.occurrence_clock);
         }
         for warning in omitted_effect_warnings {
@@ -3599,8 +3759,60 @@ impl Lowerer<'_> {
             masks::translate(&mut options.masks, [-origin[0], -origin[1]]);
         }
 
+        if depth > 0
+            && !opacity_on_carrier
+            && playback_is_identity(&group.playback)
+            && playback_active_range(&group.playback).start == Time::ZERO
+            && options.masks.is_empty()
+            && options.effects.is_empty()
+            && options.styles.is_empty()
+            && options.matte.is_none()
+            && options
+                .transform_3d
+                .as_ref()
+                .is_none_or(|(transform, _)| !transform.is_three_d)
+            && !self
+                .source_variant_eligibility
+                .get(&group.id)
+                .is_some_and(|facts| {
+                    facts.referenced_as_noncontainer_parent
+                        || facts.referenced_as_matte
+                        || facts.referenced_as_mask_guide
+                        || facts.referenced_as_text_guide
+                        || facts.referenced_as_ai_edit_source
+                        || facts.referenced_as_segment
+                        || facts.referenced_by_animation_layer_ref
+                        || facts.has_unsupported_graph_edges()
+                })
+            && let hierarchy::HierarchyPlan::Precomposition(source) = &mut plan
+        {
+            let helper_id = self.available_generated_id(group.id)?;
+            let moved = match source.move_transform_inside(
+                group,
+                self.dynamics,
+                demand,
+                helper_id,
+                &options,
+            ) {
+                Ok(moved) => moved,
+                Err(reason) => {
+                    self.warn(Some(group.id), format!("Planar pre-composite transform not admitted: {reason}; existing source-raster transform retained."));
+                    false
+                }
+            };
+            if moved {
+                self.occupied_ids.insert(helper_id);
+                self.warn(Some(group.id), "Planar Group geometry and keys are parented inside its opacity composite; the outer occurrence retains composite opacity without resampling a transformed source raster.");
+            }
+        }
         let child_start = self.layers.len();
         let previous_precomposition = self.inside_precomposition;
+        let previous_unit_rate = self.unit_rate_ancestors;
+        self.unit_rate_ancestors &= matches!(
+            group.playback.mapping(),
+            LayerPlaybackMapping::Linear { input, output }
+                if input.duration == output.duration
+        );
         let previous_clock = (self.end, self.duration);
         if matches!(plan, hierarchy::HierarchyPlan::Precomposition(_)) {
             // Descendant lifetimes are relative to this source, not the root
@@ -3621,6 +3833,7 @@ impl Lowerer<'_> {
             );
         }
         self.inside_precomposition = previous_precomposition;
+        self.unit_rate_ancestors = previous_unit_rate;
         (self.end, self.duration) = previous_clock;
         let mut children = self.layers.drain(child_start..).collect();
         omit_dangling_reference_owners(
@@ -3638,10 +3851,29 @@ impl Lowerer<'_> {
                 );
             }
             hierarchy::HierarchyPlan::Precomposition(plan) => {
-                self.layers.push(
-                    plan.finish(children, options, Some(self.composition_options))
-                        .map_err(|_| "Native precomposition finalization failed")?,
-                );
+                let mut layer = plan
+                    .finish(children, options, Some(self.composition_options))
+                    .map_err(|_| "Native precomposition finalization failed")?;
+                if depth == 0
+                    && root_composite::eligible(group, self.end, self.dynamics, parent_siblings)
+                    && !self
+                        .source_variant_eligibility
+                        .get(&group.id)
+                        .is_some_and(|facts| {
+                            facts.referenced_as_matte
+                                || facts.referenced_as_mask_guide
+                                || facts.referenced_as_text_guide
+                                || facts.referenced_as_ai_edit_source
+                                || facts.referenced_as_segment
+                                || facts.referenced_by_animation_layer_ref
+                                || facts.has_unsupported_graph_edges()
+                        })
+                {
+                    let helper_id = self.available_generated_id(group.id)?;
+                    self.occupied_ids.insert(helper_id);
+                    layer = root_composite::lower(layer, self.dimensions, helper_id)?;
+                }
+                self.layers.push(layer);
             }
         }
         for id in omitted_plain_text {
@@ -3902,11 +4134,23 @@ fn prune_independent_text_branches(
             && group.blend_mode == Default::default()
             && group.track_matte.is_none()
             && group.masks.is_empty()
-            // Never discard an effect on a retained group. An unsupported
-            // CustomShader can go only with its entire independent Text branch.
-            && (group.effects.is_empty()
-                || (dropping_text_branch
-                    && group.effects.iter().all(unsupported_custom_shader)))
+            && group.effects.iter().all(|record| {
+                if dropping_text_branch {
+                    return unsupported_custom_shader(record);
+                }
+                if effects::unmapped_warning(record).is_some() {
+                    return false;
+                }
+                let payload = match record.data() {
+                    EffectData::Identified { effect, .. } | EffectData::Legacy(effect) => effect,
+                };
+                // Outer Glow stays on the retained composite unchanged; unlike
+                // source-relative pixel effects, its controls need no new canvas.
+                matches!(
+                    payload,
+                    EffectPayload::Known(fx_schema::LayerEffect::OuterGlow(_))
+                )
+            })
             && !group.motion_blur
             && group.fills.is_empty()
             && group_layout_is_empty(group)
@@ -4514,6 +4758,38 @@ fn static_logical_bulge<'a>(
         }
     }
     bulge
+}
+
+fn sibling_rect_mask_bounds(
+    group: &GroupLayer,
+    siblings: &[Layer],
+    dynamics: &AnimationIndex<'_>,
+    canvas: fx_schema::Dimensions,
+) -> Option<hierarchy::Bounds> {
+    if group.motion_blur
+        || !group.fills.is_empty()
+        || !group_layout_is_empty(group)
+        || group.track_matte.is_some()
+        || hierarchy::pointwise_effect_stack(&group.effects).is_err()
+        || !masked_text_inputs_are_pointwise(&group.layers)
+        || !group.layers.iter().any(group_descendant_has_text)
+    {
+        return None;
+    }
+    let owner = masks::MaskOwner {
+        coordinate_owner: Some(group.id),
+        parent: group.parent,
+        transform: &group.transform,
+        source_size: [canvas.width, canvas.height],
+        clock: playback_is_identity(&group.playback)
+            .then_some(playback_active_range(&group.playback)),
+    };
+    if !masks::static_rect_add_crop_certificate(&group.masks, owner, siblings, dynamics) {
+        return None;
+    }
+    // Bound the mask actually emitted, not the guide's painted geometry.
+    let lowered = masks::lower(&group.masks, None, owner, siblings, dynamics);
+    hierarchy::path_bounds(&lowered.masks.first()?.path.commands).ok()
 }
 
 fn source_rect_mask_bounds(
@@ -5787,11 +6063,8 @@ fn color_value(value: &PropertyValue) -> Result<[f64; 4], &'static str> {
     let PropertyValue::Color(value) = value else {
         return Err("Color keyframe has a non-color value");
     };
-    if value
-        .iter()
-        .any(|component| !component.is_finite() || !(0.0..=1.0).contains(component))
-    {
-        return Err("Color keyframe component lies outside 0..=1");
+    if !fx_schema::has_valid_extended_color(value) {
+        return Err("Color keyframe component lies outside the extended shape-paint range");
     }
     Ok(*value)
 }
@@ -6600,7 +6873,10 @@ fn vector_shape_program(
             && !vector_animation::has_skew_tracks(dynamics, transform_id));
     if layer.effects.is_empty()
         && layer.masks.is_empty()
-        && layer.blend_mode == Default::default()
+        && matches!(
+            layer.blend_mode,
+            fx_schema::BlendMode::Normal | fx_schema::BlendMode::Add
+        )
         && matches!(layer.transform.position, Position::TwoD(_))
         && layer.transform.rotation_x == 0.0
         && layer.transform.rotation_y == 0.0
@@ -6620,6 +6896,7 @@ fn vector_shape_program(
                     &mut contents,
                     native.opacity * 100.0,
                     native_keys.opacity.as_mut(),
+                    layer.blend_mode,
                 )
             {
                 native.opacity = opacity / 100.0;
@@ -6630,6 +6907,7 @@ fn vector_shape_program(
                 &mut contents,
                 transform.opacity.value(),
                 animations.opacity.as_mut(),
+                layer.blend_mode,
             )
         {
             normalized_transform.opacity = fx_schema::PercentageProperty::new(opacity)
@@ -7207,12 +7485,8 @@ fn vector_rect(layer: &RectLayer, transform: &Transform) -> Result<VectorRectSpe
     } else {
         rect.stroke_color
     };
-    if color.is_none_or(|color| {
-        color
-            .iter()
-            .any(|channel| !channel.is_finite() || !(0.0..=1.0).contains(channel))
-    }) {
-        return Err("Rectangle paint requires a finite RGBA color in 0..=1");
+    if color.is_none_or(|color| !fx_schema::has_valid_extended_color(&color)) {
+        return Err("Rectangle paint requires finite extended-sRGB RGB and normalized alpha");
     }
     if rect.stroke_enabled && !rect.stroke_width.value().is_finite() {
         return Err("Rectangle stroke width must be finite");
@@ -7267,12 +7541,8 @@ fn solid(layer: &RectLayer, transform: &Transform) -> Result<SolidLayerSpec, &'s
     if layer.name.is_empty() || layer.name.len() > 255 || layer.name.contains('\0') {
         return Err("Native solid name must be 1..=255 UTF-8 bytes without NUL");
     }
-    if rect
-        .fill_color
-        .iter()
-        .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
-    {
-        return Err("Solid color lies outside the native 0..=1 range");
+    if !fx_schema::has_valid_extended_color(&rect.fill_color) {
+        return Err("Solid color lies outside the extended shape-paint range");
     }
     let anchor = [
         transform.anchor_point[0] - rect.position[0],

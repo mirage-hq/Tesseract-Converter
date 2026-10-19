@@ -376,6 +376,16 @@ pub(crate) struct VideoTrackGroup {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) output_color_space: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) working_color_space: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) working_color_space_configuration: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) allow_linear_compositing: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) tone_mapping_algorithm: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) gamut_compression_algorithm: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) auto_input_gamut_compression_enabled: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) is_graphics_white_same_as_project: Option<String>,

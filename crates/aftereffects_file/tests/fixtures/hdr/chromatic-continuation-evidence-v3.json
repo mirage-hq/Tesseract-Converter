@@ -1,0 +1,1091 @@
+{
+  "status": "INCOMPLETE; all strict comparisons FAIL, no native profile fix or in-gamut fidelity pass",
+  "admitted_profiles": "exact owned v2 bytes unchanged; v3 remains an unadmitted precision experiment",
+  "no_adobe_profile_bytes": "builtin profiles used only inside native apps; no extraction or redistribution",
+  "validation": {
+    "targeted_import_job": 5102,
+    "targeted_inventory_job": 5105,
+    "full_converter_job": 5107,
+    "rust": {
+      "passed": 5186,
+      "failed": 0,
+      "ignored": 371,
+      "groups": 29
+    },
+    "converter_python": {
+      "passed": 393,
+      "subtests_passed": 109
+    },
+    "headless_python": {
+      "passed": 934,
+      "failed": 2,
+      "known_unchanged_failures": [
+        "test_rgb_movie_packaging_has_actual709_yuv_sps_and_unchanged_fractional_clock[False]",
+        "test_rgb_movie_packaging_has_actual709_yuv_sps_and_unchanged_fractional_clock[True]"
+      ]
+    },
+    "owned_icc_before": "2 precision cases FAIL on v2",
+    "owned_icc_after": "10 tests PASS including serialized experiments"
+  },
+  "comparisons": [
+    {
+      "case": "eng2019-chromatic-ramp-pq-owned-v3-vs-builtin-signed-v1",
+      "transfer": "pq",
+      "scope": "unchanged frozen full-canvas signed-v1",
+      "report_sha256": "b47f40be988e156b9740b1c500efd2f7423fab5045325e36407fe92b4c31fa4a",
+      "spec_fingerprint_sha256": "3c326ab28788b492fd153ac2151dd2e238b9eabe1a346ca3651466887f96bc7f",
+      "reference_sha256": "7e114cee20ee9ef083abfb5744b7c350e464053e1ed0243ad2845d563bcdb03b",
+      "candidate_sha256": "48cb449abdd3a7f24a9c2edff7a5d8b52b3af39d34c1d72d19a16b1a33d993b7",
+      "author_job": 5089,
+      "native_reference_job": 5091,
+      "native_builtin_author_job": null,
+      "candidate_export_job": null,
+      "expected_frames": 30,
+      "measured_frames": 30,
+      "numeric_gates_passed": false,
+      "worst_absolute_pixel": {
+        "frame_id": 0,
+        "x": 3976,
+        "y": 128,
+        "channel": 0,
+        "absolute_error_nits": 423.3014941364336,
+        "normalized_error": 5.552062274077884,
+        "reference_nits": 7624.220933414111,
+        "candidate_nits": 8047.522427550544
+      },
+      "p99_normalized_error_max": 5.391276898183157,
+      "all_sampled_pixel_absolute_gate_passed": false,
+      "patches_first_frame": [
+        {
+          "name": "chromatic-0",
+          "reference_mean_rgb_nits": [
+            987.5691899723053,
+            1.263754168894282e-05,
+            8.492271202788081e-07
+          ],
+          "candidate_mean_rgb_nits": [
+            985.4158459118879,
+            0.004161311348898661,
+            -0.004949687716762555
+          ],
+          "mean_absolute_rgb_error_nits": [
+            2.153344060740173,
+            0.004148673807208886,
+            0.004950536943882801
+          ],
+          "reference_mean_luminance_nits": 259.434434824337,
+          "candidate_mean_luminance_nits": 258.8712705736659,
+          "passed": true
+        },
+        {
+          "name": "chromatic-1",
+          "reference_mean_rgb_nits": [
+            -1.5104429461374545e-05,
+            978.6544849323071,
+            -1.623630186793826e-06
+          ],
+          "candidate_mean_rgb_nits": [
+            0.0036353123466846215,
+            984.9648687864978,
+            -0.002032926804909606
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.0036504167761464024,
+            6.310383854040955,
+            0.0020313031747228633
+          ],
+          "reference_mean_luminance_nits": 663.5277367198894,
+          "candidate_mean_luminance_nits": 667.8070154812395,
+          "passed": false
+        },
+        {
+          "name": "chromatic-2",
+          "reference_mean_rgb_nits": [
+            5.224010193030063e-07,
+            6.05869144030052e-08,
+            983.7888774724714
+          ],
+          "candidate_mean_rgb_nits": [
+            -0.00383098746247087,
+            -0.006113956036694722,
+            982.5103381255175
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.0038315098634891524,
+            0.006114016623610675,
+            1.2785393471733075
+          ],
+          "reference_mean_luminance_nits": 58.33868061243023,
+          "candidate_mean_luminance_nits": 58.25771138824392,
+          "passed": true
+        },
+        {
+          "name": "chromatic-3",
+          "reference_mean_rgb_nits": [
+            982.6107639826832,
+            983.1050686277946,
+            -1.4782376527194084e-07
+          ],
+          "candidate_mean_rgb_nits": [
+            987.1666798659271,
+            980.3129507920253,
+            -0.007036611048818417
+          ],
+          "mean_absolute_rgb_error_nits": [
+            4.555915883499088,
+            2.792117835749771,
+            0.007036463225054371
+          ],
+          "reference_mean_luminance_nits": 924.6770842191296,
+          "candidate_mean_luminance_nits": 923.980450166737,
+          "passed": true
+        },
+        {
+          "name": "chromatic-4",
+          "reference_mean_rgb_nits": [
+            -1.1305598270756697e-05,
+            978.9260457611974,
+            982.389831362292
+          ],
+          "candidate_mean_rgb_nits": [
+            -0.00014923625540504208,
+            984.6699622955172,
+            982.389831362292
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.00013793065713429354,
+            5.743916534556774,
+            0.0
+          ],
+          "reference_mean_luminance_nits": 721.9675730558952,
+          "candidate_mean_luminance_nits": 725.8619122317803,
+          "passed": false
+        },
+        {
+          "name": "chromatic-5",
+          "reference_mean_rgb_nits": [
+            988.3401251586183,
+            1.3994951989209106e-05,
+            984.7782987989631
+          ],
+          "candidate_mean_rgb_nits": [
+            981.3783813519908,
+            -0.0014152530476612718,
+            990.1374380690861
+          ],
+          "mean_absolute_rgb_error_nits": [
+            6.961743806605225,
+            0.0014292479996507936,
+            5.359139269996539
+          ],
+          "reference_mean_luminance_nits": 318.034313486525,
+          "candidate_mean_luminance_nits": 316.52229131709845,
+          "passed": false
+        },
+        {
+          "name": "midtone",
+          "reference_mean_rgb_nits": [
+            92.24570899406534,
+            92.24570899406534,
+            92.24570899406534
+          ],
+          "candidate_mean_rgb_nits": [
+            93.30640983176349,
+            93.30640983176349,
+            93.30640983176349
+          ],
+          "mean_absolute_rgb_error_nits": [
+            1.0607008376985565,
+            1.0607008376985565,
+            1.0607008376985565
+          ],
+          "reference_mean_luminance_nits": 92.24570899406534,
+          "candidate_mean_luminance_nits": 93.30640983176349,
+          "passed": false
+        },
+        {
+          "name": "peak",
+          "reference_mean_rgb_nits": [
+            10000.0,
+            10000.0,
+            10000.0
+          ],
+          "candidate_mean_rgb_nits": [
+            10000.0,
+            10000.0,
+            10000.0
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "reference_mean_luminance_nits": 10000.0,
+          "candidate_mean_luminance_nits": 10000.0,
+          "passed": true
+        }
+      ],
+      "patch_failure_groups": [
+        {
+          "frames": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29
+          ],
+          "failed_patch_names": [
+            "chromatic-1",
+            "chromatic-4",
+            "chromatic-5",
+            "midtone"
+          ]
+        }
+      ]
+    },
+    {
+      "case": "eng2019-chromatic-ramp-hlg-owned-v3-vs-builtin-signed-v1",
+      "transfer": "hlg",
+      "scope": "unchanged frozen full-canvas signed-v1",
+      "report_sha256": "1a1bf299f09d6296e9fa8c87e4c11602def6dc1048859e461cf61ff107bef5cb",
+      "spec_fingerprint_sha256": "cb0dd8fc100a915b0da48a77b680fabcf2afd6020fba96b18f9f08bbc3de106a",
+      "reference_sha256": "8eb49ad067388ae52ce09fefb8a30bb5489564cec487c85bc52ef2f8eaac8635",
+      "candidate_sha256": "8bb1a8c337f67bfaceeef6f6c11268dcb0a739ad21c49d0f62a2bd0090f05f3e",
+      "author_job": 5090,
+      "native_reference_job": 5092,
+      "native_builtin_author_job": null,
+      "candidate_export_job": null,
+      "expected_frames": 30,
+      "measured_frames": 30,
+      "numeric_gates_passed": false,
+      "worst_absolute_pixel": {
+        "frame_id": 0,
+        "x": 4004,
+        "y": 128,
+        "channel": 0,
+        "absolute_error_nits": 19.631793141898925,
+        "normalized_error": 2.2624325611925244,
+        "reference_nits": 867.72942887416,
+        "candidate_nits": 887.361222016059
+      },
+      "p99_normalized_error_max": 2.2377963382939052,
+      "all_sampled_pixel_absolute_gate_passed": false,
+      "patches_first_frame": [
+        {
+          "name": "chromatic-0",
+          "reference_mean_rgb_nits": [
+            155.93501987657513,
+            4.786627475167683e-05,
+            2.3494665661122003e-06
+          ],
+          "candidate_mean_rgb_nits": [
+            155.45594416188055,
+            0.0011812769512952739,
+            -0.00014088230603847649
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.4790757146839802,
+            0.0011334106765435975,
+            0.00014323177260457636
+          ],
+          "reference_mean_luminance_nits": 40.96416231423393,
+          "candidate_mean_luminance_nits": 40.839069082778245,
+          "passed": true
+        },
+        {
+          "name": "chromatic-1",
+          "reference_mean_rgb_nits": [
+            -7.113881163401124e-05,
+            187.3592381242818,
+            -5.6863643372410825e-06
+          ],
+          "candidate_mean_rgb_nits": [
+            0.0011852608852969035,
+            188.14790343538266,
+            -0.0002931490400938407
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.0012563996969310856,
+            0.7886653110791141,
+            0.0002874626757565339
+          ],
+          "reference_mean_luminance_nits": 127.02954442289585,
+          "candidate_mean_luminance_nits": 127.56457251348594,
+          "passed": true
+        },
+        {
+          "name": "chromatic-2",
+          "reference_mean_rgb_nits": [
+            1.0509100994372874e-06,
+            1.3283161887957876e-07,
+            115.49234758922005
+          ],
+          "candidate_mean_rgb_nits": [
+            -0.0007016657853133127,
+            -0.0008621747074665988,
+            115.36047380909679
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.0007027166954127145,
+            0.000862307539085398,
+            0.1318737800850417
+          ],
+          "reference_mean_luminance_nits": 6.848696578174669,
+          "candidate_mean_luminance_nits": 6.840107214825975,
+          "passed": true
+        },
+        {
+          "name": "chromatic-3",
+          "reference_mean_rgb_nits": [
+            200.58730259112892,
+            200.64328946026,
+            -5.237491296981431e-07
+          ],
+          "candidate_mean_rgb_nits": [
+            200.6143313583598,
+            200.8580480014656,
+            -0.001162064757248214
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.02702876725538772,
+            0.2147585412114992,
+            0.0011615410081186614
+          ],
+          "reference_mean_luminance_nits": 188.73043461368752,
+          "candidate_mean_luminance_nits": 188.88307248239468,
+          "passed": true
+        },
+        {
+          "name": "chromatic-4",
+          "reference_mean_rgb_nits": [
+            -5.165320647687574e-05,
+            190.5688622270998,
+            190.9426882313517
+          ],
+          "candidate_mean_rgb_nits": [
+            -5.165320647687574e-05,
+            190.5688622270998,
+            190.9426882313517
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "reference_mean_luminance_nits": 140.5285764327955,
+          "candidate_mean_luminance_nits": 140.5285764327955,
+          "passed": true
+        },
+        {
+          "name": "chromatic-5",
+          "reference_mean_rgb_nits": [
+            162.48621533996797,
+            5.61390116221146e-05,
+            162.16094072782374
+          ],
+          "candidate_mean_rgb_nits": [
+            161.42060800509722,
+            -0.00013049610457249687,
+            162.82913108037388
+          ],
+          "mean_absolute_rgb_error_nits": [
+            1.0656073348475186,
+            0.0001866351161946014,
+            0.6681903525580208
+          ],
+          "reference_mean_luminance_nits": 52.301310617219414,
+          "candidate_mean_luminance_nits": 52.06087271964631,
+          "passed": false
+        },
+        {
+          "name": "midtone",
+          "reference_mean_rgb_nits": [
+            50.697028491100376,
+            50.697028491100376,
+            50.697028491100376
+          ],
+          "candidate_mean_rgb_nits": [
+            50.97583632686281,
+            50.97583632686281,
+            50.97583632686281
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.27880783576205204,
+            0.27880783576205204,
+            0.27880783576205204
+          ],
+          "reference_mean_luminance_nits": 50.69702849110038,
+          "candidate_mean_luminance_nits": 50.97583632686281,
+          "passed": true
+        },
+        {
+          "name": "peak",
+          "reference_mean_rgb_nits": [
+            1000.0000292399249,
+            1000.0000292399249,
+            1000.0000292399249
+          ],
+          "candidate_mean_rgb_nits": [
+            1000.0000292399249,
+            1000.0000292399249,
+            1000.0000292399249
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "reference_mean_luminance_nits": 1000.000029239925,
+          "candidate_mean_luminance_nits": 1000.000029239925,
+          "passed": true
+        }
+      ],
+      "patch_failure_groups": [
+        {
+          "frames": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29
+          ],
+          "failed_patch_names": [
+            "chromatic-5"
+          ]
+        }
+      ]
+    },
+    {
+      "case": "eng2019-ingamut-pq-jerboa-vs-builtin-v1",
+      "transfer": "pq",
+      "scope": "predeclared patch interiors, not full canvas",
+      "report_sha256": "37280d63d9e596161418fc2f6e54769e82d00ca51df96dbc9a2c86ccd326d7a6",
+      "spec_fingerprint_sha256": "f575c434e3f38f10cd73c827ee8df3f18e8d3589d6cb78198d8f0077f17a04a8",
+      "reference_sha256": "4033fcfa1261fcefca80cd3d921d57e5973b4832c519fb3a09095d6c777e6dbe",
+      "candidate_sha256": "77150f7a3981d1bca2af36a17b2e70521011710842df71f3c7fa103e4632f9e6",
+      "author_job": 5093,
+      "native_reference_job": 5097,
+      "native_builtin_author_job": 5094,
+      "candidate_export_job": 5099,
+      "expected_frames": 30,
+      "measured_frames": 30,
+      "numeric_gates_passed": false,
+      "worst_absolute_pixel": {
+        "frame_id": 0,
+        "x": 272,
+        "y": 272,
+        "channel": 1,
+        "absolute_error_nits": 4.823971673058395,
+        "normalized_error": 0.8015501914362912,
+        "reference_nits": 601.8302689709748,
+        "candidate_nits": 597.0062972979164
+      },
+      "p99_normalized_error_max": 0.9654317775538317,
+      "all_sampled_pixel_absolute_gate_passed": true,
+      "patches_first_frame": [
+        {
+          "name": "red-white",
+          "reference_mean_rgb_nits": [
+            120.52734325795417,
+            27.701278446388507,
+            7.988445886061522
+          ],
+          "candidate_mean_rgb_nits": [
+            118.59647970274195,
+            27.509409608531435,
+            8.093191699808155
+          ],
+          "mean_absolute_rgb_error_nits": [
+            1.9308635551087006,
+            0.1918688378638307,
+            0.10474581374147587
+          ],
+          "reference_mean_luminance_nits": 50.91771470155942,
+          "candidate_mean_luminance_nits": 50.28660120029325,
+          "passed": false
+        },
+        {
+          "name": "green-white",
+          "reference_mean_rgb_nits": [
+            57.67813810768523,
+            150.22047974821487,
+            28.691953957245854
+          ],
+          "candidate_mean_rgb_nits": [
+            57.62001973013878,
+            149.40637261706073,
+            28.650168889351406
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.05811837763080013,
+            0.8141071310506451,
+            0.04178506790476134
+          ],
+          "reference_mean_luminance_nits": 118.70296501984328,
+          "candidate_mean_luminance_nits": 118.13325483261318,
+          "passed": true
+        },
+        {
+          "name": "blue-white",
+          "reference_mean_rgb_nits": [
+            18.372140246561425,
+            17.582570347118025,
+            164.89180721231364
+          ],
+          "candidate_mean_rgb_nits": [
+            18.34091276259681,
+            17.52064035717159,
+            164.17213907279051
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.03122748394708177,
+            0.06192998992526215,
+            0.7196681394317276
+          ],
+          "reference_mean_luminance_nits": 26.525428105807908,
+          "candidate_mean_luminance_nits": 26.432559791912997,
+          "passed": true
+        },
+        {
+          "name": "yellow-white",
+          "reference_mean_rgb_nits": [
+            149.645269470976,
+            142.11088744618377,
+            20.693840051513043
+          ],
+          "candidate_mean_rgb_nits": [
+            148.68741144125903,
+            141.00562694455306,
+            20.448324698110525
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.9578580296808297,
+            1.1052605016759343,
+            0.24551535341439118
+          ],
+          "reference_mean_luminance_nits": 136.89013869359272,
+          "candidate_mean_luminance_nits": 135.87458370862367,
+          "passed": false
+        },
+        {
+          "name": "midtone",
+          "reference_mean_rgb_nits": [
+            101.0553403388654,
+            101.0553403388654,
+            101.0553403388654
+          ],
+          "candidate_mean_rgb_nits": [
+            101.0553403388654,
+            101.0553403388654,
+            101.0553403388654
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "reference_mean_luminance_nits": 101.0553403388654,
+          "candidate_mean_luminance_nits": 101.0553403388654,
+          "passed": true
+        },
+        {
+          "name": "red-above-white",
+          "reference_mean_rgb_nits": [
+            477.0138521109394,
+            110.4018684081974,
+            32.51413799496726
+          ],
+          "candidate_mean_rgb_nits": [
+            480.517875100426,
+            110.35611872439512,
+            32.21372080904528
+          ],
+          "mean_absolute_rgb_error_nits": [
+            3.5040229895885693,
+            0.0457496837688702,
+            0.3004171858973598
+          ],
+          "reference_mean_luminance_nits": 202.09209411340316,
+          "candidate_mean_luminance_nits": 202.9637679279982,
+          "passed": false
+        },
+        {
+          "name": "green-above-white",
+          "reference_mean_rgb_nits": [
+            234.09152401930493,
+            601.8302689714128,
+            116.32560904967615
+          ],
+          "candidate_mean_rgb_nits": [
+            233.37895398905505,
+            598.1540705468598,
+            116.35253544609182
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.7125700302856912,
+            3.6761984234586613,
+            0.026926396501542577
+          ],
+          "reference_mean_luminance_nits": 476.4348743391351,
+          "candidate_mean_luminance_nits": 473.75681639564897,
+          "passed": false
+        },
+        {
+          "name": "blue-above-white",
+          "reference_mean_rgb_nits": [
+            74.40191978831382,
+            70.4150494813175,
+            662.0466102177215
+          ],
+          "candidate_mean_rgb_nits": [
+            72.97353468869368,
+            70.41050136458452,
+            657.7185743944318
+          ],
+          "mean_absolute_rgb_error_nits": [
+            1.4283850997095988,
+            0.00454811685455867,
+            4.328035823077781
+          ],
+          "reference_mean_luminance_nits": 106.54615186263419,
+          "candidate_mean_luminance_nits": 105.91117894949794,
+          "passed": false
+        },
+        {
+          "name": "yellow-above-white",
+          "reference_mean_rgb_nits": [
+            596.6147450347244,
+            563.805230684367,
+            81.87232400861197
+          ],
+          "candidate_mean_rgb_nits": [
+            599.889407561011,
+            567.2515789308308,
+            82.1517615244918
+          ],
+          "mean_absolute_rgb_error_nits": [
+            3.2746625272849963,
+            3.4463482471659894,
+            0.2794375158682337
+          ],
+          "reference_mean_luminance_nits": 543.8456687383335,
+          "candidate_mean_luminance_nits": 547.0591173397833,
+          "passed": false
+        },
+        {
+          "name": "peak",
+          "reference_mean_rgb_nits": [
+            606.6534817340294,
+            606.6534817340294,
+            606.6534817340294
+          ],
+          "candidate_mean_rgb_nits": [
+            606.6534817340294,
+            606.6534817340294,
+            606.6534817340294
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "reference_mean_luminance_nits": 606.6534817340294,
+          "candidate_mean_luminance_nits": 606.6534817340294,
+          "passed": true
+        }
+      ],
+      "sampling_declaration": "ingamut-chromatic-case-v1.json",
+      "sampling_declaration_sha256": "a679671e04e6795c292705c5826ad7bb0669ef8f8885fbc326819ee6e962cc77",
+      "fixed_margin_pixels": 16,
+      "sampled_pixels_per_frame": 501760,
+      "full_canvas_fidelity_measured": false,
+      "import_assertion": "native_ingamut_chromatic_import_preserves_saturation_headroom_and_geometry",
+      "patch_failure_groups": [
+        {
+          "frames": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29
+          ],
+          "failed_patch_names": [
+            "red-white",
+            "yellow-white",
+            "red-above-white",
+            "green-above-white",
+            "blue-above-white",
+            "yellow-above-white"
+          ]
+        }
+      ]
+    },
+    {
+      "case": "eng2019-ingamut-hlg-jerboa-vs-builtin-v1",
+      "transfer": "hlg",
+      "scope": "predeclared patch interiors, not full canvas",
+      "report_sha256": "b5ea60a0b7cf5e288eaf9aa3fc40a25277d6ca98b685dbe2d938f8e21d94f3c7",
+      "spec_fingerprint_sha256": "27e853c4334f0e18d70081c6ca5ccc466aa5ca4ecb60d0ac16975d4945ef67d8",
+      "reference_sha256": "c7c7a325a38e9b44fe53e6d158dc27fcd451bc22cdc4e484d51825381ea7e409",
+      "candidate_sha256": "e0187831f52e0f5839db61891b4028952ab359f90ed71393239923abd1633357",
+      "author_job": 5095,
+      "native_reference_job": 5098,
+      "native_builtin_author_job": 5096,
+      "candidate_export_job": 5100,
+      "expected_frames": 30,
+      "measured_frames": 30,
+      "numeric_gates_passed": false,
+      "worst_absolute_pixel": {
+        "frame_id": 0,
+        "x": 272,
+        "y": 272,
+        "channel": 1,
+        "absolute_error_nits": 2.306562665726233,
+        "normalized_error": 0.32330016177069376,
+        "reference_nits": 713.4430904993491,
+        "candidate_nits": 711.1365278336228
+      },
+      "p99_normalized_error_max": 0.6059458304628507,
+      "all_sampled_pixel_absolute_gate_passed": true,
+      "patches_first_frame": [
+        {
+          "name": "red-white",
+          "reference_mean_rgb_nits": [
+            91.74009874473533,
+            20.967207357542446,
+            6.1620551685340095
+          ],
+          "candidate_mean_rgb_nits": [
+            90.84605743362964,
+            20.93432083632806,
+            6.1077838742874215
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.8940413112457013,
+            0.032886521226761924,
+            0.05427129424880092
+          ],
+          "reference_mean_luminance_nits": 38.681300400149816,
+          "candidate_mean_luminance_nits": 38.42092039859018,
+          "passed": true
+        },
+        {
+          "name": "green-white",
+          "reference_mean_rgb_nits": [
+            52.12012309114268,
+            135.16293400871575,
+            26.22527459326141
+          ],
+          "candidate_mean_rgb_nits": [
+            52.08305507167561,
+            134.75206981878725,
+            26.077539163781193
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.037068019431911285,
+            0.41086418984787987,
+            0.1477354294936267
+          ],
+          "reference_mean_luminance_nits": 106.88758437733287,
+          "candidate_mean_luminance_nits": 106.59051997687916,
+          "passed": true
+        },
+        {
+          "name": "blue-white",
+          "reference_mean_rgb_nits": [
+            12.110953201077281,
+            11.698987610053624,
+            109.27184193200351
+          ],
+          "candidate_mean_rgb_nits": [
+            12.178091522470027,
+            11.697458456853274,
+            110.48373359282333
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.06713832138210864,
+            0.0015291531895031908,
+            1.211891660925269
+          ],
+          "reference_mean_luminance_nits": 17.593281232107167,
+          "candidate_mean_luminance_nits": 17.68174687875382,
+          "passed": false
+        },
+        {
+          "name": "yellow-white",
+          "reference_mean_rgb_nits": [
+            138.16547348186913,
+            131.12031380081132,
+            19.013893246657194
+          ],
+          "candidate_mean_rgb_nits": [
+            138.11202594571517,
+            131.08772002438198,
+            18.93491867286841
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.05344753614777098,
+            0.032593776400905536,
+            0.07897457381786908
+          ],
+          "reference_mean_luminance_nits": 126.32316651016387,
+          "candidate_mean_luminance_nits": 126.28234406977147,
+          "passed": true
+        },
+        {
+          "name": "midtone",
+          "reference_mean_rgb_nits": [
+            88.31748664576263,
+            88.31748664576263,
+            88.31748664576263
+          ],
+          "candidate_mean_rgb_nits": [
+            88.31748664576263,
+            88.31748664576263,
+            88.31748664576263
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "reference_mean_luminance_nits": 88.31748664576263,
+          "candidate_mean_luminance_nits": 88.31748664576263,
+          "passed": true
+        },
+        {
+          "name": "red-above-white",
+          "reference_mean_rgb_nits": [
+            479.97297287483406,
+            110.15688612496167,
+            32.24471214676947
+          ],
+          "candidate_mean_rgb_nits": [
+            480.67416353772865,
+            110.78172081208633,
+            32.228711767512394
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.7011906621846853,
+            0.6248346871361867,
+            0.016000379324587595
+          ],
+          "reference_mean_luminance_nits": 202.68738019724637,
+          "candidate_mean_luminance_nits": 203.29427207976934,
+          "passed": true
+        },
+        {
+          "name": "green-above-white",
+          "reference_mean_rgb_nits": [
+            274.748658633391,
+            713.4430904986651,
+            136.9607621396396
+          ],
+          "candidate_mean_rgb_nits": [
+            275.14622013816216,
+            711.1365278334797,
+            136.75057452802258
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.3975615043414921,
+            2.306562665729389,
+            0.21018761176603512
+          ],
+          "reference_mean_luminance_nits": 564.0126611759674,
+          "candidate_mean_luminance_nits": 562.5407869709062,
+          "passed": true
+        },
+        {
+          "name": "blue-above-white",
+          "reference_mean_rgb_nits": [
+            64.61209564903864,
+            61.55375861236767,
+            579.4000962337168
+          ],
+          "candidate_mean_rgb_nits": [
+            64.4093037531801,
+            61.802625777160614,
+            579.355907123602
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.20279189589141924,
+            0.2488671647314451,
+            0.04418910934418818
+          ],
+          "reference_mean_luminance_nits": 93.06547157284714,
+          "candidate_mean_luminance_nits": 93.17830966530491,
+          "passed": true
+        },
+        {
+          "name": "yellow-above-white",
+          "reference_mean_rgb_nits": [
+            728.9288390056903,
+            693.0026101734209,
+            100.72626449445166
+          ],
+          "candidate_mean_rgb_nits": [
+            728.0178123785315,
+            691.75335414433,
+            100.38012046077961
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.9110266279535977,
+            1.2492560289829253,
+            0.3461440337235923
+          ],
+          "reference_mean_luminance_nits": 667.3184431888952,
+          "candidate_mean_luminance_nits": 666.2115945650203,
+          "passed": true
+        },
+        {
+          "name": "peak",
+          "reference_mean_rgb_nits": [
+            758.918509957508,
+            758.918509957508,
+            758.918509957508
+          ],
+          "candidate_mean_rgb_nits": [
+            758.918509957508,
+            758.918509957508,
+            758.918509957508
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "reference_mean_luminance_nits": 758.9185099575081,
+          "candidate_mean_luminance_nits": 758.9185099575081,
+          "passed": true
+        }
+      ],
+      "sampling_declaration": "ingamut-chromatic-case-v1.json",
+      "sampling_declaration_sha256": "a679671e04e6795c292705c5826ad7bb0669ef8f8885fbc326819ee6e962cc77",
+      "fixed_margin_pixels": 16,
+      "sampled_pixels_per_frame": 501760,
+      "full_canvas_fidelity_measured": false,
+      "import_assertion": "native_ingamut_chromatic_import_preserves_saturation_headroom_and_geometry",
+      "patch_failure_groups": [
+        {
+          "frames": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29
+          ],
+          "failed_patch_names": [
+            "blue-white"
+          ]
+        }
+      ]
+    }
+  ],
+  "blockers": [
+    "Owned-vs-builtin chromatic/ramp mismatch remains unresolved. v3 PQ worsens worst error107.227827->423.301494nit; HLG19.631793 unchanged. No unsupported matrix fit or promotion.",
+    "In-gamut patch-mean gates remain FAIL: PQ6/10 patches, HLG1/10. Passing p99/all-sampled-pixel gates is not a pass of the complete strict policy.",
+    "Native CMM/interpolation/output-route and candidate10bit conversion/quantization need independent stage isolation; current evidence does not prove the precise cause.",
+    "Public independently Adobe-rendered30fpsHDRMP4 delivery is missing; native ProRes proof is not relabeled or resampled.",
+    "Complete editedFX-to-AEP feature export, Premiere/ACES/alpha and end-to-end>=1024-level precision remain unproved."
+  ]
+}

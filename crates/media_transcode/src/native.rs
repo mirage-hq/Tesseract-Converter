@@ -271,6 +271,12 @@ fn open_local_input(path: &Path) -> Result<format::context::Input> {
 }
 
 fn validate_job(job: &Job) -> Result<()> {
+    if super::has_hdr_or_wide_gamut(&job.source) {
+        return Err(Error::Unsupported(
+            "HDR/wide-gamut preparation permits byte copy only, not a native remux/encode job"
+                .into(),
+        ));
+    }
     validate_input(&job.input)?;
     if !job.output.is_absolute() {
         return Err(Error::Unsupported(
@@ -471,7 +477,7 @@ fn probe_inner(
         timecode_stream_index: data.timecode_stream_index,
         camera_metadata: data.camera_metadata,
     };
-    validate_probe_timing(&info, ae_mp3)?;
+    validate_probe_timing(&info, ae_mp3, exact)?;
     Ok(info)
 }
 
@@ -497,9 +503,10 @@ fn probe_data_streams(
     Ok(data)
 }
 
-fn validate_probe_timing(info: &MediaInfo, ae_mp3: bool) -> Result<()> {
+fn validate_probe_timing(info: &MediaInfo, ae_mp3: bool, exact: bool) -> Result<()> {
     if let Some(video) = &info.video {
-        if video.start_seconds.abs() > 1e-6 {
+        if video.start_seconds.abs() > 1e-6 && !(exact && crate::ae_subframe_origin(info).is_some())
+        {
             return Err(Error::Unsupported(format!(
                 "video starts at {} seconds; only zero-start media is supported",
                 video.start_seconds
@@ -525,11 +532,8 @@ fn validate_probe_timing(info: &MediaInfo, ae_mp3: bool) -> Result<()> {
                 "non-square video pixels are unsupported".to_owned(),
             ));
         }
-        if matches!(video.color.transfer.as_str(), "smpte2084" | "arib-std-b67")
-            || video.color.primaries == "bt2020"
-        {
-            return Err(Error::Unsupported("HDR video is unsupported".to_owned()));
-        }
+        // Color admission belongs to the operation planner: inspecting an HDR
+        // source is safe, and verified byte-copy preparation preserves its signal.
     }
     if let Some(audio) = &info.audio {
         if audio.start_seconds.abs() > 1e-6
@@ -579,8 +583,8 @@ fn validate_display_matrix(data: &[u8], width: u32, height: u32) -> Result<[i32;
         ));
     }
     let mut matrix = [0; 9];
-    for (value, bytes) in matrix.iter_mut().zip(data.chunks_exact(4)) {
-        *value = i32::from_ne_bytes(bytes.try_into().expect("i32-sized chunk"));
+    for (value, bytes) in matrix.iter_mut().zip(data.as_chunks::<4>().0) {
+        *value = i32::from_ne_bytes(*bytes);
     }
     crate::model::display_matrix_rotation(&matrix, width, height)
         .ok_or_else(|| Error::Unsupported("unsupported display matrix".into()))?;
@@ -620,7 +624,8 @@ fn probe_video(
         ));
     }
     let time_base = stream.time_base();
-    let start_seconds = seconds(stream.start_time(), time_base).unwrap_or(0.0);
+    let stream_start = stream.start_time();
+    let start_seconds = seconds(stream_start, time_base).unwrap_or(0.0);
     let declared_duration = seconds(stream.duration(), time_base);
     let sar = {
         let value = decoder.aspect_ratio();
@@ -721,6 +726,9 @@ fn probe_video(
             "video decoder produced no frames".to_owned(),
         ));
     }
+    if exact {
+        validate_exact_probe_origin(stream_start, first_pts, time_base, declared_duration)?;
+    }
     let duration_seconds =
         declared_duration.unwrap_or(frames as f64 * f64::from(rate.1) / f64::from(rate.0));
     Ok(VideoInfo {
@@ -746,6 +754,55 @@ fn probe_video(
         first_keyframe,
         max_keyframe_interval,
     })
+}
+
+// A missing start retains the former zero-origin contract; a shifted source
+// needs a declared tail, not a duration synthesized from its decoded frames.
+fn validate_exact_probe_origin(
+    stream_start: i64,
+    first_pts: Option<i64>,
+    time_base: Rational,
+    declared_duration: Option<f64>,
+) -> Result<()> {
+    let declared_start = seconds(stream_start, time_base);
+    let expected_start = declared_start.map_or(0, |_| stream_start);
+    if first_pts != Some(expected_start) {
+        return Err(Error::Unsupported(
+            "AE preparation requires the first decoded timestamp to match the declared stream origin (zero when absent)"
+                .into(),
+        ));
+    }
+    if expected_start != 0 && declared_duration.is_none() {
+        return Err(Error::Unsupported(
+            "AE preparation requires a declared duration for nonzero-origin video".into(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod origin_tests {
+    use super::*;
+
+    #[test]
+    fn exact_probe_absent_start_accepts_only_zero_origin() {
+        let time_base = Rational(1, 12_288);
+        assert!(validate_exact_probe_origin(ffi::AV_NOPTS_VALUE, Some(0), time_base, None).is_ok());
+        assert!(
+            validate_exact_probe_origin(ffi::AV_NOPTS_VALUE, Some(300), time_base, Some(0.25))
+                .is_err()
+        );
+        assert!(validate_exact_probe_origin(300, Some(0), time_base, Some(0.25)).is_err());
+        assert!(validate_exact_probe_origin(0, None, time_base, Some(0.25)).is_err());
+    }
+
+    #[test]
+    fn exact_probe_shifted_origin_requires_declared_tail() {
+        let time_base = Rational(1, 12_288);
+        assert!(validate_exact_probe_origin(300, Some(300), time_base, None).is_err());
+        assert!(validate_exact_probe_origin(300, Some(300), time_base, Some(0.25)).is_ok());
+        assert!(validate_exact_probe_origin(0, Some(0), time_base, None).is_ok());
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -791,13 +848,13 @@ fn drain_probe_frames(
                 })?;
                 if let Some((time_base, rate)) = exact_clock {
                     if !crate::exact_frame_time(
-                        Some(pts),
+                        pts.checked_sub(first_pts.unwrap_or(pts)),
                         *frames,
                         &rational(time_base),
                         &rational(rate),
                     ) {
                         return Err(Error::Unsupported(
-                            "AE preparation requires exact zero-origin decoded frame timestamps"
+                            "AE preparation requires exact decoded frame cadence relative to the first timestamp"
                                 .into(),
                         ));
                     }

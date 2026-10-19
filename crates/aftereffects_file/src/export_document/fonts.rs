@@ -1,5 +1,7 @@
 //! Ephemeral font identities from hash-verified archive bytes, never host fonts.
 
+#[cfg(test)]
+mod baseline_tests;
 mod bounds;
 #[cfg(test)]
 mod retention_tests;
@@ -75,6 +77,17 @@ impl ArchiveFonts {
         let face = self.resolve_face(family, style)?;
         let (name, format) = face.identity.as_ref().map_err(|reason| *reason)?;
         Ok((name.as_str(), *format))
+    }
+
+    pub(super) fn cap_height(&self, postscript: &str) -> Result<f64, &'static str> {
+        let archived = self.resolve_face(postscript, "")?;
+        let face = ttf_parser::Face::parse(&archived.bytes, archived.metadata.face_index)
+            .map_err(|_| "Embedded font has no readable metrics")?;
+        let height = face
+            .capital_height()
+            .filter(|height| *height > 0)
+            .ok_or("Embedded font has no positive cap height")?;
+        Ok(f64::from(height) / f64::from(face.units_per_em()))
     }
 
     fn resolve_face(&self, family: &str, style: &str) -> Result<&ArchiveFace, &'static str> {
@@ -513,6 +526,40 @@ mod tests {
             })
         }
         assert!(contains_text(imported.document.composition().layers()));
+
+        let mut spatial_fixture = fixture.clone();
+        spatial_fixture["composition"]["layers"][0]["transform"]["rotationX"] = 20.0.into();
+        let spatial_document =
+            fx_schema::EditableFxCompositionDocument::from_json_value(spatial_fixture).unwrap();
+        let spatial_output = crate::export_document::to_aep_with_document_views_and_media_and_fps(
+            crate::export_document::ExportDocumentViews::unchanged(&spatial_document)
+                .with_fonts(&fonts),
+            &Default::default(),
+            30.0,
+        )
+        .unwrap();
+        assert!(
+            spatial_output.omitted_layer_ids.is_empty(),
+            "{:?}",
+            spatial_output.diagnostics
+        );
+        let spatial_native = crate::structure::read_project(&spatial_output.bytes).unwrap();
+        let spatial_imported =
+            crate::structure_document::to_structural_fx_document(&spatial_native, Some(1)).unwrap();
+        assert!(contains_text(
+            spatial_imported.document.composition().layers()
+        ));
+        fn contains_spatial_group(layers: &[fx_schema::Layer]) -> bool {
+            layers.iter().any(|layer| match layer.data() {
+                fx_schema::LayerData::Group(group) => {
+                    group.transform.rotation_x == 20.0 || contains_spatial_group(&group.layers)
+                }
+                _ => false,
+            })
+        }
+        assert!(contains_spatial_group(
+            spatial_imported.document.composition().layers()
+        ));
 
         // P037's Group-owned native Drop Shadow must not disable the same
         // physical-font enclosure. Its native Size is twice FX blurRadius.

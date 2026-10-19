@@ -502,7 +502,7 @@ fn path_expression(run: &[Chunk]) -> Result<Option<&str>, PropertyError> {
     if !metadata.expression_enabled {
         return Ok(None);
     }
-    let bytes = properties::data(body, *b"Utf8")?;
+    let bytes = properties::expression_data(body)?;
     std::str::from_utf8(bytes)
         .map(Some)
         .map_err(|_| PropertyError::Layout("invalid Path expression text"))

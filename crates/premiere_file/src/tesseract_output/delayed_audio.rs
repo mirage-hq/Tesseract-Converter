@@ -80,6 +80,7 @@ pub(super) fn prepare(
             "prepared audio media identity collision"
         );
         let facts = InspectedMedia {
+            normalized_still: None,
             delayed_audio: None,
             audio_omission: None,
             picture_clock: None,

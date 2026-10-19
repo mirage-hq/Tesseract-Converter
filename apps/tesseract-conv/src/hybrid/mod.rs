@@ -2,6 +2,7 @@
 mod automatic;
 mod dependencies;
 mod empty_root;
+mod frame_blending;
 mod owners;
 mod package;
 

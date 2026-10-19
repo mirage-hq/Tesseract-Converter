@@ -64,7 +64,9 @@ fn decoded_stereo(path: &Path) -> (u32, Vec<[f32; 2]>) {
         samples.extend(
             buffer
                 .samples()
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|frame| [frame[0], frame[1]]),
         );
     }
@@ -337,7 +339,9 @@ fn adobe_merged_clip_keeps_picture_and_selected_sound_offsets_through_export() {
             .unwrap();
         assert_eq!(u16::from_le_bytes(bytes[22..24].try_into().unwrap()), 1);
         let expected: Vec<u8> = wav_data(&source)
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|frame| frame[channel * 2..channel * 2 + 2].iter().copied())
             .collect();
         assert_eq!(wav_data(&bytes), expected);

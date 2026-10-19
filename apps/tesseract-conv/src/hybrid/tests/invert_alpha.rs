@@ -265,12 +265,11 @@ fn premiere_alpha_trimmed_video_uses_current_package_clock() {
             }
         }
     }
-    // Existing AEP video export offsets visibility bounds by half a millisecond;
-    // it keeps the nominal affine source origin, rather than shifting playback.
-    assert!(report.diagnostics.iter().any(|d| d
+    // Both footage copies use a Group-local floor-quantized clock.
+    assert!(!report.diagnostics.iter().any(|d| d
         .message
         .contains("half-millisecond parent-boundary correction")));
-    assert_eq!(clocks, vec![(Some(0.9995), Some(1.9995)); 2]);
+    assert_eq!(clocks, vec![(Some(1.0), Some(2.0)); 2]);
     assert_eq!(bindings, 1);
     assert!(
         sources >= 2,

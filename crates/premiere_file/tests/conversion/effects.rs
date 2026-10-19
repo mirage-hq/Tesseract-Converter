@@ -5018,16 +5018,19 @@ fn edited_source_mask_roundtrip(full_frame: bool) {
         assert_eq!(&path[..4], b"2cin");
         assert_eq!(u32::from_le_bytes(path[12..16].try_into().unwrap()), 4);
         assert_eq!(path.len(), 16 + 4 * 32);
-        for (vertex, [x, y]) in
-            path[16..]
-                .chunks_exact(32)
-                .zip([[0.0_f32, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
-        {
+        for (vertex, [x, y]) in path[16..].as_chunks::<32>().0.iter().zip([
+            [0.0_f32, 0.0],
+            [1.0, 0.0],
+            [1.0, 1.0],
+            [0.0, 1.0],
+        ]) {
             assert_eq!(u32::from_le_bytes(vertex[..4].try_into().unwrap()), 0);
             assert_eq!(u32::from_le_bytes(vertex[28..32].try_into().unwrap()), 1);
             let points: Vec<_> = vertex[4..28]
-                .chunks_exact(4)
-                .map(|bytes| f32::from_le_bytes(bytes.try_into().unwrap()))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|bytes| f32::from_le_bytes(*bytes))
                 .collect();
             assert_eq!(points, [x, y, x, y, x, y]);
         }
@@ -5124,6 +5127,21 @@ fn edited_source_mask_roundtrip(full_frame: bool) {
 /// black output to 255, updating both visible controls and private data.
 #[test]
 fn derived_levels_channels_import_and_edited_export_preserve_the_timeline() {
+    check_derived_levels_channels(false, false);
+}
+
+// Zeroed input and Gamma controls must not turn a suppressed channel back on.
+#[test]
+fn derived_zeroed_levels_channel_import_preserves_the_timeline() {
+    check_derived_levels_channels(true, false);
+}
+
+#[test]
+fn derived_zeroed_levels_with_inactive_metadata_preserve_the_timeline() {
+    check_derived_levels_channels(true, true);
+}
+
+fn check_derived_levels_channels(zeroed_red: bool, inactive_metadata: bool) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let source = read_xml(&fixture_path(LEVELS_FIXTURE));
@@ -5136,7 +5154,27 @@ fn derived_levels_channels_import_and_edited_export_preserve_the_timeline() {
             .unwrap()
     };
     let mut replacements = Vec::new();
-    for (id, value) in [("147", 0), ("155", 0), ("159", 255)] {
+    if inactive_metadata {
+        let display = record("118")
+            .children()
+            .find(|node| node.has_tag_name("Component"))
+            .unwrap()
+            .children()
+            .find(|node| node.has_tag_name("DisplayName"))
+            .unwrap();
+        replacements.push((
+            display.range(),
+            format!(
+                "{}<Bypass>false</Bypass><Intrinsic>false</Intrinsic><ArchivedType>0</ArchivedType>",
+                &source[display.range()]
+            ),
+        ));
+    }
+    let mut controls = vec![("147", 0), ("155", 0), ("159", 255)];
+    if zeroed_red {
+        controls.extend([("153", 0), ("156", 0)]);
+    }
+    for (id, value) in controls {
         let start = record(id)
             .children()
             .find(|node| node.has_tag_name("StartKeyframe"))
@@ -5153,6 +5191,10 @@ fn derived_levels_channels_import_and_edited_export_preserve_the_timeline() {
     let mut values = [0u16, 255, 0, 255, 100].repeat(4);
     values[8] = 0;
     values[12] = 255;
+    if zeroed_red {
+        values[6] = 0;
+        values[9] = 0;
+    }
     let encoded = STANDARD.encode(
         values
             .iter()

@@ -286,6 +286,118 @@ fn native_png_hint_does_not_change_mislabeled_jpeg_preparation() {
     );
 }
 
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn native_mp4_leading_empty_edit_keeps_editable_picture_and_source_endpoint() {
+    let root = tempfile::tempdir().unwrap();
+    let original =
+        include_bytes!("../../../../../premiere_file/tests/fixtures/feature_rate_24_blue.mp4");
+    // Rescale the native fixture's 24 Hz clocks without changing sample times,
+    // then add a 1 ms empty edit. FFmpeg 7 clips the last packet by that delay.
+    fn delayed_atoms(bytes: &[u8], depth: usize) -> Vec<u8> {
+        let mut result = Vec::new();
+        let mut cursor = 0;
+        while cursor < bytes.len() {
+            let size = u32::from_be_bytes(bytes[cursor..cursor + 4].try_into().unwrap()) as usize;
+            let kind = &bytes[cursor + 4..cursor + 8];
+            let mut payload = bytes[cursor + 8..cursor + size].to_vec();
+            match kind {
+                b"moov" | b"trak" | b"edts" | b"mdia" | b"minf" | b"stbl" => {
+                    payload = delayed_atoms(&payload, depth + 1);
+                }
+                b"mvhd" => {
+                    payload[12..16].copy_from_slice(&1000_u32.to_be_bytes());
+                    payload[16..20].copy_from_slice(&5001_u32.to_be_bytes());
+                }
+                b"tkhd" => payload[20..24].copy_from_slice(&5001_u32.to_be_bytes()),
+                b"mdhd" => {
+                    payload[12..16].copy_from_slice(&24000_u32.to_be_bytes());
+                    payload[16..20].copy_from_slice(&120000_u32.to_be_bytes());
+                }
+                b"stts" => {
+                    for entry in payload[8..].as_chunks_mut::<8>().0 {
+                        assert_eq!(&entry[4..8], &1_u32.to_be_bytes());
+                        entry[4..8].copy_from_slice(&1000_u32.to_be_bytes());
+                    }
+                }
+                b"elst" => {
+                    assert_eq!(&payload[8..12], &120_u32.to_be_bytes());
+                    let mut entry = payload[8..].to_vec();
+                    entry[..4].copy_from_slice(&5000_u32.to_be_bytes());
+                    payload.truncate(8);
+                    payload[4..8].copy_from_slice(&2_u32.to_be_bytes());
+                    payload.extend_from_slice(&1_u32.to_be_bytes());
+                    payload.extend_from_slice(&(-1_i32).to_be_bytes());
+                    payload.extend_from_slice(&0x0001_0000_u32.to_be_bytes());
+                    payload.extend_from_slice(&entry);
+                }
+                _ => {}
+            }
+            if depth == 0 && kind == b"moov" {
+                assert_eq!(cursor + size, bytes.len(), "moov must follow media");
+            }
+            result.extend_from_slice(&u32::try_from(payload.len() + 8).unwrap().to_be_bytes());
+            result.extend_from_slice(kind);
+            result.extend_from_slice(&payload);
+            cursor += size;
+        }
+        result
+    }
+    let delayed = delayed_atoms(original, 0);
+    let media_path = root.path().join("delayed.mp4");
+    fs::write(&media_path, &delayed).unwrap();
+    let input = archive_with_assets(
+        root.path(),
+        vec![serde_json::json!({
+            "type":"Video", "id":901, "name":"Delayed movie", "parent":null,
+            "playback":{"type":"windowed", "inputRange":{"start":0,"duration":1000},
+                "mapping":{"type":"linear", "input":{"start":0,"duration":1000},
+                    "output":{"start":2000,"duration":1000}}, "inputOffsetMs":0},
+            "sourceRange":{"start":2000,"duration":1000}, "sourceIntrinsicDuration":5001,
+            "transform":transform(), "volume":0, "source":{"assetId":"delayed","fit":"contain"}
+        })],
+        &[("delayed", &media_path, AssetKind::Video)],
+    );
+    let output = root.path().join("published");
+    let written = AfterEffects
+        .export_from_tesseract(&input, &output, &Default::default(), ConversionMode::Write)
+        .unwrap();
+    assert!(
+        !written
+            .diagnostics
+            .iter()
+            .any(|entry| entry.message.contains("omitted")),
+        "{:?}",
+        written.diagnostics
+    );
+    let native = read_project(&fs::read(output.join("project.aep")).unwrap()).unwrap();
+    let descriptor = native
+        .items
+        .iter()
+        .find_map(|item| item.media.as_ref())
+        .unwrap()
+        .as_ref()
+        .unwrap();
+    assert_eq!(descriptor.duration.seconds(), 5.001);
+    assert_eq!(descriptor.native_frame_rate.as_f64(), 24.0);
+    let comp = native
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            ItemKind::Composition(comp) => Some(comp.as_ref()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(comp.layers.len(), 1);
+    assert_eq!(comp.layers[0].name.as_ref(), "Delayed movie");
+    let asset = written
+        .artifacts
+        .iter()
+        .find(|entry| entry.kind == fx_conv::ArtifactKind::Media)
+        .unwrap();
+    assert_eq!(fs::read(output.join(&asset.path)).unwrap(), delayed);
+}
+
 fn transform() -> serde_json::Value {
     serde_json::json!({
         "anchorPoint":[0.0,0.0], "position":[0.0,0.0], "scale":[100.0,100.0],

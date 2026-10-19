@@ -9,6 +9,7 @@ fn converter<'a>(
 ) -> Converter<'a> {
     Converter {
         text_overrides: Default::default(),
+        effect_definitions: &[],
         expression_samples: samples,
         expression_evaluations: Default::default(),
         items: HashMap::new(),

@@ -95,12 +95,14 @@ fn native_mask_path_list_allocation_matches_independent_five_point_outline() {
     let actual = descendant_data(fresh_path, *b"ldat").unwrap();
     assert_eq!(actual.len(), expected.len());
     for (slot, (actual, expected)) in actual
-        .chunks_exact(4)
-        .zip(expected.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(expected.as_chunks::<4>().0.iter())
         .enumerate()
     {
-        let actual = f32::from_be_bytes(actual.try_into().unwrap());
-        let expected = f32::from_be_bytes(expected.try_into().unwrap());
+        let actual = f32::from_be_bytes(*actual);
+        let expected = f32::from_be_bytes(*expected);
         assert!(
             (actual - expected).abs() < 0.000_001,
             "native path coordinate slot {slot}: {actual} != {expected}"

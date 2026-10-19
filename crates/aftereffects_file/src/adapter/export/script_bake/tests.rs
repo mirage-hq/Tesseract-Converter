@@ -414,7 +414,10 @@ fn corner_pin_invisible_extremes_do_not_erase_visible_point_samples() {
             );
         },
     );
-    let options = AfterEffectsExportOptions { fps: 30.0 };
+    let options = AfterEffectsExportOptions {
+        fps: 30.0,
+        ..Default::default()
+    };
     let prepared = prepare_with_progress(&original, &options, Progress::default()).unwrap();
     for index in 0..8 {
         let keys = track(&prepared, index).keyframes();
@@ -451,6 +454,88 @@ fn corner_pin_invisible_extremes_do_not_erase_visible_point_samples() {
                 .value(),
             &PropertyValue::Float(-21.6)
         );
+    }
+}
+
+#[test]
+fn exported_geometry_scripts_preserve_each_sampled_value() {
+    let original = modify(
+        &document("return 100 + input.time.milliseconds * input.time.milliseconds / 100000;"),
+        |raw| {
+            raw["composition"]["layers"][0]["activeRange"] = json!({"start": 0, "duration": 1500});
+            let mut x = raw["composition"]["dynamics"]["entries"][0].clone();
+            x["target"]["propertyType"] = json!("scaleX");
+            let mut y = x.clone();
+            y["target"]["propertyType"] = json!("scaleY");
+            y["animator"]["layerTimeJsCode"] =
+                json!("return -50 - input.time.milliseconds * input.time.milliseconds / 200000;");
+            let mut position_x = x.clone();
+            position_x["target"]["propertyType"] = json!("positionX");
+            let mut position_y = y.clone();
+            position_y["target"]["propertyType"] = json!("positionY");
+            raw["composition"]["dynamics"]["entries"] = json!([x, y, position_x, position_y]);
+        },
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("input.tsrct");
+    TesseractFileBuilder::new(original).write(&input).unwrap();
+    let output = dir.path().join("output");
+    AfterEffects
+        .export_from_tesseract_with_options(
+            &input,
+            &output,
+            &AfterEffectsExportOptions {
+                fps: 30.0,
+                ..Default::default()
+            },
+            ConversionMode::Write,
+        )
+        .unwrap();
+    let native = read_project(&std::fs::read(output.join("project.aep")).unwrap()).unwrap();
+    let imported = crate::structure_document::to_structural_fx_document(&native, Some(1)).unwrap();
+    // The native Transform fixtures establish percentage Scale units (100 = identity).
+    for (property, base, divisor) in [
+        (PropType::ScaleX, 100.0, 100000.0),
+        (PropType::ScaleY, -50.0, -200000.0),
+        (PropType::PositionX, 100.0, 100000.0),
+        (PropType::PositionY, -50.0, -200000.0),
+    ] {
+        let entry = imported
+            .document
+            .composition()
+            .dynamics()
+            .entries()
+            .iter()
+            .find(|entry| {
+                entry
+                    .target
+                    .as_property()
+                    .is_some_and(|target| target.property_type() == property)
+            })
+            .expect("export retains editable Transform animation");
+        let keys = entry.animator.keyframe_track().unwrap().keyframes();
+        for sample in 0..=180 {
+            let time = (f64::from(sample) * 1000.0 / 120.0).round() as i64;
+            let left = keys.partition_point(|key| key.layer_time().as_millis() <= time) - 1;
+            let key = &keys[left];
+            let PropertyValue::Float(mut actual) = *key.value() else {
+                panic!("Transform must remain numeric");
+            };
+            if let Some(next) = keys.get(left + 1) {
+                assert_eq!(next.easing(), PropertyKeyframeEasing::Linear);
+                let PropertyValue::Float(to) = *next.value() else {
+                    panic!("Transform must remain numeric");
+                };
+                let progress = (time - key.layer_time().as_millis()) as f64
+                    / (next.layer_time().as_millis() - key.layer_time().as_millis()) as f64;
+                actual += (to - actual) * progress;
+            }
+            let expected = base + (time as f64).powi(2) / divisor;
+            assert!(
+                (actual - expected).abs() < 1e-9,
+                "{property:?} at {time}ms: {actual} != {expected}"
+            );
+        }
     }
 }
 

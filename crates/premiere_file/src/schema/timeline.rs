@@ -142,9 +142,10 @@ impl PrSequence {
     }
 
     pub(crate) fn validate_timeline(&self, media: &BTreeMap<MediaId, PrMedia>) -> Result<()> {
-        Self::validate_occurrence_count(
-            self.video_items().count() + self.nest_occurrences().count() + self.audio.len(),
-        )?;
+        let count = self.video_items().count() + self.nest_occurrences().count() + self.audio.len();
+        if count != 0 || !(self.adjustment_only_template && self.timeline_end_ticks > 0) {
+            Self::validate_occurrence_count(count)?;
+        }
         ensure_valid!(
             self.width > 0 && self.height > 0,
             "sequence {:?}: dimensions must be positive",
@@ -365,8 +366,8 @@ pub(crate) fn check_track_matte(
 }
 
 /// Resolves the actual provider span/identity, never the consumer's start.
-/// Independent masked providers remain excluded: their generated guide/stage
-/// owners cannot be substituted by an unclipped child or a guessed picture.
+/// Separate Crop/Wipe/Opacity-mask guides remain excluded. Track Matte chains
+/// keep their complete owners; strictly increasing track indices prevent cycles.
 pub(crate) fn track_matte_provider(
     tracks: &[PrVideoTrack],
     track_index: usize,
@@ -393,13 +394,26 @@ pub(crate) fn track_matte_provider(
     }
     if let Some(loss) = matte_track.items.iter().find_map(|item| match item {
         PrVideoItem::Graphic(graphic) if overlaps(&graphic.timeline_ticks()) => {
-            graphic.effect_loss.as_ref()
+            // A complete affine chain preserves picture and coverage on the
+            // same editable Group. Pixel-effect and partially omitted chains
+            // still cannot stand in for the original matte.
+            graphic.effect_loss.as_ref().filter(|loss| {
+                if loss.plain_title_alpha && matte.channel != super::PrMatteChannel::Luma {
+                    return false;
+                }
+                loss.has_unmapped_effects
+                    || loss.mapped_effects.is_empty()
+                    || loss
+                        .mapped_effects
+                        .iter()
+                        .any(|effect| !matches!(effect.params, super::PrEffectParams::Transform(_)))
+            })
         }
         _ => None,
     }) {
         return Err(format!(
-            "Track Matte Key using a graphic with omitted Ramp ({}) is not converted: luma changes and graphic-host alpha coverage is unverified",
-            loss.ramp_component
+            "Track Matte Key using a graphic with omitted {} ({}) is not converted: luma changes and graphic-host alpha coverage is unverified",
+            loss.effect_name, loss.effect_component
         ));
     }
     // Each matte candidate's range, Enable and independent coverage owners.
@@ -412,8 +426,7 @@ pub(crate) fn track_matte_provider(
                 clip.enabled,
                 !clip.crop.is_default()
                     || clip.linear_wipe.is_some()
-                    || clip.opacity_mask.is_some()
-                    || clip.track_matte.is_some(),
+                    || clip.opacity_mask.is_some(),
                 clip.id.as_deref(),
             ),
             PrVideoItem::Graphic(graphic) => (
@@ -433,7 +446,7 @@ pub(crate) fn track_matte_provider(
             (
                 nest.timeline_ticks(),
                 nest.enabled,
-                nest.track_matte.is_some() || nest.opacity_mask.is_some(),
+                nest.opacity_mask.is_some(),
                 nest.id.as_deref(),
             )
         }))
@@ -501,7 +514,8 @@ impl PrGraphic {
     /// The measured static mask frame does not cover a graphic moved by clip Motion.
     pub(crate) fn validate_clip_motion_mask(&self) -> Result<()> {
         ensure_valid!(
-            self.clip_motion == PrStaticTransform::default() || self.opacity_mask.is_none(),
+            (self.clip_motion == PrStaticTransform::default()
+                && self.clip_motion_animations.is_empty()) || self.opacity_mask.is_none(),
             "a graphic with clip Motion and a clip Opacity mask is not converted: its mask frame is unmeasured"
         );
         Ok(())
@@ -516,9 +530,11 @@ impl PrGraphic {
         if let Some(motion) = &self.vector_motion {
             motion.validate()?;
         }
-        // The clip Motion and Opacity follow the video rules; the Motion has
-        // no keys.
+        // Clip Motion uses the existing media-Motion key representation.
         self.clip_motion.validate()?;
+        for animation in &self.clip_motion_animations {
+            animation.validate_keys()?;
+        }
         self.validate_clip_motion_mask()?;
         ensure_valid!(
             self.opacity.is_finite() && (0.0..=100.0).contains(&self.opacity),
@@ -812,7 +828,8 @@ impl PrVideoOccurrence {
         }
         if let Some(wipe) = linear_wipe {
             ensure_valid!(
-                matches!(wipe.angle_degrees, 0 | 90 | 180 | 270)
+                (0..360).contains(&wipe.angle_degrees)
+                    && (wipe.angle_degrees % 90 == 0 || wipe.feather == 0.0)
                     && (0.0..=100.0).contains(&wipe.initial_completion)
                     && wipe.feather.is_finite()
                     && (0.0..=32_000.0).contains(&wipe.feather),

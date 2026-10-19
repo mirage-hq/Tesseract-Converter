@@ -297,6 +297,117 @@ fn group_data(layer: &fx_schema::Layer) -> &GroupLayer {
     group
 }
 
+fn sibling_matte_project() -> crate::structure::StructuralProject {
+    let mut project = project();
+    let ItemKind::Composition(comp) = &mut project
+        .items
+        .iter_mut()
+        .find(|item| item.id == 1)
+        .unwrap()
+        .kind
+    else {
+        panic!()
+    };
+    let mut provider = comp.layers[2].clone();
+    let mut bytes = provider.record.encode();
+    bytes[..4].copy_from_slice(&93_u32.to_be_bytes());
+    provider.record = LayerRecord::decode(&bytes).unwrap();
+    provider.name = "Matte provider".into();
+    let mut consumer = comp.layers[2].clone();
+    let mut bytes = consumer.record.encode();
+    bytes.resize(164, 0);
+    bytes[107] = 1;
+    bytes[160..164].copy_from_slice(&93_u32.to_be_bytes());
+    consumer.record = LayerRecord::decode(&bytes).unwrap();
+    consumer.name = "Matted picture".into();
+    comp.layers = vec![native_adjustment(), provider, consumer];
+    project
+}
+
+#[test]
+fn posterize_keeps_closed_sibling_matte_helpers_inside_each_hold_grid() {
+    let project = sibling_matte_project();
+    let converted = to_structural_fx_document(&project, Some(1)).unwrap();
+    let root = groups(&converted);
+    assert_eq!(root.layers.len(), 2, "{:?}", converted.diagnostics);
+    let mut branch_ids = Vec::new();
+    for branch in &root.layers {
+        assert_eq!(branch.data().name(), "Posterize Time interval");
+        let held = group_data(&group_data(branch).layers[0]);
+        assert_eq!(held.layers.len(), 3);
+        let mut ids = HashSet::new();
+        collect_layers(&FxLayer::Group(held.clone()), &mut ids, 0).unwrap();
+        let consumer = held
+            .layers
+            .iter()
+            .find(|layer| layer.data().name() == "Matted picture")
+            .unwrap();
+        let matte = group_data(consumer).track_matte.as_ref().unwrap();
+        assert!(ids.contains(&matte.layer));
+        assert!(held.layers.iter().any(|layer| layer.id() == matte.layer));
+        assert!(closed_visual(
+            &FxLayer::Group(held.clone()),
+            &ids,
+            group_data(branch).id,
+            true
+        ));
+        branch_ids.push(ids);
+    }
+    assert!(branch_ids[0].is_disjoint(&branch_ids[1]));
+}
+
+#[test]
+fn posterize_keeps_parented_matte_copies_inside_the_held_scope() {
+    let mut project = sibling_matte_project();
+    let ItemKind::Composition(comp) = &mut project
+        .items
+        .iter_mut()
+        .find(|item| item.id == 1)
+        .unwrap()
+        .kind
+    else {
+        panic!()
+    };
+    let mut bytes = comp.layers[2].record.encode();
+    bytes[132..136].copy_from_slice(&93_u32.to_be_bytes());
+    comp.layers[2].record = LayerRecord::decode(&bytes).unwrap();
+    let converted = to_structural_fx_document(&project, Some(1)).unwrap();
+    let root = groups(&converted);
+    assert_eq!(root.layers.len(), 2, "{:?}", converted.diagnostics);
+    assert!(
+        root.layers
+            .iter()
+            .all(|layer| layer.data().name() == "Posterize Time interval")
+    );
+}
+
+#[test]
+fn posterize_does_not_capture_a_matte_helper_referenced_above_the_hold() {
+    let mut project = sibling_matte_project();
+    let ItemKind::Composition(comp) = &mut project
+        .items
+        .iter_mut()
+        .find(|item| item.id == 1)
+        .unwrap()
+        .kind
+    else {
+        panic!()
+    };
+    comp.layers.swap(0, 2);
+    comp.layers.swap(1, 2);
+    let converted = to_structural_fx_document(&project, Some(1)).unwrap();
+    let root = groups(&converted);
+    assert_eq!(root.layers.len(), 4);
+    assert_eq!(root.layers[0].data().name(), "Matted picture");
+    assert!(matches!(root.layers[1].data(), FxLayer::Adjustment(_)));
+    assert!(
+        converted
+            .diagnostics
+            .iter()
+            .any(|note| note.message.contains("cross-boundary references"))
+    );
+}
+
 #[test]
 fn native_hold_schedule_uses_ceiling_boundary_and_independent_source_zero_grids() {
     assert_eq!(
@@ -814,9 +925,14 @@ fn typed_scope_and_graph_checks_reject_crossing_and_time_based_content() {
     crossing.target = fx_schema::Property::new(LayerId::new(2), PropType::Opacity).into();
     crossing.dependencies.push(entry.target.clone());
     assert!(!animations_closed(&[entry.clone(), crossing], &(10..20)));
-    let mut scripted = entry;
-    scripted.animator = PropertyAnimator::constant(PropertyValue::Float(100.0)).unwrap();
-    assert!(!animations_closed(&[scripted], &(10..20)));
+    let mut constant = entry;
+    constant.animator = PropertyAnimator::constant(PropertyValue::Float(100.0)).unwrap();
+    assert!(animations_closed(
+        std::slice::from_ref(&constant),
+        &(10..20)
+    ));
+    constant.dependencies.push(constant.target.clone());
+    assert!(!animations_closed(&[constant], &(10..20)));
 }
 
 #[test]
@@ -857,6 +973,7 @@ fn nested_copy_identity_failure_restores_converter_context_and_original_output()
     let first_id = u64::MAX - 8;
     let mut converter = Converter {
         text_overrides: Default::default(),
+        effect_definitions: &[],
         expression_samples: &expression_samples,
         expression_evaluations: Default::default(),
         items: project.items.iter().map(|item| (item.id, item)).collect(),

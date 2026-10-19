@@ -48,6 +48,39 @@ macro_rules! define_color_transform_schema {
             },
         }
 
+        /// Input Transform representations: a LUT, or (ACES only) a camera
+        /// declaration without one. Looks stay LUT-only ([`ColorTransform`]).
+        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+        #[serde(tag = "type", rename_all = "camelCase" $(, $strict)?)]
+        #[ts(export_to = "project_types.d.ts")]
+        pub enum InputColorTransform {
+            /// A three-dimensional color lookup table.
+            Lut3d {
+                /// Captions asset containing a Phase-0 `.cube` file.
+                #[serde(rename = "assetId")]
+                asset_id: AssetId,
+                /// Encoding expected at the LUT input.
+                #[serde(rename = "inputEncoding")]
+                #[ts(type = "string")]
+                input_encoding: ColorEncodingId,
+                /// Encoding produced by the LUT.
+                #[serde(rename = "outputEncoding")]
+                #[ts(type = "string")]
+                output_encoding: ColorEncodingId,
+                /// Phase-0 interpolation contract.
+                interpolation: ColorLutInterpolation,
+            },
+            /// A camera's reference Input Transform, without a LUT. Valid only in
+            /// an ACES document, where the camera's
+            /// published log curve and gamut are converted into ACES.
+            CameraInput {
+                /// Registered camera encoding, for example `camera:sony-slog3-sgamut3-cine:v1`.
+                #[serde(rename = "inputEncoding")]
+                #[ts(type = "string")]
+                input_encoding: ColorEncodingId,
+            },
+        }
+
         /// Strict canonical Input Transform payload.
         #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
         #[serde(rename_all = "camelCase" $(, $strict)?)]
@@ -57,7 +90,7 @@ macro_rules! define_color_transform_schema {
             #[ts(type = "number")]
             pub semantic_version: ColorTransformSemanticVersion,
             /// Transform representation evaluated before ordinary layer effects.
-            pub transform: ColorTransform,
+            pub transform: InputColorTransform,
         }
     };
 }

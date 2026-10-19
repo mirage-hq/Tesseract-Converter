@@ -63,6 +63,8 @@ fn admitted<'a>(
                     | PrEffectParams::FilmImpactDirectionalBlur(_)
                     | PrEffectParams::Levels(_)
                     | PrEffectParams::Offset(_)
+                    | PrEffectParams::ProcAmpBrightness(_)
+                    | PrEffectParams::DropShadow { .. }
                     | PrEffectParams::Invert(_)
                     | PrEffectParams::FindEdges(_)
                     | PrEffectParams::Tint(_)
@@ -72,6 +74,7 @@ fn admitted<'a>(
                     | PrEffectParams::Replicate(_)
                     | PrEffectParams::Posterize(_)
                     | PrEffectParams::AlphaGlow { .. }
+                    | PrEffectParams::UltraKey(_)
                     | PrEffectParams::LegacyLuma { .. }
                     | PrEffectParams::LensDistortion(_)
                     | PrEffectParams::PosterizeTime { .. }

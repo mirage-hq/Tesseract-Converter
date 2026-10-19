@@ -11,11 +11,17 @@
   "properties": {
     "version": {
       "description": "FX composition schema version.",
-      "const": 70
+      "const": 77
     },
     "backgroundColor": {
-      "description": "Composition-level render background color.",
-      "$ref": "#/$defs/color"
+      "description": "Composition background: finite extended-sRGB RGB 0..64 and coverage alpha 0..1.",
+      "$ref": "#/$defs/extendedColor"
+    },
+    "colorManagement": {
+      "$ref": "#/$defs/JBColorManagementModel",
+      "default": {
+        "workingSpace": "legacyDisplay"
+      }
     },
     "composition": {
       "description": "The single root composition rendered for this document.",
@@ -24,6 +30,101 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "JBColorManagementModel": {
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "outputTransform"
+                ]
+              },
+              {
+                "required": [
+                  "compositing"
+                ]
+              }
+            ]
+          },
+          "properties": {
+            "workingSpace": {
+              "const": "legacyDisplay"
+            }
+          }
+        },
+        {
+          "properties": {
+            "compositing": {
+              "enum": [
+                "footageOnly",
+                "wholeProgram",
+                "perClip"
+              ],
+              "type": "string"
+            },
+            "outputTransform": {
+              "const": "aces2.0",
+              "type": "string"
+            },
+            "workingSpace": {
+              "const": "acescct"
+            }
+          },
+          "required": [
+            "outputTransform",
+            "compositing"
+          ]
+        }
+      ],
+      "properties": {
+        "compositing": {
+          "anyOf": [
+            {
+              "enum": [
+                "footageOnly",
+                "wholeProgram",
+                "perClip"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Compositing"
+        },
+        "outputTransform": {
+          "anyOf": [
+            {
+              "const": "aces2.0",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Outputtransform"
+        },
+        "version": {},
+        "workingSpace": {
+          "enum": [
+            "legacyDisplay",
+            "acescct"
+          ],
+          "title": "Workingspace",
+          "type": "string"
+        }
+      },
+      "required": [
+        "workingSpace"
+      ],
+      "title": "JBColorManagementModel",
+      "type": "object"
+    },
     "blendMode": {
       "description": "Compositing blend mode — mirrors scene::BlendMode 1:1.",
       "enum": [
@@ -47,35 +148,24 @@
       ]
     },
     "color": {
+      "$ref": "#/$defs/extendedColor",
+      "description": "Authored extended-sRGB RGB (0..64), normalized coverage alpha (0..1). Intrinsic emoji and baked PAG colors retain their native semantics."
+    },
+    "extendedColor": {
       "type": "array",
-      "description": "Normalized RGBA color, matching AE/PAG floating-point color channels.",
+      "description": "Extended-sRGB RGB (0..64), normalized coverage alpha (0..1). HDR continues the sRGB EOTF; SDR fits RGB by its largest channel.",
       "prefixItems": [
-        {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        },
-        {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        },
-        {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        },
-        {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        }
+        {"type": "number", "minimum": 0, "maximum": 64},
+        {"type": "number", "minimum": 0, "maximum": 64},
+        {"type": "number", "minimum": 0, "maximum": 64},
+        {"type": "number", "minimum": 0, "maximum": 1}
       ],
       "items": false,
       "minItems": 4,
       "maxItems": 4
     },
     "composition": {
+      "not": {"required": ["colorManagement"]},
       "type": "object",
       "description": "An AE composition/PAG composition.",
       "required": [
@@ -575,6 +665,7 @@
       "additionalProperties": false
     },
     "layerBase": {
+      "not": {"required": ["colorManagement"]},
       "type": "object",
       "required": [
         "id",
@@ -2004,6 +2095,13 @@
             "type": {
               "const": "Group"
             },
+            "renderDomain": {
+              "type": "string",
+              "enum": [
+                "scene",
+                "display"
+              ]
+            },
             "motionBlur": {
               "description": "Per-layer standard motion-blur switch; requires the composition master switch.",
               "type": "boolean",
@@ -2301,6 +2399,13 @@
             "type": {
               "const": "Video"
             },
+            "renderDomain": {
+              "type": "string",
+              "enum": [
+                "scene",
+                "display"
+              ]
+            },
             "metadata": {
               "description": "Optional semantic editor state for AI features applied to this video layer.",
               "$ref": "#/$defs/videoLayerMetadata"
@@ -2395,6 +2500,13 @@
           "properties": {
             "type": {
               "const": "Image"
+            },
+            "renderDomain": {
+              "type": "string",
+              "enum": [
+                "scene",
+                "display"
+              ]
             },
             "motionBlur": {
               "description": "Per-layer standard motion-blur switch; requires the composition master switch.",
@@ -2627,6 +2739,12 @@
           "$ref": "#/$defs/layerEffectFisheye"
         },
         {
+          "$ref": "#/$defs/layerEffectHalation"
+        },
+        {
+          "$ref": "#/$defs/layerEffectNoiseReduction"
+        },
+        {
           "$ref": "#/$defs/layerEffectPosterizeTime"
         },
         {
@@ -2634,6 +2752,15 @@
         },
         {
           "$ref": "#/$defs/layerEffectColorCurves"
+        },
+        {
+          "$ref": "#/$defs/layerEffectHueCurves"
+        },
+        {
+          "$ref": "#/$defs/layerEffectChannelMixer"
+        },
+        {
+          "$ref": "#/$defs/layerEffectSelectiveColor"
         }
       ]
     },
@@ -2822,11 +2949,10 @@
     },
     "layerEffectLookTransform": {
       "type": "object",
-      "description": "Reader-only creative LUT evaluated at its exact ordered LayerEffect position.",
+      "description": "Creative LUT evaluated at its exact ordered LayerEffect position. Null or omitted transform is Creative LUT None: exact input bypass.",
       "required": [
         "type",
-        "semanticVersion",
-        "transform"
+        "semanticVersion"
       ],
       "properties": {
         "type": {
@@ -2836,7 +2962,11 @@
           "const": 1
         },
         "transform": {
-          "$ref": "#/$defs/colorTransform"
+          "anyOf": [
+            { "$ref": "#/$defs/colorTransform" },
+            { "type": "null" }
+          ],
+          "default": null
         },
         "mix": {
           "type": "number",
@@ -3932,7 +4062,7 @@
               "const": "solid"
             },
             "color": {
-              "$ref": "#/$defs/colorProperty"
+              "$ref": "#/$defs/extendedColor"
             }
           },
           "additionalProperties": false
@@ -4046,7 +4176,7 @@
           "default": true
         },
         "fillColor": {
-          "$ref": "#/$defs/colorProperty"
+          "$ref": "#/$defs/extendedColor"
         },
         "fillPaint": {
           "description": "Optional complete fill-paint override. Legacy rectangles omit this and derive a solid paint from fillColor.",
@@ -4062,7 +4192,7 @@
           "default": false
         },
         "strokeColor": {
-          "$ref": "#/$defs/colorProperty"
+          "$ref": "#/$defs/extendedColor"
         },
         "strokeWidth": {
           "$ref": "#/$defs/nonNegativeProperty",
@@ -4579,8 +4709,8 @@
       ]
     },
     "colorProperty": {
-      "description": "AE/PAG-style RGBA color value.",
-      "$ref": "#/$defs/color"
+      "description": "Authored AE/PAG-style finite extended-sRGB RGB 0..64 and coverage alpha 0..1.",
+      "$ref": "#/$defs/extendedColor"
     },
     "adjustmentLayer": {
       "description": "AE adjustment layer (ENG-1505): a contentless layer whose effects stack applies to the composite of every sibling layer BELOW it in the stack. Masks/trackMatte gate WHERE the effect applies (AE order: mask clips the backdrop copy, then effects run), transform.opacity is the wet/dry mix, blendMode blends the effected copy against the untouched composite. The geometric transform components are ignored (AE parity: they never move the layers beneath). dropShadow / layerStyles are rejected (silhouette styles are meaningless on a contentless layer). personMatte in the effects stack is skipped with a warn-once, same as on a Group.",
@@ -5078,6 +5208,68 @@
       },
       "additionalProperties": false
     },
+    "layerEffectHalation": {
+      "type": "object",
+      "description": "Film highlight bloom on native scene light; soft 0.1-white knee, wide blur, warm RGB tint and additive return. All controls animate; intensity zero bypasses.",
+      "required": [
+        "type",
+        "threshold",
+        "radius",
+        "intensity",
+        "tintRed",
+        "tintGreen",
+        "tintBlue"
+      ],
+      "properties": {
+        "type": {
+          "const": "halation"
+        },
+        "threshold": {
+          "$ref": "#/$defs/nonNegativeProperty"
+        },
+        "radius": {
+          "$ref": "#/$defs/nonNegativeProperty"
+        },
+        "intensity": {
+          "$ref": "#/$defs/nonNegativeProperty"
+        },
+        "tintRed": {
+          "$ref": "#/$defs/nonNegativeProperty"
+        },
+        "tintGreen": {
+          "$ref": "#/$defs/nonNegativeProperty"
+        },
+        "tintBlue": {
+          "$ref": "#/$defs/nonNegativeProperty"
+        },
+        "saturation": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "layerEffectNoiseReduction": {
+      "type": "object",
+      "description": "Engine-owned spatial Noise Reduction shader effect: edge-preserving smoothing of Rec.709 luma and chroma. Numeric properties are effect parameters.",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "noiseReduction"
+        },
+        "luminance": {
+          "type": "number"
+        },
+        "chrominance": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
     "layerEffectPosterizeTime": {
       "type": "object",
       "description": "AE \"Posterize Time\": quantize the layer's effective time to frameRate frames per second, so its video frames, keyframed animation, and animated effects hold and step together while the composition plays at full rate. Applies to the whole layer regardless of stack position, including nested group members. External layers referenced as track mattes or custom-shader inputs are NOT retimed (AE parity) - posterize the source too, or posterize a group containing both. frameRate is 1-60 fps (default 8; out-of-range persisted values clamp) and is NOT animatable (the rate defines the quantization grid itself); set it statically. Not valid on adjustment layers.",
@@ -5259,10 +5451,15 @@
           "minLength": 1
         },
         "shotStyleId": {
-          "description": "ShotStyleTemplate variant id inside styleId. Omitted when a legacy split preserved rendered styling but lost template lineage.",
+          "description": "ShotStyleTemplate variant id inside styleId. Omitted when a legacy split lost template lineage or styling was explicitly cleared.",
           "type": "string",
           "minLength": 1,
           "pattern": ".*\\S.*"
+        },
+        "styleCleared": {
+          "description": "Style was explicitly removed while retaining semantic ownership and generated emoji provenance. Missing defaults to false; absent shotStyleId alone does not indicate removal.",
+          "type": "boolean",
+          "default": false
         },
         "sourceLayerId": {
           "description": "Nested Video or Image layer that supplies source media.",
@@ -5301,6 +5498,71 @@
         }
       },
       "additionalProperties": false
+    },
+    "hueCurve": {
+      "type": "array", "minItems": 2, "maxItems": 16,
+      "description": "Normalized points with strictly increasing GPU-precision x; hue axes wrap, and 0/1 endpoints must have matching y (reader enforced).",
+      "items": {"$ref": "#/$defs/colorCurvePoint"}
+    },
+    "layerEffectHueCurves": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "semanticVersion"],
+      "properties": {
+        "type": {"const": "hueCurves"}, "semanticVersion": {"const": 1},
+        "hueVsHue": {"anyOf":[{"$ref":"#/$defs/hueCurve"},{"type":"null"}]},
+        "hueVsSaturation": {"anyOf":[{"$ref":"#/$defs/hueCurve"},{"type":"null"}]},
+        "hueVsLuminance": {"anyOf":[{"$ref":"#/$defs/hueCurve"},{"type":"null"}]},
+        "luminanceVsSaturation": {"anyOf":[{"$ref":"#/$defs/hueCurve"},{"type":"null"}]},
+        "saturationVsSaturation": {"anyOf":[{"$ref":"#/$defs/hueCurve"},{"type":"null"}]}
+      }
+    },
+    "channelMixerRow": {
+      "type":"object", "additionalProperties":false,
+      "required":["red","green","blue","constant"],
+      "properties": {
+        "red":{"type":"number","minimum":-2,"maximum":2},
+        "green":{"type":"number","minimum":-2,"maximum":2},
+        "blue":{"type":"number","minimum":-2,"maximum":2},
+        "constant":{"type":"number","minimum":-1,"maximum":1}
+      }
+    },
+    "layerEffectChannelMixer": {
+      "type":"object", "additionalProperties":false,
+      "required":["type","semanticVersion","red","green","blue","monochrome"],
+      "properties": {
+        "type":{"const":"channelMixer"}, "semanticVersion":{"const":1},
+        "red":{"$ref":"#/$defs/channelMixerRow"},
+        "green":{"$ref":"#/$defs/channelMixerRow"},
+        "blue":{"$ref":"#/$defs/channelMixerRow"}, "monochrome":{"type":"boolean"}
+      }
+    },
+    "selectiveColorAdjustment": {
+      "type":"object", "additionalProperties":false,
+      "required":["cyan","magenta","yellow","black"],
+      "properties": {
+        "cyan":{"type":"number","minimum":-1,"maximum":1},
+        "magenta":{"type":"number","minimum":-1,"maximum":1},
+        "yellow":{"type":"number","minimum":-1,"maximum":1},
+        "black":{"type":"number","minimum":-1,"maximum":1}
+      }
+    },
+    "layerEffectSelectiveColor": {
+      "type":"object", "additionalProperties":false,
+      "description":"Jerboa Approximate mapping of AE/Photoshop Selective Color, not vendor parity.",
+      "required":["type","semanticVersion","method","reds","yellows","greens","cyans","blues","magentas","whites","neutrals","blacks"],
+      "properties": {
+        "type":{"const":"selectiveColor"}, "semanticVersion":{"const":1},
+        "method":{"enum":["relative","absolute"]},
+        "reds":{"$ref":"#/$defs/selectiveColorAdjustment"},
+        "yellows":{"$ref":"#/$defs/selectiveColorAdjustment"},
+        "greens":{"$ref":"#/$defs/selectiveColorAdjustment"},
+        "cyans":{"$ref":"#/$defs/selectiveColorAdjustment"},
+        "blues":{"$ref":"#/$defs/selectiveColorAdjustment"},
+        "magentas":{"$ref":"#/$defs/selectiveColorAdjustment"},
+        "whites":{"$ref":"#/$defs/selectiveColorAdjustment"},
+        "neutrals":{"$ref":"#/$defs/selectiveColorAdjustment"},
+        "blacks":{"$ref":"#/$defs/selectiveColorAdjustment"}
+      }
     },
     "colorCurvePoint": {
       "type": "object",

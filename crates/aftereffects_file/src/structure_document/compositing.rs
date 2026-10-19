@@ -58,6 +58,15 @@ pub(super) fn motion_blur(
     }))
 }
 
+/// Native visual owners are Groups; inspect the emitted tree rather than all
+/// source compositions, including those not selected for this document.
+pub(super) fn group_uses_motion_blur(group: &fx_schema::GroupLayer) -> bool {
+    group.motion_blur
+        || group.layers.iter().any(|layer| {
+            matches!(layer.data(), fx_schema::LayerData::Group(child) if group_uses_motion_blur(child))
+        })
+}
+
 /// Native layer selected as a record's track matte, before index resolution.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum MatteLayer {
@@ -506,6 +515,117 @@ mod tests {
                 !source.layers.is_empty(),
                 "matte content must be editable, not a placeholder"
             );
+        }
+    }
+
+    #[test]
+    fn nested_motion_blur_and_checked_root_siblings_survive_disabled_preview() {
+        let mut project = read_project(include_bytes!(
+            "../../tests/fixtures/compositing/import_motion_blur_cases.aep"
+        ))
+        .unwrap();
+        let item = project.items.iter_mut().find(|item| item.id == 1).unwrap();
+        let ItemKind::Composition(comp) = &mut item.kind else {
+            panic!("composition")
+        };
+        // Turn the root's backdrop into a placement of the existing BOTH_ON
+        // composition. Both checked foregrounds must blur under Best Settings.
+        patch(&mut comp.layers[1], 40, &34_u32.to_be_bytes());
+        let result = to_structural_fx_document(&project, Some(1)).unwrap();
+        let settings = result.document.composition().motion_blur();
+        assert!(settings.enabled, "nested blur needs the FX global switch");
+        assert_eq!(settings.shutter_angle.value(), 180.0);
+        let layers = &root(result.document.composition().layers()).layers;
+        let FxLayer::Group(foreground) = layers[0].data() else {
+            panic!("foreground Group")
+        };
+        assert!(
+            foreground.motion_blur,
+            "root checked layer must blur independently of preview"
+        );
+        let FxLayer::Group(placement) = layers[1].data() else {
+            panic!("precomposition Group")
+        };
+        fn nested_foreground(group: &GroupLayer) -> Option<&GroupLayer> {
+            group.layers.iter().find_map(|layer| match layer.data() {
+                FxLayer::Group(child) if child.name == "moving_foreground" => Some(child),
+                FxLayer::Group(child) => nested_foreground(child),
+                _ => None,
+            })
+        }
+        let nested = nested_foreground(placement).expect("nested foreground owner");
+        assert!(nested.motion_blur, "nested BOTH_ON must remain effective");
+        assert!(result.document.to_json_vec().is_ok());
+    }
+
+    #[test]
+    fn best_settings_motion_blur_uses_checked_layers_even_with_preview_disabled() {
+        let project = read_project(include_bytes!(
+            "../../tests/fixtures/compositing/import_motion_blur_cases.aep"
+        ))
+        .unwrap();
+        for (id, master, checked, angle, phase) in [
+            (1, false, true, 180.0, 0.0),
+            (18, true, false, 180.0, 0.0),
+            (34, true, true, 180.0, 0.0),
+            (50, true, true, 270.0, -90.0),
+        ] {
+            let ItemKind::Composition(comp) = &project.item(id).unwrap().kind else {
+                panic!("native composition")
+            };
+            assert_eq!(comp.record.flags()[1] & 8 != 0, master);
+            assert_eq!(comp.layers[0].record.flags().motion_blur, checked);
+            let result = to_structural_fx_document(&project, Some(id)).unwrap();
+            let settings = result.document.composition().motion_blur();
+            assert!(settings.enabled);
+            assert_eq!(settings.shutter_angle.value(), angle);
+            assert_eq!(settings.shutter_phase, phase);
+            let FxLayer::Group(foreground) =
+                root(result.document.composition().layers()).layers[0].data()
+            else {
+                panic!("editable foreground")
+            };
+            assert_eq!(foreground.motion_blur, checked, "composition {id}");
+            assert!(!foreground.layers.is_empty());
+        }
+    }
+
+    #[test]
+    fn collapsed_precomp_uses_child_motion_blur_switches() {
+        for collapsed in [false, true] {
+            for source in [18_u32, 34] {
+                let mut project = read_project(include_bytes!(
+                    "../../tests/fixtures/compositing/import_motion_blur_cases.aep"
+                ))
+                .unwrap();
+                let item = project.items.iter_mut().find(|item| item.id == 50).unwrap();
+                let ItemKind::Composition(comp) = &mut item.kind else {
+                    panic!("composition")
+                };
+                patch(&mut comp.layers[0], 40, &source.to_be_bytes());
+                comp.layers[0].record = comp.layers[0]
+                    .record
+                    .clone()
+                    .with_collapse_transformations(collapsed)
+                    .unwrap();
+                let result = to_structural_fx_document(&project, Some(50)).unwrap();
+                let placement = root(&root(result.document.composition().layers()).layers);
+                assert_eq!(
+                    placement.motion_blur, !collapsed,
+                    "collapsed={collapsed}, source={source}: only ordinary precomps blur their raster"
+                );
+                fn child_owner(group: &GroupLayer) -> Option<&GroupLayer> {
+                    group.layers.iter().find_map(|layer| match layer.data() {
+                        FxLayer::Group(child) if child.name == "moving_foreground" => Some(child),
+                        FxLayer::Group(child) => child_owner(child),
+                        _ => None,
+                    })
+                }
+                let child = child_owner(placement).expect("editable source owner");
+                assert_eq!(child.motion_blur, source == 34);
+                assert!(!child.layers.is_empty());
+                result.document.to_json_vec().unwrap();
+            }
         }
     }
 

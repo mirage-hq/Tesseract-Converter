@@ -5,7 +5,11 @@ use crate::schema::{
     after_effects::CODEC, native::VideoStream, records, ColorSpace, PrVideoStream,
 };
 
-pub(super) fn video_stream(video: &PrVideoStream, ids: &MediaIds) -> VideoStream {
+pub(super) fn video_stream(
+    video: &PrVideoStream,
+    source: crate::schema::after_effects::PrAfterEffectsSource,
+    ids: &MediaIds,
+) -> VideoStream {
     VideoStream {
         object_id: ids.stream,
         class_id: Some(records::VIDEO_STREAM.class_id.to_owned()),
@@ -17,8 +21,13 @@ pub(super) fn video_stream(video: &PrVideoStream, ids: &MediaIds) -> VideoStream
         frame_rect: Some(format!("0,0,{},{}", video.width, video.height)),
         codec_type: Some(CODEC.to_owned()),
         original_color_space: Some(
-            serde_json::to_string(&ColorSpace::sequence_sdr())
-                .expect("native RGB color fields serialize"),
+            serde_json::to_string(
+                &source
+                    .working_hdr
+                    .map(ColorSpace::rgb_hdr)
+                    .unwrap_or_else(ColorSpace::sequence_sdr),
+            )
+            .expect("native RGB color fields serialize"),
         ),
         alpha_type: Some("1".to_owned()),
         original_field_type: Some("4".to_owned()),

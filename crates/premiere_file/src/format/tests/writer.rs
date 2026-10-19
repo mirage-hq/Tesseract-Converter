@@ -90,6 +90,7 @@ fn project(occurrences: Vec<PrVideoOccurrence>) -> PrProjectFile {
         .unwrap_or(0);
     PrProjectFile::from_sequences(
         vec![PrSequence {
+            hdr: None,
             native_frame_ticks: None,
             id: None,
             name: "Fresh & editable".into(),
@@ -100,6 +101,7 @@ fn project(occurrences: Vec<PrVideoOccurrence>) -> PrProjectFile {
             width: 1920,
             height: 1080,
             timeline_end_ticks,
+            adjustment_only_template: false,
         }],
         media,
     )
@@ -650,7 +652,8 @@ fn edited_uniform_scale_and_rotation_export_independently() {
             PrAnimatedProperty::Rotation => PrPropertyAnimation::Rotation(keys),
             PrAnimatedProperty::Position
             | PrAnimatedProperty::AnchorPoint
-            | PrAnimatedProperty::ScaleWidth => {
+            | PrAnimatedProperty::ScaleWidth
+            | PrAnimatedProperty::ScaleHeight => {
                 panic!("test only constructs uniform Scale and Rotation")
             }
         });
@@ -876,8 +879,27 @@ fn opacity_animation_and_normal_blend_round_trip_through_native_records() {
     ]));
 
     let native = project(vec![clip]);
-    let imported =
-        crate::format::inspect_project_with_media(&project_xml(&native).unwrap(), None).unwrap();
+    let xml = project_xml(&native).unwrap();
+    let document = roxmltree::Document::parse(&xml).unwrap();
+    let opacity = document
+        .descendants()
+        .find(|node| {
+            node.has_tag_name("VideoComponentParam")
+                && node
+                    .children()
+                    .any(|child| child.has_tag_name("Name") && child.text() == Some("Opacity"))
+        })
+        .unwrap();
+    // Match the enabled native control in feature_motion_opacity_26_5_strict;
+    // our reader accepting key payloads alone does not prove activation.
+    assert_eq!(
+        opacity
+            .children()
+            .find(|child| child.has_tag_name("IsTimeVarying"))
+            .and_then(|child| child.text()),
+        Some("true")
+    );
+    let imported = crate::format::inspect_project_with_media(&xml, None).unwrap();
     let actual = imported
         .single_sequence()
         .unwrap()
@@ -898,6 +920,37 @@ fn opacity_animation_and_normal_blend_round_trip_through_native_records() {
     assert_eq!(animation.keys()[1].source_ticks, 3 * TICKS_PER_SECOND);
     assert_eq!(animation.keys()[1].value, 25.0);
     assert_eq!(animation.keys()[1].easing, PrKeyframeEasing::Hold);
+}
+
+#[test]
+fn sdr_opacity_export_explicitly_disables_linear_compositing() {
+    let mut clip = occurrence(Path::new("/tmp/media/source.mp4"));
+    clip.opacity = 18.0;
+    let xml = project_xml(&project(vec![clip])).unwrap();
+    let document = roxmltree::Document::parse(&xml).unwrap();
+    let group = document
+        .descendants()
+        .find(|node| node.has_tag_name("VideoTrackGroup"))
+        .unwrap();
+    assert_eq!(
+        group
+            .children()
+            .find(|node| node.has_tag_name("AllowLinearCompositing"))
+            .and_then(|node| node.text()),
+        Some("false"),
+        "legacy FX opacity blends display-space values, not linear light"
+    );
+    let imported = crate::format::inspect_project_with_media(&xml, None).unwrap();
+    assert_eq!(
+        imported
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .next()
+            .unwrap()
+            .opacity,
+        18.0
+    );
 }
 
 #[test]

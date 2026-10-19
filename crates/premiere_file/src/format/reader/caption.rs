@@ -534,18 +534,21 @@ fn read_cue(
         decoded.document.justification,
     );
     let graphic = PrGraphic {
+        hdr: None,
         id: Some(identity),
         start_ticks: start,
         end_ticks: end,
         in_ticks: sequence.native_frame_rate().generator_in_ticks(),
         vector_motion: None,
         clip_motion: PrStaticTransform::default(),
+        clip_motion_animations: Vec::new(),
         opacity: 100.0,
         blend_mode: PrBlendMode::Normal,
         animations: Vec::new(),
         opacity_mask: None,
         effect_loss: None,
         objects: vec![PrGraphicObject::Text(PrText {
+            mask: None,
             horizontal_scale: None,
             mask_source: None,
             name: label.to_owned(),

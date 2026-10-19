@@ -90,7 +90,7 @@ fn linked(aep: &str, guid: &str, canvas: [u32; 2]) -> PrMedia {
             interpretation: Default::default(),
             orientation: crate::schema::VideoOrientation::Identity,
             kind: PrMediaKind::AfterEffectsComposition(
-                PrAfterEffectsComposition::parse(guid).unwrap(),
+                PrAfterEffectsComposition::parse(guid).unwrap().into(),
             ),
             intrinsic_ticks: 2 * TICKS,
             frame_rate: (FrameRate::Fps30).into(),

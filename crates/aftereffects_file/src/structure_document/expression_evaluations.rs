@@ -10,7 +10,8 @@ use crate::{
 };
 
 #[derive(Default)]
-pub(super) struct ExpressionEvaluations {
+pub(super) struct ExpressionEvaluations<'a> {
+    effect_definitions: &'a [crate::rifx::Chunk],
     successful: HashMap<u32, CachedOccurrence>,
     #[cfg(test)]
     evaluations: usize,
@@ -29,7 +30,14 @@ pub(super) struct EvaluatedOccurrence {
     pub(super) approximations: Vec<Rc<Approximation>>,
 }
 
-impl ExpressionEvaluations {
+impl<'a> ExpressionEvaluations<'a> {
+    pub(super) fn new(effect_definitions: &'a [crate::rifx::Chunk]) -> Self {
+        Self {
+            effect_definitions,
+            ..Self::default()
+        }
+    }
+
     // Only Converter::composition_layers calls this with its immutable source
     // graph/capture and the composition after applying these ordered overrides.
     // Native identity plus exact overrides therefore fixes every evaluator input,
@@ -78,13 +86,14 @@ impl ExpressionEvaluations {
             self.evaluations += 1;
         }
         let mut approximations = Vec::new();
-        let samples = crate::expression_eval::evaluate_occurrence_with_diagnostics(
+        let samples = crate::expression_eval::evaluate_occurrence_with_definitions(
             items,
             comp_id,
             comp,
             supplied.as_ref().unwrap_or(captured),
             !overrides.is_empty(),
             &mut approximations,
+            self.effect_definitions,
         );
         drop(supplied);
         let mut approximations: Vec<_> = approximations.into_iter().map(Rc::new).collect();

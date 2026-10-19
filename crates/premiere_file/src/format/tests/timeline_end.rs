@@ -1,7 +1,9 @@
 //! The sequence end comes from the last track item, converted or not.
 use crate::{
+    convert::premiere_to_tesseract,
     format::{inspect_project, inspect_project_with_omissions, FrameRate},
     schema::TICKS,
+    tesseract_output::asset_ids_in_order,
     Omission, OmissionScope,
 };
 
@@ -75,6 +77,66 @@ fn recovered_tail_item_keeps_selection_and_ends_the_sequence() {
 }
 
 #[test]
+fn omitted_audio_tail_keeps_sequence_duration_and_editable_picture() {
+    // An unreadable audio track omits its sound, not its valid item range.
+    // This synthetic control does not relax audio admission or invent silence.
+    let source = SOURCE
+        .replace(
+            "<TrackGroup><Second ObjectRef=\"1\"/></TrackGroup>",
+            "<TrackGroup><Second ObjectRef=\"1\"/></TrackGroup><TrackGroup><Second ObjectRef=\"10\"/></TrackGroup>",
+        )
+        .replace(
+            "</PremiereData>",
+            &format!(
+                r#"
+  <AudioTrackGroup ObjectID="10"><TrackGroup><Tracks><Track ObjectURef="audio-track"/></Tracks></TrackGroup></AudioTrackGroup>
+  <AudioClipTrack ObjectUID="audio-track"><ClipTrack><Track><ID>1</ID></Track><ClipItems><TrackItems><TrackItem ObjectRef="11"/></TrackItems></ClipItems></ClipTrack></AudioClipTrack>
+  <AudioClipTrackItem ObjectID="11"><ClipTrackItem><TrackItem><Start>0</Start><End>{}</End></TrackItem></ClipTrackItem></AudioClipTrackItem>
+</PremiereData>"#,
+                10 * TICKS
+            ),
+        );
+    let (project, omissions) = inspect_project_with_omissions(&source, None).unwrap();
+    let sequence = project.single_sequence().unwrap();
+    assert!(sequence.audio.is_empty());
+    assert!(
+        reported(
+            &omissions,
+            OmissionScope::Track,
+            "AudioClipTrack:audio-track"
+        ),
+        "{omissions:?}"
+    );
+    assert_eq!(sequence.video_occurrences().count(), 1);
+    assert_eq!(
+        sequence.video_tracks[0].clip(0).source_ticks(),
+        0..5 * TICKS
+    );
+    assert_eq!(sequence.occurrence_end_ticks(), 5 * TICKS);
+    assert_eq!(sequence.timeline_end_ticks, 10 * TICKS);
+    assert_eq!(sequence.end_ticks(), 10 * TICKS);
+    let document = premiere_to_tesseract(
+        sequence,
+        &project.media,
+        &asset_ids_in_order(sequence, &project.media),
+        &mut Vec::new(),
+    )
+    .unwrap()
+    .to_json_value()
+    .unwrap();
+    assert_eq!(document["duration"], 10.0);
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    assert_eq!(layers.len(), 2);
+    assert_eq!(layers[1]["type"], "Rect");
+    assert_eq!(layers[1]["activeRange"]["duration"], 10_000);
+    assert_eq!(layers[0]["type"], "Video");
+    assert_eq!(
+        layers[0]["sourceRange"],
+        serde_json::json!({"start": 0, "duration": 5000})
+    );
+}
+
+#[test]
 fn off_grid_item_ends_snap_to_the_nearest_sequence_frame_ties_forward() {
     // Exported clip boundaries snap the same way. Whether AME renders a
     // mid-frame item end to the nearest or to the next frame is unverified.
@@ -93,6 +155,15 @@ fn off_grid_item_ends_snap_to_the_nearest_sequence_frame_ties_forward() {
             reported(&omissions, OmissionScope::Occurrence, "9"),
             "{omissions:?}"
         );
+    }
+}
+
+#[test]
+fn missing_or_unreadable_sequence_cadence_is_not_accepted_as_a_tick_grid() {
+    let source = with_omitted_tail_item(10 * TICKS + FRAME_30 - 1);
+    for replacement in ["", "<FrameRate>invalid</FrameRate>"] {
+        let source = source.replacen("<FrameRate>8467200000</FrameRate>", replacement, 1);
+        assert!(inspect_project(&source, None).is_err());
     }
 }
 

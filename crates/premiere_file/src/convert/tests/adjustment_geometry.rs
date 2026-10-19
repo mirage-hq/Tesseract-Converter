@@ -1676,6 +1676,10 @@ fn adjustment_geometry2_suffix_reuses_lumetri_and_sharpen_payloads() {
     let origin = adjustment.in_ticks;
     let mut donor = lumetri.sequences[0].video_tracks[0].clip(0).effects.clone();
     assert_eq!(donor.len(), 6);
+    let PrEffectParams::LumetriExposure(native_exposure) = &donor[0].params else {
+        panic!("expected native Lumetri Exposure donor");
+    };
+    assert_eq!(*native_exposure, 1.0);
     donor.push(sharpen.sequences[0].video_tracks[0].clip(3).effects[0].clone());
     for effect in &mut donor {
         for animation in &mut effect.animations {
@@ -1717,7 +1721,10 @@ fn adjustment_geometry2_suffix_reuses_lumetri_and_sharpen_payloads() {
             .collect::<Vec<_>>(),
         (1..=9).collect::<Vec<_>>()
     );
-    assert_eq!(effects[2]["effect"]["exposure"], 1.0);
+    // 1 stop divided by 2.2 (the Lumetri display-code approximation), as stored.
+    assert_eq!(effects[2]["effect"]["exposure"], 0.454545455);
+    assert_eq!(effects[2]["effect"]["offset"], 0.0);
+    assert_eq!(effects[2]["effect"]["gammaCorrection"], 1.0);
     assert_eq!(effects[3]["effect"]["contrast"], 25.0);
     assert_eq!(effects[8]["effect"]["amount"], 20.0);
     for (id, param, times, values) in [
@@ -1958,7 +1965,7 @@ fn adjustment_geometry2_suffix_current_edits_export_separate_native_owners() {
             ))
         })
         .collect();
-    native_order.sort_by(|a, b| b.0.cmp(&a.0));
+    native_order.sort_by_key(|layer| std::cmp::Reverse(layer.0));
     assert_eq!(
         native_order
             .iter()

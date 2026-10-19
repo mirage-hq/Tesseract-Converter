@@ -394,8 +394,8 @@ fn native_trimmed_speed_time_remap_edits_recover_picture_selection_and_sibling()
         }
     }
 
-    // Valid saved reverse and media-end-segment clocks retain diagnosed
-    // constant playback. Only the mismatched 0.5x source span loses a placement.
+    // Rejected optional curves retain diagnosed constant playback, including
+    // sub-millisecond source motion approximated as a held picture.
     for (clip, from, to, reason, kept, fallback, rejected_curve) in [
         (
             "94",
@@ -403,7 +403,7 @@ fn native_trimmed_speed_time_remap_edits_recover_picture_selection_and_sibling()
             "<PlaybackSpeed>0.8</PlaybackSpeed><PlayBackwards>true</PlayBackwards>",
             "reverse playback combined with TimeRemapping is unsupported",
             2000,
-            Some((0, 8000, 9600, 8000)),
+            Some((0, 8000, 1600, 9600, 8000)),
             false,
         ),
         (
@@ -412,7 +412,7 @@ fn native_trimmed_speed_time_remap_edits_recover_picture_selection_and_sibling()
             "<PlaybackSpeed>0.5</PlaybackSpeed>",
             "source span does not match",
             0,
-            Some((2000, 0, 0, 1600)),
+            Some((2000, 0, 1600, 0, 1600)),
             false,
         ),
         (
@@ -421,16 +421,16 @@ fn native_trimmed_speed_time_remap_edits_recover_picture_selection_and_sibling()
             "<InPoint>609638400000</InPoint>\n\t\t\t<OutPoint>1016064000000</OutPoint>",
             "TimeRemapping from a source In or at another speed plays past the key before the curve's media-end key",
             0,
-            Some((2000, 2400, 2400, 4000)),
+            Some((2000, 2400, 1600, 2400, 4000)),
             false,
         ),
         (
             "94",
             "<PlaybackSpeed>0.8</PlaybackSpeed>\n\t\t\t<InPoint>101606400000</InPoint>\n\t\t\t<OutPoint>508032000000</OutPoint>",
             "<PlaybackSpeed>0.0001</PlaybackSpeed>\n\t\t\t<InPoint>0</InPoint>\n\t\t\t<OutPoint>50803200</OutPoint>",
-            "saved source span rounds to an empty editable range",
+            "sub-millisecond source span rounded to a held picture",
             2000,
-            None,
+            Some((0, 0, 1, 0, 0)),
             true,
         ),
     ] {
@@ -489,7 +489,17 @@ fn native_trimmed_speed_time_remap_edits_recover_picture_selection_and_sibling()
         } else {
             "VideoClipTrackItem:64"
         };
-        if fallback.is_some() {
+        if rejected_curve {
+            assert!(occurrences.is_empty(), "{reason}: {omissions:?}");
+            assert_eq!(approximations.len(), 2, "{omissions:?}");
+            for expected in ["fewer than two usable keys", reason] {
+                assert!(approximations.iter().any(|omission| {
+                    omission.scope == OmissionScope::Feature
+                        && omission.record == affected
+                        && omission.reason.contains(expected)
+                }), "{expected}: {omissions:?}");
+            }
+        } else if fallback.is_some() {
             assert!(occurrences.is_empty(), "{reason}: {omissions:?}");
             assert!(
                 approximations.iter().any(|omission|omission.scope==OmissionScope::Feature && omission.record==affected && omission.reason.contains(reason))
@@ -548,7 +558,7 @@ fn native_trimmed_speed_time_remap_edits_recover_picture_selection_and_sibling()
                 "{reason}"
             );
         }
-        if let Some((start, source_start, first, last)) = fallback {
+        if let Some((start, source_start, source_duration, first, last)) = fallback {
             let retained = layers
                 .iter()
                 .find(|layer| layer["playback"]["inputRange"]["start"] == start)
@@ -557,7 +567,7 @@ fn native_trimmed_speed_time_remap_edits_recover_picture_selection_and_sibling()
             assert_eq!(retained["sourceIntrinsicDuration"], 10000);
             assert_eq!(
                 retained["sourceRange"],
-                json!({"start": source_start, "duration": 1600})
+                json!({"start": source_start, "duration": source_duration})
             );
             let playback = &retained["playback"];
             assert_eq!(

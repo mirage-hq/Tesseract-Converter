@@ -5,7 +5,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     rifx::Chunk,
-    schema::{CompositionRecord, layer_records::LayerRecord},
+    schema::{
+        CompositionRecord,
+        layer_records::{FreshLayerClockFields, LayerRecord, NativeRational},
+    },
     timing::Duration24,
 };
 use fx_schema::{
@@ -460,7 +463,7 @@ fn apply_timing(
     timing: LayerTiming,
     duration: Duration24,
 ) -> Result<(), AepWriteError> {
-    let (start, end) = checked_timing(timing, duration)?;
+    checked_timing(timing, duration)?;
     let Some(records) = layer.children_mut() else {
         return Err(AepWriteError::Invalid(
             "native timeline layer is not a LIST",
@@ -472,7 +475,15 @@ fn apply_timing(
     let bytes = record
         .data_payload()
         .ok_or(AepWriteError::Invalid("invalid native ldta"))?;
-    let updated = LayerRecord::decode(bytes)?.with_active_range(start, end - start)?;
+    // Rounding a boundary to 24,576 Hz can move it across an output-frame sample.
+    let updated = LayerRecord::decode(bytes)?.with_source_clock(FreshLayerClockFields {
+        stretch: NativeRational::new(1, 1)?,
+        start_time: NativeRational::milliseconds(i128::from(timing.start_millis))?,
+        in_point: NativeRational::new(0, 1)?,
+        out_point: NativeRational::milliseconds(
+            i128::from(timing.end_millis) - i128::from(timing.start_millis),
+        )?,
+    })?;
     *record = Chunk::data(*b"ldta", updated.encode())?;
     Ok(())
 }
@@ -1058,7 +1069,7 @@ fn emit_timeline(
                         "native layer reference target was not emitted",
                     ))
             };
-            let parent_id = options.parent.map(&resolve).transpose()?.unwrap_or(0);
+            let parent_id = options.parent.map(resolve).transpose()?.unwrap_or(0);
             let matte_id = options
                 .matte
                 .map(|matte| resolve(matte.layer))
@@ -1362,6 +1373,8 @@ fn emit_layer(
                     precomposition.duration,
                 )?,
             };
+            let container_duration = frame_rate.enclosing_duration(precomposition.duration)?;
+            record.set_duration_fraction(container_duration.ticks(), 24_576)?;
             record.set_frame_rate(frame_rate);
             record.set_frame_blending(requires_frame_blending_master(&precomposition.layers)?);
             state.sources.push(root::composition_item(
@@ -1372,7 +1385,7 @@ fn emit_layer(
                 views::build_views_with_clock(
                     precomposition.width,
                     precomposition.height,
-                    precomposition.duration,
+                    container_duration,
                     super::keyframes::PropertyClock::for_rate(frame_rate)?,
                 )?,
             )?);
@@ -1447,7 +1460,7 @@ fn timeline_hierarchy_layer(
 ) -> Result<Chunk, AepWriteError> {
     let (transform, animations) = transform;
     let record = match source_clock {
-        Some(clock) => record.with_source_clock(clock.record)?,
+        Some(clock) => record.with_source_clock(clock.native_record())?,
         None => record,
     };
 
@@ -2525,6 +2538,63 @@ mod hierarchy_writer_tests {
     }
 
     #[test]
+    fn linked_picture_sources_cover_the_last_off_grid_sample() {
+        let root_duration = Duration24::from_frames(48).unwrap();
+        let source_duration = Duration24::from_ticks(405_013).unwrap();
+        for custom_record in [false, true] {
+            let mut nested = empty_precomposition(source_duration);
+            if custom_record {
+                nested.composition_record = Some(
+                    CompositionRecord::empty_ae26(nested.width, nested.height, source_duration)
+                        .unwrap(),
+                );
+            }
+            let layers = [LayerSpec::Precomposition(nested)];
+            let rate = crate::timing::FrameRate::new(30.0).unwrap();
+            let bytes = write_picture_only_composition_at_rate(
+                "Root",
+                320,
+                180,
+                &layers,
+                rate,
+                root_duration,
+                None,
+            )
+            .unwrap();
+            let project = crate::structure::read_project(&bytes).unwrap();
+            let durations = project
+                .items
+                .iter()
+                .filter_map(|item| match &item.kind {
+                    crate::structure::ItemKind::Composition(comp) => Some(comp.duration_secs),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(durations[0], 2.0, "root endpoint must not change");
+            assert!((durations[1] - 16.5).abs() < 1.0 / 24_576.0);
+            assert!(
+                durations[1] > 494.0 / 30.0,
+                "last visible sample must exist"
+            );
+
+            // Ordinary AE export shares the same source-container padding policy.
+            let original =
+                write_composition_at_rate("Root", 320, 180, &layers, rate, root_duration, None)
+                    .unwrap();
+            let original = crate::structure::read_project(&original).unwrap();
+            let durations = original
+                .items
+                .iter()
+                .filter_map(|item| match &item.kind {
+                    crate::structure::ItemKind::Composition(comp) => Some(comp.duration_secs),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!((durations[1] - 16.5).abs() < 1.0 / 24_576.0);
+        }
+    }
+
+    #[test]
     fn precomposition_anchor_keys_and_handles_use_source_units() {
         let duration = Duration24::from_frames(48).unwrap();
         let mut nested = empty_precomposition(duration);
@@ -3414,6 +3484,63 @@ mod hierarchy_writer_tests {
             assert_eq!(numeric.keyframes.len(), 3);
             assert!((numeric.keyframes[1].time_secs - 0.1).abs() < 1e-9);
             assert_eq!(numeric.keyframes[1].values, [0.7]);
+        }
+    }
+
+    #[test]
+    fn fractional_precomposition_tail_survives_native_frame_normalization() {
+        let rate = crate::timing::FrameRate::new(30.0).unwrap();
+        let (_, root_duration) = rate.authored_duration(20.0).unwrap();
+        for milliseconds in [1_001, 16_480, 16_500] {
+            let source_duration = Duration24::from_ticks(
+                u32::try_from((milliseconds * 24_576_u64).div_ceil(1000)).unwrap(),
+            )
+            .unwrap();
+            let mut source = empty_precomposition(source_duration);
+            source.layers.push(LayerSpec::Null(NullLayerSpec {
+                name: "Editable controls".into(),
+                transform: identity_transform(),
+                transform_animations: TransformAnimations::default(),
+            }));
+            let bytes = write_composition_at_rate(
+                "Root",
+                320,
+                180,
+                &[LayerSpec::Precomposition(source)],
+                rate,
+                root_duration,
+                None,
+            )
+            .unwrap();
+            let project = crate::structure::read_project(&bytes).unwrap();
+            let crate::structure::ItemKind::Composition(root) = &project.item(1).unwrap().kind
+            else {
+                panic!("root must be a composition");
+            };
+            let crate::structure::ItemKind::Composition(nested) = &project
+                .item(root.layers[0].record.source_id())
+                .unwrap()
+                .kind
+            else {
+                panic!("source must be a composition");
+            };
+            assert_eq!(nested.layers.len(), 1);
+            assert!(nested.layers[0].record.flags().null_layer);
+            assert_eq!(
+                nested.layers[0].record.out_point(),
+                Some(f64::from(source_duration.ticks()) / 24_576.0)
+            );
+            let (ticks, denominator) = nested.record.duration_fraction().unwrap();
+            let native_frames = (f64::from(ticks) / f64::from(denominator) * rate.fps()).round();
+            let expected_frames = (milliseconds as f64 / 1000.0 * rate.fps()).ceil();
+            assert_eq!(
+                native_frames, expected_frames,
+                "source duration {milliseconds}ms"
+            );
+            assert_eq!(
+                root.record.duration_fraction().unwrap(),
+                (root_duration.ticks(), 24_576)
+            );
         }
     }
 

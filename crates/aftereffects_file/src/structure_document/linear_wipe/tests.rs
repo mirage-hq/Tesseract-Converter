@@ -1286,7 +1286,7 @@ fn leading_geometry_retains_wipe_and_reports_geometry_omission() {
         diagnostic.layer_id == Some(layer_id)
             && diagnostic
                 .to_string()
-                .contains("Geometry2: post-layer mapping requires a planar Shape")
+                .contains("Geometry2: owner effects, Layer Styles or masks would change the native stage order")
     }));
     assert!(!result.diagnostics.iter().any(|diagnostic| {
         diagnostic

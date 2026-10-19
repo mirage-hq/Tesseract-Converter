@@ -1,0 +1,31 @@
+{
+  "case_id": "eng2019-ingamut-chromatic-v1",
+  "status": "predeclared-before-native-authoring-or-rendering",
+  "targets": ["pq", "hlg"],
+  "canvas": {"width": 1280, "height": 512, "fps": "30", "duration_seconds": "1"},
+  "graphics_white_nits": 203,
+  "linear_bt709_base_colors": [[0.9, 0.08, 0.02], [0.03, 0.8, 0.08], [0.04, 0.08, 0.9], [0.8, 0.7, 0.03]],
+  "layout": "five 256-pixel columns, two 256-pixel rows; first four columns use base colors, then 4x radiance in row two; fifth column is neutral linear0.5/3",
+  "working_signals": "published BT709-to-BT2020 matrix; PQ encode(linear2020*203/10000); HLG OETF(linear2020/3.7741176), matching existing FX normalization",
+  "sampling_policy": "declared-patch-interiors-v1",
+  "patches": [
+    {"name": "red-white", "x": 16, "y": 16, "width": 224, "height": 224},
+    {"name": "green-white", "x": 272, "y": 16, "width": 224, "height": 224},
+    {"name": "blue-white", "x": 528, "y": 16, "width": 224, "height": 224},
+    {"name": "yellow-white", "x": 784, "y": 16, "width": 224, "height": 224},
+    {"name": "midtone", "x": 1040, "y": 16, "width": 224, "height": 224},
+    {"name": "red-above-white", "x": 16, "y": 272, "width": 224, "height": 224},
+    {"name": "green-above-white", "x": 272, "y": 272, "width": 224, "height": 224},
+    {"name": "blue-above-white", "x": 528, "y": 272, "width": 224, "height": 224},
+    {"name": "yellow-above-white", "x": 784, "y": 272, "width": 224, "height": 224},
+    {"name": "peak", "x": 1040, "y": 272, "width": 224, "height": 224}
+  ],
+  "fixed_chroma_siting_margin_pixels": 16,
+  "sampling": "all pixels in each rectangle inset16pixels on all four sides, every exact output frame0..29; event frames0,15,29; native source/full canvas/duration unchanged",
+  "rationale": "4:2:0 shares chroma across 2x2 sites and reconstruction filters cross hard edges. A fixed16pixel margin (eight chroma sites) excludes those boundaries conservatively before observing new output. This is explicitly an interior-color case, not fullcanvas fidelity or a replacement for the existing frozen signed-v1 comparisons.",
+  "strict_gates": {"patch_mean_absolute_rgb_nits": "max(1,0.005*abs(reference))", "sample_union_all_pixel_absolute_rgb_nits": "max(5,0.02*abs(reference))", "p99_normalized_error": "nearest rank over every sampled RGB channel; error/max(2,0.01*abs(reference)) <=1"},
+  "native_reference": "pending independently Adobe-authored/readback-pinned source and 30fps render; no native profile bytes extraction",
+  "import": "pending fresh editable solid color/placement assertions and comparison; no out-of-gamut reduction is expected",
+  "export": "edited FX-to-AEP native acceptance/readback/render proof remains blocked/unproved; this new case does not claim it",
+  "alpha_precision_audio": "unproved"
+}

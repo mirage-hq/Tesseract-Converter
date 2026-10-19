@@ -39,6 +39,7 @@ result and any warnings. See [supported features and limitations](docs/formats/R
 | 0.1.0 | 67 |
 | 0.2.0 | 69 |
 | 0.2.1 | 70 |
+| 0.3.0 | 77 |
 
 `fxSchemaVersion` is the FX schema inventory revision, not the `.tsrct` container
 format version or a compatibility gate. New `.tsrct` files record it in
@@ -62,7 +63,7 @@ Windows: download the ZIP from [Releases](https://github.com/mirage-hq/Tesseract
 
 ### Build from source (developers)
 
-With [Rust](https://www.rust-lang.org/tools/install) 1.92.0 or newer, from this
+With [Rust](https://www.rust-lang.org/tools/install) 1.99.0 or newer, from this
 repository's root:
 
 ```sh

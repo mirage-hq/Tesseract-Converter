@@ -1035,7 +1035,7 @@ pub(super) fn build(
         .zip(&ids.media)
         .map(|(id, ids)| (*id, ids))
         .collect();
-    let mut records = project::records(&ids);
+    let mut records = project::records(&ids, spec.hdr.map(|settings| settings.graphics_white));
     records.extend(sequence::records(spec, &ids.main)?);
     for id in order {
         records.extend(media::records(&bound_media[id], media_ids[id]));

@@ -503,6 +503,142 @@ fn keyed_still_geometry2_position_keys_the_stage_on_the_layer_clock() {
 }
 
 #[test]
+fn precomposition_geometry2_keeps_editable_position_before_owner_and_fill() {
+    check_precomposition_geometry2(false);
+}
+
+#[test]
+fn collapsed_precomposition_geometry2_keys_compensate_static_scale() {
+    check_precomposition_geometry2(true);
+}
+
+fn check_precomposition_geometry2(collapsed: bool) {
+    let mut project = still_project();
+    let mut source = project
+        .items
+        .iter()
+        .find(|item| item.id == 1)
+        .unwrap()
+        .clone();
+    let mut nested = composition(&project, 2).clone();
+    nested.layers.truncate(1);
+    nested.width /= 2;
+    nested.height /= 2;
+    let plane = if collapsed {
+        composition(&project, 2)
+    } else {
+        &nested
+    };
+    let size = [f64::from(plane.width), f64::from(plane.height)];
+    let scale = if collapsed { 4.0 } else { 1.0 };
+    source.id = 100;
+    source.kind = ItemKind::Composition(Box::new(nested));
+    source.media = None;
+    source.solid = None;
+    project.items.push(source);
+    let layer = host_layer(&mut project, 2, 14);
+    patch(layer, 40, &100_u32.to_be_bytes());
+    layer.record = layer
+        .record
+        .clone()
+        .with_collapse_transformations(collapsed)
+        .unwrap();
+    fn set_scale(chunks: &mut Vec<Chunk>, scale: f64) {
+        if chunks
+            .iter()
+            .any(|chunk| is_match_name(chunk, "ADBE Position_0"))
+        {
+            let mut meta = vec![0; 124];
+            meta[..2].copy_from_slice(&[0xdb, 0x99]);
+            meta[3] = 3;
+            let leaf = Chunk::list(
+                *b"tdbs",
+                vec![
+                    data(*b"tdb4", meta),
+                    data(*b"tdsb", [0, 0, 0, 1]),
+                    data(
+                        *b"cdat",
+                        [scale, scale, 1.0]
+                            .into_iter()
+                            .flat_map(f64::to_be_bytes)
+                            .collect::<Vec<_>>(),
+                    ),
+                ],
+            );
+            chunks.splice(0..0, [match_name("ADBE Scale"), leaf]);
+            return;
+        }
+        for chunk in chunks {
+            if let Some(children) = chunk.children_mut() {
+                set_scale(children, scale);
+            }
+        }
+    }
+    set_scale(&mut layer.content, scale);
+    graft(
+        layer,
+        vec![parade(vec![
+            geometry2(vec![
+                ("ADBE Geometry2-0000", scalar(0.0, None)),
+                (
+                    "ADBE Geometry2-0002",
+                    keyed_point(8, &[(0, [0.0, 0.5], 0.5, 0.25), (4, [0.5, 0.5], 0.75, 0.5)]),
+                ),
+            ]),
+            effect("ADBE Fill", "Fill", Vec::new(), Vec::new()),
+        ])],
+    );
+    let converted = convert(&project, 2);
+    let owner = only_owner(&converted);
+    assert_eq!(
+        owner.effects.len(),
+        1,
+        "the following Fill stays on the owner"
+    );
+    let stage = as_group(&owner.layers[0]);
+    assert_eq!(stage.name, "Transform", "Geometry2 must not be omitted");
+    assert!(stage.effects.is_empty());
+    assert_eq!(stage.parent, Some(owner.id));
+    assert_eq!(owner.transform.scale, [scale * 100.0; 2]);
+    assert_eq!(
+        stage.transform.anchor_point,
+        [size[0] / (2.0 * scale), size[1] / (2.0 * scale)]
+    );
+    assert_eq!(
+        stage.transform.position,
+        Position::TwoD([0.0, size[1] / (2.0 * scale)])
+    );
+    let x = keys(&converted, stage.id, PropType::PositionX);
+    assert_eq!(
+        x.iter().map(|key| (key.0, key.1)).collect::<Vec<_>>(),
+        [(1000, 0.0), (1500, size[0] / (2.0 * scale))]
+    );
+    assert_eq!(
+        x[1].2,
+        CubicBezier {
+            x1: 0.25,
+            y1: 0.0,
+            x2: 0.25,
+            y2: 1.0
+        }
+    );
+    let content = as_group(&stage.layers[0]);
+    assert_eq!(content.name, "Source content clock");
+    assert_eq!(content.playback.input_range().start.as_millis(), 1000);
+    assert!(
+        content.playback.time_remap().is_some(),
+        "source clock stays inside the effect stage"
+    );
+    assert!(
+        !messages(&converted, 14)
+            .iter()
+            .any(|message| message.starts_with("Geometry2:") && message.contains("omitted")),
+        "{:?}",
+        messages(&converted, 14)
+    );
+}
+
+#[test]
 fn a_modern_zero_matte_id_leaves_both_occurrences_unmasked() {
     for modern in [true, false] {
         let mut project = still_project();

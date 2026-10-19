@@ -2857,6 +2857,103 @@ fn native_rectangle_shape_guide_retains_edited_masked_text_with_an_explicit_matc
     }));
 }
 
+#[test]
+fn sibling_mask_bounds_retain_text_inside_a_small_scaled_mixed_source() {
+    let native = read_project(include_bytes!(
+        "../../../tests/fixtures/masks/import_mask_controls.aep"
+    ))
+    .unwrap();
+    let imported = to_structural_fx_document(&native, Some(1))
+        .unwrap()
+        .document;
+    let guide = find_layer_named(imported.composition().layers(), "target — Mask 1 guide").unwrap();
+    let LayerData::Shape(shape) = guide.data() else {
+        panic!("native rectangular mask guide")
+    };
+    let left = shape.shape.path.commands[0].endpoint().unwrap();
+    let right = shape.shape.path.commands[2].endpoint().unwrap();
+    assert_eq!(left.0, 60.0);
+    assert!((right.0 - 380.0).abs() < 1e-4);
+    assert!(right.1 > left.1);
+    let mut guide = rect(&super::imported(), 70_002);
+    guide["parent"] = json!(70_000);
+    guide["activeRange"] = json!({"start":0,"duration":2_000});
+    guide["transform"] = zero_transform();
+    guide["rect"]["position"] = json!([left.0, left.1]);
+    guide["rect"]["size"] = json!([right.0 - left.0, right.1 - left.1]);
+    guide["rect"]["roundness"] = json!(0.0);
+    let mut title = text_layer(70_011, "Masked point text", source_text("U", false));
+    title["parent"] = json!(70_010);
+    title["activeRange"] = json!({"start":0,"duration":2_000});
+    title["transform"] = zero_transform();
+    let masked = json!({
+        "type":"Group","id":70_010,"name":"Edited rectangular crop",
+        "parent":70_000,"playback":identity_playback(2_000),
+        "transform":zero_transform(),"layers":[title],
+        "masks":[{"id":70_014,"layer":70_002,"mode":"add",
+            "feather":[0.0,0.0],"opacity":1.0,"expansion":0.0}]
+    });
+    let mut scene = json!({
+        "type":"Group","id":70_000,"name":"Small mixed scene",
+        "playback":identity_playback(2_000),"transform":zero_transform(),
+        "layers":[masked,guide]
+    });
+    scene["transform"]["scale"] = json!([0.6, 0.9]);
+    scene["transform"]["opacity"] = json!(50.0);
+    let output = to_aep(&two_second_document(vec![scene.clone()])).unwrap();
+    for id in [70_000, 70_010, 70_011] {
+        assert!(
+            !output.omitted_layer_ids.contains(&LayerId::new(id)),
+            "{id}: {:?}",
+            output.diagnostics
+        );
+    }
+    let restored = read_project(&output.bytes).unwrap();
+    assert!(restored.items.iter().any(|item| {
+        matches!(&item.kind, ItemKind::Composition(comp) if comp.layers.iter().any(|layer|
+            layer.record.layer_type() == 3 && layer.name.as_ref() == "Masked point text"))
+    }));
+    let occurrence = restored
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            ItemKind::Composition(comp) => comp
+                .layers
+                .iter()
+                .find(|layer| layer.name.as_ref() == "Edited rectangular crop"),
+            _ => None,
+        })
+        .unwrap();
+    assert!(!occurrence.record.flags().collapse_transformation);
+    let ItemKind::Composition(source) = &restored.item(occurrence.record.source_id()).unwrap().kind
+    else {
+        panic!("native masked source")
+    };
+    assert_eq!(f64::from(source.width), right.0.ceil() - left.0.floor());
+    assert_eq!(f64::from(source.height), right.1.ceil() - left.1.floor());
+    let small_masks = exported_crop_payloads(&output.bytes);
+    scene["transform"]["scale"] = json!([100.0, 100.0]);
+    let control = to_aep(&two_second_document(vec![scene.clone()])).unwrap();
+    assert_eq!(small_masks, exported_crop_payloads(&control.bytes));
+    scene["transform"]["scale"] = json!([0.6, 0.9]);
+    for case in ["feather", "rounded", "clock", "parent", "opacity"] {
+        let mut unsupported = scene.clone();
+        match case {
+            "feather" => unsupported["layers"][0]["masks"][0]["feather"] = json!([1.0, 0.0]),
+            "rounded" => unsupported["layers"][1]["rect"]["roundness"] = json!(1.0),
+            "clock" => unsupported["layers"][1]["activeRange"]["duration"] = json!(3_000),
+            "parent" => unsupported["layers"][1]["parent"] = Value::Null,
+            _ => unsupported["layers"][0]["masks"][0]["opacity"] = json!(0.5),
+        }
+        let rejected = to_aep(&two_second_document(vec![unsupported])).unwrap();
+        assert!(
+            rejected.omitted_layer_ids.contains(&LayerId::new(70_000)),
+            "{case}: {:?}",
+            rejected.diagnostics
+        );
+    }
+}
+
 fn exported_crop_payloads(bytes: &[u8]) -> Vec<([u8; 4], Vec<u8>)> {
     fn collect(chunks: &[crate::rifx::Chunk], output: &mut Vec<([u8; 4], Vec<u8>)>) {
         for chunk in chunks {

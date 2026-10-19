@@ -9,8 +9,9 @@ use crate::format::{graph::Element, Graph, Located, Record};
 use crate::schema::{
     adjustment::{BLACK_VIDEO_FILE_PATH, BLACK_VIDEO_TITLE},
     color_matte::{COLOR_MATTE_FILE_PATH, COLOR_MATTE_NAME, GENERATOR_IMPLEMENTATION_ID},
-    native::{Media, VideoStream},
-    records, PrColorMatte, PrMedia, PrMediaKind,
+    native::{Media, VideoMediaSource, VideoStream},
+    records, PrAnimatedProperty, PrColorMatte, PrMedia, PrMediaKind, PrStaticTransform,
+    PrVideoOccurrence,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 
@@ -26,6 +27,23 @@ pub(super) fn is_color_matte_media(record: Record<'_>) -> bool {
 /// alone distinguishes an ordinary black solid.
 pub(super) fn is_black_video_media(record: Record<'_>) -> bool {
     is_generator_media(record, BLACK_VIDEO_FILE_PATH)
+}
+
+/// Only solid generators have a picture independent of their source clock.
+/// Full generator/media validation still belongs to the occurrence reader.
+pub(super) fn is_solid_source(graph: &Graph<'_>, source: Record<'_>) -> Result<bool> {
+    if source.tag() != records::VIDEO_MEDIA_SOURCE.tag {
+        return Ok(false);
+    }
+    let source = graph.decode::<VideoMediaSource>(source)?;
+    let body = required(
+        source.value.media_source.as_ref(),
+        &source.identity,
+        "MediaSource",
+    )?;
+    let reference = required(body.media.as_ref(), &source.identity, "Media")?;
+    let media = graph.locate(reference, &source.identity)?;
+    Ok(is_color_matte_media(media) || is_black_video_media(media))
 }
 
 fn is_generator_media(record: Record<'_>, file_path: &str) -> bool {
@@ -117,6 +135,51 @@ pub(super) fn read_color_matte_media(graph: &Graph<'_>, media: Located<Media>) -
     )?;
     let stream = graph.follow::<VideoStream>(stream_reference, identity)?;
     solid_media(media, stream, matte, COLOR_MATTE_NAME)
+}
+
+/// Normalize a static solid that covers the canvas, without discarding coverage.
+pub(super) fn normalize_full_canvas_solid(
+    clip: &mut PrVideoOccurrence,
+    source: [u32; 2],
+    canvas: [u32; 2],
+) -> bool {
+    if clip.transform.rotation != 0.0
+        || clip
+            .animations
+            .iter()
+            .any(|animation| animation.property() != PrAnimatedProperty::Opacity)
+        || !clip.crop.is_default()
+        || clip.opacity_mask.is_some()
+        || clip.linear_wipe.is_some()
+        || !clip.effects.is_empty()
+        || clip.active_transforms != 0
+        || clip
+            .source_effects
+            .as_ref()
+            .is_some_and(|source| !source.effects.is_empty() || source.active_transforms != 0)
+    {
+        return false;
+    }
+    // Saved f32 scale percentages can leave a sub-millipixel boundary gap.
+    const EDGE_TOLERANCE: f64 = 0.001;
+    for axis in 0..2 {
+        let extent = f64::from(source[axis]);
+        let output = f64::from(canvas[axis]);
+        let scale = clip.transform.scale[axis] / 100.0;
+        let left = clip.transform.position[axis] * output
+            - clip.transform.anchor_point[axis] * extent * scale;
+        let right = left + extent * scale;
+        if !left.is_finite()
+            || !right.is_finite()
+            || scale <= 0.0
+            || left > EDGE_TOLERANCE
+            || right < output - EDGE_TOLERANCE
+        {
+            return false;
+        }
+    }
+    clip.transform = PrStaticTransform::default();
+    true
 }
 
 fn solid_media(

@@ -5,9 +5,9 @@
 //! AEP records.
 
 use fx_schema::{
-    AssetId, AudioLayer, Dimensions, FrameBlendingMode, ImageLayer, ImageSource, Layer, LayerData,
-    LayerId, MediaFit, MediaSourceKind, Position, RectBounds, TimeRangeProperty, TimeRemapProperty,
-    Transform, VideoLayer,
+    AssetId, AudioLayer, Dimensions, EffectData, EffectPayload, FrameBlendingMode, ImageLayer,
+    ImageSource, Layer, LayerData, LayerEffect, LayerId, MediaFit, MediaSourceKind, Position,
+    RectBounds, TimeRangeProperty, TimeRemapProperty, Transform, VideoLayer,
     layer::{BlendMode, FrameBlendingData, LegacyMediaData, MediaFitData, TrackMatteType},
 };
 
@@ -249,7 +249,7 @@ fn matches_source_intrinsic(authored: u64, source: &ResolvedMediaSource) -> bool
 }
 
 // Stale intrinsic metadata cannot affect this finite selection: every reachable
-// source sample is inside both domains, with no source-owned effects/remap.
+// source sample is inside both domains, with no temporal effects/remap.
 fn finite_video_selection_has_closed_source_domain(
     layer: &VideoLayer,
     source: &ResolvedMediaSource,
@@ -258,7 +258,16 @@ fn finite_video_selection_has_closed_source_domain(
         layer.playback.mapping(),
         fx_schema::LayerPlaybackMapping::Linear { .. }
     ) && layer.source.time_remap.is_none()
-        && layer.effects.is_empty()
+        && layer.effects.iter().all(|record| {
+            let payload = match record.data() {
+                EffectData::Identified { effect, .. } | EffectData::Legacy(effect) => effect,
+            };
+            // Tint changes only current-frame color, never source sampling or EOF.
+            matches!(
+                payload,
+                EffectPayload::Known(LayerEffect::TintTritone { .. })
+            )
+        })
         && layer.source_range.duration.as_millis() > 0
         && layer.source_range.end().as_millis() <= layer.source_intrinsic_duration.as_millis()
         && layer.source_range.end().as_millis() <= source.duration_millis_floor
@@ -793,6 +802,76 @@ pub(super) fn check_start_time(
         Ok(())
     } else {
         Err("media startTime disagrees with the sourceRange in-point")
+    }
+}
+
+// AE's whole-layer switch mixes at every speed; FX synthesizes only at 0 < |speed| < 1.
+pub(super) fn video_blending_approximation(
+    layer: &Layer,
+    allow_mixed_fallback: bool,
+) -> Option<&'static str> {
+    let LayerData::Video(video) = layer.data() else {
+        return None;
+    };
+    if native_frame_blending(video.frame_blending.as_ref()) == NativeFrameBlending::Disabled {
+        return None;
+    }
+    if video.source.time_remap.is_some() {
+        return Some("Video frame blending disabled for a stationary source sample, as in FX.");
+    }
+    let mut slow = false;
+    let mut other = false;
+    let mut classify = |input_delta: u64, source_delta: u64| {
+        if source_delta > 0 && source_delta < input_delta {
+            slow = true;
+        } else {
+            other = true;
+        }
+    };
+    match video.playback.mapping() {
+        fx_schema::LayerPlaybackMapping::Linear { input, output } => {
+            classify(input.duration.as_millis(), output.duration.as_millis());
+        }
+        fx_schema::LayerPlaybackMapping::TimeRemap { property } => {
+            let keys = property.keyframes();
+            let range = video.playback.input_range();
+            let start =
+                i128::from(range.start.as_millis()) + i128::from(video.playback.input_offset_ms());
+            let end =
+                i128::from(range.end().as_millis()) + i128::from(video.playback.input_offset_ms());
+            // No inference across extrapolation or nonlinear temporal easing.
+            if keys.len() < 2
+                || start < i128::from(keys.first()?.time.as_millis())
+                || end > i128::from(keys.last()?.time.as_millis())
+            {
+                return None;
+            }
+            for pair in keys.windows(2) {
+                let [first, last] = pair else { return None };
+                if i128::from(first.time.as_millis()) >= end
+                    || i128::from(last.time.as_millis()) <= start
+                {
+                    continue;
+                }
+                let delta = match last.easing {
+                    fx_schema::PropertyKeyframeEasing::Linear => {
+                        last.value.as_millis().abs_diff(first.value.as_millis())
+                    }
+                    fx_schema::PropertyKeyframeEasing::Hold => 0,
+                    _ => return None,
+                };
+                classify(last.time.as_millis() - first.time.as_millis(), delta);
+            }
+        }
+    }
+    match (slow, other) {
+        (true, true) if allow_mixed_fallback => Some(
+            "Video frame blending disabled for mixed-speed playback: native AE's whole-layer switch would also blend unit/fast/stationary intervals. Slow intervals use ordinary frame sampling as an approximation; editable source clock and movie are retained. Interval-specific blending is not implemented.",
+        ),
+        (false, true) => Some(
+            "Video frame blending disabled for unit/fast/stationary playback, as in FX; editable source clock and movie are retained.",
+        ),
+        _ => None,
     }
 }
 

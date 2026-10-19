@@ -312,16 +312,16 @@ fn isolated_native_gradient_stops_are_owned_by_the_selected_paint_only() {
                 let converted = fresh_import("import_isolated_native_gradients.aep", id, name);
                 assert_eq!(
                     converted.document.background_color(),
-                    Some([0.2, 0.4, 0.6, 1.0]),
-                    "{name} maps native #336699 preview RGB to an opaque FX background"
+                    None,
+                    "{name} must not turn native #336699 preview RGB into rendered paint"
                 );
                 assert!(
                     converted.diagnostics.iter().any(|diagnostic| {
                         diagnostic.composition_id == Some(id)
-                            && diagnostic.message.contains("opaque FX canvas content")
-                            && diagnostic.message.contains("transparency is lost")
+                            && diagnostic.message.contains("display-only")
+                            && diagnostic.message.contains("not materialized")
                     }),
-                    "{name} must diagnose the background alpha approximation"
+                    "{name} must diagnose omission of the display-only background"
                 );
                 assert_eq!(paint_kinds(&converted), [expected_kind], "{name}");
                 let gradients = gradient_paints(&converted);

@@ -1,4 +1,4 @@
-//! Exact adjacent Collect Files paths; never a filename search.
+//! Adjacent media candidates from native identities; never a filename search.
 
 use std::{
     collections::{HashMap, HashSet, hash_map::Entry},
@@ -18,9 +18,15 @@ struct CollectedSource {
     sequence_folder: bool,
 }
 
+struct AdjacentSource {
+    authored: String,
+    candidates: Vec<PathBuf>,
+}
+
 #[derive(Default)]
 pub(super) struct CollectedPaths {
     sources: HashMap<u32, Result<CollectedSource, &'static str>>,
+    adjacent: HashMap<u32, AdjacentSource>,
 }
 
 impl CollectedPaths {
@@ -62,7 +68,20 @@ impl CollectedPaths {
                 *source = Err("conflicting collected media identities");
             }
         }
-        Self { sources }
+        Self {
+            sources,
+            adjacent: adjacent_sources(project),
+        }
+    }
+
+    pub(super) fn adjacent_candidates(&self, request: &MediaAssetRequest) -> &[PathBuf] {
+        if request.kind != MediaAssetKind::Image || request.relative_location.is_some() {
+            return &[];
+        }
+        self.adjacent
+            .get(&request.source_item_id)
+            .filter(|source| source.authored == request.authored_path)
+            .map_or(&[], |source| &source.candidates)
     }
 
     pub(super) fn candidate(
@@ -94,6 +113,54 @@ impl CollectedPaths {
             ))
         }
     }
+}
+
+fn adjacent_sources(project: &StructuralProject) -> HashMap<u32, AdjacentSource> {
+    let mut sources = HashMap::new();
+    let mut owners = HashMap::new();
+    let mut conflicts = HashSet::new();
+    for item in &project.items {
+        let Some(Ok(descriptor)) = &item.media else {
+            continue;
+        };
+        if descriptor.kind != MediaKind::StillImage
+            || foreign_image_basename(&descriptor.authored_path).is_none()
+        {
+            continue;
+        }
+        let parts: Vec<_> = descriptor.authored_path[3..].split(['/', '\\']).collect();
+        if parts.len() > 256 || !parts.iter().all(|part| safe_component(OsStr::new(part))) {
+            continue;
+        }
+        // Retain a directory component: a bare basename is not a source identity.
+        let candidates: Vec<PathBuf> = (0..parts.len().saturating_sub(1))
+            .map(|start| parts[start..].iter().collect())
+            .collect();
+        for candidate in &candidates {
+            match owners.entry(candidate.clone()) {
+                Entry::Vacant(entry) => {
+                    entry.insert(&descriptor.authored_path);
+                }
+                Entry::Occupied(entry) if *entry.get() != &descriptor.authored_path => {
+                    conflicts.insert(candidate.clone());
+                }
+                Entry::Occupied(_) => {}
+            }
+        }
+        sources.insert(
+            item.id,
+            AdjacentSource {
+                authored: descriptor.authored_path.clone(),
+                candidates,
+            },
+        );
+    }
+    for source in sources.values_mut() {
+        source
+            .candidates
+            .retain(|candidate| !conflicts.contains(candidate));
+    }
+    sources
 }
 
 fn collected_source(

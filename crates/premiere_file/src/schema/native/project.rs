@@ -174,7 +174,7 @@ pub(crate) struct ProjectSettings {
     pub(crate) audio_compile_settings: Ref<AudioCompileSettings>,
     pub(crate) capture_settings: Ref<DummyCaptureSettings>,
     pub(crate) default_sequence_settings: Ref<DefaultSequenceSettings>,
-    pub(crate) color_management_settings: &'static str,
+    pub(crate) color_management_settings: String,
     pub(crate) video_time_display: &'static str,
     pub(crate) audio_time_display: &'static str,
     pub(crate) color_aware_effects_enabled: &'static str,

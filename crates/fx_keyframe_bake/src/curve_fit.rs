@@ -598,6 +598,13 @@ fn update_error(
     let progress = (offset - start) as f64 / (end - start) as f64;
     let expected = start_value + (end_value - start_value) * candidate.easing.progress(progress);
     let error = (actual - expected).abs();
+    // Finite endpoints can still overflow during interpolation. NaN must not
+    // look like a zero-error fit and silently discard an observed value.
+    let error = if error.is_finite() {
+        error
+    } else {
+        f64::INFINITY
+    };
     let replace = error > candidate.max_error
         || (error == candidate.max_error
             && candidate
@@ -771,6 +778,49 @@ mod tests {
         assert_eq!(curve.keys.len(), 2);
         assert_eq!(curve.keys[1].offset_ms, 100);
         assert_eq!(curve.keys[1].easing, FittedEasing::Linear);
+    }
+
+    #[test]
+    fn overflowing_endpoint_difference_preserves_integer_midpoint() {
+        let curve = fit_scalar_curve(2, 0.0, |offset| {
+            Ok::<_, ()>(match offset {
+                0 => -1.0e308,
+                1 => 0.0,
+                2 => 1.0e308,
+                _ => panic!("sample outside the fitted interval"),
+            })
+        })
+        .unwrap();
+        let reconstructed = if let Some(key) = curve.keys.iter().find(|key| key.offset_ms == 1) {
+            key.value
+        } else {
+            let segment = curve
+                .keys
+                .windows(2)
+                .find(|keys| keys[0].offset_ms < 1 && keys[1].offset_ms > 1)
+                .expect("fitted keys must bracket the midpoint");
+            let progress = (1 - segment[0].offset_ms) as f64
+                / (segment[1].offset_ms - segment[0].offset_ms) as f64;
+            let eased = segment[1].easing.progress(progress);
+            // Avoid overflowing the endpoint difference in the independent reconstruction.
+            segment[0].value * (1.0 - eased) + segment[1].value * eased
+        };
+        assert!(reconstructed.is_finite());
+        assert_eq!(reconstructed, 0.0);
+    }
+
+    #[test]
+    fn overflowing_hold_prediction_does_not_report_zero_error() {
+        let mut candidate = super::SegmentCandidate {
+            easing: FittedEasing::Hold,
+            max_error: 0.0,
+            max_error_offset: None,
+            max_observation_error: 0.0,
+        };
+        // The naive prediction is -1e308 + infinity * 0, yielding NaN.
+        super::update_error(&mut candidate, 0.0, -1.0e308, 1.0e308, 0, 2, 1, 1);
+        assert!(candidate.max_error > 0.0);
+        assert_eq!(candidate.max_error_offset, Some(1));
     }
 
     #[test]

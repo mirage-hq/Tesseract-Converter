@@ -30,6 +30,10 @@ mod color_balance_identity;
 mod toner_tests;
 
 #[cfg(test)]
+#[path = "effects/curves_tests.rs"]
+mod curves_tests;
+
+#[cfg(test)]
 #[path = "effects/fractal_key_tests.rs"]
 mod fractal_key_tests;
 
@@ -44,10 +48,13 @@ pub(super) struct ImportContext<'a> {
     pub composition_id: u32,
     pub composition: Option<&'a Composition>,
     pub items: Option<&'a HashMap<u32, &'a ProjectItem>>,
+    pub effect_definitions: &'a [crate::rifx::Chunk],
 }
 
 pub(super) struct ImportedEffects {
     pub basic_text: Option<super::basic_text::Generator>,
+    pub tiler: Option<EffectId>,
+    pub raster_motion_tile: Option<EffectId>,
     pub effects: Vec<EffectRecord>,
     pub native_ordinals: Vec<usize>,
     pub fractal_blends: Vec<super::fractal_blend::Stage>,
@@ -159,6 +166,7 @@ fn static_effect_color_alias(
 ) -> Option<NumericProperty> {
     let supported = match source.match_name.as_str() {
         "ADBE Fill" => parameter.match_name == "ADBE Fill-0002",
+        "ADBE Drop Shadow" => parameter.match_name == "ADBE Drop Shadow-0001",
         "ADBE Tint" => matches!(
             parameter.match_name.as_str(),
             "ADBE Tint-0001" | "ADBE Tint-0002"
@@ -208,7 +216,12 @@ fn static_effect_color_alias(
         let controls = crate::properties::runs(crate::properties::unique_list(plugin, *b"tdgp")?)?;
         let run = control_links::unique_run(&controls, &parameter.match_name)?;
         let property = crate::properties::unique_list(run, *b"tdbs")?;
-        let color = control_links::lower_static_color_control(property, composition, Some(items))?;
+        let color = control_links::lower_static_color_control(
+            property,
+            composition,
+            Some(items),
+            Some(layer),
+        )?;
         if source.match_name == "ADBE Tint" && color[3] != 1.0 {
             return Err(crate::properties::PropertyError::Layout(
                 "Tint Color Control must be opaque",
@@ -549,6 +562,7 @@ pub(super) fn import(
             composition_id: comp_id,
             composition: None,
             items: None,
+            effect_definitions: &[],
         },
         layer,
         native_size,
@@ -574,9 +588,16 @@ pub(super) fn import_with_context(
         )
     });
     let consumed = frame_fade.as_ref().ok().copied().flatten();
-    let basic_text = super::basic_text::recognize(layer, &native_effects, native_size);
+    let basic_text = super::basic_text::recognize(
+        layer,
+        &native_effects,
+        native_size,
+        context.effect_definitions,
+    );
     let mut result = ImportedEffects {
         basic_text: None,
+        tiler: None,
+        raster_motion_tile: None,
         effects: Vec::new(),
         native_ordinals: Vec::new(),
         fractal_blends: Vec::new(),
@@ -756,6 +777,132 @@ pub(super) fn import_with_context(
             }
             continue;
         }
+        if source.match_name == "ADBE Roughen Edges" {
+            let candidate = (|| -> Result<_, String> {
+                let effects =
+                    crate::effects::roughen::lower(&source, layer, context.effect_definitions)?;
+                let mut cursor = *next_id;
+                let mut records = Vec::with_capacity(effects.len());
+                for effect in effects {
+                    let id = super::reserve_ids(&mut cursor, 1)
+                        .ok_or("effect identity allocation exhausted")?;
+                    records.push(
+                        EffectRecord::from_data(&EffectData::Identified {
+                            id: EffectId::new(id),
+                            enabled: source.enabled && layer.record.flags().effects_active,
+                            effect: EffectPayload::Known(effect),
+                            compositing_options: None,
+                            extensions: Default::default(),
+                        })
+                        .map_err(|e| e.to_string())?,
+                    );
+                }
+                Ok((cursor, records))
+            })();
+            match candidate {
+                Ok((cursor, records)) => {
+                    *next_id = cursor;
+                    result.native_ordinals.extend(std::iter::repeat_n(source.index, records.len()));
+                    result.effects.extend(records);
+                    result.warnings.push("Effect ADBE Roughen Edges: static inward Border envelope approximation using editable SimpleChoker passes; fractal edge texture, sharpness, influence, scale, stretch, offset, complexity, evolution and seed are omitted. Smooth erosion can remove more alpha than native roughening; source-plane versus screen-space radius and transformed/nested raster fidelity remain unverified".into());
+                }
+                Err(reason) => result.warnings.push(format!(
+                    "Effect ADBE Roughen Edges: {reason}; effect omitted, owner and other effects retained"
+                )),
+            }
+            continue;
+        }
+        if source.match_name == "CC Tiler" {
+            let candidate = (|| -> Result<_, String> {
+                let flags = layer.record.flags();
+                if layer.record.layer_type() != 4
+                    || flags.three_d_layer
+                    || flags.adjustment_layer
+                    || !result.effects.is_empty()
+                    || result.tiler.is_some()
+                {
+                    return Err(
+                        "requires a planar Shape with Tiler as its first mapped effect".into(),
+                    );
+                }
+                let effect = crate::effects::tiler::lower(&source, native_size.map(f64::from))?;
+                let mut cursor = *next_id;
+                let id = super::reserve_ids(&mut cursor, 1)
+                    .ok_or("effect identity allocation exhausted")?;
+                let record = EffectRecord::from_data(&EffectData::Identified {
+                    id: EffectId::new(id),
+                    enabled: source.enabled && layer.record.flags().effects_active,
+                    effect: EffectPayload::Known(effect),
+                    compositing_options: None,
+                    extensions: Default::default(),
+                })
+                .map_err(|e| e.to_string())?;
+                Ok((cursor, record))
+            })();
+            match candidate {
+                Ok((cursor, record)) => {
+                    *next_id = cursor;
+                    result.tiler = Some(EffectId::new(cursor - 1));
+                    result.native_ordinals.push(source.index);
+                    result.effects.push(record);
+                    result.warnings.push("Effect CC Tiler: static Scale and Center approximated by editable Motion Tile on the source plane, with full source-sized output and no mirroring. Native resampling, edge seams and transformed/nested raster fidelity are unverified; animation, sub-one-percent Scale and Blend w. Original remain unsupported".into());
+                }
+                Err(reason) => result.warnings.push(format!(
+                    "Effect CC Tiler: {reason}; effect omitted, owner and other effects retained"
+                )),
+            }
+            continue;
+        }
+        if matches!(
+            source.match_name.as_str(),
+            "ADBE Extract" | "ADBE 3D Glasses2"
+        ) {
+            let candidate = (|| -> Result<_, String> {
+                let effect = if source.match_name == "ADBE Extract" {
+                    vec![crate::effects::extract::lower(&source)?]
+                } else {
+                    crate::effects::glasses::lower(&source, layer, group_size)?
+                };
+                let mut cursor = *next_id;
+                let count = u64::try_from(effect.len()).map_err(|e| e.to_string())?;
+                let first = super::reserve_ids(&mut cursor, count)
+                    .ok_or("effect identity allocation exhausted")?;
+                let records = effect
+                    .into_iter()
+                    .zip(first..cursor)
+                    .map(|(effect, id)| {
+                        EffectRecord::from_data(&EffectData::Identified {
+                            id: EffectId::new(id),
+                            enabled: source.enabled && layer.record.flags().effects_active,
+                            effect: EffectPayload::Known(effect),
+                            compositing_options: None,
+                            extensions: Default::default(),
+                        })
+                        .map_err(|e| e.to_string())
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok((cursor, records))
+            })();
+            match candidate {
+                Ok((cursor, records)) => {
+                    *next_id = cursor;
+                    result
+                        .native_ordinals
+                        .extend(std::iter::repeat_n(source.index, records.len()));
+                    result.effects.extend(records);
+                    result.warnings.push(if source.match_name == "ADBE Extract" {
+                        "Effect ADBE Extract: static single-sided hard Luminance cutoff approximated by editable Luma Key. Native luminance weights, cutoff equality, premultiplied edge alpha and raster fidelity are unverified; RGB/Alpha channels, softness, inverted and two-sided ranges remain unsupported"
+                    } else {
+                        "Effect ADBE 3D Glasses2: static same-source Balanced Colored Red Blue approximated by two editable ChromaticAberration passes with green/blue channel swaps. Relative red/cyan separation is retained; the common image centroid shifts by Scene Convergence/3 pixels. Native Balance compensation, stereo views and edge alpha are not reproduced; RGB/alpha fidelity is unverified"
+                    }.into());
+                }
+                Err(reason) => result.warnings.push(format!(
+                    "Effect {}: {reason}; effect omitted, owner and other effects retained",
+                    source.match_name
+                )),
+            }
+            continue;
+        }
         if source.match_name == "ADBE Box Blur2" {
             let size = if layer.record.flags().adjustment_layer {
                 group_size
@@ -821,9 +968,9 @@ pub(super) fn import_with_context(
             }
             continue;
         }
-        if source.match_name == "CC Toner" {
-            // Resolve only bounded static color aliases before the existing atomic
-            // Toner guard. Unresolved expressions still reject the whole effect.
+        if matches!(source.match_name.as_str(), "CC Toner" | "ADBE Drop Shadow") {
+            // Resolve bounded static aliases before special-control lowering.
+            // Shadow RGB has no affine field; Toner has an atomic admission guard.
             for index in 0..source.parameters.len() {
                 let parameter = &source.parameters[index];
                 let lowered = parameter.numeric.as_ref().ok().and_then(|numeric| {
@@ -845,6 +992,8 @@ pub(super) fn import_with_context(
                     source.parameters[index].numeric = Ok(numeric);
                 }
             }
+        }
+        if source.match_name == "CC Toner" {
             let candidate = (|| -> Result<_, String> {
                 let lowered = toner::lower(&source)?;
                 let enabled = source.enabled && layer.record.flags().effects_active;
@@ -894,6 +1043,114 @@ pub(super) fn import_with_context(
                 }
                 Err(reason) => result.warnings.push(format!(
                     "Effect CC Toner: {reason}; effect omitted, owner and other effects retained"
+                )),
+            }
+            continue;
+        }
+        if source.match_name == crate::effects::venetian_blinds::MATCH_NAME {
+            let checkpoint = budget.checkpoint();
+            let candidate = (|| -> Result<_, String> {
+                if native_size != group_size || layer.record.flags().adjustment_layer {
+                    return Err("requires a dimension-matched ordinary layer plane".into());
+                }
+                let effect = crate::effects::venetian_blinds::lower(&source, group_size)?;
+                let mut candidate_id = *next_id;
+                let raw_id = super::reserve_ids(&mut candidate_id, 1)
+                    .ok_or("generated effect identifier space exhausted")?;
+                let mut animations = Vec::new();
+                for (name, _, _, param) in crate::effects::venetian_blinds::CONTROLS {
+                    let Some(parameter) = source.parameters.iter().find(|p| p.match_name == name)
+                    else {
+                        continue;
+                    };
+                    let numeric = parameter
+                        .numeric
+                        .as_ref()
+                        .map_err(|error| error.to_string())?;
+                    if numeric.keyframes.is_empty() {
+                        continue;
+                    }
+                    let mut numeric = numeric.clone();
+                    // Disabled expression text does not change the authored keys.
+                    numeric.expression_present = false;
+                    let target = NumericAnimationTarget::float(
+                        PropertyTarget::effect_param(EffectId::new(raw_id), param),
+                        0,
+                        1.0,
+                    );
+                    let (entries, warnings) = animation::numeric_entries(
+                        name,
+                        &numeric,
+                        &[target],
+                        NumericAnimationClock::parent_identity(layer)?,
+                        budget,
+                    );
+                    if entries.len() != 1 || !warnings.is_empty() {
+                        return Err(format!(
+                            "{name}: numeric key lowering failed: {}",
+                            warnings.join("; ")
+                        ));
+                    }
+                    animations.extend(entries);
+                }
+                let record = EffectRecord::from_data(&EffectData::Identified {
+                    id: EffectId::new(raw_id),
+                    enabled: source.enabled && layer.record.flags().effects_active,
+                    effect: EffectPayload::Known(effect),
+                    compositing_options: None,
+                    extensions: Default::default(),
+                })
+                .map_err(|error| error.to_string())?;
+                Ok((candidate_id, record, animations))
+            })();
+            match candidate {
+                Ok((candidate_id, record, animations)) => {
+                    *next_id = candidate_id;
+                    result.effects.push(record);
+                    result.animations.extend(animations);
+                    result.native_ordinals.push(source.index);
+                    result.warnings.push(format!(
+                        "Effect {}: {}",
+                        source.match_name,
+                        crate::effects::venetian_blinds::APPROXIMATION
+                    ));
+                }
+                Err(reason) => {
+                    budget.rollback(checkpoint);
+                    result.warnings.push(format!(
+                        "Effect {}: {reason}; effect omitted, owner and other effects retained",
+                        source.match_name
+                    ));
+                }
+            }
+            continue;
+        }
+        if source.match_name == crate::effects::curves::MATCH_NAME {
+            let candidate = (|| -> Result<_, String> {
+                let effect = crate::effects::curves::lower(&layer.content, source.index)
+                    .map_err(|error| error.to_string())?;
+                let mut candidate_id = *next_id;
+                let raw_id = super::reserve_ids(&mut candidate_id, 1)
+                    .ok_or("generated effect identifier space exhausted")?;
+                let record = EffectRecord::from_data(&EffectData::Identified {
+                    id: EffectId::new(raw_id),
+                    enabled: source.enabled && layer.record.flags().effects_active,
+                    effect: EffectPayload::Known(effect),
+                    compositing_options: None,
+                    extensions: Default::default(),
+                })
+                .map_err(|error| error.to_string())?;
+                Ok((candidate_id, record))
+            })();
+            match candidate {
+                Ok((candidate_id, record)) => {
+                    *next_id = candidate_id;
+                    result.effects.push(record);
+                    result.native_ordinals.push(source.index);
+                    result.warnings.push("Effect ADBE CurvesCustom: static 8-bit tables approximated by editable piecewise-linear ColorCurves within one code value at every table sample; native spline, HDR and alpha fidelity unverified".into());
+                }
+                Err(reason) => result.warnings.push(format!(
+                    "Effect ADBE CurvesCustom: {reason}; effect omitted, owner and other effects retained"
                 )),
             }
             continue;
@@ -1020,8 +1277,7 @@ pub(super) fn import_with_context(
                 .or(alias.as_ref())
                 .or(same_effect.as_ref())
                 .unwrap_or(numeric);
-            let mut shifted = numeric.clone();
-            let mut shifted_any = false;
+            let mut shifts = Vec::new();
             let mut targets = Vec::new();
             let mut offsets = Vec::new();
             for field in fields {
@@ -1056,14 +1312,7 @@ pub(super) fn import_with_context(
                     }
                     continue;
                 }
-                if offset != 0.0 {
-                    shifted_any = true;
-                    for key in &mut shifted.keyframes {
-                        if let Some(value) = key.values.get_mut(field.component) {
-                            *value += offset / scale;
-                        }
-                    }
-                }
+                shifts.push((field.component, offset / scale));
                 offsets.push(offset);
                 targets.push(NumericAnimationTarget::float(
                     PropertyTarget::effect_param(id, field.param),
@@ -1100,17 +1349,52 @@ pub(super) fn import_with_context(
                     continue;
                 }
             };
-            let numeric = if shifted_any { &shifted } else { numeric };
-            let (entries, warnings) =
-                animation::numeric_entries(&parameter.match_name, numeric, &targets, clock, budget);
-            animations.extend(entries);
-            result.warnings.extend(
-                warnings
-                    .into_iter()
-                    .map(|warning| format!("Effect {}: {warning}", source.match_name)),
-            );
+            if shifts.iter().any(|(_, shift)| *shift != 0.0) {
+                // A single native component can feed several affine outputs
+                // (Invert's black/white endpoints). Never share one shifted
+                // source between targets with different offsets.
+                for (target, (component, shift)) in targets.iter().zip(shifts) {
+                    let mut shifted = numeric.clone();
+                    for key in &mut shifted.keyframes {
+                        if let Some(value) = key.values.get_mut(component) {
+                            *value += shift;
+                        }
+                    }
+                    let (entries, warnings) = animation::numeric_entries(
+                        &parameter.match_name,
+                        &shifted,
+                        std::slice::from_ref(target),
+                        clock,
+                        budget,
+                    );
+                    animations.extend(entries);
+                    result.warnings.extend(
+                        warnings
+                            .into_iter()
+                            .map(|warning| format!("Effect {}: {warning}", source.match_name)),
+                    );
+                }
+            } else {
+                let (entries, warnings) = animation::numeric_entries(
+                    &parameter.match_name,
+                    numeric,
+                    &targets,
+                    clock,
+                    budget,
+                );
+                animations.extend(entries);
+                result.warnings.extend(
+                    warnings
+                        .into_iter()
+                        .map(|warning| format!("Effect {}: {warning}", source.match_name)),
+                );
+            }
         }
-        if source.match_name == "ADBE Gaussian Blur 2" && value["repeatEdgePixels"] == true {
+        if matches!(
+            source.match_name.as_str(),
+            "ADBE Gaussian Blur 2" | "ADBE Fast Blur"
+        ) && value["repeatEdgePixels"] == true
+        {
             // Adjustment gates filter the composition stack, irrespective of
             // their dummy solid source. Other Groups retain source-local bounds.
             let bounds = if layer.record.flags().adjustment_layer {
@@ -1249,6 +1533,9 @@ pub(super) fn import_with_context(
                         source.match_name, source.index
                     ));
                 }
+                if source.match_name == "ADBE Tile" && result.effects.is_empty() {
+                    result.raster_motion_tile = Some(id);
+                }
                 result.native_ordinals.push(source.index);
                 result.effects.push(effect);
                 result.animations.extend(animations);
@@ -1351,6 +1638,12 @@ fn toner_original_gate(layer: &Layer, identities: &HashSet<usize>) -> Result<(),
 
 #[cfg(test)]
 mod tests {
+    mod fast_blur;
+    mod roughen;
+    mod tiler;
+    mod venetian;
+    mod venetian_blinds;
+
     use fx_schema::{
         EffectId, PropertyTarget, PropertyValue,
         animator::{AnimationGraphEntry, PropertyKeyframeEasing},
@@ -1550,6 +1843,58 @@ mod tests {
         let effect = serde_json::to_value(&imported.effects[0]).unwrap()["effect"].clone();
         assert_eq!(effect["repeatEdgePixels"], true);
         assert_eq!(effect["layerSize"], serde_json::json!([3840.0, 2160.0]));
+    }
+
+    #[test]
+    fn rgb_invert_blend_keys_keep_independent_affine_outputs() {
+        let mut effect = native_effect("ADBE Invert", &[("-0001", 1.0), ("-0002", 0.0)]);
+        effect
+            .properties
+            .iter_mut()
+            .find(|p| p.match_name.ends_with("-0002"))
+            .unwrap()
+            .animation = Some(NumericTrack {
+            keys: [
+                (0, 0.0, KeyframeEasing::Linear),
+                (500, 25.0, KeyframeEasing::Hold),
+                (1000, 100.0, KeyframeEasing::Linear),
+            ]
+            .into_iter()
+            .map(|(time_millis, value, easing)| NumericKeyframe {
+                time_millis,
+                values: vec![value],
+                easing: vec![easing],
+                spatial_in: Vec::new(),
+                spatial_out: Vec::new(),
+            })
+            .collect(),
+        });
+        let owner = catalog_owner(&[effect]);
+        let imported = import_cosmic(&owner);
+        assert_eq!(imported.effects.len(), 1, "{:?}", imported.warnings);
+        assert_eq!(imported.animations.len(), 2, "{:?}", imported.warnings);
+        for (param, expected) in [
+            ("outputBlack", [255.0, 191.25, 0.0]),
+            ("outputWhite", [0.0, 63.75, 255.0]),
+        ] {
+            let entry = imported
+                .animations
+                .iter()
+                .find(|entry| {
+                    entry.target == PropertyTarget::effect_param(EffectId::new(999), param)
+                })
+                .unwrap();
+            let keys = entry.animator.keyframe_track().unwrap().keyframes();
+            assert_eq!(keys.len(), 3);
+            for (index, key) in keys.iter().enumerate() {
+                assert_eq!(key.layer_time(), [0, 500, 1000][index].into());
+                let PropertyValue::Float(value) = key.value() else {
+                    panic!("scalar key")
+                };
+                assert!((value - expected[index]).abs() < 1e-10, "{param}: {value}");
+            }
+            assert_eq!(keys[1].easing(), PropertyKeyframeEasing::Hold);
+        }
     }
 
     #[test]
@@ -2336,6 +2681,7 @@ mod tests {
                     composition_id: 1,
                     composition: Some(comp),
                     items: Some(&items),
+                    effect_definitions: &[],
                 },
                 &layer,
                 [1920, 1080],
@@ -2396,6 +2742,7 @@ mod tests {
                         composition_id: 1,
                         composition: Some(comp),
                         items: None,
+                        effect_definitions: &[],
                     },
                     &layer,
                     [1920, 1080],
@@ -2865,6 +3212,168 @@ mod tests {
         assert_eq!(result.effects.len(), 1);
     }
 
+    /// Synthetic static Venetian Blinds on the existing public catalog owner.
+    /// No licensed source or independent Adobe proof is used by this regression.
+    fn venetian_owner() -> Layer {
+        fn named(name: &str) -> Chunk {
+            let mut bytes = name.as_bytes().to_vec();
+            bytes.resize(40, 0);
+            Chunk::data(*b"tdmn", bytes).unwrap()
+        }
+        fn scalar(value: f64) -> Chunk {
+            let mut meta = vec![0; 124];
+            meta[..4].copy_from_slice(&[0xdb, 0x99, 0, 1]);
+            Chunk::list(
+                *b"tdbs",
+                vec![
+                    Chunk::data(*b"tdsb", [0, 0, 0, 1]).unwrap(),
+                    Chunk::data(*b"tdb4", meta).unwrap(),
+                    Chunk::data(*b"cdat", value.to_be_bytes()).unwrap(),
+                ],
+            )
+        }
+        let mut owner = catalog_owner(&[]);
+        let mut controls = vec![Chunk::data(*b"tdsb", [0, 0, 0, 1]).unwrap()];
+        for (suffix, value) in [("0001", 80.), ("0002", 0.), ("0003", 20.), ("0004", 0.)] {
+            controls.extend([
+                named(&format!("ADBE Venetian Blinds-{suffix}")),
+                scalar(value),
+            ]);
+        }
+        controls.push(named("ADBE Group End"));
+        *named_group_mut(&mut owner.content, "ADBE Effect Parade").unwrap() = vec![
+            Chunk::data(*b"tdsb", [0, 0, 0, 1]).unwrap(),
+            named("ADBE Venetian Blinds"),
+            Chunk::list(*b"sspc", vec![Chunk::list(*b"tdgp", controls)]),
+            named("ADBE Group End"),
+        ];
+        owner
+    }
+
+    #[test]
+    fn static_venetian_blinds_retains_editable_stripe_controls() {
+        let owner = venetian_owner();
+        let imported = import(
+            &ExpressionSamples::default(),
+            RIPPLE_COMPOSITION,
+            &owner,
+            PLANE,
+            PLANE,
+            &mut 100,
+            &mut Default::default(),
+        );
+        assert_eq!(imported.effects.len(), 1, "{:?}", imported.warnings);
+        assert_eq!(imported.native_ordinals, [1]);
+        let value = serde_json::to_value(&imported.effects[0]).unwrap();
+        assert_eq!(value["effect"]["type"], "customShader");
+        assert_eq!(value["effect"]["params"][0]["default"], 80.);
+        assert_eq!(value["effect"]["params"][1]["default"], 0.);
+        assert_eq!(value["effect"]["params"][2]["default"], 20.);
+        assert!(
+            imported.animations.is_empty(),
+            "static controls need no scripts or baked keys"
+        );
+        assert!(imported.warnings.iter().any(
+            |warning| warning.contains("Venetian Blinds") && warning.contains("approximation")
+        ));
+    }
+
+    #[test]
+    fn static_venetian_blinds_declines_unsupported_controls_atomically() {
+        let owner = venetian_owner();
+        let (sources, _) = native::read_effects(&owner.content, PLANE.map(f64::from));
+        let source = &sources[0];
+        for (index, value, animated) in [(3, -1., false), (2, 0., false), (0, 80., true)] {
+            let mut changed = source.clone();
+            let numeric = changed.parameters[index].numeric.as_mut().unwrap();
+            numeric.values = vec![value];
+            numeric.animated = animated;
+            assert!(crate::effects::venetian_blinds::lower(&changed, PLANE).is_err());
+        }
+        let mut duplicate = source.clone();
+        duplicate.parameters.push(source.parameters[0].clone());
+        assert!(crate::effects::venetian_blinds::lower(&duplicate, PLANE).is_err());
+        let mut incompatible = source.clone();
+        incompatible.parameters[1].declared_kind = Ok(Some(7));
+        assert!(crate::effects::venetian_blinds::lower(&incompatible, PLANE).is_err());
+        let mut sparse = source.clone();
+        sparse.parameters.truncate(1);
+        let lowered =
+            serde_json::to_value(crate::effects::venetian_blinds::lower(&sparse, PLANE).unwrap())
+                .unwrap();
+        assert_eq!(lowered["params"][2]["default"], 20.);
+        assert_eq!(lowered["params"][3]["default"], f64::from(PLANE[0]));
+    }
+
+    #[test]
+    fn static_venetian_blinds_rejects_duplicate_native_records() {
+        let mut owner = venetian_owner();
+        let parade = named_group_mut(&mut owner.content, "ADBE Effect Parade").unwrap();
+        let plugin = parade[2].children_mut().unwrap();
+        let controls = plugin[0].children_mut().unwrap();
+        // Duplicate the actual native name + leaf, before the terminator.
+        // The decoder must not silently choose the first of these records.
+        controls.splice(3..3, controls[1..3].to_vec());
+        let mut next_id = 100;
+        let imported = import(
+            &ExpressionSamples::default(),
+            RIPPLE_COMPOSITION,
+            &owner,
+            PLANE,
+            PLANE,
+            &mut next_id,
+            &mut Default::default(),
+        );
+        assert!(imported.effects.is_empty());
+        assert_eq!(next_id, 100);
+        assert!(
+            imported
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("duplicate effect control record"))
+        );
+    }
+
+    #[test]
+    fn static_venetian_blinds_plane_rejection_preserves_following_effect_identity() {
+        let mut owner = venetian_owner();
+        let mut sibling = catalog_owner(&[native_effect("ADBE Gaussian Blur 2", &[])]);
+        let sibling = named_group_mut(&mut sibling.content, "ADBE Effect Parade").unwrap();
+        let parade = named_group_mut(&mut owner.content, "ADBE Effect Parade").unwrap();
+        parade.splice(
+            parade.len() - 1..parade.len() - 1,
+            sibling[1..sibling.len() - 1].iter().cloned(),
+        );
+        let retained = import(
+            &ExpressionSamples::default(),
+            RIPPLE_COMPOSITION,
+            &owner,
+            PLANE,
+            PLANE,
+            &mut 100,
+            &mut Default::default(),
+        );
+        assert_eq!(retained.effects.len(), 2, "{:?}", retained.warnings);
+        assert_eq!(retained.native_ordinals, [1, 2]);
+        let mut next_id = 100;
+        let imported = import(
+            &ExpressionSamples::default(),
+            RIPPLE_COMPOSITION,
+            &owner,
+            [160, 90],
+            PLANE,
+            &mut next_id,
+            &mut Default::default(),
+        );
+        assert_eq!(imported.effects.len(), 1, "{:?}", imported.warnings);
+        assert_eq!(imported.native_ordinals, [2]);
+        assert_eq!(next_id, 101, "omitted Blinds must not consume an identity");
+        assert_eq!(
+            serde_json::to_value(&imported.effects[0]).unwrap()["effect"]["type"],
+            "gaussianBlur"
+        );
+    }
+
     /// A native effect with the given static control values.
     fn native_effect(match_name: &str, controls: &[(&str, f64)]) -> NativeEffect {
         let mut effect =
@@ -2878,6 +3387,262 @@ mod tests {
                 .values = vec![*value];
         }
         effect
+    }
+
+    // Synthetic controls on the catalog owner; no independent native proof.
+    fn glasses_owner(convergence: f64, view: f64) -> Layer {
+        let mut owner = catalog_owner(&[
+            native_effect(
+                "ADBE Gaussian Blur 2",
+                &[("-0001", 0.), ("-0002", view), ("-0003", convergence)],
+            ),
+            native_effect("ADBE Tint", &[]),
+        ]);
+        fn rename(chunks: &mut [Chunk]) {
+            for chunk in chunks {
+                if chunk.id() == *b"tdmn" {
+                    let name = match chunk_match_name(chunk) {
+                        Some("ADBE Gaussian Blur 2") => Some("ADBE 3D Glasses2"),
+                        Some("ADBE Gaussian Blur 2-0000") => Some("ADBE 3D Glasses2-0000"),
+                        Some("ADBE Gaussian Blur 2-0001") => Some("ADBE 3D Glasses2-0001"),
+                        Some("ADBE Gaussian Blur 2-0002") => Some("ADBE 3D Glasses2-0005"),
+                        Some("ADBE Gaussian Blur 2-0003") => Some("ADBE 3D Glasses2-0003"),
+                        _ => None,
+                    };
+                    if let Some(name) = name {
+                        let mut bytes = name.as_bytes().to_vec();
+                        bytes.resize(40, 0);
+                        *chunk = Chunk::data(*b"tdmn", bytes).unwrap();
+                    }
+                }
+                if let Some(children) = chunk.children_mut() {
+                    rename(children);
+                }
+            }
+        }
+        rename(&mut owner.content);
+        owner
+    }
+
+    #[test]
+    fn same_source_colored_glasses_retains_editable_fringe_and_sibling() {
+        for convergence in [3., -3., 0.] {
+            let owner = glasses_owner(convergence, 12.);
+            let imported = import(
+                &Default::default(),
+                RIPPLE_COMPOSITION,
+                &owner,
+                PLANE,
+                PLANE,
+                &mut 100,
+                &mut Default::default(),
+            );
+            assert_eq!(imported.effects.len(), 5, "{:?}", imported.warnings);
+            assert_eq!(imported.native_ordinals, [1, 1, 1, 1, 2]);
+            let value = serde_json::to_value(&imported.effects[0]).unwrap();
+            assert_eq!(value["effect"]["type"], "chromaticAberration");
+            assert_eq!(
+                value["effect"]["amount"],
+                convergence.abs() * (2. / 3.) * 100. / f64::from(PLANE[0])
+            );
+            assert_eq!(
+                value["effect"]["direction"],
+                if convergence < 0. { 270. } else { 90. }
+            );
+            let second = serde_json::to_value(&imported.effects[2]).unwrap();
+            assert_eq!(value["effect"], second["effect"]);
+            let swap = serde_json::to_value(&imported.effects[1]).unwrap();
+            let unswap = serde_json::to_value(&imported.effects[3]).unwrap();
+            assert_eq!(swap["effect"], unswap["effect"]);
+            assert_eq!(swap["effect"]["type"], "channelMixer");
+            assert_eq!(swap["effect"]["red"]["red"], 1.);
+            assert_eq!(swap["effect"]["green"]["blue"], 1.);
+            assert_eq!(swap["effect"]["blue"]["green"], 1.);
+            assert_eq!(swap["effect"]["green"]["green"], 0.);
+            assert_eq!(swap["effect"]["blue"]["blue"], 0.);
+            assert!(
+                imported
+                    .warnings
+                    .iter()
+                    .any(|w| w.contains("3D Glasses") && w.contains("approximated"))
+            );
+        }
+    }
+
+    #[test]
+    fn unsupported_glasses_controls_do_not_discard_effect_siblings() {
+        let owner = glasses_owner(3., 7.);
+        let imported = import(
+            &Default::default(),
+            RIPPLE_COMPOSITION,
+            &owner,
+            PLANE,
+            PLANE,
+            &mut 100,
+            &mut Default::default(),
+        );
+        assert_eq!(imported.effects.len(), 1);
+        assert_eq!(imported.native_ordinals, [2]);
+        assert!(
+            imported
+                .warnings
+                .iter()
+                .any(|w| w.contains("requires same-source"))
+        );
+
+        let owner = glasses_owner(3., 12.);
+        let (sources, _) = native::read_effects(&owner.content, PLANE.map(f64::from));
+        for (name, value, animated, expression) in [
+            ("ADBE 3D Glasses2-0001", 2., false, false),
+            ("ADBE 3D Glasses2-0003", 3., true, false),
+            ("ADBE 3D Glasses2-0003", 3., false, true),
+            ("ADBE 3D Glasses2-0003", f64::NAN, false, false),
+            ("ADBE 3D Glasses2-0003", 1000., false, false),
+        ] {
+            let mut source = sources[0].clone();
+            let numeric = source
+                .parameters
+                .iter_mut()
+                .find(|p| p.match_name == name)
+                .unwrap()
+                .numeric
+                .as_mut()
+                .unwrap();
+            numeric.values = vec![value];
+            numeric.animated = animated;
+            numeric.expression_enabled = expression;
+            assert!(
+                crate::effects::glasses::lower(&source, &owner, PLANE).is_err(),
+                "{name}"
+            );
+        }
+    }
+
+    /// Synthetic Extract controls on the existing native catalog owner; no native proof.
+    fn extract_owner(white: f64, channel: f64) -> Layer {
+        let mut owner = catalog_owner(&[
+            native_effect("ADBE Luma Key", &[("-0001", channel), ("-0002", white)]),
+            native_effect("ADBE Gaussian Blur 2", &[]),
+        ]);
+        fn rename(chunks: &mut [Chunk]) {
+            for chunk in chunks {
+                if chunk.id() == *b"tdmn" {
+                    let name = match chunk_match_name(chunk) {
+                        Some("ADBE Luma Key") => Some("ADBE Extract"),
+                        Some("ADBE Luma Key-0000") => Some("ADBE Extract-0000"),
+                        Some("ADBE Luma Key-0001") => Some("ADBE Extract-0002"),
+                        Some("ADBE Luma Key-0002") => Some("ADBE Extract-0004"),
+                        Some("ADBE Luma Key-0003") => Some("ADBE Extract-0006"),
+                        Some("ADBE Luma Key-0004") => Some("ADBE Extract-0003"),
+                        Some("ADBE Luma Key-0005") => Some("ADBE Extract-0005"),
+                        _ => None,
+                    };
+                    if let Some(name) = name {
+                        let mut bytes = name.as_bytes().to_vec();
+                        bytes.resize(40, 0);
+                        *chunk = Chunk::data(*b"tdmn", bytes).unwrap();
+                    }
+                }
+                if let Some(children) = chunk.children_mut() {
+                    rename(children);
+                }
+            }
+        }
+        rename(&mut owner.content);
+        owner
+    }
+
+    #[test]
+    fn static_extract_white_cutoff_keeps_editable_alpha_effect_and_siblings() {
+        let owner = extract_owner(245., 1.);
+        let imported = import(
+            &ExpressionSamples::default(),
+            RIPPLE_COMPOSITION,
+            &owner,
+            PLANE,
+            PLANE,
+            &mut 100,
+            &mut Default::default(),
+        );
+        assert_eq!(imported.effects.len(), 2, "{:?}", imported.warnings);
+        assert_eq!(imported.native_ordinals, [1, 2]);
+        let value = serde_json::to_value(&imported.effects[0]).unwrap();
+        assert_eq!(value["effect"]["type"], "lumaKey");
+        assert_eq!(value["effect"]["threshold"], 245. / 255.);
+        assert_eq!(value["effect"]["softness"], 0.);
+        assert_eq!(value["effect"]["invert"], 1.);
+        assert!(
+            imported
+                .warnings
+                .iter()
+                .any(|w| w.contains("Extract") && w.contains("approximated"))
+        );
+    }
+
+    #[test]
+    fn unsupported_extract_channel_preserves_other_effects() {
+        let owner = extract_owner(245., 2.);
+        let imported = import(
+            &ExpressionSamples::default(),
+            RIPPLE_COMPOSITION,
+            &owner,
+            PLANE,
+            PLANE,
+            &mut 100,
+            &mut Default::default(),
+        );
+        assert_eq!(imported.effects.len(), 1);
+        assert_eq!(imported.native_ordinals, [2]);
+        assert!(
+            imported
+                .warnings
+                .iter()
+                .any(|w| w.contains("Extract") && w.contains("Luminance"))
+        );
+    }
+
+    #[test]
+    fn extract_declines_dynamic_soft_and_two_sided_cutoffs() {
+        let owner = extract_owner(245., 1.);
+        let (sources, _) = native::read_effects(&owner.content, PLANE.map(f64::from));
+        let source = sources
+            .iter()
+            .find(|s| s.match_name == "ADBE Extract")
+            .unwrap();
+        for (name, value, animated) in [
+            ("ADBE Extract-0004", 245., true),
+            ("ADBE Extract-0006", 5., false),
+            ("ADBE Extract-0003", 20., false),
+            ("ADBE Extract-0004", f64::NAN, false),
+        ] {
+            let mut changed = source.clone();
+            let numeric = changed
+                .parameters
+                .iter_mut()
+                .find(|p| p.match_name == name)
+                .unwrap()
+                .numeric
+                .as_mut()
+                .unwrap();
+            numeric.values = vec![value];
+            numeric.animated = animated;
+            assert!(crate::effects::extract::lower(&changed).is_err(), "{name}");
+        }
+        let mut black = source.clone();
+        for (name, value) in [("ADBE Extract-0003", 10.), ("ADBE Extract-0004", 255.)] {
+            black
+                .parameters
+                .iter_mut()
+                .find(|p| p.match_name == name)
+                .unwrap()
+                .numeric
+                .as_mut()
+                .unwrap()
+                .values = vec![value];
+        }
+        let value = serde_json::to_value(crate::effects::extract::lower(&black).unwrap()).unwrap();
+        assert_eq!(value["threshold"], 10. / 255.);
+        assert_eq!(value["invert"], 0.);
     }
 
     /// Native Ripple with Wave Width and Wave Height in pixels.
@@ -3384,7 +4149,7 @@ mod tests {
             *b"ldat",
             &mut |data| {
                 assert_eq!(data.len(), 208, "two native spatial Point keys");
-                for key in data.chunks_exact_mut(104) {
+                for key in data.as_chunks_mut::<104>().0.iter_mut() {
                     key[4] = 2;
                     key[5] = 2;
                     for (index, value) in

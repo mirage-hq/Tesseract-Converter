@@ -71,11 +71,12 @@ pub(super) fn read(
         ));
     }
     let mut channels = [[0.; 5]; 5];
-    for (channel, bytes) in channels.iter_mut().zip(bytes[8..].chunks_exact(20)) {
-        for (value, bytes) in channel.iter_mut().zip(bytes.chunks_exact(4)) {
-            *value = f64::from(f32::from_be_bytes(
-                bytes.try_into().expect("four-byte float chunk"),
-            ));
+    for (channel, bytes) in channels
+        .iter_mut()
+        .zip(bytes[8..].as_chunks::<20>().0.iter())
+    {
+        for (value, bytes) in channel.iter_mut().zip(bytes.as_chunks::<4>().0.iter()) {
+            *value = f64::from(f32::from_be_bytes(*bytes));
         }
         if channel.iter().any(|value| !value.is_finite())
             || [0, 1, 3, 4]

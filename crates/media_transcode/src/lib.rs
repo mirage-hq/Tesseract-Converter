@@ -203,7 +203,7 @@ fn run_for_destination(
         backend::probe_for_destination(&request.backend, &input, request.cancelled, destination)?
     };
     validate_source_file(&input, &source)?;
-    validate_source(&source, ae_mp3)?;
+    validate_source(&source, ae_mp3, destination)?;
     let plan = if destination == Destination::AfterEffects {
         plan_after_effects(&request, &input, &source)?
     } else {
@@ -322,7 +322,17 @@ fn run_for_destination(
     publish_no_replace(&staged_output, request.output)?;
     emit_status(progress, &input, ProgressStatus::Complete);
 
-    let warnings = metadata_omission_warnings(&source, plan.operation);
+    let mut warnings = metadata_omission_warnings(&source, plan.operation);
+    if destination == Destination::AfterEffects {
+        if let Some(origin) = ae_subframe_origin(&source) {
+            warnings.push(format!(
+                "Video presentation origin {origin:.9}s rebased to zero by whole-source encoding; exact frame cadence/count retained, editable source trims and timeline clocks unchanged; subframe leading gap omitted (native frame-selection fidelity unmeasured)"
+            ));
+        }
+    }
+    if has_hdr_or_wide_gamut(&source) {
+        warnings.push("HDR/wide-gamut source bytes and embedded metadata were copied unchanged; Adobe working-space, sequence/output transfer and ACES policy are not reconstructed by media preparation".into());
+    }
     Ok(TranscodeResult {
         input,
         output: request.output.to_owned(),
@@ -366,6 +376,7 @@ fn plan_after_effects(
     input: &Path,
     source: &MediaInfo,
 ) -> Result<Plan, TranscodeError> {
+    validate_color_operation(source, Operation::Remux)?;
     if request.output.extension().and_then(|value| value.to_str()) != Some("mov")
         || source.audio.is_some()
         || source.timecode.is_some()
@@ -501,6 +512,7 @@ fn plan(
         }
     };
 
+    validate_color_operation(source, operation)?;
     if operation == Operation::Copy {
         return Ok(Plan {
             profile,
@@ -621,7 +633,32 @@ fn validate_source_file(input: &Path, info: &MediaInfo) -> Result<(), TranscodeE
     Ok(())
 }
 
-fn validate_source(info: &MediaInfo, ae_mp3: bool) -> Result<(), TranscodeError> {
+/// A subframe video-only lead can be approximated without changing frame count
+/// or cadence. Longer gaps, audio/data synchronization and uncertain tails need
+/// a project-aware clock mapping rather than sequential zero-origin encoding.
+fn ae_subframe_origin(info: &MediaInfo) -> Option<f64> {
+    let video = info.video.as_ref()?;
+    if info.audio.is_some() || info.timecode.is_some() || !info.camera_metadata.is_empty() {
+        return None;
+    }
+    let frame_seconds = f64::from(video.frame_rate.den) / f64::from(video.frame_rate.num);
+    let tick_seconds = f64::from(video.time_base.num) / f64::from(video.time_base.den);
+    let duration = video.frames as f64 * frame_seconds;
+    (video.start_seconds.is_finite()
+        && video.start_seconds > 0.0
+        && video.start_seconds < frame_seconds
+        && tick_seconds.is_finite()
+        && tick_seconds > 0.0
+        && video.duration_seconds.is_finite()
+        && (video.duration_seconds - duration).abs() <= tick_seconds)
+        .then_some(video.start_seconds)
+}
+
+fn validate_source(
+    info: &MediaInfo,
+    ae_mp3: bool,
+    destination: Destination,
+) -> Result<(), TranscodeError> {
     if ae_mp3
         && (info.video.is_some()
             || info.container != "mp3"
@@ -654,7 +691,9 @@ fn validate_source(info: &MediaInfo, ae_mp3: bool) -> Result<(), TranscodeError>
         if !video.constant_frame_rate
             || video.interlaced
             || video.sample_aspect_ratio.num != video.sample_aspect_ratio.den
-            || video.start_seconds.abs() > 1e-6
+            || (video.start_seconds.abs() > 1e-6
+                && !(destination == Destination::AfterEffects
+                    && ae_subframe_origin(info).is_some()))
         {
             return Err(TranscodeError::Policy(
                 "VFR, interlace, non-square pixels, or nonzero start is not safely normalized"
@@ -675,13 +714,6 @@ fn validate_source(info: &MediaInfo, ae_mp3: bool) -> Result<(), TranscodeError>
                 "explicit RGB identity-matrix signaling has no verified YUV mapping".into(),
             ));
         }
-        if matches!(video.color.transfer.as_str(), "smpte2084" | "arib-std-b67")
-            || matches!(video.color.primaries.as_str(), "bt2020" | "smpte432")
-        {
-            return Err(TranscodeError::Policy(
-                "HDR/wide-gamut conversion has no approved preservation path".into(),
-            ));
-        }
     }
     if let Some(audio) = &info.audio {
         if audio.duration_seconds <= 0.0
@@ -698,6 +730,27 @@ fn validate_source(info: &MediaInfo, ae_mp3: bool) -> Result<(), TranscodeError>
                 "multichannel audio with unknown layout cannot be preserved".into(),
             ));
         }
+    }
+    Ok(())
+}
+
+fn has_hdr_or_wide_gamut(info: &MediaInfo) -> bool {
+    info.video.as_ref().is_some_and(|video| {
+        matches!(video.color.transfer.as_str(), "smpte2084" | "arib-std-b67")
+            || matches!(
+                video.color.primaries.as_str(),
+                "bt2020" | "smpte431" | "smpte432"
+            )
+    })
+}
+
+// A verified byte copy preserves all embedded declarations/side data, including
+// those absent from our probe DTO. Remux/encoding cannot make that guarantee.
+fn validate_color_operation(info: &MediaInfo, operation: Operation) -> Result<(), TranscodeError> {
+    if has_hdr_or_wide_gamut(info) && operation != Operation::Copy {
+        return Err(TranscodeError::Policy(
+            "HDR/wide-gamut preparation requires a verified same-container byte copy; remux and encoding have no approved preservation path".into(),
+        ));
     }
     Ok(())
 }

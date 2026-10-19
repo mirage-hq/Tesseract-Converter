@@ -331,7 +331,7 @@ fn require_formula(controls: &[(&str, &[Chunk])]) -> Result<(), &'static str> {
     let run = unique_run(controls, "ADBE Solid Composite-0001").map_err(|_| "Source Opacity")?;
     let leaf = properties::unique_list(run, *b"tdbs").map_err(|_| "Source Opacity")?;
     let numeric = properties::read_numeric(leaf).map_err(|_| "Source Opacity")?;
-    let source = properties::data(leaf, *b"Utf8")
+    let source = properties::expression_data(leaf)
         .ok()
         .and_then(|bytes| std::str::from_utf8(bytes).ok());
     if numeric.expression_enabled

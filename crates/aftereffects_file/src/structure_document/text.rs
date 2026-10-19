@@ -140,10 +140,10 @@ fn import_text(
         };
     }
 
-    if let Some(composition) = composition {
-        source_alias::lower(layer, composition, &mut source);
-    }
-    if source.percent.is_none()
+    let alias_rejected =
+        composition.is_some_and(|composition| source_alias::lower(layer, composition, &mut source));
+    if !alias_rejected
+        && source.percent.is_none()
         && let Some((comp_id, samples)) = evaluations
         && let Some(evaluated) = samples
             .texts
@@ -151,14 +151,42 @@ fn import_text(
             .find(|text| text.composition_id == comp_id && text.layer_id == layer.record.id())
     {
         match evaluated_text_holds(layer, evaluated) {
-            Ok(holds) => {
+            Ok(mut holds) => {
+                let copied_style =
+                    evaluated
+                        .style_source
+                        .and_then(|[source_comp, source_layer]| {
+                            if source_comp != comp_id {
+                                return None;
+                            }
+                            let target = composition?
+                                .layers
+                                .iter()
+                                .find(|target| target.record.id() == source_layer)?;
+                            let target = read_source(target).ok()??;
+                            if !target.document_is_static
+                                || target.documents.len() != 1
+                                || !source_alias::uniform_styles(&target.documents[0], "6")
+                            {
+                                return None;
+                            }
+                            Some(convert_document(&target.documents[0], &target.fonts, None))
+                        });
+                if let Some((style, warnings)) = copied_style {
+                    holds.style = Some(style);
+                    source.warnings.extend(warnings);
+                }
+                if evaluated.style_source.is_some() {
+                    source.warnings.push(if holds.style.is_some() {
+                        "Source Text setText copies static uniform character style; consumer paragraph/box geometry remains local and live linkage is lost".into()
+                    } else {
+                        "Source Text setText style not lowered: source must be same-composition, static and uniform; consumer style retained".into()
+                    });
+                }
                 source
                     .warnings
                     .retain(|warning| !warning.contains("enabled expression not lowered"));
-                source.warnings.push(format!(
-                    "Source Text expression evaluated by the converter into {} held text segment(s) at source frames; live expression linkage is not retained",
-                    holds.texts.len()
-                ));
+                source.warnings.push(format!("Source Text expression evaluated by the converter into {} held text segment(s) at source frames; live expression linkage is not retained",holds.texts.len()));
                 source.percent = Some(holds);
             }
             Err(reason) => source.warnings.push(format!(
@@ -193,6 +221,37 @@ fn import_text(
                     animator
                         .evaluated
                         .push((name.clone(), sample.clone(), clock));
+                }
+            }
+            for (selector_index, selector) in animator.selectors.iter().enumerate() {
+                let SelectorSource::Range { properties } = selector else {
+                    continue;
+                };
+                let Ok(selector) = u32::try_from(selector_index + 1) else {
+                    continue;
+                };
+                for (name, numeric) in properties {
+                    if !numeric
+                        .as_ref()
+                        .is_ok_and(|numeric| numeric.expression_enabled)
+                    {
+                        continue;
+                    }
+                    if let Some(sample) = samples.lookup(
+                        comp_id,
+                        layer.record.id(),
+                        &PropertyIdentity::TextSelector {
+                            animator: native_index,
+                            selector,
+                            match_name: name.clone(),
+                        },
+                    ) {
+                        animator.evaluated.push((
+                            selector_sample_name(selector_index, name),
+                            sample.clone(),
+                            clock,
+                        ));
+                    }
                 }
             }
         }
@@ -427,8 +486,23 @@ fn held_segments(
             document_warnings.push("Source Text uniform point-text glyph scale is approximated by an editable inner Text transform; tracking and raster stroke scale geometrically, while the authored occurrence position and clock remain unchanged".into());
         }
         warnings.append(&mut document_warnings);
-        let (animators, anchor_options, path_options, mut property_warnings) =
+        let (mut animators, anchor_options, path_options, mut property_warnings) =
             convert_text_properties(source, mask_guide_ids, next_id);
+        // Native animator tracking is pixels; document tracking is already 1/1000 em.
+        for animator in &mut animators {
+            animator.tracking = animator.tracking.and_then(|value| {
+                let scaled = value * (1000.0 / document.font_size.value());
+                if scaled.is_finite() {
+                    Some(scaled)
+                } else {
+                    property_warnings.push(
+                        "Source Text animator tracking overflows em units; static tracking omitted"
+                            .into(),
+                    );
+                    None
+                }
+            });
+        }
         warnings.append(&mut property_warnings);
         layers.push(FxLayer::Text(TextLayer {
             id,
@@ -802,9 +876,8 @@ fn segment_animation_entries(
                 animator,
                 &format!("{segment} {}", source_animator.name),
                 clock,
-                &mut entries,
-                &mut warnings,
-                budget,
+                1000.0 / text.source_text.font_size.value(),
+                TextAnimationOutput::new(&mut entries, &mut warnings, budget),
             );
         }
         if source.animators.len() > text.animators.len()
@@ -899,6 +972,7 @@ struct SourceText {
 /// holds each value, and each value's source-local start (none when static).
 #[derive(Clone)]
 struct PercentHolds {
+    style: Option<TextDocument>,
     starts: Vec<f64>,
     texts: Vec<String>,
 }
@@ -917,7 +991,18 @@ impl SourceText {
         };
         let (mut document, warnings) =
             convert_document(&self.documents[0], &self.fonts, self.frame.as_ref());
-        document.text.clone_from(&percent.texts[index]);
+        if let Some(style) = &percent.style {
+            let mut copied = style.clone();
+            copied.justification = document.justification;
+            copied.box_text = document.box_text;
+            copied.box_size = document.box_size;
+            copied.box_position = document.box_position;
+            copied.box_first_baseline = document.box_first_baseline;
+            copied.vertical_align = document.vertical_align;
+            copied.scale_box_text_with_transform = document.scale_box_text_with_transform;
+            document = copied;
+        }
+        document.text = editable_text(&percent.texts[index]);
         (document, warnings)
     }
 }
@@ -930,18 +1015,13 @@ struct AnimatorSource {
     name: String,
     properties: Vec<(String, Result<NumericProperty, PropertyError>)>,
     selectors: Vec<SelectorSource>,
-    /// Expression samples of enabled animator properties, in the parent
+    /// Expression samples of enabled animator/selector fields, in the parent
     /// composition clock, with the owner layer's start/stretch.
     evaluated: Vec<(String, EvaluatedProperty, [f64; 2])>,
 }
 
-/// Enabled Text Animators in native order with their animator-property leaves.
-/// Indices are one-based over enabled animators, exactly as text import
-/// numbers them; the expression model uses the same identity.
-/// One enabled animator: its one-based index and named property leaf runs.
-pub(crate) type AnimatorLeaves<'a> = (u32, Vec<(&'a str, &'a [Chunk])>);
-
-pub(crate) fn animator_property_leaves(layer: &Layer) -> Vec<AnimatorLeaves<'_>> {
+/// Enabled animator and Range Selector leaves, in the same order as text import.
+pub(crate) fn expression_property_leaves(layer: &Layer) -> Vec<(PropertyIdentity, &[Chunk])> {
     let mut ignored = Vec::new();
     let mut result = Vec::new();
     let Some(text_group) = root_runs(&layer.content).ok().and_then(|roots| {
@@ -972,22 +1052,84 @@ pub(crate) fn animator_property_leaves(layer: &Layer) -> Vec<AnimatorLeaves<'_>>
             _ => {}
         }
     }
+    let mut animator = 0;
     for run in animators {
-        if !crate::properties::group_enabled_or_warn(run, "ADBE Text Animator", &mut ignored) {
+        if !enabled_text_group(run, "ADBE Text Animator", &mut ignored) {
             continue;
         }
-        let index = u32::try_from(result.len() + 1).unwrap_or(u32::MAX);
-        let leaves = unique_list(run, *b"tdgp")
-            .and_then(runs)
-            .ok()
-            .and_then(|children| {
-                children
-                    .into_iter()
-                    .find(|(name, _)| *name == "ADBE Text Animator Properties")
-            })
-            .and_then(|(_, run)| unique_list(run, *b"tdgp").and_then(runs).ok())
-            .unwrap_or_default();
-        result.push((index, leaves));
+        animator += 1;
+        let Ok(children) = unique_list(run, *b"tdgp").and_then(runs) else {
+            continue;
+        };
+        for (name, run) in children {
+            let Ok(leaves) = unique_list(run, *b"tdgp").and_then(runs) else {
+                continue;
+            };
+            if name == "ADBE Text Animator Properties" {
+                result.extend(leaves.into_iter().map(|(name, run)| {
+                    (
+                        PropertyIdentity::TextAnimator {
+                            animator,
+                            match_name: name.to_owned(),
+                        },
+                        run,
+                    )
+                }));
+            } else if name == "ADBE Text Selectors" {
+                let mut selector = 0;
+                for (name, run) in leaves {
+                    if !enabled_text_group(run, name, &mut ignored) {
+                        continue;
+                    }
+                    selector += 1;
+                    if name != "ADBE Text Selector" {
+                        continue;
+                    }
+                    let Ok(group) = unique_list(run, *b"tdgp") else {
+                        continue;
+                    };
+                    let Ok(mut fields) = runs(group) else {
+                        continue;
+                    };
+                    if let Some((_, advanced)) = fields
+                        .iter()
+                        .find(|(name, _)| *name == "ADBE Text Range Advanced")
+                        && let Ok(advanced) = unique_list(advanced, *b"tdgp").and_then(runs)
+                    {
+                        fields.extend(advanced);
+                    }
+                    result.extend(
+                        fields
+                            .into_iter()
+                            .filter(|(name, _)| {
+                                matches!(
+                                    *name,
+                                    "ADBE Text Percent Start"
+                                        | "ADBE Text Percent End"
+                                        | "ADBE Text Percent Offset"
+                                        | "ADBE Text Index Start"
+                                        | "ADBE Text Index End"
+                                        | "ADBE Text Index Offset"
+                                        | "ADBE Text Selector Max Amount"
+                                        | "ADBE Text Levels Max Ease"
+                                        | "ADBE Text Levels Min Ease"
+                                        | "ADBE Text Random Seed"
+                                )
+                            })
+                            .map(|(name, run)| {
+                                (
+                                    PropertyIdentity::TextSelector {
+                                        animator,
+                                        selector,
+                                        match_name: name.to_owned(),
+                                    },
+                                    run,
+                                )
+                            }),
+                    );
+                }
+            }
+        }
     }
     result
 }
@@ -1423,11 +1565,34 @@ fn append_animator_property(
     clock: NumericAnimationClock,
     output: TextAnimationOutput<'_>,
 ) {
-    if let Some((_, samples, owner_clock)) = source
-        .evaluated
-        .iter()
-        .find(|(name, _, _)| name == source_name)
-    {
+    append_sampled_property(
+        &source.properties,
+        source
+            .evaluated
+            .iter()
+            .find(|(name, _, _)| name == source_name),
+        source_name,
+        context,
+        target,
+        clock,
+        output,
+    );
+}
+
+fn selector_sample_name(index: usize, name: &str) -> String {
+    format!("selector {} {name}", index + 1)
+}
+
+fn append_sampled_property(
+    properties: &[(String, Result<NumericProperty, PropertyError>)],
+    evaluated: Option<&(String, EvaluatedProperty, [f64; 2])>,
+    source_name: &str,
+    context: &str,
+    target: NumericAnimationTarget,
+    clock: NumericAnimationClock,
+    output: TextAnimationOutput<'_>,
+) {
+    if let Some((_, samples, owner_clock)) = evaluated {
         let name = format!("{context} {source_name}");
         match rebased_samples_with(samples, *owner_clock, clock) {
             Ok(rebased) => {
@@ -1440,7 +1605,7 @@ fn append_animator_property(
                 );
                 output.warnings.append(&mut warnings);
                 if !entries.is_empty() {
-                    output.warnings.push(format!("{name}: animator-property expression evaluated once per layer, not per character"));
+                    output.warnings.push(format!("{name}: numeric text expression evaluated once per layer, not per character"));
                     output.entries.append(&mut entries);
                     return;
                 }
@@ -1450,14 +1615,7 @@ fn append_animator_property(
                 .push(format!("{name}: {error}; expression samples not lowered")),
         }
     }
-    append_numeric_animation(
-        &source.properties,
-        source_name,
-        context,
-        target,
-        clock,
-        output,
-    );
+    append_numeric_animation(properties, source_name, context, target, clock, output);
 }
 
 fn append_animator_animation(
@@ -1465,10 +1623,14 @@ fn append_animator_animation(
     animator: &TextAnimator,
     context: &str,
     clock: NumericAnimationClock,
-    entries: &mut Vec<AnimationGraphEntry>,
-    warnings: &mut Vec<String>,
-    budget: &mut AnimationBudget,
+    tracking_scale: f64,
+    output: TextAnimationOutput<'_>,
 ) {
+    let TextAnimationOutput {
+        entries,
+        warnings,
+        budget,
+    } = output;
     let vector = |target_name| {
         NumericAnimationTarget::vector2(
             PropertyTarget::fx_item(animator.id, target_name),
@@ -1509,7 +1671,11 @@ fn append_animator_animation(
             source,
             source_name,
             context,
-            scalar(target_name),
+            scalar(target_name).scaled(if target_name == "tracking" {
+                tracking_scale
+            } else {
+                1.0
+            }),
             clock,
             TextAnimationOutput::new(entries, warnings, budget),
         );
@@ -1587,6 +1753,28 @@ fn append_animator_animation(
                         1.0,
                     )
                 };
+                let hard_reveal = hard_range_reveal(properties);
+                if hard_reveal
+                    && let Some((_, Ok(numeric))) =
+                        properties.iter().find(|(name, _)| name == start)
+                {
+                    let targets = ["start", "end"].map(|name| {
+                        NumericAnimationTarget::float(
+                            PropertyTarget::fx_item(selector.id, name),
+                            0,
+                            scale,
+                        )
+                    });
+                    let (mut keyed, mut diagnostics) = numeric_entries(
+                        &format!("{selector_context} shared reveal boundary"),
+                        numeric,
+                        &targets,
+                        clock,
+                        budget,
+                    );
+                    entries.append(&mut keyed);
+                    warnings.append(&mut diagnostics);
+                }
                 for (source_name, target_name, target_scale) in [
                     (start, "start", scale),
                     (end, "end", scale),
@@ -1596,8 +1784,16 @@ fn append_animator_animation(
                     ("ADBE Text Levels Min Ease", "easeLow", 0.01),
                     ("ADBE Text Random Seed", "randomSeed", 1.0),
                 ] {
-                    append_numeric_animation(
+                    if hard_reveal && matches!(target_name, "start" | "end") {
+                        continue;
+                    }
+                    let sample_name = selector_sample_name(selector_index, source_name);
+                    append_sampled_property(
                         properties,
+                        source
+                            .evaluated
+                            .iter()
+                            .find(|(name, _, _)| name == &sample_name),
                         source_name,
                         &selector_context,
                         NumericAnimationTarget::float(
@@ -2105,6 +2301,35 @@ fn warn_unsupported_properties(
     }
 }
 
+// A collapsed Ramp Up selects whole units past its boundary, unlike Square's
+// fractional overlap. Keep both boundaries linked by copying the native Start keys.
+fn hard_range_reveal(properties: &[(String, Result<NumericProperty, PropertyError>)]) -> bool {
+    let static_control = |name: &str, expected: f64, absent: bool| {
+        properties
+            .iter()
+            .find(|(candidate, _)| candidate == name)
+            .map_or(absent, |(_, value)| {
+                value.as_ref().is_ok_and(|value| {
+                    !value.animated
+                        && !value.expression_enabled
+                        && value.keyframes.is_empty()
+                        && value.values.as_slice() == [expected]
+                })
+            })
+    };
+    static_control("ADBE Text Selector Smoothness", 0.0, false)
+        && static_control("ADBE Text Range Units", 1.0, true)
+        && static_control("ADBE Text Range Shape", 1.0, true)
+        && static_control("ADBE Text Percent End", 100.0, true)
+        && static_control("ADBE Text Percent Offset", 0.0, true)
+        && static_control("ADBE Text Levels Max Ease", 0.0, true)
+        && static_control("ADBE Text Levels Min Ease", 0.0, true)
+        && properties
+            .iter()
+            .filter(|(name, _)| name == "ADBE Text Percent Start")
+            .all(|(_, value)| value.as_ref().is_ok_and(|value| !value.expression_enabled))
+}
+
 fn convert_range_selector(
     id: FxItemId,
     properties: &[(String, Result<NumericProperty, PropertyError>)],
@@ -2129,29 +2354,35 @@ fn convert_range_selector(
         "ADBE Text Index Offset"
     };
     let divisor = if percentage { 100.0 } else { 1.0 };
+    let hard_reveal = hard_range_reveal(properties);
+    let mut supported = vec![
+        "ADBE Text Percent Start",
+        "ADBE Text Percent End",
+        "ADBE Text Percent Offset",
+        "ADBE Text Index Start",
+        "ADBE Text Index End",
+        "ADBE Text Index Offset",
+        "ADBE Text Range Units",
+        "ADBE Text Range Type2",
+        "ADBE Text Selector Mode",
+        "ADBE Text Selector Max Amount",
+        "ADBE Text Range Shape",
+        "ADBE Text Levels Max Ease",
+        "ADBE Text Levels Min Ease",
+        "ADBE Text Randomize Order",
+        "ADBE Text Random Seed",
+    ];
+    if hard_reveal {
+        supported.push("ADBE Text Selector Smoothness");
+        warnings.push(format!("{prefix} Range Selector zero Smoothness reveal approximated by a collapsed Ramp Up with shared Start/End keys; edit both boundaries together; other Smoothness profiles remain unsupported"));
+    }
     warn_unsupported_properties(
         properties,
-        &[
-            "ADBE Text Percent Start",
-            "ADBE Text Percent End",
-            "ADBE Text Percent Offset",
-            "ADBE Text Index Start",
-            "ADBE Text Index End",
-            "ADBE Text Index Offset",
-            "ADBE Text Range Units",
-            "ADBE Text Range Type2",
-            "ADBE Text Selector Mode",
-            "ADBE Text Selector Max Amount",
-            "ADBE Text Range Shape",
-            "ADBE Text Levels Max Ease",
-            "ADBE Text Levels Min Ease",
-            "ADBE Text Randomize Order",
-            "ADBE Text Random Seed",
-        ],
+        &supported,
         &format!("{prefix} Range Selector"),
         warnings,
     );
-    let value = serde_json::json!({
+    let mut value = serde_json::json!({
         "id": id.value(),
         "start": scalar_property(properties, start_name, prefix, warnings).unwrap_or(range_default(start_name)) / divisor,
         "end": scalar_property(properties, end_name, prefix, warnings).unwrap_or(range_default(end_name)) / divisor,
@@ -2172,6 +2403,10 @@ fn convert_range_selector(
         ),
         "randomSeed": scalar_property(properties, "ADBE Text Random Seed", prefix, warnings).unwrap_or(range_default("ADBE Text Random Seed")),
     });
+    if hard_reveal {
+        value["shape"] = serde_json::json!("rampUp");
+        value["end"] = value["start"].clone();
+    }
     serde_json::from_value(value).unwrap_or_else(|error| {
         warnings.push(format!(
             "{prefix} Range Selector is invalid ({error}); AE defaults used"
@@ -2522,7 +2757,11 @@ fn lower_source_text_expression(
         _ => Err("keyed Source Text documents are not combined with an expression".to_owned()),
     };
     match lowered {
-        Ok((starts, texts)) => Some(PercentHolds { starts, texts }),
+        Ok((starts, texts)) => Some(PercentHolds {
+            style: None,
+            starts,
+            texts,
+        }),
         Err(reason) => {
             warnings.push(expression_not_lowered(&reason));
             None
@@ -2536,30 +2775,100 @@ fn expression_not_lowered(reason: &str) -> String {
     )
 }
 
-/// Source Text's descriptor carries the numeric-leaf expression flags read by
-/// `properties::read_numeric`: tdb4 byte 120 marks a stored expression and
-/// byte 119 disables it. Returns the descriptor only for an enabled expression.
-/// Pre-expression Source Text and the metadata list holding its enabled
-/// expression, for converter evaluation of single-document Source Text.
-pub(crate) fn source_text_expression_input(layer: &Layer) -> Option<(String, &[Chunk])> {
-    let text_group = root_runs(&layer.content)
-        .ok()?
+/// Native Source Text dependency snapshot. It is consumed only by the converter;
+/// expression results still become ordinary editable text/keyframe content.
+pub(crate) struct SourceTextSnapshot<'a> {
+    pub documents: Vec<TextDocument>,
+    pub starts: Vec<f64>,
+    pub expression: Option<&'a [Chunk]>,
+    pub bounds: Option<[f64; 4]>,
+}
+
+pub(crate) fn source_text_snapshot(
+    layer: &Layer,
+) -> Result<Option<SourceTextSnapshot<'_>>, TextError> {
+    let Some(source) = read_source(layer)? else {
+        return Ok(None);
+    };
+    let roots = root_runs(&layer.content)?;
+    let text = roots
         .into_iter()
         .find(|(name, _)| *name == "ADBE Text Properties")
-        .and_then(|(_, run)| unique_list(run, *b"tdgp").ok())?;
-    let (_, document_run) = runs(text_group)
-        .ok()?
+        .ok_or(TextError::Layout("missing Text properties"))?;
+    let text = unique_list(text.1, *b"tdgp")?;
+    let document = runs(text)?
         .into_iter()
-        .find(|(name, _)| *name == "ADBE Text Document")?;
-    let wrapper = unique_list(document_run, *b"btds").ok()?;
-    let metadata = enabled_expression_descriptor(wrapper).ok()??;
-    let source = read_source(layer).ok()??;
-    if source.documents.len() != 1 {
-        return None;
+        .find(|(name, _)| *name == "ADBE Text Document")
+        .ok_or(TextError::Layout("missing Source Text"))?;
+    let wrapper = unique_list(document.1, *b"btds")?;
+    let expression = enabled_expression_descriptor(wrapper)?;
+    if source.documents.is_empty()
+        || (source.documents.len() > 1
+            && (source.document_starts.len() != source.documents.len()
+                || source.document_starts.iter().any(|t| !t.is_finite())
+                || source
+                    .document_starts
+                    .windows(2)
+                    .any(|pair| pair[0] >= pair[1])))
+    {
+        return Err(TextError::Layout(
+            "Source Text dependency has invalid document timing",
+        ));
     }
-    let (document, _) =
-        convert_document(&source.documents[0], &source.fonts, source.frame.as_ref());
-    Some((document.text.to_string(), metadata))
+    let documents = source
+        .documents
+        .iter()
+        .map(|document| convert_document(document, &source.fonts, source.frame.as_ref()).0)
+        .collect();
+    let bounds = (source.document_is_static
+        && source.documents.len() == 1
+        && source.animators.is_empty()
+        && source.path_options.is_empty())
+    .then(|| cached_text_bounds(&source.documents[0]))
+    .flatten();
+    Ok(Some(SourceTextSnapshot {
+        documents,
+        starts: source.document_starts,
+        expression,
+        bounds,
+    }))
+}
+
+/// Saved glyph-cache union, not a fresh font layout or live expression bound.
+fn cached_text_bounds(document: &Value) -> Option<[f64; 4]> {
+    let layout = document.get("1")?.get("2")?;
+    let mut pending = vec![layout];
+    let mut bounds: Option<[f64; 4]> = None;
+    while let Some(value) = pending.pop() {
+        if value.get("99").and_then(Value::as_str) == Some("G") {
+            let raw = value.get("8")?.as_array()?;
+            let [x0, y0, x1, y1] = raw else {
+                return None;
+            };
+            let glyph = [x0.as_f64()?, y0.as_f64()?, x1.as_f64()?, y1.as_f64()?];
+            if !glyph.into_iter().all(f64::is_finite) || glyph[2] < glyph[0] || glyph[3] < glyph[1]
+            {
+                return None;
+            }
+            bounds = Some(match bounds {
+                None => glyph,
+                Some(b) => [
+                    b[0].min(glyph[0]),
+                    b[1].min(glyph[1]),
+                    b[2].max(glyph[2]),
+                    b[3].max(glyph[3]),
+                ],
+            });
+        }
+        match value {
+            Value::Array(values) => pending.extend(values.iter().rev()),
+            Value::Dict(values) => pending.extend(values.values().rev()),
+            _ => {}
+        }
+    }
+    let [left, top, right, bottom] = bounds?;
+    let result = [left, top, right - left, bottom - top];
+    result.into_iter().all(f64::is_finite).then_some(result)
 }
 
 fn enabled_expression_descriptor(wrapper: &[Chunk]) -> Result<Option<&[Chunk]>, TextError> {
@@ -2749,6 +3058,14 @@ fn convert_document(
             Justification::Left
         }
     };
+    let justification = if justification == Justification::Right
+        && cached_left_aligned(document, raw_text)
+    {
+        warnings.push("Source Text right paragraph code conflicts with a complete cached left-aligned glyph layout; editable Left alignment approximates the saved layout, without reproducing native paragraph-engine controls or verifying cache freshness".into());
+        Justification::Left
+    } else {
+        justification
+    };
     let tracking = finite_or_default(
         character.and_then(|style| number(style, "8")),
         0.0,
@@ -2923,6 +3240,79 @@ fn box_geometry(
         position: [left, top],
         first_baseline,
     })
+}
+
+// A saved layout can expose physical alignment that the paragraph code alone cannot express.
+fn cached_left_aligned(document: &Value, raw_text: &str) -> bool {
+    fn check(document: &Value, raw_text: &str) -> Option<bool> {
+        if raw_text.is_empty() || !raw_text.is_ascii() {
+            return None;
+        }
+        let paragraphs = document.get("0")?.get("5")?.get("0")?.as_array()?;
+        if paragraphs.is_empty()
+            || !paragraphs.iter().all(|run| {
+                let Some(style) = run
+                    .get("0")
+                    .and_then(|v| v.get("0"))
+                    .and_then(|v| v.get("5"))
+                else {
+                    return false;
+                };
+                style.get("0").and_then(Value::as_i64) == Some(1)
+                    && ["1", "2", "3"]
+                        .iter()
+                        .all(|key| style.get(key).is_none_or(|v| v.as_f64() == Some(0.0)))
+            })
+        {
+            return None;
+        }
+        let mut pending = vec![document.get("1")?.get("2")?];
+        let mut units = 0_usize;
+        let mut glyphs = 0_usize;
+        while let Some(node) = pending.pop() {
+            if let Some(nodes) = node.as_array() {
+                pending.extend(nodes);
+                continue;
+            }
+            let kind = node.get("99")?.as_str()?;
+            if !matches!(kind, "PC" | "F" | "R" | "L" | "S" | "G") {
+                return None;
+            }
+            if let Some(origin) = node.get("0") {
+                let point = origin.get("0")?.as_array()?;
+                if point.len() != 2 || point[0].as_f64()? != 0.0 || !point[1].as_f64()?.is_finite()
+                {
+                    return None;
+                }
+            }
+            match kind {
+                "F" if node.get("10")?.as_i64()? != 0 => return None,
+                "S" => {
+                    let count = usize::try_from(node.get("15")?.get("0")?.as_i64()?).ok()?;
+                    units = units.checked_add(count)?;
+                }
+                "G" => {
+                    let bounds = node.get("8")?.as_array()?;
+                    if bounds.len() != 4
+                        || bounds[0].as_f64()? != 0.0
+                        || !bounds
+                            .iter()
+                            .all(|v| v.as_f64().is_some_and(f64::is_finite))
+                        || bounds[2].as_f64()? <= 0.0
+                    {
+                        return None;
+                    }
+                    glyphs += 1;
+                }
+                _ => {}
+            }
+            if kind != "G" {
+                pending.extend(node.get("6")?.as_array()?);
+            }
+        }
+        Some(glyphs > 0 && units == raw_text.encode_utf16().count())
+    }
+    check(document, raw_text).unwrap_or(false)
 }
 
 fn first_layout_line_baseline(document: &Value) -> Option<f64> {
@@ -3131,11 +3521,52 @@ fn evaluated_text_holds(
     if texts.is_empty() {
         return Err("no Source Text samples inside the layer's local clock".into());
     }
-    Ok(PercentHolds { starts, texts })
+    Ok(PercentHolds {
+        style: None,
+        starts,
+        texts,
+    })
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cached_left_layout_overrides_conflicting_right_paragraph_alignment() {
+        let source = |offset: f64, units: usize| {
+            format!(
+                "<< /0 << /0 (AB\\r) /5 << /0 [ << /0 << /0 << /5 << /0 1 >> >> >> >> ] >> >> /1 << /2 [ << /99 /PC /6 [ << /99 /F /10 0 /6 [ << /99 /L /6 [ << /99 /S /0 << /0 [ {offset} 0 ] >> /15 << /0 {units} >> /6 [ << /99 /G /8 [ 0 -10 20 0 ] >> ] >> ] >> ] >> ] >> ] >> >>"
+            )
+        };
+        let native = cos::parse(source(0.0, 3).as_bytes()).unwrap();
+        let (text, warnings) = convert_document(&native, &[], None);
+        assert_eq!(text.text, "AB");
+        assert_eq!(text.justification, Justification::Left);
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("cached left-aligned"))
+        );
+        for rejected in [
+            source(-20.0, 3),
+            source(0.0, 2),
+            source(0.0, 3).replace("/8 [ 0 -10 20 0 ]", "/8 [ 1 -10 20 0 ]"),
+            source(0.0, 3).replace("/5 << /0 1 >>", "/5 << /0 1 /1 5 >>"),
+            source(0.0, 3).replace("/99 /F /10 0", "/99 /F /10 1"),
+            source(0.0, 3).replace("/0 (AB", "/0 (éB"),
+            source(0.0, 3).replace("/99 /G", "/99 /Unknown"),
+            source(0.0, 3).replace("/1 << /2", "/1 << /missing"),
+        ] {
+            let native = cos::parse(rejected.as_bytes()).unwrap();
+            let (text, warnings) = convert_document(&native, &[], None);
+            assert_eq!(text.justification, Justification::Right, "{rejected}");
+            assert!(
+                !warnings
+                    .iter()
+                    .any(|warning| warning.contains("cached left-aligned"))
+            );
+        }
+    }
+
     #[test]
     fn huge_finite_font_size_does_not_overflow_the_manual_leading_fallback() {
         // 1.7e308 is a finite, positive COS decimal; times 1.2 it overflows.
@@ -3310,7 +3741,7 @@ mod tests {
         header[10..12].copy_from_slice(&count.to_be_bytes());
         header[18..20].copy_from_slice(&8_u16.to_be_bytes());
         let mut items = vec![0; usize::from(count) * 8];
-        for (index, item) in items.chunks_exact_mut(8).enumerate() {
+        for (index, item) in items.as_chunks_mut::<8>().0.iter_mut().enumerate() {
             item[..4].copy_from_slice(&i32::try_from(index).unwrap().to_be_bytes());
         }
         let wrapper = [Chunk::list(
@@ -3630,6 +4061,128 @@ mod tests {
     }
 
     #[test]
+    fn zero_smoothness_reveal_uses_a_collapsed_ramp_with_shared_boundary_keys() {
+        let properties = vec![
+            (
+                "ADBE Text Selector Smoothness".into(),
+                Ok(numeric(&[0.0], false)),
+            ),
+            property("ADBE Text Percent Start", &[25.0]),
+        ];
+        let mut warnings = Vec::new();
+        let selector =
+            convert_range_selector(FxItemId::new(101), &properties, "Reveal", &mut warnings);
+        let wire = serde_json::to_value(&selector).unwrap();
+        assert_eq!(wire["shape"], "rampUp");
+        assert_eq!(wire["start"], wire["end"]);
+        assert!(warnings.iter().any(|w| w.contains("zero Smoothness")));
+        let source = AnimatorSource {
+            name: "Reveal".into(),
+            properties: vec![property("ADBE Text Opacity", &[0.0])],
+            selectors: vec![SelectorSource::Range { properties }],
+            evaluated: Vec::new(),
+        };
+        let animator = TextAnimator {
+            id: FxItemId::new(100),
+            selectors: vec![selector],
+            ..TextAnimator::default()
+        };
+        let mut entries = Vec::new();
+        let mut budget = AnimationBudget::default();
+        append_animator_animation(
+            &source,
+            &animator,
+            "Reveal",
+            NumericAnimationClock::source_local_rebased(0.25),
+            1.0,
+            TextAnimationOutput::new(&mut entries, &mut warnings, &mut budget),
+        );
+        AnimationGraph::from_entries(entries.clone()).unwrap();
+        let keys = |name| {
+            entries
+                .iter()
+                .find(|entry| entry.target == PropertyTarget::fx_item(FxItemId::new(101), name))
+                .unwrap()
+                .animator
+                .keyframe_track()
+                .unwrap()
+                .keyframes()
+        };
+        for (start, end) in keys("start").iter().zip(keys("end")) {
+            let mut start = serde_json::to_value(start).unwrap();
+            let mut end = serde_json::to_value(end).unwrap();
+            start.as_object_mut().unwrap().remove("id");
+            end.as_object_mut().unwrap().remove("id");
+            assert_eq!(start, end);
+        }
+        assert_eq!(keys("end")[0].layer_time().as_millis(), 1000);
+        assert_eq!(keys("end")[1].layer_time().as_millis(), 2000);
+        assert_eq!(keys("end")[0].value(), &PropertyValue::Float(0.25));
+        let mut limited = Vec::new();
+        append_animator_animation(
+            &source,
+            &animator,
+            "Reveal",
+            NumericAnimationClock::source_local(),
+            1.0,
+            TextAnimationOutput::new(
+                &mut limited,
+                &mut warnings,
+                &mut AnimationBudget::with_limit(1),
+            ),
+        );
+        assert!(limited.is_empty());
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("coupled animation target set omitted"))
+        );
+    }
+
+    #[test]
+    fn zero_smoothness_reveal_declines_other_range_profiles() {
+        let zero = (
+            "ADBE Text Selector Smoothness".into(),
+            Ok(numeric(&[0.0], false)),
+        );
+        for (name, value) in [
+            ("ADBE Text Selector Smoothness", 50.0),
+            ("ADBE Text Range Units", 2.0),
+            ("ADBE Text Range Shape", 2.0),
+            ("ADBE Text Percent End", 90.0),
+            ("ADBE Text Percent Offset", -10.0),
+            ("ADBE Text Levels Max Ease", 20.0),
+            ("ADBE Text Levels Min Ease", -20.0),
+        ] {
+            let mut properties = vec![zero.clone()];
+            properties.retain(|(candidate, _)| candidate != name);
+            properties.push((name.into(), Ok(numeric(&[value], false))));
+            assert!(!hard_range_reveal(&properties), "{name}");
+        }
+        for name in [
+            "ADBE Text Selector Smoothness",
+            "ADBE Text Percent End",
+            "ADBE Text Percent Offset",
+        ] {
+            for expression in [false, true] {
+                let mut control = numeric(&[0.0], !expression);
+                control.expression_enabled = expression;
+                let mut properties = vec![zero.clone()];
+                properties.retain(|(candidate, _)| candidate != name);
+                properties.push((name.into(), Ok(control)));
+                assert!(!hard_range_reveal(&properties), "{name}");
+            }
+        }
+        assert!(!hard_range_reveal(&[]));
+        let mut warnings = Vec::new();
+        let selector = convert_range_selector(FxItemId::new(1), &[zero], "Static", &mut warnings);
+        let wire = serde_json::to_value(selector).unwrap();
+        assert_eq!(wire["shape"], "rampUp");
+        assert_eq!(wire["start"], 0.0);
+        assert_eq!(wire["end"], 0.0);
+    }
+
+    #[test]
     fn all_runtime_supported_text_numeric_channels_emit_source_local_tracks() {
         let animator_properties = vec![
             property("ADBE Text Anchor Point 3D", &[1.0, 2.0, 3.0]),
@@ -3643,7 +4196,8 @@ mod tests {
             property("ADBE Text Blur", &[12.0, 13.0]),
             property("ADBE Text Opacity", &[75.0]),
             property("ADBE Text Fill Color", &[0.1, 0.2, 0.3, 0.4]),
-            property("ADBE Text Stroke Color", &[0.5, 0.6, 0.7, 0.8]),
+            // The keyed helper doubles all components; keep coverage <= 1.
+            property("ADBE Text Stroke Color", &[0.5, 0.6, 0.7, 0.4]),
             property("ADBE Text Line Spacing", &[0.0, 14.0]),
             property("ADBE Text Line Anchor", &[15.0]),
             property("ADBE Text Character Offset", &[16.0]),
@@ -3697,9 +4251,8 @@ mod tests {
             &animator,
             "Text segment 1 Animator 1",
             NumericAnimationClock::source_local(),
-            &mut entries,
-            &mut warnings,
-            &mut budget,
+            1.0,
+            TextAnimationOutput::new(&mut entries, &mut warnings, &mut budget),
         );
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(entries.len(), 26);
@@ -3751,9 +4304,8 @@ mod tests {
                 &animator,
                 "Timed Text Animator",
                 NumericAnimationClock::source_local_rebased(f64::from(segment_start_ms) / 1_000.0),
-                &mut rebased,
-                &mut rebased_warnings,
-                &mut budget,
+                1.0,
+                TextAnimationOutput::new(&mut rebased, &mut rebased_warnings, &mut budget),
             );
             assert!(rebased_warnings.is_empty(), "{rebased_warnings:?}");
             assert_eq!(rebased.len(), entries.len());
@@ -4133,9 +4685,8 @@ mod tests {
             &animator,
             "Text segment 1 Animator 1",
             NumericAnimationClock::source_local(),
-            &mut entries,
-            &mut warnings,
-            &mut budget,
+            1.0,
+            TextAnimationOutput::new(&mut entries, &mut warnings, &mut budget),
         );
         assert_eq!(entries.len(), 1);
         assert_eq!(
@@ -4312,9 +4863,12 @@ mod tests {
             &animators[0],
             "unsupported selector regression",
             NumericAnimationClock::source_local(),
-            &mut entries,
-            &mut Vec::new(),
-            &mut AnimationBudget::default(),
+            1.0,
+            TextAnimationOutput::new(
+                &mut entries,
+                &mut Vec::new(),
+                &mut AnimationBudget::default(),
+            ),
         );
         assert_eq!(entries.len(), 1);
         assert_eq!(
@@ -4429,6 +4983,158 @@ mod tests {
     }
 
     #[test]
+    fn animator_tracking_pixels_use_each_held_documents_em_size() {
+        let document = |size| {
+            cos::parse(format!(
+                "<< /0 << /0 (AB) /6 << /0 [ << /0 << /0 << /6 << /0 0 /1 {size} /8 -10 >> >> >> >> ] >> >> >>"
+            ).as_bytes()).unwrap()
+        };
+        let mut tracking = numeric(&[10.0], true);
+        tracking.keyframes[0].out_interpolation = 2;
+        tracking.keyframes[0].out_speed = vec![4.0];
+        tracking.keyframes[0].out_influence = vec![30.0];
+        tracking.keyframes[1].in_interpolation = 2;
+        tracking.keyframes[1].in_speed = vec![4.0];
+        tracking.keyframes[1].in_influence = vec![30.0];
+        let source = SourceText {
+            document_is_static: false,
+            fonts: Vec::new(),
+            documents: vec![document(50), document(100)],
+            document_starts: vec![0.0, 1.0],
+            percent: None,
+            frame: None,
+            animators: vec![
+                AnimatorSource {
+                    name: "Tracking".into(),
+                    properties: vec![("ADBE Text Tracking Amount".into(), Ok(tracking))],
+                    selectors: Vec::new(),
+                    evaluated: Vec::new(),
+                },
+                AnimatorSource {
+                    name: "Static tracking".into(),
+                    properties: vec![(
+                        "ADBE Text Tracking Amount".into(),
+                        Ok(numeric(&[-5.0], false)),
+                    )],
+                    selectors: Vec::new(),
+                    evaluated: Vec::new(),
+                },
+            ],
+            more_options: Vec::new(),
+            path_options: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let range = TimeRangeProperty::new(Time::ZERO, Duration::from_secs(3.0));
+        let occurrence: GroupLayer = serde_json::from_value(serde_json::json!({
+            "id": 9000, "name": "Text", "layers": [],
+            "playback": fx_schema::LayerPlayback::linear(range, range, range, 0).unwrap(),
+            "transform": identity_transform()
+        }))
+        .unwrap();
+        let mut warnings = Vec::new();
+        let layers = held_segments(
+            &source,
+            None,
+            vec![(0, 0.0, 1.0), (1, 1.0, 3.0)],
+            &occurrence,
+            &[],
+            &mut 1,
+            &mut warnings,
+        );
+        let (entries, animation_warnings) =
+            segment_animation_entries(&source, &layers, &mut AnimationBudget::default());
+        assert!(animation_warnings.is_empty(), "{animation_warnings:?}");
+        for (index, layer) in layers.iter().enumerate() {
+            let FxLayer::Text(text) = layer else {
+                panic!("editable Text expected")
+            };
+            let size = [50.0, 100.0][index];
+            assert_eq!(text.source_text.font_size.value(), size);
+            assert_eq!(text.source_text.text, "AB");
+            assert_eq!(text.source_text.tracking, -10.0);
+            assert_eq!(text.animators[1].tracking, Some(-5.0 * 1000.0 / size));
+            let animator = &text.animators[0];
+            assert_eq!(animator.tracking, Some(10.0 * 1000.0 / size));
+            let target = PropertyTarget::fx_item(animator.id, "tracking");
+            let keys = entries
+                .iter()
+                .find(|entry| entry.target == target)
+                .unwrap()
+                .animator
+                .keyframe_track()
+                .unwrap()
+                .keyframes();
+            assert_eq!(keys[0].layer_time().as_millis(), [1250, 250][index]);
+            assert_eq!(keys[1].layer_time().as_millis(), [2250, 1250][index]);
+            assert_eq!(keys[0].value(), &PropertyValue::Float(10.0 * 1000.0 / size));
+            assert_eq!(keys[1].value(), &PropertyValue::Float(20.0 * 1000.0 / size));
+            let fx_schema::animator::PropertyKeyframeEasing::CubicBezier { x1, y1, x2, y2 } =
+                keys[1].easing()
+            else {
+                panic!("native Bezier tracking expected");
+            };
+            for (actual, expected) in [(x1, 0.3), (y1, 0.12), (x2, 0.7), (y2, 0.88)] {
+                assert!((actual - expected).abs() < 1e-6, "{actual} != {expected}");
+            }
+        }
+    }
+
+    #[test]
+    fn animator_tracking_expression_samples_use_the_same_unit_conversion() {
+        let name = "ADBE Text Tracking Amount";
+        let source = AnimatorSource {
+            name: "Sampled tracking".into(),
+            properties: Vec::new(),
+            selectors: Vec::new(),
+            evaluated: vec![(
+                name.into(),
+                EvaluatedProperty {
+                    composition_id: 1,
+                    layer_id: 2,
+                    property: PropertyIdentity::TextAnimator {
+                        animator: 1,
+                        match_name: name.into(),
+                    },
+                    start_ms: 1250,
+                    sample_times_seconds: vec![1.25, 2.25],
+                    values: vec![vec![-10.0], vec![20.0]],
+                    frame_sampled: true,
+                },
+                [0.0, 1.0],
+            )],
+        };
+        let animator = TextAnimator {
+            id: FxItemId::new(3),
+            ..TextAnimator::default()
+        };
+        let mut entries = Vec::new();
+        let mut warnings = Vec::new();
+        append_animator_animation(
+            &source,
+            &animator,
+            "Sampled tracking",
+            NumericAnimationClock::source_local_rebased(1.0),
+            1000.0 / 50.0,
+            TextAnimationOutput::new(&mut entries, &mut warnings, &mut AnimationBudget::default()),
+        );
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].target,
+            PropertyTarget::fx_item(animator.id, "tracking")
+        );
+        let keys = entries[0].animator.keyframe_track().unwrap().keyframes();
+        assert_eq!(keys[0].layer_time().as_millis(), 250);
+        assert_eq!(keys[1].layer_time().as_millis(), 1250);
+        assert_eq!(keys[0].value(), &PropertyValue::Float(-200.0));
+        assert_eq!(keys[1].value(), &PropertyValue::Float(400.0));
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("once per layer"))
+        );
+    }
+
+    #[test]
     fn native_source_text_becomes_editable_with_point_and_box_layout() {
         let project =
             read_project(include_bytes!("../../tests/fixtures/text/text_ranges.aep")).unwrap();
@@ -4441,6 +5147,7 @@ mod tests {
             })
             .unwrap();
         let parent = GroupLayer {
+            render_domain: None,
             id: LayerId::new(9000),
             name: "inner".into(),
             description: String::new(),
@@ -4562,6 +5269,7 @@ mod tests {
         source.more_options.clear();
         source.documents = vec![cos::parse(br#"<< /0 << /0 (ABC) /6 << /0 [<< /1 3 /0 << /0 << /6 << /0 0 /1 100 /6 .91 /7 1 >> >> >> >>] >> >> >>"#).unwrap()];
         let percent = PercentHolds {
+            style: None,
             starts: vec![0.0, 1.0],
             texts: vec!["0".into(), "100".into()],
         };

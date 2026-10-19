@@ -292,6 +292,10 @@ fn straight_position_edited_export_keeps_linear_traversal() {
 #[test]
 fn defaults_and_explicit_silent_audio_policy() {
     let doc = project_document(&video_sequence());
+    assert_eq!(
+        doc["colorManagement"],
+        json!({"workingSpace":"legacyDisplay"})
+    );
     assert_eq!(doc["duration"], 5.0);
     assert_eq!(doc["dimensions"], json!({"width": 1920, "height": 1080}));
     assert_eq!(doc["composition"]["name"], "Main");
@@ -603,6 +607,289 @@ fn two_sided_cross_dissolve_keeps_handles_and_weighted_picture_opacity() {
             assert!((key["value"]["value"].as_f64().unwrap() - weight).abs() < 1e-10);
         }
     }
+}
+
+#[test]
+fn two_sided_cross_dissolve_retains_picture_keys_on_extended_local_clocks() {
+    use crate::schema::{PrKeyframeEasing, PrPropertyAnimation, PrScalarKeyframe};
+    let mut sequence = two_sided_dissolve_sequence();
+    for index in 0..2 {
+        let clip = sequence.video_tracks[0].clip_mut(index);
+        clip.animations = vec![PrPropertyAnimation::Rotation(
+            [(0, 10.0), (1, 30.0)]
+                .map(|(seconds, value)| PrScalarKeyframe {
+                    source_ticks: clip.in_ticks + seconds * TICKS,
+                    value,
+                    easing: PrKeyframeEasing::Linear,
+                })
+                .to_vec(),
+        )];
+    }
+    let media = video_media();
+    let ids = crate::tesseract_output::asset_ids_in_order(&sequence, &media);
+    let mut cut_sequence = sequence.clone();
+    cut_sequence.video_tracks[0].transitions.clear();
+    let cut = premiere_to_tesseract(&cut_sequence, &media, &ids, &mut Vec::new())
+        .unwrap()
+        .to_json_value()
+        .unwrap();
+    let mut omissions = Vec::new();
+    let dissolved = premiere_to_tesseract(&sequence, &media, &ids, &mut omissions)
+        .unwrap()
+        .to_json_value()
+        .unwrap();
+    assert!(
+        !omissions
+            .iter()
+            .any(|item| item.record == "two-sided" && item.kind == crate::OmissionKind::Omitted),
+        "{omissions:?}"
+    );
+    let composite = dissolved["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Group")
+        .unwrap();
+    for (index, fade) in composite["layers"].as_array().unwrap()[..2]
+        .iter()
+        .enumerate()
+    {
+        let picture = &fade["layers"][0];
+        assert_eq!(picture["type"], "Video");
+        let entry_for = |wire: &Value| {
+            wire["composition"]["dynamics"]["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["target"]["layerId"] == picture["id"])
+                .unwrap()
+                .clone()
+        };
+        let mut expected = entry_for(&cut);
+        for key in expected["animator"]["keyframes"].as_array_mut().unwrap() {
+            key["layerTime"] =
+                json!(key["layerTime"].as_i64().unwrap() + if index == 0 { 0 } else { 500 });
+        }
+        assert_eq!(entry_for(&dissolved), expected);
+        assert_eq!(fade["blendMode"], "add");
+        assert_eq!(
+            picture["transform"]["opacity"],
+            if index == 0 { 80.0 } else { 65.0 }
+        );
+    }
+}
+
+fn consecutive_dissolve_sequence() -> PrSequence {
+    let mut sequence = two_sided_dissolve_sequence();
+    let mut last = clip_of("source", 5 * TICKS..8 * TICKS, 3 * TICKS);
+    last.id = Some("last".into());
+    sequence.video_tracks[0]
+        .items
+        .push(PrVideoItem::Media(last));
+    sequence.timeline_end_ticks = 8 * TICKS;
+    sequence.video_tracks[0]
+        .transitions
+        .push(PrVideoTransition {
+            id: "second".into(),
+            kind: PrVideoTransitionKind::CrossDissolve,
+            start_ticks: 9 * TICKS / 2,
+            cut_ticks: 5 * TICKS,
+            end_ticks: 11 * TICKS / 2,
+            outgoing_clip: Some("incoming".into()),
+            incoming_clip: Some("last".into()),
+        });
+    sequence
+}
+
+#[test]
+fn consecutive_cross_dissolves_keep_both_middle_picture_ramps() {
+    use crate::schema::{PrKeyframeEasing, PrPropertyAnimation, PrScalarKeyframe};
+    let mut sequence = consecutive_dissolve_sequence();
+    sequence.video_tracks[0].clip_mut(1).animations = vec![PrPropertyAnimation::Rotation(
+        [(3 * TICKS, 10.0), (4 * TICKS, 30.0)]
+            .map(|(source_ticks, value)| PrScalarKeyframe {
+                source_ticks,
+                value,
+                easing: PrKeyframeEasing::Linear,
+            })
+            .to_vec(),
+    )];
+    // Half-second handles match adobe_cross_dissolve_fields_preserve_cut_topology_and_handles.
+    let media = video_media();
+    let ids = crate::tesseract_output::asset_ids_in_order(&sequence, &media);
+    let mut omissions = Vec::new();
+    let value = premiere_to_tesseract(&sequence, &media, &ids, &mut omissions)
+        .unwrap()
+        .to_json_value()
+        .unwrap();
+    assert!(
+        !omissions.iter().any(|item| {
+            matches!(item.record.as_str(), "two-sided" | "second")
+                && item.kind == crate::OmissionKind::Omitted
+        }),
+        "{omissions:?}"
+    );
+    let composite = value["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Group")
+        .unwrap();
+    let pictures: Vec<_> = composite["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|layer| layer["type"] == "Group")
+        .collect();
+    assert_eq!(pictures.len(), 3);
+    let middle = &pictures[1]["layers"][0];
+    assert_eq!(middle["sourceRange"], json!({"start":2500,"duration":4000}));
+    assert_eq!(
+        crate::test_support::layer_range(middle),
+        &json!({"start":1500,"duration":4000})
+    );
+    assert_eq!(middle["transform"]["opacity"], 65.0);
+    let rotation = value["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| {
+            entry["target"]["layerId"] == middle["id"]
+                && entry["target"]["propertyType"] == "rotation"
+        })
+        .unwrap();
+    let rotation_keys = rotation["animator"]["keyframes"].as_array().unwrap();
+    assert_eq!(rotation_keys.len(), 2);
+    assert_eq!(rotation_keys[0]["layerTime"], 500);
+    assert_eq!(rotation_keys[0]["value"]["value"], 10.0);
+    assert_eq!(rotation_keys[1]["layerTime"], 1500);
+    assert_eq!(rotation_keys[1]["value"]["value"], 30.0);
+    let animation = value["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| {
+            entry["target"]["layerId"] == pictures[1]["id"]
+                && entry["target"]["propertyType"] == "opacity"
+        })
+        .unwrap();
+    let keys = animation["animator"]["keyframes"].as_array().unwrap();
+    assert_eq!(keys.len(), 6);
+    let transition = &sequence.video_tracks[0].transitions[0];
+    let first_cut_weight = 100.0 * (transition.cut_ticks - transition.start_ticks) as f64
+        / (transition.end_ticks - transition.start_ticks) as f64;
+    for ((key, time), weight) in keys.iter().zip([1500, 2000, 2500, 4500, 5000, 5500]).zip([
+        0.0,
+        first_cut_weight,
+        100.0,
+        100.0,
+        50.0,
+        0.0,
+    ]) {
+        assert_eq!(key["layerTime"], time);
+        assert!((key["value"]["value"].as_f64().unwrap() - weight).abs() < 1e-10);
+    }
+}
+
+#[test]
+fn consecutive_cross_dissolves_reject_overlapping_or_unavailable_handles_atomically() {
+    for mutate in [
+        |sequence: &mut PrSequence| {
+            sequence.video_tracks[0].transitions[1].start_ticks = 2 * TICKS;
+        },
+        |sequence: &mut PrSequence| {
+            sequence.video_tracks[0].clip_mut(1).in_ticks = 0;
+        },
+    ] {
+        let mut sequence = consecutive_dissolve_sequence();
+        mutate(&mut sequence);
+        let media = video_media();
+        let ids = crate::tesseract_output::asset_ids_in_order(&sequence, &media);
+        let mut omissions = Vec::new();
+        let value = premiere_to_tesseract(&sequence, &media, &ids, &mut omissions)
+            .unwrap()
+            .to_json_value()
+            .unwrap();
+        for id in ["two-sided", "second"] {
+            assert!(
+                omissions
+                    .iter()
+                    .any(|item| item.record == id && item.kind == crate::OmissionKind::Omitted),
+                "{omissions:?}"
+            );
+        }
+        assert_eq!(
+            value["composition"]["layers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|layer| layer["type"] == "Video")
+                .count(),
+            3
+        );
+        assert!(!value["composition"]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|layer| layer["type"] == "Group"));
+    }
+}
+
+#[test]
+fn consecutive_cross_dissolves_use_the_document_content_clock_after_an_empty_prefix() {
+    let mut sequence = consecutive_dissolve_sequence();
+    for item in &mut sequence.video_tracks[0].items {
+        let PrVideoItem::Media(clip) = item else {
+            panic!("picture")
+        };
+        clip.start_ticks += TICKS;
+        clip.end_ticks += TICKS;
+    }
+    for transition in &mut sequence.video_tracks[0].transitions {
+        transition.start_ticks += TICKS;
+        transition.cut_ticks += TICKS;
+        transition.end_ticks += TICKS;
+    }
+    sequence.timeline_end_ticks += TICKS;
+    let value = project_document(&sequence);
+    let group = value["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Group")
+        .unwrap();
+    assert_eq!(group["playback"]["mapping"]["output"]["start"], 1000);
+    for (fade, expected) in group["layers"].as_array().unwrap()[..3].iter().zip([
+        vec![2500, 3000, 3500],
+        vec![2500, 3000, 3500, 5500, 6000, 6500],
+        vec![5500, 6000, 6500],
+    ]) {
+        let track = value["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| {
+                entry["target"]["layerId"] == fade["id"]
+                    && entry["target"]["propertyType"] == "opacity"
+            })
+            .unwrap();
+        let times: Vec<_> = track["animator"]["keyframes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|key| key["layerTime"].as_i64().unwrap())
+            .collect();
+        assert_eq!(times, expected);
+    }
+}
+
+#[test]
+fn consecutive_cross_dissolves_ignore_serialization_order() {
+    let sequence = consecutive_dissolve_sequence();
+    let expected = project_document(&sequence);
+    let mut reversed = sequence;
+    reversed.video_tracks[0].transitions.reverse();
+    assert_eq!(project_document(&reversed), expected);
 }
 
 #[test]
@@ -2849,6 +3136,33 @@ fn numeric_opacity_masks_do_not_freeze_on_static_still_import() {
 }
 
 #[test]
+fn root_blends_composite_before_the_black_canvas() {
+    // Native feature_blend_codes_26_5_strict saves Darker Color as (4, 7).
+    let mut sequence = video_sequence();
+    sequence.video_tracks[0].clip_mut(0).blend_mode = crate::schema::PrBlendMode::DarkerColor;
+    let (wire, _) = import_with_frame(&sequence, [1920, 1080]);
+    let roots = wire["composition"]["layers"].as_array().unwrap();
+    let group = &roots[0];
+    assert_eq!(group["type"], "Group", "black must not be a blend operand");
+    assert_eq!(group["blendMode"], "normal");
+    let children = group["layers"].as_array().unwrap();
+    let content = &children[0];
+    let video = &content["layers"][0];
+    assert_eq!(content["parent"], group["id"]);
+    assert_eq!(video["type"], "Video");
+    assert_eq!(video["blendMode"], "darkerColor");
+    assert_eq!(video["parent"], content["id"]);
+    let guide = &children[1];
+    assert_eq!(guide["rect"]["size"], json!([1920.0, 1080.0]));
+    assert_eq!(guide["parent"], group["id"]);
+    assert_eq!(group["masks"][0]["layer"], guide["id"]);
+    assert_eq!(roots.last().unwrap()["name"], "Premiere black canvas");
+    assert!(children
+        .iter()
+        .all(|child| child["name"] != "Premiere black canvas"));
+}
+
+#[test]
 fn a_clips_blend_converts_on_its_root_layer_both_ways() {
     use crate::{schema::PrBlendMode, OmissionKind};
     let dissolve = PrBlendMode::Unmeasured {
@@ -2890,7 +3204,7 @@ fn a_clips_blend_converts_on_its_root_layer_both_ways() {
             clip.enabled = false;
         }
         let (wire, omissions) = import_with_frame(&sequence, [1920, 1080]);
-        let layer = &wire["composition"]["layers"][0];
+        let layer = &crate::tests::support::picture_composition(&wire)["layers"][0];
         assert_eq!(
             (
                 &layer["type"],
@@ -2946,9 +3260,7 @@ fn a_clips_blend_converts_on_its_root_layer_both_ways() {
             &mut omissions,
         )
         .unwrap();
-        let clip = project
-            .single_sequence()
-            .unwrap()
+        let clip = crate::tests::support::picture_sequence(&project)
             .video_occurrences()
             .next()
             .unwrap();
@@ -2959,6 +3271,136 @@ fn a_clips_blend_converts_on_its_root_layer_both_ways() {
         );
         assert_eq!(clip.opacity_mask.is_some(), staged, "{blend:?}");
         assert_eq!(reports(&omissions), report(exported), "{blend:?}");
+    }
+}
+
+#[test]
+fn forward_picture_frame_boundary_never_rounds_before_selected_frame() {
+    let mut sequence = video_sequence();
+    let clip = sequence.video_tracks[0].clip_mut(0);
+    clip.in_ticks = 19 * THIRTY_FPS_TICKS;
+    clip.out_ticks = 90 * THIRTY_FPS_TICKS;
+    clip.end_ticks = 71 * THIRTY_FPS_TICKS;
+    sequence.timeline_end_ticks = clip.end_ticks;
+
+    let (document, notes) = import(&sequence, &video_media());
+    let picture = &document["composition"]["layers"][0];
+    assert_eq!(picture["sourceRange"], json!({"start":634,"duration":2367}));
+    assert_eq!(
+        picture["playback"]["mapping"]["output"],
+        picture["sourceRange"]
+    );
+    assert_eq!(
+        picture["playback"]["mapping"]["input"],
+        json!({"start":0,"duration":2367})
+    );
+    assert!(notes
+        .iter()
+        .any(|note| note.reason.contains("picture source-in rounded forward")));
+    // Whole-millisecond decode requests must not select the picture preceding
+    // the saved frame boundary, including the 30fps fractional sample phases.
+    for frame in 0..71_i64 {
+        let parent_ms = frame * THIRTY_FPS_TICKS / TICKS_PER_MILLISECOND;
+        let start_ms = picture["sourceRange"]["start"].as_i64().unwrap();
+        let selected = (start_ms + parent_ms) * TICKS_PER_MILLISECOND / THIRTY_FPS_TICKS;
+        assert_eq!(selected, 19 + frame);
+    }
+}
+
+#[test]
+fn forward_picture_rounding_covers_later_fractional_request_phases() {
+    for source_frame in [1, 2, 19, 20] {
+        let mut sequence = video_sequence();
+        let clip = sequence.video_tracks[0].clip_mut(0);
+        clip.in_ticks = source_frame * THIRTY_FPS_TICKS;
+        clip.out_ticks = (source_frame + 71) * THIRTY_FPS_TICKS;
+        clip.end_ticks = 71 * THIRTY_FPS_TICKS;
+        sequence.timeline_end_ticks = clip.end_ticks;
+        let document = project_document(&sequence);
+        let start_ms = document["composition"]["layers"][0]["sourceRange"]["start"]
+            .as_i64()
+            .unwrap();
+        for frame in 0..71_i64 {
+            let parent_ms = frame * THIRTY_FPS_TICKS / TICKS_PER_MILLISECOND;
+            let selected = (start_ms + parent_ms) * TICKS_PER_MILLISECOND / THIRTY_FPS_TICKS;
+            assert_eq!(
+                selected,
+                source_frame + frame,
+                "source {source_frame}, frame {frame}"
+            );
+        }
+    }
+}
+
+#[test]
+fn fractional_reverse_picture_trim_keeps_signed_clock_without_forward_compensation() {
+    let mut sequence = video_sequence();
+    let clip = sequence.video_tracks[0].clip_mut(0);
+    clip.in_ticks = 210 * THIRTY_FPS_TICKS;
+    clip.out_ticks = 281 * THIRTY_FPS_TICKS;
+    clip.end_ticks = 71 * THIRTY_FPS_TICKS;
+    clip.playback_rate = -1.0;
+    sequence.timeline_end_ticks = clip.end_ticks;
+    let (document, notes) = import(&sequence, &video_media());
+    let picture = &document["composition"]["layers"][0];
+    // Reflected physical window starts at frame 19, just as in the forward
+    // regression, but the negative clock must retain nearest rounding.
+    assert_eq!(picture["sourceRange"], json!({"start":633,"duration":2367}));
+    assert!(notes
+        .iter()
+        .all(|note| !note.reason.contains("picture source-in rounded forward")));
+    assert_eq!(
+        crate::tests::support::playback_keys(picture)[0]["value"],
+        3000
+    );
+    assert_eq!(
+        crate::tests::support::playback_keys(picture)[1]["value"],
+        633
+    );
+}
+
+#[test]
+fn picture_source_rounding_keeps_integral_late_and_physical_tail_bounds() {
+    for (source_frame, duration_frames, expected_start) in [
+        (0, 3, 0),
+        (1, 3, 34),
+        (2, 3, 68),
+        (2, 298, 67),   // Phase compensation also needs spare physical tail.
+        (19, 281, 633), // No spare physical tail for the forward approximation.
+    ] {
+        let mut sequence = video_sequence();
+        let clip = sequence.video_tracks[0].clip_mut(0);
+        clip.in_ticks = source_frame * THIRTY_FPS_TICKS;
+        clip.out_ticks = (source_frame + duration_frames) * THIRTY_FPS_TICKS;
+        clip.end_ticks = duration_frames * THIRTY_FPS_TICKS;
+        sequence.timeline_end_ticks = clip.end_ticks;
+        let document = project_document(&sequence);
+        assert_eq!(
+            document["composition"]["layers"][0]["sourceRange"]["start"],
+            expected_start
+        );
+    }
+}
+
+#[test]
+fn forward_picture_rounding_does_not_change_complex_or_mixed_rate_clocks() {
+    let media = video_media();
+    let source = media.values().next().unwrap().video.as_ref().unwrap();
+    for (rate, effected, expected_start) in [
+        (Some(FrameRate::Fps30), false, 634),
+        (Some(FrameRate::Fps25), false, 633),
+        (None, false, 633),
+        (Some(FrameRate::Fps30), true, 633),
+    ] {
+        let mut clip = clip_of("source", 0..71 * THIRTY_FPS_TICKS, 19 * THIRTY_FPS_TICKS);
+        if effected {
+            clip.effects
+                .push(transform_effect(DEFAULT_PR_TRANSFORM, Vec::new()));
+        }
+        let window = super::tick_range(clip.start_ticks, clip.end_ticks).unwrap();
+        let timing =
+            super::constant_clip_timing(&clip, source, window, window, None, rate).unwrap();
+        assert_eq!(timing.source_range.start.as_millis(), expected_start);
     }
 }
 
@@ -3031,6 +3473,104 @@ fn constant_speed_and_reverse_import_as_editable_time_remap() {
             "after": "inactive"
         })
     );
+}
+
+#[test]
+fn fractional_endpoint_forward_speed_keeps_exact_editable_slope() {
+    let mut sequence = video_sequence();
+    let clip = sequence.video_tracks[0].clip_mut(0);
+    clip.end_ticks = 302 * THIRTY_FPS_TICKS;
+    clip.in_ticks = 0;
+    clip.out_ticks = 151 * THIRTY_FPS_TICKS;
+    clip.playback_rate = 0.5;
+
+    let document = project_document(&sequence);
+    let layer = &document["composition"]["layers"][0];
+    assert_eq!(layer["sourceRange"], json!({"start": 0, "duration": 5033}));
+    assert_eq!(
+        layer["playback"]["inputRange"],
+        json!({"start": 0, "duration": 10067})
+    );
+    let keys = crate::tests::support::playback_keys(layer);
+    assert_eq!(keys.len(), 2);
+    let end_time = keys[1]["time"].as_u64().unwrap();
+    let end_value = keys[1]["value"].as_u64().unwrap();
+    assert_eq!(end_time, 10068);
+    assert_eq!(end_value, 5034);
+    for timeline_ms in [2000, 4000, 8000, 10000] {
+        let mapped_ms = timeline_ms as f64 * end_value as f64 / end_time as f64;
+        assert_eq!(mapped_ms, timeline_ms as f64 / 2.0);
+    }
+    assert_eq!(layer["type"], "Video");
+    assert_eq!(layer["transform"]["opacity"], 100.0);
+}
+
+#[test]
+fn exact_forward_rate_controls_preserve_offsets_and_speedup() {
+    let mut sequence = video_sequence();
+    let clip = sequence.video_tracks[0].clip_mut(0);
+    clip.start_ticks = TICKS;
+    clip.end_ticks = TICKS + 62 * THIRTY_FPS_TICKS;
+    clip.in_ticks = TICKS;
+    clip.out_ticks = TICKS + 93 * THIRTY_FPS_TICKS;
+    clip.playback_rate = 1.5;
+
+    let document = project_document(&sequence);
+    let layer = &document["composition"]["layers"][0];
+    assert_eq!(
+        layer["playback"]["inputRange"],
+        json!({"start": 1000, "duration": 2067})
+    );
+    assert_eq!(
+        layer["sourceRange"],
+        json!({"start": 1000, "duration": 3100})
+    );
+    let keys = crate::tests::support::playback_keys(layer);
+    assert_eq!(keys[0]["time"], 1000);
+    assert_eq!(keys[0]["value"], 1000);
+    assert_eq!(keys[1]["time"], 3068);
+    assert_eq!(keys[1]["value"], 4102);
+    assert_eq!(keys[1]["easing"], json!({"type": "linear"}));
+    assert_eq!(
+        layer["playback"]["mapping"]["property"]["after"],
+        "inactive"
+    );
+}
+
+#[test]
+fn collapsed_slow_picture_at_rounded_source_end_omits_only_that_occurrence() {
+    let mut sequence = video_sequence();
+    let clip = sequence.video_tracks[0].clip_mut(0);
+    clip.id = Some("unavailable-hold".into());
+    clip.end_ticks = 26 * THIRTY_FPS_TICKS;
+    clip.in_ticks = 9999 * TICKS_PER_MILLISECOND + 3 * TICKS_PER_MILLISECOND / 5;
+    clip.out_ticks = 10 * TICKS;
+    clip.playback_rate = (clip.out_ticks - clip.in_ticks) as f64 / clip.end_ticks as f64;
+    sequence.video_tracks[0]
+        .items
+        .push(PrVideoItem::Media(clip_of("source", TICKS..2 * TICKS, 0)));
+    let media = video_media();
+    let mut omissions = Vec::new();
+    let document = premiere_to_tesseract(
+        &sequence,
+        &media,
+        &crate::tesseract_output::asset_ids_in_order(&sequence, &media),
+        &mut omissions,
+    )
+    .unwrap()
+    .to_json_value()
+    .unwrap();
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    assert_eq!(layers.len(), 2);
+    assert_eq!(layers[0]["type"], "Video");
+    assert_eq!(
+        layers[0]["sourceRange"],
+        json!({"start": 0, "duration": 1000})
+    );
+    assert_eq!(omissions.len(), 1, "{omissions:?}");
+    assert_eq!(omissions[0].scope, crate::OmissionScope::Occurrence);
+    assert_eq!(omissions[0].record, "unavailable-hold");
+    assert!(omissions[0].reason.contains("empty editable range"));
 }
 
 #[test]
@@ -4471,6 +5011,76 @@ fn an_unconvertible_linear_wipe_omits_its_occurrence() {
 }
 
 #[test]
+fn nonunit_playback_retains_single_opacity_key_before_source_in() {
+    let (opacity_source, _) = native_fixture(
+        "feature_opacity_screen_strict.prproj",
+        "c8acf9c1-34b2-4086-9f55-d528950a7059",
+    );
+    let opacity = opacity_source
+        .video_occurrences()
+        .find(|clip| clip.opacity != 100.0)
+        .unwrap()
+        .opacity;
+    assert_eq!(opacity, 50.0);
+    for (fixture, target) in [
+        (
+            "feature_constant_reverse_0_905_strict.prproj",
+            "c8acf9c1-34b2-4086-9f55-d528950a7059",
+        ),
+        (
+            "feature_frame_blending_half_speed_strict.prproj",
+            "c8acf9c1-34b2-4086-9f55-d528950a7059",
+        ),
+        (
+            "feature_time_remap_variable_speed_strict.prproj",
+            "9a10a3b7-a83b-47d9-a68c-91d06d937738",
+        ),
+    ] {
+        let (mut sequence, media) = native_fixture(fixture, target);
+        let (before, _) = import(&sequence, &media);
+        let clip = sequence.video_tracks[0].clip_mut(0);
+        // The public native Screen-opacity fixture establishes 50% units.
+        // A sole key replaces the inactive default for every source time.
+        clip.opacity = 100.0;
+        clip.animations = vec![PrPropertyAnimation::Opacity(linear_keys(&[(0, opacity)]))];
+        let (wire, omissions) = import(&sequence, &media);
+        let layer = &wire["composition"]["layers"][0];
+        assert_eq!(layer["type"], "Video", "{fixture}");
+        assert_eq!(
+            layer["playback"],
+            before["composition"]["layers"][0]["playback"]
+        );
+        assert_eq!(
+            layer["sourceRange"],
+            before["composition"]["layers"][0]["sourceRange"]
+        );
+        assert_eq!(
+            animated_properties(&wire),
+            ["opacity"],
+            "{fixture}: {omissions:?}"
+        );
+        let entries = wire["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap();
+        let opacity = entries
+            .iter()
+            .find(|entry| entry["target"]["propertyType"] == "opacity")
+            .unwrap();
+        assert_eq!(opacity["target"]["layerId"], layer["id"]);
+        let keys = opacity["animator"]["keyframes"].as_array().unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0]["layerTime"], 0);
+        assert_eq!(keys[0]["value"], json!({"type": "float", "value": 50.0}));
+        assert!(
+            !omissions
+                .iter()
+                .any(|item| item.reason.contains("Opacity animation was not imported")),
+            "{fixture}: {omissions:?}"
+        );
+    }
+}
+
+#[test]
 fn nonunit_playback_omits_source_clock_keys_and_keeps_the_clip() {
     // The pinned Adobe-authored reverse clip at -0.905x, edited with keys and
     // a Crop. The keys are omitted on the retimed clock, so the Crop guide
@@ -4842,6 +5452,124 @@ fn keyed_sequence(
     });
     edit(&mut fill);
     sequence_of("Main", vec![PrVideoTrack::media([fill]), matte])
+}
+
+#[test]
+fn numbered_images_track_matte_retains_timed_picture_and_coverage() {
+    use crate::schema::{PrMatteChannel, PrMediaKind};
+    let mut media = video_media();
+    media
+        .get_mut(&MediaId("source".into()))
+        .unwrap()
+        .video
+        .as_mut()
+        .unwrap()
+        .kind = PrMediaKind::NumberedStills { alpha: true };
+    for (channel, mode) in [
+        (PrMatteChannel::Alpha, "alpha"),
+        (PrMatteChannel::AlphaInverted, "alphaInverted"),
+        (PrMatteChannel::Luma, "luma"),
+    ] {
+        let matte_track = || PrVideoTrack::media([clip_of("source", 0..5 * TICKS, 0)]);
+        let sequence = keyed_sequence(channel, matte_track(), |clip| {
+            clip.animations = vec![opacity_fade()];
+        });
+        let (wire, omissions) = import(&sequence, &media);
+        let layers = wire["composition"]["layers"].as_array().unwrap();
+        assert_eq!(layers.len(), 3, "{omissions:?}");
+        let (provider, consumer) = (&layers[0], &layers[1]);
+        assert_eq!(provider["type"], "Group");
+        assert_eq!(consumer["type"], "Group");
+        assert_eq!(
+            consumer["trackMatte"],
+            json!({"layer": provider["id"], "mode": mode})
+        );
+        for group in [provider, consumer] {
+            let frames = group["layers"].as_array().unwrap();
+            assert_eq!(frames.len(), 150);
+            assert_eq!(frames[0]["type"], "Image");
+            assert_eq!(frames[0]["parent"], group["id"]);
+            assert_eq!(frames[0]["source"]["assetId"], "premiere-video-1-frame-0");
+            assert_eq!(
+                crate::test_support::layer_range(&frames[149])["start"],
+                4967
+            );
+        }
+        assert_eq!(animated_properties(&wire), ["opacity"]);
+        assert!(
+            omissions
+                .iter()
+                .all(|item| item.kind != crate::OmissionKind::Omitted),
+            "{omissions:?}"
+        );
+        assert!(omissions
+            .iter()
+            .any(|item| item.reason.contains("native sampled edge/alpha fidelity")));
+
+        let moved = keyed_sequence(channel, matte_track(), |clip| {
+            clip.transform.scale = [50.0; 2];
+        });
+        let (wire, omissions) = import(&moved, &media);
+        assert_eq!(layer_types(&wire), ["Rect"]);
+        assert!(omissions
+            .iter()
+            .any(|item| item.reason.contains("neutral consumer Motion")));
+    }
+}
+
+#[test]
+fn numbered_images_track_matte_uses_containing_sequence_canvas() {
+    use crate::{schema::PrMatteChannel, tests::support::nest_of};
+    for (width, height, retained) in [(1280, 720, true), (1920, 1080, false)] {
+        let mut media = video_media();
+        let source = media
+            .get_mut(&MediaId("source".into()))
+            .unwrap()
+            .video
+            .as_mut()
+            .unwrap();
+        source.kind = crate::schema::PrMediaKind::NumberedStills { alpha: true };
+        source.width = width;
+        source.height = height;
+        let mut inner = keyed_sequence(
+            PrMatteChannel::Alpha,
+            PrVideoTrack::media([clip_of("source", 0..5 * TICKS, 0)]),
+            |_| {},
+        );
+        inner.width = 1280;
+        inner.height = 720;
+        let outer = sequence_of(
+            "Outer",
+            vec![PrVideoTrack {
+                nests: vec![nest_of(inner, 0..5 * TICKS, 0)],
+                ..PrVideoTrack::media([])
+            }],
+        );
+        let (wire, omissions) = import(&outer, &media);
+        let children = wire["composition"]["layers"][0]["layers"]
+            .as_array()
+            .unwrap();
+        let consumer = children
+            .iter()
+            .find(|layer| layer["trackMatte"].is_object());
+        assert_eq!(consumer.is_some(), retained, "{omissions:?}");
+        if let Some(consumer) = consumer {
+            let provider = children
+                .iter()
+                .find(|layer| layer["id"] == consumer["trackMatte"]["layer"])
+                .unwrap();
+            assert_eq!(consumer["layers"].as_array().unwrap().len(), 150);
+            assert_eq!(provider["layers"].as_array().unwrap().len(), 150);
+            assert_eq!(consumer["parent"], provider["parent"]);
+        }
+        assert_eq!(
+            omissions.iter().any(|item| item.reason.contains(
+                "Track Matte Key on numbered images requires a square-pixel sequence-sized source"
+            )),
+            !retained,
+            "{omissions:?}"
+        );
+    }
 }
 
 #[test]
@@ -5763,6 +6491,7 @@ fn native_film_impact_pop_rejects_retained_motion_dependent_effects() {
         mask: None,
         enabled: true,
         params: PrEffectParams::Ramp(PrRamp {
+            radial: false,
             start: [0.5, 0.0],
             start_colour: PrColour { rgb: [0, 0, 0] },
             end: [0.5, 1.0],

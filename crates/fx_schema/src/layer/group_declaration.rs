@@ -12,6 +12,8 @@ macro_rules! define_wire_group_layer_schema {
         #[derive(Debug, Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct WireGroupLayer {
+            #[serde(default)]
+            render_domain: Option<$crate::RenderDomain>,
             id: LayerId,
             name: String,
             #[serde(default)]
@@ -94,6 +96,10 @@ macro_rules! define_group_layer_schema {
         #[serde(rename_all = "camelCase" $($reader)*)]
         #[ts(export_to = "project_types.d.ts")]
         pub struct GroupLayer {
+            /// Explicit domain override; omission inherits document preset rules.
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            #[ts(optional)]
+            pub render_domain: Option<$crate::RenderDomain>,
             /// Stable composition-unique layer id — the id space referenced by
             /// `parent`, track mattes, path masks, and text `pathOptions`.
             pub id: LayerId,

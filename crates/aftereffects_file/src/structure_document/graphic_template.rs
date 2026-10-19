@@ -461,6 +461,7 @@ mod tests {
             content: Vec::new(),
         };
         let comp = Composition {
+            marker_times: Ok(Vec::new()),
             width: 320,
             height: 100,
             duration_secs: 1.0,

@@ -1151,8 +1151,8 @@ pub enum PropertyValue {
     Float(f64),
     /// Two-dimensional value for vector properties such as position.
     Vector2(Vector2Property),
-    /// RGBA color value for color properties.
-    Color(ColorProperty),
+    /// Extended-sRGB RGB 0..64 and coverage alpha 0..1 for authored color properties.
+    Color(#[serde(deserialize_with = "crate::deserialize_extended_color")] ColorProperty),
     /// Text value for string properties.
     String(String),
     /// Boolean value for toggle properties.
@@ -1209,6 +1209,15 @@ impl PropertyValueKind {
 }
 
 impl PropertyValue {
+    /// Whether a keyframe segment can interpolate rather than requiring Hold.
+    #[must_use]
+    pub const fn supports_continuous_interpolation(&self) -> bool {
+        matches!(
+            self,
+            Self::Float(_) | Self::Vector2(_) | Self::Color(_) | Self::Path(_)
+        )
+    }
+
     /// This value's [`PropertyValueKind`] discriminant.
     #[must_use]
     pub const fn kind(&self) -> PropertyValueKind {

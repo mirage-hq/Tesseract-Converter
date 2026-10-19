@@ -767,6 +767,8 @@ fn packet_time_in_track_units(
 // Physical packet facts do not imply an editable destination source clock.
 struct PhysicalPresentation {
     clock: SampleClock,
+    /// Positive-extent pictures; the physical tables still include every packet.
+    sample_count: u32,
     first_presentation: i128,
     last_start: i128,
     final_presentation_interval: u64,
@@ -781,7 +783,8 @@ fn validate_media_timing(
     file_size: u64,
     usage: Option<&VideoUse>,
 ) -> Result<VideoTiming> {
-    let presentation = validate_packet_presentation(stream, packets, track, file_size, usage)?;
+    let presentation =
+        validate_packet_presentation(stream, packets, track, file_size, usage, None)?;
     admit_media_presentation(presentation, track, movie_timescale, usage)
 }
 
@@ -792,10 +795,21 @@ fn validate_export_media_timing(
     movie_timescale: u32,
     file_size: u64,
 ) -> Result<VideoTiming> {
-    let presentation = validate_packet_presentation(stream, packets, track, file_size, None)?;
+    let presentation = validate_packet_presentation(
+        stream,
+        packets,
+        track,
+        file_size,
+        None,
+        Some(movie_timescale),
+    )?;
     validate_export_edits(&presentation, track, movie_timescale)?;
-    let authored_source_duration =
-        full_source_edit_rejection(&presentation, track, movie_timescale).is_some();
+    let authored_source_duration = presentation.declared_media_end.is_some()
+        || track
+            .sample_timing
+            .as_ref()
+            .is_some_and(|timing| timing.final_duration == 0)
+        || full_source_edit_rejection(&presentation, track, movie_timescale).is_some();
     let mut timing = if authored_source_duration {
         let sample_timing = track
             .sample_timing
@@ -807,7 +821,9 @@ fn validate_export_media_timing(
         VideoTiming {
             clock: presentation.clock,
             timescale: track.timescale,
-            sample_count: sample_timing.sample_count,
+            // Endpoint packets have no positive picture interval. Preserve the
+            // authored duration separately rather than count one extra frame.
+            sample_count: presentation.sample_count,
             window: VideoWindow {
                 presentation_origin: None,
                 last_start: presentation.last_start,
@@ -833,6 +849,7 @@ fn validate_packet_presentation(
     track: &crate::media_metadata::TrackMetadata,
     file_size: u64,
     usage: Option<&VideoUse>,
+    export_movie_timescale: Option<u32>,
 ) -> Result<PhysicalPresentation> {
     ensure!(
         stream.time_base_num > 0 && stream.time_base_den > 0 && track.timescale > 0,
@@ -850,12 +867,17 @@ fn validate_packet_presentation(
         // MDHD cannot create samples. Recover only selected picture interiors,
         // with excess strictly smaller than the final decoded sample interval.
         // This is a sample-bound policy, not a tick/epsilon rounding allowance.
+        // Export requires an explicit nonempty edit list, retaining original
+        // bytes only after every playback edit is bounded against STTS below.
+        // Without edits, the strict sample-bound admission remains unchanged.
         ensure!(
-            usage.is_some_and(|usage| !usage.uses_audio)
-                && track.duration > timing.media_end
-                && track.duration - timing.media_end < u64::from(timing.final_duration)
+            track.duration > timing.media_end
                 && stream.duration > 0
-                && stream.frame_count == i64::from(timing.sample_count),
+                && stream.frame_count == i64::from(timing.sample_count)
+                && ((export_movie_timescale.is_some()
+                    && track.edit.as_ref().is_some_and(|edits| !edits.is_empty()))
+                    || (usage.is_some_and(|usage| !usage.uses_audio)
+                        && track.duration - timing.media_end < u64::from(timing.final_duration))),
             "packaged MP4 declared duration differs from its exact sample timeline"
         );
     }
@@ -919,12 +941,18 @@ fn validate_packet_presentation(
         presentation.push(packet_time_in_track_units(pts, stream, track.timescale)?);
     }
     let final_dts = previous_dts.expect("nonempty packet timeline");
+    let edited_stream_duration = if let Some(movie_timescale) = export_movie_timescale {
+        export_stream_duration_matches_edits(stream, track, movie_timescale)?
+    } else {
+        false
+    };
     ensure!(
         final_dts + i128::from(timing.final_duration) == i128::from(timing.media_end)
             && expected_dts == i128::from(timing.media_end)
             && (stream.duration <= 0
                 || packet_time_in_track_units(stream.duration, stream, track.timescale)?
-                    == i128::from(timing.media_end))
+                    == i128::from(timing.media_end)
+                || edited_stream_duration)
             && (stream.frame_count <= 0
                 || usize::try_from(stream.frame_count) == Ok(packets.len())),
         "packaged MP4 declared duration differs from its exact sample timeline"
@@ -933,9 +961,26 @@ fn validate_packet_presentation(
     let timescale = track.timescale;
     let sample_count = timing.sample_count;
     let media_end = timing.media_end;
-    let constant = timing.constant_duration.is_some();
-    let frame_duration = timing.constant_duration;
-    let last_duration = timing.final_duration;
+    let terminal_zero = timing.final_duration == 0;
+    let frame_duration = if terminal_zero {
+        let step = timing.decode_runs[0].1;
+        ensure!(
+            (export_movie_timescale.is_some() || usage.is_some_and(|usage| !usage.uses_audio))
+                && timing.zero_composition_offsets
+                && presentation.first() == Some(&0)
+                && timing.decode_runs[..timing.decode_runs.len() - 1]
+                    .iter()
+                    .all(|&(_, duration)| duration == step),
+            "terminal zero-duration sample requires export or selected picture-only constant zero-origin timing"
+        );
+        Some(step)
+    } else {
+        timing.constant_duration
+    };
+    let constant = frame_duration.is_some();
+    let last_duration = frame_duration
+        .filter(|_| terminal_zero)
+        .unwrap_or(timing.final_duration);
     let zero_composition_offsets = timing.zero_composition_offsets;
     let legacy_signed_ctts = timing.legacy_signed_ctts;
     presentation.sort_unstable();
@@ -951,7 +996,7 @@ fn validate_packet_presentation(
             .enumerate()
             .all(|(index, time)| *time == first_presentation + index as i128 * step);
         ensure!(
-            on_grid || usage.is_some(),
+            on_grid || (!terminal_zero && usage.is_some()),
             "MP4 presentation samples must form an exact constant frame grid"
         );
         ensure!(
@@ -1009,11 +1054,39 @@ fn validate_packet_presentation(
     };
     Ok(PhysicalPresentation {
         clock,
+        sample_count: sample_count - u32::from(terminal_zero),
         first_presentation,
         last_start,
         final_presentation_interval,
         declared_media_end,
     })
+}
+
+// FFmpeg exposes edit-list duration, rescaled to media ticks, rather than
+// necessarily STTS duration. Export keeps those edits unchanged. This check
+// reconciles the reported duration only; physical packets and playback bounds
+// are independently checked, so neither MDHD nor ELST can invent samples.
+fn export_stream_duration_matches_edits(
+    stream: &media_transcode::inspect::StreamInfo,
+    track: &crate::media_metadata::TrackMetadata,
+    movie_timescale: u32,
+) -> Result<bool> {
+    let Some(edits) = track.edit.as_deref() else {
+        return Ok(false);
+    };
+    if movie_timescale == 0 || edits.is_empty() {
+        return Ok(false);
+    }
+    let duration = packet_time_in_track_units(stream.duration, stream, track.timescale)?;
+    let total = edits.iter().try_fold(0_i128, |total, edit| {
+        total
+            .checked_add(i128::from(edit.segment_duration))
+            .ok_or_else(|| unsupported("MP4 playback edit duration overflows"))
+    })?;
+    let selected = total
+        .checked_mul(i128::from(track.timescale))
+        .ok_or_else(|| unsupported("MP4 playback edit duration overflows"))?;
+    Ok((duration * i128::from(movie_timescale)).abs_diff(selected) < u128::from(movie_timescale))
 }
 
 fn full_source_edit_rejection(
@@ -1067,9 +1140,14 @@ fn validate_export_edits(
         movie_timescale > 0 && !edits.is_empty(),
         "invalid MP4 playback edit clock or version"
     );
+    let physical_end = track
+        .sample_timing
+        .as_ref()
+        .expect("validated physical sample timing")
+        .media_end;
     let source_end = presentation
         .first_presentation
-        .checked_add(i128::from(track.duration))
+        .checked_add(i128::from(physical_end))
         .ok_or_else(|| unsupported("MP4 presentation endpoint overflows"))?;
     let mut has_playback = false;
     for edit in edits {
@@ -1089,7 +1167,7 @@ fn validate_export_edits(
             start >= presentation.first_presentation && start < source_end,
             "MP4 playback edit selects outside the physical presentation timeline"
         );
-        // The bounded i64 media origin lies inside first + u64 duration, so
+        // The bounded i64 media origin lies inside first + physical duration, so
         // this remaining interval and its u32 movie-scale product fit i128.
         let available = (source_end - start) * i128::from(movie_timescale);
         let selected = i128::from(edit.segment_duration) * i128::from(track.timescale);
@@ -1121,6 +1199,7 @@ fn admit_media_presentation(
     }
     let PhysicalPresentation {
         clock,
+        sample_count,
         first_presentation,
         last_start,
         ..
@@ -1131,7 +1210,6 @@ fn admit_media_presentation(
         .expect("validated physical sample timing");
     let timescale = track.timescale;
     let media_end = timing.media_end;
-    let sample_count = timing.sample_count;
     let constant = timing.constant_duration.is_some();
     let legacy_signed_ctts = timing.legacy_signed_ctts;
     let edit = track.edit.as_deref();
@@ -1199,7 +1277,10 @@ fn admit_media_presentation(
         edit_duration,
     };
     if let Some(usage) = usage {
-        if partial_timeline || (matches!(clock, SampleClock::Irregular { .. }) && constant) {
+        if timing.final_duration == 0
+            || partial_timeline
+            || (matches!(clock, SampleClock::Irregular { .. }) && constant)
+        {
             window.validate(&usage.ranges)?;
         }
     }
@@ -1221,14 +1302,16 @@ impl VideoMedia {
     /// its colour and depth are a measured combination (`HdrProfile`).
     pub(crate) fn hdr_profile(&self) -> Option<HdrProfile> {
         match (self.colour?.codes(), self.bit_depth) {
+            ((1, 1, 1), 10) if self.codec == VideoCodec::H264 => Some(HdrProfile::Bt709),
             ((9, 18, 9), 10) => Some(HdrProfile::Hlg10Bit),
             ((9, 16, 9), 10) => Some(HdrProfile::Pq10Bit),
             _ => None,
         }
     }
 
-    /// [`Self::validate_source`] for the selected `usage`, returning whether
-    /// only its proved intervals import.
+    /// Import admission with bounded endpoint conventions and optional selected
+    /// `usage`. Returns whether the source clock needs an approximation note;
+    /// whole-file/export validation keeps its separate exact descriptor checks.
     pub(crate) fn validate_source_for_use(
         &self,
         source: &PrVideoStream,
@@ -1254,7 +1337,9 @@ impl VideoMedia {
             return Ok(true);
         }
         if self.timing.presentation_origin().is_some() {
-            self.validate_source_descriptor(source)?;
+            if !self.has_native_last_sample_endpoint(source)? {
+                self.validate_source_descriptor(source)?;
+            }
             let usage = usage.filter(|usage| !usage.uses_audio).ok_or_else(|| {
                 unsupported("presentation origin requires selected picture-only intervals")
             })?;
@@ -1264,6 +1349,17 @@ impl VideoMedia {
         let Err(error) = self.validate_source(source) else {
             return Ok(self.timing.partial_timeline);
         };
+        // Some native CFR descriptors end at the last sample start rather
+        // than the half-open file endpoint. A complete, exact grid proves all
+        // source times below that native duration, even without unit-use proof.
+        // Keep the native duration; never invent or extend a final frame.
+        // Sound has its own descriptor and independent admission checks.
+        if !self.timing.partial_timeline && self.has_native_last_sample_endpoint(source)? {
+            if let Some(usage) = usage {
+                self.timing.window.validate(&usage.ranges)?;
+            }
+            return Ok(true);
+        }
         // Known frame grids retain their exact rate meaning. Only the
         // average endpoint of an unlisted native source may differ;
         // its orientation and frame count must still match, or the
@@ -1295,17 +1391,36 @@ impl VideoMedia {
         self.validate_source_descriptor(source)
     }
 
+    /// Whether the exact last-sample convention can admit this source, rather
+    /// than a declared-tail or partial-window approximation.
+    pub(crate) fn has_native_last_sample_endpoint(&self, source: &PrVideoStream) -> Result<bool> {
+        if self.timing.declared_media_end.is_some()
+            || (self.timing.partial_timeline && self.timing.presentation_origin().is_none())
+        {
+            return Ok(false);
+        }
+        let (Some(native_rate), SampleClock::Constant { .. }) =
+            (source.frame_rate.supported(), self.timing.clock)
+        else {
+            return Ok(false);
+        };
+        let (file_rate, duration) = self.timing.supported()?;
+        Ok(self.orientation == source.orientation
+            && native_rate == file_rate
+            && source.intrinsic_ticks > 0
+            && duration.checked_sub(file_rate.ticks_per_frame()) == Some(source.intrinsic_ticks)
+            && i128::from(source.intrinsic_ticks) * i128::from(self.timing.timescale)
+                == self.timing.window.last_start * i128::from(crate::schema::TICKS))
+    }
+
     fn validate_source_descriptor(&self, source: &PrVideoStream) -> Result<()> {
         ensure!(
             self.orientation == source.orientation,
             "native source orientation disagrees with the MP4 quarter-turn display matrix"
         );
-        if matches!(self.timing.clock, SampleClock::Irregular { .. }) {
-            ensure!(
-                source.frame_rate.supported().is_none(),
-                "irregular presentation requires an unlisted native VideoStream FrameRate; supported-rate interpretation is not inferred"
-            );
-        }
+        // A listed native descriptor can accompany irregular physical PTS.
+        // Validate its count and endpoint below without replacing that clock
+        // with the descriptor's nominal grid.
         if let (Some(native_rate), SampleClock::Constant { .. }) =
             (source.frame_rate.supported(), self.timing.clock)
         {
@@ -1435,9 +1550,10 @@ impl InterpretedPictureClock {
             ));
         };
         source.interpreted_duration()?;
-        // Keep existing native-vs-file integrity checks, but never its partial
-        // selected-window escape hatch: native ranges here are interpreted.
-        video.validate_source(source)?;
+        // Native ranges here are interpreted, so no partial selected-window
+        // escape hatch applies. A complete CFR grid may still prove the exact
+        // native last-sample endpoint convention without changing the slope.
+        video.validate_source_for_use(source, None)?;
         let timing = &video.timing;
         ensure!(
             !timing.partial_timeline,

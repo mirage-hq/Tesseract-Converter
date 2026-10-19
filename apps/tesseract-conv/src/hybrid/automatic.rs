@@ -126,6 +126,11 @@ pub(super) fn stage(
         .find(|c| c.token == recipe.root())
         .context("missing root picture container")?;
     let boundaries = recipe.boundaries();
+    let packing_order = boundaries
+        .iter()
+        .filter(|boundary| boundary.container == root.token)
+        .map(|boundary| owners.layer(boundary.layer))
+        .collect::<anyhow::Result<Vec<_>>>()?;
     let mut boundary_layers = BTreeMap::<_, BTreeSet<_>>::new();
     for boundary in &boundaries {
         boundary_layers
@@ -139,15 +144,12 @@ pub(super) fn stage(
         .filter(|boundary| retained.contains(&boundary.token))
         .map(|boundary| owners.layer(boundary.layer))
         .collect::<anyhow::Result<_>>()?;
+    let native_retained = native_retained_layers(recipe);
     let mut replacements = Vec::new();
     let mut scopes = Vec::new();
     let mut diagnostics = Vec::new();
-    while let Some(seed) = seeds.pop_first() {
+    for connected in dependencies.scopes(&seeds, &packing_order) {
         progress.stage("prepare linked AE scope");
-        let connected = dependencies.connected(seed);
-        for index in &connected {
-            seeds.remove(index);
-        }
         let first = *connected.first().context("empty picture scope")?;
         let last = *connected.last().context("empty picture scope")?;
         ensure!(scopes.len() < 256, "hybrid picture scope limit exceeded");
@@ -166,12 +168,16 @@ pub(super) fn stage(
             "selected roots are not independently replaceable native boundaries"
         );
         let scope = u16::try_from(scopes.len() + 1)?;
+        let blending = super::frame_blending::prepare(document, first..last + 1)?;
         let ae = match AfterEffects.stage_picture_layers_with_control(
             archive,
-            document,
+            &blending.document,
             first..last + 1,
             parent,
-            &AfterEffectsExportOptions { fps },
+            &AfterEffectsExportOptions {
+                fps,
+                hdr: options.hdr,
+            },
             AepPreparationControl {
                 progress,
                 preserve_video_assets,
@@ -200,19 +206,37 @@ pub(super) fn stage(
                 continue;
             }
         };
-        let omitted_roots: BTreeSet<_> = ae
+        let original_owner =
+            |id: &fx_schema::LayerId| blending.owners.get(id).copied().unwrap_or(*id);
+        let omitted_ids = ae
             .omitted_layer_ids()
+            .iter()
+            .map(original_owner)
+            .collect::<BTreeSet<_>>();
+        let unsupported_media_ids = ae
+            .unsupported_media_layer_ids()
+            .iter()
+            .map(original_owner)
+            .collect::<BTreeSet<_>>();
+        let omitted_roots: BTreeSet<_> = omitted_ids
             .iter()
             .map(|id| owners.layer(*id))
             .collect::<anyhow::Result<_>>()?;
-        if !omitted_roots.is_disjoint(&retained_roots) {
+        if ae.has_unsupported_media() || !omitted_roots.is_disjoint(&retained_roots) {
             // After Effects drops something that the native export kept.
             // Replace the native picture only when the linked scope still
             // preserves more of it than the native export does.
             let scope = &document.composition().layers()[first..=last];
             let native_lost = native_lost_leaves(scope, &losses.losses, &owners, first..=last)?;
-            let linked_lost = lost_leaves(scope, ae.omitted_layer_ids());
-            if !linked_scope_preserves_more(&linked_lost, &native_lost) {
+            let linked_lost = lost_leaves(scope, &omitted_ids);
+            // Keep actual native placements dependent on rejected sources; unrelated
+            // lowering losses still use the existing whole-scope comparison.
+            let media_dependents =
+                super::dependencies::media_dependents(scope, &unsupported_media_ids);
+            let discards_native_media = linked_lost
+                .intersection(&native_retained)
+                .any(|id| media_dependents.contains(id));
+            if discards_native_media || !linked_scope_preserves_more(&linked_lost, &native_lost) {
                 for omission in &ae.report().diagnostics {
                     let mut diagnostic = omission.diagnostic();
                     diagnostic.context = Some(format!(
@@ -241,6 +265,7 @@ pub(super) fn stage(
                 message: format!("The native Premiere export omits or partly converts {} shown picture layers of this scope; After Effects omits {} whole, including {} that the native export kept. The linked scope replaces the native picture because {because}; this count ignores effect and key approximations on either side, and its omissions are reported with the scope's diagnostics.", native_lost.len(), linked_lost.len(), linked_lost.difference(&native_lost).count()),
             });
         }
+        diagnostics.extend(blending.diagnostics);
         let composition = ae.root_composition();
         let frames = (composition.duration_secs() * fps).round();
         ensure!(
@@ -269,6 +294,7 @@ pub(super) fn stage(
             container: root.token,
             boundaries: slots,
             picture: AfterEffectsPicture {
+                working_hdr: options.hdr,
                 composition_guid: composition.dynamic_link_guid().to_owned(),
                 relative_path: package::scoped_aep_path(scope)?,
                 dimensions: root.dimensions,
@@ -288,6 +314,32 @@ pub(super) fn stage(
         scopes,
         diagnostics,
     })
+}
+
+fn native_retained_layers(
+    recipe: &premiere_file::PicturePackingRecipe,
+) -> BTreeSet<fx_schema::LayerId> {
+    let mut children = BTreeMap::<_, Vec<_>>::new();
+    for container in recipe.containers() {
+        if let Some(parent) = container.parent_boundary {
+            children.entry(parent).or_default().push(container.token);
+        }
+    }
+    let mut pending = vec![recipe.root()];
+    let mut retained = BTreeSet::new();
+    while let Some(container) = pending.pop() {
+        for boundary in recipe.retained_picture_boundaries(container) {
+            if retained.insert(boundary) {
+                pending.extend(children.get(&boundary).into_iter().flatten().copied());
+            }
+        }
+    }
+    recipe
+        .boundaries()
+        .into_iter()
+        .filter(|boundary| retained.contains(&boundary.token))
+        .map(|boundary| boundary.layer)
+        .collect()
 }
 
 /// Picture layers that the native Premiere export of roots `scope_roots`

@@ -51,6 +51,7 @@ fn empty_root_staging_preserves_public_picture_api_and_rejects_incomplete_links(
             .unwrap();
         let end = 3 * TICKS;
         let mut picture = AfterEffectsPicture {
+            working_hdr: None,
             composition_guid: "00000001-0000-0000-0000-000000000000".into(),
             relative_path: "media/ae-0001/compositions.aep".into(),
             dimensions: [1080, 1920],
@@ -167,6 +168,7 @@ fn empty_root_rejects_stripped_archive_semantics() {
             .unwrap();
         let end = 3 * TICKS;
         let picture = AfterEffectsPicture {
+            working_hdr: None,
             composition_guid: "00000001-0000-0000-0000-000000000000".into(),
             relative_path: "media/ae-0001/compositions.aep".into(),
             dimensions: [1080, 1920],

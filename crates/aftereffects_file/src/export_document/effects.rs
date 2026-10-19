@@ -451,6 +451,7 @@ fn lower_with_rate(
             if !note.is_empty() {
                 result.warnings.push(format!("Effect {kind}: {note}"));
             }
+            clamp_extended_generator_colors(kind, &mut native, &mut result.warnings);
             result.effects.push(native);
         }
     }
@@ -458,6 +459,40 @@ fn lower_with_rate(
         result.warnings.push("FX Layer Effects were normalized to AE's separate Layer Styles phase; their relative ordering with Effect Parade plugins cannot be preserved exactly.".into());
     }
     result
+}
+
+/// Keep native generator colors normalized without silently losing FX headroom.
+fn clamp_extended_generator_colors(
+    kind: &str,
+    native: &mut writer::effects::NativeEffect,
+    warnings: &mut Vec<String>,
+) {
+    if !matches!(kind, "tintTritone" | "gradientRamp") {
+        return;
+    }
+    for property in &mut native.properties {
+        if property.values.len() != 4 {
+            continue;
+        }
+        let mut clipped = false;
+        let values = std::iter::once(&mut property.values).chain(
+            property
+                .animation
+                .iter_mut()
+                .flat_map(|track| track.keys.iter_mut().map(|key| &mut key.values)),
+        );
+        for values in values {
+            for channel in values.iter_mut().take(3) {
+                if *channel < 0.0 || *channel > 1.0 {
+                    *channel = channel.clamp(0.0, 1.0);
+                    clipped = true;
+                }
+            }
+        }
+        if clipped {
+            warnings.push(format!("Effect {kind} / {}: extended-sRGB RGB constants/keys were clamped to native 0..=1; HDR brightness and channel ratios are not retained; alpha and authored key times/easing are unchanged", property.match_name));
+        }
+    }
 }
 
 /// Only the Lumetri-style saturation-only case changes native construction.
@@ -848,6 +883,116 @@ pub(crate) fn invert_bezier(x: f64, a: f64, b: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn extended_generator_color_constants_and_keys_clip_with_diagnostics() {
+        for (kind, plugin) in [("tintTritone", "ADBE Tint"), ("gradientRamp", "ADBE Ramp")] {
+            let mut effect = writer::effects::new_effect(plugin, true, [32.0, 32.0]).unwrap();
+            let property = effect
+                .properties
+                .iter_mut()
+                .find(|p| p.values.len() == 4)
+                .unwrap();
+            property.values = vec![2.0, 0.5, 4.0, 0.25];
+            property.animation = Some(NumericTrack {
+                keys: vec![NumericKeyframe {
+                    time_millis: 123,
+                    values: vec![4.0, 0.25, 2.0, 0.5],
+                    easing: vec![KeyframeEasing::Linear; 4],
+                    spatial_in: Vec::new(),
+                    spatial_out: Vec::new(),
+                }],
+            });
+            let mut warnings = Vec::new();
+            clamp_extended_generator_colors(kind, &mut effect, &mut warnings);
+            let property = effect
+                .properties
+                .iter()
+                .find(|p| p.values.len() == 4)
+                .unwrap();
+            assert_eq!(property.values, [1.0, 0.5, 1.0, 0.25]);
+            let key = &property.animation.as_ref().unwrap().keys[0];
+            assert_eq!(key.values, [1.0, 0.25, 1.0, 0.5]);
+            assert_eq!(key.time_millis, 123);
+            assert_eq!(warnings.len(), 1);
+            assert!(warnings[0].contains(kind) && warnings[0].contains("clamped to native"));
+        }
+    }
+
+    #[test]
+    fn generator_color_normalization_preserves_metadata_and_unchanged_properties() {
+        for (kind, plugin) in [("tintTritone", "ADBE Tint"), ("gradientRamp", "ADBE Ramp")] {
+            for (constant, animated, expected_constant, expected_animated, clipped) in [
+                (
+                    [-0.5, 0.5, 0.0],
+                    [0.0, 0.5, 1.0],
+                    [0.0, 0.5, 0.0],
+                    [0.0, 0.5, 1.0],
+                    true,
+                ),
+                (
+                    [0.0, 0.5, 1.0],
+                    [-0.25, 0.5, 1.0],
+                    [0.0, 0.5, 1.0],
+                    [0.0, 0.5, 1.0],
+                    true,
+                ),
+                (
+                    [-0.5, 2.0, 0.5],
+                    [2.0, -0.25, 0.5],
+                    [0.0, 1.0, 0.5],
+                    [1.0, 0.0, 0.5],
+                    true,
+                ),
+                (
+                    [0.0, 0.5, 1.0],
+                    [1.0, 0.25, 0.0],
+                    [0.0, 0.5, 1.0],
+                    [1.0, 0.25, 0.0],
+                    false,
+                ),
+            ] {
+                let mut effect = writer::effects::new_effect(plugin, true, [32.0, 32.0]).unwrap();
+                let property = effect
+                    .properties
+                    .iter_mut()
+                    .find(|p| p.values.len() == 4)
+                    .unwrap();
+                property.values = constant.into_iter().chain([0.25]).collect();
+                property.animation = Some(NumericTrack {
+                    keys: vec![NumericKeyframe {
+                        time_millis: 123,
+                        values: animated.into_iter().chain([0.5]).collect(),
+                        easing: vec![KeyframeEasing::Linear; 4],
+                        spatial_in: vec![0.125, 0.25],
+                        spatial_out: vec![0.375, 0.5],
+                    }],
+                });
+                let before = effect.clone();
+                let mut warnings = Vec::new();
+                clamp_extended_generator_colors("unrelated", &mut effect, &mut warnings);
+                assert_eq!(effect, before);
+                assert!(warnings.is_empty());
+                clamp_extended_generator_colors(kind, &mut effect, &mut warnings);
+                let mut expected = before;
+                let property = expected
+                    .properties
+                    .iter_mut()
+                    .find(|p| p.values.len() == 4)
+                    .unwrap();
+                property.values = expected_constant.into_iter().chain([0.25]).collect();
+                property.animation.as_mut().unwrap().keys[0].values =
+                    expected_animated.into_iter().chain([0.5]).collect();
+                let match_name = property.match_name.clone();
+                assert_eq!(effect, expected);
+                assert_eq!(warnings.len(), usize::from(clipped));
+                if clipped {
+                    assert!(warnings[0].contains(kind) && warnings[0].contains(&match_name));
+                    assert!(warnings[0].contains("clamped to native 0..=1"));
+                }
+            }
+        }
+    }
+
     #[test]
     fn effect_color_final_clock_fallback_has_contextual_warning() {
         let mut effect = writer::effects::new_effect("ADBE Tint", true, [32.0, 32.0]).unwrap();

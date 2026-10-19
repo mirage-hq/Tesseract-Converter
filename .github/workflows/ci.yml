@@ -17,9 +17,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@ffaa7fb73f2b6e3c49bc425913220fa3d71c3ee5 # 1.92.0
+      - uses: dtolnay/rust-toolchain@fb523f40495206854c36b250850817ae0f83e3d1 # 1.99.0
         with:
-          toolchain: '1.92.0'
+          toolchain: '1.99.0'
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
@@ -57,31 +57,28 @@ jobs:
           - runner: windows-2022
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    env:
+      RUSTC_WRAPPER: sccache
+      CARGO_INCREMENTAL: "0"
+      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_GHA_VERSION: converter-v1
+      SCCACHE_GHA_RW_MODE: ${{ github.ref == 'refs/heads/main' && 'READ_WRITE' || 'READ_ONLY' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@ffaa7fb73f2b6e3c49bc425913220fa3d71c3ee5 # 1.92.0
+      - uses: dtolnay/rust-toolchain@fb523f40495206854c36b250850817ae0f83e3d1 # 1.99.0
         with:
-          toolchain: '1.92.0'
+          toolchain: '1.99.0'
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
-      - name: Build pinned inspection libraries (Linux)
+      - name: Install controlled FFmpeg build prerequisites
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends build-essential pkg-config nasm zlib1g-dev clang libclang-dev patchelf
-          prefix="$PWD/target/ci-ffmpeg"
-          python3 scripts/ffmpeg.py "$prefix"
-          echo "FFMPEG_DIR=$prefix" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_PATH=$prefix/lib/pkgconfig" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_LIBDIR=$prefix/lib/pkgconfig" >> "$GITHUB_ENV"
-          echo "BINDGEN_EXTRA_CLANG_ARGS=-I$prefix/include" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=$prefix/lib" >> "$GITHUB_ENV"
-          echo "CARGO_BUILD_JOBS=2" >> "$GITHUB_ENV"
       - name: Set up MSVC compiler
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
@@ -92,6 +89,66 @@ jobs:
           msystem: MSYS
           path-type: inherit
           install: make diffutils patch nasm
+      - name: Set up optional compiler cache
+        id: sccache
+        uses: Mozilla-Actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: v0.18.0
+        continue-on-error: true
+      - name: Verify compiler cache or fall back
+        shell: bash
+        env:
+          SCCACHE_SETUP_OUTCOME: ${{ steps.sccache.outcome }}
+        run: |
+          # A real compiler failure must not be masked as a cache failure.
+          rustc -vV
+          if [[ "$SCCACHE_SETUP_OUTCOME" != success ]] || ! sccache "$(command -v rustc)" -vV; then
+            echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+            echo "sccache unavailable; continuing without compiler caching" >&2
+          fi
+      # Restore Cargo's target tree before restoring/validating the native prefix.
+      - name: Compute FFmpeg cache identity
+        id: ffmpeg-identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="$PWD/target/ci-ffmpeg"
+          if [[ "$RUNNER_OS" = Windows ]]; then
+            export PATH="$(dirname "$(which cl)"):$PATH"
+            prefix="$(cygpath -w "$prefix")"
+          fi
+          key=$(python scripts/ffmpeg.py "$prefix" --cache-key)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "image=${ImageVersion:?Hosted runner image version is required}" >> "$GITHUB_OUTPUT"
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: . -> target
+          # shared-key supersedes key; include native identity here so bindings
+          # cannot restore across different FFmpeg builds, even via fallback.
+          shared-key: converter-ci-${{ steps.ffmpeg-identity.outputs.image }}-${{ hashFiles('scripts/ffmpeg.py') }}-${{ steps.ffmpeg-identity.outputs.key }}
+          cache-on-failure: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Restore pinned FFmpeg
+        id: ffmpeg-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: target/ci-ffmpeg
+          # Include build code and compiler/SDK/configuration/prefix identity.
+          key: conv-ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ steps.ffmpeg-identity.outputs.image }}-${{ hashFiles('scripts/ffmpeg.py') }}-${{ steps.ffmpeg-identity.outputs.key }}
+      - name: Build pinned inspection libraries (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="$PWD/target/ci-ffmpeg"
+          python3 scripts/ffmpeg.py "$prefix"
+          echo "FFMPEG_DIR=$prefix" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$prefix/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_LIBDIR=$prefix/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-I$prefix/include" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$prefix/lib" >> "$GITHUB_ENV"
+          echo "CARGO_BUILD_JOBS=2" >> "$GITHUB_ENV"
       - name: Build pinned inspection libraries (Windows)
         if: runner.os == 'Windows'
         shell: msys2 {0}
@@ -117,6 +174,14 @@ jobs:
           echo "BINDGEN_EXTRA_CLANG_ARGS=-I$prefix/include" >> "$GITHUB_ENV"
           echo "MACOSX_DEPLOYMENT_TARGET=14.0" >> "$GITHUB_ENV"
           echo "DYLD_LIBRARY_PATH=$prefix/lib" >> "$GITHUB_ENV"
+      # Save immediately after successful native validation, even if a later
+      # Rust build fails. Cache hits still run the builder's identity/license checks.
+      - name: Save validated FFmpeg
+        if: github.ref == 'refs/heads/main' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: target/ci-ffmpeg
+          key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
       - name: Build and smoke CLI
         shell: bash
         run: |

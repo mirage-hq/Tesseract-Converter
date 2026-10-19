@@ -401,7 +401,10 @@ fn validate_sample_tables(
         let samples = be_u32(reader, at)?;
         let duration = be_u32(reader, at + 4)?;
         ensure!(
-            samples > 0 && duration > 0,
+            samples > 0
+                && (duration > 0 || (index + 1 == run_count && samples == 1 && media_end > 0)),
+            // A single terminal zero-duration sample can name the endpoint.
+            // Packet admission still has to prove its presentation clock.
             "packaged MP4 has invalid sample-timing runs"
         );
         sample_count = sample_count

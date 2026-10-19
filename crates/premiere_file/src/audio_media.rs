@@ -452,7 +452,14 @@ fn decode_channel(
             .map_err(|_| unsupported("selected sample offset exceeds host address space"))?;
         let count = usize::try_from(last - first)
             .map_err(|_| unsupported("selected sample count exceeds host address space"))?;
-        for frame in buffer.samples().chunks_exact(2).skip(offset).take(count) {
+        for frame in buffer
+            .samples()
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .skip(offset)
+            .take(count)
+        {
             ensure!(
                 frame[channel].is_finite(),
                 "selected audio contains nonfinite samples"

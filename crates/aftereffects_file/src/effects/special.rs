@@ -213,6 +213,48 @@ pub(crate) fn validate_import(native: &DecodedEffect) -> Result<(), &'static str
             return Err("wavelength must be finite and positive");
         }
     }
+    if native.match_name == "ADBE Fast Blur" {
+        if native.declarations == super::native::Declarations::Unreadable {
+            return Err("Fast Blur requires readable parameter declarations");
+        }
+        for suffix in ["-0001", "-0002", "-0003"] {
+            let name = format!("ADBE Fast Blur{suffix}");
+            let numeric = native
+                .parameters
+                .iter()
+                .find(|parameter| parameter.match_name == name)
+                .and_then(|parameter| parameter.numeric.as_ref().ok())
+                .ok_or("Fast Blur requires readable Blurriness, Dimensions and Repeat controls")?;
+            if numeric.expression_enabled || numeric.dimensions_separated {
+                return Err("Fast Blur requires expression-free scalar controls");
+            }
+            if suffix == "-0001" {
+                let valid = |values: &[f64]| matches!(values, [value] if value.is_finite() && *value >= 0.0);
+                let initial = numeric
+                    .keyframes
+                    .first()
+                    .map(|key| key.values.as_slice())
+                    .unwrap_or(&numeric.values);
+                if !valid(initial)
+                    || (numeric.animated && numeric.keyframes.is_empty())
+                    || numeric.keyframes.iter().any(|key| !valid(&key.values))
+                {
+                    return Err("Fast Blur requires finite nonnegative Blurriness values/keys");
+                }
+            } else {
+                if numeric.animated || !numeric.keyframes.is_empty() {
+                    return Err("Fast Blur Dimensions and Repeat Edge Pixels must be static");
+                }
+                if suffix == "-0002" && numeric.values != [1.0] {
+                    return Err("Fast Blur requires Both Blur Dimensions");
+                }
+                if suffix == "-0003" && numeric.values != [0.0] && numeric.values != [1.0] {
+                    return Err("Fast Blur requires a boolean Repeat Edge Pixels switch");
+                }
+            }
+        }
+        return Ok(());
+    }
     if native.match_name == "ADBE Gaussian Blur" {
         // Admit only the observed scalar-only legacy descriptor. Additional
         // controls are not assumed to share the modern plugin's defaults/units.
@@ -268,10 +310,31 @@ pub(crate) fn validate_import(native: &DecodedEffect) -> Result<(), &'static str
         Some(([1.0], false)) => {}
         _ => return Err("only a static RGB Channel is representable"),
     }
-    match source(native, "-0002") {
-        Some(([blend], false)) if blend.is_finite() && (0.0..=100.0).contains(blend) => Ok(()),
-        _ => Err("Blend With Original must be a static finite percentage in 0..100"),
+    let numeric = native
+        .parameters
+        .iter()
+        .find(|parameter| parameter.match_name == "ADBE Invert-0002")
+        .and_then(|parameter| parameter.numeric.as_ref().ok())
+        .ok_or("Blend With Original is unreadable")?;
+    let valid = |values: &[f64]| {
+        matches!(values, [blend]
+        if blend.is_finite() && (0.0..=100.0).contains(blend))
+    };
+    let initial = numeric
+        .keyframes
+        .first()
+        .map(|key| key.values.as_slice())
+        .unwrap_or(&numeric.values);
+    if numeric.expression_enabled
+        || !valid(initial)
+        || (numeric.animated && numeric.keyframes.is_empty())
+        || numeric.keyframes.iter().any(|key| !valid(&key.values))
+    {
+        return Err(
+            "Blend With Original requires expression-free finite scalar values/keys in 0..100",
+        );
     }
+    Ok(())
 }
 
 /// Called after affine fields, before deserializing the edited FX payload.
@@ -280,6 +343,7 @@ pub(crate) fn import(native: &DecodedEffect, size: [f64; 2], payload: &mut Value
     let mut report = ImportReport::default();
     match native.match_name.as_str() {
         "ADBE Invert" => report.consume("-0001"),
+        "ADBE Fast Blur" => report.consume("-0002"),
         "ADBE Fill" => {
             for (suffix, label) in [
                 ("-0003", "Horizontal Feather"),
@@ -511,9 +575,14 @@ pub(crate) fn export(
     };
     let mut warnings = Vec::new();
     match native.match_name.as_str() {
-        "ADBE Exposure2" if matches!(effect, LayerEffect::TemperatureTint { .. }) => {
-            // Canonical AE26 popup: Master=1, Individual Channels=2.
-            set_native(native, "-0001", 0, 2.0);
+        "ADBE Exposure2" => {
+            // Both FX Exposure and the Temperature/Tint offset decomposition
+            // operate directly on display RGB, not AE\'s default linearized RGB.
+            set_native(native, "-0022", 0, 1.0);
+            if matches!(effect, LayerEffect::TemperatureTint { .. }) {
+                // Canonical AE26 popup: Master=1, Individual Channels=2.
+                set_native(native, "-0001", 0, 2.0);
+            }
         }
         "ADBE Radial Blur" => {
             // FX's radial kernel samples along rays from the center (Zoom),
@@ -609,9 +678,12 @@ pub(crate) fn export(
             }
             // Add Grain stores untouched instance state as zeroes even though its
             // parameter descriptors and scripting API expose nonzero UI defaults.
-            // Keep the independently authored Preview replacement and its guide box;
-            // Adobe derives the zero-valued region from the cropped native owner.
-            set_native(native, "-0028", 0, 1.0);
+            // FX Grain has no preview-region semantics: apply it to the entire
+            // owner, without a native-only guide box. The catalog's one-based
+            // Viewing Mode popup is Preview | Blending Matte | Final Output.
+            set_native(native, "-0021", 0, 3.0);
+            set_native(native, "-0028", 0, 0.0);
+            warnings.push("Grain uses native Final Output without preview guides; the native noise kernel and unrepresented plugin sub-settings remain approximations".into());
         }
         "ADBE AIF Perlin Noise 3D" => {
             let noise = match payload

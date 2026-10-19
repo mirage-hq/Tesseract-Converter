@@ -436,6 +436,12 @@ fn prepare_media_impl(
                     result.operation, result.input_sha256, result.output_sha256,
                     if result.operation == media_transcode::Operation::Transcode { " RGB encoding is approximate; native render fidelity remains unverified." } else { " Compressed video packets retained without re-encoding; native render fidelity remains unverified." },
                 )));
+                preparations.extend(
+                    result
+                        .warnings
+                        .into_iter()
+                        .map(|warning| (asset_id.to_owned(), warning)),
+                );
                 source
             }
             Err(InterpretError::Unsupported(reason)) => {

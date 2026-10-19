@@ -154,6 +154,12 @@ pub(super) fn records(
     animations: &[PrPropertyAnimation],
     ids: &MotionIds,
 ) -> Result<Vec<Record>> {
+    ensure_valid!(
+        !animations
+            .iter()
+            .any(|animation| matches!(animation, PrPropertyAnimation::ScaleHeight(_))),
+        "independent Scale Height animation export is not implemented"
+    );
     // Uniform Scale is on when both axes have one Scale at every time: equal
     // static axes that no Scale Width key moves apart.
     let uniform = transform.scale[0] == transform.scale[1]
@@ -315,7 +321,7 @@ pub(super) fn opacity_records(
             class_id: Some(spec.class_id.to_owned()),
             version: Some("9".to_owned()),
             name: Some(spec.name.to_owned()),
-            is_time_varying: animation.is_none().then_some("false".to_owned()),
+            is_time_varying: Some(animation.is_some().to_string()),
             discontinuous_interpolate: spec.animation.is_none().then_some("true".to_owned()),
             parameter_control_type: spec.control.map(str::to_owned),
             start_keyframe: scalar_start_keyframe(&value),

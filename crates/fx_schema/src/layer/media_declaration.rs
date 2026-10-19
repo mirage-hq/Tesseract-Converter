@@ -11,6 +11,8 @@ macro_rules! define_wire_video_layer_schema {
     ($emit:ident) => {
         $emit! {
             struct WireVideoLayer {
+                #[serde(default)]
+                render_domain: Option<$crate::RenderDomain>,
                 id: LayerId,
                 name: String,
                 #[serde(default)]
@@ -97,6 +99,10 @@ macro_rules! define_media_layer_schema {
         #[serde(rename_all = "camelCase" $(, $video_serde)*)]
         #[ts(export_to = "project_types.d.ts")]
         pub struct VideoLayer {
+            /// Explicit domain override; omission inherits document preset rules.
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            #[ts(optional)]
+            pub render_domain: Option<$crate::RenderDomain>,
             /// Stable composition-unique layer id — the id space referenced by
             /// `parent`, track mattes, path masks, and text `pathOptions`.
             pub id: LayerId,
@@ -144,7 +150,9 @@ macro_rules! define_media_layer_schema {
             #[serde(default, skip_serializing_if = "Option::is_none")]
             #[ts(optional = nullable)]
             pub corner_radius: Option<f64>,
-            /// Source-video span, independent of the visible playback window.
+            /// Authored source-video selection, independent of the visible playback
+            /// window. Trims and splits keep it whole, so it is not the span that
+            /// plays: `playback` maps the visible window onto the source.
             pub source_range: TimeRangeProperty,
             /// Parent-clock window and editable source mapping.
             pub playback: LayerPlayback,
@@ -211,6 +219,10 @@ macro_rules! define_media_layer_schema {
         #[serde(rename_all = "camelCase" $(, $image_serde)*)]
         #[ts(export_to = "project_types.d.ts")]
         pub struct ImageLayer {
+            /// Explicit domain override; omission inherits document preset rules.
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            #[ts(optional)]
+            pub render_domain: Option<$crate::RenderDomain>,
             /// Stable composition-unique layer id.
             pub id: LayerId,
             /// User-visible name for the layer.

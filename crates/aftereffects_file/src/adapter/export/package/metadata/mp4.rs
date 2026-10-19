@@ -6,6 +6,7 @@ use crate::media::MediaDuration;
 use media_transcode::inspect::{self, InspectError, MediaInspection, StreamKind};
 use std::io::{Read, Seek};
 
+mod leading_edit;
 mod terminal_sample;
 
 pub(in crate::adapter::export::package) fn from_reader(
@@ -16,6 +17,7 @@ pub(in crate::adapter::export::package) fn from_reader(
     original_profile(&original)?;
     let rounding = final_frame_rounding(&original)?;
     let terminal_sample = terminal_sample::from_original(&original)?;
+    let leading_edit = leading_edit::from_original(&original)?;
     let inspection = inspect::inspect_presentation(reader, size).map_err(|error| match error {
         InspectError::Io(error) => MetadataReadError::Io(error),
         InspectError::Unavailable => {
@@ -23,7 +25,7 @@ pub(in crate::adapter::export::package) fn from_reader(
         }
         InspectError::Invalid(_) => MetadataError::Malformed("invalid MP4 container").into(),
     })?;
-    presentation_profiles(&inspection, rounding, terminal_sample).map_err(Into::into)
+    presentation_profiles(&inspection, rounding, terminal_sample, leading_edit).map_err(Into::into)
 }
 
 // FFmpeg's displayed packet grid alone does not establish authored elst rates
@@ -189,7 +191,7 @@ fn final_frame_rounding(bytes: &[u8]) -> Result<Option<FinalFrameRounding>, Meta
 
 #[cfg(test)]
 fn presentation(media: &MediaInspection) -> Result<QuickTimeMetadata, MetadataError> {
-    presentation_profiles(media, None, None)
+    presentation_profiles(media, None, None, None)
 }
 
 #[cfg(test)]
@@ -197,13 +199,14 @@ fn presentation_with_rounding(
     media: &MediaInspection,
     rounding: Option<FinalFrameRounding>,
 ) -> Result<QuickTimeMetadata, MetadataError> {
-    presentation_profiles(media, rounding, None)
+    presentation_profiles(media, rounding, None, None)
 }
 
 fn presentation_profiles(
     media: &MediaInspection,
     rounding: Option<FinalFrameRounding>,
     terminal_sample: Option<terminal_sample::TerminalSample>,
+    leading_edit: Option<leading_edit::LeadingEdit>,
 ) -> Result<QuickTimeMetadata, MetadataError> {
     let unsupported = MetadataError::Unsupported;
     let mut videos = media
@@ -258,14 +261,36 @@ fn presentation_profiles(
     if delta <= 0 {
         return Err(unsupported("MP4 video has no positive frame duration"));
     }
-    // Sorting PTS, rather than DTS, keeps reordered AVC frames in the displayed
-    // clock. Reject delay/trim/irregular grids not represented by this profile.
+    let origin = first.pts.unwrap_or(-1);
+    let delayed = leading_edit.is_some_and(|edit| {
+        edit.matches(
+            origin,
+            video.duration,
+            delta,
+            packets.len(),
+            video.time_base_num,
+            video.time_base_den,
+        )
+    });
+    if origin != 0 && !delayed {
+        return Err(unsupported("MP4 video presentation origin is unsupported"));
+    }
+    // Sorting PTS, rather than DTS, keeps reordered AVC frames in display order.
+    // A verified empty edit stays in the original decoder input, not in layer clocks.
     for (index, packet) in packets.iter().enumerate() {
         let expected = i64::try_from(index)
             .ok()
             .and_then(|index| index.checked_mul(delta))
+            .and_then(|offset| offset.checked_add(origin))
             .ok_or(MetadataError::Malformed("MP4 presentation clock overflows"))?;
-        if packet.pts != Some(expected) || packet.duration != delta {
+        // FFmpeg 7 clips a delayed run's final packet against stream duration
+        // without its edit origin. Original stts proves the complete final sample.
+        let clipped_tail = delayed
+            && index + 1 == packets.len()
+            && packet.duration > 0
+            && packet.duration < delta
+            && packet.duration == video.duration - expected;
+        if packet.pts != Some(expected) || (packet.duration != delta && !clipped_tail) {
             return Err(unsupported(
                 "MP4 video presentation is not a zero-origin constant frame grid",
             ));
@@ -303,6 +328,11 @@ fn presentation_profiles(
             "MP4 video duration disagrees with presentation packets",
         ));
     }
+    let duration = duration
+        .checked_add(origin)
+        .ok_or(MetadataError::Malformed(
+            "MP4 delayed presentation endpoint overflows",
+        ))?;
     let sample_delta = u32::try_from(delta)
         .ok()
         .and_then(|delta| delta.checked_mul(video.time_base_num as u32))
@@ -319,6 +349,9 @@ fn presentation_profiles(
         .iter()
         .filter(|stream| stream.kind == StreamKind::Audio);
     let audio_sample_rate = if let Some(stream) = audio.next() {
+        if delayed {
+            return Err(unsupported("Delayed MP4 picture with audio is unsupported"));
+        }
         if audio.next().is_some()
             || stream.codec_tag != *b"mp4a"
             || stream.codec_name != "aac"
@@ -333,18 +366,37 @@ fn presentation_profiles(
     } else {
         0.0
     };
-    if media
-        .streams
-        .iter()
-        .any(|stream| !matches!(stream.kind, StreamKind::Video | StreamKind::Audio))
-    {
+    // tmcd is ancillary source metadata, not picture or sound. Preserve its
+    // bytes in the original container without deriving the native source clock
+    // from its label/rate. Subtitles and other data still require a mapping.
+    if media.streams.iter().any(|stream| match stream.kind {
+        StreamKind::Video | StreamKind::Audio => false,
+        StreamKind::Other => {
+            stream.codec_tag != *b"tmcd"
+                || stream.width != 0
+                || stream.height != 0
+                || stream.sample_rate != 0
+                || stream.channels != 0
+        }
+        StreamKind::Subtitle => true,
+    }) {
         return Err(unsupported(
             "MP4 native profile does not support ancillary streams",
         ));
     }
     // The native 50/60 fps sources store sample count / rate in sspc. A
     // 24576 Hz duration would shorten fractional-tick endpoints such as 3.2 s.
-    let native_duration = if matches!(frame_rate.integer, 50 | 60) && frame_rate.fractional == 0 {
+    let native_duration = if delayed {
+        Some(MediaDuration {
+            numerator: u32::try_from(duration)
+                .ok()
+                .and_then(|duration| duration.checked_mul(video.time_base_num as u32))
+                .ok_or(unsupported(
+                    "MP4 delayed endpoint exceeds native duration range",
+                ))?,
+            denominator: video.time_base_den as u32,
+        })
+    } else if matches!(frame_rate.integer, 50 | 60) && frame_rate.fractional == 0 {
         Some(MediaDuration {
             numerator: u32::try_from(packets.len())
                 .map_err(|_| unsupported("MP4 sample count exceeds native duration range"))?,
@@ -514,6 +566,40 @@ mod tests {
 
     fn native_media() -> MediaInspection {
         inspect::inspect_presentation(Cursor::new(NATIVE_MEDIA), NATIVE_MEDIA.len() as u64).unwrap()
+    }
+
+    #[test]
+    fn mp4_ancillary_timecode_does_not_omit_editable_video() {
+        let mut media = native_media();
+        let expected = presentation(&media).unwrap();
+        let mut timecode = media.streams[0].clone();
+        timecode.index = 1;
+        timecode.kind = StreamKind::Other;
+        timecode.codec_tag = *b"tmcd";
+        timecode.codec_name.clear();
+        timecode.width = 0;
+        timecode.height = 0;
+        timecode.sample_rate = 0;
+        timecode.channels = 0;
+        media.streams.push(timecode);
+        let actual = presentation(&media).expect("ancillary timecode must retain the video");
+        assert_eq!(actual.dimensions, expected.dimensions);
+        assert_eq!(actual.frame_rate, expected.frame_rate);
+        assert_eq!(actual.duration_millis, expected.duration_millis);
+        assert_eq!(actual.audio_sample_rate, 0.0);
+
+        for (kind, tag) in [
+            (StreamKind::Other, *b"meta"),
+            (StreamKind::Subtitle, *b"tmcd"),
+            (StreamKind::Other, *b"c608"),
+        ] {
+            media.streams[1].kind = kind;
+            media.streams[1].codec_tag = tag;
+            assert!(matches!(
+                presentation(&media),
+                Err(MetadataError::Unsupported(_))
+            ));
+        }
     }
 
     #[test]

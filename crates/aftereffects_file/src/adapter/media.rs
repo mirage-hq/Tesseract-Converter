@@ -1,7 +1,7 @@
 //! Local-only media preflight shared by check and write conversions.
 
 mod collected;
-mod psd;
+pub mod psd;
 mod video;
 
 #[cfg(test)]
@@ -498,6 +498,58 @@ impl<'a> MediaPreflight<'a> {
                 Err(reason) => {
                     missing_status = MediaStatus::Unassessed;
                     missing = format!("{missing}; collected source rejected: {reason}");
+                }
+            }
+        }
+        if foreign_drive
+            && located
+                .as_ref()
+                .is_none_or(|(_, metadata)| metadata.as_ref().is_err_and(is_missing))
+            && !self.collected.adjacent_candidates(request).is_empty()
+        {
+            let base = fs::canonicalize(self.base).map_err(|error| {
+                AepConversionError::io("resolve AEP directory", self.base, error)
+            })?;
+            let mut matches = HashSet::new();
+            for relative in self.collected.adjacent_candidates(request) {
+                let candidate = base.join(relative);
+                let canonical = match fs::canonicalize(&candidate) {
+                    Ok(path) => path,
+                    Err(error) if is_missing(&error) => continue,
+                    Err(error) => {
+                        return Err(AepConversionError::io(
+                            "resolve adjacent media",
+                            &candidate,
+                            error,
+                        ));
+                    }
+                };
+                if !canonical.starts_with(&base) {
+                    self.omit(
+                        request,
+                        "adjacent media suffix escapes the AEP directory; content omitted",
+                    );
+                    return Ok(MediaResolution::Unavailable);
+                }
+                matches.insert(canonical);
+            }
+            if matches.len() > 1 {
+                self.omit(
+                    request,
+                    "ambiguous adjacent media directory suffixes; content omitted",
+                );
+                return Ok(MediaResolution::Unavailable);
+            }
+            if let Some(candidate) = matches.into_iter().next() {
+                self.diagnostics.push(ImportDiagnostic {
+                    limitation: Limitation::Placeholder,
+                    composition_id: None,
+                    layer_id: None,
+                    message: format!("media {} at {:?}: resolved at unique adjacent directory suffix {candidate:?}; file identity and rendering against Adobe are unverified", request.logical_id, request.authored_path),
+                });
+                let metadata = fs::metadata(&candidate);
+                if let Some((previous, _)) = located.replace((candidate, metadata)) {
+                    missing_paths.push(previous);
                 }
             }
         }

@@ -23252,6 +23252,227 @@
         "Text-layer sourceRectAtTime, camera-layer projection, per-character expressions and createPath are not modelled.",
         "Live expressions are replaced by held text / baked keys."
       ]
+    },
+    {
+      "case_id": "aep-expression-samples-expression-compatibility-c1",
+      "direction": "import",
+      "feature": "Independent 3D world/vector point and inverse probes, property-owned pingpong loop, scalar distance, zero-rate posterization, native Source Text fill-color dependency, cached Text-bound approximation and editable held Echo text",
+      "requirement": "required",
+      "supported_by": [],
+      "source_path": "crates/aftereffects_file/tests/fixtures/expression_samples/expression_compatibility.aep",
+      "composition_id": 1,
+      "critical_frames": [
+        "0",
+        "11/30",
+        "2/5",
+        "23/30",
+        "4/5",
+        "29/30"
+      ],
+      "tests": [
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/native_compatibility_tests.rs",
+          "symbol": "native_compatibility_values_match_adobe_and_cached_bounds_are_reported",
+          "assertions": [
+            {
+              "description": "Assert all 31 native observations for each numeric probe within 1e-3 and all Echo strings exactly; separately report cached Text-bound error without claiming numerical equality",
+              "source_anchor": "maximum_error <= 1e-3"
+            }
+          ]
+        },
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/native_compatibility_tests.rs",
+          "symbol": "native_compatibility_import_retains_editable_consumers_and_held_echo",
+          "assertions": [
+            {
+              "description": "Fresh import retains each Rotation consumer as a valid finite editable native-owner track, PropertyLoop varies, ScalarLength is 50, Echo is editable Lottie!, and no JsScript is emitted",
+              "source_anchor": "PropertyLoop must vary"
+            }
+          ]
+        },
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/native_compatibility_tests.rs",
+          "symbol": "native_world_vector_basis_uses_reciprocal_scale_not_point_differences",
+          "assertions": [
+            {
+              "description": "Pinned independent native vector and three basis components match within1e-8; native point difference is checked separately and inverse recovers the original vector",
+              "source_anchor": "native {name} component"
+            }
+          ]
+        }
+      ],
+      "execution": {
+        "status": "UNRUN"
+      },
+      "visual": {
+        "status": "unmeasured"
+      },
+      "limitations": [
+        "Registry execution remains the historical UNRUN marker; exact queued CPU execution is recorded separately in the support ledger.",
+        "Cached glyph Text bounds are a diagnosed approximation; dynamic/uncached text remains unsupported.",
+        "Native readback and reference rendering are not fresh-tsrct RGB/alpha fidelity.",
+        "Expression import only; existing native key export does not restore AE program semantics."
+      ]
+    },
+    {
+      "case_id": "aep-expression-samples-expression-paths-c1",
+      "direction": "import",
+      "feature": "Native Path API and createPath import: sparse CreatedClosed/TimedCopy output, keyed Shape/Mask source reads, point/tangent/normal and expression-driven dependency consumers",
+      "requirement": "required",
+      "supported_by": [],
+      "source_path": "crates/aftereffects_file/tests/fixtures/expression_samples/expression_paths.aep",
+      "composition_id": 1,
+      "critical_frames": [
+        "0",
+        "1/30",
+        "1/2",
+        "1",
+        "3/2",
+        "59/30"
+      ],
+      "tests": [
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/native_path_tests.rs",
+          "symbol": "native_path_created_and_timed_consumers_are_sparse_editable_paths",
+          "assertions": [
+            {
+              "description": "Fresh import keeps closed moving cubic and static timed-copy as2/1 ordinary editable Path keys with independently native start vertices and closure, no JsScript",
+              "source_anchor": "missing editable expression Path track"
+            }
+          ]
+        },
+        {
+          "path": "crates/aftereffects_file/src/expression_eval/native_path_tests.rs",
+          "symbol": "native_path_numeric_consumers_match_independent_adobe_samples",
+          "assertions": [
+            {
+              "description": "Compare all61 independently Adobe-read Position values for point/tangent/normal/dependency consumers within1e-3",
+              "source_anchor": "native Path API value mismatch"
+            }
+          ]
+        }
+      ],
+      "execution": {
+        "status": "UNRUN"
+      },
+      "visual": {
+        "status": "unmeasured"
+      },
+      "limitations": [
+        "Implementation and source-based RED/GREEN execution pending; native source/reference publication is not conversion support.",
+        "CopiedOpen/CopiedMask exhibit native Path API fixed-point observation rounding; sparse output for those targets remains pending.",
+        "Defaults and native raw source geometry are supporting readback for the createPath/API case, not separate visual passes.",
+        "Import-only expression scope; export restoration unchanged.",
+        "Fresh-tsrct RGB, alpha and persisted runtime playback remain unmeasured."
+      ]
+    },
+    {
+      "case_id": "aep-canvas-transparency-c1",
+      "direction": "import",
+      "feature": "Display-only nonblack preview RGB preserves native transparency and editable foreground Solid",
+      "requirement": "required",
+      "supported_by": [],
+      "source_path": "crates/aftereffects_file/tests/fixtures/canvas/transparency.aep",
+      "composition_id": 1,
+      "critical_frames": [
+        "0",
+        "1/2",
+        "29/30"
+      ],
+      "tests": [
+        {
+          "path": "crates/aftereffects_file/src/structure_document/tests/native_canvas_transparency.rs",
+          "symbol": "native_canvas_preview_background_does_not_replace_transparent_pixels",
+          "assertions": [
+            {
+              "description": "Pinned native canvas/FPS, source controls and editable Solid geometry/paint/transforms/order survive; preview color does not become opaque canvas paint; no JsScript",
+              "source_anchor": "assert_canvas"
+            }
+          ]
+        }
+      ],
+      "execution": {
+        "status": "UNRUN"
+      },
+      "visual": {
+        "status": "unmeasured"
+      },
+      "limitations": [
+        "Native alpha equality and black-composite RGB SSIM are scoped to this static binary-alpha case; not universal raster/expression fidelity or human UI inspection.",
+        "Import-only policy fix; export implementation unchanged."
+      ]
+    },
+    {
+      "case_id": "aep-canvas-transparency-c16",
+      "direction": "import",
+      "feature": "Authored opaque background Solid preserves editable paint, transform and native layer ordering",
+      "requirement": "required",
+      "supported_by": [],
+      "source_path": "crates/aftereffects_file/tests/fixtures/canvas/transparency.aep",
+      "composition_id": 16,
+      "critical_frames": [
+        "0",
+        "1/2",
+        "29/30"
+      ],
+      "tests": [
+        {
+          "path": "crates/aftereffects_file/src/structure_document/tests/native_canvas_transparency.rs",
+          "symbol": "native_canvas_authored_background_remains_editable_below_foreground",
+          "assertions": [
+            {
+              "description": "Pinned native canvas/FPS, source controls and editable Solid geometry/paint/transforms/order survive; preview color does not become opaque canvas paint; no JsScript",
+              "source_anchor": "assert_canvas"
+            }
+          ]
+        }
+      ],
+      "execution": {
+        "status": "UNRUN"
+      },
+      "visual": {
+        "status": "unmeasured"
+      },
+      "limitations": [
+        "Native alpha equality and black-composite RGB SSIM are scoped to this static binary-alpha case; not universal raster/expression fidelity or human UI inspection.",
+        "Import-only policy fix; export implementation unchanged."
+      ]
+    },
+    {
+      "case_id": "aep-canvas-transparency-c32",
+      "direction": "import",
+      "feature": "Nested transparent precomposition preserves child paint and source clock",
+      "requirement": "required",
+      "supported_by": [],
+      "source_path": "crates/aftereffects_file/tests/fixtures/canvas/transparency.aep",
+      "composition_id": 32,
+      "critical_frames": [
+        "0",
+        "1/2",
+        "29/30"
+      ],
+      "tests": [
+        {
+          "path": "crates/aftereffects_file/src/structure_document/tests/native_canvas_transparency.rs",
+          "symbol": "native_canvas_nested_transparent_child_keeps_same_alpha_policy",
+          "assertions": [
+            {
+              "description": "Pinned native canvas/FPS, source controls and editable Solid geometry/paint/transforms/order survive; preview color does not become opaque canvas paint; no JsScript",
+              "source_anchor": "assert_canvas"
+            }
+          ]
+        }
+      ],
+      "execution": {
+        "status": "UNRUN"
+      },
+      "visual": {
+        "status": "unmeasured"
+      },
+      "limitations": [
+        "Native alpha equality and black-composite RGB SSIM are scoped to this static binary-alpha case; not universal raster/expression fidelity or human UI inspection.",
+        "Import-only policy fix; export implementation unchanged."
+      ]
     }
   ]
 }

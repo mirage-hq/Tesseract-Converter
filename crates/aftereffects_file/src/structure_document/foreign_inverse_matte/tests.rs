@@ -95,13 +95,10 @@ fn native_foreign_alias_copies_keys_and_preserves_destination_clock() {
     );
     assert_eq!(rotation.transform.anchor_point, [1920., 1080.]);
     assert_eq!(rotation.transform.rotation, 180.);
-    assert!(matches!(
-        owner.effects[0].data(),
-        fx_schema::EffectData::Identified {
-            effect: fx_schema::EffectPayload::Known(fx_schema::LayerEffect::InnerShadow { .. }),
-            ..
-        }
-    ));
+    assert!(
+        owner.effects.is_empty(),
+        "bypassed empty styles add no paint"
+    );
     let shadows = group(&rotation.layers[0]);
     let masked = group(&shadows.layers[0]);
     let content = group(&masked.layers[0]);
@@ -452,6 +449,121 @@ fn foreign_alias_depth_identity_and_animation_exhaustion_rollback() {
         assert_eq!(budget.used(), 7);
     }
 }
+#[test]
+fn sampled_path_fallback_survives_failed_native_admission_transactionally() {
+    let (original, original_animations) = baseline();
+    let LayerData::Shape(guide) = original.layers[1].data() else {
+        panic!("missing sampled mask guide")
+    };
+    let target = PropertyTarget::layer(guide.id, PropType::ShapePath);
+    assert!(
+        original_animations
+            .iter()
+            .any(|entry| entry.target == target)
+    );
+    let reserved = original_animations
+        .iter()
+        .map(|entry| committed_entry_reservation_bytes(entry).unwrap())
+        .sum::<usize>()
+        + 7;
+    for case in 0..3 {
+        let mut p = project();
+        if case == 1 {
+            // Authored destination animation must not be mistaken for sampling.
+            let meta = properties::data(leaf(&mut composition(&mut p, 1).layers[0]), *b"tdb4")
+                .unwrap()
+                .to_vec();
+            let mut animated = meta;
+            animated[68] = 1;
+            replace_data(
+                leaf(&mut composition(&mut p, 1).layers[0]),
+                *b"tdb4",
+                animated,
+            );
+        }
+        let ItemKind::Composition(comp) = &p.item(1).unwrap().kind else {
+            panic!()
+        };
+        let items = p.items.iter().map(|item| (item.id, item)).collect();
+        let mut owner = original.clone();
+        let mut animations = original_animations.clone();
+        let mut next_id = 1000;
+        let mut budget = if case == 2 {
+            AnimationBudget::with_limit(reserved)
+        } else {
+            AnimationBudget::default()
+        };
+        budget.reserve(reserved).unwrap();
+        let error = apply_with_sampled_paths(
+            Context {
+                comp,
+                items: &items,
+                depth: if case == 0 {
+                    super::super::MAX_GROUP_DEPTH
+                } else {
+                    0
+                },
+            },
+            &comp.layers[0],
+            &mut owner,
+            &mut animations,
+            &mut next_id,
+            &mut budget,
+            std::slice::from_ref(&target),
+        )
+        .unwrap_err();
+        if case == 1 {
+            assert!(error.contains("authored animation"), "{error}");
+        }
+        assert_eq!(owner, original, "case {case}: {error}");
+        assert_eq!(animations, original_animations, "case {case}: {error}");
+        assert_eq!(next_id, 1000);
+        assert_eq!(budget.used(), reserved);
+    }
+}
+
+#[test]
+fn rejected_foreign_profile_retains_supported_generic_mask_sampling() {
+    let mut p = project();
+    replace_data(
+        effect_control(
+            &mut composition(&mut p, 1).layers[0],
+            "ADBE Geometry2",
+            "ADBE Geometry2-0007",
+        ),
+        *b"cdat",
+        179_f64.to_be_bytes(),
+    );
+    let converted = crate::structure_document::to_structural_fx_document(&p, Some(1)).unwrap();
+    let owner = group(&group(&converted.document.composition().layers()[0]).layers[0]);
+    assert_eq!(group(&owner.layers[0]).name, "Source content clock");
+    let LayerData::Shape(guide) = owner.layers[1].data() else {
+        panic!()
+    };
+    let target = PropertyTarget::layer(guide.id, PropType::ShapePath);
+    assert!(
+        converted
+            .document
+            .composition()
+            .dynamics()
+            .entries()
+            .iter()
+            .any(|entry| entry.target == target)
+    );
+    assert!(
+        converted
+            .diagnostics
+            .iter()
+            .any(|warning| warning.message.contains("Path expression lowered"))
+    );
+    assert!(
+        converted
+            .diagnostics
+            .iter()
+            .any(|warning| warning.message.contains("Foreign Set Matte not lowered"))
+    );
+}
+
 #[test]
 fn all_effects_matte_provider_uses_the_same_foreign_stage() {
     let mut p = project();

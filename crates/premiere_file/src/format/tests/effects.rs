@@ -61,11 +61,13 @@ fn keyed_blur(id: u32, fields: &str) -> String {
 /// value 0 and the cached value 10.
 const CORPUS_KEYED_BLURRINESS: &str = "<ParameterControlType>8</ParameterControlType><StartKeyframe>-91445760000000000,0.,0,0,0,0,0,0</StartKeyframe><Keyframes>914456685542400,10.,0,0,0,0.16666666666666666,-66.046909906632067,0.16666666666666666;914495145479490,0.,0,0,-66.046909906632067,0.16666666666666666,0,0.16666666666666666;</Keyframes><CurrentValue>10</CurrentValue>";
 
-/// The real Premiere 12.1 `PR.ADBE Black & White` of `mixkit-399`
-/// (`VideoFilterComponent:1170`, on a nest): `VideoFilterType` 1 and one
-/// unnamed `ArbVideoComponentParam`. It is not Premiere 26.5.1's
-/// `AE.ADBE Black & White` and has no mapping.
+/// An unknown effect based on the legacy Black & White record scaffold.
 fn black_white_pr(id: u32) -> String {
+    legacy_black_white(id).replace("PR.ADBE Black", "PR.Unknown Black")
+}
+
+/// Premiere 12.1's parameterless grayscale has an empty arbitrary-data slot.
+fn legacy_black_white(id: u32) -> String {
     format!(
         "<VideoFilterComponent ObjectID=\"{id}\" ClassID=\"d10da199-beea-4dd1-b941-ed3a78766d50\" Version=\"7\"><Component Version=\"5\"><Params Version=\"1\"><Param Index=\"0\" ObjectRef=\"{}\"/></Params><ID>4</ID><DisplayName>Black &amp; White</DisplayName>{ACTIVE}<Intrinsic>false</Intrinsic></Component><MatchName>PR.ADBE Black &amp; White</MatchName><VideoFilterType>1</VideoFilterType></VideoFilterComponent>\
 <ArbVideoComponentParam ObjectID=\"{}\" ClassID=\"313e54d4-6903-49ad-b0bf-8262cdd10f4e\" Version=\"2\"><IsTimeVarying>false</IsTimeVarying><ParameterControlType>9</ParameterControlType><StartKeyframePosition>-91445760000000000</StartKeyframePosition><ParameterID>-1</ParameterID></ArbVideoComponentParam>",
@@ -667,7 +669,7 @@ fn unknown_active_effect_is_omitted_with_identity_clip_track_and_time() {
     assert_eq!(omission.record, "VideoFilterComponent:20");
     for context in [
         "unknown active effect \"Black & White\"",
-        "match name \"PR.ADBE Black & White\"",
+        "match name \"PR.Unknown Black & White\"",
         "VideoFilterComponent version 7, Component version 5",
         "stack position 1",
         "clip \"Source\" (VideoClipTrackItem:3, V1, 0.000 s to 5.000 s): no Tesseract effect mapping",
@@ -985,8 +987,8 @@ fn unexpected_blur_shapes_are_rejected_with_a_precise_reason() {
     let base = blur(20);
     for (changed, expected) in [
         (
-            base.replace("<ArchivedType>0</ArchivedType>", "<InstanceName>Soft</InstanceName>"),
-            "Component/InstanceName is not supported",
+            base.replace("<ArchivedType>0</ArchivedType>", "<UnknownControl>Soft</UnknownControl>"),
+            "Component/UnknownControl is not supported",
         ),
         (
             base.replace("</Component><MatchName>", "</Component><SubComponents/><MatchName>"),
@@ -1349,22 +1351,35 @@ fn corner_quads_that_stay_convex_between_keys_convert() {
 }
 
 #[test]
-fn corner_bezier_keys_premiere_velocity_cannot_hold_omit_the_corner_pin() {
-    for (keys, expected) in [
-        // A rise between two keys on one point.
-        (
-            "0,0:0,5,0,0,0.16666666666666666,2,0.5,0,0,0,0,0,0;254016000000,0:0,0,0,0,0.5,0,0.16666666666666666,0,0,0,0,0,0;",
-            "Bezier between equal values cannot preserve Premiere velocity",
-        ),
-        (
-            "0,0:0,5,0,0,0.16666666666666666,0,1.5,0,0,0,0,0,0;254016000000,0.5:0,0,0,0,0.5,0,0.16666666666666666,0,0,0,0,0,0;",
-            "Bezier influence must be between zero and one",
-        ),
-    ] {
+fn corner_stationary_point_keeps_picture_despite_saved_temporal_velocity() {
+    // Temporal speed cannot create a spatial excursion without a path.
+    let mut corners = IDENTITY_CORNERS;
+    corners[0].1 = "0,0:0,5,0,0,0.16666666666666666,2,0.5,0,0,0,0,0,0;254016000000,0:0,0,0,0,0.5,0,0.16666666666666666,0,0,0,0,0,0;";
+    let (occurrence, omissions) = read(&with_effects(&[(20, corner_pin(20, corners))]));
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let [effect] = occurrence.effects.as_slice() else {
+        panic!("expected one effect: {:?}", occurrence.effects);
+    };
+    let crate::schema::PrEffectParamKeys::Point(keys) = &effect.animations[0].keys else {
+        panic!("expected point keys");
+    };
+    assert_eq!(keys.len(), 2);
+    assert_eq!(keys[0].value, keys[1].value);
+    assert_eq!(keys[1].easing, crate::schema::PrKeyframeEasing::Linear);
+}
+
+#[test]
+fn corner_bezier_invalid_influence_still_omits_the_corner_pin() {
+    // Both moving and stationary paths retain influence validation.
+    for end in ["0.5:0", "0:0"] {
+        let keys = format!("0,0:0,5,0,0,0.16666666666666666,0,1.5,0,0,0,0,0,0;254016000000,{end},0,0,0,0.5,0,0.16666666666666666,0,0,0,0,0,0;");
         let mut corners = IDENTITY_CORNERS;
-        corners[0].1 = keys;
+        corners[0].1 = &keys;
         let reason = omitted_reason(corner_pin(20, corners));
-        assert!(reason.ends_with(expected), "{expected}: {reason}");
+        assert!(
+            reason.ends_with("Bezier influence must be between zero and one"),
+            "{reason}"
+        );
     }
 }
 
@@ -1783,11 +1798,11 @@ fn unconvertible_tints_and_black_whites_are_omitted_with_a_reason() {
             "{expected}: {reason}"
         );
     }
-    // The corpus's older `PR.ADBE Black & White` is another effect and stays
+    // An unrecognized match name stays
     // unknown.
     let reason = omitted_reason(black_white_pr(20));
     assert!(
-        reason.starts_with("unknown active effect \"Black & White\" (match name \"PR.ADBE Black & White\", VideoFilterComponent version 7, Component version 5)")
+        reason.starts_with("unknown active effect \"Black & White\" (match name \"PR.Unknown Black & White\", VideoFilterComponent version 7, Component version 5)")
             && reason.ends_with("no Tesseract effect mapping"),
         "{reason}"
     );
@@ -1939,6 +1954,7 @@ fn ramp_effect(
         mask: None,
         enabled,
         params: PrEffectParams::Ramp(PrRamp {
+            radial: false,
             start,
             start_colour: colour(start_colour),
             end,
@@ -2043,6 +2059,50 @@ fn ramps_read_static_keyed_and_bypassed_values_in_stack_order() {
 }
 
 #[test]
+fn radial_ramp_import_keeps_editable_gradient_and_reports_approximation() {
+    let xml = with_effects(&[(
+        20,
+        ramp_26_5_xml(
+            20,
+            RampXml {
+                start: ("0.7:-0.4", ""),
+                end: ("0.2:1.2", ""),
+                start_colour: (RAMP_RED, ""),
+                end_colour: (RAMP_BLUE, ""),
+                shape: "1",
+                scatter: "17.",
+                blend: ("0.25", ""),
+            },
+        ),
+    )]);
+    let (project, mut omissions) =
+        inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+    let sequence = &project.sequences[0];
+    let ids = crate::tesseract_output::asset_ids_in_order(sequence, &project.media);
+    let document =
+        crate::convert::premiere_to_tesseract(sequence, &project.media, &ids, &mut omissions)
+            .unwrap()
+            .to_json_value()
+            .unwrap();
+    let effect = &document["composition"]["layers"][0]["effects"][0]["effect"];
+    assert_eq!(effect["type"], "gradientRamp", "{document}");
+    assert_eq!(effect["shape"], 1.0);
+    assert_eq!(effect["startX"], 0.7);
+    assert_eq!(effect["startY"], -0.4);
+    assert_eq!(effect["endX"], 0.2);
+    assert_eq!(effect["endY"], 1.2);
+    assert_eq!(effect["startR"], 200.0 / 255.0);
+    assert_eq!(effect["endB"], 1.0);
+    assert_eq!(effect["blend"], 0.75);
+    assert!(
+        omissions
+            .iter()
+            .any(|o| o.reason.contains("radial Ramp") && o.reason.contains("scatter omitted")),
+        "{omissions:?}"
+    );
+}
+
+#[test]
 fn unconvertible_ramps_are_omitted_with_a_reason() {
     let base = ramp_26_5_xml(20, DEFAULT_RAMP);
     let prefix = "active effect \"Ramp\" (match name \"AE.ADBE Ramp\", VideoFilterComponent version 9, Component version 7) at stack position 1";
@@ -2070,7 +2130,8 @@ fn unconvertible_ramps_are_omitted_with_a_reason() {
     let diagonal_reason = "is not aligned with the frame at every time; Premiere measures a ramp in clip pixels and the FX gradientRamp in frame UV, which agree only along the frame's axes";
     #[rustfmt::skip]
     let records = [
-        (base.replace("<StartKeyframe>-91445760000000000,0,0,0,0,0,0,0</StartKeyframe>", "<StartKeyframe>-91445760000000000,1,0,0,0,0,0,0</StartKeyframe>"), "Ramp Shape \"1\" is not linear (0); a radial ramp is not converted, because Premiere measures its radius in clip pixels and the FX gradientRamp in frame UV".to_owned()),
+        (ramp_26_5_xml(20, RampXml { shape: "1", end: ("0.5:0.001", ""), ..DEFAULT_RAMP }), "radial Ramp radius is too short for the FX gradientRamp".to_owned()),
+        (ramp_26_5_xml(20, RampXml { shape: "1", end: ("0.5:1", "127008000000,0.5:1,0,0,0,0.16666666666666666,0,0.16666666666666666,0,0,0,0,0,0;381024000000,0.5:0.6,0,0,0,0.16666666666666666,0,0.16666666666666666,0,0,0,0,0,0;"), ..DEFAULT_RAMP }), "radial Ramp endpoint keys are not converted; only static radial geometry is approximated".to_owned()),
         (ramp_26_5_xml(20, RampXml { scatter: "12.", ..DEFAULT_RAMP }), "Ramp Scatter 12 is not converted; FX has no scatter".to_owned()),
         // The corpus diagonal 0.3406:0.4426 to 0.5693:0.7602.
         (ramp_26_5_xml(20, RampXml { start: ("0.3406:0.4426", ""), end: ("0.5693:0.7602", ""), ..DEFAULT_RAMP }), format!("Start of Ramp 0.3406:0.4426 to End of Ramp 0.5693:0.7602 {diagonal_reason}")),
@@ -3037,6 +3098,90 @@ fn transform_d_animations() -> Vec<PrEffectParamAnimation> {
     ]
 }
 
+fn without_transform_parameter(records: &str, parameter_id: &str) -> String {
+    let xml = format!("<Records>{records}</Records>");
+    let document = roxmltree::Document::parse(&xml).unwrap();
+    let parameter = document
+        .root_element()
+        .children()
+        .find(|node| {
+            node.children().any(|child| {
+                child.has_tag_name("ParameterID") && child.text() == Some(parameter_id)
+            })
+        })
+        .unwrap();
+    let id = parameter.attribute("ObjectID").unwrap();
+    let reference = document
+        .descendants()
+        .find(|node| node.has_tag_name("Param") && node.attribute("ObjectRef") == Some(id))
+        .unwrap();
+    records
+        .replace(&xml[parameter.range()], "")
+        .replace(&xml[reference.range()], "")
+}
+
+#[test]
+fn legacy_transform_without_sampling_keeps_native_affine_controls() {
+    // E11 C supplies the native skew/axis and explicit bilinear Sampling oracle.
+    let native = fixture_transform(140, 201);
+    let legacy = native
+        .replace("Version=\"9\"", "Version=\"7\"")
+        .replace("<Component Version=\"7\">", "<Component Version=\"5\">");
+    let legacy = without_transform_parameter(&legacy, "12");
+    let convert = |records: String| {
+        let xml = with_effects(&[(140, records)]);
+        let (project, mut notes) = inspect_project_with_omissions(&xml, None).unwrap();
+        let sequence = project.single_sequence().unwrap();
+        let clip = sequence.video_tracks[0].clip(0);
+        assert_eq!(clip.effects.len(), 1, "{notes:?}");
+        let PrEffectParams::Transform(transform) = clip.effects[0].params else {
+            panic!("expected native Transform");
+        };
+        assert_eq!(transform.skew, 30.0);
+        assert_eq!(transform.skew_axis, 45.0);
+        assert!(!transform.bicubic_sampling);
+        let ids = crate::tesseract_output::asset_ids_in_order(sequence, &project.media);
+        crate::convert::premiere_to_tesseract(sequence, &project.media, &ids, &mut notes)
+            .unwrap()
+            .to_json_value()
+            .unwrap()
+    };
+    let expected = convert(native);
+    let actual = convert(legacy);
+    assert_eq!(actual, expected);
+    let stage = actual["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Group")
+        .unwrap();
+    let picture = &stage["layers"][0];
+    assert_eq!(picture["transform"]["skew"], 30.0);
+    assert_eq!(picture["transform"]["skewAxis"], -45.0);
+}
+
+#[test]
+fn legacy_transform_missing_other_controls_is_not_defaulted() {
+    let legacy = corpus_transform(70, "");
+    for parameter in ["1", "7", "9", "11"] {
+        let (clip, notes) = read(&with_effects(&[(
+            70,
+            without_transform_parameter(&legacy, parameter),
+        )]));
+        assert!(
+            clip.effects.is_empty(),
+            "ParameterID {parameter}: {notes:?}"
+        );
+        assert!(!notes.is_empty());
+    }
+    let modern = fixture_transform(140, 201);
+    let (clip, notes) = read(&with_effects(&[(
+        140,
+        without_transform_parameter(&modern, "12"),
+    )]));
+    assert!(clip.effects.is_empty(), "{notes:?}");
+}
+
 #[test]
 fn transforms_read_static_and_keyed_values_in_stack_order() {
     // The run E11 fixture's six records verbatim, a corpus 7/5 Transform, a
@@ -3174,6 +3319,38 @@ fn transforms_read_static_and_keyed_values_in_stack_order() {
         ),
     ];
     assert_eq!(occurrence.effects, expected);
+}
+
+#[test]
+fn renamed_effect_instance_keeps_controls_keys_and_picture() {
+    let mut values = DEFAULT_TRANSFORM;
+    values[2] = ("true", "");
+    let keys = format!("{TICKS},80.,0,0,0,0,0,0;{},120.,0,0,0,0,0,0;", 3 * TICKS);
+    values[3] = ("100.", &keys);
+    for (id, records) in [
+        (20, transform_26_5_xml(20, values)),
+        (20, keyed_blur(20, CORPUS_KEYED_BLURRINESS)),
+    ] {
+        let (expected, notes) = read(&with_effects(&[(id, records.clone())]));
+        assert!(notes.is_empty(), "{notes:?}");
+        assert!(!expected.effects.is_empty());
+        for label in ["Scale In (smooth)", "", "Gaussian Blur"] {
+            let renamed = records.replacen(
+                "</DisplayName>",
+                &format!("</DisplayName><InstanceName>{label}</InstanceName>"),
+                1,
+            );
+            let (actual, omissions) = read(&with_effects(&[(id, renamed)]));
+            assert!(omissions.is_empty(), "{label}: {omissions:?}");
+            assert_eq!(actual.effects, expected.effects, "{label}");
+            assert_eq!(actual.media, expected.media, "{label}");
+            assert_eq!(actual.start_ticks, expected.start_ticks, "{label}");
+            assert_eq!(actual.end_ticks, expected.end_ticks, "{label}");
+            assert_eq!(actual.in_ticks, expected.in_ticks, "{label}");
+            assert_eq!(actual.out_ticks, expected.out_ticks, "{label}");
+            assert_eq!(actual.enabled, expected.enabled, "{label}");
+        }
+    }
 }
 
 #[test]
@@ -3810,6 +3987,83 @@ fn keying_and_masked_effects_omit_their_occurrence() {
     assert_eq!(omissions[0].scope, OmissionScope::Feature);
 }
 
+#[test]
+fn legacy_black_white_checks_empty_slot_and_keeps_stack_order() {
+    let (occurrence, omissions) = read(&with_effects(&[
+        (20, blur(20)),
+        (30, legacy_black_white(30)),
+        (40, legacy_black_white(40).replace(ACTIVE, BYPASSED)),
+    ]));
+    assert!(omissions.is_empty(), "{omissions:?}");
+    assert_eq!(
+        occurrence.effects,
+        [
+            black_white_effect(false),
+            black_white_effect(true),
+            gaussian_blur(true, 25.0, false)
+        ]
+    );
+    let native = legacy_black_white(20);
+    for changed in [
+        native.replace("<IsTimeVarying>false", "<IsTimeVarying>true"),
+        native.replace("<ParameterID>-1", "<ParameterID>1"),
+        native.replace("<ParameterControlType>9", "<ParameterControlType>8"),
+        native.replace(
+            "<StartKeyframePosition>-91445760000000000",
+            "<StartKeyframePosition>0",
+        ),
+        native.replace(
+            "</ArbVideoComponentParam>",
+            "<StartKeyframeValue>AAAA</StartKeyframeValue></ArbVideoComponentParam>",
+        ),
+        native.replace("313e54d4-6903-49ad-b0bf-8262cdd10f4e", "unknown-class"),
+    ] {
+        let (occurrence, omissions) = read(&with_effects(&[(20, changed), (30, blur(30))]));
+        assert_eq!(occurrence.effects, [gaussian_blur(true, 25.0, false)]);
+        assert_eq!(omissions.len(), 1, "{omissions:?}");
+    }
+}
+
+#[test]
+#[cfg(feature = "ffmpeg-library")]
+fn legacy_black_white_imports_editable_grayscale() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(directory.path().join("media")).unwrap();
+    std::fs::write(
+        directory.path().join("media/source.mp4"),
+        include_bytes!("../../../tests/fixtures/video-30fps-10s.mp4"),
+    )
+    .unwrap();
+    let source = directory.path().join("project.prproj");
+    let output = directory.path().join("imported");
+    crate::test_support::write_prproj(&source, &with_effects(&[(20, legacy_black_white(20))]));
+    let notes = crate::premiere_to_tesseract(&source, &output, Some("sequence-1"), false).unwrap();
+    assert!(notes.is_empty(), "{notes:?}");
+    let archive = std::fs::read_dir(&output)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let document = tesseract_file::TesseractFile::open(archive)
+        .unwrap()
+        .project_json()
+        .unwrap();
+    let effects = document["composition"]["layers"][0]["effects"]
+        .as_array()
+        .unwrap();
+    assert_eq!(effects.len(), 1);
+    let effect = &effects[0]["effect"];
+    assert_eq!(effect["type"], "tintTritone");
+    for field in ["blackR", "blackG", "blackB"] {
+        assert_eq!(effect[field], 0.0);
+    }
+    for field in ["whiteR", "whiteG", "whiteB"] {
+        assert_eq!(effect[field], 1.0);
+    }
+    assert_eq!(effect["amount"], 100.0);
+}
+
 /// The imported document of `xml`'s one sequence, which maps without omission.
 fn import(xml: &str) -> serde_json::Value {
     let (project, _) = inspect_project_with_omissions(xml, Some("sequence-1")).unwrap();
@@ -4414,41 +4668,31 @@ fn masks_that_import_cannot_place_omit_the_occurrence() {
 }
 
 #[test]
-fn crop_with_unmeasured_anchor_point_or_scale_height_keys_still_omits_the_occurrence() {
+fn crop_with_unmeasured_anchor_point_keys_still_omits_the_occurrence() {
     // The static Motion of `feature_motion_static_transform_strict.prproj`
     // (Premiere 26.3, Scale Height 135 and Width 70), keyed in one parameter
-    // outside the measured key forms: an Anchor Point key with Premiere's
-    // automatic spatial mode, and Scale Height keys without Uniform Scale.
+    // outside the supported key forms: a curved Anchor Point path with
+    // automatic spatial mode.
     let motion = fixture_records(
         "feature_motion_static_transform_strict.prproj",
         &["146", "147", "148", "149", "150", "151", "152", "153"],
     );
     let flags = "<DefaultOpacity>true</DefaultOpacity><DefaultOpacityComponentID>2</DefaultOpacityComponentID>";
-    for (name, keys, expected) in [
-        (
-            "<Name>Anchor Point</Name>",
-            "<Keyframes>0,0.25:0.75,0,0,0,0,0,0,5,4,0,0,0,0;</Keyframes>",
-            "only Linear Anchor Point keys without spatial tangents convert; Premiere's other Anchor Point keys are unmeasured",
-        ),
-        (
-            "<Name>Scale</Name>",
-            "<Keyframes>0,135.,0,0,0,0,0,0;254016000000,100.,0,0,0,0,0,0;</Keyframes>",
-            "animated Scale Height without Uniform Scale is unsupported",
-        ),
-    ] {
-        // Key the parameter and set its `IsTimeVarying`, as Premiere does.
-        let (head, param) = motion.split_at(motion.find(name).unwrap());
-        let keyed = head.to_owned()
-            + &param
-                .replacen(
-                    "<IsTimeVarying>false</IsTimeVarying>",
-                    "<IsTimeVarying>true</IsTimeVarying>",
-                    1,
-                )
-                .replacen(name, &format!("{name}{keys}"), 1);
-        let reason = omitted_occurrence_reason(flags, &[(146, keyed), (20, top_crop(20))]);
-        assert!(reason.ends_with(expected), "{expected}: {reason}");
-    }
+    let name = "<Name>Anchor Point</Name>";
+    let keys = "<Keyframes>0,0.25:0.75,0,0,0,0,0,0,5,4,0,0,0.1,0;254016000000,0.75:0.25,0,0,0,0,0,0,5,4,-0.1,0,0,0;</Keyframes>";
+    let expected = "curved Anchor Point spatial paths are not converted; native distance traversal is unmeasured";
+    // Key the parameter and set its `IsTimeVarying`, as Premiere does.
+    let (head, param) = motion.split_at(motion.find(name).unwrap());
+    let keyed = head.to_owned()
+        + &param
+            .replacen(
+                "<IsTimeVarying>false</IsTimeVarying>",
+                "<IsTimeVarying>true</IsTimeVarying>",
+                1,
+            )
+            .replacen(name, &format!("{name}{keys}"), 1);
+    let reason = omitted_occurrence_reason(flags, &[(146, keyed), (20, top_crop(20))]);
+    assert!(reason.ends_with(expected), "{expected}: {reason}");
 }
 
 #[test]
@@ -4476,6 +4720,7 @@ fn project(effects: Vec<PrEffect>) -> PrProjectFile {
     let media = MediaId("/tmp/media/source.mp4".into());
     PrProjectFile::from_sequences(
         vec![PrSequence {
+            hdr: None,
             native_frame_ticks: None,
             id: None,
             name: "Effect stack".into(),
@@ -4516,6 +4761,7 @@ fn project(effects: Vec<PrEffect>) -> PrProjectFile {
             width: 1920,
             height: 1080,
             timeline_end_ticks: 2 * TICKS,
+            adjustment_only_template: false,
         }],
         [(
             media,
@@ -5590,6 +5836,40 @@ fn premiere_26_levels_read_static_and_keyed_master_values() {
 }
 
 #[test]
+fn levels_with_explicit_inactive_component_metadata_keep_editable_controls() {
+    let mut selectors = NEUTRAL_LEVELS;
+    selectors[8] = 0;
+    selectors[13] = 0;
+    for (start, keys) in [
+        (selectors, None),
+        (NEUTRAL_LEVELS, Some((3, FIXTURE_WHITE_OUTPUT_KEYS))),
+    ] {
+        let records = levels(20, start, keys);
+        let (expected, expected_omissions) = read(&with_effects(&[(20, records.clone())]));
+        assert!(expected_omissions.is_empty(), "{expected_omissions:?}");
+        assert_eq!(expected.effects.len(), 1);
+        for metadata in [
+            "<Bypass>false</Bypass>",
+            "<Intrinsic>false</Intrinsic>",
+            "<ArchivedType>0</ArchivedType>",
+            "<Bypass>false</Bypass><Intrinsic>false</Intrinsic><ArchivedType>0</ArchivedType>",
+        ] {
+            let older = records
+                .replace("Version=\"9\"", "Version=\"8\"")
+                .replace("Version=\"7\"", "Version=\"6\"")
+                .replace("Version=\"10\"", "Version=\"9\"")
+                .replace("</DisplayName>", &format!("</DisplayName>{metadata}"));
+            let (actual, omissions) = read(&with_effects(&[(20, older)]));
+            assert!(omissions.is_empty(), "{metadata}: {omissions:?}");
+            assert_eq!(actual.effects, expected.effects, "{metadata}");
+            assert_eq!(actual.start_ticks, expected.start_ticks);
+            assert_eq!(actual.end_ticks, expected.end_ticks);
+            assert_eq!(actual.in_ticks, expected.in_ticks);
+        }
+    }
+}
+
+#[test]
 fn deduplicated_levels_private_data_reads_its_stored_copy() {
     // Premiere stores each distinct blob once and names it from empty copies,
     // as `abstract_slideshow` does for 49 Motion blobs.
@@ -5645,7 +5925,7 @@ fn levels_forms_fx_cannot_hold_omit_the_levels() {
         (levels(20, selectors, None).replace(&levels_private_data(&selectors), &private), "PremiereFilterPrivateData stores 255 for (R) White Output Level, not its StartKeyframe value \"0\""),
         (
             levels(20, selectors, None).replace("</DisplayName>", "</DisplayName><Bypass>true</Bypass>"),
-            "Component/Bypass is not supported",
+            "unsupported Levels Bypass Some(\"true\")",
         ),
         // Invalid channel values still reject rather than being silently neutralized.
         (
@@ -5682,14 +5962,13 @@ fn levels_forms_fx_cannot_hold_omit_the_levels() {
             neutral.replacen("<ParameterID>-1</ParameterID>", "<ParameterID>1</ParameterID>", 1),
             "ParameterID 1 is not -1",
         ),
-        // The bypassed form of a Premiere-native filter is unverified.
         (
-            neutral.replace("</DisplayName>", "</DisplayName><Bypass>false</Bypass>"),
-            "Component/Bypass is not supported",
+            neutral.replace("</DisplayName>", "</DisplayName><Bypass>invalid</Bypass>"),
+            "unsupported Levels Bypass Some(\"invalid\")",
         ),
         (
-            neutral.replace("</DisplayName>", "</DisplayName><Intrinsic>false</Intrinsic>"),
-            "Component/Intrinsic is not supported",
+            neutral.replace("</DisplayName>", "</DisplayName><ArchivedType>1</ArchivedType>"),
+            "unsupported ArchivedType Some(\"1\")",
         ),
         // Forms that no Adobe render measured, static or keyed.
         (
@@ -6861,6 +7140,187 @@ fn native_geometry2_keeps_picture_and_motion_with_a_stale_static_current_value()
             .len(),
         8
     );
+}
+
+#[test]
+fn geometry2_position_keys_keep_editable_translation_on_video_and_still_clocks() {
+    for still in [false, true] {
+        let source_in = if still { 3600 * TICKS } else { 0 };
+        let position_keys = format!(
+            "{source_in},0.5:0.5,5,0,0,0.33333333333333331,0.75,0.33333333333333331,5,4,0,0,0,0.25;{},0.5:1.25,5,0,0.75,0.33333333333333331,0,0.33333333333333331,5,4,0,-0.25,0,0;",
+            source_in + TICKS
+        );
+        let mut values = DEFAULT_TRANSFORM;
+        values[1] = ("0.5:0.5", &position_keys);
+        values[3] = ("80.", "");
+        values[4] = ("60.", "");
+        values[10] = ("360.", "");
+        let records =
+            transform_26_5_xml(20, values).replace("AE.ADBE Geometry", "AE.ADBE Geometry2");
+        let source = if still {
+            super::still::still_xml(true)
+        } else {
+            SOURCE.to_owned()
+        };
+        let chain = "<VideoComponentChain ObjectID=\"4\"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain><Components><Component Index=\"0\" ObjectRef=\"20\"/></Components></ComponentChain></VideoComponentChain>";
+        let xml = source
+            .replace(DEFAULT_CHAIN, chain)
+            .replace("</PremiereData>", &format!("{records}</PremiereData>"));
+        let (occurrence, omissions) = read(&xml);
+        assert!(
+            omissions
+                .iter()
+                .all(|note| note.kind == OmissionKind::Approximated),
+            "{omissions:?}"
+        );
+        assert!(
+            omissions
+                .iter()
+                .any(|note| note.reason.contains("saved Shutter Angle 360")),
+            "{omissions:?}"
+        );
+        let [PrEffect {
+            params: PrEffectParams::CornerPin(pin),
+            animations,
+            ..
+        }] = occurrence.effects.as_slice()
+        else {
+            panic!("{:?}", occurrence.effects);
+        };
+        assert_eq!(
+            pin.corners,
+            [
+                [0.2, 0.09999999999999998],
+                [0.8, 0.09999999999999998],
+                [0.2, 0.9],
+                [0.8, 0.9]
+            ]
+        );
+        assert_eq!(animations.len(), 4);
+        for (index, animation) in animations.iter().enumerate() {
+            let keys = animation.keys.point().unwrap();
+            assert_eq!(keys.len(), 2);
+            assert_eq!(
+                [keys[0].source_ticks, keys[1].source_ticks],
+                [source_in, source_in + TICKS]
+            );
+            assert_eq!(keys[0].value, pin.corners[index]);
+            assert!((keys[1].value[0] - pin.corners[index][0]).abs() < 1e-12);
+            assert!((keys[1].value[1] - pin.corners[index][1] - 0.75).abs() < 1e-12);
+            assert!(matches!(
+                keys[1].easing,
+                PrKeyframeEasing::CubicBezier { .. }
+            ));
+        }
+        let document = import(&xml);
+        let picture = &document["composition"]["layers"][0];
+        assert_eq!(picture["type"], if still { "Image" } else { "Video" });
+        assert_eq!(picture["effects"][0]["effect"]["type"], "cornerPin");
+        let entries = document["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap();
+        assert_eq!(entries.len(), 8);
+        for entry in entries {
+            let keys = entry["animator"]["keyframes"].as_array().unwrap();
+            assert_eq!(
+                keys.iter()
+                    .map(|key| key["layerTime"].as_i64().unwrap())
+                    .collect::<Vec<_>>(),
+                [0, 1000]
+            );
+        }
+    }
+}
+
+#[test]
+fn geometry2_curved_position_keeps_saved_positions_with_explicit_handle_loss() {
+    let keys =
+        format!("0,0.5:0.5,0,0,0,0,0,0,5,4,0,0,0.1,0;{TICKS},0.5:1,0,0,0,0,0,0,5,4,0,0,0,0;");
+    let mut values = DEFAULT_TRANSFORM;
+    values[1] = ("0.5:0.5", &keys);
+    let records = transform_26_5_xml(20, values).replace("AE.ADBE Geometry", "AE.ADBE Geometry2");
+    let xml = with_effects(&[(20, records), (60, tint(60))]);
+    let (occurrence, omissions) = read(&xml);
+    assert_eq!(occurrence.effects.len(), 2);
+    assert!(
+        omissions
+            .iter()
+            .any(|note| note.kind == OmissionKind::Approximated
+                && note.reason.contains("spatial curvature/backtracking")),
+        "{omissions:?}"
+    );
+    let pin = occurrence
+        .effects
+        .iter()
+        .find(|effect| matches!(effect.params, PrEffectParams::CornerPin(_)))
+        .unwrap();
+    assert_eq!(pin.animations.len(), 4);
+    for (index, animation) in pin.animations.iter().enumerate() {
+        let keys = animation.keys.point().unwrap();
+        assert_eq!([keys[0].source_ticks, keys[1].source_ticks], [0, TICKS]);
+        assert_eq!(keys[1].value[0], if index % 2 == 0 { 0.0 } else { 1.0 });
+        assert_eq!(keys[1].value[1], if index < 2 { 0.5 } else { 1.5 });
+        assert!(keys
+            .iter()
+            .all(|key| key.spatial_in_tangent.is_none() && key.spatial_out_tangent.is_none()));
+    }
+    let document = import(&xml);
+    assert_eq!(
+        document["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap()
+            .len(),
+        8
+    );
+}
+
+#[test]
+fn geometry2_unsupported_position_combinations_keep_picture_and_sibling_effects() {
+    let straight =
+        format!("0,0.5:0.5,0,0,0,0,0,0,5,4,0,0,0,0;{TICKS},0.5:1,0,0,0,0,0,0,5,4,0,0,0,0;");
+    let scale = format!("0,100.,0,0,0,0,0,0;{TICKS},80.,0,0,0,0,0,0;");
+    for (position, scale, smaller, reason) in [
+        (
+            straight.as_str(),
+            scale.as_str(),
+            false,
+            "simultaneously keyed Position and rendered Scale",
+        ),
+        (
+            straight.as_str(),
+            "",
+            true,
+            "frame that Premiere normalizes",
+        ),
+    ] {
+        let mut values = DEFAULT_TRANSFORM;
+        values[1] = ("0.5:0.5", position);
+        values[3] = ("100.", scale);
+        let records =
+            transform_26_5_xml(20, values).replace("AE.ADBE Geometry", "AE.ADBE Geometry2");
+        let mut xml = with_effects(&[(20, records), (60, tint(60))]);
+        if smaller {
+            xml = xml.replace(
+                "<FrameRect>0,0,1920,1080</FrameRect></VideoStream>",
+                "<FrameRect>0,0,1280,720</FrameRect></VideoStream>",
+            );
+        }
+        let (occurrence, omissions) = read(&xml);
+        assert_eq!(occurrence.media.as_str(), "Media:ObjectUID:media-1");
+        assert!(matches!(
+            occurrence.effects.as_slice(),
+            [PrEffect {
+                params: PrEffectParams::Tint(_),
+                ..
+            }]
+        ));
+        assert!(
+            omissions
+                .iter()
+                .any(|note| note.scope == OmissionScope::Feature && note.reason.contains(reason)),
+            "{omissions:?}"
+        );
+    }
 }
 
 #[test]

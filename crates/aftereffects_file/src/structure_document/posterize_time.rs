@@ -217,7 +217,11 @@ pub(super) fn animations_closed(entries: &[AnimationGraphEntry], ids: &Range<u64
     entries.iter().all(|entry| {
         let owned = ids.contains(&target_id(&entry.target));
         if owned {
-            entry.animator.keyframe_track().is_some()
+            (entry.animator.keyframe_track().is_some()
+                || matches!(
+                    entry.animator.data(),
+                    fx_schema::animator::AnimatorData::Constant { .. }
+                ))
                 && entry.dependencies.is_empty()
                 && entry.random_seed_target.is_none()
                 && entry.layer_refs.is_empty()
@@ -362,12 +366,18 @@ impl Converter<'_> {
                 }
             }
         }
-        // Direct sibling matte helpers allocate outside the native occurrence
-        // intervals. Nested helpers were already allocated inside each occurrence.
+        // Appended matte copies may join the held scope, but rewritten native
+        // occurrences cannot use the original sibling correspondence.
+        let native_count = source_indices.len();
         if invalid
             || found.len() != 1
-            || layers.len() != source_indices.len()
-            || self.next_id != emitted_end
+            || layers.len() < native_count
+            || layers[..native_count]
+                .iter()
+                .any(|layer| u64::from(layer.id()) >= emitted_end)
+            || layers[native_count..]
+                .iter()
+                .any(|layer| u64::from(layer.id()) < emitted_end)
         {
             return Ok(());
         }
@@ -389,7 +399,7 @@ impl Converter<'_> {
         let result = self.posterized_stack(
             context,
             source_indices,
-            emitted_end,
+            self.next_id,
             layers,
             index,
             &intervals,
@@ -710,7 +720,9 @@ impl Converter<'_> {
                         return Err("regenerated scope is not closed visual content".into());
                     }
                     if !animations_closed(&self.animations, &(copy_first_id..self.next_id)) {
-                        return Err("regenerated animations are not independent keyframes".into());
+                        return Err(
+                            "regenerated animations are not independent keys or constants".into(),
+                        );
                     }
                     copies
                 };

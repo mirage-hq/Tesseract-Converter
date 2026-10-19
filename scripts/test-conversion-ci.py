@@ -59,7 +59,12 @@ class WorkflowIntegrityTests(unittest.TestCase):
         "actions/setup-python": ("a26af69be951a213d495a4c3e4e4022e16d87065", "v5"),
         "actions/upload-artifact": ("ea165f8d65b6e75b540449e92b4886f43607fa02", "v4"),
         "actions/download-artifact": ("d3f86a106a0bac45b974a628896c90dbdf5c8093", "v4"),
-        "dtolnay/rust-toolchain": ("ffaa7fb73f2b6e3c49bc425913220fa3d71c3ee5", "1.92.0"),
+        "dtolnay/rust-toolchain": ("fb523f40495206854c36b250850817ae0f83e3d1", "1.99.0"),
+        "Mozilla-Actions/sccache-action": ("7d986dd989559c6ecdb630a3fd2557667be217ad", "v0.0.9"),
+        "Swatinem/rust-cache": ("6323deb102c322ba6fcbdcafc7e3dddab59af2b6", "v2"),
+        "actions/cache/restore": ("0057852bfaa89a56745cba8c7296529d2fc39830", "v4"),
+        "actions/cache/save": ("0057852bfaa89a56745cba8c7296529d2fc39830", "v4"),
+        "taiki-e/install-action": ("f7e5d7c961414b23f5b25b2da9294395d08513ad", "v2"),
     }
 
     def workflows(self):
@@ -136,13 +141,58 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn('"$binary" --version', smoke)
         self.assertIn('"$binary" --help', smoke)
 
+    def test_platform_caches_are_standalone_and_keep_native_validation(self):
+        build = self.job('platform-build')
+        for setting in ('RUSTC_WRAPPER: sccache', 'CARGO_INCREMENTAL: "0"',
+                        'SCCACHE_GHA_ENABLED: "true"', 'SCCACHE_GHA_VERSION: converter-v1',
+                        "SCCACHE_GHA_RW_MODE: ${{ github.ref == 'refs/heads/main' && 'READ_WRITE' || 'READ_ONLY' }}",
+                        'workspaces: . -> target', 'shared-key: converter-ci',
+                        "save-if: ${{ github.ref == 'refs/heads/main' }}",
+                        'path: target/ci-ffmpeg', "hashFiles('scripts/ffmpeg.py')",
+                        'steps.ffmpeg-identity.outputs.key'):
+            self.assertIn(setting, build)
+        self.assertIn('${{ steps.ffmpeg-identity.outputs.image }}', build)
+        self.assertIn('image=${ImageVersion:?Hosted runner image version is required}', build)
+        self.assertIn('version: v0.18.0', build)
+        self.assertNotIn('opensource/conv', build)
+        self.assertNotIn('restore-keys:', build)
+        rust_cache = build.split('      - name: Restore Rust build cache\n', 1)[1].split('\n      - ', 1)[0]
+        self.assertIn('shared-key: converter-ci-${{ steps.ffmpeg-identity.outputs.image }}-', rust_cache)
+        self.assertNotIn('\n          key:', rust_cache)
+        self.assertIn('steps.ffmpeg-identity.outputs.key', rust_cache)
+        self.assertIn('hashFiles(', rust_cache)
+        markers = ('name: Set up MSVC compiler', 'name: Set up optional compiler cache',
+                   'name: Compute FFmpeg cache identity', 'name: Restore Rust build cache',
+                   'name: Restore pinned FFmpeg', 'name: Build pinned inspection libraries (Linux)',
+                   'name: Build pinned inspection libraries (Windows)',
+                   'name: Build pinned inspection libraries (macOS)', 'name: Save validated FFmpeg',
+                   'name: Build and smoke CLI')
+        positions = [build.index(marker) for marker in markers]
+        self.assertEqual(positions, sorted(positions))
+        save = build.split('      - name: Save validated FFmpeg\n', 1)[1].split('\n      - ', 1)[0]
+        self.assertIn("github.ref == 'refs/heads/main'", save)
+        self.assertIn("steps.ffmpeg-cache.outputs.cache-hit != 'true'", save)
+        self.assertIn('key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}', save)
+        self.assertNotIn('if: always()', save)
+        for platform in ('Linux', 'Windows', 'macOS'):
+            native = build.split(f'      - name: Build pinned inspection libraries ({platform})\n', 1)[1].split('\n      - ', 1)[0]
+            self.assertNotIn('cache-hit', native)
+        release = (SOURCE_ROOT / '.github/workflows/release.yml').read_text()
+        def probe(source):
+            return source.split('      - name: Verify compiler cache or fall back\n', 1)[1].split('\n      - ', 1)[0]
+        # The release tests execute this same fallback body with fake compilers.
+        self.assertEqual(probe(build), probe(release))
+
     def test_linux_build_precedes_clippy_and_tests_with_one_ffmpeg_setup(self):
         build = self.job('platform-build')
         setup = build.split('      - name: Build pinned inspection libraries (Linux)\n', 1)[1].split(
             '\n      - ', 1)[0]
         self.assertIn("if: runner.os == 'Linux'", setup)
         self.assertEqual(setup.count('python3 scripts/ffmpeg.py "$prefix"'), 1)
-        self.assertIn('patchelf', setup)
+        prerequisites = build.split('      - name: Install controlled FFmpeg build prerequisites\n', 1)[1].split('\n      - ', 1)[0]
+        self.assertIn('patchelf', prerequisites)
+        self.assertLess(build.index('name: Install controlled FFmpeg build prerequisites'),
+                        build.index('name: Compute FFmpeg cache identity'))
         self.assertIn('CARGO_BUILD_JOBS=2', setup)
         self.assertLess(build.index('name: Build and smoke CLI'), build.index('name: Clippy'))
         self.assertLess(build.index('name: Clippy'), build.index('name: Rust tests'))

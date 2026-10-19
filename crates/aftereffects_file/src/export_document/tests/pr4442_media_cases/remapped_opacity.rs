@@ -116,6 +116,41 @@ fn case(
     (doc, sources)
 }
 
+fn with_animated_mosaic(
+    document: &EditableFxCompositionDocument,
+    enabled: bool,
+) -> serde_json::Value {
+    let mut value = document.to_json_value().unwrap();
+    value["composition"]["layers"][0]["effects"] = json!([{
+        "id":8991,"enabled":enabled,"effect":{
+            "type":"mosaic","horizontalBlocks":320,"verticalBlocks":180,"sharpColors":true
+        }
+    }]);
+    let entries: Vec<_> = [
+        ("horizontalBlocks", [320.0, 960.0, 1920.0]),
+        ("verticalBlocks", [180.0, 540.0, 1080.0]),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (parameter, values))| {
+        let mut entry = serde_json::to_value(keyed_entry(
+            LayerId::new(8900 + index as u64),
+            PropType::Rotation,
+            [
+                (0, PropertyValue::Float(values[0])),
+                (2_500, PropertyValue::Float(values[1])),
+                (4_000, PropertyValue::Float(values[2])),
+            ],
+        ))
+        .unwrap();
+        entry["target"] = json!({"kind":"effectProperty","effectId":8991,"paramName":parameter});
+        entry
+    })
+    .collect();
+    value["composition"]["dynamics"]["entries"] = json!(entries);
+    value
+}
+
 #[test]
 fn remapped_opacity_retains_source_movie_and_source_owned_keys() {
     let (doc, sources) = case(None);
@@ -176,6 +211,207 @@ fn remapped_opacity_retains_source_movie_and_source_owned_keys() {
             .any(|(name, _)| *name == "ADBE Time Remapping")
     );
     assert!(native.items.iter().any(|item| item.media.is_some()));
+}
+
+#[test]
+fn remapped_mosaic_without_opacity_keeps_counts_on_the_source_clock() {
+    let (doc, sources) = case(None);
+    let value = with_animated_mosaic(&doc, true);
+    let doc = EditableFxCompositionDocument::from_json_value(value).unwrap();
+
+    let output = to_aep_with_media_and_fps(&doc, &sources, 30.0).unwrap();
+    let native = read_project(&output.bytes).unwrap();
+    let wrapper = layers(&native)
+        .iter()
+        .find(|layer| layer.name.as_ref() == "video-8990")
+        .expect("outer Time Remap occurrence");
+    assert!(
+        root_runs(&wrapper.content)
+            .unwrap()
+            .iter()
+            .any(|(name, keys)| *name == "ADBE Time Remapping" && !keys.is_empty())
+    );
+    assert!(
+        crate::effects::native::read_effects(&wrapper.content, [1920.0, 1080.0])
+            .0
+            .is_empty(),
+        "Mosaic must not use the occurrence clock"
+    );
+
+    let inner = native
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ItemKind::Composition(comp) => Some(comp.as_ref()),
+            _ => None,
+        })
+        .flat_map(|comp| comp.layers.iter())
+        .find(|layer| layer.name.as_ref() == "video-8990 source controls")
+        .expect("source-clock Mosaic carrier");
+    let (effects, _) = crate::effects::native::read_effects(&inner.content, [1920.0, 1080.0]);
+    let mosaic = effects
+        .iter()
+        .find(|effect| effect.match_name == "ADBE Mosaic")
+        .expect("editable source-clock Mosaic");
+    for (name, expected) in [
+        ("ADBE Mosaic-0001", [320.0, 960.0, 1920.0]),
+        ("ADBE Mosaic-0002", [180.0, 540.0, 1080.0]),
+    ] {
+        let track = mosaic
+            .parameters
+            .iter()
+            .find(|property| property.match_name == name)
+            .unwrap()
+            .numeric
+            .as_ref()
+            .unwrap();
+        assert_eq!(track.keyframes.len(), 3);
+        for (key, (time, count)) in
+            track
+                .keyframes
+                .iter()
+                .zip([(0.0, expected[0]), (2.5, expected[1]), (4.0, expected[2])])
+        {
+            assert!((key.time_secs - time).abs() < 0.002);
+            assert_eq!(key.values, [count]);
+        }
+    }
+    assert!(output.diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("source-owned control plane (Mosaic)")
+    }));
+}
+
+#[test]
+fn static_source_time_keeps_animated_mosaic_on_the_occurrence_clock() {
+    let (doc, sources) = case(None);
+    let mut value = with_animated_mosaic(&doc, true);
+    let owner = &mut value["composition"]["layers"][0];
+    owner["playback"] = fixture_linear_playback(
+        json!({"start":0,"duration":4000}),
+        json!({"start":0,"duration":4000}),
+    );
+    owner["source"]["timeRemap"] = json!(0.75);
+    let doc = EditableFxCompositionDocument::from_json_value(value).unwrap();
+
+    let output = to_aep_with_media_and_fps(&doc, &sources, 30.0).unwrap();
+    let native = read_project(&output.bytes).unwrap();
+    let direct = layers(&native)
+        .iter()
+        .find(|layer| layer.name.as_ref() == "video-8990")
+        .expect("static source-time movie remains on the direct path");
+    assert!(direct.record.flags().enabled);
+    assert!(
+        root_runs(&direct.content)
+            .unwrap()
+            .iter()
+            .any(|(name, keys)| *name == "ADBE Time Remapping" && !keys.is_empty())
+    );
+    let (effects, _) = crate::effects::native::read_effects(&direct.content, [1920.0, 1080.0]);
+    let mosaic = effects
+        .iter()
+        .find(|effect| effect.match_name == "ADBE Mosaic")
+        .expect("static-remap occurrence keeps editable Mosaic");
+    assert!(mosaic.enabled);
+    for (name, expected) in [
+        ("ADBE Mosaic-0001", [320.0, 960.0, 1920.0]),
+        ("ADBE Mosaic-0002", [180.0, 540.0, 1080.0]),
+    ] {
+        let track = mosaic
+            .parameters
+            .iter()
+            .find(|property| property.match_name == name)
+            .unwrap()
+            .numeric
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            track
+                .keyframes
+                .iter()
+                .map(|key| (key.time_secs, key.values[0]))
+                .collect::<Vec<_>>(),
+            vec![(0.0, expected[0]), (2.5, expected[1]), (4.0, expected[2])]
+        );
+    }
+    assert!(!native.items.iter().any(|item| {
+        match &item.kind {
+            ItemKind::Composition(comp) => comp
+                .layers
+                .iter()
+                .any(|layer| layer.name.as_ref() == "video-8990 source controls"),
+            _ => false,
+        }
+    }));
+    assert!(!output.diagnostics.iter().any(|diagnostic| {
+        diagnostic
+            .message
+            .contains("animated Mosaic controls remain editable on the occurrence clock")
+            || diagnostic
+                .message
+                .contains("source-owned control plane (Mosaic)")
+    }));
+}
+
+#[test]
+fn remapped_mosaic_fallback_keeps_direct_picture_audio_and_ignores_disabled_effects() {
+    for enabled in [true, false] {
+        let (doc, mut sources) = case(None);
+        let mut value = with_animated_mosaic(&doc, enabled);
+        value["composition"]["layers"][0]["volume"] = json!(1.0);
+        sources.get_mut("source-movie").unwrap().audio_sample_rate = 48_000.0;
+        let doc = EditableFxCompositionDocument::from_json_value(value).unwrap();
+
+        let output = to_aep_with_media_and_fps(&doc, &sources, 30.0).unwrap();
+        let native = read_project(&output.bytes).unwrap();
+        let direct_layers: Vec<_> = native
+            .items
+            .iter()
+            .filter_map(|item| match &item.kind {
+                ItemKind::Composition(comp) => Some(comp.as_ref()),
+                _ => None,
+            })
+            .flat_map(|comp| comp.layers.iter())
+            .filter(|layer| layer.name.as_ref() == "video-8990")
+            .collect();
+        assert_eq!(
+            direct_layers.len(),
+            1,
+            "{enabled}: {:?}",
+            output.diagnostics
+        );
+        let direct = direct_layers[0];
+        assert!(direct.record.flags().enabled);
+        assert!(direct.record.flags().audio_enabled);
+        let (effects, _) = crate::effects::native::read_effects(&direct.content, [1920.0, 1080.0]);
+        let mosaic = effects
+            .iter()
+            .find(|effect| effect.match_name == "ADBE Mosaic")
+            .expect("direct occurrence keeps editable Mosaic");
+        assert_eq!(mosaic.enabled, enabled);
+        assert!(!native.items.iter().any(|item| {
+            match &item.kind {
+                ItemKind::Composition(comp) => comp
+                    .layers
+                    .iter()
+                    .any(|layer| layer.name.as_ref() == "video-8990 source controls"),
+                _ => false,
+            }
+        }));
+        let fallback = output.diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("animated Mosaic controls remain editable on the occurrence clock")
+        });
+        assert_eq!(fallback, enabled, "{enabled}: {:?}", output.diagnostics);
+        assert!(
+            !output
+                .diagnostics
+                .iter()
+                .any(|diagnostic| { diagnostic.message.contains("layer and its subtree omitted") })
+        );
+    }
 }
 
 #[test]

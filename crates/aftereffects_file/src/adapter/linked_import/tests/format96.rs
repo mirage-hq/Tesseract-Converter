@@ -60,7 +60,9 @@ fn native_format96_guids_select_editable_composition_siblings() {
         let payload = STANDARD.decode(&occurrence.importer_prefs).unwrap();
         assert_eq!(payload.len(), 72);
         let units: Vec<_> = payload
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
             .collect();
         let native_guid = String::from_utf16(&units).unwrap();

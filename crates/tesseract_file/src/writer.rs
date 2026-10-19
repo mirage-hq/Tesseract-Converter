@@ -1,5 +1,8 @@
 use crate::error::IoContext;
 use crate::metadata::{invalid, serialize_metadata, METADATA_PATH, PROJECT_PATH};
+#[cfg(target_os = "macos")]
+use crate::zip_compat::normalize_central_record;
+use crate::zip_compat::open_archive;
 use crate::{PendingAsset, SaveReport, SaveStrategy, TesseractFileError, TesseractFileMetadata};
 use crc32fast::Hasher as Crc32;
 use sha2::{Digest, Sha256};
@@ -14,7 +17,7 @@ use std::io::{Cursor, Seek, SeekFrom};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use zip::write::SimpleFileOptions;
-use zip::{CompressionMethod, ZipArchive, ZipWriter};
+use zip::{CompressionMethod, ZipWriter};
 
 #[cfg(target_os = "macos")]
 const LOCAL_HEADER_SIGNATURE: u32 = 0x0403_4b50;
@@ -60,18 +63,23 @@ pub(crate) fn save(
     project_bytes: &[u8],
     pending_assets: &BTreeMap<String, PendingAsset>,
 ) -> Result<SaveReport, TesseractFileError> {
-    // Reused central records keep their stored local-header offsets, so the
-    // append route is only valid for archives without prepended bytes.
+    // Only retained assets may survive the clone boundary. Everything after
+    // that prefix is replaced, not appended to obsolete document records.
     #[cfg(target_os = "macos")]
-    if ZipArchive::new(File::open(source).at(source)?)?.offset() == 0 {
+    if let Some(asset_end) = retained_asset_prefix(source, metadata, pending_assets)? {
         if let Some(temporary_path) = clone_to_sibling(source, destination)? {
-            let result =
-                append_changed_entries(&temporary_path, metadata, project_bytes, pending_assets)
-                    .and_then(|report| {
-                        crate::TesseractFile::open(&temporary_path)?;
-                        publish_clone(&temporary_path, destination)?;
-                        Ok(report)
-                    });
+            let result = replace_changed_entries(
+                &temporary_path,
+                asset_end,
+                metadata,
+                project_bytes,
+                pending_assets,
+            )
+            .and_then(|report| {
+                crate::TesseractFile::open(&temporary_path)?;
+                publish_clone(&temporary_path, destination)?;
+                Ok(report)
+            });
             if result.is_err() {
                 let _ = std::fs::remove_file(&temporary_path);
             }
@@ -133,7 +141,7 @@ fn rewrite_archive(
 
     if let Some(source) = source {
         let source_file = File::open(source).at(source)?;
-        let mut archive = ZipArchive::new(source_file)?;
+        let mut archive = open_archive(source_file, source)?;
         for index in 0..archive.len() {
             let file = archive.by_index_raw(index)?;
             let name = file.name().to_string();
@@ -143,12 +151,6 @@ fn rewrite_archive(
             }
         }
     }
-
-    writer.start_file(
-        PROJECT_PATH,
-        options.large_file(needs_zip64(project_bytes.len() as u64)),
-    )?;
-    writer.write_all(project_bytes).at(destination)?;
 
     for (asset_id, pending) in pending_assets.iter_mut() {
         // zip aborts a non-ZIP64 entry once it passes 4 GiB, so size it up front.
@@ -171,6 +173,14 @@ fn rewrite_archive(
                 .insert(asset_id.clone(), pending.descriptor.clone());
         }
     }
+    // Keep every asset before the replaceable document suffix so future saves
+    // can retain the media through copy-on-write without retaining old JSON.
+    writer.start_file(
+        PROJECT_PATH,
+        options.large_file(needs_zip64(project_bytes.len() as u64)),
+    )?;
+    writer.write_all(project_bytes).at(destination)?;
+
     metadata.validate()?;
     let metadata_bytes = serialize_metadata(metadata)?;
 
@@ -189,6 +199,54 @@ fn rewrite_archive(
         bytes_written,
         reused_assets,
     })
+}
+
+/// Reuse media only when its local records form a gap-free prefix. Legacy
+/// layouts, removed/replaced interior assets and data descriptors use a rewrite.
+#[cfg(target_os = "macos")]
+fn retained_asset_prefix(
+    path: &Path,
+    metadata: &TesseractFileMetadata,
+    pending_assets: &BTreeMap<String, PendingAsset>,
+) -> Result<Option<u64>, TesseractFileError> {
+    let mut archive = open_archive(File::open(path).at(path)?, path)?;
+    if archive.offset() != 0 {
+        return Ok(None);
+    }
+    let pending_paths: HashSet<&str> = pending_assets
+        .values()
+        .map(|asset| asset.descriptor.path.as_str())
+        .collect();
+    let mut ranges = Vec::with_capacity(metadata.assets.len());
+    for descriptor in metadata.assets.values() {
+        if pending_paths.contains(descriptor.path.as_str()) {
+            continue;
+        }
+        let entry = archive.by_name(&descriptor.path)?;
+        let end = entry
+            .data_start()
+            .checked_add(entry.compressed_size())
+            .ok_or_else(|| invalid("asset entry range overflow"))?;
+        ranges.push((entry.header_start(), end));
+    }
+    ranges.sort_unstable();
+    let mut input = File::open(path).at(path)?;
+    let mut asset_end = 0;
+    for (start, end) in ranges {
+        if start != asset_end || end > archive.central_directory_start() {
+            return Ok(None);
+        }
+        input.seek(SeekFrom::Start(start + 6)).at(path)?;
+        let mut flags = [0; 2];
+        input.read_exact(&mut flags).at(path)?;
+        if u16::from_le_bytes(flags) & (1 << 3) != 0 {
+            // A trailing data descriptor is part of the local record too;
+            // don't truncate or retain an incompletely measured record.
+            return Ok(None);
+        }
+        asset_end = end;
+    }
+    Ok(Some(asset_end))
 }
 
 #[cfg(target_os = "macos")]
@@ -227,8 +285,9 @@ fn clone_to_sibling(
 }
 
 #[cfg(target_os = "macos")]
-fn append_changed_entries(
+fn replace_changed_entries(
     path: &Path,
+    asset_end: u64,
     metadata: &TesseractFileMetadata,
     project_bytes: &[u8],
     pending_assets: &BTreeMap<String, PendingAsset>,
@@ -236,7 +295,7 @@ fn append_changed_entries(
     // Serialize and size-check before mutating the cloned destination. The
     // metadata has already been finalized by prepare_save_metadata.
     let metadata_bytes = serialize_metadata(metadata)?;
-    let (central_start, existing_records) = read_central_records(path)?;
+    let (_, existing_records) = read_central_records(path)?;
     let pending_paths: HashSet<&str> = pending_assets
         .values()
         .map(|asset| asset.descriptor.path.as_str())
@@ -264,18 +323,18 @@ fn append_changed_entries(
         .write(true)
         .open(path)
         .at(path)?;
-    output.set_len(central_start).at(path)?;
-    output.seek(SeekFrom::Start(central_start)).at(path)?;
+    output.set_len(asset_end).at(path)?;
+    output.seek(SeekFrom::Start(asset_end)).at(path)?;
 
+    for pending in pending_assets.values() {
+        central_records.push(write_stored_pending(&mut output, pending, path)?);
+    }
     central_records.push(write_stored_bytes(
         &mut output,
         PROJECT_PATH,
         project_bytes,
         path,
     )?);
-    for pending in pending_assets.values() {
-        central_records.push(write_stored_pending(&mut output, pending, path)?);
-    }
     central_records.push(write_stored_bytes(
         &mut output,
         METADATA_PATH,
@@ -301,7 +360,7 @@ fn append_changed_entries(
 
     Ok(SaveReport {
         strategy: SaveStrategy::ReflinkAppend,
-        bytes_written: end - central_start,
+        bytes_written: end - asset_end,
         reused_assets,
     })
 }
@@ -315,7 +374,7 @@ struct CentralRecord {
 
 #[cfg(target_os = "macos")]
 fn read_central_records(path: &Path) -> Result<(u64, Vec<CentralRecord>), TesseractFileError> {
-    let archive = ZipArchive::new(File::open(path).at(path)?)?;
+    let archive = open_archive(File::open(path).at(path)?, path)?;
     let central_start = archive.central_directory_start();
     let count = archive.len();
     drop(archive);
@@ -344,6 +403,7 @@ fn read_central_records(path: &Path) -> Result<(u64, Vec<CentralRecord>), Tesser
             .to_string();
         let mut bytes = fixed.to_vec();
         bytes.extend_from_slice(&variable);
+        normalize_central_record(&mut bytes)?;
         records.push(CentralRecord { name, bytes });
     }
     Ok((central_start, records))
@@ -580,6 +640,21 @@ fn publish_named(
     destination: &Path,
     replace: bool,
 ) -> Result<(), TesseractFileError> {
+    #[cfg(windows)]
+    if replace {
+        // Keep the source identity handle alive, but use Rust's POSIX-semantics
+        // fallback when MoveFileExW cannot replace an archive with open readers.
+        // keep() also clears Windows' temporary attribute before publication.
+        let (file, path) = temporary.keep().map_err(|error| TesseractFileError::Io {
+            path: destination.to_path_buf(),
+            source: error.error,
+        })?;
+        drop(file);
+        let temporary = tempfile::TempPath::try_from_path(path).at(destination)?;
+        std::fs::rename(&temporary, destination).at(destination)?;
+        return sync_parent(destination);
+    }
+
     let result = if replace {
         temporary.persist(destination)
     } else {

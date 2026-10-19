@@ -49,6 +49,35 @@ def test_checked_in_case_stages_the_declared_paths_and_bytes(ctx):
         fixtures.stage_case(ctx.case, dangling)
 
 
+def test_reuse_checks_unhashed_inputs_against_the_checked_in_bytes(ctx):
+    ctx.case = copy.deepcopy(next(
+        case for case in ctx.original["cases"]
+        if any("sha256" not in file for file in case["files"])
+    ))
+    output = ctx.root / "staged"
+    fixtures.stage_case(ctx.case, output)
+    fixtures.stage_case(ctx.case, output, reuse=True)
+    unpinned = next(file for file in ctx.case["files"] if "sha256" not in file)
+    staged = output / unpinned["path"]
+    original = staged.read_bytes()
+    # Equal length defeats size-only checks; reuse must verify actual content.
+    staged.write_bytes(bytes([original[0] ^ 1]) + original[1:])
+    with pytest.raises(fixtures.FixtureError, match="staged.*differs"):
+        fixtures.stage_case(ctx.case, output, reuse=True)
+
+
+def test_reuse_rejects_symlinked_parent_of_a_staged_file(ctx):
+    output = ctx.root / "staged"
+    fixtures.stage_case(ctx.case, output)
+    media = output / "media"
+    external = ctx.root / "external-media"
+    media.rename(external)
+    media.symlink_to(external, target_is_directory=True)
+    with pytest.raises(fixtures.FixtureError, match="unsafe staged"):
+        fixtures.stage_case(ctx.case, output, reuse=True)
+    assert external.is_dir()
+
+
 def test_numeric_prefix_real_project_id_is_safe(ctx):
     ctx.case["id"] = "2128_aiedit_en_na_multicreators"
     assert check(ctx, [ctx.case])["cases"][0]["id"] == ctx.case["id"]

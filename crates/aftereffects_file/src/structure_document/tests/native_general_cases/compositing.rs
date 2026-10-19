@@ -120,7 +120,7 @@ fn grouped_native_motion_blur_keeps_master_layer_shutter_and_position_keys() {
                 let project = pinned_project(&MOTION_BLUR);
                 let converted = fresh_import(&project, id, &format!("IMPORT_BLUR_{suffix}"));
                 let settings = converted.document.composition().motion_blur();
-                assert_eq!(settings.enabled, master);
+                assert_eq!(settings.enabled, master || layer);
                 assert_eq!(settings.shutter_angle.value(), angle);
                 assert_eq!(settings.shutter_phase, phase);
                 let foreground = named_group(root(&converted), "moving_foreground");

@@ -87,7 +87,31 @@ pub(super) fn lower_with_native_3d(
         .chain(layer.anchor_options.iter().map(|options| options.id))
         .chain(layer.path_options.iter().map(|options| options.id))
         .collect::<BTreeSet<_>>();
+    for animator in &layer.animators {
+        if animator
+            .fill_color
+            .iter()
+            .chain(animator.stroke_color.iter())
+            .any(|color| color[..3].iter().any(|channel| *channel > 1.0))
+        {
+            diagnostics.push(format!("Text animator {}: extended-sRGB RGB above 1 was clamped to native 0..=1; HDR brightness and ratios are not retained; alpha is unchanged", animator.id));
+        }
+    }
     for entry in dynamics {
+        if entry
+            .target
+            .fx_item_id()
+            .is_some_and(|id| text_item_ids.contains(&id))
+        {
+            let extended = match entry.animator.data() {
+                AnimatorData::Constant { value } => matches!(value, PropertyValue::Color(color) if color[..3].iter().any(|channel| *channel > 1.0)),
+                AnimatorData::Keyframes { track, .. } => track.keyframes().iter().any(|key| matches!(key.value(), PropertyValue::Color(color) if color[..3].iter().any(|channel| *channel > 1.0))),
+                _ => false,
+            };
+            if extended {
+                diagnostics.push(format!("Text control {}: extended-sRGB color constants/keys were clamped to native RGB 0..=1; HDR brightness and ratios are not retained; alpha and authored key times are unchanged", entry.target));
+            }
+        }
         if matches!(
             entry.animator.data(),
             AnimatorData::Keyframes { enabled: false, .. }
@@ -107,7 +131,9 @@ pub(super) fn lower_with_native_3d(
         }
     }
     let document = lower_document(&layer.source_text, &mut diagnostics, fonts.is_none())?;
-    let documents = lower_document_timeline(document, layer.id, dynamics, &mut diagnostics, fonts)?;
+    let mut documents =
+        lower_document_timeline(document, layer.id, dynamics, &mut diagnostics, fonts)?;
+    lower_box_baseline(&layer.source_text, &mut documents, fonts, &mut diagnostics);
     // Source Text document controls are already consumed by the text timeline.
     // They are not 2D Transform controls and must not be rejected by its gate.
     let transform_dynamics = dynamics
@@ -377,12 +403,6 @@ fn lower_document(
                 .into(),
         );
     }
-    if document.box_first_baseline.is_some() {
-        diagnostics.push(
-            "boxFirstBaseline is derived PAG/renderer metadata, not an AE-authored Source Text control, and was omitted"
-                .into(),
-        );
-    }
     if document.underline || document.strikethrough {
         diagnostics.push(
             "Underline/strikethrough have no established whole-document AE COS mapping and were omitted"
@@ -427,6 +447,63 @@ fn lower_document(
             all_caps: document.all_caps,
         },
     })
+}
+
+/// The cache-free native box profile lays out its first line from the physical
+/// face's cap height. Rebase the frame, not Transform or Baseline Shift: those
+/// controls also affect paths, animators and per-character baseline semantics.
+/// This remains an explicit approximation, not a native first-baseline control.
+fn lower_box_baseline(
+    source: &TextDocument,
+    timeline: &mut TextDocumentTimeline,
+    fonts: Option<&super::fonts::ArchiveFonts>,
+    diagnostics: &mut Vec<String>,
+) {
+    let Some(baseline) = source.box_first_baseline else {
+        return;
+    };
+    let frame = (|| {
+        if !source.box_text || source.vertical_align.is_none() {
+            return Err("requires Box Text with explicit vertical alignment");
+        }
+        let first = &timeline
+            .keys
+            .first()
+            .ok_or("has no emitted document")?
+            .document;
+        if timeline.keys.iter().any(|key| {
+            key.document.font_postscript != first.font_postscript
+                || key.document.font_size != first.font_size
+        }) {
+            return Err("changing font or size requires keyed native box geometry");
+        }
+        let fonts = fonts.ok_or("requires a verified embedded physical font")?;
+        let cap_height = fonts.cap_height(&first.font_postscript)?;
+        let [left, old_top] = first.box_position.ok_or("has no box position")?;
+        let [width, old_height] = first.box_size.ok_or("has no box size")?;
+        // Match the native writer's f32 size; retain the original bottom so
+        // moving the first baseline does not add room for another text line.
+        let top = baseline - cap_height * f64::from(first.font_size as f32);
+        let height = old_top + old_height - top;
+        if !top.is_finite() || !height.is_finite() || height <= 0.0 {
+            return Err("rebased box has no finite positive height");
+        }
+        Ok(([left, top], [width, height]))
+    })();
+    match frame {
+        Ok((position, size)) => {
+            for key in &mut timeline.keys {
+                key.document.box_position = Some(position);
+                key.document.box_size = Some(size);
+                // An authored FX baseline consumes explicit vertical alignment.
+                key.document.vertical_align = Some(fx_schema::VerticalAlign::Top);
+            }
+            diagnostics.push("boxFirstBaseline: cap-height baseline approximation rebases the native box top using verified embedded-font metrics and retains its bottom; wording, Transform, leading and animators remain editable. Native font layout, clipping, reflow after edits and raster fidelity are unverified".into());
+        }
+        Err(reason) => diagnostics.push(format!(
+            "boxFirstBaseline omitted: {reason}; editable native Text retains its ordinary box layout"
+        )),
+    }
 }
 
 #[derive(Clone)]
@@ -528,6 +605,7 @@ fn lower_document_timeline(
         diagnostics.push("Source Text font changes use deterministic PostScript-name candidates; native font identity and host resolution remain unverified".into());
     }
     if tracks.is_empty() {
+        clamp_document_colors(&mut state.document, 0, diagnostics);
         return Ok(TextDocumentTimeline {
             keyed: false,
             keys: vec![TextDocumentKey {
@@ -552,12 +630,32 @@ fn lower_document_timeline(
             apply_document_value(&mut current, *property, key.value())?;
         }
         refresh_font(&mut current, fonts, diagnostics)?;
+        clamp_document_colors(&mut current.document, time_millis, diagnostics);
         keys.push(TextDocumentKey {
             time_millis,
             document: current.document,
         });
     }
     Ok(TextDocumentTimeline { keyed: true, keys })
+}
+
+fn clamp_document_colors(
+    document: &mut TextDocumentSpec,
+    time: i64,
+    diagnostics: &mut Vec<String>,
+) {
+    let mut clipped = false;
+    for color in std::iter::once(&mut document.fill_color).chain(document.stroke_color.iter_mut()) {
+        for channel in &mut color[..3] {
+            if *channel > 1.0 {
+                *channel = 1.0;
+                clipped = true;
+            }
+        }
+    }
+    if clipped {
+        diagnostics.push(format!("Source Text at {time}ms: extended-sRGB RGB above 1 was clamped to native 0..=1; HDR brightness and ratios are not retained; alpha and document key time are unchanged"));
+    }
 }
 
 fn is_document_property(property: PropType) -> bool {
@@ -604,9 +702,7 @@ fn validate_document_value(property: PropType, value: &PropertyValue) -> Result<
             PropertyValue::Bool(_),
         ) => Ok(()),
         (PropType::FillColor | PropType::StrokeColor, PropertyValue::Color(value))
-            if value
-                .iter()
-                .all(|component| component.is_finite() && (0.0..=1.0).contains(component)) =>
+            if fx_schema::has_valid_extended_color(value) =>
         {
             Ok(())
         }
@@ -875,18 +971,15 @@ fn constant_track(
             let PropertyValue::Color(value) = value else {
                 return Err("Text color constant has a non-color value");
             };
-            if value
-                .iter()
-                .any(|component| !component.is_finite() || !(0.0..=1.0).contains(component))
-            {
-                return Err("Text color constant lies outside 0..=1");
+            if !fx_schema::has_valid_extended_color(value) {
+                return Err("Text color constant requires RGB 0..=64 and alpha 0..=1");
             }
             (
                 vec![
                     value[3] * 255.0,
-                    value[0] * 255.0,
-                    value[1] * 255.0,
-                    value[2] * 255.0,
+                    value[0].min(1.0) * 255.0,
+                    value[1].min(1.0) * 255.0,
+                    value[2].min(1.0) * 255.0,
                 ],
                 4,
                 false,
@@ -952,18 +1045,15 @@ fn encode_track(
                     let PropertyValue::Color(value) = key.value() else {
                         return Err("Text color keyframe has a non-color value");
                     };
-                    if value
-                        .iter()
-                        .any(|component| !component.is_finite() || !(0.0..=1.0).contains(component))
-                    {
-                        return Err("Text color keyframe lies outside 0..=1");
+                    if !fx_schema::has_valid_extended_color(value) {
+                        return Err("Text color keyframe requires RGB 0..=64 and alpha 0..=1");
                     }
                     (
                         vec![
                             value[3] * 255.0,
-                            value[0] * 255.0,
-                            value[1] * 255.0,
-                            value[2] * 255.0,
+                            value[0].min(1.0) * 255.0,
+                            value[1].min(1.0) * 255.0,
+                            value[2].min(1.0) * 255.0,
                         ],
                         vec![easing; 4],
                         Vec::new(),
@@ -1024,6 +1114,24 @@ mod tests {
             random_seed_target: None,
             layer_refs: Default::default(),
         }
+    }
+
+    #[test]
+    fn extended_text_color_clips_rgb_but_preserves_native_alpha_and_key_clock() {
+        let mut state = document_state();
+        state.document.fill_color = [2.0, 0.5, 0.25, 0.25];
+        state.document.stroke_color = Some([64.0, 2.0, 1.0, 0.5]);
+        let mut diagnostics = Vec::new();
+        clamp_document_colors(&mut state.document, 250, &mut diagnostics);
+        assert_eq!(state.document.fill_color, [1.0, 0.5, 0.25, 0.25]);
+        assert_eq!(state.document.stroke_color, Some([1.0, 1.0, 1.0, 0.5]));
+        assert!(diagnostics[0].contains("250ms"));
+        let track = constant_track(
+            &PropertyValue::Color([2.0, 0.5, 0.25, 0.5]),
+            TrackEncoding::Color,
+        )
+        .unwrap();
+        assert_eq!(track.keys[0].values, [127.5, 255.0, 127.5, 63.75]);
     }
 
     #[test]
@@ -1373,7 +1481,7 @@ mod tests {
         );
         for color in [
             [-0.1, 0.0, 0.0, 1.0],
-            [0.0, 1.1, 0.0, 1.0],
+            [0.0, 65.0, 0.0, 1.0],
             [0.0, 0.0, f64::NAN, 1.0],
         ] {
             assert!(

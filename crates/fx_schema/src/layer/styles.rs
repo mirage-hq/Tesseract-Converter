@@ -29,6 +29,7 @@ macro_rules! define_layer_styles_schema {
             pub enabled: bool,
             /// RGBA shadow color.
             #[serde(default = "default_shadow_color")]
+            #[serde(deserialize_with = "crate::deserialize_extended_color")]
             pub color: ColorProperty,
             /// Screen-space shadow offset in pixels.
             #[serde(default)]
@@ -100,6 +101,7 @@ macro_rules! define_layer_styles_schema {
             pub enabled: bool,
             /// RGBA glow color (alpha carries the glow opacity, like [`DropShadow`]).
             #[serde(default = "default_glow_color")]
+            #[serde(deserialize_with = "crate::deserialize_extended_color")]
             pub color: ColorProperty,
             /// Glow size in pixels at full intrinsic scale (libpag's authored `size`).
             #[serde(default)]
@@ -127,6 +129,7 @@ macro_rules! define_layer_styles_schema {
             enabled: bool,
             /// RGBA stroke color (alpha carries the stroke opacity).
             #[serde(default = "default_stroke_outline_color")]
+            #[serde(deserialize_with = "crate::deserialize_extended_color")]
             pub(crate) color: ColorProperty,
             /// Stroke width in pixels.
             #[serde(default)]
@@ -203,6 +206,7 @@ macro_rules! define_layer_styles_schema {
             pub(crate) enabled: bool,
             /// RGBA shadow color (alpha carries the shadow opacity, like [`DropShadow`]).
             #[serde(default = "default_shadow_color")]
+            #[serde(deserialize_with = "crate::deserialize_extended_color")]
             pub(crate) color: ColorProperty,
             /// Shadow offset in layer-local pixels (author derives it from AE's
             /// angle + distance, matching the PAG Drop Shadow convention).
@@ -247,6 +251,7 @@ macro_rules! define_layer_styles_schema {
             pub(crate) enabled: bool,
             /// RGBA glow color (alpha carries the glow opacity, like [`OuterGlowStyle`]).
             #[serde(default = "default_glow_color")]
+            #[serde(deserialize_with = "crate::deserialize_extended_color")]
             pub(crate) color: ColorProperty,
             /// Glow size in pixels (AE "Size").
             #[serde(default)]
@@ -299,6 +304,7 @@ macro_rules! define_layer_styles_schema {
             pub(crate) enabled: bool,
             /// RGBA satin color (alpha carries the satin opacity). AE default: black.
             #[serde(default = "default_shadow_color")]
+            #[serde(deserialize_with = "crate::deserialize_extended_color")]
             pub(crate) color: ColorProperty,
             /// Contour offset in layer-local pixels (author derives it from AE's
             /// angle + distance).
@@ -362,10 +368,12 @@ macro_rules! define_layer_styles_schema {
             /// RGBA highlight (alpha carries the highlight opacity; AE default white at
             /// 75%, composited Screen-like).
             #[serde(default = "default_bevel_highlight_color")]
+            #[serde(deserialize_with = "crate::deserialize_extended_color")]
             pub(crate) highlight_color: ColorProperty,
             /// RGBA shadow (alpha carries the shadow opacity; AE default black at 75%,
             /// composited Multiply-like).
             #[serde(default = "default_shadow_color_75")]
+            #[serde(deserialize_with = "crate::deserialize_extended_color")]
             pub(crate) shadow_color: ColorProperty,
         }
 

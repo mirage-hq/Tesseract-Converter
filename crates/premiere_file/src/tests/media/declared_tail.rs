@@ -43,6 +43,7 @@ fn declared_tail_selected_picture_keeps_exact_sample_clock() {
     assert!(file.timing.partial_timeline);
     assert_eq!(file.timing.declared_media_end, Some(6000));
     assert!(file.validate_source(&source()).is_err());
+    assert!(!file.has_native_last_sample_endpoint(&source()).unwrap());
     assert!(file
         .validate_source_for_use(&source(), Some(&usage))
         .unwrap());
@@ -173,6 +174,12 @@ fn declared_tail_public_import_publishes_original_bytes_and_editable_trim() {
         notes
             .iter()
             .any(|note| note.reason.contains("declared media-header tail")),
+        "{notes:?}"
+    );
+    assert!(
+        notes
+            .iter()
+            .all(|note| !note.reason.contains("last physical sample start")),
         "{notes:?}"
     );
     let archive = tesseract_file::TesseractFile::open(output.join("project.tsrct")).unwrap();

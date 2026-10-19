@@ -72,7 +72,7 @@ fn psd_unsupported_sibling_geometry_does_not_omit_selected_raster() {
     // an off-canvas rectangle. Blue's identity/channels remain untouched.
     for bounds in [[0_i32, 0, 0, 0], [-8, 10, 24, 30]] {
         let mut bytes = FIXTURE.to_vec();
-        for (field, value) in bytes[44..60].chunks_exact_mut(4).zip(bounds) {
+        for (field, value) in bytes[44..60].as_chunks_mut::<4>().0.iter_mut().zip(bounds) {
             field.copy_from_slice(&value.to_be_bytes());
         }
         let blue = decode(&bytes, Selection::Layer { id: 202, index: 1 }, [32, 20]).unwrap();
@@ -186,6 +186,30 @@ fn psd_rgb_composite_is_opaque_but_cannot_discard_a_transparency_marker() {
 }
 
 #[test]
+fn native_declared_composite_alpha_does_not_require_layer_records() {
+    let layer_mask_len = u32::from_be_bytes(FIXTURE[34..38].try_into().unwrap()) as usize;
+    let mut flattened = FIXTURE.to_vec();
+    flattened.splice(34..38 + layer_mask_len, 0_u32.to_be_bytes());
+    assert!(matches!(
+        decode(&flattened, Selection::Merged, [64, 48]),
+        Err(DecodeError::Unsupported(
+            "fourth composite channel without merged transparency marker"
+        ))
+    ));
+    assert_eq!(
+        decode(&flattened, Selection::MergedWithStraightAlpha, [64, 48]).unwrap(),
+        decode(FIXTURE, Selection::Merged, [64, 48]).unwrap()
+    );
+    flattened[12..14].copy_from_slice(&3_u16.to_be_bytes());
+    assert!(matches!(
+        decode(&flattened, Selection::MergedWithStraightAlpha, [64, 48]),
+        Err(DecodeError::Malformed(
+            "merged transparency channel is absent"
+        ))
+    ));
+}
+
+#[test]
 fn psd_composite_packbits_uses_one_table_for_all_channels() {
     let layer_mask_len = u32::from_be_bytes(FIXTURE[34..38].try_into().unwrap()) as usize;
     let start = 38 + layer_mask_len;
@@ -195,7 +219,7 @@ fn psd_composite_packbits_uses_one_table_for_all_channels() {
     for _ in 0..4 * 48 {
         encoded.extend(65_u16.to_be_bytes());
     }
-    for row in raw.chunks_exact(64) {
+    for row in raw.as_chunks::<64>().0.iter() {
         encoded.push(63);
         encoded.extend(row);
     }

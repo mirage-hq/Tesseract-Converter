@@ -136,10 +136,16 @@ fn be_u32(bytes: &[u8], offset: usize) -> u32 {
 
 /// The nonempty authored full path, and the rest of the alias metadata.
 fn decode_alias(children: &[Chunk]) -> Result<(String, alias::AliasMetadata), MediaDecodeError> {
-    let alias =
-        optional_unique_list(children, *b"Als2", "Als2")?.ok_or(MediaDecodeError::Chunk("Als2"))?;
-    let bytes = unique_data(alias, *b"alas", "alas")?;
-    let mut metadata = alias::decode(bytes).map_err(|_| MediaDecodeError::Invalid("alas JSON"))?;
+    let modern = optional_unique_list(children, *b"Als2", "Als2")?;
+    let legacy = optional_unique_list(children, *b"Alas", "Alas")?;
+    let mut metadata = match (modern, legacy) {
+        (Some(alias), None) => alias::decode(unique_data(alias, *b"alas", "alas")?)
+            .map_err(|_| MediaDecodeError::Invalid("alas JSON"))?,
+        (None, Some(alias)) => alias::decode_legacy_windows(unique_data(alias, *b"alas", "alas")?)
+            .map_err(|_| MediaDecodeError::Invalid("legacy alas"))?,
+        (None, None) => return Err(MediaDecodeError::Chunk("Als2")),
+        (Some(_), Some(_)) => return Err(MediaDecodeError::Chunk("Als2/Alas")),
+    };
     let authored_path = metadata
         .fullpath
         .take()
@@ -362,6 +368,66 @@ mod tests {
         assert_eq!(descriptor.native_frame_rate.as_f64(), 24.0);
         assert_eq!(descriptor.audio_sample_rate, 48_000.0);
         assert_eq!(descriptor.authored_path, r"C:\source\clip.mov");
+    }
+
+    fn legacy_pin(path: &[u8]) -> Chunk {
+        let mut payload = vec![1, 0, 0, 13, 255, 255, 255, 255, 0, 0, 0, 0];
+        payload.extend_from_slice(&u16::try_from(path.len()).unwrap().to_le_bytes());
+        payload.extend_from_slice(path);
+        payload.extend_from_slice(&[1, 0]);
+        let mut pin = media_pin("unused", [64, 48], (0, 1), 0.0);
+        pin.children_mut().unwrap()[2] =
+            Chunk::list(*b"Alas", vec![Chunk::data(*b"alas", payload).unwrap()]);
+        pin
+    }
+
+    #[test]
+    fn legacy_windows_alias_retains_editable_image_source() {
+        let pin = legacy_pin(b"\\C:\\original\\Footage\\badge.png\0");
+        let descriptor = decode(&pin).unwrap();
+        assert_eq!(descriptor.kind, MediaKind::StillImage);
+        assert_eq!(descriptor.authored_path, r"C:\original\Footage\badge.png");
+        assert_eq!((descriptor.width, descriptor.height), (64, 48));
+        assert_eq!(descriptor.relative_location, None);
+        assert!(!descriptor.target_is_folder);
+    }
+
+    #[test]
+    fn legacy_alias_rejects_unbounded_or_ambiguous_paths() {
+        for path in [
+            &b"\\C:\\original\\badge.png"[..],
+            &b"\\C:\\original\0\\badge.png\0"[..],
+            &b"\\\\server\\badge.png\0"[..],
+            &b"\\C:\\original\\bad\xff.png\0"[..],
+        ] {
+            assert!(decode(&legacy_pin(path)).is_err());
+        }
+        let valid = legacy_pin(b"\\C:\\original\\badge.png\0");
+        let payload = valid.children().unwrap()[2].children().unwrap()[0]
+            .data_payload()
+            .unwrap();
+        for length in 0..payload.len() {
+            let mut truncated = valid.clone();
+            truncated.children_mut().unwrap()[2] = Chunk::list(
+                *b"Alas",
+                vec![Chunk::data(*b"alas", payload[..length].to_vec()).unwrap()],
+            );
+            assert!(decode(&truncated).is_err(), "truncated length {length}");
+        }
+        let mut duplicate = valid.clone();
+        duplicate
+            .children_mut()
+            .unwrap()
+            .push(valid.children().unwrap()[2].clone());
+        assert!(decode(&duplicate).is_err());
+        let mut mixed = legacy_pin(b"\\C:\\original\\badge.png\0");
+        mixed.children_mut().unwrap().push(
+            media_pin("other.png", [64, 48], (0, 1), 0.0)
+                .children()
+                .unwrap()[2]
+                .clone(),
+        );
+        assert!(decode(&mixed).is_err());
     }
 
     #[test]

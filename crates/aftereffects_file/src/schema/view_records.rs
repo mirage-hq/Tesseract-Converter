@@ -173,10 +173,10 @@ impl StaticPropertyValues {
             return Err(RifxError::Invalid("invalid static cdat length"));
         }
         let values = bytes
-            .chunks_exact(8)
-            .map(|part| {
-                f64::from_be_bytes(part.try_into().expect("chunks_exact yields eight bytes"))
-            })
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|part| f64::from_be_bytes(*part))
             .collect::<Vec<_>>();
         Self::new(values)
     }

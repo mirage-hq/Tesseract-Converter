@@ -4,6 +4,8 @@
 #[path = "caption_box.rs"]
 mod caption_box;
 #[cfg(test)]
+mod evaluated_tests;
+#[cfg(test)]
 mod gradient_stroke_tests;
 #[path = "rigged_box.rs"]
 mod rigged_box;
@@ -220,8 +222,11 @@ pub(super) fn lower_with_context(
         "ADBE Vector Rect Roundness",
     ]
     .into_iter()
-    .filter_map(|property| numeric_leaf(&leaves, property, &mut local_warnings))
-    .any(|numeric| numeric.expression_enabled);
+    .any(|property| {
+        numeric_leaf(&leaves, property, &mut local_warnings).is_some_and(|numeric| {
+            numeric.expression_enabled && evaluated_control(collector, &leaves, property).is_none()
+        })
+    });
     // The two recognized expression grammars are disjoint: at most one applies.
     let controls = match control_context {
         Some((layer, composition)) if expression_driven => {
@@ -264,12 +269,21 @@ pub(super) fn lower_with_context(
         };
         ([size[0], size[1]], [position[0], position[1]], roundness[0])
     } else {
-        let Some(size) = initial_pair(&leaves, "ADBE Vector Rect Size") else {
-            return Ok(None);
+        let pair = |property| {
+            if let Some(samples) = evaluated_control(collector, &leaves, property) {
+                let first = samples.values().first()?;
+                Some([*first.first()?, *first.get(1)?])
+            } else {
+                initial_pair(&leaves, property)
+            }
         };
-        let (Some(position), Some(roundness)) = (
-            initial_pair(&leaves, "ADBE Vector Rect Position"),
-            initial_scalar(&leaves, "ADBE Vector Rect Roundness"),
+        let roundness = evaluated_control(collector, &leaves, "ADBE Vector Rect Roundness")
+            .map(|samples| samples.values().first()?.first().copied())
+            .unwrap_or_else(|| initial_scalar(&leaves, "ADBE Vector Rect Roundness"));
+        let (Some(size), Some(position), Some(roundness)) = (
+            pair("ADBE Vector Rect Size"),
+            pair("ADBE Vector Rect Position"),
+            roundness,
         ) else {
             return Ok(None);
         };
@@ -305,6 +319,15 @@ pub(super) fn lower_with_context(
             &parsed
         };
         if numeric.expression_enabled
+            && controls.is_none()
+            && let Some(samples) = evaluated_control(collector, &leaves, property)
+        {
+            if !valid_evaluated_control(samples, dimensions, property) {
+                return Ok(None);
+            }
+            continue;
+        }
+        if numeric.expression_enabled
             || if property == "ADBE Vector Rect Size" {
                 !valid_rect_size_animation(size, numeric)
             } else {
@@ -331,8 +354,13 @@ pub(super) fn lower_with_context(
                 // An expression-backed native leaf looks static; its resolved
                 // control curve is what the Rect animates.
                 Some(controls) => animated(controls.curve(name)),
-                None => numeric_leaf(&leaves, name, &mut local_warnings)
-                    .is_some_and(|numeric| animated(&numeric)),
+                None => evaluated_control(collector, &leaves, name).map_or_else(
+                    || {
+                        numeric_leaf(&leaves, name, &mut local_warnings)
+                            .is_some_and(|numeric| animated(&numeric))
+                    },
+                    |samples| samples.values().windows(2).any(|pair| pair[0] != pair[1]),
+                ),
             })
     {
         // Rect paint coordinates have no FX gradient-axis animation target. A
@@ -456,19 +484,27 @@ pub(super) fn lower_with_context(
         }),
         ShapePaint::Solid { .. } => None,
     });
+    let mut paint_blend = blend::from_run(
+        fill_run
+            .or(stroke_run)
+            .expect("paint presence checked above")
+            .chunks,
+        &mut local_warnings,
+    );
+    if single.is_some() && paint_blend != fx_schema::BlendMode::Normal {
+        // A sole paint has a transparent native backdrop, not the composition below.
+        local_warnings.push(format!(
+            "{name}: singleton Rectangle paint blend {paint_blend:?} normalized to Normal against its transparent native backdrop; paint blend control is not independently editable"
+        ));
+        paint_blend = fx_schema::BlendMode::Normal;
+    }
     let mut rect = RectLayer {
         id,
         name: name.to_owned(),
         description: "Editable AE parametric Rectangle and owned paint".into(),
         is_hidden: false,
         parent: Some(rect_parent),
-        blend_mode: blend::from_run(
-            fill_run
-                .or(stroke_run)
-                .expect("paint presence checked above")
-                .chunks,
-            &mut local_warnings,
-        ),
+        blend_mode: paint_blend,
         track_matte: None,
         masks: Vec::new(),
         active_range: full_active_range(),
@@ -641,6 +677,41 @@ pub(super) fn identity_group(
     let identity = decoded == identity_transform() && !dynamic && transform_warnings.is_empty();
     warnings.extend(transform_warnings);
     identity
+}
+
+fn evaluated_control<'a>(
+    collector: &'a Collector<'_>,
+    leaves: &[(&str, &[Chunk])],
+    name: &str,
+) -> Option<&'a crate::expression_samples::EvaluatedProperty> {
+    let (_, run) = leaves.iter().find(|(property, _)| *property == name)?;
+    if !super::numeric_from_run(run)?.expression_enabled {
+        return None;
+    }
+    match collector.evaluated_shapes.get(&(run.as_ptr() as usize))? {
+        super::EvaluatedShape::Numeric(samples) => Some(samples),
+        _ => None,
+    }
+}
+
+fn valid_evaluated_control(
+    samples: &crate::expression_samples::EvaluatedProperty,
+    dimensions: usize,
+    property: &str,
+) -> bool {
+    let nonnegative = property != "ADBE Vector Rect Position";
+    !samples.values().is_empty()
+        && samples.values().iter().all(|value| {
+            value.len() == dimensions
+                && value
+                    .iter()
+                    .all(|value| value.is_finite() && (!nonnegative || *value >= 0.0))
+        })
+        && (property != "ADBE Vector Rect Size"
+            || samples
+                .values()
+                .iter()
+                .any(|value| value.iter().all(|value| *value > 0.0)))
 }
 
 fn initial_scalar(leaves: &[(&str, &[Chunk])], name: &str) -> Option<f64> {

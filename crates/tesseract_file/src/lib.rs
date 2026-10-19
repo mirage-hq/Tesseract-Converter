@@ -16,6 +16,7 @@ mod metadata;
 #[cfg(test)]
 mod tests;
 mod writer;
+mod zip_compat;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use cache::{MaterializationCache, MaterializedAsset};
@@ -67,7 +68,8 @@ pub(crate) struct PendingAsset {
 /// Strategy used to publish a save.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SaveStrategy {
-    /// Copy-on-write clone with changed entries and a replacement central directory.
+    /// Copy-on-write clone retaining only an asset prefix, with the remaining
+    /// entries and central directory replaced. The historical name is retained.
     ReflinkAppend,
     /// Safe fallback that raw-copies Stored assets without decoding or recompressing them.
     RawCopyRewrite,
@@ -108,7 +110,7 @@ impl TesseractFile {
         let source_identity = source_identity(&file, &path)?;
         #[cfg(not(target_arch = "wasm32"))]
         let source_handle = same_file::Handle::from_file(file.try_clone().at(&path)?).at(&path)?;
-        let mut archive = ZipArchive::new(file)?;
+        let mut archive = zip_compat::open_archive(file, &path)?;
 
         let data_range_end = archive.central_directory_start();
         let mut names = HashSet::with_capacity(archive.len());
@@ -199,8 +201,9 @@ impl TesseractFile {
         &self.project_bytes
     }
 
-    /// Consumes a fully verified archive, transferring its original JSON bytes
-    /// without retaining or copying the validated editable document.
+    /// Consumes the archive, transferring its validated project JSON bytes
+    /// without retaining or copying the editable document. Asset payloads remain
+    /// lazily verified; this operation does not check their integrity.
     #[must_use]
     pub fn into_project_json_bytes(self) -> Vec<u8> {
         self.project_bytes
@@ -221,7 +224,10 @@ impl TesseractFile {
         &self,
         destination: impl AsRef<Path>,
     ) -> Result<(), TesseractFileError> {
-        atomic_write_file(destination.as_ref(), &self.project_bytes)
+        atomic_write_file(
+            destination.as_ref(),
+            &normalize_color_management(&self.project_bytes)?,
+        )
     }
 
     /// Commits an agent-edited JSON file when every referenced asset is packaged.
@@ -245,6 +251,7 @@ impl TesseractFile {
         let project_bytes = read_project_file(source.as_ref())?;
         let candidate = legacy_timing::read(&project_bytes)?;
         validate_project_asset_refs(&candidate, &self.metadata, is_runtime_owned)?;
+        let project_bytes = normalize_color_management(&project_bytes)?;
         self.project = candidate;
         self.project_bytes = project_bytes;
         Ok(())
@@ -324,6 +331,19 @@ impl TesseractFile {
         Ok(())
     }
 
+    /// Sets or removes a top-level metadata field this version doesn't define.
+    /// The format never reads it; the next save writes it as-is.
+    pub fn set_unknown_metadata_field(&mut self, name: &str, value: Option<Value>) {
+        match value {
+            Some(value) => {
+                self.metadata.unknown_fields.insert(name.to_string(), value);
+            }
+            None => {
+                self.metadata.unknown_fields.remove(name);
+            }
+        }
+    }
+
     /// Persists inspected authoring metadata for an embedded font asset.
     ///
     /// The opaque `asset_id` selects bytes through `assets`; semantic family,
@@ -353,6 +373,10 @@ impl TesseractFile {
     }
 
     /// Atomically saves over the opened path when every asset is packaged.
+    ///
+    /// Retained asset payloads are reused without verifying their hashes. As on
+    /// open, use verified asset reads or materialization to detect pre-existing
+    /// payload corruption; a successful save does not certify asset integrity.
     pub fn save(&mut self) -> Result<SaveReport, TesseractFileError> {
         self.save_with_runtime_assets(|_| false)
     }
@@ -367,6 +391,7 @@ impl TesseractFile {
     }
 
     /// Rewrites only active entries, removing unreachable records from prior saves.
+    /// Retained asset payloads keep the lazy integrity boundary of [`Self::save`].
     pub fn optimize(&mut self) -> Result<SaveReport, TesseractFileError> {
         self.optimize_with_runtime_assets(|_| false)
     }
@@ -392,6 +417,7 @@ impl TesseractFile {
     }
 
     /// Atomically saves to another path when every asset is packaged.
+    /// Retained asset payloads keep the lazy integrity boundary of [`Self::save`].
     pub fn save_as(&mut self, path: impl AsRef<Path>) -> Result<SaveReport, TesseractFileError> {
         self.save_as_with_runtime_assets(path, |_| false)
     }
@@ -430,7 +456,7 @@ impl TesseractFile {
         is_runtime_owned: impl Fn(AssetRef<'_>) -> bool,
     ) -> Result<Vec<u8>, TesseractFileError> {
         validate_project_asset_refs(&self.project, &self.metadata, is_runtime_owned)?;
-        let project_bytes = self.project_bytes.clone();
+        let project_bytes = normalize_color_management(&self.project_bytes)?;
         self.metadata.project.byte_length = project_bytes.len() as u64;
         self.metadata.project.sha256 = sha256_bytes(&project_bytes);
         self.metadata.modified_at = now_rfc3339()?;
@@ -595,7 +621,7 @@ impl TesseractFileBuilder {
     pub fn from_project_json(bytes: &[u8]) -> Result<Self, TesseractFileError> {
         let project = EditableFxCompositionDocument::from_json_slice(bytes)?;
         let mut builder = Self::from_document(project);
-        builder.project_bytes = Some(bytes.to_vec());
+        builder.project_bytes = Some(normalize_color_management(bytes)?);
         Ok(builder)
     }
 
@@ -745,6 +771,7 @@ fn archive_metadata(
             .map(|(id, asset)| (id.clone(), asset.descriptor.clone()))
             .collect(),
         fonts,
+        unknown_fields: BTreeMap::new(),
     })
 }
 
@@ -766,6 +793,7 @@ struct ExportDocument<'a, C> {
     format_version: u8,
     dimensions: ExportDimensions,
     duration: f64,
+    color_management: fx_schema::ColorManagement,
     composition: &'a C,
 }
 
@@ -786,6 +814,7 @@ impl TesseractExportBuilder {
         width: u32,
         height: u32,
         duration_seconds: f64,
+        color_management: fx_schema::ColorManagement,
     ) -> Result<Self, TesseractFileError> {
         if width == 0 || height == 0 || !duration_seconds.is_finite() || duration_seconds <= 0.0 {
             return Err(invalid(
@@ -797,6 +826,7 @@ impl TesseractExportBuilder {
             format_version: fx_schema::EDITABLE_FX_DOCUMENT_FORMAT_VERSION,
             dimensions: ExportDimensions { width, height },
             duration: duration_seconds,
+            color_management,
             composition,
         };
         let project_bytes = serde_json::to_vec(&document)?;
@@ -807,6 +837,62 @@ impl TesseractExportBuilder {
             assets: BTreeMap::new(),
             fonts: BTreeMap::new(),
         })
+    }
+
+    /// Adds document-owned properties without interpreting opaque extension values.
+    /// Reserved envelope keys must use the typed builder inputs instead.
+    pub fn with_document_properties(
+        mut self,
+        background: Option<fx_schema::Color>,
+        white: Option<f64>,
+        extras: &BTreeMap<String, serde_json::Value>,
+    ) -> Result<Self, TesseractFileError> {
+        if background.is_some_and(|color| !fx_schema::has_valid_extended_color(&color)) {
+            return Err(invalid(
+                "backgroundColor requires finite RGB in 0..=64 and alpha in 0..=1",
+            ));
+        }
+        if white.is_some_and(|nits| !fx_schema::HDR_GRAPHICS_WHITE_NITS_RANGE.contains(&nits)) {
+            return Err(invalid(
+                "hdrGraphicsWhiteNits must be finite and from 100 through 1000",
+            ));
+        }
+        for key in extras.keys() {
+            if matches!(
+                key.as_str(),
+                "$schema"
+                    | "formatVersion"
+                    | "dimensions"
+                    | "duration"
+                    | "composition"
+                    | "colorManagement"
+                    | "backgroundColor"
+                    | "hdrGraphicsWhiteNits"
+            ) {
+                return Err(invalid(format!(
+                    "document extras cannot contain reserved field {key:?}"
+                )));
+            }
+        }
+        let mut document: serde_json::Value = serde_json::from_slice(&self.project_bytes)?;
+        let object = document
+            .as_object_mut()
+            .ok_or_else(|| invalid("expected document object"))?;
+        object.remove("backgroundColor");
+        object.remove("hdrGraphicsWhiteNits");
+        if let Some(color) = background {
+            object.insert("backgroundColor".into(), serde_json::to_value(color)?);
+        }
+        if let Some(nits) = white {
+            object.insert("hdrGraphicsWhiteNits".into(), serde_json::to_value(nits)?);
+        }
+        object.extend(
+            extras
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
+        self.project_bytes = serde_json::to_vec(&document)?;
+        Ok(self)
     }
 
     /// Records the identity of the archive writer.
@@ -980,6 +1066,23 @@ fn prepare_asset(
     })
 }
 
+// Normalize only historical writes. Explicit policy keeps its exact bytes.
+fn normalize_color_management(bytes: &[u8]) -> Result<Vec<u8>, TesseractFileError> {
+    let mut value: Value = serde_json::from_slice(bytes)?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| invalid("expected project object"))?;
+    if let Some(policy) = object.get("colorManagement") {
+        serde_json::from_value::<fx_schema::ColorManagement>(policy.clone())?;
+        return Ok(bytes.to_vec());
+    }
+    object.insert(
+        "colorManagement".into(),
+        serde_json::to_value(fx_schema::ColorManagement::default())?,
+    );
+    Ok(serde_json::to_vec_pretty(&value)?)
+}
+
 fn atomic_write_file(destination: &Path, bytes: &[u8]) -> Result<(), TesseractFileError> {
     let parent = destination
         .parent()
@@ -1034,8 +1137,8 @@ fn read_document_snapshot(
     Ok(bytes)
 }
 
-fn read_document_entry(
-    archive: &mut ZipArchive<File>,
+fn read_document_entry<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
     name: &str,
     expected_size: Option<u64>,
 ) -> Result<Vec<u8>, TesseractFileError> {

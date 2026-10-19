@@ -76,7 +76,11 @@ fn native_self_inverse_mask_keeps_source_clock_and_effect_order() {
     assert!(shadows.masks.is_empty());
     assert!(masked.effects.is_empty());
     assert_eq!(shadows.effects.len(), 2);
-    assert_eq!(owner.effects.len(), 2);
+    assert_eq!(owner.effects.len(), 1);
+    assert!(matches!(
+        known(&owner.effects[0]),
+        Ok(LayerEffect::Glow { .. })
+    ));
     let content = group(&masked.layers[0]);
     assert_eq!(content.playback.input_range().start.as_millis(), 333);
     assert!(
@@ -484,11 +488,10 @@ fn native_equivalent_foreign_mask_post_wipe_transform_preserves_stages_and_sourc
         known(&rotation.effects[0]),
         Ok(LayerEffect::Glow { .. })
     ));
-    assert_eq!(owner.effects.len(), 1);
-    assert!(matches!(
-        known(&owner.effects[0]),
-        Ok(LayerEffect::InnerShadow { .. })
-    ));
+    assert!(
+        owner.effects.is_empty(),
+        "bypassed empty styles add no paint"
+    );
     let shadows = group(&rotation.layers[0]);
     assert_eq!(shadows.effects.len(), 2);
     assert!(shadows.masks.is_empty());
@@ -738,10 +741,13 @@ fn native_fixed_direction_shadow_distance_becomes_editable_vector2_keys() {
         for (index, (key, distance)) in keys.iter().zip(distances).enumerate() {
             assert_eq!(key.value(), &PropertyValue::Vector2([0., -distance]));
             let local = index as f64 / 12.;
-            assert_eq!(
-                key.layer_time().as_millis(),
-                (clock.seconds(local) * 1000.).round() as i64
-            );
+            let millis = clock.seconds(local) * 1000.;
+            let expected = if index > 0 && key.easing() == fx_schema::PropertyKeyframeEasing::Hold {
+                millis.floor()
+            } else {
+                millis.round()
+            };
+            assert_eq!(key.layer_time().as_millis(), expected as i64);
         }
     }
     assert!(
@@ -810,7 +816,8 @@ fn generic_fixed_shadow_angle_preserves_scalar_ease_in_vector2_projection() {
         NumericAnimationClock::parent_identity(&layer).unwrap(),
         &mut AnimationBudget::default(),
     );
-    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("Hold transition"), "{warnings:?}");
     for (vector, scalar) in entry
         .animator
         .keyframe_track()

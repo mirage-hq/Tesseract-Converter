@@ -23,8 +23,9 @@ use fx_schema::{
 };
 
 use super::media::{self, MediaRequest};
+pub(super) use references::DocumentReferenceFacts;
+use references::ReferenceAnalysisError;
 pub(super) use references::SourceVariantEligibility;
-use references::{DocumentReferenceFacts, ReferenceAnalysisError};
 
 impl SourceVariantEligibility {
     pub(super) const fn has_external_references(self) -> bool {

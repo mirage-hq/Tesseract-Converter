@@ -110,6 +110,77 @@ fn nest_depth(sequence: &PrSequence) -> usize {
 }
 
 #[test]
+fn nested_subclip_offset_keeps_unit_forward_picture_windows() {
+    let original = outer_xml(&[
+        Placement {
+            start: TICKS,
+            end: 3 * TICKS,
+            source_in: 2 * TICKS,
+        },
+        Placement {
+            start: 4 * TICKS,
+            end: 6 * TICKS,
+            source_in: 0,
+        },
+    ]);
+    let (expected, _) = inspect_project_with_omissions(&original, Some("outer")).unwrap();
+    let expected_document =
+        project_document_with_media(expected.single_sequence().unwrap(), &expected.media);
+    for offset in [-3600 * TICKS, -TICKS, 0, TICKS] {
+        let xml = original.replace(
+            r#"<SubClip ObjectRef="112"/>"#,
+            &format!(
+                r#"<SubClip ObjectRef="112"/><OriginalSubClipTimeOffset>{offset}</OriginalSubClipTimeOffset>"#
+            ),
+        );
+        let (project, omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+        let sequence = project.single_sequence().unwrap();
+        let nests: Vec<_> = sequence.nest_occurrences().collect();
+        assert_eq!(nests.len(), 2, "offset {offset}: {omissions:?}");
+        assert_eq!(nests[0].timeline_ticks(), TICKS..3 * TICKS);
+        assert_eq!(nests[0].in_ticks..nests[0].out_ticks, 2 * TICKS..4 * TICKS);
+        assert_eq!(nests[1].timeline_ticks(), 4 * TICKS..6 * TICKS);
+        assert_eq!(nests[1].in_ticks..nests[1].out_ticks, 0..2 * TICKS);
+        assert_eq!(
+            project_document_with_media(sequence, &project.media),
+            expected_document,
+            "offset {offset} must not shift nested children or source windows"
+        );
+        let reports: Vec<_> = omissions
+            .iter()
+            .filter(|item| item.reason.contains("OriginalSubClipTimeOffset"))
+            .collect();
+        assert_eq!(reports.len(), usize::from(offset != 0), "{omissions:?}");
+        if offset != 0 {
+            assert_eq!(reports[0].record, "VideoClipTrackItem:110");
+            assert_eq!(reports[0].kind, crate::OmissionKind::Approximated);
+            assert!(reports[0].reason.contains(&offset.to_string()));
+            assert!(reports[0].reason.contains("authored source In/Out"));
+        }
+    }
+}
+
+#[test]
+fn nested_subclip_offset_does_not_admit_invalid_or_retimed_clocks() {
+    let with_offset = |value: &str| {
+        one_placement().replace(
+            r#"<SubClip ObjectRef="112"/>"#,
+            &format!(
+                r#"<SubClip ObjectRef="112"/><OriginalSubClipTimeOffset>{value}</OriginalSubClipTimeOffset>"#
+            ),
+        )
+    };
+    for value in ["0.5", "unknown", "9223372036854775808"] {
+        assert!(rejection(&with_offset(value)).contains("invalid OriginalSubClipTimeOffset"));
+    }
+    let retimed = with_offset("1").replace(
+        r#"<Source ObjectRef="102"/>"#,
+        r#"<Source ObjectRef="102"/><PlaybackSpeed>2</PlaybackSpeed>"#,
+    );
+    assert!(rejection(&retimed).contains("nonzero OriginalSubClipTimeOffset"));
+}
+
+#[test]
 fn repeated_placements_read_independent_copies_that_share_media() {
     let xml = outer_xml(&[
         Placement {
@@ -455,12 +526,72 @@ fn top_level_placements_past_256_all_convert() {
 }
 
 #[test]
-fn a_placement_past_the_end_of_its_nested_sequence_is_omitted() {
-    // Main ends at 5 s; this placement shows inner 1-6 s.
+fn unit_forward_nest_overrun_retains_editable_prefix_and_independent_copies() {
+    let frame = FrameRate::Fps30.ticks_per_frame();
+    for tail in [frame, TICKS, 4 * TICKS] {
+        let xml = outer_xml(&[
+            Placement {
+                start: TICKS,
+                end: 5 * TICKS + tail,
+                source_in: TICKS,
+            },
+            Placement {
+                start: 10 * TICKS,
+                end: 15 * TICKS,
+                source_in: 0,
+            },
+        ]);
+        let (project, omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+        let outer = project.single_sequence().unwrap();
+        let nests: Vec<_> = outer.nest_occurrences().collect();
+        assert_eq!(nests.len(), 2, "{omissions:?}");
+        assert_eq!(nests[0].timeline_ticks(), TICKS..5 * TICKS);
+        assert_eq!(nests[0].in_ticks..nests[0].out_ticks, TICKS..5 * TICKS);
+        assert!(!nests[0].is_retimed());
+        assert_eq!(nests[1].timeline_ticks(), 10 * TICKS..15 * TICKS);
+        assert_eq!(nests[1].in_ticks..nests[1].out_ticks, 0..5 * TICKS);
+        assert!(nests
+            .iter()
+            .all(|nest| nest.sequence.end_ticks() == 5 * TICKS));
+        assert!(
+            omissions
+                .iter()
+                .any(|note| note.record == "VideoClipTrackItem:110"
+                    && note.reason.contains("nested source tail")
+                    && note.reason.contains(&tail.to_string())),
+            "{omissions:?}"
+        );
+        let document = project_document_with_media(outer, &project.media);
+        let layers = document["composition"]["layers"].as_array().unwrap();
+        let first = layers
+            .iter()
+            .find(|layer| layer["type"] == "Group")
+            .unwrap();
+        assert_eq!(
+            first["playback"]["inputRange"],
+            serde_json::json!({"start":1000,"duration":4000})
+        );
+        let video = first["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["type"] == "Video")
+            .unwrap();
+        assert_eq!(
+            video["sourceRange"],
+            serde_json::json!({"start":1000,"duration":4000})
+        );
+        assert!(video["source"]["assetId"].as_str().is_some());
+    }
+}
+
+#[test]
+fn a_nest_window_wholly_past_the_inner_timeline_is_omitted() {
+    // Main ends at 5 s; this placement has no available source picture.
     let error = rejection(&outer_xml(&[Placement {
         start: 0,
-        end: 5 * TICKS,
-        source_in: TICKS,
+        end: TICKS,
+        source_in: 5 * TICKS,
     }]));
     assert!(
         error.ends_with(&format!(
@@ -469,6 +600,26 @@ fn a_placement_past_the_end_of_its_nested_sequence_is_omitted() {
             5 * TICKS
         )),
         "{error}"
+    );
+}
+
+#[test]
+fn retimed_nest_overrun_is_not_shortened_as_a_unit_forward_prefix() {
+    let xml = outer_xml(&[Placement {
+        start: 0,
+        end: 3 * TICKS,
+        source_in: 0,
+    }])
+    .replace(
+        r#"<Clip><Source ObjectRef="102"/>"#,
+        r#"<Clip><PlaybackSpeed>2</PlaybackSpeed><Source ObjectRef="102"/>"#,
+    )
+    .replace(
+        &format!("<OutPoint>{}</OutPoint>", 3 * TICKS),
+        &format!("<OutPoint>{}</OutPoint>", 6 * TICKS),
+    );
+    assert!(
+        rejection(&xml).contains("a placement longer than its nested sequence is not supported")
     );
 }
 
@@ -698,7 +849,7 @@ fn reverse_nest_reflects_saved_original_duration_without_rewriting_input_bounds(
     let picture = &group["layers"][0];
     assert_eq!(
         crate::tests::support::playback_keys(picture)[0]["value"],
-        3000
+        2967
     );
     assert_eq!(
         crate::tests::support::playback_keys(picture)[1]["value"],
@@ -753,6 +904,36 @@ fn reverse_nest_rejects_unbounded_and_unestablished_source_clocks() {
 }
 
 #[test]
+fn nest_missing_speed_keeps_unit_playback_despite_stale_out_point() {
+    for out in [2 * TICKS, 5 * TICKS] {
+        let xml = one_placement().replace(
+            &format!("<OutPoint>{}</OutPoint></Clip></VideoClip>\n", 3 * TICKS),
+            &format!("<OutPoint>{out}</OutPoint></Clip></VideoClip>\n"),
+        );
+        let (project, notes) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+        let outer = project.single_sequence().unwrap();
+        let nest = outer.nest_occurrences().next().unwrap();
+        assert_eq!(nest.timeline_ticks(), 0..2 * TICKS);
+        assert_eq!(nest.in_ticks..nest.out_ticks, TICKS..3 * TICKS);
+        assert_eq!(nest.playback_rate, 1.0);
+        assert_eq!(nest.sequence.video_occurrences().count(), 1);
+        assert!(
+            notes
+                .iter()
+                .any(|note| note.reason.contains("missing PlaybackSpeed")),
+            "{notes:?}"
+        );
+        let document = project_document_with_media(outer, &project.media);
+        let group = &document["composition"]["layers"][0];
+        assert_eq!(group["type"], "Group");
+        assert_eq!(group["layers"][0]["type"], "Video");
+        assert_eq!(group["playback"]["mapping"]["input"]["duration"], 2000);
+        assert_eq!(group["playback"]["mapping"]["output"]["duration"], 2000);
+        assert_eq!(group["playback"]["mapping"]["output"]["start"], 0);
+    }
+}
+
+#[test]
 fn nests_with_an_unsupported_clock_are_rejected() {
     // Main's 1-3 s at normal speed ends at Out 3 s; Out 5 s is twice as long.
     let long_window = one_placement().replace(
@@ -767,7 +948,7 @@ fn nests_with_an_unsupported_clock_are_rejected() {
     };
     for (xml, reason) in [
         (
-            long_window.clone(),
+            speed(&long_window, "<PlaybackSpeed>1</PlaybackSpeed>"),
             "VideoClip:113: In 254016000000 to Out 1270080000000 does not match PlaybackSpeed 1 over the 508032000000-tick placement",
         ),
         (
@@ -1464,6 +1645,37 @@ fn nested_occurrence_rejection_discards_local_effect_diagnostics() {
         .contains("does not match PlaybackSpeed"));
 }
 
+/// Saved pin records on a publishable synthetic nest, not Adobe fidelity proof.
+#[test]
+fn nested_corner_pin_normalizes_and_keeps_editable_picture() {
+    let pin = super::effects::corner_pin(
+        300,
+        [
+            ("0.2:0.1", ""),
+            ("0.8:0.2", ""),
+            ("0.1:0.9", ""),
+            ("0.9:0.8", ""),
+        ],
+    );
+    let xml = nest_with_occurrence_effects(&[(300, pin)]);
+    let (project, mut notes) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+    let outer = project.single_sequence().unwrap();
+    assert_eq!(outer.nest_occurrences().count(), 2, "{notes:?}");
+    let ids = crate::tesseract_output::asset_ids_in_order(outer, &project.media);
+    let document = crate::convert::premiere_to_tesseract(outer, &project.media, &ids, &mut notes)
+        .unwrap()
+        .to_json_value()
+        .unwrap();
+    let owner = &document["composition"]["layers"][0];
+    let pin = &owner["layers"][0];
+    assert_eq!(pin["effects"][0]["effect"]["type"], "cornerPin");
+    assert_eq!(pin["effects"][0]["effect"]["upperLeftX"], 0.2);
+    assert_eq!(pin["layers"][0]["layers"][0]["type"], "Video");
+    assert!(notes
+        .iter()
+        .any(|note| note.reason.contains("Corner Pin canvas normalization")));
+}
+
 #[test]
 fn nested_occurrence_active_corner_pin_omits_owner_but_bypass_keeps_blur() {
     for bypass in [Some("true"), Some("false"), Some("invalid"), None] {
@@ -1660,6 +1872,627 @@ fn differing_canvas_geometry2_sibling_does_not_admit_ordinary_transform_keys() {
                         .reason
                         .contains("ordinary Transform point basis is unmeasured")),
                 "{label}: {notes:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn short_canvas_geometry2_public_import_keeps_position_and_scale_keys() {
+    short_canvas_geometry2_import(false, false, false, 0.5);
+}
+
+#[test]
+fn short_canvas_geometry2_public_import_keeps_outer_motion_keys() {
+    short_canvas_geometry2_import(true, false, false, 0.5);
+}
+
+#[test]
+fn short_canvas_geometry2_public_import_keeps_two_axis_position_keys() {
+    short_canvas_geometry2_import(true, true, false, 0.5);
+}
+
+#[test]
+fn short_canvas_geometry2_public_import_keeps_two_axis_outer_motion_keys() {
+    short_canvas_geometry2_import(true, true, true, 0.5);
+}
+
+#[test]
+fn short_canvas_geometry2_public_import_keeps_offcenter_position_keys() {
+    short_canvas_geometry2_import(true, true, true, 0.25);
+}
+
+fn short_canvas_geometry2_import(
+    keyed_outer_motion: bool,
+    two_axis_position: bool,
+    horizontal_outer_motion: bool,
+    initial_x: f64,
+) {
+    use fx_conv::{ConversionMode, ImportToTesseract};
+    use serde_json::json;
+
+    let native = include_str!("../../../tests/fixtures/nested-transform-geometry2.xml");
+    let dom = roxmltree::Document::parse(native).unwrap();
+    let records: String = dom
+        .root_element()
+        .children()
+        .filter(|node| node.is_element())
+        .map(|node| {
+            let mut record = native[node.range()].to_owned();
+            for child in node.children().filter(|child| {
+                child.has_tag_name("Keyframes") || child.has_tag_name("IsTimeVarying")
+            }) {
+                record = record.replace(&native[child.range()], "");
+            }
+            record.replace("0.3645833432674408:1.6666666269302368", "0.5:0.5")
+        })
+        .collect();
+    let records = edit_record(
+        records,
+        "<PointComponentParam ObjectID=\"830\"",
+        "</PointComponentParam>",
+        |record| {
+            record.replace("</PointComponentParam>", &format!(
+            "<Keyframes>{TICKS},{initial_x}:0.5,0,0,0,0,0,0,5,4,0,0,0,0;{},0.5:8.5,0,0,0,0,0,0,5,4,0,0,0,0;</Keyframes></PointComponentParam>", 3 * TICKS))
+        },
+    );
+    let records = edit_record(
+        records,
+        "<VideoComponentParam ObjectID=\"832\"",
+        "</VideoComponentParam>",
+        |record| {
+            record.replace("</VideoComponentParam>", &format!(
+            "<Keyframes>{TICKS},150.,0,0,0,0,0,0;{},100.,0,0,0,0,0,0;</Keyframes></VideoComponentParam>", 3 * TICKS))
+        },
+    );
+    let base = one_placement();
+    let dom = roxmltree::Document::parse(&base).unwrap();
+    let mut xml = base.clone();
+    for node in dom.root_element().children().filter(|node| {
+        node.has_tag_name("VideoTrackGroup") && node.attribute("ObjectID") != Some("100")
+            || node.attribute("ObjectID") == Some("3")
+    }) {
+        let record = &base[node.range()];
+        xml = xml.replace(record, &record.replace("0,0,1920,1080", "0,0,1920,100"));
+    }
+    let original = r#"<VideoComponentChain ObjectID="111"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>"#;
+    let mut components = vec![(407, records)];
+    if keyed_outer_motion {
+        components.insert(0, (9000, motion_component(9000, |name| match name {
+            "Position" => (None, Some(format!(
+                "{TICKS},0.5:0.625,0,0,0,0,0,0,5,4,0,0,0,0;{},0.5:0.5,0,0,0,0,0,0,5,4,0,0,0,0;", 3 * TICKS
+            ))),
+            _ => (None, None),
+        })));
+    }
+    let xml = xml.replace(
+        original,
+        &placement_chain(111, DEFAULT_OPACITY, &components),
+    );
+    let xml = if two_axis_position {
+        xml.replace("0.5:8.5", "0.75:8.5")
+    } else {
+        xml
+    };
+    let xml = if horizontal_outer_motion {
+        xml.replace("0.5:0.625", "0.75:0.625")
+    } else {
+        xml
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    std::fs::create_dir(root.join("media")).unwrap();
+    std::fs::copy(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/feature_timecoded_source.mp4"),
+        root.join("media/source.mp4"),
+    )
+    .unwrap();
+    let source = root.join("source.prproj");
+    std::fs::write(&source, &xml).unwrap();
+    let output = root.join("converted");
+    let report = crate::Premiere
+        .import_to_tesseract(
+            &source,
+            &output,
+            &crate::PremiereImportOptions {
+                sequence: Some("outer".into()),
+            },
+            ConversionMode::Write,
+        )
+        .unwrap();
+    let file = tesseract_file::TesseractFile::open(output.join("project.tsrct")).unwrap();
+    let wire = file.project_json().unwrap();
+    let outer = wire["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Group")
+        .unwrap_or_else(|| panic!("Geometry2 picture omitted: {:?}", report.diagnostics));
+    let affine = &outer["layers"][0];
+    assert_eq!(outer["transform"]["anchorPoint"], json!([960.0, 50.0]));
+    assert_eq!(
+        outer["transform"]["position"],
+        json!([
+            if horizontal_outer_motion {
+                1440.0
+            } else {
+                960.0
+            },
+            if keyed_outer_motion { 675.0 } else { 540.0 }
+        ])
+    );
+    assert_eq!(affine["transform"]["anchorPoint"], json!([960.0, 50.0]));
+    assert_eq!(
+        affine["transform"]["position"],
+        json!([initial_x * 1920.0, 50.0])
+    );
+    let guide = affine["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["id"] == affine["masks"][0]["layer"])
+        .unwrap();
+    assert_eq!(guide["rect"]["size"], json!([1920.0, 100.0]));
+    let entries = wire["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    for (property, values) in [
+        (
+            "positionX",
+            [
+                initial_x * 1920.0,
+                if two_axis_position { 1440.0 } else { 960.0 },
+            ],
+        ),
+        ("positionY", [50.0, 850.0]),
+        ("scaleX", [150.0, 100.0]),
+        ("scaleY", [150.0, 100.0]),
+    ] {
+        let entry = entries
+            .iter()
+            .find(|entry| {
+                entry["target"]["layerId"] == affine["id"]
+                    && entry["target"]["propertyType"] == property
+            })
+            .unwrap();
+        let keys: Vec<_> = entry["animator"]["keyframes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|key| {
+                (
+                    key["layerTime"].as_i64().unwrap(),
+                    key["value"]["value"].as_f64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(keys, [(0, values[0]), (2000, values[1])]);
+    }
+    if keyed_outer_motion {
+        let motion = entries
+            .iter()
+            .find(|entry| {
+                entry["target"]["layerId"] == outer["id"]
+                    && entry["target"]["propertyType"] == "positionY"
+            })
+            .unwrap();
+        let keys: Vec<_> = motion["animator"]["keyframes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|key| {
+                (
+                    key["layerTime"].as_i64().unwrap(),
+                    key["value"]["value"].as_f64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(keys, [(0, 675.0), (2000, 540.0)]);
+        if horizontal_outer_motion {
+            let motion_x = entries
+                .iter()
+                .find(|entry| {
+                    entry["target"]["layerId"] == outer["id"]
+                        && entry["target"]["propertyType"] == "positionX"
+                })
+                .unwrap();
+            let keys: Vec<_> = motion_x["animator"]["keyframes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|key| (key["layerTime"].clone(), key["value"]["value"].clone()))
+                .collect();
+            assert_eq!(
+                keys,
+                [(json!(0), json!(1440.0)), (json!(2000), json!(960.0))]
+            );
+            let curved = edit_record(
+                xml.clone(),
+                "<PointComponentParam ObjectID=\"9001\"",
+                "</PointComponentParam>",
+                |record| {
+                    record.replace(
+                        "0.75:0.625,0,0,0,0,0,0,5,4,0,0,0,0;",
+                        "0.75:0.625,5,0,0,0,0,0,5,4,0,0,0.2,0;",
+                    )
+                },
+            );
+            assert_ne!(curved, xml);
+            assert!(rejection(&curved).contains("differing-canvas"));
+        }
+    }
+    assert_eq!(file.metadata().assets.len(), 1);
+    for rejected in [
+        xml.replace("AE.ADBE Geometry2", "AE.ADBE Geometry"),
+        xml.replace(
+            &format!("{TICKS},{initial_x}:0.5,0,0,0,0,0,0,5,4,0,0,0,0;"),
+            &format!("{TICKS},{initial_x}:0.5,0,0,0,0,0,0,5,4,0,0,0.1,0;"),
+        ),
+        edit_record(
+            xml.clone(),
+            "<VideoComponentParam ObjectID=\"836\"",
+            "</VideoComponentParam>",
+            |record| record.replace(",0.,0,0,0,0,0,0", ",30.,0,0,0,0,0,0"),
+        ),
+    ] {
+        assert_ne!(rejected, xml);
+        let reason = rejection(&rejected);
+        assert!(reason.contains("differing-canvas"), "{reason}");
+    }
+}
+
+#[test]
+fn static_geometry2_keeps_nonproportional_nested_canvas() {
+    let native = include_str!("../../../tests/fixtures/nested-transform-geometry2.xml");
+    let dom = roxmltree::Document::parse(native).unwrap();
+    let records: String = dom
+        .root_element()
+        .children()
+        .filter(|node| node.is_element())
+        .map(|node| {
+            let mut record = native[node.range()].to_owned();
+            for child in node.children().filter(|child| {
+                child.has_tag_name("Keyframes") || child.has_tag_name("IsTimeVarying")
+            }) {
+                record = record.replace(&native[child.range()], "");
+            }
+            record
+                .replace("0.3645833432674408:1.6666666269302368", "0.5:0.5")
+                .replace(",100.,0,0,0,0,0,0", ",75.,0,0,0,0,0,0")
+        })
+        .collect();
+    // Opacity stays full; only the two scale controls use 75 percent.
+    let records = edit_record(
+        records,
+        "<VideoComponentParam ObjectID=\"837\"",
+        "</VideoComponentParam>",
+        |record| record.replace(",75.,", ",100.,"),
+    );
+    let base = one_placement();
+    let dom = roxmltree::Document::parse(&base).unwrap();
+    let mut xml = base.clone();
+    for node in dom.root_element().children().filter(|node| {
+        node.has_tag_name("VideoTrackGroup") && node.attribute("ObjectID") != Some("100")
+            || node.attribute("ObjectID") == Some("3")
+    }) {
+        let record = &base[node.range()];
+        xml = xml.replace(record, &record.replace("0,0,1920,1080", "0,0,1000,80"));
+    }
+    let original = r#"<VideoComponentChain ObjectID="111"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>"#;
+    let xml = xml.replace(
+        original,
+        &placement_chain(111, DEFAULT_OPACITY, &[(407, records)]),
+    );
+    let (project, notes) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+    assert!(
+        notes.iter().any(|note| note
+            .reason
+            .contains("static nonproportional nested Geometry2")),
+        "{notes:?}"
+    );
+    let ordinary = xml.replace("AE.ADBE Geometry2", "AE.ADBE Geometry");
+    let error = inspect_project_with_omissions(&ordinary, Some("outer")).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("ordinary Transform point basis is unmeasured"),
+        "{error}"
+    );
+    let outer = project.single_sequence().unwrap();
+    let nest = outer
+        .nest_occurrences()
+        .next()
+        .expect("static rectangular Geometry2 retained");
+    assert_eq!(nest.sequence.dimensions(), [1000, 80], "{notes:?}");
+    let document = project_document_with_media(outer, &project.media);
+    let affine = &document["composition"]["layers"][0]["layers"][0];
+    assert_eq!(
+        affine["transform"]["anchorPoint"],
+        serde_json::json!([500.0, 40.0])
+    );
+    assert_eq!(
+        affine["transform"]["position"],
+        serde_json::json!([500.0, 40.0])
+    );
+    assert_eq!(
+        affine["transform"]["scale"],
+        serde_json::json!([75.0, 75.0])
+    );
+    assert!(document.to_string().contains("\"type\":\"Video\""));
+    let guide = affine["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["id"] == affine["masks"][0]["layer"])
+        .unwrap();
+    assert_eq!(guide["rect"]["size"], serde_json::json!([1000.0, 80.0]));
+}
+
+#[test]
+fn nested_transform_keeps_static_wipe_on_its_authored_side() {
+    let affine = include_str!("../../../tests/fixtures/nested-transform-geometry2.xml");
+    let affine_dom = roxmltree::Document::parse(affine).unwrap();
+    let affine_records: String = affine_dom
+        .root_element()
+        .children()
+        .filter(|node| node.is_element())
+        .map(|node| &affine[node.range()])
+        .collect();
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/feature_adjustment_motion_wipe_26_5_strict.prproj");
+    let donor = crate::format::read_xml(&fixture).unwrap();
+    let dom = roxmltree::Document::parse(&donor).unwrap();
+    let wipe: String = dom
+        .root_element()
+        .children()
+        .filter(|node| {
+            matches!(
+                node.attribute("ObjectID"),
+                Some("126" | "178" | "179" | "180")
+            )
+        })
+        .map(|node| &donor[node.range()])
+        .collect();
+    let original = r#"<VideoComponentChain ObjectID="111"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>"#;
+    for wipe_first in [true, false] {
+        let mut components = vec![(126, wipe.clone()), (407, affine_records.clone())];
+        // Native component indices run opposite to render order.
+        if wipe_first {
+            components.reverse();
+        }
+        let xml = one_placement().replace(
+            original,
+            &placement_chain(111, super::effects::DEFAULT_FLAGS, &components),
+        );
+        let (project, notes) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+        let sequence = project.single_sequence().unwrap();
+        let nest = sequence.nest_occurrences().next().unwrap();
+        let wipe = nest.linear_wipe.as_ref().unwrap();
+        assert_eq!(wipe.initial_completion, 50.0);
+        assert_eq!(wipe.angle_degrees, 90);
+        assert_eq!(wipe.feather, 0.0);
+        assert!(wipe.completion.is_empty());
+        assert_eq!(
+            nest.effects_above_mask,
+            usize::from(!wipe_first),
+            "{notes:?}"
+        );
+        let document = project_document_with_media(sequence, &project.media);
+        let outer = &document["composition"]["layers"][0];
+        let affine = &outer["layers"][0];
+        assert_eq!(affine["name"], "Nested Transform picture", "{document}");
+        let (owner, unmasked) = if wipe_first {
+            (affine, outer)
+        } else {
+            (outer, affine)
+        };
+        assert!(unmasked["masks"].as_array().is_none_or(Vec::is_empty));
+        let guide = owner["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["id"] == owner["masks"][0]["layer"])
+            .expect("wipe guide stays with its coverage owner");
+        assert_eq!(guide["parent"], owner["id"]);
+        assert_eq!(
+            guide["transform"]["anchorPoint"],
+            serde_json::json!([1920.0, 0.0])
+        );
+        assert_eq!(
+            guide["transform"]["scale"],
+            serde_json::json!([50.0, 100.0])
+        );
+        assert_eq!(guide["rect"]["size"], serde_json::json!([1920.0, 1080.0]));
+        assert_eq!(owner["masks"][0]["feather"], serde_json::json!([0.0, 0.0]));
+        assert_eq!(
+            outer["playback"]["mapping"]["output"],
+            serde_json::json!({"start": 0, "duration": 2000})
+        );
+        assert!(document.to_string().contains("\"type\":\"Video\""));
+        let rotation = document["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| {
+                entry["target"]["layerId"] == affine["id"]
+                    && entry["target"]["propertyType"] == "rotation"
+            })
+            .unwrap();
+        let keys = rotation["animator"]["keyframes"].as_array().unwrap();
+        assert_eq!(keys[0]["layerTime"], 0);
+        assert_eq!(keys[0]["value"]["value"], 0.0);
+        assert_eq!(keys[1]["layerTime"], 2000);
+        assert_eq!(keys[1]["value"]["value"], -90.0);
+        for unsupported in ["animated", "feathered", "noncardinal"] {
+            let mut rejected = sequence.clone();
+            let wipe = rejected
+                .video_tracks
+                .iter_mut()
+                .flat_map(|track| &mut track.nests)
+                .next()
+                .unwrap()
+                .linear_wipe
+                .as_mut()
+                .unwrap();
+            match unsupported {
+                "animated" => wipe.completion.push(crate::schema::PrScalarKeyframe {
+                    source_ticks: TICKS,
+                    value: 50.0,
+                    easing: PrKeyframeEasing::Linear,
+                }),
+                "feathered" => wipe.feather = 5.0,
+                "noncardinal" => wipe.angle_degrees = 45,
+                _ => unreachable!(),
+            }
+            let ids = crate::tesseract_output::asset_ids_in_order(&rejected, &project.media);
+            let mut reports = Vec::new();
+            let wire = crate::convert::premiere_to_tesseract(
+                &rejected,
+                &project.media,
+                &ids,
+                &mut reports,
+            )
+            .unwrap()
+            .to_json_value()
+            .unwrap();
+            assert!(
+                !wire.to_string().contains("\"type\":\"Video\""),
+                "{unsupported}"
+            );
+            assert!(
+                reports
+                    .iter()
+                    .any(|report| report.reason.contains("sharp static cardinal Linear Wipe")),
+                "{reports:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn nested_transform_keeps_static_crop_on_its_authored_side() {
+    let native = include_str!("../../../tests/fixtures/nested-transform-geometry2.xml");
+    let dom = roxmltree::Document::parse(native).unwrap();
+    let records: String = dom
+        .root_element()
+        .children()
+        .filter(|node| node.is_element())
+        .map(|node| &native[node.range()])
+        .collect();
+    let original = r#"<VideoComponentChain ObjectID="111"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>"#;
+    for crop_first in [true, false] {
+        let mut components = vec![(500, super::effects::top_crop(500)), (407, records.clone())];
+        // Native component indices run opposite to render order.
+        if crop_first {
+            components.reverse();
+        }
+        let xml = one_placement().replace(
+            original,
+            &placement_chain(
+                111,
+                "<DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity>",
+                &components,
+            ),
+        );
+        let (project, notes) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+        let sequence = project.single_sequence().unwrap();
+        let nest = sequence
+            .nest_occurrences()
+            .next()
+            .expect("cropped affine nest retained");
+        assert_eq!(nest.crop.top, 15.0);
+        assert_eq!(nest.effects.len(), 1);
+        assert_eq!(nest.in_ticks, TICKS);
+        assert_eq!(
+            nest.effects_above_mask,
+            usize::from(!crop_first),
+            "{notes:?}"
+        );
+        let document = project_document_with_media(sequence, &project.media);
+        let outer = &document["composition"]["layers"][0];
+        assert_eq!(outer["type"], "Group", "{document}");
+        let affine = &outer["layers"][0];
+        assert_eq!(affine["type"], "Group");
+        let coverage_owner = if crop_first { affine } else { outer };
+        let guide = coverage_owner["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["id"] == coverage_owner["masks"][0]["layer"])
+            .expect("crop stays with its coverage owner");
+        assert_eq!(guide["rect"]["position"], serde_json::json!([0.0, 162.0]));
+        assert_eq!(guide["rect"]["size"], serde_json::json!([1920.0, 918.0]));
+        assert!(document.to_string().contains("\"type\":\"Video\""));
+        let rotation = document["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| {
+                entry["target"]["layerId"] == affine["id"]
+                    && entry["target"]["propertyType"] == "rotation"
+            })
+            .expect("Geometry2 rotation targets its affine owner");
+        let keys = rotation["animator"]["keyframes"].as_array().unwrap();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0]["layerTime"], 0);
+        assert_eq!(keys[0]["value"]["value"], 0.0);
+        assert_eq!(keys[1]["layerTime"], 2000);
+        assert_eq!(keys[1]["value"]["value"], -90.0);
+        assert!(keys.iter().all(|key| key["easing"]["type"] == "linear"));
+    }
+    let base = outer_xml(&[
+        Placement {
+            start: 0,
+            end: 2 * TICKS,
+            source_in: 0,
+        },
+        Placement {
+            start: 3 * TICKS,
+            end: 5 * TICKS,
+            source_in: 0,
+        },
+    ]);
+    for neutral in [false, true] {
+        let crop = super::effects::top_crop(500);
+        let crop = if neutral {
+            crop.replace(",15.,", ",0.,")
+        } else {
+            crop
+        };
+        let chain = placement_chain(
+            111,
+            "<DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity>",
+            &[
+                (407, records.clone()),
+                (500, crop),
+                (
+                    408,
+                    dom.root_element()
+                        .children()
+                        .find(|node| node.attribute("ObjectID") == Some("407"))
+                        .map(|node| {
+                            native[node.range()].replace("ObjectID=\"407\"", "ObjectID=\"408\"")
+                        })
+                        .unwrap(),
+                ),
+            ],
+        );
+        let (project, notes) =
+            inspect_project_with_omissions(&base.replace(original, &chain), Some("outer")).unwrap();
+        let nests: Vec<_> = project
+            .single_sequence()
+            .unwrap()
+            .nest_occurrences()
+            .collect();
+        assert_eq!(nests.len(), if neutral { 2 } else { 1 }, "{notes:?}");
+        assert_eq!(nests.last().unwrap().timeline_ticks(), 3 * TICKS..5 * TICKS);
+        if !neutral {
+            assert!(
+                notes
+                    .iter()
+                    .any(|note| note.reason.contains("both sides of coverage")),
+                "{notes:?}"
             );
         }
     }
@@ -2339,6 +3172,101 @@ fn native_nested_opacity_mask_preserves_coverage_and_exports_current_owner() {
     assert_eq!(group["masks"][0]["opacity"], 0.3);
 }
 
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn differing_canvas_nested_opacity_mask_public_import_keeps_source_coordinates() {
+    use fx_conv::{ConversionMode, ImportToTesseract};
+    use serde_json::json;
+
+    for [width, height] in [[1280, 720], [1920, 2060]] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        std::fs::create_dir(root.join("media")).unwrap();
+        std::fs::copy(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/feature_timecoded_source.mp4"),
+            root.join("media/source.mp4"),
+        )
+        .unwrap();
+        // Mask A's native quarter-frame vertices stay in the 1920x1080
+        // source frame, not the independently sized parent sequence.
+        let xml = native_nested_opacity_mask_xml();
+        let (prefix, outer) = xml.split_at(xml.find("<VideoTrackGroup ObjectID=\"100\">").unwrap());
+        let mut xml = format!(
+            "{prefix}{}",
+            outer.replacen(
+                "<FrameRect>0,0,1920,1080</FrameRect>",
+                &format!("<FrameRect>0,0,{width},{height}</FrameRect>"),
+                1,
+            )
+        );
+        for id in [110, 120] {
+            let start = xml
+                .find(&format!("<VideoClipTrackItem ObjectID=\"{id}\">"))
+                .unwrap();
+            let end = start + xml[start..].find("</VideoClipTrackItem>").unwrap();
+            let edited = xml[start..end].replace(
+                "<FrameRect>0,0,1920,1080</FrameRect>",
+                &format!("<FrameRect>0,0,{width},{height}</FrameRect>"),
+            );
+            xml.replace_range(start..end, &edited);
+        }
+        let source = root.join("source.prproj");
+        std::fs::write(&source, xml).unwrap();
+        let output = root.join("converted");
+        let report = crate::Premiere
+            .import_to_tesseract(
+                &source,
+                &output,
+                &crate::PremiereImportOptions {
+                    sequence: Some("outer".into()),
+                },
+                ConversionMode::Write,
+            )
+            .unwrap();
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .all(|item| item.scope != crate::OmissionScope::Occurrence),
+            "{:?}",
+            report.diagnostics
+        );
+        let file = tesseract_file::TesseractFile::open(output.join("project.tsrct")).unwrap();
+        let wire = file.project_json().unwrap();
+        let groups: Vec<_> = wire["composition"]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|layer| layer["type"] == "Group")
+            .collect();
+        assert_eq!(groups.len(), 2);
+        let group = groups
+            .iter()
+            .find(|group| group["masks"].as_array().unwrap().len() == 1)
+            .unwrap();
+        let mask = &group["masks"][0];
+        assert_eq!(mask["opacity"], 0.5);
+        assert_eq!(group["transform"]["anchorPoint"], json!([960.0, 540.0]));
+        assert_eq!(
+            group["transform"]["position"],
+            json!([f64::from(width) / 2.0, f64::from(height) / 2.0])
+        );
+        let guide = group["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["id"] == mask["layer"])
+            .unwrap();
+        assert_eq!(guide["transform"]["position"], json!([0.0, 0.0]));
+        assert_eq!(
+            guide["shape"]["path"]["commands"][0],
+            json!({"type": "moveTo", "x": 480.0, "y": 270.0})
+        );
+        assert_eq!(file.metadata().assets.len(), 1);
+    }
+}
+
 #[test]
 fn nested_crop_keeps_its_guide_and_rejects_unsafe_combinations() {
     let original = r#"<VideoComponentChain ObjectID="111"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>"#;
@@ -2439,6 +3367,102 @@ fn nested_crop_keeps_its_guide_and_rejects_unsafe_combinations() {
 }
 
 #[test]
+fn nested_opacity_path_keys_keep_native_values_and_source_trim() {
+    let native = include_str!("../../../tests/fixtures/opacity-mask-records.xml");
+    let dom = roxmltree::Document::parse(native).unwrap();
+    let mut pending = vec!["1203"];
+    let mut selected = std::collections::BTreeSet::new();
+    let mut records = String::new();
+    while let Some(id) = pending.pop() {
+        if !selected.insert(id) {
+            continue;
+        }
+        let node = dom
+            .root_element()
+            .children()
+            .find(|node| node.attribute("ObjectID") == Some(id))
+            .unwrap();
+        records.push_str(&native[node.range()]);
+        pending.extend(
+            node.descendants()
+                .filter_map(|node| node.attribute("ObjectRef")),
+        );
+    }
+    let original = r#"<VideoComponentChain ObjectID="111"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>"#;
+    let xml = one_placement().replace(
+        original,
+        &placement_chain(
+            111,
+            "<DefaultMotion>true</DefaultMotion>",
+            &[(1203, records)],
+        ),
+    );
+    let (project, mut notes) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+    let outer = project.single_sequence().unwrap();
+    let nest = outer.nest_occurrences().next().unwrap();
+    assert_eq!(nest.in_ticks..nest.out_ticks, TICKS..3 * TICKS);
+    assert_eq!(nest.sequence.video_occurrences().count(), 1);
+    let mask = nest.opacity_mask.as_ref().unwrap();
+    assert_eq!(mask.path_keys.len(), 3);
+    assert_eq!(
+        (mask.feather, mask.opacity, mask.expansion, mask.inverted),
+        (321.0, 100.0, 0.0, false)
+    );
+    assert_eq!(mask.path_keys[0].path.vertices[0].point, [0.25, 0.25]);
+    assert_eq!(mask.path_keys[1].path.vertices[0].point, [0.5, 0.25]);
+    let ids = crate::tesseract_output::asset_ids_in_order(outer, &project.media);
+    let document = crate::convert::premiere_to_tesseract(outer, &project.media, &ids, &mut notes)
+        .unwrap()
+        .to_json_value()
+        .unwrap();
+    assert!(
+        notes
+            .iter()
+            .all(|note| note.scope != crate::OmissionScope::Occurrence),
+        "{notes:?}"
+    );
+    let owner = &document["composition"]["layers"][0];
+    let guide = owner["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["id"] == owner["masks"][0]["layer"])
+        .unwrap();
+    assert_eq!(guide["parent"], owner["id"]);
+    assert_eq!(
+        guide["transform"]["position"],
+        serde_json::json!([0.0, 0.0])
+    );
+    let entry = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| {
+            entry["target"]["layerId"] == guide["id"]
+                && entry["target"]["propertyType"] == "shapePath"
+        })
+        .unwrap();
+    let keys = entry["animator"]["keyframes"].as_array().unwrap();
+    assert_eq!(keys.len(), 3);
+    assert_eq!(keys[1]["easing"]["type"], "linear");
+    assert_eq!(keys[2]["easing"]["type"], "hold");
+    for (key, (time, point)) in keys.iter().zip([
+        (-500, (480.0, 270.0)),
+        (500, (960.0, 270.0)),
+        (1000, (480.0, 270.0)),
+    ]) {
+        assert_eq!(key["layerTime"], time);
+        let path: fx_schema::ShapePath =
+            serde_json::from_value(key["value"]["value"].clone()).unwrap();
+        assert_eq!(path.commands[0].endpoint(), Some(point));
+    }
+    assert_eq!(
+        document.to_string().matches("\"type\":\"Video\"").count(),
+        1
+    );
+}
+
+#[test]
 fn nest_placement_motion_reads_and_malformed_effect_keeps_picture() {
     let nest_chain = r#"<VideoComponentChain ObjectID="111"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>"#;
     // An intrinsic Motion component with `position` and optional Rotation keys.
@@ -2522,7 +3546,7 @@ fn nest_placement_motion_reads_and_malformed_effect_keeps_picture() {
                 &format!("<OutPoint>{}</OutPoint></Clip></VideoClip>", 3 * TICKS),
                 &format!("<OutPoint>{}</OutPoint><PlaybackSpeed>2</PlaybackSpeed></Clip></VideoClip>", 5 * TICKS),
             ),
-            "VideoClipTrackItem:110: nested Opacity mask requires a static vector outline, unit-forward playback and no other masks",
+            "VideoClipTrackItem:110: nested Opacity mask requires a vector outline, unit-forward playback and no other masks",
         ),
         (
             one_placement().replace(
@@ -5878,6 +6902,201 @@ fn nested_geometry2_output_mask_xml() -> String {
         &[(1522, records), (1523, String::new())],
     );
     xml.replace(default_chain, &chain)
+}
+
+#[test]
+fn nested_geometry2_zero_opacity_keeps_picture_outside_effect_mask() {
+    let xml = edit_record(
+        nested_geometry2_output_mask_xml(),
+        "<PointComponentParam ObjectID=\"1778\"",
+        "</PointComponentParam>",
+        |record| {
+            let start = record.find("<Keyframes>").unwrap();
+            let end = record.find("</Keyframes>").unwrap() + "</Keyframes>".len();
+            let mut record = record.to_owned();
+            record.replace_range(start..end, "<IsTimeVarying>false</IsTimeVarying>");
+            record
+        },
+    );
+    let xml = edit_record(
+        xml,
+        "<VideoComponentParam ObjectID=\"1785\"",
+        "</VideoComponentParam>",
+        |record| record.replace("-91445760000000000,100.,", "-91445760000000000,0.,"),
+    );
+    for inverted in [false, true] {
+        let xml = edit_record(
+            xml.clone(),
+            "<VideoComponentParam ObjectID=\"1903\"",
+            "</VideoComponentParam>",
+            |record| {
+                record.replace(
+                    "-91445760000000000,false,",
+                    &format!("-91445760000000000,{inverted},"),
+                )
+            },
+        );
+        let (project, mut notes) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+        let outer = project.single_sequence().unwrap();
+        assert_eq!(outer.nest_occurrences().count(), 2, "{notes:?}");
+        let ids = crate::tesseract_output::asset_ids_in_order(outer, &project.media);
+        let document =
+            crate::convert::premiere_to_tesseract(outer, &project.media, &ids, &mut notes)
+                .unwrap()
+                .to_json_value()
+                .unwrap();
+        let coverage = &document["composition"]["layers"][0]["layers"][0];
+        assert_eq!(coverage["masks"][0]["inverted"], !inverted);
+        assert_eq!(coverage["masks"][0]["opacity"], 1.0);
+        let picture = coverage["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["type"] == "Group")
+            .unwrap();
+        assert_eq!(picture["transform"]["opacity"], 100.0);
+        assert_eq!(
+            picture["transform"]["position"],
+            serde_json::json!([650.0, 150.0])
+        );
+        assert_eq!(
+            picture["transform"]["anchorPoint"],
+            serde_json::json!([650.0, 150.0])
+        );
+        assert_eq!(
+            document.to_string().matches("\"type\":\"Video\"").count(),
+            2
+        );
+    }
+}
+
+#[test]
+fn nested_geometry2_component_counter_keeps_masked_picture_and_controls() {
+    let xml = nested_geometry2_output_mask_xml();
+    let convert = |xml: &str| {
+        let (project, mut notes) = inspect_project_with_omissions(xml, Some("outer")).unwrap();
+        let outer = project.single_sequence().unwrap();
+        assert_eq!(outer.nest_occurrences().count(), 2, "{notes:?}");
+        let ids = crate::tesseract_output::asset_ids_in_order(outer, &project.media);
+        crate::convert::premiere_to_tesseract(outer, &project.media, &ids, &mut notes)
+            .unwrap()
+            .to_json_value()
+            .unwrap()
+    };
+    let expected = convert(&xml);
+    let dom = roxmltree::Document::parse(&xml).unwrap();
+    let geometry = dom
+        .root_element()
+        .children()
+        .find(|node| {
+            node.children().any(|child| {
+                child.has_tag_name("MatchName") && child.text() == Some("AE.ADBE Geometry2")
+            })
+        })
+        .unwrap();
+    // Saved counter profile also occurs in feature_mask_tracker_26_5.prproj.
+    let changed = xml[geometry.range()].replace(
+        "<Component Version=\"6\">",
+        "<Component Version=\"6\"><Node Version=\"1\"><Properties Version=\"1\"><BE.VideoFilterComponent.NextComponentNumber>2</BE.VideoFilterComponent.NextComponentNumber></Properties></Node>",
+    );
+    assert_ne!(changed, &xml[geometry.range()]);
+    let actual = convert(&xml.replace(&xml[geometry.range()], &changed));
+    assert_eq!(
+        actual, expected,
+        "allocation metadata must not discard mask or picture controls"
+    );
+    assert_eq!(actual.to_string().matches("\"type\":\"Video\"").count(), 2);
+    assert_eq!(
+        actual["composition"]["layers"][0]["layers"][0]["masks"][0]["mode"],
+        "add"
+    );
+}
+
+#[test]
+fn nested_geometry2_output_mask_path_keys_keep_guide_plane_and_trim_clock() {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+
+    let xml = nested_geometry2_output_mask_xml();
+    let dom = roxmltree::Document::parse(&xml).unwrap();
+    let record = dom
+        .root_element()
+        .children()
+        .find(|node| node.attribute("ObjectID") == Some("1899"))
+        .unwrap();
+    let value = record
+        .children()
+        .find(|node| node.has_tag_name("StartKeyframeValue"))
+        .unwrap();
+    let path =
+        crate::schema::decode_mask_path(&STANDARD.decode(value.text().unwrap()).unwrap()).unwrap();
+    let mut shifted = path.clone();
+    for vertex in &mut shifted.vertices {
+        vertex.point[0] += 0.125;
+        vertex.in_tangent[0] += 0.125;
+        vertex.out_tangent[0] += 0.125;
+    }
+    let keys = format!(
+        "<Keyframes>0,{};{TICKS},{};</Keyframes>",
+        STANDARD.encode(crate::schema::encode_mask_path(&path).unwrap()),
+        STANDARD.encode(crate::schema::encode_mask_path(&shifted).unwrap()),
+    );
+    let edited = xml[record.range()]
+        .replace("<IsTimeVarying>false</IsTimeVarying>", "")
+        .replace(
+            &xml[value.range()],
+            &format!("{}{keys}", &xml[value.range()]),
+        );
+    let xml = xml.replace(&xml[record.range()], &edited);
+    let (project, mut notes) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+    let outer = project.single_sequence().unwrap();
+    let nests: Vec<_> = outer.nest_occurrences().collect();
+    assert_eq!(nests.len(), 2, "{notes:?}");
+    assert_eq!(nests[0].geometry2_masks[&0][0].path_keys.len(), 2);
+    let ids = crate::tesseract_output::asset_ids_in_order(outer, &project.media);
+    let document = crate::convert::premiere_to_tesseract(outer, &project.media, &ids, &mut notes)
+        .unwrap()
+        .to_json_value()
+        .unwrap();
+    let motion = &document["composition"]["layers"][0];
+    let coverage = &motion["layers"][0];
+    assert_eq!(coverage["name"], "Nested Geometry2 output coverage");
+    let guide = coverage["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["id"] == coverage["masks"][0]["layer"])
+        .unwrap();
+    assert_eq!(guide["parent"], coverage["id"]);
+    assert_eq!(
+        guide["transform"]["position"],
+        serde_json::json!([0.0, 0.0])
+    );
+    let entry = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| {
+            entry["target"]["layerId"] == guide["id"]
+                && entry["target"]["propertyType"] == "shapePath"
+        })
+        .unwrap();
+    let keys = entry["animator"]["keyframes"].as_array().unwrap();
+    assert_eq!(keys.len(), 2);
+    assert_eq!(keys[0]["layerTime"], -67);
+    assert_eq!(keys[1]["layerTime"], 933);
+    for (key, expected) in keys.iter().zip([path, shifted]) {
+        let actual: fx_schema::ShapePath =
+            serde_json::from_value(key["value"]["value"].clone()).unwrap();
+        let first = expected.vertices[0].point.map(f64::from);
+        assert_eq!(
+            actual.commands[0].endpoint(),
+            Some((first[0] * 1300.0, first[1] * 300.0))
+        );
+    }
+    assert_eq!(
+        document.to_string().matches("\"type\":\"Video\"").count(),
+        2
+    );
 }
 
 #[test]

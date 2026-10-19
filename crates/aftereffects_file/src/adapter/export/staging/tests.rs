@@ -58,7 +58,10 @@ fn published_package_copies_only_emitted_text_fonts_with_exact_bytes_and_hash() 
         .export_from_tesseract(
             &input,
             &destination,
-            &AfterEffectsExportOptions { fps: 30.0 },
+            &AfterEffectsExportOptions {
+                fps: 30.0,
+                ..Default::default()
+            },
             ConversionMode::Write,
         )
         .unwrap();
@@ -143,7 +146,10 @@ fn selected_picture_admits_mp4_without_rewriting_editable_remap_or_originals() {
             archive.project(),
             0..1,
             parent.path(),
-            &AfterEffectsExportOptions { fps: 30.0 },
+            &AfterEffectsExportOptions {
+                fps: 30.0,
+                ..Default::default()
+            },
         )
         .unwrap();
     assert!(stage.omitted_layer_ids().is_empty(), "{:?}", stage.report());
@@ -234,7 +240,10 @@ fn selected_picture_rejects_complete_rgb_matte_scope_when_one_source_clock_diffe
             archive.project(),
             0..2,
             parent.path(),
-            &AfterEffectsExportOptions { fps: 30.0 },
+            &AfterEffectsExportOptions {
+                fps: 30.0,
+                ..Default::default()
+            },
         )
         .unwrap_err();
     let omissions = error
@@ -287,7 +296,10 @@ fn selected_picture_prunes_rgb_when_its_native_matte_owner_fails() {
             archive.project(),
             0..3,
             parent.path(),
-            &AfterEffectsExportOptions { fps: 30.0 },
+            &AfterEffectsExportOptions {
+                fps: 30.0,
+                ..Default::default()
+            },
         )
         .unwrap();
     assert_eq!(
@@ -368,7 +380,10 @@ fn selected_picture_prepared_movie_pair_retains_bound_alpha_matte_and_unmapped_e
             archive.project(),
             0..3,
             parent.path(),
-            &AfterEffectsExportOptions { fps: 30.0 },
+            &AfterEffectsExportOptions {
+                fps: 30.0,
+                ..Default::default()
+            },
         )
         .unwrap();
     assert!(stage.omitted_layer_ids().is_empty(), "{:?}", stage.report());
@@ -564,7 +579,10 @@ fn selected_picture_unmapped_effect_does_not_withhold_source_preparation() {
                 archive.project(),
                 0..1,
                 parent.path(),
-                &AfterEffectsExportOptions { fps: 30.0 },
+                &AfterEffectsExportOptions {
+                    fps: 30.0,
+                    ..Default::default()
+                },
                 Progress::new(&callback),
             )
             .unwrap_err();
@@ -604,7 +622,10 @@ fn dropped_shader_does_not_block_ordinary_selected_video_preparation() {
             archive.project(),
             0..1,
             parent.path(),
-            &AfterEffectsExportOptions { fps: 30.0 },
+            &AfterEffectsExportOptions {
+                fps: 30.0,
+                ..Default::default()
+            },
         )
         .unwrap_err();
     assert!(
@@ -634,7 +655,10 @@ fn selected_picture_admitted_shader_movie_retains_owner_and_picture() {
             archive.project(),
             0..1,
             parent.path(),
-            &AfterEffectsExportOptions { fps: 30.0 },
+            &AfterEffectsExportOptions {
+                fps: 30.0,
+                ..Default::default()
+            },
         )
         .expect("movie content survives without its shader");
     assert!(staged.omitted_layer_ids().is_empty());
@@ -693,7 +717,10 @@ fn selected_picture_unmapped_effect_still_verifies_later_assets() {
                 archive.project(),
                 0..2,
                 parent.path(),
-                &AfterEffectsExportOptions { fps: 30.0 },
+                &AfterEffectsExportOptions {
+                    fps: 30.0,
+                    ..Default::default()
+                },
             )
             .unwrap_err();
         assert!(error.picture_scope_omissions().is_none(), "{error}");
@@ -784,7 +811,10 @@ fn staging_writer_receives_original_and_distinct_script_prepared_views_once() {
         &archive,
         &original,
         directory,
-        &AfterEffectsExportOptions { fps: 30.0 },
+        &AfterEffectsExportOptions {
+            fps: 30.0,
+            ..Default::default()
+        },
         NativeWriteTarget {
             write: observe_script_prepared_writer,
             roots: None,
@@ -809,7 +839,10 @@ fn staging_writer_reuses_original_view_when_preparation_is_unchanged() {
         &archive,
         archive.project(),
         directory,
-        &AfterEffectsExportOptions { fps: 30.0 },
+        &AfterEffectsExportOptions {
+            fps: 30.0,
+            ..Default::default()
+        },
         NativeWriteTarget {
             write: observe_unchanged_writer,
             roots: None,
@@ -827,7 +860,10 @@ fn staging_writer_reuses_original_view_when_preparation_is_unchanged() {
 fn staged_generated_project_digests_match_exact_writer_outputs() {
     let parent = tempfile::tempdir().unwrap();
     let archive = archive(parent.path());
-    let options = AfterEffectsExportOptions { fps: 30.0 };
+    let options = AfterEffectsExportOptions {
+        fps: 30.0,
+        ..Default::default()
+    };
     let staged = AfterEffects
         .stage_document(&archive, archive.project(), parent.path(), &options)
         .unwrap();
@@ -863,7 +899,10 @@ fn staged_picture_and_ordinary_exports_report_typed_failed_source_layers() {
         .unwrap()
         .push(failed);
     let selected = document(value);
-    let options = AfterEffectsExportOptions { fps: 30.0 };
+    let options = AfterEffectsExportOptions {
+        fps: 30.0,
+        ..Default::default()
+    };
     let staged = AfterEffects
         .stage_document(&archive, &selected, parent.path(), &options)
         .unwrap();
@@ -883,6 +922,92 @@ fn staged_picture_and_ordinary_exports_report_typed_failed_source_layers() {
 }
 
 #[test]
+fn selected_picture_unsupported_media_prunes_matte_dependents_not_editable_siblings() {
+    let parent = tempfile::tempdir().unwrap();
+    let source = parent.path().join("unsupported.gif");
+    fs::write(
+        &source,
+        b"GIF89a\x01\0\x01\0\x80\0\0\0\0\0\xff\xff\xff\x21\xf9\x04\x01\0\0\0\0\x2c\0\0\0\0\x01\0\x01\0\0\x02\x01\x44\0\x3b",
+    )
+    .unwrap();
+    let mut value: Value = serde_json::from_str(RECT).unwrap();
+    let sibling = value["composition"]["layers"][0].clone();
+    let mut provider = sibling.clone();
+    provider["id"] = json!(901);
+    provider["name"] = json!("Unsupported matte");
+    provider["type"] = json!("Image");
+    provider.as_object_mut().unwrap().remove("rect");
+    provider["source"] = json!({"assetId":"matte","fit":"contain"});
+    let mut consumer = sibling.clone();
+    consumer["id"] = json!(902);
+    consumer["name"] = json!("Dependent rectangle");
+    consumer["trackMatte"] = json!({"layer":901,"mode":"alpha"});
+    let mut transitive = sibling.clone();
+    transitive["id"] = json!(903);
+    transitive["name"] = json!("Transitive dependent");
+    transitive["trackMatte"] = json!({"layer":902,"mode":"alpha"});
+    value["composition"]["layers"] = json!([transitive, consumer, provider, sibling]);
+    let archive = TesseractFileBuilder::try_new(document(value))
+        .unwrap()
+        .add_asset("matte", &source, AssetKind::Image)
+        .unwrap()
+        .write(parent.path().join("input.tsrct"))
+        .unwrap();
+    let original = archive.project().to_json_value().unwrap();
+    let options = AfterEffectsExportOptions {
+        fps: 30.0,
+        ..Default::default()
+    };
+    let staged = AfterEffects
+        .stage_picture_layers(&archive, archive.project(), 0..4, parent.path(), &options)
+        .unwrap();
+    assert!(staged.has_unsupported_media());
+    assert_eq!(
+        staged.unsupported_media_layer_ids(),
+        &[LayerId::new(901)].into_iter().collect()
+    );
+    assert_eq!(
+        staged.omitted_layer_ids(),
+        &[901, 902, 903].into_iter().map(LayerId::new).collect()
+    );
+    assert!(staged.report().diagnostics.iter().any(|diagnostic| {
+        diagnostic.message.contains("Asset matte:")
+            && diagnostic.message.contains("convertible siblings retained")
+    }));
+    for id in [902, 903] {
+        assert!(staged.report().diagnostics.iter().any(|diagnostic| {
+            diagnostic.layer_id == Some(LayerId::new(id))
+                && diagnostic.message.contains("omitted transitively")
+        }));
+    }
+    let bytes = fs::read(staged.directory().join("project.aep")).unwrap();
+    let native = read_project(&bytes).unwrap();
+    let ItemKind::Composition(comp) = &native
+        .item(staged.root_composition().item_id())
+        .unwrap()
+        .kind
+    else {
+        panic!("generated root composition");
+    };
+    assert_eq!(comp.layers.len(), 1);
+    assert_eq!(comp.layers[0].name.as_ref(), "Editable identity rectangle");
+    let control = AfterEffects
+        .stage_picture_layers(&archive, archive.project(), 3..4, parent.path(), &options)
+        .unwrap();
+    assert!(!control.has_unsupported_media());
+    // The control's exact rectangle bytes are pinned to the Adobe-opened fixture below.
+    assert_eq!(
+        bytes,
+        fs::read(control.directory().join("project.aep")).unwrap()
+    );
+    assert_eq!(
+        staged.report().artifacts,
+        [Artifact::project("project.aep")]
+    );
+    assert_eq!(archive.project().to_json_value().unwrap(), original);
+}
+
+#[test]
 fn staged_root_matches_the_nonempty_native_observed_rect_bytes() {
     let parent = tempfile::tempdir().unwrap();
     let archive = archive(parent.path());
@@ -891,7 +1016,10 @@ fn staged_root_matches_the_nonempty_native_observed_rect_bytes() {
             &archive,
             archive.project(),
             parent.path(),
-            &AfterEffectsExportOptions { fps: 30.0 },
+            &AfterEffectsExportOptions {
+                fps: 30.0,
+                ..Default::default()
+            },
         )
         .unwrap();
     let bytes = fs::read(staged.directory().join("project.aep")).unwrap();
@@ -937,7 +1065,10 @@ fn staged_selected_document_uses_its_own_name_canvas_and_rounded_clock() {
             &archive,
             &selected,
             parent.path(),
-            &AfterEffectsExportOptions { fps: 29.97 },
+            &AfterEffectsExportOptions {
+                fps: 29.97,
+                ..Default::default()
+            },
         )
         .unwrap();
     let identity = staged.root_composition();
@@ -981,7 +1112,10 @@ fn staged_drop_and_failed_preparation_preserve_unrelated_parent_entries() {
                 &archive,
                 archive.project(),
                 parent.path(),
-                &AfterEffectsExportOptions { fps: 0.0 },
+                &AfterEffectsExportOptions {
+                    fps: 0.0,
+                    ..Default::default()
+                },
             )
             .is_err()
     );
@@ -1007,7 +1141,10 @@ fn staged_check_and_write_have_identical_inventory_diagnostics_and_bytes() {
     let input = parent.path().join("input.tsrct");
     let original = fs::read(&input).unwrap();
     let destination = parent.path().join("published");
-    let options = AfterEffectsExportOptions { fps: 30.0 };
+    let options = AfterEffectsExportOptions {
+        fps: 30.0,
+        ..Default::default()
+    };
     let staged = AfterEffects
         .stage_document(&archive, archive.project(), parent.path(), &options)
         .unwrap();
@@ -1677,6 +1814,57 @@ fn picture_only_staging_keeps_embedded_audio_owner_media_and_input_unchanged() {
 }
 
 #[test]
+fn final_project_write_cancellation_returns_cancelled_and_cleans_owned_stage() {
+    let parent = tempfile::tempdir().unwrap();
+    let archive = archive(parent.path());
+    let sentinel = parent.path().join("keep.txt");
+    fs::write(&sentinel, b"keep").unwrap();
+    let directory = tempfile::tempdir_in(parent.path()).unwrap();
+    let owned_path = directory.path().to_path_buf();
+    let cancelled = AtomicBool::new(false);
+    let mut wrote_project = false;
+
+    let result = prepare_with_project_writer(
+        &archive,
+        archive.project(),
+        directory,
+        &AfterEffectsExportOptions::default(),
+        NativeWriteTarget {
+            write: to_aep_with_document_views_and_media_and_fps_with_progress,
+            roots: None,
+            alias_directory: None,
+        },
+        AepPreparationControl {
+            cancelled: Some(&cancelled),
+            ..Default::default()
+        },
+        |path, bytes| {
+            assert!(!cancelled.load(Ordering::Relaxed));
+            assert_eq!(path, owned_path.join("project.aep"));
+            fs::write(path, bytes)?;
+            assert_eq!(fs::read(path)?, bytes);
+            wrote_project = true;
+            cancelled.store(true, Ordering::Relaxed);
+            Ok(())
+        },
+    );
+    let returned_cancelled = matches!(&result, Err(AepConversionError::Cancelled));
+    // Drop an unexpected successful handle too, so a failing regression cannot
+    // leave its owned output behind. On cancellation, preparation already dropped it.
+    drop(result);
+
+    assert!(wrote_project);
+    assert!(cancelled.load(Ordering::Relaxed));
+    assert!(!owned_path.exists());
+    assert_eq!(fs::read_dir(parent.path()).unwrap().count(), 2);
+    assert_eq!(fs::read(sentinel).unwrap(), b"keep");
+    assert!(
+        returned_cancelled,
+        "cancellation during the final write was lost"
+    );
+}
+
+#[test]
 fn preparation_pre_cancel_creates_no_owned_output() {
     let parent = tempfile::tempdir().unwrap();
     let archive = archive(parent.path());
@@ -1876,7 +2064,10 @@ fn export_media_preserve_original_control_never_prepares_unsupported_video() {
             archive.project(),
             0..1,
             parent.path(),
-            &AfterEffectsExportOptions { fps: 30.0 },
+            &AfterEffectsExportOptions {
+                fps: 30.0,
+                ..Default::default()
+            },
             AepPreparationControl {
                 preserve_video_assets: true,
                 ..Default::default()

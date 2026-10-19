@@ -8,7 +8,7 @@
 //! whole graphic, and so does the clip's own Opacity, which the video Opacity
 //! reader reads with its one clip mask and bounded numeric controls. Bezier keys convert only on
 //! parameters whose Bezier speeds were measured, in the measured form; other
-//! Bezier keys omit the graphic.
+//! Bezier keys omit the graphic, except Shape Scale's diagnosed scalar approximation.
 //!
 //! A Source Graphic keeps its objects on its master clip's own chain, which
 //! every placement of that master shows; each placement reads them afresh,
@@ -16,10 +16,12 @@
 //! shared chain omit the placement: their clock is unmeasured.
 
 mod capsule;
+mod legacy_title;
 
 use super::{
     animation::{
-        point_keys, read_video_animations, read_video_compositing, scalar_keys, MotionAndMasks,
+        point_keys, point_start, read_video_animations, read_video_compositing, scalar_keys,
+        MotionAndMasks,
     },
     color_matte, integer, require_zero_subclip_time_offset, required, required_integer,
     stream_dimensions,
@@ -89,14 +91,16 @@ pub(super) fn graphic_clip(
     let capsule = media.value.implementation_id.as_deref()
         == Some(crate::schema::after_effects::IMPORTER_ID)
         && capsule::has_saved_component(graph, item);
-    (capsule || media.value.implementation_id.as_deref() == Some(text::GRAPHIC_IMPLEMENTATION_ID))
-        .then_some(GraphicClip {
-            sub,
-            clip,
-            source,
-            media,
-            capsule,
-        })
+    (capsule
+        || legacy_title::is_title(&media.value)
+        || media.value.implementation_id.as_deref() == Some(text::GRAPHIC_IMPLEMENTATION_ID))
+    .then_some(GraphicClip {
+        sub,
+        clip,
+        source,
+        media,
+        capsule,
+    })
 }
 
 pub(super) fn is_capsule(source: &GraphicClip) -> bool {
@@ -195,7 +199,25 @@ pub(super) fn read_graphic(
         "{}: graphic retiming is unsupported",
         clip.identity
     );
-    validate_generator(graph, &source, &media, &frame_rect, frame_rate)?;
+    let legacy = legacy_title::is_title(&media.value);
+    let hdr = if legacy {
+        let stream = graph.follow::<VideoStream>(
+            required(
+                media.value.video_stream.as_ref(),
+                &media.identity,
+                "VideoStream",
+            )?,
+            &media.identity,
+        )?;
+        ensure!(
+            stream_dimensions(&stream)? == frame,
+            "{}: legacy title stream differs from sequence canvas",
+            media.identity
+        );
+        None
+    } else {
+        validate_generator(graph, &source, &media, &frame_rect, frame_rate, omissions)?
+    };
     let master = sub
         .value
         .master_clip
@@ -203,6 +225,7 @@ pub(super) fn read_graphic(
         .map(|master| validate_master(graph, master, &sub.identity, &source))
         .transpose()?;
     let shared = match &master {
+        _ if legacy => None,
         Some(master) => shared_content(graph, master, omissions)?,
         None => None,
     };
@@ -217,10 +240,24 @@ pub(super) fn read_graphic(
     )?;
     let chain = graph.follow::<VideoComponentChain>(components, &identity)?;
     if shared.is_none() {
-        // Check this before `default_chain`, which would also report it as a
-        // feature. Clip Motion keys are not converted and keep this message.
+        // An explicit Motion component replaces the default flag. Its controls
+        // and keys are checked below by the shared media-Motion reader.
         ensure!(
-            chain.value.default_motion.as_deref() == Some("true"),
+            chain.value.default_motion.as_deref() == Some("true")
+                || chain
+                    .value
+                    .component_chain
+                    .as_ref()
+                    .and_then(|content| content.components.as_ref())
+                    .is_some_and(
+                        |components| components.items.iter().any(|reference| match_name(
+                            graph,
+                            reference,
+                            &chain.identity
+                        )
+                        .as_deref()
+                            == Some("AE.ADBE Motion"))
+                    ),
             "{}: graphic clip Motion and Opacity must keep their defaults",
             chain.identity
         );
@@ -243,18 +280,27 @@ pub(super) fn read_graphic(
         .as_ref()
         .and_then(|content| content.components.as_ref())
         .map_or(&[][..], |components| components.items.as_slice());
-    // The chain that holds the objects: the master clip's for a Source
-    // Graphic, whose placement keeps only the clip's own Motion and Opacity.
-    let (content, clip_motion, clip_opacity, layers) = match &shared {
+    // Source Graphic objects belong to the master; placement transforms
+    // must surround those objects without changing the shared source.
+    let mut placement_vector_motion = None;
+    let (content, clip_motion, clip_motion_animations, clip_opacity, layers) = match &shared {
         Some(content) => {
-            let (motion, opacity) = read_placement_motion(graph, &chain, placed, omissions)?;
+            let (motion, opacity, vector_motion) =
+                read_placement_motion(graph, &chain, placed, frame, omissions)?;
+            placement_vector_motion = vector_motion;
             let layers = content
                 .value
                 .component_chain
                 .as_ref()
                 .and_then(|chain| chain.components.as_ref())
                 .map_or(&[][..], |components| components.items.as_slice());
-            (content, motion, opacity, layers)
+            (
+                content,
+                motion.transform,
+                motion.animations,
+                opacity,
+                layers,
+            )
         }
         None => {
             // Premiere 26.5.1 lists a kept clip Opacity first. A chain with neither a
@@ -266,7 +312,30 @@ pub(super) fn read_graphic(
                 }
                 _ => (None, placed),
             };
-            (&chain, PrStaticTransform::default(), clip_opacity, layers)
+            let (clip_motion, clip_motion_animations, layers) = match layers.split_first() {
+                Some((first, rest))
+                    if match_name(graph, first, &chain.identity).as_deref()
+                        == Some("AE.ADBE Motion") =>
+                {
+                    let motion = read_video_animations(graph, &chain, &[first], true, omissions)?;
+                    ensure!(
+                        motion.crop.is_default()
+                            && motion.linear_wipe.is_none()
+                            && motion.track_matte.is_none(),
+                        "{}: graphic Motion coverage effects are not converted",
+                        chain.identity
+                    );
+                    (motion.transform, motion.animations, rest)
+                }
+                _ => (PrStaticTransform::default(), Vec::new(), layers),
+            };
+            (
+                &chain,
+                clip_motion,
+                clip_motion_animations,
+                clip_opacity,
+                layers,
+            )
         }
     };
     // A mask on the clip Opacity masks the whole graphic after its Vector
@@ -295,17 +364,21 @@ pub(super) fn read_graphic(
         chain.identity
     );
     if let Some(reference) = clip_opacity {
-        // Its Bezier speeds were measured in value per second, as on the
-        // probed graphic parameters, with the same unmeasured form.
+        // Keep the shared scalar reader's editable curve rather than drop
+        // the whole graphic for an unmeasured mode pair. Native graphic
+        // readback has not established parity for these mixed-mode handles.
         let (param, wire) = opacity_keys(graph, reference, &chain.identity)?;
-        ensure!(
-            !bent_bezier_after_linear_or_hold(&wire, None),
-            "{param}: Bezier key after a Linear or Hold key on graphic clip Opacity is unsupported until its interpolation is verified"
-        );
+        if bent_bezier_after_linear_or_hold(&wire, None) {
+            approximate(
+                omissions,
+                param,
+                "graphic clip Opacity mixed-mode interpolation uses the shared scalar Motion mapping: Linear into Bezier uses both stored handles, Hold into Bezier stays Hold; native graphic interpolation and RGB/alpha fidelity are unverified, so fades may differ; editable objects, key values and generator-clock times retained",
+            );
+        }
     }
     // The Vector Motion comes first, after a clip Opacity: an order
     // inferred, not seen in an Adobe save.
-    let (group, object_references) = match layers.split_first() {
+    let (mut group, object_references) = match layers.split_first() {
         Some((first, rest))
             if match_name(graph, first, &content.identity).as_deref()
                 == Some(text::VECTOR_MOTION_MATCH_NAME) =>
@@ -317,8 +390,17 @@ pub(super) fn read_graphic(
         }
         _ => (None, layers),
     };
+    let group_is_placement = placement_vector_motion.is_some();
+    if let Some(motion) = placement_vector_motion {
+        ensure!(
+            group.is_none(),
+            "{}: simultaneous shared and placement Vector Motion is unsupported",
+            chain.identity
+        );
+        group = Some(motion);
+    }
     ensure!(
-        !object_references.is_empty(),
+        legacy || !object_references.is_empty(),
         "{}: a graphic without text or shape objects is unsupported",
         content.identity
     );
@@ -327,15 +409,57 @@ pub(super) fn read_graphic(
         "{}: SubGroups in a shared Source Graphic are unverified",
         content.identity
     );
-    let (mut objects, mut effect_loss) = read_objects(
-        graph,
-        object_references,
-        content,
-        frame,
-        shared.is_none(),
-        &identity,
-        omissions,
-    )?;
+    let (mut objects, mut effect_loss) = if legacy {
+        let title = legacy_title::objects(graph, &media, frame, omissions)?;
+        let split = super::effects::split_chain(graph, placed, &content.identity)?;
+        approximate(omissions, &identity, "legacy title placement effects use the existing canvas-sized graphic group approximation; source/placement effect staging and native coverage fidelity are unverified; Track Matte Key/Linear Wipe are not mapped on this graphic host");
+        let mut effect_omissions = Vec::new();
+        let (mapped_effects, _) = split.read_effects(
+            graph,
+            &super::effects::EffectOwner {
+                occurrence: &identity,
+                source: None,
+                stroke_geometry: false,
+                clip_name: media.value.title.as_deref(),
+                track_index: 0,
+                timeline_ticks: start..end,
+                source_is_canvas: true,
+                adjustment: false,
+                solid_crop: false,
+            },
+            false,
+            &mut effect_omissions,
+        );
+        let plain_title_alpha = title.plain_alpha
+            && shared.is_none()
+            && split.motion_and_masks.is_empty()
+            && effect_omissions
+                .iter()
+                .all(|loss| loss.kind != crate::OmissionKind::Omitted)
+            && mapped_effects
+                .iter()
+                .all(|effect| matches!(effect.params, crate::schema::PrEffectParams::Transform(_)));
+        omissions.extend(effect_omissions);
+        // RGB paint losses do not change an opaque single-face glyph's alpha.
+        let loss = Some(PrGraphicEffectLoss {
+            effect_component: media.identity.clone(),
+            effect_name: "legacy title styling/placement effects",
+            mapped_effects,
+            has_unmapped_effects: true,
+            plain_title_alpha,
+        });
+        (title.objects, loss)
+    } else {
+        read_objects(
+            graph,
+            object_references,
+            content,
+            frame,
+            shared.is_none(),
+            &identity,
+            omissions,
+        )?
+    };
     ensure!(
         shared.is_none() || objects.iter().all(|object| object.mask_source().is_none()),
         "{}: Mask with Shape or Text in a shared Source Graphic is unverified",
@@ -343,7 +467,7 @@ pub(super) fn read_graphic(
     );
     ensure!(
         effect_loss.is_none() || opacity_mask.is_none(),
-        "{}: omitted graphic Ramp beside a clip Opacity mask has unverified alpha coverage; graphic occurrence omitted",
+        "{}: graphic effect beside a clip Opacity mask has unverified alpha coverage; graphic occurrence omitted",
         content.identity
     );
     // Shared graphics remain flat; the guard above rejects any SubGroup map.
@@ -358,31 +482,32 @@ pub(super) fn read_graphic(
     // static text at two source clocks, which fixes no clock for keys.
     ensure!(
         shared.is_none()
-            || group
-                .as_ref()
-                .is_none_or(|motion| motion.animations.is_empty())
+            || (group_is_placement
+                || group
+                    .as_ref()
+                    .is_none_or(|motion| motion.animations.is_empty()))
                 && objects.iter().all(|object| match object {
                     PrGraphicObject::Text(text) => {
                         text.animations.is_empty() && text.source_text_keys.is_empty()
                     }
                     PrGraphicObject::TextLines(lines) => lines.animations.is_empty(),
-                    PrGraphicObject::Shape(_) => true,
+                    PrGraphicObject::Shape(shape) => shape.animations.is_empty(),
                     PrGraphicObject::Group(_) => false,
                 }),
         "{}: keys in Source Graphic shared content are not converted: their clock is unmeasured",
         content.identity
     );
     if let (Some(_), Some(loss)) = (&shared, &mut effect_loss) {
-        for effect in &mut loss.mapped_ramps {
+        for effect in &mut loss.mapped_effects {
             if !effect.animations.is_empty() {
                 effect.animations.clear();
                 approximate(omissions, &identity,
-                    "graphic Ramp keys in shared Source Graphic content have an unmeasured clock; retained saved static controls and independent content");
+                    "graphic effect keys in shared Source Graphic content have an unmeasured clock; retained saved static controls and independent content");
             }
         }
     }
-    let ramp_keys = effect_loss.as_ref().is_some_and(|loss| {
-        loss.mapped_ramps
+    let effect_keys = effect_loss.as_ref().is_some_and(|loss| {
+        loss.mapped_effects
             .iter()
             .any(|effect| !effect.animations.is_empty())
     });
@@ -390,7 +515,7 @@ pub(super) fn read_graphic(
         .as_ref()
         .is_none_or(|motion| motion.animations.is_empty())
         && objects.iter().all(object_is_static)
-        && !ramp_keys;
+        && !effect_keys;
     // Premiere can save a still graphic with a source span different from its
     // displayed placement (100% speed, no reverse). With no keys anywhere in
     // the accepted graphic, generator time cannot change its content. Keep the
@@ -399,6 +524,7 @@ pub(super) fn read_graphic(
     ensure!(
         source_out.checked_sub(source_in) == end.checked_sub(start)
             || opacity_animation.is_none()
+                && clip_motion_animations.is_empty()
                 && opacity_mask.as_ref().is_none_or(mask_is_static)
                 && content_is_static,
         "{}: graphic retiming is unsupported",
@@ -408,7 +534,7 @@ pub(super) fn read_graphic(
         Some(motion)
             if effect_loss
                 .as_ref()
-                .is_none_or(|loss| loss.mapped_ramps.is_empty())
+                .is_none_or(|loss| loss.mapped_effects.is_empty())
                 && motion.animations.is_empty()
                 && objects.len() == 1
                 && objects[0].compose_static_vector_motion_in_range(&motion, frame) =>
@@ -418,12 +544,14 @@ pub(super) fn read_graphic(
         motion => motion,
     };
     let graphic = PrGraphic {
+        hdr,
         id: Some(identity),
         start_ticks: start,
         end_ticks: end,
         in_ticks: source_in,
         vector_motion,
         clip_motion,
+        clip_motion_animations,
         opacity,
         blend_mode,
         animations: opacity_animation.into_iter().collect(),
@@ -459,7 +587,9 @@ fn object_is_static(object: &PrGraphicObject) -> bool {
             text.animations.is_empty() && text.source_text_keys.is_empty()
         }
         PrGraphicObject::TextLines(lines) => lines.animations.is_empty(),
-        PrGraphicObject::Shape(shape) => shape.mask.as_ref().is_none_or(mask_is_static),
+        PrGraphicObject::Shape(shape) => {
+            shape.animations.is_empty() && shape.mask.as_ref().is_none_or(mask_is_static)
+        }
         PrGraphicObject::Group(group) => group.objects.iter().all(object_is_static),
     }
 }
@@ -511,20 +641,31 @@ fn shared_content(
     Ok(Some(content))
 }
 
-/// The static clip Motion of a Source Graphic placement, read by the Motion
-/// reader of media clips, and its one clip Opacity component, from the
-/// placement's chain `placed`, which may hold nothing else. Keyed clip Motion
-/// on a graphic is unmeasured and omits the placement.
+/// Read placement-owned Motion and Vector Motion on the generator source
+/// clock, independently of the shared objects and the clip Opacity component.
 fn read_placement_motion<'r>(
     graph: &Graph<'_>,
     chain: &Located<VideoComponentChain>,
     placed: &'r [Reference],
+    frame: [u32; 2],
     omissions: &mut Vec<Omission>,
-) -> Result<(PrStaticTransform, Option<&'r Reference>)> {
+) -> Result<(
+    MotionAndMasks,
+    Option<&'r Reference>,
+    Option<PrVectorMotion>,
+)> {
     let mut clip_opacity = None;
+    let mut vector_motion = None;
+    let mut components = Vec::new();
     for reference in placed {
         let component = graph.follow::<VideoFilterComponent>(reference, &chain.identity)?;
         match component.value.match_name.as_deref() {
+            Some(text::VECTOR_MOTION_MATCH_NAME) => {
+                ensure!(vector_motion.is_none(), "{}: duplicate placement Vector Motion", chain.identity);
+                let motion = read_vector_motion(graph, reference, &chain.identity, frame)?;
+                vector_motion = Some(motion);
+                continue;
+            }
             Some("AE.ADBE Motion") => {}
             // The compositing reader checks only the component returned
             // here, so a second Opacity would escape its checks.
@@ -540,27 +681,15 @@ fn read_placement_motion<'r>(
                 )))
             }
         }
+        components.push(reference);
     }
-    let components: Vec<_> = placed.iter().collect();
-    let MotionAndMasks {
-        transform,
-        animations,
-        crop,
-        linear_wipe,
-        track_matte,
-        ..
-    } = read_video_animations(graph, chain, &components, true, omissions)?;
+    let motion = read_video_animations(graph, chain, &components, true, omissions)?;
     ensure!(
-        animations.is_empty(),
-        "{}: graphic clip Motion keys are not converted",
-        chain.identity
-    );
-    ensure!(
-        crop.is_default() && linear_wipe.is_none() && track_matte.is_none(),
+        motion.crop.is_default() && motion.linear_wipe.is_none() && motion.track_matte.is_none(),
         "{}: Motion Crop, Linear Wipe or Track Matte Key on a Source Graphic placement is not converted",
         chain.identity
     );
-    Ok((transform, clip_opacity))
+    Ok((motion, clip_opacity, vector_motion))
 }
 
 /// The match name of a chain component that resolves.
@@ -595,8 +724,8 @@ struct OpenGroup {
 /// `ID` in Adobe's 24.3 Social Media Template. A pin
 /// must name a member and a SubGroup of this chain, once, and a member must
 /// follow its SubGroup inside the SubGroup's run of members. A component
-/// that cannot convert still omits the graphic, except Ramp, which leaves the
-/// saved paints and carries supported leading Ramp controls without certifying
+/// that cannot convert still omits the graphic, except Ramp, Gaussian Blur, Geometry2,
+/// Tint and Basic 3D, which retain saved paints and supported controls without certifying
 /// native coverage. A mask or SubGroup form that no render covers omits only
 /// its part ([`admit`]).
 fn read_objects(
@@ -617,14 +746,26 @@ fn read_objects(
     let mut ids = BTreeSet::new();
     let mut groups = BTreeSet::new();
     let mut effect_loss = None;
-    let mut leading_ramps = true;
+    let mut leading_effects = true;
     for reference in references {
         let native_record = graph.locate(reference, &chain.identity)?;
         let component = graph.decode::<VideoFilterComponent>(native_record)?;
-        let is_ramp = component.value.match_name.as_deref() == Some("AE.ADBE Ramp");
-        let ramp = (leading_ramps && open.is_empty() && is_ramp)
-            .then(|| super::effects::read_graphic_ramp(graph, native_record));
-        leading_ramps &= is_ramp;
+        let is_effect = matches!(
+            component.value.match_name.as_deref(),
+            Some(
+                "AE.ADBE Ramp"
+                    | "AE.ADBE Gaussian Blur 2"
+                    | "AE.ADBE Geometry2"
+                    | "AE.ADBE Tint"
+                    | "AE.ADBE Basic 3D"
+            )
+        );
+        let mapped_effect = (leading_effects
+            && open.is_empty()
+            && is_effect
+            && component.value.match_name.as_deref() != Some("AE.ADBE Basic 3D"))
+        .then(|| super::effects::read_graphic_effect(graph, native_record));
+        leading_effects &= is_effect;
         let id = component
             .value
             .component
@@ -686,7 +827,7 @@ fn read_objects(
             record,
             omissions,
             &mut effect_loss,
-            ramp,
+            mapped_effect,
         )?;
         let mask = match &object {
             ReadObject::Kept(object) => object.mask_source().is_some(),
@@ -733,7 +874,8 @@ fn omit_changed_mask_dependents(
     let mut objects = objects.into_iter();
     while let Some(mut object) = objects.next() {
         let masks_below = object.mask_source().is_some();
-        let attached = matches!(&object, PrGraphicObject::Shape(shape) if shape.mask.is_some());
+        let attached = matches!(&object, PrGraphicObject::Shape(shape) if shape.mask.is_some())
+            || matches!(&object, PrGraphicObject::Text(text) if text.mask.is_some());
         if masks_below || attached {
             let below = if masks_below { objects.len() } else { 0 };
             omit(
@@ -741,7 +883,7 @@ fn omit_changed_mask_dependents(
                 OmissionScope::Feature,
                 record,
                 omitted_part(
-                    &format!("{}: omitted graphic Ramp changes luma and has unverified alpha coverage for Mask with Shape/Text or an attached mask", loss.ramp_component),
+                    &format!("{}: graphic {} changes luma and has unverified alpha coverage for Mask with Shape/Text or an attached mask", loss.effect_component, loss.effect_name),
                     below,
                 ),
             );
@@ -923,9 +1065,10 @@ fn read_subgroup(
     ))
 }
 
-/// Read one graphic object or carry its supported leading Ramp controls.
+/// Read one graphic object or carry its supported leading effect controls.
 /// Native graphic-host coverage stays unproved for masks/Track Matte consumers.
-/// Unknown effects and misplaced transforms retain their existing guards.
+/// Unknown effects retain their existing guards; misplaced Geometry2 is diagnosed
+/// without discarding independent base paints.
 fn read_object(
     graph: &Graph<'_>,
     mut component: Located<VideoFilterComponent>,
@@ -933,26 +1076,76 @@ fn read_object(
     record: &str,
     omissions: &mut Vec<Omission>,
     effect_loss: &mut Option<PrGraphicEffectLoss>,
-    ramp: Option<Result<crate::schema::PrEffect>>,
+    mapped_effect: Option<Result<crate::schema::PrEffect>>,
 ) -> Result<ReadObject> {
     let pixels = frame_pixels(frame);
     let identity = component.identity.clone();
+    if component.value.match_name.as_deref() == Some(text::SHAPE_MATCH_NAME)
+        && component.value.component.as_ref().is_some_and(|body| {
+            body.display_name.as_deref() == Some("Shape") && body.bypass.as_deref() == Some("true")
+        })
+    {
+        // Bypass removes the whole object, including any coverage it supplied.
+        return Ok(ReadObject::Omitted {
+            reason: format!("{identity}: bypassed graphic Shape omitted; disabled content is not retained for editing"),
+            masks_below: false,
+        });
+    }
     let attached = component.value.sub_components.take();
     let object = match component.value.match_name.as_deref() {
         Some(text::TEXT_MATCH_NAME) => {
-            let layer = read_text_component(graph, component)?;
+            let mut layer = read_text_component(graph, component)?;
+            if let text_payload::TextDocuments::Lines(lines) = &layer.document {
+                if lines.iter().any(|line| line.leading != 0.0) {
+                    if !layer.transform.uniform || attached.is_some() || layer.mask_source.is_some()
+                    {
+                        let mut document = lines[0].clone();
+                        document.text = lines
+                            .iter()
+                            .map(|line| line.text.as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        document.leading = 0.0;
+                        layer.document = text_payload::TextDocuments::Uniform(document);
+                        approximate(omissions, &identity, "tight point text with nonuniform scale or object coverage retains automatic leading; independent line placement is unsupported for this host");
+                    } else {
+                        approximate(omissions, &identity, "tight point text retained as independently editable lines; text edits do not reflow between lines");
+                    }
+                }
+            }
             for reason in &layer.transform.approximations {
                 approximate(omissions, &identity, reason);
             }
             let masks_below = layer.mask_source.is_some();
-            // Keep the existing occurrence-level refusal for ordinary attached
-            // masks, including shared Source Graphics. A mask-source role must
-            // instead remove its entire lower composite within its own scope.
-            ensure!(
-                attached.is_none() || masks_below,
-                "{identity}: a mask on a graphic object is not converted"
-            );
-            let unsupported = if attached.is_some() {
+            let mask = if !masks_below {
+                let mask = attached
+                    .as_ref()
+                    .map(|attached| {
+                        super::mask::read_opacity_mask(graph, &identity, attached, omissions)
+                    })
+                    .transpose()?
+                    .flatten();
+                ensure!(
+                    mask.as_ref().is_none_or(|mask| mask.raster.is_none()
+                        && mask.path_keys.is_empty()
+                        && !mask.has_numeric_keys()
+                        && mask.feather == 0.0
+                        && mask.expansion == 0.0
+                        && mask.opacity == 100.0)
+                        && (mask.is_none()
+                            || matches!(&layer.document,
+                            text_payload::TextDocuments::Uniform(document) if document.fill.is_some())
+                                && layer
+                                    .source_text_keys
+                                    .iter()
+                                    .all(|key| key.document.fill.is_some())),
+                    "{identity}: only static hard masks on uniform graphic Text are converted"
+                );
+                mask
+            } else {
+                None
+            };
+            let unsupported = if attached.is_some() && masks_below {
                 Some("a mask on a graphic object is not converted".to_owned())
             } else if masks_below && matches!(layer.document, text_payload::TextDocuments::Lines(_))
             {
@@ -985,6 +1178,7 @@ fn read_object(
             let transform = object_transform(&layer.transform, pixels);
             match layer.document {
                 text_payload::TextDocuments::Uniform(document) => PrGraphicObject::Text(PrText {
+                    mask,
                     horizontal_scale: (!layer.transform.uniform)
                         .then_some(layer.transform.horizontal_scale),
                     name: layer.name,
@@ -1035,33 +1229,51 @@ fn read_object(
             }
             PrGraphicObject::Shape(shape)
         }
-        Some("AE.ADBE Ramp") => {
+        Some(
+            name @ ("AE.ADBE Ramp"
+            | "AE.ADBE Gaussian Blur 2"
+            | "AE.ADBE Geometry2"
+            | "AE.ADBE Tint"
+            | "AE.ADBE Basic 3D"),
+        ) => {
+            let label = match name {
+                "AE.ADBE Ramp" => "Ramp",
+                "AE.ADBE Geometry2" => "Geometry2",
+                "AE.ADBE Tint" => "Tint",
+                "AE.ADBE Basic 3D" => "Basic 3D",
+                _ => "Gaussian Blur",
+            };
             let body = required(component.value.component.as_ref(), &identity, "Component")?;
             let bypassed = body.bypass.as_deref() == Some("true");
             ensure!(
                 bypassed || attached.is_none(),
-                "{identity}: graphic Ramp with an attached mask is not converted"
+                "{identity}: graphic {label} with an attached mask is not converted"
             );
             let mut limitation = None;
             if !bypassed {
                 let loss = effect_loss.get_or_insert_with(|| PrGraphicEffectLoss {
-                    ramp_component: identity.clone(),
-                    mapped_ramps: Vec::new(),
+                    effect_component: identity.clone(),
+                    effect_name: label,
+                    mapped_effects: Vec::new(),
+                    has_unmapped_effects: false,
+                    plain_title_alpha: false,
                 });
-                match ramp {
+                match mapped_effect {
                     Some(Ok(effect)) => {
-                        loss.mapped_ramps.push(effect);
+                        loss.mapped_effects.push(effect);
                         return Ok(ReadObject::MappedEffect);
                     }
                     Some(Err(error)) => limitation = Some(super::effects::reason(error)),
-                    None => limitation = Some("the Ramp is inside or between graphic objects; its effect scope cannot be replaced by the whole graphic".to_owned()),
+                    None if name == "AE.ADBE Basic 3D" => limitation = Some("Swivel, Tilt, Distance to Image, Specular Highlight, Preview and their animation are omitted; retained content is flat, not a perspective or lighting approximation".to_owned()),
+                    None => limitation = Some(format!("the {label} is inside or between graphic objects; its effect scope cannot be replaced by the whole graphic")),
                 }
+                loss.has_unmapped_effects = true;
             }
             return Ok(ReadObject::Omitted {
                 reason: if bypassed {
-                    format!("{identity}: bypassed graphic Ramp omitted")
+                    format!("{identity}: bypassed graphic {label} omitted")
                 } else {
-                    format!("{identity}: graphic Ramp is unsupported; saved base paints retained without the effect: {}", limitation.unwrap_or_default())
+                    format!("{identity}: graphic {label} is unsupported; saved base paints retained without the effect: {}", limitation.unwrap_or_default())
                 },
                 masks_below: false,
             });
@@ -1135,7 +1347,8 @@ fn validate_generator(
     media: &Located<Media>,
     frame_rect: &str,
     frame_rate: FrameRate,
-) -> Result<()> {
+    omissions: &mut Vec<Omission>,
+) -> Result<Option<fx_conv::HdrTransfer>> {
     ensure!(
         source.value.original_duration.as_deref() == Some(&text::GRAPHIC_MEDIA_TICKS.to_string()),
         "{}: unexpected graphic source duration",
@@ -1170,7 +1383,17 @@ fn validate_generator(
         "{}: graphic frame size or rate differs from its sequence",
         stream.identity
     );
-    Ok(())
+    let Some(encoded) = stream.value.original_color_space.as_deref() else {
+        return Ok(None); // Legacy missing declaration is not a root-HDR inference.
+    };
+    match serde_json::from_str::<crate::schema::ColorSpace>(encoded) {
+        Ok(color) if color == crate::schema::ColorSpace::sequence_sdr() => Ok(None),
+        Ok(color) if color.rgb_hdr_transfer().is_some() => Ok(color.rgb_hdr_transfer()),
+        _ => {
+            approximate(omissions, &stream.identity, "unknown Graphic OriginalColorSpace; source RGB retained as legacy numeric approximation, independently convertible objects preserved; no root HDR inheritance or colour-fidelity claim");
+            Ok(None)
+        }
+    }
 }
 
 /// The graphic's master clip, which must play the placement's generator
@@ -1202,7 +1425,7 @@ struct NormalizedTransform {
     position: [f64; 2],
     anchor: [f64; 2],
     scale: f64,
-    /// A Shape's Horizontal Scale and Uniform Scale switch.
+    /// Independent horizontal scale and the native Uniform Scale switch.
     horizontal_scale: f64,
     uniform: bool,
     rotation: f64,
@@ -1238,7 +1461,6 @@ fn read_vector_motion(
     )?;
     ensure!(
         component.value.match_name.as_deref() == Some(text::VECTOR_MOTION_MATCH_NAME)
-            && body.display_name.as_deref() == Some("Vector Motion")
             && body.intrinsic.as_deref() == Some("true")
             && body.bypass.as_deref().is_none_or(|value| value == "false"),
         "{}: unsupported graphic component",
@@ -1278,7 +1500,6 @@ fn read_text_component(
     );
     ensure!(
         component.value.match_name.as_deref() == Some(text::TEXT_MATCH_NAME)
-            && body.display_name.as_deref() == Some("Text")
             && body.bypass.as_deref().is_none_or(|value| value == "false"),
         "{}: unsupported graphic component",
         component.identity
@@ -1431,7 +1652,7 @@ fn read_shape_component(
         component.identity
     );
     ensure!(
-        body.display_name.as_deref() == Some("Shape")
+        component.value.match_name.as_deref() == Some(text::SHAPE_MATCH_NAME)
             && body.bypass.as_deref().is_none_or(|value| value == "false"),
         "{}: unsupported graphic component",
         component.identity
@@ -1465,16 +1686,20 @@ fn read_shape_component(
         &component.identity,
     )?;
     ensure!(
-        animations.is_empty(),
+        animations
+            .iter()
+            .all(|animation| matches!(animation, PrPropertyAnimation::UniformScale(_))),
         "{}: keyed graphic Shape parameters are unsupported",
         component.identity
     );
     for reason in &transform.approximations {
         approximate(omissions, &component.identity, reason);
     }
-    // Under Uniform Scale, a Horizontal Scale other than 100 was not rendered.
+    // Equal static axes are unambiguous without inferring inactive-width semantics.
     let horizontal_scale = match (transform.uniform, transform.horizontal_scale) {
-        (true, 100.0) => None,
+        (true, width) if width == 100.0 || (width == transform.scale && animations.is_empty()) => {
+            None
+        }
         (true, _) => {
             return Err(unsupported(format!(
                 "{}: Horizontal Scale under Uniform Scale is unverified",
@@ -1483,7 +1708,10 @@ fn read_shape_component(
         }
         (false, scale) => Some(scale),
     };
-    if appearance.stroke.is_some() {
+    if appearance
+        .stroke
+        .is_some_and(|stroke| stroke.join.is_none())
+    {
         text::stroke_join(&path, None)
             .map_err(|reason| unsupported(format!("{}: {reason}", component.identity)))?;
     }
@@ -1496,6 +1724,7 @@ fn read_shape_component(
         appearance,
         transform: object_transform(&transform, pixels),
         horizontal_scale,
+        animations,
         mask: None,
     })
 }
@@ -1592,7 +1821,6 @@ fn arb_param(
     let source = graph.follow::<ArbVideoComponentParam>(reference, from)?;
     ensure!(
         source.value.parameter_id == id
-            && source.value.name.as_deref() == Some(name)
             && source
                 .value
                 .start_keyframe_position
@@ -1715,9 +1943,17 @@ fn read_params(
             && spec.id == 4
             && param.name.as_deref() == Some("Vertical Scale");
         vertical_name |= named_vertical;
+        // Older Text saves leave the seven inactive tail controls unassigned.
+        // Their ordered layout, class and name still identify the default slot;
+        // do not extend this admission to transforms or modern graphic profiles.
+        let unassigned_legacy_tail = matches!(component, GraphicComponent::LegacyText)
+            && (15..=21).contains(&spec.id)
+            && param.parameter_id == "-1";
+        // Current controls bind by ParameterID, not localized UI labels.
         ensure!(
-            param.parameter_id == spec.id.to_string()
-                && (param.name.as_deref() == spec.name || named_vertical),
+            (param.parameter_id == spec.id.to_string() || unassigned_legacy_tail)
+                && (!matches!(component, GraphicComponent::LegacyText)
+                    || param.name.as_deref() == spec.name),
             "{}: unexpected graphic parameter {:?}",
             input.identity,
             param.name
@@ -1761,7 +1997,9 @@ fn read_params(
                     PrPropertyAnimation::Opacity(scalar_keys(wire, &input.identity)?)
                 }
                 // No graphic role keys these clip Motion properties.
-                PrAnimatedProperty::AnchorPoint | PrAnimatedProperty::ScaleWidth => {
+                PrAnimatedProperty::AnchorPoint
+                | PrAnimatedProperty::ScaleWidth
+                | PrAnimatedProperty::ScaleHeight => {
                     return Err(unsupported(format!(
                         "{}: animated graphic {name:?} is unsupported",
                         input.identity
@@ -1772,7 +2010,17 @@ fn read_params(
             // Motion, Text Rotation in stored degrees/second, Linear→Bezier
             // Text Scale and Hold→Bezier Text Opacity. Keep every other
             // unmeasured combination behind the original guards.
-            if spec.bezier_speeds_verified {
+            if matches!(
+                (component, property),
+                (GraphicComponent::Shape, PrAnimatedProperty::UniformScale)
+            ) {
+                if has_temporal_bezier(wire) {
+                    transform.approximations.push(format!(
+                        "{}: Shape Scale interpolation uses the shared scalar Motion mapping; native speed units and mixed modes are unverified, so intermediate size may differ; editable values and generator-clock times retained",
+                        input.identity
+                    ));
+                }
+            } else if spec.bezier_speeds_verified {
                 let measured_start = match (component, property) {
                     (GraphicComponent::Text, PrAnimatedProperty::UniformScale) => Some(0),
                     (GraphicComponent::Text, PrAnimatedProperty::Opacity) => Some(4),
@@ -1803,27 +2051,49 @@ fn read_params(
             animations.push(animation);
         }
         let fields: Vec<_> = param.start_keyframe.split(',').collect();
+        let expected_fields = if spec.is_point() {
+            if fields.get(1).is_some_and(|value| value.contains(':')) {
+                14
+            } else {
+                15
+            }
+        } else {
+            8
+        };
         ensure!(
-            fields.len() == if spec.is_point() { 14 } else { 8 }
-                && fields[0] == records::STATIC_KEYFRAME_TIME,
+            fields.len() == expected_fields && fields[0] == records::STATIC_KEYFRAME_TIME,
             "{}: unexpected graphic parameter keyframe shape",
             input.identity
         );
         let value = fields[1];
+        if unassigned_legacy_tail {
+            ensure!(
+                spec.accepts_default(value),
+                "{}: nondefault unassigned legacy Text control is unsupported",
+                input.identity
+            );
+            transform.approximations.push(format!(
+                "{}: unassigned legacy Text control at slot {} ({:?}) retains its static default; responsive authoring control is not exported",
+                input.identity, spec.id, spec.name.unwrap_or("unnamed")
+            ));
+        }
         // Legacy Text uses the same Scale/Width/Uniform IDs as current Text.
         // Read the inactive width too: its type, bounds and static clock remain
         // validated even when Uniform selects Scale for both axes.
         let role = match (component, spec.id) {
             (GraphicComponent::LegacyText, 5) => GraphicParamRole::HorizontalScale,
             (GraphicComponent::LegacyText, 6) => GraphicParamRole::Uniform,
+            (GraphicComponent::VectorMotion, 3) => GraphicParamRole::HorizontalScale,
+            (GraphicComponent::VectorMotion, 4) => GraphicParamRole::Uniform,
             _ => spec.role,
         };
-        if matches!(component, GraphicComponent::LegacyText)
-            && matches!(
-                role,
-                GraphicParamRole::Scale | GraphicParamRole::HorizontalScale
-            )
-        {
+        if matches!(
+            component,
+            GraphicComponent::LegacyText | GraphicComponent::VectorMotion
+        ) && matches!(
+            role,
+            GraphicParamRole::Scale | GraphicParamRole::HorizontalScale
+        ) {
             ensure!(
                 spec.holds(number(value, owner)?),
                 "{}: graphic scale is outside its native bounds",
@@ -1854,8 +2124,12 @@ fn read_params(
             continue;
         }
         match role {
-            GraphicParamRole::Position => transform.position = point(value, owner)?,
-            GraphicParamRole::Anchor => transform.anchor = point(value, owner)?,
+            GraphicParamRole::Position => {
+                transform.position = point_start(&param.start_keyframe, &input.identity)?;
+            }
+            GraphicParamRole::Anchor => {
+                transform.anchor = point_start(&param.start_keyframe, &input.identity)?;
+            }
             GraphicParamRole::Scale => transform.scale = number(value, owner)?,
             GraphicParamRole::HorizontalScale => {
                 let width = number(value, owner)?;
@@ -1885,6 +2159,17 @@ fn read_params(
                 spec.name.unwrap_or("(unnamed)")
             ),
         }
+    }
+    if matches!(component, GraphicComponent::VectorMotion) && !transform.uniform {
+        // PrVectorMotion has one scale axis; equal static independent axes are
+        // the same similarity, but keyed Scale would leave Scale Width behind.
+        ensure!(
+            transform.horizontal_scale == transform.scale
+                && !animations
+                    .iter()
+                    .any(|animation| matches!(animation, PrPropertyAnimation::UniformScale(_))),
+            "{owner}: independent Vector Motion scale requires equal static Scale and Scale Width"
+        );
     }
     if matches!(component, GraphicComponent::LegacyText) {
         // PrText's uniform transform uses Scale for both axes; Horizontal
@@ -1935,13 +2220,13 @@ fn bezier_keys_only(wire: &str) -> bool {
     keys.peek().is_some() && is_bezier(first) && keys.all(is_bezier)
 }
 
-/// Temporal Position speed was measured only on straight, tangent-free paths.
+/// Temporal Position speed was measured on straight paths. Collinear automatic
+/// handles describe the same path; the editable mapper discards them too.
 fn animation_is_straight(animation: &PrPropertyAnimation) -> bool {
     let PrPropertyAnimation::Position(keys) = animation else {
         return false;
     };
-    keys.iter()
-        .all(|key| key.spatial_in_tangent.is_none() && key.spatial_out_tangent.is_none())
+    crate::schema::spatial::curved_segment(keys).is_none()
 }
 
 /// Whether a key list that the Motion key readers accepted has a key with
@@ -2019,13 +2304,6 @@ fn number(value: &str, context: &str) -> Result<f64> {
         .ok()
         .filter(|value| value.is_finite())
         .ok_or_else(|| unsupported(format!("{context}: invalid graphic parameter value")))
-}
-
-fn point(value: &str, context: &str) -> Result<[f64; 2]> {
-    let (x, y) = value
-        .split_once(':')
-        .ok_or_else(|| unsupported(format!("{context}: invalid graphic point value")))?;
-    Ok([number(x, context)?, number(y, context)?])
 }
 
 #[cfg(test)]

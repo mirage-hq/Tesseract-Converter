@@ -4,6 +4,7 @@ from pathlib import Path
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import textwrap
@@ -18,6 +19,7 @@ WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/release.yml"
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    workflow_path = WORKFLOW
     @classmethod
     def setUpClass(cls):
         cls.workflow = WORKFLOW.read_text()
@@ -43,6 +45,82 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('python3 scripts/ffmpeg.py "$prefix"', source)
         for marker in ("PKG_CONFIG_PATH", "FFMPEG_DIR", "LIBCLANG_PATH", "MACOSX_DEPLOYMENT_TARGET"):
             self.assertIn(marker, source)
+
+    def test_build_caches_preserve_native_validation_and_workspace_paths(self):
+        build = self.workflow.split("  build:\n", 1)[1].split("  sign-macos:\n", 1)[0]
+        workspace = "opensource/conv" if "working-directory: opensource/conv" in build else "."
+        prefix = "opensource/conv/" if workspace != "." else ""
+        for setting in ('RUSTC_WRAPPER: sccache', 'CARGO_INCREMENTAL: "0"',
+                        'SCCACHE_GHA_ENABLED: "true"',
+                        'SCCACHE_GHA_VERSION: converter-v1',
+                        "SCCACHE_GHA_RW_MODE: ${{ github.ref == 'refs/heads/main' && 'READ_WRITE' || 'READ_ONLY' }}"):
+            self.assertIn(setting, build)
+        self.assertIn(f'workspaces: {workspace} -> target', build)
+        self.assertIn('shared-key: converter-release', build)
+        self.assertIn('cache-on-failure: false', build)
+        self.assertIn("save-if: ${{ github.ref == 'refs/heads/main' }}", build)
+        self.assertIn(f'path: {prefix}target/release-ffmpeg', build)
+        self.assertIn(f"hashFiles('{prefix}scripts/ffmpeg.py')", build)
+        self.assertIn('steps.ffmpeg-identity.outputs.key', build)
+        self.assertIn('${{ steps.ffmpeg-identity.outputs.image }}', build)
+        self.assertIn('image=${ImageVersion:?Hosted runner image version is required}', build)
+        if 'uses: ./.github/actions/setup-sccache' not in build:
+            self.assertIn('version: v0.18.0', build)
+        self.assertIn('python scripts/ffmpeg.py "$prefix" --cache-key', build)
+        self.assertNotIn('restore-keys:', build)
+        rust_cache = build.split('      - name: Restore Rust build cache\n', 1)[1].split('\n      - ', 1)[0]
+        self.assertIn('shared-key: converter-release-${{ steps.ffmpeg-identity.outputs.image }}-', rust_cache)
+        self.assertNotIn('\n          key:', rust_cache)
+        self.assertIn('steps.ffmpeg-identity.outputs.key', rust_cache)
+        self.assertIn('hashFiles(', rust_cache)
+        markers = ('name: Set up MSVC compiler', 'name: Set up optional compiler cache',
+                   'name: Compute FFmpeg cache identity', 'name: Restore Rust build cache',
+                   'name: Restore pinned FFmpeg', 'name: Build pinned shared FFmpeg (Windows)',
+                   'name: Build pinned shared FFmpeg (Unix)', 'name: Save validated FFmpeg',
+                   'name: Install prebuilt license generator', 'name: Build, smoke, and package CLI')
+        positions = [build.index(marker) for marker in markers]
+        self.assertEqual(positions, sorted(positions))
+        save = build.split('      - name: Save validated FFmpeg\n', 1)[1].split('\n      - ', 1)[0]
+        self.assertIn("github.ref == 'refs/heads/main'", save)
+        self.assertIn("steps.ffmpeg-cache.outputs.cache-hit != 'true'", save)
+        self.assertIn('key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}', save)
+        self.assertNotIn('if: always()', save)
+        for platform in ('Windows', 'Unix'):
+            native = build.split(f'      - name: Build pinned shared FFmpeg ({platform})\n', 1)[1].split('\n      - ', 1)[0]
+            self.assertNotIn('cache-hit', native)
+        prebuilt = build.split('      - name: Install prebuilt license generator\n', 1)[1].split('\n      - ', 1)[0]
+        self.assertIn("if: matrix.platform != 'darwin-x86_64'", prebuilt)
+        self.assertIn('tool: cargo-about@0.9.2', prebuilt)
+        self.assertIn('fallback: none', prebuilt)
+        intel = build.split('      - name: Install license generator (Intel Mac)\n', 1)[1].split('\n      - ', 1)[0]
+        self.assertIn("if: matrix.platform == 'darwin-x86_64'", intel)
+        self.assertIn('cargo install cargo-about --locked --version 0.9.2 --features cli', intel)
+
+    def test_optional_compiler_cache_fallback_executes(self):
+        if "uses: ./.github/actions/setup-sccache" in self.workflow:
+            action = self.workflow_path.parents[1] / "actions/setup-sccache/action.yml"
+            step = action.read_text().split("    - name: Verify sccache or fall back to uncached Rust builds\n", 1)[1]
+        else:
+            step = self.workflow.split('      - name: Verify compiler cache or fall back\n', 1)[1].split('\n      - ', 1)[0]
+        script = textwrap.dedent(step.split('run: |\n', 1)[1])
+        for setup, cache_exit, compiler_exit, expected in (
+            ('success', 0, 0, ''), ('failure', 0, 0, 'RUSTC_WRAPPER=\n'),
+            ('success', 2, 0, 'RUSTC_WRAPPER=\n'), ('success', 0, 7, ''),
+        ):
+            with self.subTest(setup=setup, cache_exit=cache_exit, compiler_exit=compiler_exit), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                for tool, code in (('rustc', compiler_exit), ('sccache', cache_exit)):
+                    path = root / tool
+                    path.write_text(f'#!/bin/bash\nexit {code}\n')
+                    path.chmod(0o755)
+                env_file = root / 'env'
+                env_file.touch()
+                result = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', script],
+                    env=os.environ | {'PATH': f"{root}:{os.environ['PATH']}",
+                                      'GITHUB_ENV': str(env_file), 'SCCACHE_SETUP_OUTCOME': setup},
+                    capture_output=True, text=True)
+                self.assertEqual(result.returncode, compiler_exit, result.stderr)
+                self.assertEqual(env_file.read_text(), expected)
 
     def test_signer_has_no_checkout_or_repo_code_with_secrets(self):
         signer = self.workflow.split("  sign-macos:", 1)[1].split("  github-release:", 1)[0]

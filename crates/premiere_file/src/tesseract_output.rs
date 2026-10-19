@@ -22,7 +22,7 @@ use fx_schema::AssetId;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fs::File,
-    io::BufReader,
+    io::{BufReader, Read},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -164,9 +164,19 @@ pub(crate) fn source_pixel_aspect(
     let aspect = match kind {
         PrMediaKind::Still { .. } => {
             let facts = crate::image_media::inspect_image_media(File::open(&path)?)?;
-            ensure!(facts.format == crate::image_media::ImageFormat::Png,
-                "missing native PAR override: source image pixel aspect is unavailable for this format");
-            crate::image_media::inspect_png_pixel_aspect(File::open(&path)?)?
+            match facts.format {
+                crate::image_media::ImageFormat::Png => {
+                    crate::image_media::inspect_png_pixel_aspect(File::open(&path)?)?
+                }
+                crate::image_media::ImageFormat::Jpeg => {
+                    crate::image_media::inspect_jpeg_pixel_aspect(File::open(&path)?)?
+                }
+                crate::image_media::ImageFormat::OpenExr => {
+                    return Err(unsupported(
+                        "missing native PAR override: source image format disagrees with native still kind",
+                    ));
+                }
+            }
         }
         PrMediaKind::OpenExr { .. } => {
             let facts = crate::image_media::inspect_image_media(File::open(&path)?)?;
@@ -245,6 +255,7 @@ pub(crate) struct PendingTesseractFile {
     _channel_files: Option<tempfile::TempDir>,
     _raw_audio_files: Option<tempfile::TempDir>,
     _mask_files: tempfile::TempDir,
+    _normalized_stills: Vec<tempfile::NamedTempFile>,
 }
 
 #[derive(Debug)]
@@ -271,6 +282,7 @@ struct NumberedFrame {
 
 /// The resolved source file of one media record, shared by all of its placements.
 struct InspectedMedia {
+    normalized_still: Option<Box<tempfile::NamedTempFile>>,
     delayed_audio: Option<Box<crate::audio_media::DelayedAudioClock>>,
     /// Unsupported embedded sound must not remove an independently admitted picture.
     audio_omission: Option<String>,
@@ -300,6 +312,7 @@ enum MediaNote {
         origin: crate::media::PresentationOrigin,
         timescale: u32,
         declared_tail: bool,
+        last_sample_endpoint: bool,
     },
 }
 
@@ -502,7 +515,7 @@ fn inspect_media(
         }
         Err(error) => return Err(error),
     };
-    let path = media_map
+    let mut path = media_map
         .map(|map| map.replacement_for(&native_path))
         .transpose()?
         .flatten()
@@ -528,6 +541,7 @@ fn inspect_media(
                 };
             let container = frames[0].container;
             return Ok(MediaInspection::Ready(InspectedMedia {
+                normalized_still: None,
                 delayed_audio: None,
                 audio_omission: None,
                 picture_clock: None,
@@ -537,7 +551,59 @@ fn inspect_media(
             }));
         }
     }
-    let hash = media_hash(&path, digests)?;
+    let mut hash = media_hash(&path, digests)?;
+    let mut normalized_still = None;
+    let mut normalization_note = None;
+    if let Some(native) = media.video.as_ref() {
+        if matches!(native.kind, PrMediaKind::Still { .. })
+            && path
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("psd"))
+        {
+            // Premiere's layer-selection preferences are not mapped. Retain its
+            // independently stored preview as a diagnosed fallback, not as an
+            // assertion that selected Photoshop layers have been reconstructed.
+            let input = File::open(&path)?;
+            if input.metadata()?.len() > 64 * 1024 * 1024 {
+                return Ok(MediaInspection::Omitted(
+                    "PSD exceeds 64 MiB input bound".into(),
+                ));
+            }
+            let mut bytes = Vec::new();
+            input.take(64 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
+            if bytes.len() > 64 * 1024 * 1024 {
+                return Ok(MediaInspection::Omitted(
+                    "PSD exceeds 64 MiB input bound".into(),
+                ));
+            }
+            let selection = if matches!(native.kind, PrMediaKind::Still { alpha: true }) {
+                aftereffects_file::photoshop::Selection::MergedWithStraightAlpha
+            } else {
+                aftereffects_file::photoshop::Selection::Merged
+            };
+            let image = match aftereffects_file::photoshop::decode(
+                &bytes,
+                selection,
+                [native.width, native.height],
+            ) {
+                Ok(image) => image,
+                Err(error) => return Ok(MediaInspection::Omitted(error.to_string())),
+            };
+            let mut png = tempfile::Builder::new()
+                .prefix("premiere-psd-")
+                .suffix(".png")
+                .tempfile()?;
+            image::DynamicImage::ImageRgba8(image)
+                .write_to(png.as_file_mut(), image::ImageFormat::Png)
+                .map_err(|error| unsupported(format!("PSD PNG encoding: {error}")))?;
+            path = png.path().to_owned();
+            hash = media_hash(&path, digests)?;
+            normalized_still = Some(Box::new(png));
+            normalization_note = Some(MediaNote::Approximation(
+                "PSD stored merged preview normalized to PNG; Image placement, Motion and Opacity remain editable; Photoshop internals and saved layer-selection preferences are not mapped, embedded color profiles are not converted, and native RGB/alpha fidelity is unverified",
+            ));
+        }
+    }
     let extension = path.extension().and_then(|x| x.to_str());
     let is_video = media
         .video
@@ -584,7 +650,7 @@ fn inspect_media(
     .filter(|_| !interpreted);
     let mut picture_clock = None;
     // A media keeps one note: the first one below that applies.
-    let mut note = None;
+    let mut note = normalization_note;
     let mut colour = None;
     let mut codec = None;
     let mut picture = None;
@@ -624,11 +690,12 @@ fn inspect_media(
         picture = crate::audio_media::PictureClock::of(&facts);
         let selected_only = match &facts {
             MediaFacts::Video(video) if interpreted => {
+                let endpoint_note = video.validate_source_for_use(native, None)?;
                 picture_clock = Some(Box::new(
                     crate::media::InterpretedPictureClock::bind(native, video)
                         .map(crate::media::PictureClock::Interpreted),
                 ));
-                Ok(false)
+                Ok(endpoint_note)
             }
             MediaFacts::Video(video) => {
                 let selected_only = video.validate_source_for_use(native, usage)?;
@@ -640,6 +707,7 @@ fn inspect_media(
                         origin,
                         timescale: video.timing.timescale,
                         declared_tail: video.timing.declared_media_end.is_some(),
+                        last_sample_endpoint: video.has_native_last_sample_endpoint(native)?,
                     });
                 }
                 Ok(selected_only)
@@ -653,7 +721,13 @@ fn inspect_media(
                 &facts,
                 MediaFacts::Video(video) if video.timing.declared_media_end.is_some()
             );
-            note.get_or_insert(MediaNote::Approximation(if declared_tail {
+            let last_sample_endpoint = matches!(
+                &facts,
+                MediaFacts::Video(video) if video.has_native_last_sample_endpoint(native)?
+            );
+            note.get_or_insert(MediaNote::Approximation(if last_sample_endpoint {
+                "native CFR duration ends at the last physical sample start rather than the file endpoint; original bytes, native duration and editable playback retained on the complete physical frame grid; final sample excluded by the native endpoint; sound is independently validated; native intermediate frame selection is unverified"
+            } else if declared_tail {
                 "declared media-header tail has no samples; original sample timestamps, bytes and first affine MP4 edit retained for proved selected picture-only unit intervals; the uncertain final sample and whole-source playback remain unsupported; native intermediate frame selection is unverified"
             } else {
                 "original sample timestamps and first affine MP4 edit retained for proved selected unit source intervals; whole-source endpoint and later edit playback are unsupported"
@@ -807,6 +881,7 @@ fn inspect_media(
         }
     }
     Ok(MediaInspection::Ready(InspectedMedia {
+        normalized_still,
         audio_omission,
         delayed_audio,
         picture_clock,
@@ -1467,6 +1542,7 @@ fn convert_premiere_sequence_with_options(
     if parsed.video_items().next().is_none()
         && parsed.nest_occurrences().next().is_none()
         && parsed.audio.is_empty()
+        && !(parsed.adjustment_only_template && parsed.timeline_end_ticks > 0)
     {
         omit(
             omissions,
@@ -1485,6 +1561,7 @@ fn convert_premiere_sequence_with_options(
     // occurrence is neither packaged nor rechecked.
     let placed: BTreeSet<MediaId> = parsed.media_in_order().into_iter().cloned().collect();
     let mut media = BTreeMap::new();
+    let mut normalized_stills = Vec::new();
     let mut picture_clocks = crate::media::PictureClocks::new();
     for (id, inspected) in inspected {
         let resolved = match inspected {
@@ -1495,6 +1572,9 @@ fn convert_premiere_sequence_with_options(
                 let Some(asset_id) = asset_ids.get(&id) else {
                     continue;
                 };
+                if let Some(file) = inspected.normalized_still {
+                    normalized_stills.push(*file);
+                }
                 match inspected.note {
                     Some(MediaNote::Approximation(note)) => {
                         approximate(
@@ -1507,9 +1587,12 @@ fn convert_premiere_sequence_with_options(
                         origin,
                         timescale,
                         declared_tail,
+                        last_sample_endpoint,
                     }) => {
                         let tail = if declared_tail {
                             "declared media-header tail has no samples; "
+                        } else if last_sample_endpoint {
+                            "native CFR duration ends at the last physical sample start rather than the file endpoint; "
                         } else {
                             ""
                         };
@@ -1608,6 +1691,7 @@ fn convert_premiere_sequence_with_options(
         _channel_files: channel_files,
         _raw_audio_files: raw_audio_files,
         _mask_files: mask_files,
+        _normalized_stills: normalized_stills,
     };
     // Check mode stops here, so media must still match the bytes we inspected.
     output.verify_media()?;

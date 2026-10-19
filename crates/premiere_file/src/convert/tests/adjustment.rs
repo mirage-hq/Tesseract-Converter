@@ -135,6 +135,7 @@ fn ramp() -> PrEffect {
         mask: None,
         enabled: true,
         params: PrEffectParams::Ramp(PrRamp {
+            radial: false,
             start: [0.25, 0.5],
             start_colour: PrColour { rgb: [0, 0, 0] },
             end: [0.75, 0.5],
@@ -183,6 +184,61 @@ fn static_wipe() -> crate::schema::PrLinearWipe {
         angle_degrees: 90,
         feather: 0.0,
     }
+}
+
+#[test]
+fn terminal_adjustment_wipe_keeps_support_keys_under_nested_origin_rounding() {
+    let mut adjustment = adjustment_occurrence(0, 5);
+    adjustment.linear_wipe = Some(crate::schema::PrLinearWipe {
+        completion: vec![
+            PrScalarKeyframe {
+                source_ticks: IN_TICKS,
+                value: 50.0,
+                easing: PrKeyframeEasing::Linear,
+            },
+            PrScalarKeyframe {
+                source_ticks: IN_TICKS + 6 * TICKS,
+                value: 25.0,
+                easing: PrKeyframeEasing::Linear,
+            },
+        ],
+        ..static_wipe()
+    });
+    let inner = sequence_with_adjustments(vec![adjustment]);
+    let phase = TICKS_PER_MILLISECOND / 3;
+    let outer = sequence_of(
+        "Outer",
+        vec![PrVideoTrack {
+            items: Vec::new(),
+            nests: vec![nest_of(inner, phase..5 * TICKS + phase, 0)],
+            transitions: Vec::new(),
+        }],
+    );
+    let (document, omissions) = import(&outer);
+    fn guide(value: &Value) -> Option<&Value> {
+        if value["name"] == "Premiere adjustment Wipe guide" {
+            return Some(value);
+        }
+        match value {
+            Value::Object(map) => map.values().find_map(guide),
+            Value::Array(values) => values.iter().find_map(guide),
+            _ => None,
+        }
+    }
+    let guide = guide(&document).unwrap_or_else(|| panic!("{omissions:?}"));
+    let track = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["target"]["layerId"] == guide["id"])
+        .unwrap();
+    let keys = track["animator"]["keyframes"].as_array().unwrap();
+    assert_eq!(keys.len(), 2);
+    assert_eq!(keys[0]["layerTime"], 0);
+    assert_eq!(keys[0]["value"]["value"], 50.0);
+    assert_eq!(keys[1]["layerTime"], 6000);
+    assert_eq!(keys[1]["value"]["value"], 75.0);
+    assert_eq!(keys[1]["easing"]["type"], "linear");
 }
 
 #[test]
@@ -958,7 +1014,7 @@ fn a_blended_adjustment_keeps_its_blend_both_ways() {
     (adjustment.blend_mode, adjustment.opacity) = (PrBlendMode::DarkerColor, 60.0);
     adjustment.effects = vec![levels([40.0, 220.0, 1.0, 0.0, 255.0])];
     let (document, omissions) = import(&sequence_with_adjustments(vec![adjustment]));
-    let layer = &document["composition"]["layers"][0];
+    let layer = &crate::tests::support::picture_composition(&document)["layers"][0];
     assert_eq!(
         (
             &layer["type"],

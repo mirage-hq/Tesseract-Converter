@@ -104,8 +104,9 @@ pub(super) fn lower_static_color_control(
     property: &[Chunk],
     composition: &Composition,
     source_items: Option<&HashMap<u32, &ProjectItem>>,
+    consumer: Option<&Layer>,
 ) -> Result<[f64; 4], PropertyError> {
-    color_control::resolve(property, composition, source_items)
+    color_control::resolve(property, composition, source_items, consumer)
 }
 
 pub(super) fn lower_slider_scalar(
@@ -286,9 +287,9 @@ fn read_layer_transform_inner<'a>(
                     Ok(value) => {
                         property.numeric = Ok(value);
                         warnings.retain(|warning| !warning.starts_with("ADBE Scale: control link not lowered"));
-                        warnings.push("ADBE Scale: bounded static cross-composition Slider repeated XY binding lowered to independent editable values; live controller linkage and native Z Scale semantics are not retained".into());
+                        warnings.push("ADBE Scale: bounded static composition Slider repeated XY binding lowered to independent editable values; live controller linkage and native Z Scale semantics are not retained".into());
                     }
-                    Err(error) => warnings.push(format!("ADBE Scale: static cross-composition Slider binding not lowered ({error}); original expression retained")),
+                    Err(error) => warnings.push(format!("ADBE Scale: static composition Slider binding not lowered ({error}); original expression retained")),
                 }
                 continue;
             }
@@ -839,7 +840,27 @@ pub(super) fn unique_run<'a>(
 }
 
 pub(super) fn display_name(chunks: &[Chunk]) -> Option<&str> {
-    utf8_name(properties::data(chunks, *b"tdsn").ok()?)
+    let bytes = properties::data(chunks, *b"tdsn").ok()?;
+    if let Some(name) = utf8_name(bytes) {
+        return Some(name);
+    }
+    // Reserve a complete binary header with a zero length high byte for the
+    // modern format, even when malformed. Printable legacy names can start
+    // with "Utf8" too, but must not bypass modern length/padding validation.
+    if bytes.len() >= 8 && bytes.starts_with(b"Utf8\0") {
+        return None;
+    }
+    // Older projects store tdsn as a NUL-terminated native string, without
+    // the Utf8 envelope. ASCII is encoding-independent; non-ASCII legacy
+    // names need a proven source encoding rather than a guessed UTF-8 decode.
+    let end = bytes.iter().position(|byte| *byte == 0)?;
+    let name = bytes.get(..end)?;
+    if !name.iter().all(|byte| (0x20..=0x7e).contains(byte))
+        || bytes.get(end..)?.iter().any(|byte| *byte != 0)
+    {
+        return None;
+    }
+    std::str::from_utf8(name).ok()
 }
 
 /// The display name AE stores for an effect that keeps its default name.
@@ -896,7 +917,7 @@ pub(super) fn effect_instance_name<'a>(
 }
 
 pub(super) fn expression(chunks: &[Chunk]) -> Result<&str, PropertyError> {
-    std::str::from_utf8(properties::data(chunks, *b"Utf8")?)
+    std::str::from_utf8(properties::expression_data(chunks)?)
         .map_err(|_| PropertyError::Layout("invalid expression text"))
 }
 

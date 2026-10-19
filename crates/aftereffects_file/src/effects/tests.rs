@@ -10,6 +10,7 @@ use crate::{
 
 // Nondefault native feature contracts may expose unfinished converter behavior.
 mod coverage;
+mod fill;
 mod keylight;
 mod native_controls;
 mod warp;

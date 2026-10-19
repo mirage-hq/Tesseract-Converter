@@ -176,6 +176,7 @@ pub(super) fn normalize_ai_edit(
     ));
     Ok(LayoutNormalization {
         group: GroupLayer {
+            render_domain: None,
             id: ai_edit.id,
             name: ai_edit.name.clone(),
             description: String::new(),
@@ -601,6 +602,7 @@ mod tests {
 
     fn empty_group() -> GroupLayer {
         GroupLayer {
+            render_domain: None,
             id: LayerId::new(1),
             name: "group".into(),
             description: String::new(),

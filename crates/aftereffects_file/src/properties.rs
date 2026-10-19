@@ -7,7 +7,9 @@
 use crate::rifx::Chunk;
 
 mod keyframes;
+mod path;
 use keyframes::read_keyframes;
+pub(crate) use path::{NativePathValue, read_native_path, read_native_shape_path};
 
 /// A property could not be interpreted safely within the supported numeric layout.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -242,6 +244,30 @@ pub(crate) fn data(children: &[Chunk], id: [u8; 4]) -> Result<&[u8], PropertyErr
     Ok(first)
 }
 
+/// Expression source on one property leaf, in modern Utf8 or legacy expr storage.
+/// Ambiguous records are rejected rather than choosing a source by tag priority.
+/// Both forms may have trailing NUL terminators; embedded NULs remain invalid.
+pub(crate) fn expression_data(children: &[Chunk]) -> Result<&[u8], PropertyError> {
+    let mut sources = children
+        .iter()
+        .filter(|chunk| matches!(&chunk.id(), b"Utf8" | b"expr"));
+    let bytes = sources
+        .next()
+        .and_then(Chunk::data_payload)
+        .ok_or(PropertyError::Layout("missing expression source"))?;
+    if sources.next().is_some() {
+        return Err(PropertyError::Layout("duplicate expression source"));
+    }
+    let end = bytes
+        .iter()
+        .rposition(|byte| *byte != 0)
+        .map_or(0, |index| index + 1);
+    if bytes[..end].contains(&0) {
+        return Err(PropertyError::Layout("embedded expression terminator"));
+    }
+    Ok(&bytes[..end])
+}
+
 /// Group eyeball state lives directly in tdgp/tdsb, unlike leaf metadata in tdbs.
 /// Missing flags mean enabled; never borrow a descendant's flags.
 pub(crate) fn group_enabled(run: &[Chunk]) -> Result<bool, PropertyError> {
@@ -445,9 +471,11 @@ fn decode_doubles(
         .get(..dimensions * 8)
         .ok_or(PropertyError::Layout("truncated numeric value"))?;
     let values: Vec<_> = bytes
-        .chunks_exact(8)
+        .as_chunks::<8>()
+        .0
+        .iter()
         .map(|bytes| {
-            let bytes: [u8; 8] = bytes.try_into().expect("eight-byte chunk");
+            let bytes: [u8; 8] = *bytes;
             if little_endian {
                 f64::from_le_bytes(bytes)
             } else {

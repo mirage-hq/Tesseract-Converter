@@ -14,6 +14,7 @@ fn collected_stroke(expression: &str, source_expression: &str) -> (ShapeStrokeSt
     let mut id = 100;
     let mut budget = AnimationBudget::default();
     let mut collector = Collector {
+        source_items: None,
         includes_occurrence_pipeline: true,
         next_id: &mut id,
         animation_budget: &mut budget,
@@ -32,6 +33,112 @@ fn collected_stroke(expression: &str, source_expression: &str) -> (ShapeStrokeSt
         decorations.strokes.into_iter().next().unwrap(),
         collector.warnings,
     )
+}
+
+#[test]
+fn evaluated_shape_paint_keeps_editable_rgba_without_native_keys() {
+    use crate::expression_samples::{EvaluatedProperty, ShapePathSegment};
+    use fx_schema::PropertyKeyframeEasing;
+
+    for (name, property) in [
+        ("ADBE Vector Fill Color", PropType::FillColor),
+        ("ADBE Vector Stroke Color", PropType::StrokeColor),
+    ] {
+        for supported in [true, false] {
+            let run = vec![test_color(
+                [255.0, 255.0, 0.0, 0.0],
+                "[1-time, time, 0, 0.25+time/2]",
+            )];
+            let leaves = [(name, run.as_slice())];
+            let mut warnings = Vec::new();
+            assert!(
+                numeric_leaf(&leaves, name, &mut warnings)
+                    .unwrap()
+                    .keyframes
+                    .is_empty()
+            );
+            let identity = PropertyIdentity::Shape {
+                path: vec![ShapePathSegment {
+                    index: 1,
+                    match_name: name.into(),
+                }],
+            };
+            let samples = EvaluatedProperty {
+                composition_id: 1,
+                layer_id: 2,
+                property: identity.clone(),
+                start_ms: 0,
+                sample_times_seconds: vec![0.0, 0.5, 1.0],
+                values: vec![
+                    vec![1.0, 0.0, 0.0, 0.25],
+                    vec![0.5, 0.5, 0.0, 0.5],
+                    vec![0.0, 1.0, 0.0, 0.75],
+                ],
+                frame_sampled: true,
+            };
+            let mut id = 100;
+            let mut budget = AnimationBudget::default();
+            let mut collector = Collector {
+                source_items: None,
+                includes_occurrence_pipeline: true,
+                next_id: &mut id,
+                animation_budget: &mut budget,
+                animations: Vec::new(),
+                warnings: Vec::new(),
+                frame_fade_lowered: false,
+                evaluated_shapes: HashMap::from([(
+                    run.as_ptr() as usize,
+                    EvaluatedShape::Numeric(samples),
+                )]),
+                mapped_expressions: Vec::new(),
+            };
+            let targets = [LayerId::new(10), LayerId::new(11)];
+            collector.add_paint_entry(&leaves, name, property, &targets, supported);
+            if !supported {
+                assert!(collector.animations.is_empty());
+                assert!(collector.mapped_expressions.is_empty());
+                assert!(
+                    collector
+                        .warnings
+                        .iter()
+                        .any(|warning| warning.contains("non-solid or non-primary"))
+                );
+                continue;
+            }
+            assert_eq!(collector.animations.len(), 2, "{:?}", collector.warnings);
+            for (entry, target_id) in collector.animations.iter().zip(targets) {
+                assert_eq!(entry.target, PropertyTarget::layer(target_id, property));
+                assert!(!entry.animator.is_js_script());
+                let keys = entry.animator.keyframe_track().unwrap().keyframes();
+                assert_eq!(keys.len(), 2);
+                assert_eq!(keys[0].layer_time().as_millis(), 0);
+                assert_eq!(keys[1].layer_time().as_millis(), 1000);
+                assert_eq!(
+                    keys[0].value(),
+                    &PropertyValue::Color([1.0, 0.0, 0.0, 0.25])
+                );
+                assert_eq!(
+                    keys[1].value(),
+                    &PropertyValue::Color([0.0, 1.0, 0.0, 0.75])
+                );
+                assert_eq!(keys[1].easing(), PropertyKeyframeEasing::Linear);
+            }
+            assert!(
+                collector
+                    .mapped_expressions
+                    .iter()
+                    .all(|(mapped, _)| mapped == &identity)
+            );
+            assert_eq!(collector.mapped_expressions.len(), 2);
+            assert!(
+                collector
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.contains("Adobe oracle equality unverified"))
+            );
+            fx_schema::AnimationGraph::from_entries(collector.animations).unwrap();
+        }
+    }
 }
 
 #[test]

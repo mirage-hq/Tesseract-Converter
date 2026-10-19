@@ -145,9 +145,16 @@ fn cubic_easing(
 }
 
 pub(super) fn point_start(wire: &str, context: &str) -> Result<[f64; 2]> {
-    let (x, y) = start_field(wire, 14, context)?
-        .split_once(':')
-        .ok_or_else(|| unsupported(format!("{context}: invalid point StartKeyframe")))?;
+    let value = start_field(wire, 14, context)?;
+    let (x, y) = if let Some(point) = value.split_once(':') {
+        point
+    } else {
+        // Older static PointComponentParam saves use separate X/Y fields,
+        // adding one field to the colon-paired layout. Do not interpret a
+        // truncated pair's first curve field as its missing Y coordinate.
+        let fields = key_fields(wire, 15, context)?;
+        (fields[1], fields[2])
+    };
     let point = [
         x.parse::<f64>()
             .map_err(|_| unsupported(format!("{context}: invalid point StartKeyframe")))?,
@@ -582,16 +589,8 @@ fn read_point_keys(wire: &str, context: &str) -> Result<Vec<PrPointKeyframe>> {
             parse(fields[13], "spatial outgoing tangent")?,
         ];
         let (spatial_in_tangent, spatial_out_tangent) = match (spatial_mode, spatial_flags) {
-            // Saved linear keys can retain flag 2 with zero tangents. Admit
-            // only that tangent-free form; temporal handles and times still
-            // use the same reading as the existing linear spatial profile.
-            (0, 0 | 2) => {
-                ensure!(
-                    incoming == [0.0, 0.0] && outgoing == [0.0, 0.0],
-                    "{context}: linear spatial key has nonzero tangents"
-                );
-                (None, None)
-            }
+            // Linear spatial interpolation does not use saved Bezier handles.
+            (0, 0 | 2 | 4) => (None, None),
             // Mode 5 saves resolved spatial handles with flags 0 or 4, and
             // ordinary Motion also saves resolved handles with flag 2.
             // Keep them in the native model; FX track mapping retains them only
@@ -630,23 +629,50 @@ fn read_point_keys(wire: &str, context: &str) -> Result<Vec<PrPointKeyframe>> {
     let mut distance = 0.0;
     for index in 1..points.len() {
         let (previous, incoming) = (points[index - 1], points[index]);
-        let segment_length = crate::schema::spatial::segment_length(
-            &PrPointKeyframe {
-                source_ticks: native[index - 1].source_ticks,
-                value: previous.0,
-                easing: PrKeyframeEasing::Linear,
-                spatial_in_tangent: previous.1,
-                spatial_out_tangent: previous.2,
-            },
-            &PrPointKeyframe {
-                source_ticks: native[index].source_ticks,
-                value: incoming.0,
-                easing: PrKeyframeEasing::Linear,
-                spatial_in_tangent: incoming.1,
-                spatial_out_tangent: incoming.2,
-            },
-        )
-        .ok_or_else(|| unsupported(format!("{context}: nonfinite spatial curve length")))?;
+        let start = PrPointKeyframe {
+            source_ticks: native[index - 1].source_ticks,
+            value: previous.0,
+            easing: PrKeyframeEasing::Linear,
+            spatial_in_tangent: previous.1,
+            spatial_out_tangent: previous.2,
+        };
+        let end = PrPointKeyframe {
+            source_ticks: native[index].source_ticks,
+            value: incoming.0,
+            easing: PrKeyframeEasing::Linear,
+            spatial_in_tangent: incoming.1,
+            spatial_out_tangent: incoming.2,
+        };
+        let segment_length = crate::schema::spatial::segment_length(&start, &end)
+            .ok_or_else(|| unsupported(format!("{context}: nonfinite spatial curve length")))?;
+        if segment_length > 0.0
+            && !crate::schema::spatial::is_curved(&start, &end)
+            && native[index - 1].outgoing_mode == 5
+        {
+            let duration = (i128::from(end.source_ticks) - i128::from(start.source_ticks)) as f64
+                / TICKS as f64;
+            let (before, after) = native.split_at_mut(index);
+            let start = &mut before[index - 1];
+            let end = &mut after[0];
+            // Spatial speed handles cannot travel beyond the segment's path distance.
+            for (influence, speed) in [
+                (&mut start.outgoing_influence, start.outgoing_speed),
+                (&mut end.incoming_influence, end.incoming_speed),
+            ] {
+                if (0.0..=1.0).contains(influence) && speed > 0.0 {
+                    *influence = influence.min(segment_length / (speed * duration));
+                }
+            }
+        }
+        // Point speeds parameterize travel along the spatial path. A zero-
+        // length path cannot move, even when a saved pause retains nonzero
+        // temporal speeds from its adjacent moves. Normalize only this
+        // interval's handles; scalar equal-value overshoot and nonzero-length
+        // spatial loops still need their ordinary easing admission.
+        if segment_length == 0.0 {
+            native[index - 1].outgoing_speed = 0.0;
+            native[index].incoming_speed = 0.0;
+        }
         distance += segment_length;
         ensure!(
             distance.is_finite(),
@@ -654,7 +680,7 @@ fn read_point_keys(wire: &str, context: &str) -> Result<Vec<PrPointKeyframe>> {
         );
         native[index].value = distance;
     }
-    native
+    let keys = native
         .iter()
         .enumerate()
         .zip(points)
@@ -669,7 +695,8 @@ fn read_point_keys(wire: &str, context: &str) -> Result<Vec<PrPointKeyframe>> {
                 })
             },
         )
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    Ok(keys)
 }
 
 /// Checks that every point key of `wire`, which [`point_keys`] reads, has the
@@ -800,11 +827,6 @@ fn read_linear_wipe(graph: &Graph<'_>, reference: &Reference, from: &str) -> Res
                     input.identity
                 );
                 let normalized = (rounded as i16).rem_euclid(360);
-                ensure!(
-                    matches!(normalized, 0 | 90 | 180 | 270),
-                    "{}: only cardinal Wipe Angle values are supported",
-                    input.identity
-                );
                 angle = Some(normalized);
             }
             ("3", "Feather") => {
@@ -830,6 +852,11 @@ fn read_linear_wipe(graph: &Graph<'_>, reference: &Reference, from: &str) -> Res
         "{}: missing Linear Wipe parameters",
         effect.identity
     );
+    ensure!(
+        angle.is_some_and(|angle| angle % 90 == 0) || feather == Some(0.0),
+        "{}: non-cardinal Linear Wipe requires zero Feather",
+        effect.identity
+    );
     Ok(PrLinearWipe {
         initial_completion: initial_completion
             .ok_or_else(|| unsupported("missing initial Transition Completion"))?,
@@ -837,6 +864,51 @@ fn read_linear_wipe(graph: &Graph<'_>, reference: &Reference, from: &str) -> Res
         angle_degrees: angle.ok_or_else(|| unsupported("missing Wipe Angle"))?,
         feather: feather.ok_or_else(|| unsupported("missing Feather"))?,
     })
+}
+
+fn static_wipe_intersection(
+    graph: &Graph<'_>,
+    chain: &Located<VideoComponentChain>,
+    wipes: &[PrLinearWipe],
+) -> Result<PrStaticCrop> {
+    let mut seen = false;
+    let mut interrupted = false;
+    for reference in chain_components(chain)? {
+        let record = graph.follow::<VideoFilterComponent>(reference, &chain.identity)?;
+        if record.value.match_name.as_deref() == Some("AE.ADBE Linear Wipe") {
+            ensure!(
+                !interrupted,
+                "{}: multiple Linear Wipes must be consecutive to share rectangular coverage",
+                chain.identity
+            );
+            seen = true;
+        } else if seen {
+            interrupted = true;
+        }
+    }
+    let mut crop = PrStaticCrop::default();
+    for wipe in wipes {
+        ensure!(
+            wipe.completion.is_empty() && wipe.feather == 0.0 && wipe.angle_degrees % 90 == 0,
+            "{}: multiple Linear Wipes require static cardinal controls with zero Feather",
+            chain.identity
+        );
+        // Consecutive hard half-planes intersect without changing the picture domain.
+        let edge = match wipe.angle_degrees {
+            0 => &mut crop.top,
+            90 => &mut crop.left,
+            180 => &mut crop.bottom,
+            270 => &mut crop.right,
+            _ => return Err(unsupported("non-cardinal Linear Wipe intersection")),
+        };
+        *edge = edge.max(wipe.initial_completion);
+    }
+    ensure!(
+        crop.left + crop.right < 100.0 && crop.top + crop.bottom < 100.0,
+        "{}: multiple Linear Wipes leave no positive rectangular coverage",
+        chain.identity
+    );
+    Ok(crop)
 }
 
 /// The ordered component references of a video component chain.
@@ -883,7 +955,7 @@ pub(super) fn read_video_animations(
     );
     let mut motion_reference = None;
     let mut crop = None;
-    let mut linear_wipe = None;
+    let mut wipes = Vec::new();
     let mut track_matte = None;
     for component in components {
         let record = graph.follow::<VideoFilterComponent>(component, &chain.identity)?;
@@ -919,20 +991,16 @@ pub(super) fn read_video_animations(
                 let read = read_crop_component(graph, component, &chain.identity)?;
                 if let Some(cardinal_reveal) = read.cardinal_reveal {
                     ensure!(
-                        linear_wipe.replace(cardinal_reveal).is_none(),
+                        wipes.is_empty(),
                         "{}: multiple Crop or Linear Wipe animations are unsupported",
                         chain.identity
                     );
+                    wipes.push(cardinal_reveal);
                 }
                 crop = Some(read.crop);
             }
             Some("AE.ADBE Linear Wipe") => {
-                ensure!(
-                    linear_wipe.is_none(),
-                    "{}: duplicate Linear Wipe component",
-                    chain.identity
-                );
-                linear_wipe = Some(read_linear_wipe(graph, component, &chain.identity)?);
+                wipes.push(read_linear_wipe(graph, component, &chain.identity)?);
             }
             Some(name) if name == TRACK_MATTE_KEY.match_name => {
                 if let Some(key) = read_track_matte(graph, component, &chain.identity)? {
@@ -952,6 +1020,17 @@ pub(super) fn read_video_animations(
             }
         }
     }
+    let linear_wipe = if wipes.len() > 1 {
+        ensure!(
+            crop.is_none(),
+            "{}: multiple Linear Wipes with Crop are unsupported",
+            chain.identity
+        );
+        crop = Some(static_wipe_intersection(graph, chain, &wipes)?);
+        None
+    } else {
+        wipes.pop()
+    };
     let Some(motion_reference) = motion_reference else {
         ensure!(
             chain
@@ -981,9 +1060,9 @@ pub(super) fn read_video_animations(
         .value
         .component
         .ok_or_else(|| unsupported(format!("{}: missing Component", motion.identity)))?;
+    // MatchName and intrinsic state identify Motion; DisplayName is localized UI text.
     ensure!(
         motion.value.match_name.as_deref() == Some("AE.ADBE Motion")
-            && body.display_name.as_deref() == Some("Motion")
             && matches!(body.bypass.as_deref(), None | Some("false"))
             && body.intrinsic.as_deref() == Some("true"),
         "{}: unsupported video component",
@@ -1076,7 +1155,7 @@ pub(super) fn read_video_animations(
                     let keys = scalar_keys(wire, &input.identity)?;
                     (!keys.is_empty()).then_some(PrPropertyAnimation::Rotation(keys))
                 }
-                PrAnimatedProperty::UniformScale => {
+                PrAnimatedProperty::UniformScale | PrAnimatedProperty::ScaleHeight => {
                     transform.scale[1] = scalar_start(initial, &input.identity)?;
                     let keys = scalar_keys(wire, &input.identity)?;
                     (!keys.is_empty()).then_some(PrPropertyAnimation::UniformScale(keys))
@@ -1096,9 +1175,24 @@ pub(super) fn read_video_animations(
                     "{}: keyframes conflict with disabled IsTimeVarying",
                     input.identity
                 );
-                if let Some(reason) = animation.unmeasured_form() {
-                    return Err(unsupported(format!("{}: {reason}", input.identity)));
+                if let PrPropertyAnimation::AnchorPoint(keys) = &animation {
+                    // A straight spatial path advances by temporal easing alone.
+                    // The existing paired anchor tracks carry that easing in source
+                    // pixels; rejecting automatic collinear handles drops the picture.
+                    ensure!(
+                        crate::schema::spatial::curved_segment(keys).is_none(),
+                        "{}: curved Anchor Point spatial paths are not converted; native distance traversal is unmeasured",
+                        input.identity
+                    );
+                    if animation.unmeasured_form().is_some() {
+                        crate::approximate(
+                            omissions,
+                            &input.identity,
+                            "Anchor Point straight spatial path retained as editable temporal keys; collinear spatial handles are unnecessary for distance traversal; native fidelity is unmeasured",
+                        );
+                    }
                 }
+                // Width shares Height's scalar easing; export admission is separate.
                 animations.push(animation);
             }
             continue;
@@ -1165,25 +1259,20 @@ pub(super) fn read_video_animations(
         "{}: missing Motion parameters",
         motion.identity
     );
-    let keyed = |property| {
-        animations
-            .iter()
-            .any(|animation| animation.property() == property)
-    };
     if uniform_scale {
         // Uniform Scale drives both axes from Height; saved Width keys are
         // inactive, even when their values, clocks or easing differ. Both tracks
-        // have passed ordinary key parsing and supported-form checks above.
+        // have passed ordinary key parsing above.
         animations.retain(|animation| !matches!(animation, PrPropertyAnimation::ScaleWidth(_)));
         transform.scale[0] = transform.scale[1];
     } else {
-        // Without Uniform Scale, Scale is the height; Scale Width keys beside
-        // a static Scale Height are measured, keyed Scale Height is not.
-        ensure!(
-            !keyed(PrAnimatedProperty::UniformScale),
-            "{}: animated Scale Height without Uniform Scale is unsupported",
-            motion.identity
-        );
+        // Parameter 2 always drives Height. Only the saved Uniform Scale
+        // toggle determines whether its keys also drive Width.
+        for animation in &mut animations {
+            if let PrPropertyAnimation::UniformScale(keys) = animation {
+                *animation = PrPropertyAnimation::ScaleHeight(std::mem::take(keys));
+            }
+        }
     }
     let [left, top, right, bottom] = motion_crop;
     let motion_crop = PrStaticCrop {
@@ -1560,6 +1649,25 @@ mod tests {
     const F23_P3: &str = "254016000000,100.,0,0,0,0.16666666666666666,20,0.40000000000000002;508032000000,150.,5,0,12.5,0.59999999999999998,0,0.16666666666666666;1016064000000,100.,4,0,-25,0.16666666666666666,0,0.33333333333333331;1270080000000,150.,5,0,12.5,0.59999999999999998,0,0.16666666666666666;";
 
     #[test]
+    fn static_point_layouts_keep_finite_coordinates_and_reject_incomplete_pairs() {
+        for coordinates in ["0.75:0.25", "0.75,0.25"] {
+            let wire = format!(
+                "{},{coordinates},0,0,0,0,0,0,5,4,0,0,0,0",
+                records::STATIC_KEYFRAME_TIME
+            );
+            assert_eq!(point_start(&wire, "test").unwrap(), [0.75, 0.25]);
+        }
+        for coordinates in ["NaN,0.25", "0.75,inf", "0.75,", "0.75", "0.75:"] {
+            let wire = format!(
+                "{},{coordinates},0,0,0,0,0,0,5,4,0,0,0,0",
+                records::STATIC_KEYFRAME_TIME
+            );
+            assert!(point_start(&wire, "test").is_err(), "{wire}");
+        }
+        assert!(point_start("0,0.75,0.25,0,0,0,0,0,0,5,4,0,0,0,0", "test").is_err());
+    }
+
+    #[test]
     fn linear_key_eases_into_a_bezier_key_unless_its_handles_lie_on_the_chord() {
         // P3's stored handles ease K1 into K2.
         let keys = scalar_keys(F23_P3, "P3").unwrap();
@@ -1710,20 +1818,24 @@ mod tests {
     }
 
     #[test]
-    fn linear_spatial_flags_two_keep_tangent_and_unknown_form_guards() {
-        for flag in [0, 2] {
+    fn linear_spatial_resolved_flags_ignore_inactive_handles_and_reject_unknown_forms() {
+        for flag in [0, 2, 4] {
             for tangents in ["1,0,0,0", "0,1,0,0", "0,0,1,0", "0,0,0,1"] {
                 let wire = format!("0,0:0,0,0,0,0,0,0,0,{flag},{tangents};");
-                let error = point_keys(&wire, "nonlinear handles").unwrap_err();
-                assert!(
-                    error
-                        .to_string()
-                        .contains("linear spatial key has nonzero tangents"),
-                    "{error}"
-                );
+                let keys = point_keys(&wire, "inactive handles").unwrap();
+                assert_eq!(keys[0].spatial_in_tangent, None);
+                assert_eq!(keys[0].spatial_out_tangent, None);
             }
         }
-        for (mode, flags) in [(0, 1), (0, 3), (0, 4), (5, 1), (5, 3), (4, 2)] {
+        for outgoing in ["0,1", "-1,0", "2,0"] {
+            let wire = format!(
+                "0,0:0,0,0,0,0,0,0,0,0,0,0,{outgoing};254016000000,1:0,0,0,0,0,0,0,0,0,0,0,0,0;"
+            );
+            let keys = point_keys(&wire, "inactive linear handles").unwrap();
+            assert_eq!(keys[0].spatial_out_tangent, None);
+            assert_eq!(keys[1].easing, PrKeyframeEasing::Linear);
+        }
+        for (mode, flags) in [(0, 1), (0, 3), (0, 5), (5, 1), (5, 3), (4, 2)] {
             let wire = format!("0,0:0,0,0,0,0,0,0,{mode},{flags},0,0,0,0;");
             assert!(point_keys(&wire, "unknown form")
                 .unwrap_err()

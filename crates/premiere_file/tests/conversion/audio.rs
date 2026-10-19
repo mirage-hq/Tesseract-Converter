@@ -507,22 +507,30 @@ fn audio_source_proxies_mono_selector_uses_original_channel_one() {
     assert_eq!(u16::from_le_bytes(bytes[22..24].try_into().unwrap()), 1);
     assert_eq!(u32::from_le_bytes(bytes[24..28].try_into().unwrap()), 48000);
     let right: Vec<_> = original[44..]
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|frame| &frame[2..4])
         .copied()
         .collect();
     let left: Vec<_> = original[44..]
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|frame| &frame[..2])
         .copied()
         .collect();
     let proxy_left: Vec<_> = preview[44..]
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|frame| &frame[..2])
         .copied()
         .collect();
     let proxy_right: Vec<_> = preview[44..]
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|frame| &frame[2..4])
         .copied()
         .collect();
@@ -1543,6 +1551,7 @@ fn check_authored_sound_round_trip(legacy: bool) {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("source.tsrct");
     let mut document = audible_document();
+    document["colorManagement"] = json!({"workingSpace": "legacyDisplay"});
     if legacy {
         let video = &mut document["composition"]["layers"][1];
         video["activeRange"] = video["playback"]["inputRange"].clone();
@@ -4268,7 +4277,9 @@ fn audio_filters_fill_right_prepares_source_channel_and_retains_edits() {
         panic!("WAV data missing")
     };
     let expected: Vec<_> = data(&original)
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|frame| frame[..2].iter().copied())
         .collect();
     assert_eq!(data(&prepared), expected);

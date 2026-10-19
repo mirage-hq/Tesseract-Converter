@@ -191,6 +191,16 @@ pub(crate) enum PrEffectParams {
     /// Import-only selected Lumetri controls. Never serialize as native Lumetri;
     /// edited FX exports through the linked-AEP route.
     LumetriExposure(f64),
+    /// Import-only ProcAmp brightness; edited FX uses linked Exposure export.
+    ProcAmpBrightness(f64),
+    /// Import-only native effect, distinct from a graphic Appearance shadow.
+    DropShadow {
+        color: PrColour,
+        opacity: f64,
+        direction: f64,
+        distance: f64,
+        softness: f64,
+    },
     LumetriTemperature(f64),
     LumetriTint(f64),
     LumetriSaturation(f64),
@@ -211,6 +221,8 @@ pub(crate) enum PrEffectParams {
         brightness: f64,
         color: PrColour,
     },
+    /// Import-only static color-distance surrogate; native export is unsupported.
+    UltraKey(super::ultra_key::PrUltraKey),
     LegacyLuma {
         threshold: f64,
         cutoff: f64,
@@ -981,10 +993,12 @@ impl PrPosterize {
 ///
 /// Premiere measures the ramp in clip pixels and the FX shader in the layer
 /// frame's UV, so the two agree only on an axis-aligned ramp on a clip whose
-/// frame is the canvas ([`PrRamp::ensure_aligned`], the converter's host rule;
-/// the E10 probe measured 50 and 13 levels on a diagonal and a radial ramp).
+/// frame is the canvas ([`PrRamp::ensure_aligned`], the converter's host rule).
+/// Static radial geometry imports with a diagnosed UV falloff approximation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct PrRamp {
+    /// Import-only UV radial approximation; native export still admits only linear ramps.
+    pub(crate) radial: bool,
     /// Start of Ramp, normalized to the clip frame (origin top left, y down),
     /// possibly outside it.
     pub(crate) start: [f64; 2],
@@ -1024,6 +1038,8 @@ impl PrRamp {
     /// so a converted ramp never reaches the floor when the shader evaluates
     /// it; Premiere has no such floor (E10: a ramp is its pixel projection).
     pub(crate) const MIN_LENGTH: f64 = 0.0032;
+
+    pub(crate) const RADIAL_APPROXIMATION: &str = "radial Ramp retained as editable UV gradientRamp; pixel-space circular falloff becomes elliptical on nonsquare frames, and native scatter omitted because FX has no scatter; native color/alpha fidelity is unmeasured";
 
     /// The FX values that the shader's `blend` and Premiere's Blend With
     /// Original exchange: each is one minus the other, an affine map under
@@ -1663,6 +1679,10 @@ impl PrLevelChannel {
     }
 
     pub(crate) fn from_values(values: [f64; 5]) -> Option<Self> {
+        // Saved zeroed rows suppress the channel despite inactive input/Gamma controls.
+        if values == [0.0; 5] {
+            return Some(Self::Off);
+        }
         [Self::Keep, Self::Off, Self::On]
             .into_iter()
             .find(|channel| channel.values() == values)
@@ -1763,6 +1783,8 @@ impl PrEffect {
             PrEffectParams::BrightnessContrast(_) => &BRIGHTNESS_CONTRAST,
             PrEffectParams::Offset(_) => &OFFSET,
             PrEffectParams::LumetriExposure(_) => &LUMETRI_EXPOSURE_SPEC,
+            PrEffectParams::ProcAmpBrightness(_) => &PROC_AMP,
+            PrEffectParams::DropShadow { .. } => &DROP_SHADOW,
             PrEffectParams::LumetriTemperature(_) => &LUMETRI_TEMPERATURE_SPEC,
             PrEffectParams::LumetriTint(_) => &LUMETRI_TINT_SPEC,
             PrEffectParams::LumetriSaturation(_) => &LUMETRI_SATURATION_SPEC,
@@ -1777,6 +1799,7 @@ impl PrEffect {
             PrEffectParams::Posterize(_) => &POSTERIZE,
             PrEffectParams::Sharpen(_) => &SHARPEN,
             PrEffectParams::AlphaGlow { .. } => &ALPHA_GLOW,
+            PrEffectParams::UltraKey(_) => &super::ultra_key::ULTRA_KEY,
             PrEffectParams::LegacyLuma { .. } => &LEGACY_LUMA_KEY,
             PrEffectParams::LensDistortion(_) => &LENS_DISTORTION,
             PrEffectParams::Noise { .. } => &NOISE,
@@ -1808,6 +1831,14 @@ impl PrEffect {
             );
         }
         match &self.params {
+            PrEffectParams::DropShadow { opacity, direction, distance, softness, .. } => {
+                for (value, param) in [opacity, direction, distance, softness].into_iter().zip(&DROP_SHADOW.params[1..5]) {
+                    ensure_valid!(param.value_range().is_some_and(|range| range.contains(value)), "Drop Shadow {} outside saved range", param.name);
+                }
+            }
+            PrEffectParams::ProcAmpBrightness(value) => {
+                ensure_valid!(PROC_AMP_BRIGHTNESS.value_range().is_some_and(|range| range.contains(value)), "ProcAmp Brightness outside -100 to 100");
+            }
             PrEffectParams::LumetriVignette(values) => {
                 for (value, param) in values.iter().zip(LUMETRI_VIGNETTE_SPEC.params) {
                     ensure_valid!(param.value_range().is_some_and(|range| range.contains(value)), "Lumetri Vignette value outside saved range");
@@ -1993,6 +2024,9 @@ impl PrEffect {
             PrEffectParams::AlphaGlow { size, brightness, .. } => {
                 alpha_glow_size(*size, &self.animations).map_err(invalid)?;
                 ensure_valid!((0.0..=255.0).contains(brightness) && brightness.fract() == 0.0, "Alpha Glow Brightness must be whole in 0..255");
+            }
+            PrEffectParams::UltraKey(key) => {
+                ensure_valid!(self.animations.is_empty() && [key.tolerance, key.pedestal, key.transparency].iter().all(|v| (0.0..=100.0).contains(v)), "Ultra Key requires static controls in 0..100");
             }
             PrEffectParams::LegacyLuma { threshold, cutoff } => {
                 validate_legacy_luma(*threshold, *cutoff, &self.animations).map_err(invalid)?;
@@ -2900,6 +2934,126 @@ pub(crate) const BRIGHTNESS_CONTRAST: EffectSpec = EffectSpec {
     opaque_private_data: false,
 };
 
+/// ProcAmp's additive brightness percentage, not AE Brightness & Contrast.
+pub(crate) const PROC_AMP_BRIGHTNESS: EffectParamSpec = EffectParamSpec {
+    binding: Some(EffectParamBinding::ScaledScalar {
+        name: "offset",
+        multiplier: 0.01,
+    }),
+    ..BRIGHTNESS_CONTRAST_BRIGHTNESS
+};
+
+/// Import-only saved ProcAmp layout. Only brightness has an editable mapping;
+/// the remaining controls must be static and neutral before admission.
+pub(crate) const PROC_AMP: EffectSpec = EffectSpec {
+    match_name: "AE.ADBE ProcAmp",
+    display_name: "ProcAmp",
+    params: &[
+        PROC_AMP_BRIGHTNESS,
+        EffectParamSpec {
+            lower_bound: "0",
+            upper_bound: "200",
+            binding: None,
+            ..BRIGHTNESS_CONTRAST_CONTRAST
+        },
+        EffectParamSpec {
+            id: 3,
+            name: "Hue",
+            label: "Hue",
+            control: "3",
+            lower_bound: "-32768",
+            upper_bound: "32767",
+            binding: None,
+            ..BRIGHTNESS_CONTRAST_CONTRAST
+        },
+        EffectParamSpec {
+            id: 4,
+            name: "Saturation",
+            label: "Saturation",
+            lower_bound: "0",
+            upper_bound: "200",
+            binding: None,
+            ..BRIGHTNESS_CONTRAST_CONTRAST
+        },
+        EffectParamSpec {
+            id: 5,
+            ..GAUSSIAN_BLUR_REPEAT_EDGE_PIXELS
+        },
+        EffectParamSpec {
+            id: 6,
+            name: "Split Percent",
+            label: "Split Percent",
+            lower_bound: "0",
+            upper_bound: "100",
+            binding: None,
+            ..BRIGHTNESS_CONTRAST_CONTRAST
+        },
+    ],
+    ..BRIGHTNESS_CONTRAST
+};
+
+pub(crate) const DROP_SHADOW: EffectSpec = EffectSpec {
+    match_name: "AE.ADBE Drop Shadow",
+    display_name: "Drop Shadow",
+    params: &[
+        EffectParamSpec {
+            id: 1,
+            name: "Shadow Color",
+            label: "Shadow Color",
+            binding: None,
+            ..TINT_MAP_BLACK_TO
+        },
+        EffectParamSpec {
+            id: 2,
+            name: "Opacity",
+            label: "Opacity",
+            lower_bound: "0",
+            upper_bound: "255",
+            binding: None,
+            ..BRIGHTNESS_CONTRAST_BRIGHTNESS
+        },
+        EffectParamSpec {
+            id: 3,
+            name: "Direction",
+            label: "Direction",
+            control: "3",
+            lower_bound: "-32768",
+            upper_bound: "32767",
+            binding: None,
+            ..BRIGHTNESS_CONTRAST_BRIGHTNESS
+        },
+        EffectParamSpec {
+            id: 4,
+            name: "Distance",
+            label: "Distance",
+            lower_bound: "0",
+            upper_bound: "4000",
+            binding: Some(EffectParamBinding::Scalar("offset")),
+            ..BRIGHTNESS_CONTRAST_BRIGHTNESS
+        },
+        EffectParamSpec {
+            id: 5,
+            name: "Softness",
+            label: "Softness",
+            lower_bound: "0",
+            upper_bound: "30000",
+            binding: Some(EffectParamBinding::ScaledScalar {
+                name: "blurRadius",
+                multiplier: 0.5,
+            }),
+            ..BRIGHTNESS_CONTRAST_BRIGHTNESS
+        },
+        EffectParamSpec {
+            id: 6,
+            name: "Shadow Only",
+            label: "Shadow Only",
+            binding: None,
+            ..GAUSSIAN_BLUR_REPEAT_EDGE_PIXELS
+        },
+    ],
+    ..BRIGHTNESS_CONTRAST
+};
+
 // Import metadata only: these specs describe selected saved controls, not a
 // complete Lumetri record layout. The native writer explicitly rejects them.
 pub(crate) const LUMETRI_TEMPERATURE: EffectParamSpec = EffectParamSpec {
@@ -2944,7 +3098,11 @@ pub(crate) const LUMETRI_EXPOSURE: EffectParamSpec = EffectParamSpec {
     label: "Lumetri saved Exposure",
     lower_bound: "-5",
     upper_bound: "5",
-    binding: Some(EffectParamBinding::Scalar("exposure")),
+    // A gamma-2.2 display approximation maps linear-light stops to code-value gain.
+    binding: Some(EffectParamBinding::ScaledScalar {
+        name: "exposure",
+        multiplier: 1.0 / 2.2,
+    }),
     ..BRIGHTNESS_CONTRAST_CONTRAST
 };
 pub(crate) const LUMETRI_SATURATION: EffectParamSpec = EffectParamSpec {
@@ -3170,9 +3328,8 @@ pub(crate) const TINT: EffectSpec = EffectSpec {
     opaque_private_data: false,
 };
 
-/// `AE.ADBE Black & White`, Premiere 26.5.1's "Black & White" (9/7): a record without parameters (no `Params` element). The corpus's older
-/// `PR.ADBE Black & White` (`VideoFilterType` 1, one unnamed
-/// `ArbVideoComponentParam`) is another effect and stays unknown.
+/// `AE.ADBE Black & White`, Premiere 26.5.1's parameterless grayscale.
+/// Import also reads the legacy PR form after validating its empty arb slot.
 pub(crate) const BLACK_WHITE: EffectSpec = EffectSpec {
     match_name: "AE.ADBE Black & White",
     display_name: "Black & White",
@@ -3192,7 +3349,7 @@ pub(crate) const RAMP_END: EffectParamSpec = point_param(3, "End of Ramp", "endX
 pub(crate) const RAMP_END_COLOR: EffectParamSpec =
     colour_param(4, "End Color", "endR", "endG", "endB");
 
-/// Ramp Shape popup: 0 linear, 1 radial. Only [`RAMP_SHAPE_LINEAR`] converts.
+/// Ramp Shape popup: 0 linear, 1 radial (import approximation only).
 pub(crate) const RAMP_SHAPE: EffectParamSpec = EffectParamSpec {
     id: 5,
     name: "Ramp Shape",
@@ -4402,7 +4559,8 @@ impl PrEffect {
 
     /// Dropping an enabled key must never leave an opaque occurrence behind.
     pub(crate) fn requires_coverage(&self) -> bool {
-        self.enabled && self.is_legacy_luma()
+        self.enabled
+            && (self.is_legacy_luma() || matches!(self.params, PrEffectParams::UltraKey(_)))
     }
 }
 
@@ -4634,6 +4792,7 @@ mod tests {
             mask: None,
             enabled: true,
             params: PrEffectParams::Ramp(PrRamp {
+                radial: false,
                 start: [0.5, 0.0],
                 start_colour: PrColour::BLACK,
                 end: [0.5, 1.0],
@@ -5278,6 +5437,7 @@ mod tests {
             mask: None,
             enabled: true,
             params: PrEffectParams::Ramp(PrRamp {
+                radial: false,
                 start,
                 start_colour: PrColour::BLACK,
                 end: [0.5, 1.0],
@@ -5360,6 +5520,7 @@ mod tests {
     #[test]
     fn ramp_axis_rule_holds_at_every_time() {
         let ramp = |start: [f64; 2], end: [f64; 2]| PrRamp {
+            radial: false,
             start,
             start_colour: PrColour::BLACK,
             end,

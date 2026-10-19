@@ -4,6 +4,105 @@ use super::*;
 use sha2::{Digest, Sha256};
 
 #[test]
+fn scaled_native_still_uses_editable_bilinear_linked_picture() {
+    let parent = tempfile::tempdir().unwrap();
+    let imported = parent.path().join("imported");
+    let source = fixture("premiere_isolated_still_image.prproj");
+    let mut import = request(&source, &imported, ConversionMode::Write);
+    import.sequence = Some("c8acf9c1-34b2-4086-9f55-d528950a7059");
+    import_premiere(&import).unwrap();
+    let archive = TesseractFile::open(imported.join("project.tsrct")).unwrap();
+    let mut document = archive.project_json().unwrap();
+    let mut image = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Image" && layer["activeRange"]["start"] == 5000)
+        .unwrap()
+        .clone();
+    let asset = image["source"]["assetId"].as_str().unwrap().to_owned();
+    image["activeRange"] = json!({"start":0,"duration":1000});
+    image["transform"]["scale"] = json!([110.0, 90.0]);
+    document["duration"] = json!(1.0);
+    document["composition"]["layers"] = json!([image]);
+    document["composition"]["dynamics"] = json!({"entries":[]});
+    let input = parent.path().join("scaled.tsrct");
+    TesseractFileBuilder::from_project_json(&serde_json::to_vec(&document).unwrap())
+        .unwrap()
+        .add_asset(
+            &asset,
+            fixture("feature_still_transparent.png"),
+            AssetKind::Image,
+        )
+        .unwrap()
+        .write(&input)
+        .unwrap();
+    let output = parent.path().join("exported");
+    let mut conversion = request(&input, &output, ConversionMode::Write);
+    conversion.fps = Some("30");
+    let written = crate::formats::export_premiere(&conversion).unwrap();
+    assert!(
+        xml(&output.join("project.prproj")).contains("./media/ae-0001/compositions.aep"),
+        "native Motion must not substitute bicubic for the Image's bilinear sampling"
+    );
+    let project = aftereffects_file::structure::read_project(
+        &fs::read(output.join("media/ae-0001/compositions.aep")).unwrap(),
+    )
+    .unwrap();
+    let layers = project
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            aftereffects_file::structure::ItemKind::Composition(comp) => Some(&comp.layers),
+            _ => None,
+        })
+        .flatten()
+        .collect::<Vec<_>>();
+    assert_eq!(layers.len(), 1);
+    let native = aftereffects_file::structure::read_project(
+        &fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../crates/aftereffects_file/tests/fixtures/layers/avlayer_flags.aep"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let bicubic = native
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            aftereffects_file::structure::ItemKind::Composition(comp)
+                if item.name == "samplingQuality_BICUBIC" =>
+            {
+                Some(&comp.layers[0])
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert!(bicubic.record.flags().sampling_quality);
+    assert!(!layers[0].record.flags().sampling_quality);
+    assert_eq!(layers[0].record.quality(), 2);
+    let properties = aftereffects_file::properties::read_transform(&layers[0].content).unwrap();
+    let scale = properties
+        .iter()
+        .find(|p| p.match_name == "ADBE Scale")
+        .unwrap()
+        .numeric
+        .as_ref()
+        .unwrap();
+    assert_eq!(scale.values, [1.1, 0.9, 1.0]);
+    let packaged = written
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.path.extension().is_some_and(|e| e == "png"))
+        .unwrap();
+    assert_eq!(
+        fs::read(output.join(&packaged.path)).unwrap(),
+        fs::read(fixture("feature_still_transparent.png")).unwrap()
+    );
+}
+
+#[test]
 fn native_still_motion_scripts_keep_source_relative_anchor_in_linked_export() {
     let source = fixture("premiere_isolated_still_image.prproj");
     let source_bytes = fs::read(&source).unwrap();

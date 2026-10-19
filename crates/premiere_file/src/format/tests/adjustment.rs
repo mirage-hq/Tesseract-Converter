@@ -192,6 +192,74 @@ fn a_flagged_black_video_clip_reads_as_an_adjustment_with_its_effects() {
 }
 
 #[test]
+fn adjustment_crop_requires_hard_edges_and_unit_coverage() {
+    let crop = super::effects::top_crop(90);
+    for (name, crop, flags, extra) in [
+        ("Top", crop.clone(), DEFAULT_FLAGS, Vec::new()),
+        (
+            "feather",
+            crop.replace(
+                ",0,0,0,0,0,0,0</StartKeyframe>",
+                ",1,0,0,0,0,0,0</StartKeyframe>",
+            ),
+            DEFAULT_FLAGS,
+            Vec::new(),
+        ),
+        (
+            "mixed edges",
+            crop.replace(",0.,", ",5.,"),
+            DEFAULT_FLAGS,
+            Vec::new(),
+        ),
+        (
+            "moved Motion",
+            crop.clone(),
+            "<DefaultOpacity>true</DefaultOpacity>",
+            vec![(70, motion("50.", ""))],
+        ),
+        (
+            "Opacity mix",
+            crop.clone(),
+            "<DefaultMotion>true</DefaultMotion>",
+            vec![(50, opacity("50.", ""))],
+        ),
+        (
+            "effect after Crop",
+            crop,
+            DEFAULT_FLAGS,
+            vec![(60, blur(60))],
+        ),
+    ] {
+        let mut components = extra;
+        components.push((90, crop));
+        let (_, clips, _, omissions) = read(&adjustment_xml(
+            flags,
+            &components,
+            CLIP_FLAG,
+            MASTER_FLAG,
+            BLACK_VIDEO_MEDIA,
+        ));
+        assert_eq!(
+            clips.len(),
+            if matches!(name, "Top" | "mixed edges") {
+                2
+            } else {
+                1
+            },
+            "{name}: {omissions:?}"
+        );
+        if name == "Top" {
+            assert_eq!(
+                clips[1].linear_wipe.as_ref().unwrap().initial_completion,
+                15.0
+            );
+            assert_eq!(clips[1].linear_wipe.as_ref().unwrap().angle_degrees, 0);
+            assert!(clips[1].crop.is_default());
+        }
+    }
+}
+
+#[test]
 fn adjustment_wipe_does_not_feather_the_composite_outside_its_window() {
     let mut clip = crate::tests::support::clip_of("source", 0..TICKS, 0);
     clip.linear_wipe = Some(crate::schema::PrLinearWipe {
@@ -200,9 +268,33 @@ fn adjustment_wipe_does_not_feather_the_composite_outside_its_window() {
         angle_degrees: 90,
         feather: 0.0,
     });
-    assert!(crate::schema::adjustment::supports_wipe_coverage(&clip));
+    assert!(crate::schema::adjustment::supports_wipe_coverage(
+        &clip, false
+    ));
     clip.linear_wipe.as_mut().unwrap().feather = 1.0;
-    assert!(!crate::schema::adjustment::supports_wipe_coverage(&clip));
+    assert!(!crate::schema::adjustment::supports_wipe_coverage(
+        &clip, false
+    ));
+    let wipe = clip.linear_wipe.as_mut().unwrap();
+    wipe.feather = 0.0;
+    wipe.completion = vec![
+        crate::schema::PrScalarKeyframe {
+            source_ticks: clip.in_ticks,
+            value: 50.0,
+            easing: crate::schema::PrKeyframeEasing::Linear,
+        },
+        crate::schema::PrScalarKeyframe {
+            source_ticks: clip.out_ticks + TICKS,
+            value: 25.0,
+            easing: crate::schema::PrKeyframeEasing::Linear,
+        },
+    ];
+    assert!(!crate::schema::adjustment::supports_wipe_coverage(
+        &clip, false
+    ));
+    assert!(crate::schema::adjustment::supports_wipe_coverage(
+        &clip, true
+    ));
 }
 
 #[test]
@@ -592,6 +684,103 @@ fn a_sequence_whose_only_kept_items_are_adjustments_has_no_convertible_content()
 }
 
 #[test]
+fn unresolved_track_group_cannot_qualify_as_adjustment_only_template() {
+    let xml = corpus_adjustment_xml(&[]).replace(
+        "</TrackGroups>",
+        r#"<TrackGroup><Second ObjectRef="999999"/></TrackGroup></TrackGroups>"#,
+    );
+    // An unresolved sibling must not prevent best-effort conversion of picture.
+    let (project, omissions) = inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+    assert!(
+        project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .count()
+            > 1
+    );
+    assert!(omissions
+        .iter()
+        .any(|o| o.reason.contains("track group not converted")));
+
+    let xml = xml.replace(r#"<Track ObjectURef="track-1"/>"#, "");
+    let mut omissions = Vec::new();
+    let error = crate::format::reader::read_sequence(
+        &crate::format::Graph::parse(&xml).unwrap(),
+        Some("sequence-1"),
+        &std::collections::BTreeSet::new(),
+        &mut std::collections::BTreeMap::new(),
+        &mut omissions,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.contains("no convertible video or audio occurrences"),
+        "{error}"
+    );
+    assert!(omissions
+        .iter()
+        .any(|o| o.reason.contains("track group not converted")));
+}
+
+#[test]
+fn effect_free_adjustment_template_keeps_timed_editable_canvas() {
+    // Public synthetic record control: remove the picture track entirely,
+    // rather than corrupting its range and recovering a failed conversion.
+    for width in [1920, 1080] {
+        let xml = corpus_adjustment_xml(&[])
+            .replace(r#"<Track ObjectURef="track-1"/>"#, "")
+            .replace(
+                "<FrameRect>0,0,1920,1080</FrameRect>",
+                &format!("<FrameRect>0,0,{width},1080</FrameRect>"),
+            )
+            .replace(
+                &BLACK_VIDEO_MEDIA.replace(
+                    "<FrameRect>0,0,1920,1080</FrameRect>",
+                    &format!("<FrameRect>0,0,{width},1080</FrameRect>"),
+                ),
+                BLACK_VIDEO_MEDIA,
+            );
+        let (project, omissions) =
+            inspect_project_with_omissions(&xml, Some("sequence-1")).unwrap();
+        assert_eq!(
+            omissions
+                .iter()
+                .any(|o| o.scope == OmissionScope::Occurrence),
+            width == 1080
+        );
+        let sequence = project.single_sequence().unwrap();
+        assert!(sequence.audio.is_empty());
+        assert_eq!(sequence.end_ticks(), 4 * TICKS);
+        let document = project_document_with_media(sequence, &project.media);
+        assert_eq!(
+            document["dimensions"],
+            json!({"width": width, "height": 1080})
+        );
+        let layers = document["composition"]["layers"].as_array().unwrap();
+        assert_eq!(layers.len(), if width == 1080 { 1 } else { 2 });
+        let canvas = layers.last().unwrap();
+        if width == 1920 {
+            assert_eq!(layers[0]["type"], "Adjustment");
+            assert!(
+                layers[0].get("effects").is_none(),
+                "empty effects are omitted"
+            );
+            assert_eq!(
+                layers[0]["activeRange"],
+                json!({"start": 1000, "duration": 3000})
+            );
+        }
+        assert_eq!(canvas["type"], "Rect");
+        assert_eq!(canvas["name"], "Premiere black canvas");
+        assert_eq!(canvas["activeRange"], json!({"start": 0, "duration": 4000}));
+        assert!(omissions
+            .iter()
+            .any(|o| o.reason.contains("timed editable black canvas")));
+    }
+}
+
+#[test]
 fn an_adjustment_imports_as_an_fx_adjustment_layer_with_its_blur() {
     let blur = blur(60).replace(
         "<StartKeyframe>-91445760000000000,false,0,0,0,0,0,0</StartKeyframe>",
@@ -839,6 +1028,81 @@ fn adjustment_coverage_checks_active_native_effects_before_they_can_be_omitted()
         let (_, clips, _, omissions) = read(&adjustment_xml("<DefaultOpacity>true</DefaultOpacity>", &[(70, motion("50.", "")), (90, effect)], CLIP_FLAG, MASTER_FLAG, BLACK_VIDEO_MEDIA));
         assert_eq!(clips.len(), if keep {2} else {1}, "{name}: {omissions:?}");
         assert_eq!(omissions.iter().any(|omission| omission.scope == OmissionScope::Occurrence), !keep, "{name}: {omissions:?}");
+    }
+}
+
+#[test]
+fn moved_adjustment_retains_offset_keys_and_separate_coverage() {
+    let source = include_str!("../../../tests/fixtures/native_offset_keyed.xml");
+    let (_, records) = source
+        .split_once("<VideoFilterComponent ObjectID=\"927\"")
+        .unwrap();
+    let mut offset = format!(
+        "<VideoFilterComponent ObjectID=\"927\"{}",
+        records.split_once("</PremiereData>").unwrap().0
+    );
+    for (index, clock) in [
+        914617723219200_i64,
+        914753333894400,
+        914756191026401,
+        914888944569600,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        offset = offset.replace(
+            &clock.to_string(),
+            &(IN_TICKS + index as i64 * TICKS / 2).to_string(),
+        );
+    }
+    let moved = motion("100.", "").replace(
+        "<ParameterID>1</ParameterID><StartKeyframe>-91445760000000000,0.5:0.5",
+        "<ParameterID>1</ParameterID><StartKeyframe>-91445760000000000,0:0.5",
+    );
+    let xml = adjustment_xml(
+        "<DefaultOpacity>true</DefaultOpacity>",
+        &[(70, moved), (927, offset)],
+        CLIP_FLAG,
+        MASTER_FLAG,
+        BLACK_VIDEO_MEDIA,
+    );
+    let (project, clips, _, omissions) = read(&xml);
+    assert_eq!(clips.len(), 2, "{omissions:?}");
+    assert!(matches!(
+        clips[1].effects[0].params,
+        PrEffectParams::Offset(_)
+    ));
+    assert_eq!(
+        clips[1].effects[0].animations[0]
+            .keys
+            .point()
+            .unwrap()
+            .len(),
+        4
+    );
+    let document = project_document_with_media(project.single_sequence().unwrap(), &project.media);
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    let adjustment = layers
+        .iter()
+        .find(|layer| layer["type"] == "Adjustment")
+        .unwrap();
+    let guide = layers
+        .iter()
+        .find(|layer| layer["id"] == adjustment["masks"][0]["layer"])
+        .unwrap();
+    assert_eq!(guide["transform"]["position"], json!([0.0, 540.0]));
+    assert_eq!(guide["rect"]["fillEnabled"], false);
+    assert_eq!(adjustment["transform"]["position"], json!([0.0, 0.0]));
+    assert_eq!(adjustment["effects"][0]["effect"]["type"], "motionTile");
+    let entries = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    for property in ["tileCenterX", "tileCenterY"] {
+        let track = entries
+            .iter()
+            .find(|entry| entry["target"]["paramName"] == property)
+            .unwrap();
+        assert_eq!(track["animator"]["keyframes"].as_array().unwrap().len(), 4);
     }
 }
 

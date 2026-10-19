@@ -560,14 +560,24 @@ class UnifiedAdobeRunnerTests(unittest.TestCase):
         self.assertFalse(report["selection"]["full_coverage_claimed"])
         self.assertEqual(report["direction_scope"], ["import"])
 
-    def test_real_import_inventory_has_641_local_cases_and_full_frame_schedule(self) -> None:
+    def test_real_import_inventory_has_646_local_cases_and_full_frame_schedule(self) -> None:
         cases, targets, _ = adobe_test.aep_test.load_catalog(
             adobe_test.REPO,
             adobe_test.aep_test.DEFAULT_REGISTRY,
             adobe_test.aep_test.DEFAULT_REFERENCES,
         )
         selected = list(cases.values())
-        self.assertEqual(len(selected), 641)
+        self.assertEqual(len(selected), 646)
+        # Five independently registered targets added by expression/Path and
+        # transparency cases must remain in the exact executable inventory.
+        for case_id in (
+            "aep-expression-samples-expression-compatibility-c1",
+            "aep-expression-samples-expression-paths-c1",
+            "aep-canvas-transparency-c1",
+            "aep-canvas-transparency-c16",
+            "aep-canvas-transparency-c32",
+        ):
+            self.assertIn(case_id, cases)
         self.assertEqual(
             {
                 case_id
@@ -588,11 +598,11 @@ class UnifiedAdobeRunnerTests(unittest.TestCase):
         )
         self.assertIn("aep-expression-samples-sampled-position-expression-c1", cases)
         self.assertIn("aep-effects-fill-isolated-c1", cases)
-        self.assertEqual(sum(target[1]["expected_frame_count"] for target in targets.values()), 51_900)
+        self.assertEqual(sum(target[1]["expected_frame_count"] for target in targets.values()), 52_080)
         # The nested support composition is exercised via its parent, not rendered separately.
         self.assertEqual(sum("reference" not in target[1] for target in targets.values()), 1)
         self.assertEqual(sum("path" in target[1].get("reference", {})
-                             for target in targets.values()), 678)
+                             for target in targets.values()), 683)
         self.assertEqual(adobe_test.required_max_samples(selected, targets), 301)
 
     def test_max_samples_must_cover_full_inclusive_duration(self) -> None:

@@ -4,13 +4,20 @@
 use image::RgbaImage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Selection {
+/// Select stored composite pixels or one persistent native layer identity.
+pub enum Selection {
     Merged,
-    Layer { id: u32, index: u32 },
+    /// The native host explicitly declares the fourth composite plane as straight alpha.
+    MergedWithStraightAlpha,
+    Layer {
+        id: u32,
+        index: u32,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(super) enum DecodeError {
+/// Invalid, unsupported, or unsafe stored Photoshop pixels.
+pub enum DecodeError {
     #[error("malformed PSD: {0}")]
     Malformed(&'static str),
     #[error("unsupported PSD: {0}")]
@@ -422,7 +429,7 @@ fn pixels(
     }
     if !found[3] {
         if cropped {
-            for pixel in result.chunks_exact_mut(4) {
+            for pixel in result.as_chunks_mut::<4>().0.iter_mut() {
                 pixel[3] = 255;
             }
         } else {
@@ -442,7 +449,9 @@ fn pixels(
 /// Extracts stored composite pixels or one exactly identified editable layer.
 /// An expected layer size equal to its rectangle returns the crop; otherwise a
 /// canvas-sized request places the original rectangle on transparent canvas.
-pub(super) fn decode(
+/// Decode bounded RGB8 PSD v1 pixels, checking the expected native dimensions.
+/// This does not execute Photoshop effects or recompose its layers.
+pub fn decode(
     bytes: &[u8],
     selection: Selection,
     expected: [u32; 2],
@@ -472,12 +481,16 @@ pub(super) fn decode(
     // lengths are still validated, and a known absent merged preview is never
     // treated as authoritative pixels.
     let real_merged = read_resources(cursor.section()?)?;
-    if selection == Selection::Merged && !real_merged {
+    if matches!(
+        selection,
+        Selection::Merged | Selection::MergedWithStraightAlpha
+    ) && !real_merged
+    {
         return Err(DecodeError::Unsupported("PSD has no real merged preview"));
     }
     let mut layer_mask = cursor.section()?;
     match selection {
-        Selection::Merged => {
+        Selection::Merged | Selection::MergedWithStraightAlpha => {
             // Stored composite pixels are authoritative, even when the layer
             // records require features the editable-layer path cannot decode.
             let merged_alpha = if layer_mask.remaining() == 0 {
@@ -495,12 +508,13 @@ pub(super) fn decode(
                     "merged dimensions differ from canvas",
                 ));
             }
-            if merged_alpha && channel_count != 4 {
+            let declared_alpha = selection == Selection::MergedWithStraightAlpha;
+            if (merged_alpha || declared_alpha) && channel_count != 4 {
                 return Err(DecodeError::Malformed(
                     "merged transparency channel is absent",
                 ));
             }
-            if channel_count == 4 && !merged_alpha {
+            if channel_count == 4 && !merged_alpha && !declared_alpha {
                 return Err(DecodeError::Unsupported(
                     "fourth composite channel without merged transparency marker",
                 ));

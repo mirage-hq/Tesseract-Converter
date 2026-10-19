@@ -15,6 +15,11 @@ pub struct Layer(Stored<LayerData>);
 impl<'de> Deserialize<'de> for Layer {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let layer = Self(Stored::deserialize(deserializer)?);
+        if layer.0.contains_key("colorManagement") {
+            return Err(serde::de::Error::custom(
+                crate::ColorManagementError::Misplaced("layer".into()),
+            ));
+        }
         if matches!(
             layer.data(),
             LayerData::Video(_) | LayerData::Audio(_) | LayerData::Group(_)

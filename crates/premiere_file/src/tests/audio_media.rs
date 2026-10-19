@@ -720,7 +720,9 @@ fn delayed_aac_preparation_is_deterministic_and_preserves_channel_samples() {
     let channel = std::fs::read(mono).unwrap();
     assert_eq!(channel.len(), 44 + 10624 * 4);
     let expected_channel: Vec<_> = bytes[data..data + 10624 * 8]
-        .chunks_exact(8)
+        .as_chunks::<8>()
+        .0
+        .iter()
         .flat_map(|frame| frame[4..].iter().copied())
         .collect();
     assert_eq!(&channel[44..], expected_channel);

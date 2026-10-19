@@ -112,7 +112,7 @@ fn native_tracking_uses_integer_tokens_not_fixed_point_reals() {
 }
 
 #[test]
-fn native_font_size_and_leading_use_single_precision_without_rounding_geometry() {
+fn native_font_size_leading_and_box_geometry_use_single_precision() {
     for point in [false, true] {
         let mut input = spec("DEEP BLUE");
         input.font_size = 646.9260017548991;
@@ -136,7 +136,7 @@ fn native_font_size_and_leading_use_single_precision_without_rounding_geometry()
             );
         }
         if !point {
-            let geometry = b"660.1234567890123";
+            let geometry = b"660.1235";
             assert!(bytes.windows(geometry.len()).any(|part| part == geometry));
         }
         let root = cos::parse(&bytes).unwrap();
@@ -149,6 +149,43 @@ fn native_font_size_and_leading_use_single_precision_without_rounding_geometry()
             style.get("5").unwrap().as_f64().unwrap() as f32,
             29.700000000000003_f64 as f32
         );
+    }
+}
+
+#[test]
+fn computed_box_baseline_keeps_one_native_scalar_per_coordinate() {
+    // A cap-height compensation computed in f64 exposes an arithmetic tail.
+    // Adobe tokenizes the old long decimal as `13.4 .00003`, inserting a
+    // coordinate and turning the rectangle into a malformed paragraph path.
+    let mut input = spec("Editable paragraph wrapping remains rectangular");
+    input.box_position = Some([0.0, 40.0 - 0.7 * 38.0]);
+    input.box_size = Some([728.0, 154.0 - (40.0 - 0.7 * 38.0)]);
+    let bytes = profile::render(&timeline(input)).unwrap();
+    let root = cos::parse(&bytes).unwrap();
+    let frame = at(&root, &["0", "8", "0"]).index(0).unwrap();
+    let coordinates = at(frame, &["0", "1", "0"]).as_array().unwrap();
+    assert_eq!(coordinates.len(), 32);
+    let actual = coordinates
+        .iter()
+        .map(|value| value.as_f64().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actual,
+        [
+            0.0, 13.4, 0.0, 13.4, 728.0, 13.4, 728.0, 13.4, 728.0, 13.4, 728.0, 13.4, 728.0, 154.0,
+            728.0, 154.0, 728.0, 154.0, 728.0, 154.0, 0.0, 154.0, 0.0, 154.0, 0.0, 154.0, 0.0,
+            154.0, 0.0, 13.4, 0.0, 13.4,
+        ]
+    );
+    assert!(!bytes.windows(18).any(|part| part == b"13.400000000000002"));
+}
+
+#[test]
+fn native_box_coordinates_reject_single_precision_overflow() {
+    for position in [[f64::MAX, 0.0], [0.0, -f64::MAX]] {
+        let mut input = spec("Coordinate range");
+        input.box_position = Some(position);
+        assert!(profile::render(&timeline(input)).is_err());
     }
 }
 
@@ -533,6 +570,40 @@ fn boxed_text_replaces_native_authored_content_with_editable_fx_values() {
         .flat_map(u16::to_be_bytes)
         .collect::<Vec<_>>();
     assert!(!payload(&group).windows(donor.len()).any(|x| x == donor));
+}
+
+#[test]
+fn fractional_text_paints_use_short_native_color_tokens() {
+    let mut input = spec("Fractional paints");
+    input.fill_color = [232.0 / 255.0, 222.0 / 255.0, 195.0 / 255.0, 1.0];
+    input.stroke_color = Some([128.0 / 255.0, 64.0 / 255.0, 32.0 / 255.0, 128.0 / 255.0]);
+    input.apply_stroke = true;
+    for boxed in [true, false] {
+        let mut paint_document = input.clone();
+        if !boxed {
+            paint_document.box_size = None;
+            paint_document.box_position = None;
+        }
+        let source = timeline(paint_document);
+        let group = if boxed {
+            boxed_properties(&source, 8000, PropertyClock::DEFAULT)
+        } else {
+            point_properties(&source, 8000, PropertyClock::DEFAULT)
+        }
+        .unwrap();
+        let bytes = payload(&group);
+        for expected in [
+            b"[ 1.0 0.9098039 0.87058824 0.7647059 ]".as_slice(),
+            b"[ 0.5019608 0.5019608 0.2509804 0.1254902 ]".as_slice(),
+        ] {
+            assert!(bytes.windows(expected.len()).any(|part| part == expected));
+        }
+        let parsed = cos::parse(bytes).unwrap();
+        let style = run_style(document(&parsed, 0), "6");
+        for name in ["53", "54"] {
+            assert_eq!(at(style, &[name, "0", "1"]).as_array().unwrap().len(), 4);
+        }
+    }
 }
 
 #[test]

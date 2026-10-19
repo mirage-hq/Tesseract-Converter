@@ -61,6 +61,51 @@ fn position_override(comp: &Composition, code: &str) -> Override {
 }
 
 #[test]
+fn legacy_expr_numeric_source_keeps_editable_tracks() {
+    let mut project = read_project(SOURCE).unwrap();
+    let mut override_value = position_override(composition(&project, 1), "[time * 20, 12, 0]\0");
+    let OverrideValue::Property { chunks, .. } = &mut override_value.value else {
+        unreachable!()
+    };
+    let leaf = chunks
+        .iter_mut()
+        .find(|c| c.list_kind() == Some(*b"tdbs"))
+        .unwrap()
+        .children_mut()
+        .unwrap();
+    let source = leaf.iter_mut().find(|c| c.id() == *b"Utf8").unwrap();
+    *source = Chunk::data(*b"expr", source.data_payload().unwrap()).unwrap();
+    let ItemKind::Composition(comp) =
+        &mut project.items.iter_mut().find(|i| i.id == 1).unwrap().kind
+    else {
+        unreachable!()
+    };
+    crate::essential::apply(&mut comp.layers[0], &override_value).unwrap();
+    let imported = to_structural_fx_document(&project, Some(1)).unwrap();
+    let track = imported
+        .document
+        .composition()
+        .dynamics()
+        .entries()
+        .iter()
+        .find(|entry| {
+            entry
+                .target
+                .as_property()
+                .is_some_and(|p| p.property_type() == PropType::PositionX)
+        })
+        .expect("legacy expression must produce editable Position X keys");
+    let keys = track.animator.keyframe_track().unwrap().keyframes();
+    assert!(keys.len() > 1);
+    assert_eq!(keys[0].value(), &PropertyValue::Float(0.0));
+    assert!(keys.last().unwrap().value() != keys[0].value());
+    fx_schema::EditableFxCompositionDocument::from_json_slice(
+        &imported.document.to_json_vec().unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
 fn occurrence_expression_reuse_distinguishes_exact_overrides_and_repeats() {
     let project = read_project(SOURCE).unwrap();
     let items = project.items.iter().map(|item| (item.id, item)).collect();

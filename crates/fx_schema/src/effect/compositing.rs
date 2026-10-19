@@ -14,9 +14,14 @@ macro_rules! bounded_scalar {
         #[ts(type = "number")]
         pub struct $name(f64);
         impl $name {
+            /// Inclusive lower authoring bound.
+            pub const MIN: f64 = $min;
+            /// Inclusive upper authoring bound.
+            pub const MAX: f64 = $max;
             /// Reject non-finite values and values outside the inclusive domain.
             pub fn new(value: f64) -> Option<Self> {
-                (value.is_finite() && ($min..=$max).contains(&value)).then_some(Self(value))
+                (value.is_finite() && (Self::MIN..=Self::MAX).contains(&value))
+                    .then_some(Self(value))
             }
             /// Numeric value in the declared units.
             pub fn value(self) -> f64 {
@@ -248,6 +253,9 @@ macro_rules! define_effect_compositing_class {
                 | PrimaryGrade(_)
                 | TonalColor(_)
                 | ColorCurves { .. }
+                | HueCurves(_)
+                | ChannelMixer(_)
+                | SelectiveColor(_)
                 | BrightnessContrast { .. }
                 | ShiftChannels { .. }
                 | HueSaturation { .. }
@@ -266,6 +274,8 @@ macro_rules! define_effect_compositing_class {
                 | RadialBlur { .. }
                 | FindEdges { .. }
                 | Sharpen { .. }
+                | Halation { .. }
+                | NoiseReduction { .. }
                 | ChromaticAberration { .. } => Class::Neighbourhood,
                 Bulge { .. }
                 | CornerPin { .. }
@@ -307,5 +317,30 @@ impl EffectCompositingClass {
     /// HSL qualifies only operations that colour or sample existing image pixels.
     pub fn allows_qualifier(self) -> bool {
         matches!(self, Self::PixelColour | Self::Neighbourhood)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn authoring_bounds_match_scalar_validation() {
+        macro_rules! check {
+            ($scalar:ty, $min:expr, $max:expr) => {
+                assert_eq!(<$scalar>::MIN, $min);
+                assert_eq!(<$scalar>::MAX, $max);
+                assert!(<$scalar>::new($min).is_some());
+                assert!(<$scalar>::new($max).is_some());
+                for value in [$min - 1.0, $max + 1.0, f64::NAN, f64::INFINITY] {
+                    assert!(<$scalar>::new(value).is_none());
+                }
+            };
+        }
+        check!(UnitInterval, 0.0, 1.0);
+        check!(HueDegrees, 0.0, 360.0);
+        check!(DenoiseRadius, 0.0, 10.0);
+        check!(QualifierBlurRadius, 0.0, 100.0);
+        check!(QualifierChoke, -50.0, 50.0);
     }
 }

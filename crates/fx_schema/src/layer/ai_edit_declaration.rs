@@ -34,6 +34,10 @@ macro_rules! define_ai_edit_layer_schema {
             #[serde(default, skip_serializing_if = "Option::is_none")]
             #[ts(optional)]
             pub shot_style_id: Option<String>,
+            /// The shot style was explicitly removed while retaining this
+            /// segment's source media and generated-emoji ownership.
+            #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+            pub style_cleared: bool,
             /// The nested FX Video or Image layer that supplies this segment's source media.
             pub source_layer_id: LayerId,
             /// Initial source offset for shot-style media overlays, in milliseconds.

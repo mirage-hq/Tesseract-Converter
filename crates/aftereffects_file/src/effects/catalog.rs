@@ -15,6 +15,9 @@ pub(crate) fn effect_type(effect: &LayerEffect) -> &'static str {
         LayerEffect::PrimaryGrade(_) => "primaryGrade",
         LayerEffect::TonalColor(_) => "tonalColor",
         LayerEffect::ColorCurves { .. } => "colorCurves",
+        LayerEffect::HueCurves(_) => "hueCurves",
+        LayerEffect::ChannelMixer(_) => "channelMixer",
+        LayerEffect::SelectiveColor(_) => "selectiveColor",
         LayerEffect::BrightnessContrast { .. } => "brightnessContrast",
         LayerEffect::ShiftChannels { .. } => "shiftChannels",
         LayerEffect::HueSaturation { .. } => "hueSaturation",
@@ -51,6 +54,8 @@ pub(crate) fn effect_type(effect: &LayerEffect) -> &'static str {
         LayerEffect::ChromaticAberration { .. } => "chromaticAberration",
         LayerEffect::TurbulentNoise { .. } => "turbulentNoise",
         LayerEffect::Fisheye { .. } => "fisheye",
+        LayerEffect::NoiseReduction { .. } => "noiseReduction",
+        LayerEffect::Halation { .. } => "halation",
         LayerEffect::CustomShader { .. } => "customShader",
         LayerEffect::Unsupported(_) => "unsupported",
     }
@@ -66,7 +71,10 @@ pub(crate) fn unsupported_reason(effect: &LayerEffect) -> Option<&'static str> {
         LayerEffect::LookTransform { .. }
         | LayerEffect::PrimaryGrade(_)
         | LayerEffect::TonalColor(_)
-        | LayerEffect::ColorCurves { .. } => {
+        | LayerEffect::ColorCurves { .. }
+        | LayerEffect::HueCurves(_)
+        | LayerEffect::ChannelMixer(_)
+        | LayerEffect::SelectiveColor(_) => {
             Some("reader-specific color operation has no native effect equivalent")
         }
         LayerEffect::CustomShader { .. } => {
@@ -75,6 +83,12 @@ pub(crate) fn unsupported_reason(effect: &LayerEffect) -> Option<&'static str> {
         LayerEffect::ChromaticAberration { .. } => Some(
             "Chromatic channel/alpha assembly failed native RGBA checks; no verified exact editable construction",
         ),
+        LayerEffect::Halation { .. } => {
+            Some("native-light tinted halation has no verified faithful native mapping; omitted")
+        }
+        LayerEffect::NoiseReduction { .. } => {
+            Some("FX edge-preserving noise reduction has no native effect equivalent")
+        }
         LayerEffect::Unsupported(_) => {
             Some("unknown future-version effect payload is not editable")
         }
@@ -132,6 +146,9 @@ pub(crate) fn animatable_params(effect: &LayerEffect) -> &'static [&'static str]
         | LayerEffect::PrimaryGrade(_)
         | LayerEffect::TonalColor(_)
         | LayerEffect::ColorCurves { .. }
+        | LayerEffect::HueCurves(_)
+        | LayerEffect::ChannelMixer(_)
+        | LayerEffect::SelectiveColor(_)
         | LayerEffect::ShiftChannels { .. }
         | LayerEffect::PosterizeTime { .. }
         | LayerEffect::CustomShader { .. }
@@ -240,6 +257,16 @@ pub(crate) fn animatable_params(effect: &LayerEffect) -> &'static [&'static str]
             "blend",
         ],
         LayerEffect::Fisheye { .. } => &["amount", "centerX", "centerY"],
+        LayerEffect::NoiseReduction { .. } => &["luminance", "chrominance"],
+        LayerEffect::Halation { .. } => &[
+            "threshold",
+            "radius",
+            "intensity",
+            "tintRed",
+            "tintGreen",
+            "tintBlue",
+            "saturation",
+        ],
     }
 }
 

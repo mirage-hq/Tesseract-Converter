@@ -50,6 +50,7 @@ fn numeric(
                 layer,
                 &controller.path,
                 [f64::from(comp.width), f64::from(comp.height)],
+                &template.project.effect_definitions,
             )
             .unwrap()
             .unwrap()
@@ -228,7 +229,14 @@ fn capsule_sparse_native_point_default_keeps_relative_framing_and_pixel_value() 
     }
     remove_explicit(&mut layer.content, name);
     assert!(storage(layer, &point.path).is_err());
-    let original = effect_default(layer, &point.path, size).unwrap().unwrap();
+    let original = effect_default(
+        layer,
+        &point.path,
+        size,
+        &template.project.effect_definitions,
+    )
+    .unwrap()
+    .unwrap();
     assert!(original.effect_point);
     assert_eq!(original.numeric.values.len(), 2);
     let (before, _) = crate::effects::native::read_effects(&layer.content, size);
@@ -302,6 +310,161 @@ fn capsule_sparse_native_point_default_keeps_relative_framing_and_pixel_value() 
 }
 
 #[test]
+fn capsule_shared_geometry_point_default_keeps_saved_pixel_override() {
+    let mut template = SavedGraphicTemplate::decode(include_bytes!(
+        "../../../tests/fixtures/effects/static_point_controls.aep"
+    ))
+    .unwrap();
+    // Code-built Geometry2 controller using the public native Point records.
+    // Geometry2 has no checked-in catalog default: it needs this file's parT.
+    fn rename_point_profile(chunks: &mut [Chunk]) {
+        for chunk in chunks {
+            if chunk.id() == *b"tdmn" {
+                let replacement = match chunk
+                    .data_payload()
+                    .unwrap()
+                    .split(|byte| *byte == 0)
+                    .next()
+                    .unwrap()
+                {
+                    b"ADBE Twirl" => Some("ADBE Geometry2"),
+                    b"ADBE Twirl-0003" => Some("ADBE Geometry2-0002"),
+                    _ => None,
+                };
+                if let Some(name) = replacement {
+                    let mut bytes = vec![0; 40];
+                    bytes[..name.len()].copy_from_slice(name.as_bytes());
+                    *chunk = Chunk::data(*b"tdmn", bytes).unwrap();
+                }
+            }
+            if let Some(children) = chunk.children_mut() {
+                rename_point_profile(children);
+            }
+        }
+    }
+    rename_point_profile(&mut template.project.effect_definitions);
+    for item in &mut template.project.items {
+        if let ItemKind::Composition(comp) = &mut item.kind {
+            for layer in &mut comp.layers {
+                rename_point_profile(&mut layer.content);
+            }
+        }
+    }
+    let mut target = None;
+    for item in &mut template.project.items {
+        let ItemKind::Composition(comp) = &mut item.kind else {
+            continue;
+        };
+        let size = [f64::from(comp.width), f64::from(comp.height)];
+        for layer in &mut comp.layers {
+            let (effects, _) = crate::effects::native::read_effects(&layer.content, size);
+            let Some(effect) = effects
+                .iter()
+                .find(|effect| effect.match_name == "ADBE Geometry2")
+            else {
+                continue;
+            };
+            let point = essential::Controller {
+                uuid: "shared-geometry-position".into(),
+                controller_type: 5,
+                source_comp_id: Some(item.id),
+                source_layer_id: Some(layer.record.id()),
+                path: vec![
+                    essential::SourcePropertyRef {
+                        match_name: "ADBE Effect Parade".into(),
+                        child_index: None,
+                    },
+                    essential::SourcePropertyRef {
+                        match_name: effect.match_name.clone(),
+                        child_index: Some(u32::try_from(effect.index - 1).unwrap()),
+                    },
+                    essential::SourcePropertyRef {
+                        match_name: "ADBE Geometry2-0002".into(),
+                        child_index: Some(3),
+                    },
+                ],
+            };
+            // A later native instance can omit both its default value and its
+            // shared declaration. Keep the public fixture's file catalog intact.
+            fn make_sparse(chunks: &mut Vec<Chunk>) {
+                for chunk in chunks.iter_mut() {
+                    if chunk.list_kind() == Some(*b"parT") {
+                        chunk.children_mut().unwrap().clear();
+                    } else if let Some(children) = chunk.children_mut() {
+                        make_sparse(children);
+                    }
+                }
+                if let Some(start) = chunks.iter().position(|chunk| {
+                    chunk.id() == *b"tdmn"
+                        && chunk
+                            .data_payload()
+                            .is_some_and(|bytes| bytes.starts_with(b"ADBE Geometry2-0002\0"))
+                }) {
+                    let end = (start + 1..chunks.len())
+                        .find(|index| chunks[*index].id() == *b"tdmn")
+                        .unwrap_or(chunks.len());
+                    chunks.drain(start..end);
+                }
+            }
+            make_sparse(&mut layer.content);
+            assert!(storage(layer, &point.path).is_err());
+            comp.essential_properties.values.push(point.clone());
+            target = Some((point, size));
+            break;
+        }
+        if target.is_some() {
+            break;
+        }
+    }
+    let (point, size) = target.expect("public fixture must contain Geometry2");
+    let original = template.clone();
+    let mut instance = template.clone();
+    instance
+        .apply_numeric(&point.uuid, &SavedGraphicNumeric::Point([64.25, 32.5]))
+        .expect("shared file declaration must supply the missing native point default");
+    let ItemKind::Composition(comp) = &instance
+        .project
+        .item(point.source_comp_id.unwrap())
+        .unwrap()
+        .kind
+    else {
+        panic!()
+    };
+    let layer = comp
+        .layers
+        .iter()
+        .find(|layer| layer.record.id() == point.source_layer_id.unwrap())
+        .unwrap();
+    let leaf = properties::unique_list(storage(layer, &point.path).unwrap(), *b"tdbs").unwrap();
+    assert_eq!(properties::data(leaf, *b"tdb4").unwrap()[59], 4);
+    assert_eq!(
+        properties::read_effect_point(leaf).unwrap().values,
+        [64.25 / size[0], 32.5 / size[1]]
+    );
+    let (effects, _) = crate::effects::native::read_effects(&layer.content, size);
+    let position = effects
+        .iter()
+        .flat_map(|effect| &effect.parameters)
+        .find(|parameter| parameter.match_name == "ADBE Geometry2-0002")
+        .unwrap();
+    assert_eq!(position.numeric.as_ref().unwrap().values, [64.25, 32.5]);
+    assert_eq!(template.source(), original.source());
+    assert_eq!(
+        instance.project.effect_definitions,
+        original.project.effect_definitions
+    );
+    let mut missing = template.clone();
+    missing.project.effect_definitions.clear();
+    let before = missing.clone();
+    assert!(
+        missing
+            .apply_numeric(&point.uuid, &SavedGraphicNumeric::Point([64.25, 32.5]))
+            .is_err()
+    );
+    assert_eq!(missing.source(), before.source());
+}
+
+#[test]
 fn capsule_native_colour_override_preserves_known_alpha_and_siblings() {
     let template = SavedGraphicTemplate::decode(NATIVE).unwrap();
     let colour = native_controller(&template, "ADBE Fill-0002");
@@ -321,6 +484,69 @@ fn capsule_native_colour_override_preserves_known_alpha_and_siblings() {
     );
     assert_eq!(numeric(&instance, &brightness).values, sibling);
     assert_eq!(numeric(&template, &colour).values, expected);
+}
+
+#[test]
+fn capsule_sparse_effect_override_uses_template_file_declarations() {
+    let mut template = SavedGraphicTemplate::decode(NATIVE).unwrap();
+    let colour = native_controller(&template, "ADBE Fill-0002");
+    let brightness = native_controller(&template, "ADBE Brightness & Contrast 2-0001");
+    let sibling = numeric(&template, &brightness).values;
+    let alpha = numeric(&template, &colour).values[3];
+    // Materialize the admitted implicit colour so this case tests declaration
+    // transport independently of the partial-edit source-default reader.
+    template
+        .apply_numeric(
+            &colour.uuid,
+            &SavedGraphicNumeric::ColourRgb([0.25, 0.0, 1.0]),
+        )
+        .unwrap();
+    // Supplemental mutation of the public native fixture: later instances can
+    // omit their shared declarations while the file's EfdG stays authoritative.
+    fn empty_tables(chunks: &mut [Chunk]) {
+        for chunk in chunks {
+            if chunk.list_kind() == Some(*b"parT") {
+                chunk.children_mut().unwrap().clear();
+            } else if let Some(children) = chunk.children_mut() {
+                empty_tables(children);
+            }
+        }
+    }
+    for item in &mut template.project.items {
+        if let ItemKind::Composition(comp) = &mut item.kind {
+            for layer in &mut comp.layers {
+                empty_tables(&mut layer.content);
+            }
+        }
+    }
+    let original = template.source().clone();
+    let (mut instance, _, _) = template.instantiate(&[&colour.uuid]).unwrap();
+    instance
+        .apply_numeric(
+            &colour.uuid,
+            &SavedGraphicNumeric::ColourRgb([0.0, 1.0, 0.25]),
+        )
+        .expect("saved colour must resolve through the native file declarations");
+    assert_eq!(numeric(&instance, &colour).values, [0.0, 1.0, 0.25, alpha]);
+    assert_eq!(numeric(&instance, &brightness).values, sibling);
+    assert_eq!(
+        instance.project.effect_definitions,
+        original.effect_definitions
+    );
+    assert_eq!(template.source(), &original);
+
+    let (mut unresolved, _, _) = template.instantiate(&[&colour.uuid]).unwrap();
+    unresolved.project.effect_definitions.clear();
+    let before = unresolved.source().clone();
+    assert!(
+        unresolved
+            .apply_numeric(
+                &colour.uuid,
+                &SavedGraphicNumeric::ColourRgb([0.0, 1.0, 0.25])
+            )
+            .is_err()
+    );
+    assert_eq!(unresolved.source(), &before);
 }
 
 #[test]

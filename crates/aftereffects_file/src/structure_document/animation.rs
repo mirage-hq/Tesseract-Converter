@@ -33,6 +33,7 @@ fn legacy_script_fixture_wire_clock_is_owner_local() {
 }
 
 mod expressions;
+mod marker_remap;
 #[cfg(test)]
 mod position_z_tests;
 mod spatial_position;
@@ -581,13 +582,24 @@ pub(super) enum AuthoredRemap {
 
 pub(super) fn time_remap(
     layer: &Layer,
-    _composition: &Composition,
+    composition: &Composition,
     target_id: LayerId,
     budget: &mut AnimationBudget,
 ) -> (Option<AuthoredRemap>, Vec<String>) {
-    let numeric = match time_remap_numeric(layer) {
+    let mut numeric = match time_remap_numeric(layer) {
         Ok(Some(numeric)) => numeric,
         Ok(None) => return (None, Vec::new()),
+        Err(error) => {
+            return (
+                None,
+                vec![format!(
+                    "ADBE Time Remapping: {error}; authored remap omitted"
+                )],
+            );
+        }
+    };
+    let marker_lowered = match marker_remap::lower(layer, composition, &mut numeric) {
+        Ok(lowered) => lowered,
         Err(error) => {
             return (
                 None,
@@ -652,6 +664,9 @@ pub(super) fn time_remap(
         };
     }
     let mut warnings = Vec::new();
+    if marker_lowered {
+        warnings.push("ADBE Time Remapping: bounded composition-marker hold/reverse program lowered to editable source-clock keys; marker linkage is not live, endpoints round to milliseconds; independent Adobe feature proof is unrun".into());
+    }
     let mut estimate = TimeRemapEstimate::default();
     for output_index in 0..numeric.keyframes.len() {
         let source_index = if stretch < 0.0 {
@@ -927,7 +942,7 @@ pub(crate) fn editable_native_keys(
     let prepared = if spatial_position {
         match spatial_position::prepare(numeric, clock)? {
             Some(prepared) => {
-                warnings.push(format!("{name}: native spatial Position path-speed sampled into adaptive Linear keys before expression evaluation (same 0.25 source-unit refinement as keyed import); original tangents and ease controls replaced"));
+                warnings.push(format!("{name}: native spatial Position path-speed lowered before expression evaluation: monotone axis-aligned spans retain speed-limited scalar temporal curves; other spans use the same 0.25 source-unit adaptive Linear refinement as keyed import"));
                 prepared
             }
             None => numeric.clone(),
@@ -983,6 +998,16 @@ fn mapped_millis(clock: NumericAnimationClock, source_secs: f64) -> Result<i64, 
     Ok(TimeOffset::from_millis_f64(millis).as_millis())
 }
 
+fn temporal_influence(interpolation: u8, influence: f64) -> f64 {
+    // Independent native mixed Orientation/Path samples pin the Linear handle
+    // at one-sixth, regardless of the inactive stored Bezier influence.
+    if interpolation == 1 {
+        1.0 / 6.0
+    } else {
+        (influence / 100.0).clamp(0.0, 1.0)
+    }
+}
+
 fn temporal_value(values: &[f64], component: usize, label: &str) -> Result<f64, String> {
     values
         .get(component)
@@ -1014,7 +1039,7 @@ fn cubic_parameter(progress: f64, control1: f64, control2: f64) -> f64 {
     (low + high) * 0.5
 }
 
-fn evaluate_numeric_segment(
+pub(super) fn evaluate_numeric_segment(
     from: &NumericKeyframe,
     to: &NumericKeyframe,
     source_secs: f64,
@@ -1064,12 +1089,14 @@ fn evaluate_numeric_segment(
         .zip(&to.values)
         .enumerate()
         .map(|(component, (&from_value, &to_value))| {
-            let out_influence = (temporal_value(&from.out_influence, component, "out influence")?
-                / 100.0)
-                .clamp(0.0, 1.0);
-            let in_influence = (temporal_value(&to.in_influence, component, "in influence")?
-                / 100.0)
-                .clamp(0.0, 1.0);
+            let out_influence = temporal_influence(
+                from.out_interpolation,
+                temporal_value(&from.out_influence, component, "out influence")?,
+            );
+            let in_influence = temporal_influence(
+                to.in_interpolation,
+                temporal_value(&to.in_influence, component, "in influence")?,
+            );
             let out_speed = temporal_value(&from.out_speed, component, "out speed")?;
             let in_speed = temporal_value(&to.in_speed, component, "in speed")?;
             let parameter = cubic_parameter(progress, out_influence, 1.0 - in_influence);
@@ -1267,10 +1294,10 @@ impl CoupledExcursionPreparation {
         let mut warnings = Vec::new();
         if !self.recovered_segments.is_empty() {
             let segments = self.recovered_segment_ranges();
-            warnings.push(format!("{name}: equal-endpoint Bezier source keys {segments} sampled on the receiving FX integer-millisecond clock and reduced to coupled editable Linear keys within {COUPLED_LINEAR_TOLERANCE} actual destination units; exact source boundary endpoints retained, native temporal handles and sibling easing in each sampled segment replaced, key density depends on the curve and tolerance, fractional-millisecond fidelity unverified"));
+            warnings.push(format!("{name}: coupled Bezier source keys {segments} (equal-endpoint excursions or independent vector eases) sampled on the receiving FX integer-millisecond clock and reduced to coupled editable Linear keys within {COUPLED_LINEAR_TOLERANCE} actual destination units; exact source boundary endpoints retained, native temporal handles and sibling easing in each sampled segment replaced, key density depends on the curve and tolerance, fractional-millisecond fidelity unverified"));
         }
         warnings.extend(self.unfitted_segments.iter().map(|(index, error)| {
-            format!("{name}: equal-endpoint Bezier source keys {index}→{} could not be sampled ({error}); native keys retained with supported siblings, but the equal-endpoint excursion lost to the existing Linear easing fallback", index + 1)
+            format!("{name}: coupled Bezier source keys {index}→{} could not be sampled ({error}); native keys retained for ordinary validation; incompatible vector eases may still omit the coupled target set and equal-endpoint excursions may use the existing Linear fallback", index + 1)
         }));
         warnings
     }
@@ -1294,7 +1321,48 @@ fn validate_target_components(
     Ok(())
 }
 
-fn prepare_equal_endpoint_excursions(
+/// Detect a segment whose moving vector axes need different temporal curves.
+/// Fitting all targets together also keeps Size-derived anchors synchronized.
+fn independent_vector_segment(
+    numeric: &NumericProperty,
+    targets: &[NumericAnimationTarget],
+    index: usize,
+    clock: NumericAnimationClock,
+) -> bool {
+    let from = &numeric.keyframes[index];
+    let to = &numeric.keyframes[index + 1];
+    if !from.spatial_out.is_empty() || !to.spatial_in.is_empty() {
+        return false;
+    }
+    targets.iter().any(|target| {
+        let Some(components) = target.vector_easing_components() else {
+            return false;
+        };
+        if !components.iter().all(|&(component, scale)| {
+            from.values[component] * scale != to.values[component] * scale
+        }) {
+            return false;
+        }
+        let source_index = if clock.reversed() { index } else { index + 1 };
+        let easings = components.map(|(component, multiplier)| {
+            effective_easing_for_key(
+                &numeric.keyframes,
+                source_index,
+                EffectiveEasing {
+                    component,
+                    multiplier,
+                    clock,
+                    discrete: false,
+                },
+                &mut Vec::new(),
+                "coupled numeric segment",
+            )
+        });
+        matches!(&easings, [Ok(left), Ok(right)] if !easing_equivalent(left, right))
+    })
+}
+
+fn prepare_coupled_segments(
     numeric: &NumericProperty,
     targets: &[NumericAnimationTarget],
     clock: NumericAnimationClock,
@@ -1305,10 +1373,12 @@ fn prepare_equal_endpoint_excursions(
     let excursion_segments = numeric
         .keyframes
         .windows(2)
-        .map(|pair| {
+        .enumerate()
+        .map(|(index, pair)| {
             targets
                 .iter()
                 .any(|target| target.has_equal_endpoint_excursion(&pair[0], &pair[1]))
+                || independent_vector_segment(numeric, targets, index, clock)
         })
         .collect::<Vec<_>>();
     if !excursion_segments.iter().any(|excursion| *excursion) {
@@ -1378,18 +1448,22 @@ pub(super) fn numeric_entries(
     }
     let mut warnings = Vec::new();
     let spatial_prepared;
+    // Effect point controls become scalar FX parameters, which cannot carry
+    // spatial tangents. Sample their native shared path before splitting axes,
+    // just as for layer Position; retain the same clock and coupled budget.
     let numeric = if targets.iter().all(|target| {
-        target.target.as_property().is_some_and(|property| {
-            matches!(
-                property.property_type(),
-                PropType::PositionX | PropType::PositionY | PropType::PositionZ
-            )
-        })
+        matches!(target.target, PropertyTarget::EffectProperty(_))
+            || target.target.as_property().is_some_and(|property| {
+                matches!(
+                    property.property_type(),
+                    PropType::PositionX | PropType::PositionY | PropType::PositionZ
+                )
+            })
     }) {
         match spatial_position::prepare(numeric, clock) {
             Ok(Some(value)) => {
                 spatial_prepared = value;
-                warnings.push(format!("{name}: native spatial Position shared path-speed converted to adaptive editable Linear keys (0.25 source-unit quarter-point sampled tolerance on the receiving FX millisecond clock; adjacent milliseconds have no interior sample); original tangents and ease controls replaced, unsampled and fractional-millisecond fidelity unverified"));
+                warnings.push(format!("{name}: native spatial point shared path-speed lowered to editable keys: monotone axis-aligned spans retain speed-limited scalar temporal curves; other spans use adaptive Linear keys (0.25 source-unit quarter-point sampled tolerance on the receiving FX millisecond clock; adjacent milliseconds have no interior sample); original spatial handles replaced, unsampled and fractional-millisecond fidelity unverified"));
                 &spatial_prepared
             }
             Ok(None) => numeric,
@@ -1397,7 +1471,7 @@ pub(super) fn numeric_entries(
                 return (
                     Vec::new(),
                     vec![format!(
-                        "{name}: {error}; coupled Position animation omitted"
+                        "{name}: {error}; coupled spatial point animation omitted"
                     )],
                 );
             }
@@ -1405,7 +1479,7 @@ pub(super) fn numeric_entries(
     } else {
         numeric
     };
-    let coupled_preparation = match prepare_equal_endpoint_excursions(numeric, targets, clock) {
+    let coupled_preparation = match prepare_coupled_segments(numeric, targets, clock) {
         Ok(prepared) => prepared,
         Err(error) => {
             return (
@@ -2070,12 +2144,25 @@ fn prospective_key(
         discrete,
         warnings,
     )?;
+    let millis = clock.seconds(key.time_secs) * 1000.0;
+    let rounded = TimeOffset::from_millis_f64(millis);
+    let time = if output_index > 0 && easing == PropertyKeyframeEasing::Hold {
+        // A rounded-up discontinuity can miss its source frame entirely.
+        let nearest = millis.round();
+        let integral = (millis - nearest).abs() <= 8.0 * f64::EPSILON * millis.abs().max(1.0);
+        TimeOffset::from_millis_f64(if integral { nearest } else { millis.floor() })
+    } else {
+        rounded
+    };
+    if time != rounded && target_index == 0 {
+        warnings.push(format!("{name}: Hold transition at source key {source_index} quantized to the earlier millisecond to avoid a late step; submillisecond timing remains approximate"));
+    }
     let mut output = PropertyKeyframe::new(
         KeyframeId::new(format!(
             "aep-{}-{name}-{target_index}-{output_index}",
             target.target
         )),
-        TimeOffset::from_millis_f64(clock.seconds(key.time_secs) * 1000.0),
+        time,
         value,
         easing,
     );
@@ -2383,8 +2470,8 @@ pub(super) fn easing_for_key(
     {
         return PropertyKeyframeEasing::Linear;
     }
-    let x1 = (out_influence / 100.0).clamp(0.0, 1.0);
-    let x2 = 1.0 - (in_influence / 100.0).clamp(0.0, 1.0);
+    let x1 = temporal_influence(previous.out_interpolation, out_influence);
+    let x2 = 1.0 - temporal_influence(current.in_interpolation, in_influence);
     // A linear side is a diagonal handle, not a reason to discard the
     // opposite side's authored Bezier ease.
     let y1 = if previous.out_interpolation == 1 {
@@ -2514,6 +2601,63 @@ mod tests {
     }
 
     #[test]
+    fn curved_effect_point_keeps_coupled_normalized_editable_tracks() {
+        let targets = ["startX", "startY"].map(|param| {
+            let axis = usize::from(param == "startY");
+            NumericAnimationTarget::float(
+                PropertyTarget::effect_param(17.into(), param),
+                axis,
+                1.0 / [200.0, 100.0][axis],
+            )
+        });
+        let key = |time, values, incoming, outgoing| NumericKeyframe {
+            time_secs: time,
+            values,
+            in_interpolation: 1,
+            out_interpolation: 1,
+            in_speed: vec![0.0],
+            out_speed: vec![0.0],
+            in_influence: vec![100.0 / 3.0],
+            out_influence: vec![100.0 / 3.0],
+            spatial_in: incoming,
+            spatial_out: outgoing,
+        };
+        let numeric = NumericProperty {
+            values: vec![0.0, 0.0],
+            animated: true,
+            expression_enabled: false,
+            expression_present: false,
+            dimensions_separated: false,
+            value_kind: NumericValueKind::Continuous,
+            keyframes: vec![
+                key(0.0, vec![0.0, 0.0], vec![0.0; 2], vec![0.0, 100.0]),
+                key(1.0, vec![100.0, 0.0], vec![0.0, 100.0], vec![0.0; 2]),
+            ],
+        };
+        let (entries, warnings) = numeric_entries(
+            "ADBE Ramp-0001",
+            &numeric,
+            &targets,
+            NumericAnimationClock::source_local(),
+        );
+        assert_eq!(entries.len(), 2, "{warnings:?}");
+        for (axis, entry) in entries.iter().enumerate() {
+            assert_eq!(entry.target, targets[axis].target);
+            let keys = entry.animator.keyframe_track().unwrap().keyframes();
+            assert!(keys.len() > 2);
+            assert!(keys.iter().all(
+                |key| key.spatial_in_tangent().is_none() && key.spatial_out_tangent().is_none()
+            ));
+            assert_eq!(sampled_components(entry, 0), vec![0.0]);
+            assert_eq!(sampled_components(entry, 1000), vec![[0.5, 0.0][axis]]);
+            // A symmetric cubic arch has half its traveled distance at t=0.5.
+            // Scalar endpoint easing alone would lose the entire Y excursion.
+            assert!((sampled_components(entry, 500)[0] - [0.25, 0.75][axis]).abs() < 0.003);
+        }
+        AnimationGraph::from_entries(entries).unwrap();
+    }
+
+    #[test]
     fn equal_endpoint_bezier_excursion_becomes_editable_linear_motion() {
         let target = NumericAnimationTarget::float(
             PropertyTarget::layer(LayerId::new(17), PropType::Rotation),
@@ -2548,7 +2692,7 @@ mod tests {
             assert_eq!(sampled_components(&entries[0], 1000), [10.0]);
             assert!(warnings.iter().any(|warning| {
                 warning.contains("Review Rotation")
-                    && warning.contains("equal-endpoint Bezier")
+                    && warning.contains("coupled Bezier")
                     && warning.contains("editable Linear keys")
             }));
             assert!(warnings.iter().all(|warning| !warning.contains("omitted")));
@@ -2800,7 +2944,7 @@ mod tests {
         assert!(warnings.iter().any(|warning| {
             warning.contains("source keys 0→1")
                 && warning.contains("native keys retained")
-                && warning.contains("excursion lost")
+                && warning.contains("equal-endpoint excursions may use")
         }));
         assert!(warnings.iter().all(|warning| {
             !warning.contains("coupled numeric animation omitted")
@@ -3033,7 +3177,9 @@ mod tests {
             keyframes: vec![
                 key(0.0, [100.0, 100.0], [0.0; 2], [100.0, 60.0]),
                 key(1.0, [200.0, 100.0], [100.0, -60.0], [25.0, 75.0]),
-                key(2.0, [300.0, 200.0], [25.0, 75.0], [0.0; 2]),
+                // Distinct native endpoints collide on the receiving clock:
+                // this following segment cannot be fitted safely.
+                key(1.0001, [300.0, 200.0], [25.0, 75.0], [0.0; 2]),
             ],
         };
         let (entries, warnings) = numeric_entries(
@@ -3227,7 +3373,50 @@ mod tests {
     }
 
     #[test]
-    fn review_import_incompatible_vector_eases_omit_coupled_rect_targets() {
+    fn rectangle_component_eases_retain_size_and_anchors() {
+        let mut numeric = rect_size_numeric(75.0);
+        for key in &mut numeric.keyframes {
+            key.in_influence = vec![100.0 / 3.0; 2];
+            key.out_influence = vec![100.0 / 3.0; 2];
+        }
+        let (entries, warnings) = numeric_entries(
+            "ADBE Vector Rect Size",
+            &numeric,
+            &coupled_rect_size_targets(),
+            NumericAnimationClock::source_local(),
+        );
+        assert_eq!(entries.len(), 3, "{warnings:?}");
+        // With one-third temporal influences, Bezier time is linear. Check
+        // independent cubic values, not the fitter's own segment evaluator.
+        for millis in 0..=1000 {
+            let t = millis as f64 / 1000.0;
+            let inverse = 1.0 - t;
+            let expected = |speed: f64| {
+                inverse.powi(3) * 100.0
+                    + 3.0 * inverse.powi(2) * t * (100.0 + speed / 3.0)
+                    + 3.0 * inverse * t.powi(2) * (200.0 - speed / 3.0)
+                    + t.powi(3) * 200.0
+            };
+            let size = sampled_components(&entries[0], millis);
+            for (actual, expected) in size.iter().zip([expected(25.0), expected(75.0)]) {
+                assert!(
+                    (actual - expected).abs() <= 0.01,
+                    "at {millis}: {actual} != {expected}"
+                );
+            }
+            assert!((sampled_components(&entries[1], millis)[0] - size[0] * 0.5).abs() <= 0.01);
+            assert!((sampled_components(&entries[2], millis)[0] - size[1] * 0.5).abs() <= 0.01);
+        }
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("independent vector eases"))
+        );
+        AnimationGraph::from_entries(entries).unwrap();
+    }
+
+    #[test]
+    fn independent_vector_eases_keep_editable_rect_size_and_anchors() {
         let numeric = rect_size_numeric(75.0);
         for clock in [
             NumericAnimationClock::source_local(),
@@ -3243,16 +3432,73 @@ mod tests {
                 clock,
             );
 
+            assert_eq!(entries.len(), 3, "{clock:?}: {warnings:?}");
+            for time_ms in [0, 125, 250, 500, 750, 875, 1000] {
+                let source_secs = clock.source_seconds(time_ms as f64 / 1000.0).unwrap();
+                let expected = super::evaluate_numeric_segment(
+                    &numeric.keyframes[0],
+                    &numeric.keyframes[1],
+                    source_secs,
+                )
+                .unwrap();
+                let size = sampled_components(&entries[0], time_ms);
+                let anchor_x = sampled_components(&entries[1], time_ms)[0];
+                let anchor_y = sampled_components(&entries[2], time_ms)[0];
+                for axis in 0..2 {
+                    assert!((size[axis] - expected[axis]).abs() <= 0.01);
+                }
+                assert!((anchor_x - size[0] * 0.5).abs() <= 0.01);
+                assert!((anchor_y - size[1] * 0.5).abs() <= 0.01);
+            }
             assert!(
-                entries.is_empty(),
-                "Size and both derived anchors must be omitted atomically for {clock:?}: {entries:?}"
+                warnings
+                    .iter()
+                    .any(|warning| warning.contains("editable Linear keys"))
             );
-            assert!(warnings.iter().any(|warning| {
-                warning.contains("component")
-                    && warning.contains("eas")
-                    && warning.contains("omitted")
-            }));
+            AnimationGraph::from_entries(entries).unwrap();
         }
+    }
+
+    #[test]
+    fn independent_vector_eases_from_zero_height_keep_rebased_reveal() {
+        let mut numeric = source_shaped_coupled_numeric(
+            2.0,
+            0.6,
+            [1600.0, 0.0],
+            [1900.0, 1100.0],
+            [[0.0, 0.0], [40.0, 250.0]],
+        );
+        numeric.keyframes[0].out_influence = vec![35.0, 40.0];
+        numeric.keyframes[1].in_influence = vec![40.0, 49.0];
+        let clock = NumericAnimationClock::source_local_rebased(2.0);
+        let (entries, warnings) = numeric_entries(
+            "ADBE Vector Rect Size reveal",
+            &numeric,
+            &coupled_rect_size_targets(),
+            clock,
+        );
+        assert_eq!(entries.len(), 3, "{warnings:?}");
+        assert_eq!(sampled_components(&entries[0], 0), [1600.0, 0.0]);
+        assert_eq!(sampled_components(&entries[0], 600), [1900.0, 1100.0]);
+        for time_ms in [75, 150, 225, 300, 375, 450, 525] {
+            let expected = super::evaluate_numeric_segment(
+                &numeric.keyframes[0],
+                &numeric.keyframes[1],
+                2.0 + time_ms as f64 / 1000.0,
+            )
+            .unwrap();
+            let size = sampled_components(&entries[0], time_ms);
+            assert!(
+                size[1] > 0.0,
+                "reveal must not remain at its zero-height base"
+            );
+            for axis in 0..2 {
+                assert!((size[axis] - expected[axis]).abs() <= 0.01);
+                let anchor = sampled_components(&entries[axis + 1], time_ms)[0];
+                assert!((anchor - size[axis] * 0.5).abs() <= 0.01);
+            }
+        }
+        AnimationGraph::from_entries(entries).unwrap();
     }
 
     #[test]
@@ -3394,6 +3640,107 @@ mod tests {
     #[test]
     fn vector2_y_only_motion_uses_y_easing_forward_and_reversed() {
         assert_single_axis_vector_easing(1);
+    }
+
+    #[test]
+    fn fractional_hold_transitions_do_not_wait_for_the_next_source_frame() {
+        let mut numeric = rect_size_numeric(0.0);
+        numeric.keyframes[0].time_secs = 7.0 / 24.0;
+        numeric.keyframes[0].out_interpolation = 3;
+        numeric.keyframes[1].time_secs = 13.0 / 24.0;
+        let target = NumericAnimationTarget::vector2(
+            PropertyTarget::layer(LayerId::new(42), PropType::RectSize),
+            [0, 1],
+            [1.0, 1.0],
+        );
+        let (entries, warnings) = numeric_entries(
+            "ADBE Vector Rect Size",
+            &numeric,
+            std::slice::from_ref(&target),
+            NumericAnimationClock::source_local(),
+        );
+        assert_eq!(entries.len(), 1, "{warnings:?}");
+        let keys = entries[0].animator.keyframe_track().unwrap().keyframes();
+        assert_eq!(keys[0].layer_time().as_millis(), 292);
+        assert_eq!(keys[1].layer_time().as_millis(), 541);
+        assert_eq!(keys[1].easing(), PropertyKeyframeEasing::Hold);
+        assert_eq!(keys[0].value(), &PropertyValue::Vector2([100., 100.]));
+        assert_eq!(keys[1].value(), &PropertyValue::Vector2([200., 200.]));
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("Hold transition"))
+        );
+
+        numeric.keyframes[0].out_interpolation = 1;
+        numeric.keyframes[1].in_interpolation = 1;
+        let (entries, warnings) = numeric_entries(
+            "ADBE Vector Rect Size",
+            &numeric,
+            &[target],
+            NumericAnimationClock::source_local(),
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let keys = entries[0].animator.keyframe_track().unwrap().keyframes();
+        assert_eq!(keys[1].layer_time().as_millis(), 542);
+        assert_eq!(keys[1].easing(), PropertyKeyframeEasing::Linear);
+    }
+
+    #[test]
+    fn hold_time_quantization_uses_the_destination_clock_and_keeps_integral_keys() {
+        let target = NumericAnimationTarget::vector2(
+            PropertyTarget::layer(LayerId::new(42), PropType::RectSize),
+            [0, 1],
+            [1.0, 1.0],
+        );
+        for (source_time, clock, expected) in [
+            (
+                13.0 / 24.0,
+                NumericAnimationClock::ParentIdentity {
+                    start: 0.125,
+                    stretch: 2.0,
+                },
+                1208,
+            ),
+            (
+                13.0 / 24.0,
+                NumericAnimationClock::ParentIdentity {
+                    start: -1.0,
+                    stretch: 1.0,
+                },
+                -459,
+            ),
+            (
+                1.0 - f64::EPSILON,
+                NumericAnimationClock::source_local(),
+                1000,
+            ),
+        ] {
+            let mut numeric = rect_size_numeric(0.0);
+            numeric.keyframes[0].out_interpolation = 3;
+            numeric.keyframes[1].time_secs = source_time;
+            let (entries, warnings) =
+                numeric_entries("Size", &numeric, std::slice::from_ref(&target), clock);
+            assert_eq!(entries.len(), 1, "{warnings:?}");
+            let keys = entries[0].animator.keyframe_track().unwrap().keyframes();
+            assert_eq!(keys[1].layer_time().as_millis(), expected);
+            assert_eq!(keys[1].easing(), PropertyKeyframeEasing::Hold);
+        }
+
+        let mut numeric = rect_size_numeric(0.0);
+        numeric.keyframes[0].out_interpolation = 3;
+        numeric.keyframes[1].time_secs = 0.0008;
+        let (entries, warnings) = numeric_entries(
+            "Size",
+            &numeric,
+            &[target],
+            NumericAnimationClock::source_local(),
+        );
+        assert!(
+            entries.is_empty(),
+            "colliding keys must not be silently merged"
+        );
+        assert!(warnings.iter().any(|warning| warning.contains("omitted")));
     }
 
     #[test]
@@ -3550,6 +3897,56 @@ mod tests {
                         .iter()
                         .any(|warning| warning.contains("shared path-speed"))
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn mixed_linear_sides_ignore_inactive_native_ease_controls() {
+        for outgoing_linear in [true, false] {
+            for unused_influence in [0.0, 17.0, 100.0] {
+                let mut keys = [numeric_key(0.0, 0.0), numeric_key(1.0, 100.0)];
+                keys[0].out_interpolation = if outgoing_linear { 1 } else { 2 };
+                keys[1].in_interpolation = if outgoing_linear { 2 } else { 1 };
+                keys[0].out_speed[0] = 0.0;
+                keys[1].in_speed[0] = 0.0;
+                keys[0].out_influence[0] = if outgoing_linear {
+                    unused_influence
+                } else {
+                    100.0
+                };
+                keys[1].in_influence[0] = if outgoing_linear {
+                    100.0
+                } else {
+                    unused_influence
+                };
+                let mut warnings = Vec::new();
+                let easing = super::easing_for_key(&keys, 1, 0, 1.0, &mut warnings, "Scale");
+                let expected = if outgoing_linear {
+                    PropertyKeyframeEasing::CubicBezier {
+                        x1: 1.0 / 6.0,
+                        y1: 1.0 / 6.0,
+                        x2: 0.0,
+                        y2: 1.0,
+                    }
+                } else {
+                    PropertyKeyframeEasing::CubicBezier {
+                        x1: 1.0,
+                        y1: 0.0,
+                        x2: 1.0 - 1.0 / 6.0,
+                        y2: 1.0 - 1.0 / 6.0,
+                    }
+                };
+                assert!(super::easing_equivalent(&easing, &expected), "{easing:?}");
+                // At parameter 1/2 these curves have exact (time, value) pairs.
+                let (time, value) = if outgoing_linear {
+                    (0.1875, 56.25)
+                } else {
+                    (0.8125, 43.75)
+                };
+                let sampled = super::evaluate_numeric_segment(&keys[0], &keys[1], time).unwrap();
+                assert!((sampled[0] - value).abs() < 1e-8, "{sampled:?}");
+                assert!(warnings.is_empty());
             }
         }
     }

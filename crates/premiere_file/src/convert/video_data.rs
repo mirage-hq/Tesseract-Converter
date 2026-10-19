@@ -43,6 +43,7 @@ pub(crate) fn video_data(layer: &Layer) -> Result<Option<Cow<'_, VideoLayer>>> {
         },
     };
     Ok(Some(Cow::Owned(VideoLayer {
+        render_domain: None,
         id: legacy.id,
         name: legacy.name.clone(),
         description: legacy.description.clone(),

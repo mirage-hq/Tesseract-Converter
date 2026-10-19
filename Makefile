@@ -87,7 +87,7 @@ check-conversion: check clippy
 test-conversion: check-conversion-fixtures check-aep-support-ledger test
 
 test-release-archive: ## Test bundles, release routing and installation offline
-	python3 scripts/test_native_bundle.py
+	python3 -m pytest -q scripts/test_native_bundle.py scripts/test_ffmpeg_cache.py
 	python3 scripts/test_release_archive.py
 	python3 scripts/test_release_workflow.py
 	python3 scripts/test_release_plan.py
@@ -110,6 +110,11 @@ test-premiere-file: ## Run Premiere CPU tests (optional filter=name, cargo_args=
 
 clippy-premiere-file: ## Lint Premiere library and CPU tests
 	cargo clippy --locked -p premiere_file $(cargo_args) --all-targets -- -D warnings
+
+.PHONY: test-color-management-foundation
+test-color-management-foundation: ## CPU-only document policy and archive regression tests
+	cargo test --locked -p fx_schema --test color_management --test aces_policy
+	cargo test --locked -p tesseract_file color_management
 
 test-tesseract-file: ## Run document roundtrip and archive validation tests (optional filter=name)
 	cargo test --locked -p tesseract_file $(filter)

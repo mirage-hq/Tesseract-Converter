@@ -127,6 +127,220 @@ fn with_i1_clip_opacities(xml: &str, masked: &[bool]) -> String {
     xml.replace("</PremiereData>", &format!("{records}\n</PremiereData>"))
 }
 
+/// Static Vector Motion records from the native Shapes save, relocated to I1.
+fn with_i1_vector_motion() -> String {
+    with_i1_vector_motion_from(
+        include_bytes!("../../../tests/fixtures/feature_graphic_shapes_26_5_strict.prproj"),
+        [133, 340, 341, 342, 343, 344, 345],
+    )
+}
+
+fn with_i1_vector_motion_from(source: &[u8], ids: [u32; 7]) -> String {
+    let mut donor = String::new();
+    flate2::read::GzDecoder::new(source)
+        .read_to_string(&mut donor)
+        .unwrap();
+    let tree = roxmltree::Document::parse(&donor).unwrap();
+    let mut records = String::new();
+    for id in ids {
+        let id = id.to_string();
+        let node = tree
+            .descendants()
+            .find(|node| node.attribute("ObjectID") == Some(id.as_str()))
+            .unwrap();
+        records.push_str(&donor[node.range()]);
+    }
+    for (old, new) in ids.into_iter().zip(9500..) {
+        for attribute in ["ObjectID", "ObjectRef"] {
+            records = records.replace(
+                &format!("{attribute}=\"{old}\""),
+                &format!("{attribute}=\"{new}\""),
+            );
+        }
+    }
+    edited(
+        &save_xml(),
+        "<Component Index=\"0\" ObjectRef=\"206\"/>",
+        "<Component Index=\"0\" ObjectRef=\"206\"/><Component Index=\"1\" ObjectRef=\"9500\"/>",
+    )
+    .replace("</PremiereData>", &format!("{records}</PremiereData>"))
+}
+
+#[test]
+fn source_graphic_static_placement_vector_motion_keeps_shared_text_and_clip_motion() {
+    let (project, mut omissions) =
+        inspect_project_with_omissions(&with_i1_vector_motion(), Some(PLACEMENTS)).unwrap();
+    let sequence = project.single_sequence().unwrap();
+    assert_eq!(
+        sequence
+            .video_items()
+            .filter_map(PrVideoItem::graphic)
+            .count(),
+        2,
+        "{omissions:?}"
+    );
+    let document = crate::convert::premiere_to_tesseract(
+        sequence,
+        &project.media,
+        &crate::tesseract_output::asset_ids_in_order(sequence, &project.media),
+        &mut omissions,
+    )
+    .unwrap()
+    .to_json_value()
+    .unwrap();
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    let outer = layers
+        .iter()
+        .find(|layer| layer["transform"]["position"] == serde_json::json!([672.0, 486.0]))
+        .unwrap();
+    assert_eq!(outer["transform"]["scale"], serde_json::json!([80.0, 80.0]));
+    let content = &outer["layers"][0];
+    assert_eq!(content["type"], "Group");
+    assert_eq!(
+        content["transform"]["position"],
+        serde_json::json!([960.0, 540.0])
+    );
+    assert_eq!(
+        content["transform"]["scale"],
+        serde_json::json!([80.0, 80.0])
+    );
+    assert_eq!(content["transform"]["rotation"], 15.0);
+    for (actual, expected) in content["transform"]["anchorPoint"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip([864.0, 594.0])
+    {
+        assert!((actual.as_f64().unwrap() - expected).abs() < 1e-9);
+    }
+    let texts = content["layers"].as_array().unwrap();
+    assert_eq!(texts.len(), 2);
+    assert!(texts.iter().all(|layer| layer["type"] == "Text"));
+    assert!(texts
+        .iter()
+        .any(|layer| layer["sourceText"]["text"] == "py"));
+    fx_schema::EditableFxCompositionDocument::from_json_value(document).unwrap();
+}
+
+#[test]
+fn source_graphic_placement_transform_keys_keep_native_values_and_source_clock() {
+    let xml = with_i1_vector_motion_from(
+        include_bytes!("../../../tests/fixtures/feature_graphic_transform_keys_26_5_strict.prproj"),
+        [95, 108, 109, 110, 111, 112, 113],
+    );
+    // A saved clip Motion key can be on the zero-origin placement clock while
+    // Vector Motion uses the generator's one-hour source origin.
+    let xml = edited(
+        &xml,
+        "<PointComponentParam ObjectID=\"220\" ClassID=\"ca81d347-309b-44d2-acc7-1c572efb973c\" Version=\"4\">",
+        "<PointComponentParam ObjectID=\"220\" ClassID=\"ca81d347-309b-44d2-acc7-1c572efb973c\" Version=\"4\"><IsTimeVarying>true</IsTimeVarying><Keyframes>0,0.5:0.5,0,0,0,0.16666666666666666,0,0.16666666666666666,5,4,0,0,0,0;</Keyframes>",
+    );
+    let (project, mut omissions) = inspect_project_with_omissions(&xml, Some(PLACEMENTS)).unwrap();
+    let sequence = project.single_sequence().unwrap();
+    assert_eq!(
+        sequence
+            .video_items()
+            .filter_map(PrVideoItem::graphic)
+            .count(),
+        2,
+        "{omissions:?}"
+    );
+    let document = crate::convert::premiere_to_tesseract(
+        sequence,
+        &project.media,
+        &crate::tesseract_output::asset_ids_in_order(sequence, &project.media),
+        &mut omissions,
+    )
+    .unwrap()
+    .to_json_value()
+    .unwrap();
+    let outer = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["transform"]["position"] == serde_json::json!([672.0, 486.0]))
+        .unwrap();
+    let content = &outer["layers"][0];
+    assert_eq!(content["type"], "Group");
+    assert!(content["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|layer| layer["sourceText"]["text"] == "py"));
+    let entries = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    let track = |owner: &serde_json::Value, property: &str| {
+        entries
+            .iter()
+            .find(|entry| {
+                entry["target"]["layerId"] == owner["id"]
+                    && entry["target"]["propertyType"] == property
+            })
+            .unwrap_or_else(|| panic!("{property} on {owner}: {entries:?}"))["animator"]
+            ["keyframes"]
+            .as_array()
+            .unwrap()
+    };
+    for (property, expected) in [
+        (
+            "positionX",
+            vec![(1500, 960.0), (2500, 1056.0), (3500, 1152.0)],
+        ),
+        (
+            "positionY",
+            vec![(1500, 540.0), (2500, 486.0), (3500, 432.0)],
+        ),
+        ("scaleX", vec![(500, 100.0), (2500, 70.0)]),
+        ("rotation", vec![(2000, 0.0), (3000, 20.0)]),
+    ] {
+        let actual = track(content, property);
+        assert_eq!(actual.len(), expected.len(), "{property}: {actual:?}");
+        for (key, (time, value)) in actual.iter().zip(expected) {
+            assert_eq!(key["layerTime"], time, "{property}");
+            assert!(
+                (key["value"]["value"].as_f64().unwrap() - value).abs() < 1e-9,
+                "{property}: {key}"
+            );
+        }
+    }
+    for (property, value) in [("positionX", 960.0), ("positionY", 540.0)] {
+        let keys = track(outer, property);
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0]["layerTime"], -3_600_000);
+        assert_eq!(keys[0]["value"]["value"], value);
+    }
+    fx_schema::EditableFxCompositionDocument::from_json_value(document).unwrap();
+}
+
+#[test]
+fn source_graphic_placement_vector_motion_rejects_duplicate_and_invalid_stages_locally() {
+    let xml = with_i1_vector_motion();
+    for (xml, reason) in [
+        (
+            edited(
+                &xml,
+                "<Component Index=\"1\" ObjectRef=\"9500\"/>",
+                "<Component Index=\"1\" ObjectRef=\"9500\"/><Component Index=\"2\" ObjectRef=\"9500\"/>",
+            ),
+            "duplicate placement Vector Motion",
+        ),
+        (
+            edited(
+                &xml,
+                "<VideoComponentParam ObjectID=\"9502\" ClassID=\"fe47129e-6c94-4fc0-95d5-c056a517aaf3\" Version=\"10\">",
+                "<VideoComponentParam ObjectID=\"9502\" ClassID=\"fe47129e-6c94-4fc0-95d5-c056a517aaf3\" Version=\"10\"><IsTimeVarying>false</IsTimeVarying><Keyframes>914457600000000,80.,0,0,0,0.16666666666666666,0,0.16666666666666666;914711616000000,90.,0,0,0,0.16666666666666666,0,0.16666666666666666;</Keyframes>",
+            ),
+            "animated or unknown graphic parameters are unsupported",
+        ),
+    ] {
+        let (placed, omissions) = graphics(&xml, PLACEMENTS);
+        assert_eq!(placed.len(), 1, "{omissions:?}");
+        assert_eq!(placed[0].id(), Some("VideoClipTrackItem:146"));
+        assert!(omission(&omissions, "145").is_some_and(|text| text.contains(reason)), "{omissions:?}");
+    }
+}
+
 #[test]
 fn a_source_graphic_placement_reads_its_clip_opacity_and_enable() {
     // Supplementary: I1 keeps a clip Opacity after its Motion, and I2 is
@@ -161,15 +375,6 @@ fn unmeasured_source_graphic_forms_omit_only_their_placements() {
     let xml = save_xml();
     // Supplementary edits of I1 (record 145); I2 (146) still converts.
     for (xml, reason) in [
-        // Keyed clip Motion on a graphic is unmeasured.
-        (
-            edited(
-                &xml,
-                "<Name>Scale</Name>\n\t\t<ParameterID>2</ParameterID>\n\t\t<UpperUIBound>200</UpperUIBound>\n\t\t<StartKeyframe>-91445760000000000,80.,0,0,0,0,0,0</StartKeyframe>",
-                "<Name>Scale</Name>\n\t\t<IsTimeVarying>true</IsTimeVarying>\n\t\t<ParameterID>2</ParameterID>\n\t\t<UpperUIBound>200</UpperUIBound>\n\t\t<StartKeyframe>-91445760000000000,80.,0,0,0,0,0,0</StartKeyframe>\n\t\t<Keyframes>914457600000000,80.,0,0,0,0.16666666666666666,0,0.16666666666666666;914711616000000,90.,0,0,0,0.16666666666666666,0,0.16666666666666666;</Keyframes>",
-            ),
-            "VideoComponentChain:176: graphic clip Motion keys are not converted",
-        ),
         // A Source Graphic has no crop guide, so exposing its cropped-away
         // content would be a silent concealment failure.
         (
@@ -296,7 +501,7 @@ fn unmeasured_source_graphic_forms_omit_only_their_placements() {
 fn a_graphic_without_a_master_chain_keeps_the_ordinary_graphic_rules() {
     // Supplementary: without the master's own chain the placements are
     // ordinary graphics again, whatever master they share: I1 and I2 keep
-    // the clip Motion that ordinary graphics reject, and the original, whose
+    // clip Motion, but no objects of their own; the original, whose
     // own chain holds no object, has nothing to show.
     let xml = edited(&save_xml(), "<VideoComponentChain ObjectRef=\"46\"/>", "");
     let (placed, omissions) = graphics(&xml, PLACEMENTS);
@@ -304,7 +509,7 @@ fn a_graphic_without_a_master_chain_keeps_the_ordinary_graphic_rules() {
     for record in ["145", "146"] {
         assert!(
             omission(&omissions, record).is_some_and(|omitted| omitted
-                .contains("graphic clip Motion and Opacity must keep their defaults")),
+                .contains("a graphic without text or shape objects is unsupported")),
             "{record}: {omissions:?}"
         );
     }

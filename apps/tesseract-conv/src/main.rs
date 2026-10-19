@@ -59,6 +59,9 @@ struct ConversionOptions {
     /// any rate up to 240 fps (default 24).
     #[arg(long, value_name = "FPS")]
     fps: Option<String>,
+    /// Explicit native BT.2100 export target; omitted keeps legacy SDR.
+    #[arg(long, value_parser = ["pq", "hlg"])]
+    hdr: Option<String>,
     /// Validate the complete conversion without publishing output.
     #[arg(long)]
     check: bool,
@@ -173,6 +176,7 @@ fn convert(
         media_map: options.media_map.as_deref(),
         media_relink: options.media_relink.as_deref(),
         fps: options.fps.as_deref(),
+        hdr: options.hdr.as_deref(),
         mode: if options.check {
             ConversionMode::Check
         } else {
@@ -232,6 +236,54 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hdr_target_is_explicit_export_only_and_rejects_before_input_io() {
+        for target in ["pq", "hlg"] {
+            let cli = Cli::try_parse_from([
+                "tsrct-conv",
+                "convert",
+                "missing.aep",
+                "--to",
+                "tesseract",
+                "--output",
+                "out.tsrct",
+                "--hdr",
+                target,
+            ])
+            .unwrap();
+            let error = run(cli).unwrap_err().to_string();
+            assert!(error.contains("--hdr is only supported"), "{error}");
+            let cli = Cli::try_parse_from([
+                "tsrct-conv",
+                "convert",
+                "missing.tsrct",
+                "--to",
+                "after-effects",
+                "--output",
+                "out.aep",
+                "--hdr",
+                target,
+            ])
+            .unwrap();
+            let Command::Convert(args) = cli.command else {
+                panic!("expected conversion");
+            };
+            assert_eq!(args.options.hdr.as_deref(), Some(target));
+        }
+        assert!(Cli::try_parse_from([
+            "tsrct-conv",
+            "convert",
+            "missing.tsrct",
+            "--to",
+            "premiere",
+            "--output",
+            "out",
+            "--hdr",
+            "unknown"
+        ])
+        .is_err());
+    }
 
     #[test]
     fn convert_subcommand_uses_the_existing_conversion_route() {

@@ -506,6 +506,7 @@ fn convert_image_sequence(
         }
         let id = LayerId::new(first_id + u64::from(ordinal));
         layers.push(FxLayer::Image(ImageLayer {
+            render_domain: None,
             id,
             name: format!("{} frame {source_frame}", occurrence.name),
             description: format!(
@@ -862,6 +863,7 @@ pub(super) fn convert_resolved(
     let (layers, animations) = match descriptor.kind {
         MediaKind::StillImage => {
             let image = ImageLayer {
+                render_domain: None,
                 id,
                 name: occurrence.name.clone(),
                 description: format!("Editable AE still image from source item {}", source.id),
@@ -898,6 +900,7 @@ pub(super) fn convert_resolved(
             );
             warnings.extend(gain_warnings);
             let video = VideoLayer {
+                render_domain: None,
                 id,
                 name: occurrence.name.clone(),
                 description: format!("Editable AE video from source item {}", source.id),

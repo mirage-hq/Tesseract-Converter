@@ -458,6 +458,33 @@ fn slider_index_one_reaches_source_text_percent_and_default_named_sliders() {
 }
 
 #[test]
+fn legacy_ascii_controller_names_reach_editable_scale() {
+    let mut controls = slider("Progress", 40.0, None);
+    let descriptor = controls[1].children_mut().unwrap();
+    let body = descriptor[0].children_mut().unwrap();
+    body[0] = data(b"tdsn", b"Progress\0");
+    let (properties, warnings) = super::read_transform(&content(
+        "[effect('Progress')('Slider'), effect('Progress')('Slider')]",
+        controls,
+    ))
+    .unwrap();
+    let scale = properties[0].numeric.as_ref().unwrap();
+    assert!(!scale.expression_enabled, "{warnings:?}");
+    assert_eq!(scale.values, vec![0.4; 2]);
+    assert_eq!(
+        super::display_name(&[data(b"tdsn", b"Color 03\0")]),
+        Some("Color 03")
+    );
+    for value in ["Utf8 Control", "Utf8", "Utf8Name"] {
+        let bytes = format!("{value}\0");
+        assert_eq!(super::display_name(&[data(b"tdsn", bytes)]), Some(value));
+    }
+    for bytes in [b"Progress".as_slice(), b"Progress\0evil", b"\xff\0"] {
+        assert_eq!(super::display_name(&[data(b"tdsn", bytes)]), None);
+    }
+}
+
+#[test]
 fn invalid_display_name_length_or_padding_is_rejected() {
     assert_eq!(super::display_name(&[name("Scale X")]), Some("Scale X"));
     assert_eq!(
@@ -467,6 +494,16 @@ fn invalid_display_name_length_or_padding_is_rejected() {
     assert_eq!(
         super::display_name(&[data(b"tdsn", b"Utf8\0\0\0\x01Xevil")]),
         None
+    );
+    assert_eq!(
+        super::display_name(&[name("Utf8 Control")]),
+        Some("Utf8 Control")
+    );
+    assert_eq!(super::display_name(&[name("")]), Some(""));
+    assert_eq!(
+        super::display_name(&[data(b"tdsn", b"Utf8\0\0\0\0\0\0\0\0")]),
+        None,
+        "excess padding must not become a legacy name"
     );
     assert_eq!(super::display_name(&[name("X"), name("X")]), None);
 }

@@ -84,8 +84,8 @@ fn frame_blending(
 /// `<ScaleToFramePolicy>1</ScaleToFramePolicy>`, the form of all six corpus
 /// clips that use it; absent is off. Premiere then draws the source fitted
 /// inside the sequence frame at Motion Scale 100 (measured on a still in
-/// `premiere_isolated_images_nests_26_5`). No host converts it, so each
-/// rejects `true` with its own reason. Premiere CS6 to CC 2015 write the off
+/// `premiere_isolated_images_nests_26_5`). Physical video approximates the
+/// static fit with Motion scale; other hosts reject it. CS6 to CC 2015 write the off
 /// state as policy `0` (360 corpus clips) or as `ScaleToFrameSize`; other
 /// values are unobserved and reject.
 pub(super) fn scale_to_frame_size(clip: &VideoClip, identity: &str) -> Result<bool> {
@@ -276,6 +276,7 @@ fn report_occurrence_structure(record: Record<'_>, omissions: &mut Vec<Omission>
                 "HeadTransition",
                 "TailTransition",
                 "IsMuted",
+                "OriginalSubClipTimeOffset",
             ],
             &identity,
             "ClipTrackItem/",
@@ -398,6 +399,7 @@ pub(super) fn read_tracks(
     nesting: &mut super::nested::Nesting<'_>,
     omissions: &mut Vec<Omission>,
     selected_video_track: Option<usize>,
+    sequence_end_ticks: i64,
 ) -> Result<(FrameRate, [u32; 2], Vec<PrVideoTrack>)> {
     let frame_rect = required(
         video.value.frame_rect.as_deref(),
@@ -443,6 +445,9 @@ pub(super) fn read_tracks(
         ),
     ] {
         if actual.is_some_and(|actual| actual != expected) {
+            if name == "ColorManagementSettings" && super::hdr::is_admitted(graph, &video) {
+                continue; // The sequence coordinator already bound these exact HDR settings.
+            }
             omit(
                 omissions,
                 OmissionScope::Feature,
@@ -665,8 +670,8 @@ pub(super) fn read_tracks(
                     continue;
                 }
             };
-            // Whatever becomes of the placement, an active key consumes its
-            // matte track over the placement's range.
+            // Failed conversion must not reveal the claimed matte picture.
+            let claims_start = claims.len();
             claims.extend(
                 claimed_matte_tracks(graph, &item, &parent, omissions)
                     .into_iter()
@@ -695,6 +700,21 @@ pub(super) fn read_tracks(
                                 .intrinsic_ticks,
                         });
                         items.push(PrVideoItem::Media(*occurrence));
+                    }
+                    Err(error @ BuildError::EmptyNativeSequence(_)) => {
+                        if claims.len() > claims_start {
+                            claims.truncate(claims_start);
+                            crate::approximate(omissions, &identity, format!(
+                                "{error}; Track Matte Key omitted without claiming its matte picture; visible provider retention approximates native empty-input behavior, not rejected-content recovery"
+                            ));
+                        } else {
+                            omit(
+                                omissions,
+                                OmissionScope::Occurrence,
+                                identity,
+                                error.to_string(),
+                            );
+                        }
                     }
                     Err(error) => omit(
                         omissions,
@@ -749,10 +769,16 @@ pub(super) fn read_tracks(
                         &occurrence,
                         stream.kind,
                         track_index,
+                        occurrence.end_ticks == sequence_end_ticks,
                         omissions,
                     ) && keep_mask_boundary(
                         &occurrence,
-                        [stream.width, stream.height],
+                        // Unequal-canvas solids reached here only after full-canvas normalization.
+                        if matches!(stream.kind, crate::schema::PrMediaKind::ColorMatte(_)) {
+                            [width, height]
+                        } else {
+                            [stream.width, stream.height]
+                        },
                         [width, height],
                         track_index,
                         omissions,
@@ -878,6 +904,7 @@ pub(super) fn read_tracks(
         });
     }
     super::nested::copy_placements(&mut parsed_tracks, track_nests, nesting);
+    split_moved_nest_matte_windows(&mut parsed_tracks, [width, height]);
     resolve_track_mattes(graph, &mut parsed_tracks, [width, height], omissions);
     consume_claimed_mattes(&mut parsed_tracks, &claims, omissions);
     Ok((frame_rate, [width, height], parsed_tracks))
@@ -1021,6 +1048,176 @@ fn consume_claimed_mattes(
     }
 }
 
+// Separate editable windows can each consume one consecutive provider without
+// changing the nested picture's source clock or exposing either matte as paint.
+fn split_consecutive_matte_nests(tracks: &mut [PrVideoTrack], track_index: usize) {
+    let replacements: Vec<_> = tracks[track_index]
+        .nests
+        .iter()
+        .enumerate()
+        .filter_map(|(index, nest)| {
+            let matte = nest.track_matte?;
+            if !nest.enabled
+                || nest.is_retimed()
+                || !nest.animations.is_empty()
+                || nest.transform != PrStaticTransform::default()
+                || !nest.crop.is_default()
+                || nest.linear_wipe.is_some()
+                || nest.opacity_mask.is_some()
+                || !nest.effects.is_empty()
+            {
+                return None;
+            }
+            let provider_track = tracks.get(matte.track_index)?;
+            let mut ranges: Vec<_> = provider_track
+                .items
+                .iter()
+                .map(PrVideoItem::timeline_ticks)
+                .chain(
+                    provider_track
+                        .nests
+                        .iter()
+                        .map(|source| source.timeline_ticks()),
+                )
+                .filter(|range| nest.overlaps(range))
+                .collect();
+            ranges.sort_by_key(|range| range.start);
+            if ranges.len() < 2
+                || ranges.first()?.start != nest.start_ticks
+                || ranges.last()?.end != nest.end_ticks
+                || ranges.windows(2).any(|pair| pair[0].end != pair[1].start)
+                || ranges.iter().any(|range| {
+                    check_track_matte(tracks, track_index, range.clone(), matte).is_err()
+                })
+            {
+                return None;
+            }
+            let parts: Option<Vec<_>> = ranges
+                .into_iter()
+                .map(|range| {
+                    let mut part = nest.clone();
+                    part.in_ticks = nest.in_ticks.checked_add(range.start - nest.start_ticks)?;
+                    part.out_ticks = nest.in_ticks.checked_add(range.end - nest.start_ticks)?;
+                    part.start_ticks = range.start;
+                    part.end_ticks = range.end;
+                    Some(part)
+                })
+                .collect();
+            Some((index, parts?))
+        })
+        .collect();
+    for (index, parts) in replacements.into_iter().rev() {
+        tracks[track_index].nests.splice(index..=index, parts);
+    }
+}
+
+// Split an unshared linear provider so its independently painting head/tail
+// remain outside the consumer's pre-Motion matte owner.
+fn split_moved_nest_matte_windows(tracks: &mut [PrVideoTrack], canvas: [u32; 2]) {
+    let consumers: Vec<_> = tracks
+        .iter()
+        .flat_map(|track| {
+            track.nests.iter().filter_map(|nest| {
+                let matte = nest.track_matte?;
+                let moved = nest.sequence.dimensions() != canvas
+                    || nest.transform.position != nest.transform.anchor_point
+                    || nest.transform.scale != [100.0, 100.0]
+                    || nest.animations.iter().any(|animation| {
+                        matches!(
+                            animation,
+                            PrPropertyAnimation::UniformScale(_)
+                                | PrPropertyAnimation::ScaleWidth(_)
+                                | PrPropertyAnimation::ScaleHeight(_)
+                        )
+                    });
+                (nest.enabled && moved).then_some((matte.track_index, nest.timeline_ticks()))
+            })
+        })
+        .collect();
+    for (provider_track, range) in consumers {
+        let uses = tracks
+            .iter()
+            .flat_map(|track| {
+                track
+                    .items
+                    .iter()
+                    .filter_map(PrVideoItem::media)
+                    .filter_map(|clip| Some((clip.track_matte?, clip.timeline_ticks())))
+                    .chain(
+                        track
+                            .nests
+                            .iter()
+                            .filter_map(|nest| Some((nest.track_matte?, nest.timeline_ticks()))),
+                    )
+            })
+            .filter(|(matte, _)| matte.track_index == provider_track)
+            .count();
+        if uses != 1 {
+            continue;
+        }
+        let Some(track) = tracks.get_mut(provider_track) else {
+            continue;
+        };
+        let candidates: Vec<_> = track
+            .items
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| {
+                let clip = item.media()?;
+                (clip.start_ticks <= range.start
+                    && clip.end_ticks >= range.end
+                    && (clip.start_ticks < range.start || clip.end_ticks > range.end)
+                    && clip.playback_rate == 1.0
+                    && clip.out_ticks.checked_sub(clip.in_ticks)
+                        == clip.end_ticks.checked_sub(clip.start_ticks)
+                    && clip.time_remap.is_none()
+                    && clip.track_matte.is_none()
+                    && clip.crop.is_default()
+                    && clip.linear_wipe.is_none()
+                    && clip.opacity_mask.is_none()
+                    && clip.effects.is_empty()
+                    && clip.source_effects.is_none())
+                .then_some(index)
+            })
+            .collect();
+        let [index] = candidates.as_slice() else {
+            continue;
+        };
+        let PrVideoItem::Media(source) = &track.items[*index] else {
+            continue;
+        };
+        let part = |start: i64, end: i64, suffix: &str| {
+            let mut clip = source.clone();
+            clip.start_ticks = start;
+            clip.end_ticks = end;
+            clip.in_ticks = source.in_ticks.checked_add(start - source.start_ticks)?;
+            clip.out_ticks = source.in_ticks.checked_add(end - source.start_ticks)?;
+            if !suffix.is_empty() {
+                clip.id = source.id.as_ref().map(|id| format!("{id}:{suffix}"));
+            }
+            Some(PrVideoItem::Media(clip))
+        };
+        let mut parts = Vec::new();
+        if source.start_ticks < range.start {
+            let Some(head) = part(source.start_ticks, range.start, "matte-head") else {
+                continue;
+            };
+            parts.push(head);
+        }
+        let Some(middle) = part(range.start, range.end, "") else {
+            continue;
+        };
+        parts.push(middle);
+        if source.end_ticks > range.end {
+            let Some(tail) = part(range.end, source.end_ticks, "matte-tail") else {
+                continue;
+            };
+            parts.push(tail);
+        }
+        track.items.splice(*index..=*index, parts);
+    }
+}
+
 /// Why a keyed placement that is disabled or on a muted track is omitted: FX
 /// draws the track matte source of a hidden layer as content, and whether
 /// Premiere draws the matte clip of a disabled keyed clip is unmeasured
@@ -1040,6 +1237,7 @@ fn resolve_track_mattes(
     omissions: &mut Vec<Omission>,
 ) {
     for index in (0..tracks.len()).rev() {
+        split_consecutive_matte_nests(tracks, index);
         let track = &tracks[index];
         let keyed = track
             .items
@@ -1826,7 +2024,6 @@ pub(super) fn read_placement<'g>(
         &item.identity,
         "ClipTrackItem",
     )?;
-    require_zero_subclip_time_offset(clip_track_item, &item.identity)?;
     let enabled = !visibility::is_muted(clip_track_item.is_muted.as_deref(), &item.identity)?;
     let chain = if let Some(components) = clip_track_item
         .component_owner
@@ -2119,6 +2316,59 @@ pub(super) fn read_placement<'g>(
             )?),
         };
     }
+    let constant_generator = !is_adjustment
+        && signed_playback_rate == 1.0
+        && native_clip.time_remapping.is_none()
+        && !clip.value.declares_frame_hold()
+        && animations.is_empty()
+        && !has_effects
+        && source_chain.is_none()
+        && opacity_mask.is_none()
+        && linear_wipe.is_none()
+        && track_matte.is_none()
+        && color_matte::is_solid_source(graph, source_record)?;
+    if constant_generator {
+        let offset = clip_track_item
+            .original_sub_clip_time_offset
+            .as_deref()
+            .map(|value| {
+                integer(
+                    value,
+                    &format!("{}: invalid OriginalSubClipTimeOffset", item.identity),
+                )
+            })
+            .transpose()?
+            .unwrap_or(0);
+        if offset != 0 {
+            approximate(omissions, &item.identity,
+                format!("OriginalSubClipTimeOffset ({offset} ticks) is not applied to the constant generator; retained static fill and authored source/placement ranges; historical subclip timing semantics are unverified"));
+        }
+    } else if source_record.tag() == records::VIDEO_SEQUENCE_SOURCE.tag
+        && signed_playback_rate == 1.0
+        && native_clip.time_remapping.is_none()
+        && !clip.value.declares_frame_hold()
+    {
+        let offset = clip_track_item
+            .original_sub_clip_time_offset
+            .as_deref()
+            .map(|value| {
+                integer(
+                    value,
+                    &format!("{}: invalid OriginalSubClipTimeOffset", item.identity),
+                )
+            })
+            .transpose()?
+            .unwrap_or(0);
+        if offset != 0 {
+            approximate(
+                omissions,
+                &item.identity,
+                format!("OriginalSubClipTimeOffset ({offset} ticks) is not applied to the unit-forward nested picture; retained authored source In/Out and placement clocks; historical subclip offset semantics and native frame selection are unverified, so picture timing may differ"),
+            );
+        }
+    } else {
+        require_zero_subclip_time_offset(clip_track_item, &item.identity)?;
+    }
     Ok(Placement {
         enabled,
         transform,
@@ -2212,12 +2462,11 @@ fn read_occurrence(
         adjustment,
         omissions,
     )?;
-    validate_color(
+    report_output_color(
         video.value.output_color_space.as_deref(),
         &video.identity,
-        true,
-        "OutputColorSpace",
-    )?;
+        omissions,
+    );
     let original_duration = required_integer(
         source.value.original_duration.as_deref(),
         &source.identity,
@@ -2234,14 +2483,11 @@ fn read_occurrence(
     let kind = stream.kind;
     let source_is_canvas = stream.orientation == crate::schema::VideoOrientation::Identity
         && [stream.width, stream.height] == parent.dimensions;
-    // Import draws a Color Matte as a rectangle of its sequence's canvas and an
-    // adjustment layer over the whole composite below it, so generator media of
-    // another size would silently grow to the canvas. Shared media is checked
-    // against each placement's own sequence.
+    // Adjustments cover the composite; solid generators get a separate bounded normalization.
     let generator = match kind {
-        crate::schema::PrMediaKind::ColorMatte(_) => Some("a Color Matte"),
         crate::schema::PrMediaKind::Adjustment => Some("an adjustment layer"),
-        crate::schema::PrMediaKind::Video { .. }
+        crate::schema::PrMediaKind::ColorMatte(_)
+        | crate::schema::PrMediaKind::Video { .. }
         | crate::schema::PrMediaKind::NumberedStills { .. }
         | crate::schema::PrMediaKind::Still { .. }
         | crate::schema::PrMediaKind::OpenExr { .. }
@@ -2284,11 +2530,30 @@ fn read_occurrence(
         crate::schema::PrMediaKind::ColorMatte(_) => "a Color Matte",
         crate::schema::PrMediaKind::Adjustment => "an adjustment layer",
     };
-    ensure!(
-        !scale_to_frame,
-        "{}: Scale to Frame Size on {media} is not converted",
-        clip.identity
-    );
+    let mut transform = transform;
+    if scale_to_frame {
+        ensure!(
+            matches!(kind, crate::schema::PrMediaKind::Video { .. }),
+            "{}: Scale to Frame Size on {media} is not converted",
+            clip.identity
+        );
+        ensure!(
+            stream.orientation == crate::schema::VideoOrientation::Identity
+                && stream.pixel_aspect.scale() == 1.0
+                && animations
+                    .iter()
+                    .all(|animation| animation.property()
+                        == crate::schema::PrAnimatedProperty::Opacity),
+            "{}: Scale to Frame Size requires unrotated square-pixel video with static Motion",
+            clip.identity
+        );
+        // Fold the pre-Motion contain fit into the original source's editable scale.
+        let fit = (f64::from(parent.dimensions[0]) / f64::from(stream.width))
+            .min(f64::from(parent.dimensions[1]) / f64::from(stream.height));
+        transform.scale = transform.scale.map(|scale| scale * fit);
+        approximate(omissions, &clip.identity,
+            "Scale to Frame Size approximated by a contain factor in editable Motion scale; native pre-resampling and source-space effect/mask sampling are not retained; RGB/alpha fidelity is unmeasured");
+    }
     // Video and Color Matte guides convert keyed vector/numeric coverage.
     // Other hosts must not freeze an animated mask at its static controls.
     let keyed_mask_host = matches!(
@@ -2391,6 +2656,26 @@ fn read_occurrence(
         .and_then(|group| group.frame_rate.as_deref())
         .and_then(|ticks| ticks.parse::<i64>().ok())
         .unwrap_or(sequence_rate.ticks_per_frame());
+    ensure!(frame_ticks > 0, "video track frame grid must be positive");
+    // A unit-forward still has no changing source samples. Keep its picture
+    // when a saved duration ends between sequence frames, using the same
+    // nearest-frame policy as the sequence end. Starts, finite picture clocks
+    // and retimed stills retain strict admission; no source endpoint is moved.
+    if kind.is_still()
+        && occurrence.playback_rate == 1.0
+        && occurrence.time_remap.is_none()
+        && occurrence.end_ticks % frame_ticks != 0
+    {
+        let saved_end = occurrence.end_ticks;
+        let snapped = super::timeline_end::nearest_frame_boundary(saved_end, frame_ticks)
+            .filter(|end| *end > occurrence.start_ticks)
+            .ok_or_else(|| {
+                unsupported("still timeline end cannot snap to a positive frame span")
+            })?;
+        occurrence.end_ticks = snapped;
+        approximate(omissions, &item.identity, format!(
+            "still timeline end snapped from {saved_end} to {snapped} ticks on the native {frame_ticks}-tick grid; original source span and Motion/key clocks retained, terminal coverage changes by at most half a frame; native endpoint fidelity is unmeasured"));
+    }
     // Prefer main's independently valid saved constant clock before the
     // existing bounded-selection recovery. An invalid curve never supplies
     // new endpoints, and the complete occurrence still validates below.
@@ -2478,7 +2763,7 @@ fn read_occurrence(
         }
         ensure!(
             !matches!(kind, crate::schema::PrMediaKind::NumberedStills { .. })
-                || !split.has_active_standard_effects(),
+                || !split.has_active_non_matte_effects(),
             "numbered-image occurrence: active standard effects are unsupported"
         );
         if adjustment && occurrence.transform != crate::schema::PrStaticTransform::default() {
@@ -2493,6 +2778,8 @@ fn read_occurrence(
             timeline_ticks: start..end,
             source_is_canvas,
             adjustment,
+            solid_crop: matches!(kind, crate::schema::PrMediaKind::ColorMatte(_))
+                && !occurrence.crop.is_default(),
         };
         // A Crop effect, Linear Wipe or Track Matte Key applies at its stack
         // position, which `read_effects` finds.
@@ -2501,7 +2788,12 @@ fn read_occurrence(
             || occurrence.track_matte.is_some();
         split.reject_unconverted_masked_geometry2(graph, &owner, mask)?;
         occurrence.stroke = split.read_stroke(graph, omissions)?;
-        occurrence.active_transforms = u8::try_from(split.active_transforms()).unwrap_or(u8::MAX);
+        let affine_count = if owner.solid_crop {
+            split.active_solid_transforms()
+        } else {
+            split.active_transforms()
+        };
+        occurrence.active_transforms = u8::try_from(affine_count).unwrap_or(u8::MAX);
         (occurrence.effects, occurrence.effects_above_mask) =
             split.read_effects(graph, &owner, mask, omissions);
         if matches!(kind, crate::schema::PrMediaKind::AfterEffectsComposition(_)) {
@@ -2563,6 +2855,7 @@ fn read_occurrence(
             track_index: parent.track_index,
             timeline_ticks: start..end,
             adjustment,
+            solid_crop: false,
         };
         // `admit_source_chain` rejects an active source Crop, Linear Wipe or
         // Track Matte Key, so no source effect is on a mask boundary.
@@ -2572,6 +2865,23 @@ fn read_occurrence(
             effects: source_effects,
             active_transforms: u8::try_from(split.active_transforms()).unwrap_or(u8::MAX),
         });
+    }
+    if matches!(kind, crate::schema::PrMediaKind::ColorMatte(_)) && !source_is_canvas {
+        ensure!(
+            color_matte::normalize_full_canvas_solid(
+                &mut occurrence,
+                [stream.width, stream.height],
+                parent.dimensions,
+            ),
+            "{}: a Color Matte of {}x{} on a {}x{} sequence is not converted: only static full-canvas solids without source-space masks or effects can be normalized",
+            item.identity, stream.width, stream.height, parent.dimensions[0], parent.dimensions[1]
+        );
+        approximate(omissions, &item.identity, format!(
+            "{}x{} generator normalized to an editable {}x{} full-canvas solid; original static Motion and overflow are replaced, boundary gaps up to 0.001 pixel are filled; retained Track Matte coverage uses sequence coordinates, not the original pre-Motion source frame; native RGB/alpha fidelity is unmeasured",
+            stream.width, stream.height, parent.dimensions[0], parent.dimensions[1]));
+    }
+    if adjustment && !crop_from_motion {
+        adjustment::normalize_cardinal_crop(&mut occurrence);
     }
     occurrence.id = Some(item.identity);
     Ok(occurrence)
@@ -2634,7 +2944,7 @@ fn read_video_stream(
     omissions: &mut Vec<Omission>,
 ) -> Result<PrVideoStream> {
     let stream = graph.follow::<VideoStream>(reference, &media.identity)?;
-    let kind = match super::after_effects::media_kind(graph, media, &stream)? {
+    let kind = match super::after_effects::media_kind(graph, media, &stream, omissions)? {
         Some(kind) => kind,
         None => super::still::media_kind(&stream, media)?,
     };
@@ -2709,12 +3019,39 @@ fn read_video_stream(
         "{}: non-video source orientation unsupported",
         stream.identity
     );
-    validate_color(
-        stream.value.original_color_space.as_deref(),
-        &stream.identity,
-        false,
-        "OriginalColorSpace",
-    )?;
+    // The AEP reader has already admitted its exact RGB source profile.
+    // Do not revalidate that role using compressed-video profile rules.
+    if !matches!(kind, crate::schema::PrMediaKind::AfterEffectsComposition(_)) {
+        let smpte170m_video = matches!(kind, crate::schema::PrMediaKind::Video { .. })
+            && stream
+                .value
+                .original_color_space
+                .as_deref()
+                .map(serde_json::from_str::<ColorSpace>)
+                .transpose()?
+                .is_some_and(|color| color.is_smpte170m_video());
+        match validate_color(
+            stream.value.original_color_space.as_deref(),
+            &stream.identity,
+            false,
+            "OriginalColorSpace",
+        ) {
+            Err(BuildError::Unsupported(_)) if smpte170m_video => {
+                crate::approximate(omissions, &stream.identity,
+                    "SMPTE 170M SDR OriginalColorSpace approximated using original video bytes and the target decoder's colour interpretation; editable placement retained, Premiere's source-to-working-space conversion is not restored and RGB fidelity is unverified");
+            }
+            // Still assets already retain their original encoded pixels and
+            // embedded ICC bytes. A saved interpretation we cannot map must
+            // not erase otherwise convertible picture or its nested owners.
+            Err(BuildError::Unsupported(_))
+                if matches!(kind, crate::schema::PrMediaKind::Still { .. }) =>
+            {
+                crate::approximate(omissions, &stream.identity,
+                    "unmapped still OriginalColorSpace; original image bytes and editable placement retained; native colour interpretation is not restored and RGB/alpha fidelity is unverified");
+            }
+            result => result?,
+        }
+    }
     let intrinsic_ticks = required_integer(
         stream.value.duration.as_deref(),
         &stream.identity,
@@ -2926,6 +3263,17 @@ fn read_media_paths(graph: &Graph<'_>, media: &Located<Media>) -> Result<PrMedia
         video: None,
         audio: None,
     })
+}
+
+fn report_output_color(encoded: Option<&str>, identity: &str, omissions: &mut Vec<Omission>) {
+    let Some(encoded) = encoded else {
+        return;
+    };
+    match serde_json::from_str::<ColorSpace>(encoded) {
+        Ok(value) if value.is_sequence_sdr() || value.output_hdr_transfer().is_some() => {},
+        _ => omit(omissions, OmissionScope::Feature, identity,
+            "unknown sequence OutputColorSpace; output colour/tone/gamut behaviour is an explicit approximation, independently admitted source footage retained"),
+    }
 }
 
 fn validate_color(

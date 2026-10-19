@@ -61,7 +61,7 @@ pub(super) fn render(timeline: &TextDocumentTimeline) -> Result<Vec<u8>, AepWrit
         &[
             ("font", literal(&first.font_postscript)),
             ("format", format(first)),
-            ("vertices", real_array(&vertices)),
+            ("vertices", geometry_array(&vertices)?),
             (
                 "vertical_alignment",
                 match first.vertical_align {
@@ -252,18 +252,36 @@ fn real(value: f64) -> Vec<u8> {
     text.into_bytes()
 }
 
-fn real_array(values: &[f64]) -> Vec<u8> {
+fn geometry_array(values: &[f64]) -> Result<Vec<u8>, AepWriteError> {
+    // Adobe's native COS scanner can split long f64 arithmetic tails into
+    // additional numbers (13.400000000000002 becomes 13.4 .00003). A box
+    // outline is an ordered coordinate array, so even one split corrupts its
+    // topology. Emit shortest native f32 tokens, as for font size and leading.
     let mut bytes = vec![b'[', b' '];
     for value in values {
-        bytes.extend(real(*value));
+        bytes.extend(style_real(
+            *value,
+            "Source Text box coordinate is not representable as a native f32",
+        )?);
+        bytes.push(b' ');
+    }
+    bytes.push(b']');
+    Ok(bytes)
+}
+
+fn color([red, green, blue, alpha]: [f64; 4]) -> Vec<u8> {
+    let mut bytes = vec![b'[', b' '];
+    for value in [alpha, red, green, blue] {
+        // Native paint channels are f32; long f64 tokens can split into extra COS numbers.
+        let mut text = (value as f32).to_string();
+        if !text.contains('.') {
+            text.push_str(".0");
+        }
+        bytes.extend_from_slice(text.as_bytes());
         bytes.push(b' ');
     }
     bytes.push(b']');
     bytes
-}
-
-fn color([red, green, blue, alpha]: [f64; 4]) -> Vec<u8> {
-    real_array(&[alpha, red, green, blue])
 }
 
 fn literal(text: &str) -> Vec<u8> {

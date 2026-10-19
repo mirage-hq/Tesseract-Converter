@@ -24,6 +24,7 @@ pub(super) fn recognize(
     layer: &Layer,
     effects: &[DecodedEffect],
     plane: [u16; 2],
+    effect_definitions: &[crate::rifx::Chunk],
 ) -> Result<Option<Generator>, String> {
     let candidates: Vec<_> = effects
         .iter()
@@ -70,14 +71,24 @@ pub(super) fn recognize(
             return Err("nonempty effect compositing options".into());
         }
     }
-    let declarations =
-        properties::unique_list(descriptor, *b"parT").map_err(|error| error.to_string())?;
-    let declarations = properties::runs(declarations).map_err(|error| error.to_string())?;
+    let table = properties::unique_list(descriptor, *b"parT").map_err(|error| error.to_string())?;
+    let declarations = properties::runs(table).map_err(|error| error.to_string())?;
     let value = |suffix: &str| -> Result<Vec<f64>, String> {
         let name = format!("{MATCH_NAME}-{suffix}");
-        if explicit.iter().any(|(id, _)| *id == name) || !matches!(suffix, "0002" | "0007") {
+        if explicit.iter().any(|(id, _)| *id == name) || !matches!(suffix, "0002" | "0005" | "0007")
+        {
             return static_values(effect, suffix);
         }
+        // Explicit controls do not depend on a shared table. Only a truly empty
+        // instance table may resolve a missing default from the same native file.
+        let shared = if table.is_empty() {
+            let table = crate::essential::file_effect_declarations(effect_definitions, MATCH_NAME)
+                .map_err(|warning| warning.message)?;
+            Some(properties::runs(table).map_err(|error| error.to_string())?)
+        } else {
+            None
+        };
+        let declarations = shared.as_ref().unwrap_or(&declarations);
         let declared: Vec<_> = declarations.iter().filter(|(id, _)| *id == name).collect();
         let [(_, declaration)] = declared.as_slice() else {
             return Err(format!("{name}: unique declaration required"));
@@ -171,6 +182,13 @@ fn declared_default(bytes: &[u8], suffix: &str, plane: [u16; 2]) -> Result<Vec<f
     // and restrict_bounds. PF_PopupDef has current value, num_choices, dephault.
     // These are declarations, not an opaque guessed generator default.
     match (suffix, kind) {
+        ("0005", 2) => Ok(vec![
+            f64::from(i32::from_be_bytes(
+                bytes[56..60]
+                    .try_into()
+                    .expect("checked declaration length"),
+            )) / 65_536.0,
+        ]),
         ("0002", 6) => Ok([68, 72]
             .into_iter()
             .zip(plane)
@@ -521,6 +539,240 @@ mod tests {
             );
         }
         (project, original)
+    }
+
+    #[test]
+    fn basic_text_after_shape_geometry_keeps_effect_plane_size_before_tiling() {
+        use crate::{rifx::Chunk, structure::ItemKind};
+
+        fn named(value: &str) -> Chunk {
+            let mut bytes = value.as_bytes().to_vec();
+            bytes.resize(40, 0);
+            Chunk::data(*b"tdmn", bytes).unwrap()
+        }
+        fn numeric(values: &[f64]) -> Chunk {
+            let mut meta = vec![0; 124];
+            meta[..2].copy_from_slice(&[0xdb, 0x99]);
+            meta[2..4].copy_from_slice(&u16::try_from(values.len()).unwrap().to_be_bytes());
+            Chunk::list(
+                *b"tdbs",
+                vec![
+                    Chunk::data(*b"tdsb", [0, 0, 0, 1]).unwrap(),
+                    Chunk::data(*b"tdb4", meta).unwrap(),
+                    Chunk::data(
+                        *b"cdat",
+                        values
+                            .iter()
+                            .flat_map(|v| v.to_be_bytes())
+                            .collect::<Vec<_>>(),
+                    )
+                    .unwrap(),
+                ],
+            )
+        }
+        fn group<'a>(chunks: &'a mut [Chunk], name: &str) -> &'a mut Vec<Chunk> {
+            let start = chunks
+                .iter()
+                .position(|chunk| {
+                    chunk
+                        .data_payload()
+                        .is_some_and(|data| data.starts_with(name.as_bytes()))
+                })
+                .unwrap();
+            chunks[start + 1..]
+                .iter_mut()
+                .find(|chunk| chunk.list_kind() == Some(*b"tdgp"))
+                .unwrap()
+                .children_mut()
+                .unwrap()
+        }
+        let (mut project, _) = qualifying_project(None);
+        let ItemKind::Composition(comp) = &mut project
+            .items
+            .iter_mut()
+            .find(|item| item.id == 1)
+            .unwrap()
+            .kind
+        else {
+            panic!("native Shape composition")
+        };
+        let root = comp.layers[0]
+            .content
+            .iter_mut()
+            .find(|chunk| chunk.list_kind() == Some(*b"tdgp"))
+            .unwrap()
+            .children_mut()
+            .unwrap();
+        *group(root, "ADBE Transform Group") = vec![
+            Chunk::data(*b"tdsb", [0, 0, 0, 1]).unwrap(),
+            named("ADBE Position"),
+            numeric(&[100., 200., 0.]),
+            named("ADBE Anchor Point"),
+            numeric(&[10., 20., 0.]),
+            named("ADBE Scale"),
+            numeric(&[2., 4., 1.]),
+            named("ADBE Group End"),
+        ];
+        let parade = group(root, "ADBE Effect Parade");
+        // Keep the existing Basic Text and replace the trailing Twirl stage.
+        parade.truncate(2);
+        parade.extend([
+            named("CC Tiler"),
+            Chunk::list(
+                *b"sspc",
+                vec![Chunk::list(
+                    *b"tdgp",
+                    vec![
+                        Chunk::data(*b"tdsb", [0, 0, 0, 1]).unwrap(),
+                        named("CC Tiler-0001"),
+                        numeric(&[0.35]),
+                    ],
+                )],
+            ),
+            named("ADBE Group End"),
+        ]);
+        let imported =
+            crate::structure_document::to_structural_fx_document(&project, Some(1)).unwrap();
+        let document = imported.document.to_json_value().unwrap();
+        let text = named_layer(&document, "Basic Text (editable generator)").unwrap();
+        assert_eq!(text["sourceText"]["fontSize"], 254.);
+        assert_eq!(text["transform"]["scale"], serde_json::json!([50., 25.]));
+        assert_eq!(
+            text["transform"]["position"],
+            serde_json::json!([40., 24.25])
+        );
+        let input =
+            named_layer(&document, "Tiler normalized input").expect("Tiler must remain mapped");
+        assert_eq!(input["transform"]["scale"], serde_json::json!([200., 400.]));
+        assert_eq!(
+            input["transform"]["position"],
+            serde_json::json!([80., 120.])
+        );
+        // Native 320×180 plane: centered Position plus the existing 127px baseline.
+        for (axis, expected) in [160., 217.].into_iter().enumerate() {
+            let scale = input["transform"]["scale"][axis].as_f64().unwrap() / 100.;
+            let position = input["transform"]["position"][axis].as_f64().unwrap();
+            assert_eq!(
+                text["transform"]["position"][axis].as_f64().unwrap() * scale + position,
+                expected
+            );
+            assert_eq!(
+                text["transform"]["scale"][axis].as_f64().unwrap() * scale,
+                100.
+            );
+        }
+    }
+
+    #[test]
+    fn basic_text_sparse_instance_uses_shared_native_declarations() {
+        use crate::{rifx::Chunk, structure::ItemKind};
+
+        let (mut project, _) = qualifying_project(None);
+        let ItemKind::Composition(comp) = &mut project
+            .items
+            .iter_mut()
+            .find(|item| item.id == 1)
+            .unwrap()
+            .kind
+        else {
+            panic!("composition required")
+        };
+        let owner = &mut comp.layers[0];
+        // Tracking is also sparse: its zero must come from the native declaration,
+        // not from a guessed destination default.
+        fn sparse_tracking(chunks: &mut [Chunk]) {
+            for chunk in chunks {
+                if chunk.list_kind() == Some(*b"sspc") {
+                    let children = chunk.children_mut().unwrap();
+                    if children.iter().any(|child| child.id() == *b"sdat") {
+                        let table = children
+                            .iter_mut()
+                            .find(|child| child.list_kind() == Some(*b"parT"))
+                            .unwrap()
+                            .children_mut()
+                            .unwrap();
+                        let mut name = vec![0; 40];
+                        name[..21].copy_from_slice(b"ADBE Basic Text2-0005");
+                        let mut declaration = vec![0; 148];
+                        declaration[12..16].copy_from_slice(&2u32.to_be_bytes());
+                        table.extend([
+                            Chunk::data(*b"tdmn", name).unwrap(),
+                            Chunk::data(*b"pard", declaration).unwrap(),
+                        ]);
+                        let controls = children
+                            .iter_mut()
+                            .find(|child| child.list_kind() == Some(*b"tdgp"))
+                            .unwrap()
+                            .children_mut()
+                            .unwrap();
+                        let index = controls
+                            .iter()
+                            .position(|child| {
+                                child
+                                    .data_payload()
+                                    .is_some_and(|data| data.starts_with(b"ADBE Basic Text2-0005"))
+                            })
+                            .unwrap();
+                        controls.drain(index..index + 2);
+                        return;
+                    }
+                }
+                if let Some(children) = chunk.children_mut() {
+                    sparse_tracking(children);
+                }
+            }
+        }
+        sparse_tracking(&mut owner.content);
+        let definitions = crate::essential::instance_definitions(&owner.content);
+        fn empty_table(chunks: &mut [Chunk]) {
+            for chunk in chunks {
+                if chunk.list_kind() == Some(*b"sspc") {
+                    let children = chunk.children_mut().unwrap();
+                    if children.iter().any(|child| child.id() == *b"sdat") {
+                        let table = children
+                            .iter_mut()
+                            .find(|child| child.list_kind() == Some(*b"parT"))
+                            .unwrap();
+                        *table = Chunk::list(*b"parT", Vec::new());
+                        return;
+                    }
+                }
+                if let Some(children) = chunk.children_mut() {
+                    empty_table(children);
+                }
+            }
+        }
+        empty_table(&mut owner.content);
+        project.effect_definitions = vec![Chunk::list(*b"EfdG", definitions)];
+        let imported =
+            crate::structure_document::to_structural_fx_document(&project, Some(1)).unwrap();
+        let document = imported.document.to_json_value().unwrap();
+        fn find_text(value: &serde_json::Value) -> Option<&serde_json::Value> {
+            if value["name"] == "Basic Text (editable generator)" {
+                return Some(value);
+            }
+            match value {
+                serde_json::Value::Object(object) => object.values().find_map(find_text),
+                serde_json::Value::Array(array) => array.iter().find_map(find_text),
+                _ => None,
+            }
+        }
+        let text =
+            find_text(&document).expect("shared declarations must retain editable generator");
+        assert_eq!(text["type"], "Text");
+        assert_eq!(text["sourceText"]["text"], "Editable");
+        assert_eq!(text["sourceText"]["fontFamily"], "Arial-BoldMT");
+        assert_eq!(text["sourceText"]["fontSize"], 254.0);
+        assert!(text["parent"].is_number());
+
+        // Missing and conflicting registries must not invent a popup default.
+        let shared = project.effect_definitions.clone();
+        for definitions in [Vec::new(), [shared.clone(), shared].concat()] {
+            project.effect_definitions = definitions;
+            let imported =
+                crate::structure_document::to_structural_fx_document(&project, Some(1)).unwrap();
+            assert!(find_text(&imported.document.to_json_value().unwrap()).is_none());
+        }
     }
 
     #[test]

@@ -1,0 +1,152 @@
+{
+  "scope": "Partial import proof, not full expression-surface completion",
+  "public_reference_derivation": {
+    "operation": "Replace optional XMP atoms with same-size zero-filled free atoms; remove local authoring paths without re-encoding",
+    "verification": "All non-XMP bytes, stream descriptions, packet data hashes and timing are identical; all 30 decoded RGBA frames per movie are byte-identical",
+    "provenance": "original_rgba_movie_sha256 identifies the original native render; rgba_movie_sha256 identifies the public derivative; historical measurements below retain original native-render hashes"
+  },
+  "converter_commit": "530e7fd0c",
+  "renderer_build_receipt_job": 3695,
+  "converter_build_job": 3727,
+  "native_authoring_job": 3712,
+  "native_renders": [
+    {
+      "composition_id": 1,
+      "mp4_job": 3715,
+      "rgba_job": 3716,
+      "mp4_sha256": "6160c9e6d2acc44c24e2643392d61ed050aa9f7fb73dc63fcb3e4f767ee4775a",
+      "original_rgba_movie_sha256": "f0dea2af69b6ec8cc8ddbed97db2c451dd7a5f1a8ff0bda99ff29dce847376b1",
+      "rgba_movie_sha256": "48bf65d53513d85e1db5a3c7f962698b7aafd8342a3d8bc632137e0b7cf10168",
+      "rgba_png_sha256": "3126dd23e22b089d78719260bbd52d3e832460bc84539603a970bd4c65087c19",
+      "alpha_frame_sha256": "0f2f08fce77d1aea3db98147cd2ef12dfccec88edb6e8fa45f9ef3ff035dbd36",
+      "all_30_native_alpha_planes_identical": true,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "reference_path": "tests/references/aep/canvas/transparency__composition_1.mp4",
+      "rgba_movie_path": "crates/aftereffects_file/tests/fixtures/canvas/rgba/composition_1.public.mov",
+      "rgba_png_path": "crates/aftereffects_file/tests/fixtures/canvas/rgba/composition_1.png",
+      "probe": {
+        "width": 160,
+        "height": 90,
+        "pix_fmt": "yuv420p",
+        "color_space": "smpte170m",
+        "color_transfer": "smpte170m",
+        "color_primaries": "smpte170m",
+        "r_frame_rate": "30/1",
+        "duration": "1.000000",
+        "nb_frames": "30"
+      }
+    },
+    {
+      "composition_id": 16,
+      "mp4_job": 3717,
+      "rgba_job": 3718,
+      "mp4_sha256": "0c3cfd98e3702ac36073ec2d2dec65cce0f215bc0d47e3b75735f46ee018c379",
+      "original_rgba_movie_sha256": "f4328654d9992490d7eca5627807b7ce094d62b0b68263de94ea5218329c8b01",
+      "rgba_movie_sha256": "9eedde6f802bb615d70a7af290394d321ea50e2c7e60216673aed9f75c9688e0",
+      "rgba_png_sha256": "c15035a202f37772d942aaa040c5cae1be2281115dcac098a0b9829c05a487ea",
+      "alpha_frame_sha256": "37bbd22ce30a6924626484c03559550c263080b63d5605240a7b1f125ebaec05",
+      "all_30_native_alpha_planes_identical": true,
+      "alpha_values": [
+        255
+      ],
+      "reference_path": "tests/references/aep/canvas/transparency__composition_16.mp4",
+      "rgba_movie_path": "crates/aftereffects_file/tests/fixtures/canvas/rgba/composition_16.public.mov",
+      "rgba_png_path": "crates/aftereffects_file/tests/fixtures/canvas/rgba/composition_16.png",
+      "probe": {
+        "width": 160,
+        "height": 90,
+        "pix_fmt": "yuv420p",
+        "color_space": "smpte170m",
+        "color_transfer": "smpte170m",
+        "color_primaries": "smpte170m",
+        "r_frame_rate": "30/1",
+        "duration": "1.000000",
+        "nb_frames": "30"
+      }
+    },
+    {
+      "composition_id": 32,
+      "mp4_job": 3719,
+      "rgba_job": 3720,
+      "mp4_sha256": "c12af0aad9b12d33cab3a3e0798da5f6227968e5fc906f507d04e3edf51b26e2",
+      "original_rgba_movie_sha256": "b0b5b857f1d5bc8dc4694964bf5beaba5a293cc8e544def361bd27256d0a44aa",
+      "rgba_movie_sha256": "fa84a33903753207c2a0154cf61317d1597883d3ff1526258dfe40c2d24de589",
+      "rgba_png_sha256": "476c98ea60ec4147bbc477d83910c8670e9f3d4bd63e9d50550c535d156aedde",
+      "alpha_frame_sha256": "0f2f08fce77d1aea3db98147cd2ef12dfccec88edb6e8fa45f9ef3ff035dbd36",
+      "all_30_native_alpha_planes_identical": true,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "reference_path": "tests/references/aep/canvas/transparency__composition_32.mp4",
+      "rgba_movie_path": "crates/aftereffects_file/tests/fixtures/canvas/rgba/composition_32.public.mov",
+      "rgba_png_path": "crates/aftereffects_file/tests/fixtures/canvas/rgba/composition_32.png",
+      "probe": {
+        "width": 160,
+        "height": 90,
+        "pix_fmt": "yuv420p",
+        "color_space": "smpte170m",
+        "color_transfer": "smpte170m",
+        "color_primaries": "smpte170m",
+        "r_frame_rate": "30/1",
+        "duration": "1.000000",
+        "nb_frames": "30"
+      }
+    }
+  ],
+  "measurements": [
+    {
+      "composition_id": 1,
+      "frames": 30,
+      "native_rgba_sha256": "f0dea2af69b6ec8cc8ddbed97db2c451dd7a5f1a8ff0bda99ff29dce847376b1",
+      "fx_rgba_sha256": "c50987f6cd99ee10a2bd06eceb878dcd0ee0a719a381e4ceefffbdb3832e8cf7",
+      "persisted_tsrct_sha256": "b7922783c16becd5685f7d421b2d995d17e9e20219c6812910cd0d1821d1d9a3",
+      "alpha_max_delta": 0,
+      "alpha_mean_delta": 0.0,
+      "alpha_different_pixels": 0,
+      "rgb_black_composite_ssim_mean": 0.9999348,
+      "rgb_black_composite_ssim_minimum": 0.999933,
+      "worst_frame": 23,
+      "binary_alpha_verified": true
+    },
+    {
+      "composition_id": 16,
+      "frames": 30,
+      "native_rgba_sha256": "f4328654d9992490d7eca5627807b7ce094d62b0b68263de94ea5218329c8b01",
+      "fx_rgba_sha256": "8c720ee0f2623a60cc55b1b3c85edccf20703cc12cf074d41819c4e2e3f77c4c",
+      "persisted_tsrct_sha256": "638752d06d071ebde83d7c7b66e3c00a2d2ff11c84f4f4c28a31851691a0fa87",
+      "alpha_max_delta": 0,
+      "alpha_mean_delta": 0.0,
+      "alpha_different_pixels": 0,
+      "rgb_black_composite_ssim_mean": 0.9960093,
+      "rgb_black_composite_ssim_minimum": 0.996007,
+      "worst_frame": 27,
+      "binary_alpha_verified": true
+    },
+    {
+      "composition_id": 32,
+      "frames": 30,
+      "native_rgba_sha256": "b0b5b857f1d5bc8dc4694964bf5beaba5a293cc8e544def361bd27256d0a44aa",
+      "fx_rgba_sha256": "c50987f6cd99ee10a2bd06eceb878dcd0ee0a719a381e4ceefffbdb3832e8cf7",
+      "persisted_tsrct_sha256": "09ca4893878b6fefe11674c7f3f50b35a0eb6be42085fe7dfdfe3657abb8b3e4",
+      "alpha_max_delta": 0,
+      "alpha_mean_delta": 0.0,
+      "alpha_different_pixels": 0,
+      "rgb_black_composite_ssim_mean": 0.9999348,
+      "rgb_black_composite_ssim_minimum": 0.999933,
+      "worst_frame": 23,
+      "binary_alpha_verified": true
+    }
+  ],
+  "validation": {
+    "RED": 3723,
+    "GREEN": 3724,
+    "existing_gradient_opt_in": 3726,
+    "check_clippy_fmt": 3733
+  },
+  "comparison_policy": "All30 original30fps frames per target, no reference resampling. Native and FX binary alpha checked; RGB composed over black by discarding RGB only at zero alpha. Alpha exact byte equality; RGB SSIM descriptive, not a broad authoritative gate.",
+  "remaining": "Expression surface coverage incomplete. Prior Path alpha minimum0.985164 remains below0.99; raw RGB association differs (native matted vs FX straight), so raw0.944812 is not a valid fidelity score. Path raster fidelity remains unresolved."
+}

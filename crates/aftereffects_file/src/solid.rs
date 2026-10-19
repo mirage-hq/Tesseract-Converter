@@ -56,8 +56,14 @@ pub(super) fn decode(pin: &Chunk) -> Result<SolidSource, SolidDecodeError> {
         .children()
         .ok_or(SolidDecodeError::Invalid("Pin shape"))?;
     let opti = unique_data(children, *b"opti")?;
-    // py-aep e12a451: SoliOptiChunk is 4+2+8+3*4+256 = 282 bytes.
-    if opti.len() < 282 || &opti[..4] != b"Soli" || u16::from_be_bytes([opti[4], opti[5]]) != 9 {
+    // Revision 8 uses a 64-byte name (90 bytes total); revision 9 uses
+    // 256 bytes (282 total, py-aep e12a451). RGB offsets are unchanged.
+    // Check the revision/size pair, not just a shortened common prefix.
+    if opti.len() < 6 || &opti[..4] != b"Soli" {
+        return Err(SolidDecodeError::Invalid("opti layout"));
+    }
+    let revision = u16::from_be_bytes([opti[4], opti[5]]);
+    if !matches!((revision, opti.len()), (8, 90) | (9, 282..)) {
         return Err(SolidDecodeError::Invalid("opti layout"));
     }
     let color = [14, 18, 22].map(|offset| {
@@ -100,6 +106,48 @@ pub(super) fn decode(pin: &Chunk) -> Result<SolidSource, SolidDecodeError> {
 mod tests {
     use super::{SolidDecodeError, decode};
     use crate::rifx::Chunk;
+
+    #[test]
+    fn decodes_legacy_revision_eight_solid() {
+        // Revision 8 has a 64-byte name, rather than revision 9's 256 bytes.
+        // Both retain the same source RGB, dimensions and pixel-aspect offsets.
+        let mut opti = vec![0; 90];
+        opti[..4].copy_from_slice(b"Soli");
+        opti[4..6].copy_from_slice(&8u16.to_be_bytes());
+        opti[6..10].copy_from_slice(&90u32.to_be_bytes());
+        opti[10..14].copy_from_slice(&1.0f32.to_be_bytes());
+        for (offset, value) in [(14, 0.25f32), (18, 0.5), (22, 0.75)] {
+            opti[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
+        }
+        let mut sspc = vec![0; 286];
+        sspc[22..26].copy_from_slice(b"Soli");
+        sspc[32..34].copy_from_slice(&1920u16.to_be_bytes());
+        sspc[36..38].copy_from_slice(&1080u16.to_be_bytes());
+        sspc[136..140].copy_from_slice(&1u32.to_be_bytes());
+        sspc[140..144].copy_from_slice(&1u32.to_be_bytes());
+        let pin = Chunk::list(
+            *b"Pin ",
+            vec![
+                Chunk::data(*b"opti", opti).unwrap(),
+                Chunk::data(*b"sspc", sspc).unwrap(),
+            ],
+        );
+        let solid = decode(&pin).unwrap();
+        assert_eq!((solid.width, solid.height), (1920, 1080));
+        assert_eq!(solid.pixel_aspect, (1, 1));
+        assert_eq!(solid.color, [0.25, 0.5, 0.75]);
+    }
+
+    #[test]
+    fn rejects_unknown_and_truncated_solid_layouts() {
+        for (revision, length) in [(8u16, 89), (8, 282), (9, 90), (10, 282)] {
+            let mut opti = vec![0; length];
+            opti[..4].copy_from_slice(b"Soli");
+            opti[4..6].copy_from_slice(&revision.to_be_bytes());
+            let pin = Chunk::list(*b"Pin ", vec![Chunk::data(*b"opti", opti).unwrap()]);
+            assert_eq!(decode(&pin), Err(SolidDecodeError::Invalid("opti layout")));
+        }
+    }
 
     #[test]
     fn rejects_short_and_invalid_optional_solid() {

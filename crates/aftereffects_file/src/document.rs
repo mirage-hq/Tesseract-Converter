@@ -136,6 +136,20 @@ mod tests {
     }
 
     #[test]
+    fn color_management_legacy_marker_preserves_native_empty_export() {
+        let parsed =
+            read_empty_composition(include_bytes!("../tests/fixtures/ae26_one_comp.aep")).unwrap();
+        let explicit = to_fx_document(&parsed).unwrap();
+        let mut value = explicit.to_json_value().unwrap();
+        value.as_object_mut().unwrap().remove("colorManagement");
+        let absent = fx_schema::EditableFxCompositionDocument::from_json_value(value).unwrap();
+        assert_eq!(
+            crate::export_document::to_aep(&absent).unwrap().bytes,
+            crate::export_document::to_aep(&explicit).unwrap().bytes
+        );
+    }
+
+    #[test]
     fn ae26_empty_comp_yields_editable_document() {
         let source = include_bytes!("../tests/fixtures/ae26_one_comp.aep");
         let parsed = read_empty_composition(source).unwrap();
@@ -146,6 +160,10 @@ mod tests {
         assert_eq!(document.composition().id(), "main");
         assert_eq!(document.composition().name(), "classic-3d");
         assert!(document.composition().layers().is_empty());
+        assert_eq!(
+            document.to_json_value().unwrap()["colorManagement"],
+            serde_json::json!({"workingSpace":"legacyDisplay"})
+        );
         assert!(document.to_json_vec().is_ok());
     }
 }

@@ -657,7 +657,7 @@ fn require_quicktime_brand(payload: &[u8]) -> Result<(), MetadataError> {
     let major = payload
         .get(0..4)
         .ok_or(MetadataError::Malformed("QuickTime ftyp atom is truncated"))?;
-    let compatible = payload[8..].chunks_exact(4);
+    let compatible = payload[8..].as_chunks::<4>().0.iter();
     if major != b"qt  " && !compatible.into_iter().any(|brand| brand == b"qt  ") {
         return Err(MetadataError::Unsupported(
             "movie bytes do not declare the QuickTime qt brand",

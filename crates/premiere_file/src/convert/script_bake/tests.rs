@@ -1819,6 +1819,7 @@ fn baked_tracks_that_export_discards_are_reported_under_their_owner() {
 #[test]
 fn documents_without_scripts_export_unchanged_without_a_copy() {
     let mut raw = video_fixture();
+    raw["composition"]["layers"][0]["transform"]["scale"] = json!([100.0, 100.0]);
     raw["composition"]["dynamics"] = json!({"entries": [
         {"target": layer_target(1, "opacity"), "animator": {"type": "keyframes", "enabled": true, "keyframes": [
             {"id": "a", "layerTime": 0, "value": {"type": "float", "value": 30.0}, "easing": {"type": "linear"}},

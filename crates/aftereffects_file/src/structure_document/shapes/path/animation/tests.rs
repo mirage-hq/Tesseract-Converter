@@ -50,13 +50,92 @@ fn mixed_one_second_path_import_mask_guide_uses_parent_identity_clock() {
         panic!("editable mask guide")
     };
     assert_eq!(guide.parent, Some(group.id));
-    // Retain existing omission until a separately scoped import proof is supplied.
-    assert!(
-        converted
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.message.contains("mixed"))
+    let entry = converted
+        .document
+        .composition()
+        .dynamics()
+        .entries()
+        .iter()
+        .find(|entry| entry.target == PropertyTarget::layer(guide.id, PropType::ShapePath))
+        .unwrap();
+    let fx_schema::animator::AnimatorData::Keyframes { track, .. } = entry.animator.data() else {
+        panic!("editable mask keys")
+    };
+    assert_eq!(track.keyframes()[0].layer_time().as_millis(), 2250);
+    assert_eq!(track.keyframes()[1].layer_time().as_millis(), 3250);
+}
+
+#[test]
+fn mixed_path_import_keeps_native_keys_and_independent_one_second_progress() {
+    let source =
+        include_bytes!("../../../../../tests/fixtures/path-animation/mixed_one_second.aep");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(source)),
+        "2307e4551a9f13646678834be5c124e0a21439caa1f5c2e224e5922b598b74a1"
     );
+    let projection = include_bytes!(
+        "../../../../../tests/fixtures/path-animation/mixed_one_second_readback.json"
+    );
+    assert_eq!(
+        format!("{:x}", Sha256::digest(projection)),
+        "54135f4e38054c617d2c556ada981d5a53a1cb9ac338ace50fa043e4c98fd4cc"
+    );
+    let oracle: serde_json::Value = serde_json::from_slice(projection).unwrap();
+    let project = read_project(source).unwrap();
+    let converted =
+        crate::structure_document::to_structural_fx_document(&project, Some(1)).unwrap();
+    let entries = converted.document.composition().dynamics().entries();
+    assert!(entries.iter().all(|entry| !entry.animator.is_js_script()));
+    for control in oracle["controls"].as_array().unwrap() {
+        let group = find_group(
+            converted.document.composition().layers(),
+            control["name"].as_str().unwrap(),
+        )
+        .unwrap();
+        let mut ids = Vec::new();
+        shape_ids(&group.layers, &mut ids, false);
+        ids.extend(group.masks.iter().filter_map(|mask| mask.layer));
+        let entry = entries
+            .iter()
+            .find(|entry| {
+                ids.iter()
+                    .any(|id| entry.target == PropertyTarget::layer(*id, PropType::ShapePath))
+            })
+            .unwrap_or_else(|| panic!("missing editable Path: {:?}", converted.diagnostics));
+        let fx_schema::animator::AnimatorData::Keyframes { track, .. } = entry.animator.data()
+        else {
+            panic!("native Path must remain authored editable keys")
+        };
+        let keys = track.keyframes();
+        assert_eq!(keys.len(), 2, "no sampled geometry");
+        // Shape content is source-local; Mask guides use the identity owner clock.
+        let start = if group.masks.is_empty() {
+            control["start"].as_f64().unwrap()
+        } else {
+            0.0
+        };
+        for (key, native) in keys.iter().zip(control["keys"].as_array().unwrap()) {
+            assert_eq!(
+                key.layer_time().as_millis(),
+                ((native["time"].as_f64().unwrap() - start) * 1000.0).round() as i64
+            );
+            let PropertyValue::Path(path) = key.value() else {
+                panic!("not Path")
+            };
+            assert_native_outline(path, native);
+        }
+        for sample in control["samples"].as_array().unwrap() {
+            let time = sample["time"].as_f64().unwrap();
+            let t = (time - 2.25).clamp(0.0, 1.0);
+            let fraction = progress(keys[1].easing(), t);
+            for axis in 0..2 {
+                let from = control["keys"][0]["vertices"][0][axis].as_f64().unwrap();
+                let to = control["keys"][1]["vertices"][0][axis].as_f64().unwrap();
+                let expected = sample["vertices"][0][axis].as_f64().unwrap();
+                assert!((from + (to - from) * fraction - expected).abs() < 0.002);
+            }
+        }
+    }
 }
 
 fn native_run() -> Vec<Chunk> {
@@ -533,6 +612,30 @@ fn native_path_nonzero_speed_matches_independent_adobe_progress() {
         to.in_speed = vec![1.0];
         let converted = easing(&from, &to).unwrap();
         assert!((progress(converted, 0.37) - 0.37).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn mixed_path_easing_is_duration_independent_on_both_sides() {
+    let run = native_run();
+    let value = unique_list(super::super::property_run(&run).unwrap(), *b"om-s").unwrap();
+    let metadata = read_path_metadata(unique_list(value, *b"tdbs").unwrap()).unwrap();
+    for (out_kind, in_kind) in [(1, 2), (2, 1)] {
+        let mut from = metadata.keyframes[0].clone();
+        let mut to = metadata.keyframes[1].clone();
+        from.out_interpolation = out_kind;
+        to.in_interpolation = in_kind;
+        from.out_speed = vec![0.0];
+        to.in_speed = vec![0.0];
+        from.out_influence = vec![90.0];
+        to.in_influence = vec![90.0];
+        from.time_secs = 0.25;
+        to.time_secs = 2.25;
+        let expected = easing(&from, &to).unwrap();
+        for duration in [0.125, 1.0, 1.6, 3.0] {
+            to.time_secs = from.time_secs + duration;
+            assert_eq!(easing(&from, &to).unwrap(), expected);
+        }
     }
 }
 

@@ -74,7 +74,7 @@ macro_rules! define_rect_shape_schema {
             pub roundness: ScalarProperty,
             /// Whether the solid fill is painted (default true).
             pub fill_enabled: bool,
-            /// Fill color (RGBA, channels 0..1).
+            /// Extended-sRGB fill RGB (0..64); alpha is coverage (0..1).
             pub fill_color: ColorProperty,
             /// Optional complete fill-paint override. Legacy rectangles omit this and
             /// derive a solid paint from [`Self::fill_color`]; gradients are stored
@@ -91,7 +91,7 @@ macro_rules! define_rect_shape_schema {
             pub fill_blend_mode: Option<BlendMode>,
             /// Whether the stroke is painted (default false).
             pub stroke_enabled: bool,
-            /// Stroke color (RGBA, channels 0..1). The stroke renders only when
+            /// Extended-sRGB stroke RGB (0..64), alpha 0..1. The stroke renders only when
             /// `strokeEnabled` is true, `strokeWidth` > 0, AND a color is present.
             pub stroke_color: Option<ColorProperty>,
             /// Stroke width in layer pixels (non-negative).

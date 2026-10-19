@@ -47,6 +47,41 @@ pub(crate) fn prproj_xml(path: &Path) -> String {
     xml
 }
 
+/// Picture owners inside the importer's optional sequence isolation boundary.
+pub(crate) fn picture_composition(document: &Value) -> &Value {
+    let composition = &document["composition"];
+    let first = &composition["layers"][0];
+    if first["name"] == "Premiere sequence composite" {
+        assert_eq!(first["type"], "Group");
+        assert_eq!(first["masks"].as_array().unwrap().len(), 1);
+        assert_eq!(first["layers"][0]["name"], "Premiere sequence pictures");
+        &first["layers"][0]
+    } else {
+        composition
+    }
+}
+
+pub(crate) fn picture_composition_mut(document: &mut Value) -> &mut Value {
+    if document["composition"]["layers"][0]["name"] == "Premiere sequence composite" {
+        &mut document["composition"]["layers"][0]["layers"][0]
+    } else {
+        &mut document["composition"]
+    }
+}
+
+pub(crate) fn picture_sequence(project: &PrProjectFile) -> &PrSequence {
+    let mut sequence = project.single_sequence().unwrap();
+    while let Some(nest) = sequence.nest_occurrences().find(|nest| {
+        matches!(
+            nest.sequence.name.as_str(),
+            "Premiere sequence composite" | "Premiere sequence pictures"
+        )
+    }) {
+        sequence = &nest.sequence;
+    }
+    sequence
+}
+
 /// The current Gaussian Blur that export writes for an FX `blurriness`.
 pub(crate) fn exported_blur(
     enabled: bool,
@@ -265,6 +300,7 @@ pub(crate) fn nested_sequence() -> (PrSequence, BTreeMap<MediaId, PrMedia>) {
 pub(crate) fn video_sequence() -> PrSequence {
     use crate::{format::FrameRate, schema::TICKS};
     PrSequence {
+        hdr: None,
         native_frame_ticks: None,
         id: None,
         name: "Main".into(),
@@ -303,6 +339,7 @@ pub(crate) fn video_sequence() -> PrSequence {
             nests: Vec::new(),
         }],
         timeline_end_ticks: 5 * TICKS,
+        adjustment_only_template: false,
     }
 }
 
@@ -395,18 +432,21 @@ pub(crate) fn text_graphic() -> PrGraphic {
         PrText, TICKS,
     };
     PrGraphic {
+        hdr: None,
         id: Some("20".into()),
         start_ticks: TICKS,
         end_ticks: 3 * TICKS,
         in_ticks: crate::format::FrameRate::Fps30.generator_in_ticks(),
         vector_motion: None,
         clip_motion: crate::schema::PrStaticTransform::default(),
+        clip_motion_animations: Vec::new(),
         opacity: 100.0,
         blend_mode: crate::schema::PrBlendMode::Normal,
         animations: Vec::new(),
         opacity_mask: None,
         effect_loss: None,
         objects: vec![PrGraphicObject::Text(PrText {
+            mask: None,
             horizontal_scale: None,
             mask_source: None,
             name: "Title".into(),
@@ -415,6 +455,7 @@ pub(crate) fn text_graphic() -> PrGraphic {
                 font: "OpenSans-Bold".into(),
                 size: 80.0,
                 fill: Some(PrRgb([255, 0, 0])),
+                fill_spans: Vec::new(),
                 stroke: Some(PrTextStroke {
                     color: PrRgb([0, 0, 255]),
                     width: 5.0,
@@ -550,6 +591,7 @@ pub(crate) fn shape_graphic() -> PrGraphic {
                 opacity: 100.0,
             },
             horizontal_scale: None,
+            animations: Vec::new(),
             mask: None,
         })],
         ..text_graphic()

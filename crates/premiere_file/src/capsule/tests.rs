@@ -428,6 +428,18 @@ fn capsule_saved_numeric_forms_keep_native_values_and_reject_nonfinite_overrides
             "72337973781266176",
             SavedGraphicNumeric::ColourRgb([1.0; 3]),
         ),
+        (
+            3,
+            "5",
+            // Synthetic 8.8 RGB channels: fractional low bytes are editable,
+            // not a reason to retain the unrelated template colour.
+            "72077610036271804",
+            SavedGraphicNumeric::ColourRgb([
+                4660.0 / 65280.0,
+                22136.0 / 65280.0,
+                39612.0 / 65280.0,
+            ]),
+        ),
     ] {
         let xml = format!("<PremiereData><VideoComponentParam ObjectID=\"1\"><ParameterControlType>{control_type}</ParameterControlType><IsTimeVarying>false</IsTimeVarying><StartKeyframe>{},{wire},0,0,0,0,0,0</StartKeyframe></VideoComponentParam></PremiereData>", records::STATIC_KEYFRAME_TIME);
         let graph = Graph::parse(&xml).unwrap();
@@ -474,6 +486,39 @@ fn capsule_saved_numeric_forms_keep_native_values_and_reject_nonfinite_overrides
             }
         )
         .is_err());
+    }
+}
+
+#[test]
+fn capsule_saved_colour_keeps_fractional_rgb_independent_of_alpha_and_bounds() {
+    for alpha in [0_u64, 0x0100, 0xff00, 0xffff] {
+        for (channels, expected) in [
+            ([0_u16, 0x7f81, 0xff00], Some([0.0, 32641.0 / 65280.0, 1.0])),
+            ([0xff01, 0, 0], None),
+            ([0, 0xff01, 0], None),
+            ([0, 0, 0xffff], None),
+        ] {
+            let [red, green, blue] = channels.map(u64::from);
+            let packed = (alpha << 48) | (red << 32) | (green << 16) | blue;
+            let xml = format!("<PremiereData><VideoComponentParam ObjectID=\"1\"><ParameterControlType>5</ParameterControlType><StartKeyframe>{},{packed},0,0,0,0,0,0</StartKeyframe></VideoComponentParam></PremiereData>", records::STATIC_KEYFRAME_TIME);
+            let graph = Graph::parse(&xml).unwrap();
+            let record = graph
+                .locate(
+                    &Reference {
+                        id: Some("1".into()),
+                        uid: None,
+                        index: None,
+                    },
+                    "test",
+                )
+                .unwrap();
+            let value = saved_numeric(record.element(), 3, CapsulePoint { x: 1.0, y: 1.0 });
+            if let Some(rgb) = expected {
+                assert_eq!(value.unwrap(), SavedGraphicNumeric::ColourRgb(rgb));
+            } else {
+                assert!(value.unwrap_err().contains("exceeds white"));
+            }
+        }
     }
 }
 

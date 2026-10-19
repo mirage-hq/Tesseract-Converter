@@ -8,11 +8,13 @@ use super::required;
 use crate::{
     error::{ensure, unsupported, Result},
     format::{Graph, Located},
+    omit,
     schema::{
         after_effects::{CODEC, IMPORTER_ID},
         native::{Media, VideoStream},
         ColorSpace, PrAfterEffectsComposition, PrMediaKind,
     },
+    Omission, OmissionScope,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 
@@ -20,6 +22,7 @@ pub(super) fn media_kind(
     graph: &Graph<'_>,
     media: &Located<Media>,
     stream: &Located<VideoStream>,
+    omissions: &mut Vec<Omission>,
 ) -> Result<Option<PrMediaKind>> {
     if media.value.implementation_id.as_deref() != Some(IMPORTER_ID) {
         ensure!(
@@ -76,7 +79,9 @@ pub(super) fn media_kind(
         "{identity}: invalid After Effects GUID byte count"
     );
     let units: Vec<_> = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
         .collect();
     let guid = String::from_utf16(&units).map_err(|error| {
@@ -128,19 +133,30 @@ pub(super) fn media_kind(
                 .is_none_or(|value| value == "false"),
         "{identity}: uncertain After Effects alpha or field interpretation is unsupported"
     );
-    let color: ColorSpace = serde_json::from_str(required(
+    let encoded = required(
         video.original_color_space.as_deref(),
         identity,
         "OriginalColorSpace",
-    )?)
-    .map_err(|error| {
+    )?;
+    let declaration: serde_json::Value = serde_json::from_str(encoded).map_err(|error| {
         unsupported(format!(
             "{identity}: invalid After Effects color profile: {error}"
         ))
     })?;
     ensure!(
-        color == ColorSpace::sequence_sdr(),
-        "{identity}: unsupported After Effects color interpretation"
+        declaration.is_object(),
+        "{identity}: After Effects colour declaration must be an object"
     );
-    Ok(Some(PrMediaKind::AfterEffectsComposition(composition)))
+    let color = serde_json::from_value::<ColorSpace>(declaration).ok();
+    let working_hdr = color.as_ref().and_then(ColorSpace::rgb_hdr_transfer);
+    if color.as_ref() != Some(&ColorSpace::sequence_sdr()) && working_hdr.is_none() {
+        omit(omissions, OmissionScope::Feature, identity,
+            "Unrecognized linked-AEP source colour domain: composition identity/geometry retained with legacy numeric approximation; HDR is not inferred from the sequence. Native project rewrite uses legacy RGB interpretation, not preservation of unknown colour meaning");
+    }
+    Ok(Some(PrMediaKind::AfterEffectsComposition(
+        crate::schema::after_effects::PrAfterEffectsSource {
+            composition,
+            working_hdr,
+        },
+    )))
 }

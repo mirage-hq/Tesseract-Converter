@@ -201,18 +201,209 @@ fn numbered_images_missing_frame_and_late_change_are_io_or_identity_failures() {
 }
 
 #[test]
+fn numbered_images_unit_reverse_keeps_trimmed_frame_choices() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = numbered_project(dir.path());
+    trim_project(&project);
+    add_repeated_placement(&project, true);
+    let output = dir.path().join("reverse.tsrct");
+    crate::tests::support::build_tesseract_file(&project, &output, None).unwrap();
+    let archive = TesseractFile::open(output).unwrap();
+    let value = archive.project_json().unwrap();
+    let groups: Vec<_> = value["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|layer| layer["type"] == "Group")
+        .collect();
+    assert_eq!(groups.len(), 2);
+    for (group, start, reverse) in [(groups[0], 400, false), (groups[1], 1000, true)] {
+        assert_eq!(crate::test_support::layer_range(group)["start"], start);
+        let frames = group["layers"].as_array().unwrap();
+        assert_eq!(frames.len(), 10);
+        for (index, frame) in frames.iter().enumerate() {
+            // Native reverse reflects ascending In/Out about the full media
+            // duration and selects the preceding frame at the exclusive end.
+            let source = if reverse { 57 - index } else { 2 + index };
+            assert_eq!(
+                frame["source"]["assetId"],
+                format!("premiere-video-1-frame-{source}")
+            );
+            assert_eq!(frame["parent"], group["id"]);
+            assert_eq!(crate::test_support::layer_range(frame)["start"], index * 40);
+            assert_eq!(crate::test_support::layer_range(frame)["duration"], 40);
+            let mut bytes = Vec::new();
+            archive
+                .asset(frame["source"]["assetId"].as_str().unwrap())
+                .unwrap()
+                .open()
+                .unwrap()
+                .read_to_end(&mut bytes)
+                .unwrap();
+            assert_eq!(
+                image::load_from_memory(&bytes)
+                    .unwrap()
+                    .to_rgba8()
+                    .get_pixel(0, 0)
+                    .0,
+                [source as u8 + 42, 0, 0, 128]
+            );
+        }
+    }
+}
+
+#[test]
+fn numbered_images_static_forward_speed_retains_source_clock() {
+    let native =
+        roxmltree::Document::parse(include_str!("../../tests/fixtures/cap2-native-retime.xml"))
+            .unwrap();
+    let native_speed: f64 = native
+        .descendants()
+        .find(|node| node.has_tag_name("PlaybackSpeed"))
+        .unwrap()
+        .text()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(native_speed, 0.2);
+    let native_ticks = |tag| {
+        native
+            .descendants()
+            .find(|node| node.has_tag_name(tag))
+            .unwrap()
+            .text()
+            .unwrap()
+            .parse::<i64>()
+            .unwrap()
+    };
+    assert_eq!(
+        native_ticks("End") - native_ticks("Start"),
+        5 * (native_ticks("OutPoint") - native_ticks("InPoint"))
+    );
+    for (speed, source_duration, frame_count) in [(native_speed, 80, 2), (1.3, 520, 13)] {
+        let dir = tempfile::tempdir().unwrap();
+        let project = numbered_project(dir.path());
+        trim_project(&project);
+        let xml = fs::read_to_string(&project)
+            .unwrap()
+            .replace(
+                &format!("<InPoint>{}</InPoint>", ticks(80)),
+                &format!(
+                    "<PlaybackSpeed>{speed}</PlaybackSpeed><InPoint>{}</InPoint>",
+                    ticks(80)
+                ),
+            )
+            .replace(
+                &format!("<OutPoint>{}</OutPoint>", ticks(480)),
+                &format!("<OutPoint>{}</OutPoint>", ticks(80 + source_duration)),
+            );
+        fs::write(&project, xml).unwrap();
+        let output = dir.path().join("retimed.tsrct");
+        crate::tests::support::build_tesseract_file(&project, &output, None).unwrap();
+        let archive = TesseractFile::open(output).unwrap();
+        let value = archive.project_json().unwrap();
+        let group = &value["composition"]["layers"][0];
+        assert_eq!(group["type"], "Group", "speed {speed}: {value}");
+        assert_eq!(
+            group["playback"]["inputRange"],
+            serde_json::json!({"start":400,"duration":400})
+        );
+        assert_eq!(
+            group["playback"]["mapping"],
+            serde_json::json!({
+                "type":"linear",
+                "input":{"start":400,"duration":400},
+                "output":{"start":80,"duration":source_duration}
+            })
+        );
+        let frames = group["layers"].as_array().unwrap();
+        assert_eq!(frames.len(), frame_count);
+        for (index, frame) in frames.iter().enumerate() {
+            assert_eq!(frame["parent"], group["id"]);
+            assert_eq!(
+                crate::test_support::layer_range(frame)["start"],
+                80 + index * 40
+            );
+            assert_eq!(crate::test_support::layer_range(frame)["duration"], 40);
+            assert_eq!(
+                frame["source"]["assetId"],
+                format!("premiere-video-1-frame-{}", index + 2)
+            );
+        }
+        let choices: Vec<_> = (0..10)
+            .map(|sample| {
+                let source_ms = 80 + sample * 40 * source_duration / 400;
+                frames
+                    .iter()
+                    .find(|frame| {
+                        let range = crate::test_support::layer_range(frame);
+                        let start = range["start"].as_i64().unwrap();
+                        source_ms >= start
+                            && source_ms < start + range["duration"].as_i64().unwrap()
+                    })
+                    .unwrap()["source"]["assetId"]
+                    .as_str()
+                    .unwrap()
+            })
+            .collect();
+        let expected = if speed == native_speed {
+            vec![2, 2, 2, 2, 2, 3, 3, 3, 3, 3]
+        } else {
+            vec![2, 3, 4, 5, 7, 8, 9, 11, 12, 13]
+        };
+        assert_eq!(
+            choices,
+            expected
+                .into_iter()
+                .map(|index| format!("premiere-video-1-frame-{index}"))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn numbered_images_reverse_mixed_clock_omits_only_its_occurrence() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = numbered_project(dir.path());
+    trim_project(&project);
+    add_repeated_placement(&project, true);
+    let xml = fs::read_to_string(&project).unwrap().replace(
+        "<Duration>609638400000</Duration><FrameRate>10160640000</FrameRate>",
+        "<Duration>609638400000</Duration><FrameRate>12700800000</FrameRate>",
+    );
+    assert_ne!(xml, fs::read_to_string(&project).unwrap());
+    fs::write(&project, xml).unwrap();
+    let output = dir.path().join("mixed.tsrct");
+    crate::tests::support::build_tesseract_file(&project, &output, None).unwrap();
+    let value = TesseractFile::open(output).unwrap().project_json().unwrap();
+    let groups: Vec<_> = value["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|layer| layer["type"] == "Group")
+        .collect();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(crate::test_support::layer_range(groups[0])["start"], 400);
+}
+
+#[test]
 fn numbered_images_unsupported_playback_omits_only_its_occurrence() {
     let dir = tempfile::tempdir().unwrap();
     let project = numbered_project(dir.path());
     trim_project(&project);
     add_repeated_placement(&project, true);
+    let xml = fs::read_to_string(&project).unwrap().replace(
+        "<PlayBackwards>true</PlayBackwards>",
+        "<PlayBackwards>true</PlayBackwards><PlaybackSpeed>0.5</PlaybackSpeed>",
+    );
+    fs::write(&project, xml).unwrap();
     let (parsed, omissions) = crate::format::PrProjectFile::load_selected(&project, None).unwrap();
     let (sequences, _) = parsed.into_parts();
     assert_eq!(sequences[0].video_items().count(), 1);
     assert!(
-        omissions
-            .iter()
-            .any(|omission| omission.to_string().contains("unit forward playback")),
+        omissions.iter().any(|omission| omission
+            .to_string()
+            .contains("positive forward or unit reverse playback")),
         "{omissions:?}"
     );
     let output = dir.path().join("supported.tsrct");

@@ -125,6 +125,7 @@ fn removed_authored_black_shape_exports_as_a_disabled_replacement() {
         container: recipe.root(),
         boundaries: vec![boundary.token],
         picture: crate::AfterEffectsPicture {
+            working_hdr: None,
             composition_guid: "00000001-0000-0000-0000-000000000000".into(),
             relative_path: "media/ae-0001/compositions.aep".into(),
             dimensions: container.dimensions,

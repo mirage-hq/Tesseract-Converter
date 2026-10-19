@@ -1,7 +1,9 @@
 # Format support
 
 `tsrct-conv` converts standalone editable documents through Tesseract
-(`.tsrct`). It is not a lossless native-project archiver or a video transcoder.
+(`.tsrct`). Project conversion is not lossless native-project archiving or
+video export. The separate `transcode` command prepares individual media files;
+see [media preparation](../media-preparation.md).
 
 | Format | Import to `.tsrct` | Export from `.tsrct` | Details |
 | --- | --- | --- | --- |

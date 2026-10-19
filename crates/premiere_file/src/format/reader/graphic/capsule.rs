@@ -136,12 +136,14 @@ pub(super) fn read(
         transform.scale = transform.scale.map(|scale| scale * fit);
     }
     let graphic = PrGraphic {
+        hdr: None,
         id: Some(item.identity.clone()),
         start_ticks: start,
         end_ticks: end,
         in_ticks: source_in,
         vector_motion: None,
         clip_motion: transform,
+        clip_motion_animations: Vec::new(),
         opacity,
         blend_mode,
         animations: opacity_animation.into_iter().collect(),

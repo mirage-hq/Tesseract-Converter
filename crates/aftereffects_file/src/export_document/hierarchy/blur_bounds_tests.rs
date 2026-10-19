@@ -141,6 +141,177 @@ fn effect_owned_blur_keys_do_not_certify_the_authored_static_radius() {
     assert_eq!(bounds.max, [224.0, 222.0]);
 }
 
+fn glowing_shape() -> Layer {
+    let mut value = serde_json::to_value(shadow(12.0, true).data()).unwrap();
+    value["name"] = serde_json::json!("Glowing moving shape");
+    value["activeRange"] = serde_json::json!({"start":0,"duration":1000});
+    value["motionBlur"] = serde_json::json!(true);
+    value["effects"][0]["effect"] = serde_json::json!({
+        "type":"glow", "glowRadius":40,"glowThreshold":35,"glowIntensity":0.9
+    });
+    Layer::from_data(&serde_json::from_value(value).unwrap()).unwrap()
+}
+
+fn glow_position_keys() -> Vec<fx_schema::animator::AnimationGraphEntry> {
+    vec![serde_json::from_value(serde_json::json!({
+        "target":{"kind":"layer","layerId":12442,"propertyType":"positionY"},
+        "animator":{"type":"keyframes","enabled":true,"keyframes":[
+            {"id":"a","layerTime":0,"value":{"type":"float","value":100},"easing":{"type":"linear"}},
+            {"id":"b","layerTime":1000,"value":{"type":"float","value":0},"easing":{"type":"linear"}}
+        ]},"dependencies":[],"layerRefs":{}
+    })).unwrap()]
+}
+
+#[test]
+fn shape_glow_keeps_logical_working_plane_without_certifying_kernel_reach() {
+    let canvas = fx_schema::Dimensions {
+        width: 640,
+        height: 360,
+    };
+    let layer = glowing_shape();
+    for entries in [vec![], glow_position_keys()] {
+        let dynamics = crate::export_document::AnimationIndex::new(&entries);
+        for bounds in [
+            all_time_layer_bounds(&layer, &dynamics, &Default::default(), canvas),
+            animated_bounds::layer_bounds(&layer, &dynamics, &Default::default(), canvas),
+        ] {
+            let bounds = bounds.unwrap().unwrap();
+            assert_eq!(bounds.min, [0.0; 2]);
+            assert_eq!(bounds.max, [640.0, 360.0]);
+        }
+    }
+    assert!(
+        effect_support::input_reach(
+            layer.data().effects(),
+            &crate::export_document::AnimationIndex::new(&[])
+        )
+        .is_err()
+    );
+    // The working plane must never crop validated offscreen paint.
+    let mut value = serde_json::to_value(layer.data()).unwrap();
+    value["transform"]["position"] = serde_json::json!([800, 8]);
+    let outside = Layer::from_data(&serde_json::from_value(value).unwrap()).unwrap();
+    let bounds = layer_bounds(&outside, &Default::default(), canvas)
+        .unwrap()
+        .unwrap();
+    assert_eq!(bounds.min, [0.0; 2]);
+    assert_eq!(bounds.max, [1016.0, 360.0]);
+}
+
+#[test]
+fn shape_glow_working_plane_preserves_unproved_profile_guards() {
+    let empty = crate::export_document::AnimationIndex::new(&[]);
+    for (field, value) in [
+        ("scale", serde_json::json!([50, 100])),
+        ("rotation", serde_json::json!(20)),
+        ("skew", serde_json::json!(10)),
+        ("position", serde_json::json!([0, 0, 10])),
+    ] {
+        let mut data = serde_json::to_value(glowing_shape().data()).unwrap();
+        data["transform"][field] = value;
+        let LayerData::Shape(shape) = serde_json::from_value(data).unwrap() else {
+            panic!("shape")
+        };
+        assert!(!shape_glow_working_plane(&shape, &empty));
+    }
+    let LayerData::Shape(mut shape) = glowing_shape().data().clone() else {
+        panic!("shape")
+    };
+    let mut keys = glow_position_keys();
+    keys[0].target =
+        fx_schema::PropertyTarget::effect_param(fx_schema::EffectId::new(12441), "glowRadius");
+    assert!(!shape_glow_working_plane(
+        &shape,
+        &crate::export_document::AnimationIndex::new(&keys)
+    ));
+    shape.effects.push(shape.effects[0].clone());
+    assert!(!shape_glow_working_plane(&shape, &empty));
+    let LayerData::Shape(mut shape) = glowing_shape().data().clone() else {
+        panic!("shape")
+    };
+    shape.effects = shadow(12.0, true).data().effects().to_vec();
+    assert!(!shape_glow_working_plane(&shape, &empty));
+}
+
+#[test]
+fn masked_glowing_shape_exports_an_editable_full_plane_source() {
+    use crate::structure::{ItemKind, read_project};
+    let native = read_project(include_bytes!(
+        "../../../tests/fixtures/properties/transform_unseparated.aep"
+    ))
+    .unwrap();
+    let mut value = crate::structure_document::to_structural_fx_document(&native, Some(1))
+        .unwrap()
+        .document
+        .to_json_value()
+        .unwrap();
+    value["duration"] = serde_json::json!(1);
+    value["dimensions"] = serde_json::json!({"width":640,"height":360});
+    value["composition"]["layers"] = serde_json::json!([{
+        "id":42,"type":"Group","name":"Masked glow","blendMode":"normal",
+        "transform":{"position":[0,0],"anchorPoint":[0,0],"scale":[100,100],"rotation":0,"opacity":90},
+        "masks":[{"id":43,"mode":"add","opacity":100,"feather":[0,0],"expansion":0,"inverted":false,
+            "path":{"commands":[{"type":"moveTo","x":-1000,"y":-1000},
+                {"type":"lineTo","x":1000,"y":-1000},
+                {"type":"lineTo","x":1000,"y":180},
+                {"type":"lineTo","x":-1000,"y":180},{"type":"close"}]}}],
+        "layers":[glowing_shape().data()]
+    }]);
+    value["composition"]["layers"][0]["playback"] = super::super::tests::fixture_linear_playback(
+        serde_json::json!({"start":0,"duration":1000}),
+        serde_json::json!({"start":0,"duration":1000}),
+    );
+    value["composition"]["dynamics"] = serde_json::json!({"entries":glow_position_keys()});
+    let document = fx_schema::EditableFxCompositionDocument::from_json_value(value).unwrap();
+    let output = super::super::to_aep(&document).unwrap();
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|d| !d.message.contains("subtree omitted")),
+        "{:?}",
+        output.diagnostics
+    );
+    let native = read_project(&output.bytes).unwrap();
+    let ItemKind::Composition(root) = &native.item(1).unwrap().kind else {
+        panic!("root")
+    };
+    assert_eq!(root.layers.len(), 1);
+    let ItemKind::Composition(source) =
+        &native.item(root.layers[0].record.source_id()).unwrap().kind
+    else {
+        panic!("source")
+    };
+    assert_eq!([source.width, source.height], [640, 360]);
+    assert_eq!(source.layers.len(), 1);
+    assert_eq!(source.layers[0].name.as_ref(), "Glowing moving shape");
+    assert!(source.layers[0].record.flags().effects_active);
+    let (effects, _) =
+        crate::effects::native::read_effects(&source.layers[0].content, [640.0, 360.0]);
+    assert_eq!(effects.len(), 1);
+    assert_eq!(effects[0].match_name, "ADBE Glo2");
+    assert!(effects[0].enabled);
+    for (name, expected) in [
+        ("ADBE Glo2-0002", 89.25),
+        ("ADBE Glo2-0003", 40.0),
+        ("ADBE Glo2-0004", 0.9),
+    ] {
+        let parameter = effects[0]
+            .parameters
+            .iter()
+            .find(|p| p.match_name == name)
+            .unwrap();
+        assert!((parameter.numeric.as_ref().unwrap().values[0] - expected).abs() < 1e-5);
+    }
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .any(|d| d.layer_id == Some(fx_schema::LayerId::new(12442))
+                && d.message.contains("logical composition working plane"))
+    );
+}
+
 #[test]
 fn static_mitered_offset_paths_bounds_match_the_animated_analyzer() {
     let canvas = fx_schema::Dimensions {

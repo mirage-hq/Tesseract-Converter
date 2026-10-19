@@ -1,6 +1,9 @@
 //! Supplementary CPU integration, not Adobe acceptance or native-render proof.
+mod additive_paint;
 mod channel_levels;
 mod channel_matte;
+mod composite_transform;
+mod direct_blending;
 mod empty_root;
 mod export_media;
 mod export_still;
@@ -9,11 +12,13 @@ mod linked_alpha;
 mod lumetri;
 mod lumetri_nested;
 mod lumetri_vignette;
+mod nested_visibility;
 mod offset;
 mod pixel_motion_blur;
 mod rates;
 mod sampled;
 mod still_motion;
+mod video_motion;
 mod white_balance;
 
 use super::*;
@@ -203,6 +208,7 @@ fn request<'a>(input: &'a Path, output: &'a Path, mode: ConversionMode) -> Conve
         media_map: None,
         media_relink: None,
         fps: None,
+        hdr: None,
         mode,
         progress: fx_conv::Progress::default(),
     }
@@ -293,6 +299,74 @@ fn layers(roots: &[Layer]) -> Vec<&Layer> {
         }
     }
     result
+}
+
+#[test]
+fn hybrid_deferred_matte_keeps_interleaved_editable_foreground() {
+    let parent = tempfile::tempdir().unwrap();
+    let input = parent.path().join("source.tsrct");
+    let mut document = document_value();
+    let mut edge = document["composition"]["layers"][1].clone();
+    edge["id"] = json!(11);
+    edge["name"] = json!("Foreground edge");
+    // Select the edge independently before the later matte scope absorbs it.
+    edge["effects"] = document["composition"]["layers"][1]["effects"].clone();
+    edge["effects"][0]["id"] = json!(101);
+    edge["rect"]["size"] = json!([9, 1080]);
+    let mut guide = edge.clone();
+    guide["id"] = json!(10);
+    guide["name"] = json!("Matte provider");
+    guide["effects"] = json!([]);
+    guide["rect"]["size"] = json!([1920, 1080]);
+    let mut consumer = document["composition"]["layers"][2].clone();
+    consumer["trackMatte"] = json!({"layer": 10, "mode": "alpha"});
+    // Glow ensures this native picture loss selects the existing linked route.
+    consumer["effects"] = document["composition"]["layers"][1]["effects"].clone();
+    let backdrop = document["composition"]["layers"][3].clone();
+    document["composition"]["layers"] = json!([edge, guide, consumer, backdrop]);
+    archive(&document, &input);
+    let output = parent.path().join("output");
+    let checked = export(
+        &request(&input, &output, ConversionMode::Check),
+        &Default::default(),
+    )
+    .unwrap();
+    assert!(!output.exists());
+    let written = export(
+        &request(&input, &output, ConversionMode::Write),
+        &Default::default(),
+    )
+    .unwrap();
+    assert_eq!(checked, written);
+    assert!(output.join("media/ae-0001/compositions.aep").is_file());
+    let imported = parent.path().join("imported");
+    import_premiere(&request(
+        &output.join("project.prproj"),
+        &imported,
+        ConversionMode::Write,
+    ))
+    .unwrap();
+    let result = TesseractFile::open(imported.join("project.tsrct")).unwrap();
+    let all = layers(result.project().composition().layers());
+    assert!(all.iter().any(|layer| layer.name() == "Foreground edge"
+        && matches!(layer.data(), LayerData::Rect(rect) if rect.rect.size == [9.0, 1080.0])));
+    let provider = all
+        .iter()
+        .find(|layer| layer.name() == "Matte provider (matte source)")
+        .unwrap();
+    assert!(all.iter().any(|layer| layer.name() == "Matte provider"
+        && matches!(layer.data(), LayerData::Rect(rect) if rect.rect.size == [1920.0, 1080.0])));
+    assert!(all.iter().any(|layer| {
+        let value = serde_json::to_value(layer).unwrap();
+        layer.name() == "Source"
+            && value["trackMatte"]["layer"] == json!(provider.id())
+            && value["trackMatte"]["mode"] == "alpha"
+    }));
+    assert!(!result
+        .project_json()
+        .unwrap()
+        .to_string()
+        .contains("JsScript"));
 }
 
 #[test]
@@ -517,6 +591,15 @@ fn hybrid_picture_backdrop_does_not_absorb_standalone_audio() {
 /// replaces the native picture and says so.
 #[test]
 fn hybrid_prefers_the_linked_scope_when_it_preserves_more_than_the_native_export() {
+    assert_linked_scope_preferred(false);
+}
+
+#[test]
+fn hybrid_unrelated_omission_does_not_become_a_rejected_media_dependency() {
+    assert_linked_scope_preferred(true);
+}
+
+fn assert_linked_scope_preferred(unsupported_hidden_media: bool) {
     let parent = tempfile::tempdir().unwrap();
     let input = parent.path().join("source.tsrct");
     let mut value = document_value();
@@ -535,7 +618,35 @@ fn hybrid_prefers_the_linked_scope_when_it_preserves_more_than_the_native_export
     unnamed["blendMode"] = json!("normal");
     unnamed.as_object_mut().unwrap().remove("effects");
     roots.insert(4, unnamed);
-    archive(&value, &input);
+    if unsupported_hidden_media {
+        let mut hidden = roots
+            .iter()
+            .find(|layer| layer["type"] == "Video")
+            .unwrap()
+            .clone();
+        hidden["id"] = json!(90);
+        hidden["isHidden"] = json!(true);
+        hidden["source"]["assetId"] = json!("unsupported");
+        hidden["sourceIntrinsicDuration"] = json!(2000);
+        hidden["source"]["sourceRect"] = json!({"x":0,"y":0,"width":320,"height":180});
+        roots.push(hidden);
+        TesseractFileBuilder::from_project_json(&serde_json::to_vec(&value).unwrap())
+            .unwrap()
+            .add_asset(
+                "premiere-video-1",
+                fixture("video-30fps.mp4"),
+                AssetKind::Video,
+            )
+            .unwrap()
+            .add_asset("music", fixture("audio-mono.wav"), AssetKind::Audio)
+            .unwrap()
+            .add_asset("unsupported", fixture(NATIVE_ONLY_VIDEO), AssetKind::Video)
+            .unwrap()
+            .write(&input)
+            .unwrap();
+    } else {
+        archive(&value, &input);
+    }
     let output = parent.path().join("output");
     let checked = export(
         &request(&input, &output, ConversionMode::Check),
@@ -569,7 +680,14 @@ fn hybrid_prefers_the_linked_scope_when_it_preserves_more_than_the_native_export
         .iter()
         .find(|d| d.code == "HYBRID-LINKED-PREFERRED")
         .expect("the linked scope is preferred");
-    assert_eq!(preferred.context.as_deref(), Some("roots 1..=6"));
+    assert_eq!(
+        preferred.context.as_deref(),
+        Some(if unsupported_hidden_media {
+            "roots 1..=7"
+        } else {
+            "roots 1..=6"
+        })
+    );
     assert!(
         preferred
             .message
@@ -1051,6 +1169,100 @@ fn hybrid_ramp_only_picture_retains_native_endpoints_when_ae_rejects_media() {
 }
 
 #[test]
+fn hybrid_mixed_speed_boolean_blending_retains_slow_interval_synthesis() {
+    let parent = tempfile::tempdir().unwrap();
+    let input = parent.path().join("source.tsrct");
+    let mut value = document_value();
+    value["composition"]["layers"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|layer| layer["id"] == 1);
+    let video = &mut value["composition"]["layers"][0];
+    video["sourceIntrinsicDuration"] = json!(8000);
+    video["sourceRange"] = json!({"start":0,"duration":8000});
+    video["source"]
+        .as_object_mut()
+        .unwrap()
+        .remove("sourceRect");
+    video["frameBlending"] = json!(true);
+    video["playback"] = json!({
+        "type":"windowed", "inputRange":{"start":0,"duration":1000}, "inputOffsetMs":0,
+        "mapping":{"type":"timeRemap", "property":{
+            "before":"inactive", "after":"inactive", "keyframes":[
+                {"id":"blend-in","time":0,"value":0,"easing":{"type":"linear"}},
+                {"id":"blend-middle","time":500,"value":500,"easing":{"type":"linear"}},
+                {"id":"blend-out","time":1000,"value":750,"easing":{"type":"linear"}}
+            ]
+        }}
+    });
+    let media = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../crates/aftereffects_file/tests/fixtures/media_native_panel/media/movie.mov");
+    TesseractFileBuilder::from_project_json(&serde_json::to_vec(&value).unwrap())
+        .unwrap()
+        .add_asset("premiere-video-1", &media, AssetKind::Video)
+        .unwrap()
+        .write(&input)
+        .unwrap();
+    let original = fs::read(&input).unwrap();
+    let output = parent.path().join("output");
+    let report = export(
+        &request(&input, &output, ConversionMode::Write),
+        &Default::default(),
+    )
+    .unwrap();
+    assert!(report
+        .diagnostics
+        .iter()
+        .any(|item| item.code == "HYBRID-FRAME-BLENDING"));
+    let linked = aftereffects_file::structure::read_project(
+        &fs::read(output.join("media/ae-0001/compositions.aep")).unwrap(),
+    )
+    .unwrap();
+    let videos = linked
+        .items
+        .iter()
+        .filter_map(|item| {
+            let aftereffects_file::structure::ItemKind::Composition(comp) = &item.kind else {
+                return None;
+            };
+            Some(comp.layers.iter().filter(|layer| {
+                !numeric_properties(&layer.content, "ADBE Time Remapping").is_empty()
+            }))
+        })
+        .flatten()
+        .collect::<Vec<_>>();
+    assert_eq!(videos.len(), 2, "separate native sampling owners");
+    let mut windows = videos
+        .iter()
+        .map(|layer| {
+            (
+                layer.record.start_time().unwrap() + layer.record.in_point().unwrap(),
+                layer.record.start_time().unwrap() + layer.record.out_point().unwrap(),
+                layer.record.flags().frame_blending,
+            )
+        })
+        .collect::<Vec<_>>();
+    windows.sort_by(|a, b| a.0.total_cmp(&b.0));
+    assert_eq!(windows, vec![(0.0, 0.5, false), (0.5, 1.0, true)]);
+    for video in videos {
+        let remap = numeric_properties(&video.content, "ADBE Time Remapping");
+        assert_eq!(remap.len(), 1);
+        let keys = &remap[0].keyframes;
+        assert_eq!(keys.len(), 3);
+        for (key, (time, value)) in keys.iter().zip([(0.0, 0.0), (0.5, 0.5), (1.0, 0.75)]) {
+            assert!((video.record.start_time().unwrap() + key.time_secs - time).abs() < 1e-9);
+            assert_eq!(key.values, vec![value]);
+        }
+    }
+    let oracle = aftereffects_file::structure::read_project(include_bytes!(
+        "../../../../crates/aftereffects_file/tests/fixtures/pr4442_native/sources/media_frame_mix.aep"
+    )).unwrap();
+    assert!(oracle.items.iter().any(|item| matches!(&item.kind,
+        aftereffects_file::structure::ItemKind::Composition(comp) if comp.layers.iter().any(|layer| layer.record.flags().frame_blending))));
+    assert_eq!(fs::read(input).unwrap(), original);
+}
+
+#[test]
 fn hybrid_supported_ae_ramp_replaces_native_approximation_with_original_curve() {
     let parent = tempfile::tempdir().unwrap();
     let input = parent.path().join("source.tsrct");
@@ -1489,7 +1701,10 @@ fn hybrid_middle_scopes_with_equal_guids_import_their_own_edited_files() {
             edited.project(),
             1..2,
             parent.path(),
-            &aftereffects_file::AfterEffectsExportOptions { fps: 30.0 },
+            &aftereffects_file::AfterEffectsExportOptions {
+                fps: 30.0,
+                ..Default::default()
+            },
         )
         .unwrap();
     fs::copy(
@@ -1523,20 +1738,48 @@ fn hybrid_middle_scopes_with_equal_guids_import_their_own_edited_files() {
 }
 
 #[test]
-fn hybrid_interleaved_dependencies_leave_no_output() {
+fn hybrid_interleaved_dependencies_keep_the_editable_interval() {
     let parent = tempfile::tempdir().unwrap();
     let mut value = document_value();
     let output = parent.path().join("output");
-    // Parent references cannot jump across an unrelated retained video scope.
+    // Interval closure includes the video between a foreground and its parent.
+    // AE still diagnoses the unsupported non-containment transform parent.
     value["composition"]["layers"][1]["parent"] = json!(2);
     let related = parent.path().join("related.tsrct");
     archive(&value, &related);
-    assert!(export(
+    let report = export(
         &request(&related, &output, ConversionMode::Write),
-        &Default::default()
+        &Default::default(),
     )
-    .is_err());
-    assert!(!output.exists());
+    .unwrap();
+    assert!(output.join("media/ae-0001/compositions.aep").is_file());
+    let imported = parent.path().join("imported");
+    import_premiere(&request(
+        &output.join("project.prproj"),
+        &imported,
+        ConversionMode::Write,
+    ))
+    .unwrap();
+    let result = TesseractFile::open(imported.join("project.tsrct")).unwrap();
+    let all = layers(result.project().composition().layers());
+    assert!(report.diagnostics.iter().any(|diagnostic| diagnostic
+        .message
+        .contains("Non-containment transform parent is not yet exportable")));
+    assert!(all.iter().any(
+        |layer| matches!(layer.data(), LayerData::Rect(rect) if rect.rect.size == [1920.0, 1080.0])
+    ));
+    assert_eq!(
+        all.iter()
+            .filter(|layer| matches!(layer.data(), LayerData::Video(_)))
+            .count(),
+        1
+    );
+    assert_eq!(
+        all.iter()
+            .filter(|layer| matches!(layer.data(), LayerData::Audio(_)))
+            .count(),
+        1
+    );
     assert!(fs::read_dir(parent.path()).unwrap().all(|entry| !entry
         .unwrap()
         .file_name()

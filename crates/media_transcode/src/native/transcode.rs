@@ -1306,6 +1306,84 @@ mod tests {
         assert_eq!(packets(&target), source_packets);
     }
 
+    // Shift only packet clocks of the public six-frame fixture, never private media.
+    #[cfg(target_os = "macos")]
+    fn shifted_video(path: &Path, origin: i64, drift: i64) {
+        init().unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../premiere_file/tests/fixtures/video-24fps.mp4");
+        let mut input = open_local_input(&fixture).unwrap();
+        let source = input.streams().best(media::Type::Video).unwrap();
+        let input_time_base = source.time_base();
+        let time_base = Rational(1, 12_288);
+        let index = source.index();
+        let mut output = format::output_as(path, "mov").unwrap();
+        let mut stream = output.add_stream(encoder::find(codec::Id::None)).unwrap();
+        stream.set_parameters(source.parameters());
+        stream.set_time_base(time_base);
+        let mut options = Dictionary::new();
+        options.set("use_editlist", "1");
+        options.set("movie_timescale", &time_base.1.to_string());
+        options.set("video_track_timescale", &time_base.1.to_string());
+        output.write_header_with(options).unwrap();
+        assert_eq!(output.stream(0).unwrap().time_base(), time_base);
+        for (ordinal, (_, mut packet)) in input.packets()
+            .filter(|(stream, _)| stream.index() == index).enumerate()
+        {
+            packet.rescale_ts(input_time_base, time_base);
+            let shift = origin + if ordinal == 3 { drift } else { 0 };
+            packet.set_pts(packet.pts().map(|pts| pts + shift));
+            packet.set_dts(packet.dts().map(|dts| dts + shift));
+            packet.set_stream(0);
+            packet.write_interleaved(&mut output).unwrap();
+        }
+        output.write_trailer().unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn ae_preparation_rebases_subframe_origin_but_rejects_drift_and_long_delays() {
+        let directory = tempfile::tempdir().unwrap();
+        let cancelled = AtomicBool::new(false);
+        for (name, origin, drift, supported) in [
+            ("offset", 300, 0, true),
+            ("drift", 300, 1, false),
+            ("delay", 12_288, 0, false),
+        ] {
+            let source = directory.path().join(format!("{name}.mov"));
+            let target = directory.path().join(format!("{name}-prepared.mov"));
+            shifted_video(&source, origin, drift);
+            // Standalone preparation still refuses nonzero starts.
+            assert!(probe(&source, &cancelled, false).is_err());
+            let result = crate::run_for_after_effects(
+                crate::TranscodeRequest {
+                    input: &source,
+                    output: &target,
+                    backend: crate::Backend::Library,
+                    cancelled: &cancelled,
+                },
+                &mut |_| {},
+            );
+            if !supported {
+                assert!(matches!(result, Err(crate::TranscodeError::Policy(_))), "{result:?}");
+                assert!(!target.exists());
+                continue;
+            }
+            let result = result.unwrap();
+            assert_eq!(result.operation, crate::Operation::Transcode);
+            let before = result.source.video.unwrap();
+            let after = result.media.video.unwrap();
+            assert_eq!(before.start_seconds, 300.0 / 12_288.0);
+            assert_eq!(before.frames, 6);
+            assert_eq!(after.frames, before.frames);
+            assert_eq!(after.start_seconds, 0.0);
+            assert_eq!(after.duration_seconds, before.duration_seconds);
+            assert_eq!(after.frame_rate, before.frame_rate);
+            assert!(direct_video_clock(&target, &after, &cancelled).unwrap());
+            assert!(result.warnings.iter().any(|warning| warning.contains("presentation origin")));
+        }
+    }
+
     #[test]
     fn h264_profile_is_accepted_by_generic_codec_options() {
         init().unwrap();
@@ -1392,7 +1470,7 @@ mod tests {
             let mut frame = frame::Video::new(format::Pixel::YUVA444P10LE, 16, 16);
             frame.set_pts(Some(index));
             for plane in 0..4 {
-                for (offset, bytes) in frame.data_mut(plane).chunks_exact_mut(2).enumerate() {
+                for (offset, bytes) in frame.data_mut(plane).as_chunks_mut::<2>().0.iter_mut().enumerate() {
                     let value = if plane == 3 {
                         ((offset % 256) * 4) as u16
                     } else {
@@ -1695,7 +1773,7 @@ mod tests {
             let mut source = frame::Video::new(format::Pixel::RGB24, 16, 16);
             let stride = source.stride(0);
             for row in source.data_mut(0).chunks_exact_mut(stride).take(16) {
-                for pixel in row[..48].chunks_exact_mut(3) {
+                for pixel in row[..48].as_chunks_mut::<3>().0 {
                     pixel.copy_from_slice(&rgb);
                 }
             }
@@ -1735,9 +1813,9 @@ mod tests {
             }
             let mut destination = frame::Video::new(format::Pixel::YUVA444P10LE, 256, 1);
             copy_eight_bit_alpha(&source, &mut destination).unwrap();
-            for (value, bytes) in destination.data(3)[..512].chunks_exact(2).enumerate() {
+            for (value, bytes) in destination.data(3)[..512].as_chunks::<2>().0.iter().enumerate() {
                 assert_eq!(
-                    u16::from_le_bytes(bytes.try_into().unwrap()) >> 2,
+                    u16::from_le_bytes(*bytes) >> 2,
                     value as u16
                 );
             }
