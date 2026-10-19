@@ -25,6 +25,7 @@ jobs:
           python-version: '3.12'
       - name: Release archive and CI policy unit tests
         run: |
+          python3 -m pip install pytest==8.4.2
           make test-release-archive
           python3 scripts/test-conversion-ci.py
       - name: Check public source boundaries and crates.io publication policy
