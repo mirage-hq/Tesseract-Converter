@@ -25,6 +25,60 @@ pub(crate) const COLOR_MATTE_INTRINSIC_TICKS: i64 = 12 * 60 * 60 * TICKS;
 /// Default project-item name; user renames are not round-tripped.
 pub(crate) const COLOR_MATTE_NAME: &str = "Color Matte";
 
+/// A sharp source Crop can share a solid's straight affine motion before
+/// neutral intrinsic Motion; the opposite effect order needs separate owners.
+pub(crate) fn cropped_transform(
+    clip: &super::PrVideoOccurrence,
+) -> Option<(&super::PrEffect, &super::PrTransform)> {
+    use super::{PrEffectParamKeys, PrEffectParams, PrStaticTransform, TRANSFORM_POSITION};
+
+    let [effect] = clip.effects.as_slice() else {
+        return None;
+    };
+    let PrEffectParams::Transform(transform) = &effect.params else {
+        return None;
+    };
+    if clip.crop.is_default()
+        || clip.crop.edge_feather != 0.0
+        || clip.effects_above_mask != 0
+        || clip.active_transforms != 1
+        || clip.transform != PrStaticTransform::default()
+        || !clip.animations.is_empty()
+        || clip.opacity != 100.0
+        || clip.opacity_mask.is_some()
+        || clip.track_matte.is_some()
+        || clip.linear_wipe.is_some()
+        || clip.stroke.is_some()
+        || clip.playback_rate != 1.0
+        || clip.time_remap.is_some()
+        || clip
+            .source_effects
+            .as_ref()
+            .is_some_and(|source| !source.effects.is_empty() || source.active_transforms != 0)
+        || !effect.enabled
+        || effect.mask.is_some()
+        || !transform.uniform_scale
+        || transform.scale_height <= 0.0
+        || transform.rotation != 0.0
+        || transform.skew != 0.0
+        || transform.skew_axis != 0.0
+        || transform.opacity != 100.0
+        || transform.shutter_angle != 0.0
+        || transform.bicubic_sampling
+    {
+        return None;
+    }
+    effect
+        .animations
+        .iter()
+        .all(|animation| {
+            animation.param.id == TRANSFORM_POSITION.id
+                && matches!(&animation.keys, PrEffectParamKeys::Point(keys)
+                if super::spatial::curved_segment(keys).is_none())
+        })
+        .then_some((effect, transform))
+}
+
 const PREFS_LEN: usize = 8;
 const PREFS_VERSION: [u8; 4] = 1u32.to_le_bytes();
 

@@ -15,6 +15,68 @@ fn interior() -> Vec<std::ops::Range<i64>> {
 }
 
 #[test]
+fn presentation_origin_last_sample_native_endpoint_keeps_editable_clock() {
+    let bytes = sample_grid_bytes(&[0, 1000, 2000, 3000, 4000, 5000, 6000], 30000);
+    let bytes = with_composition_offsets(&bytes, &[1000; 6]);
+    let step = FrameRate::Fps30.ticks_per_frame();
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("media")).unwrap();
+    fs::write(root.path().join("media/source.mp4"), &bytes).unwrap();
+    let xml = include_str!("../../../tests/fixtures/one-clip.xml")
+        .replace("2540160000000", &(5 * step).to_string())
+        .replace("1270080000000", &(4 * step).to_string());
+    let input = root.path().join("source.prproj");
+    crate::test_support::write_prproj(&input, &xml);
+    let output = root.path().join("import");
+    let notes = crate::premiere_to_tesseract(&input, &output, Some("sequence-1"), false).unwrap();
+    assert!(
+        notes.iter().any(|note| note.reason.contains("34 ms")),
+        "{notes:?}"
+    );
+    let archive = tesseract_file::TesseractFile::open(output.join("project.tsrct")).unwrap();
+    let document = archive.project_json().unwrap();
+    let video = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Video")
+        .unwrap();
+    assert_eq!(video["sourceIntrinsicDuration"], 167);
+    assert_eq!(
+        video["sourceRange"],
+        serde_json::json!({"start":34,"duration":133})
+    );
+    assert_eq!(
+        crate::test_support::layer_range(video),
+        &serde_json::json!({"start":0,"duration":133})
+    );
+    assert_eq!(video["playback"]["mapping"]["output"], video["sourceRange"]);
+    let asset = video["source"]["assetId"].as_str().unwrap();
+    assert_eq!(
+        archive
+            .asset(asset)
+            .unwrap()
+            .read_verified_bytes(bytes.len() as u64)
+            .unwrap(),
+        bytes
+    );
+    let file = inspect_selected(&bytes, interior(), false).unwrap();
+    let mut source = crate::tests::support::video_media()
+        .into_values()
+        .next()
+        .unwrap()
+        .video
+        .unwrap();
+    source.intrinsic_ticks = 5 * step;
+    assert!(file.validate_source_for_use(&source, None).is_err());
+    let audio = crate::media::VideoUse {
+        ranges: interior(),
+        uses_audio: true,
+    };
+    assert!(file.validate_source_for_use(&source, Some(&audio)).is_err());
+}
+
+#[test]
 fn presentation_origin_selected_zero_edit_retains_all_packet_identities() {
     let bytes = origin_bytes();
     let file = inspect_selected(&bytes, interior(), false).unwrap();

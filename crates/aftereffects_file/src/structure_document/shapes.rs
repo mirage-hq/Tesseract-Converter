@@ -13,6 +13,7 @@ mod budget;
 pub(super) use budget::OutputBudget;
 mod direction;
 mod dynamic_path;
+mod ellipse_scale;
 pub(super) use dynamic_path::composition_origin_curve;
 mod lowering;
 mod modifiers;
@@ -111,7 +112,15 @@ pub(super) struct ShapeImport {
     pub(super) mapped_expressions: Vec<PropertyIdentity>,
 }
 
+#[derive(Clone)]
+enum EvaluatedShape {
+    Numeric(EvaluatedProperty),
+    Path(crate::expression_samples::EvaluatedPath),
+    Unsupported(PropertyIdentity),
+}
+
 struct Collector<'a> {
+    source_items: Option<&'a HashMap<u32, &'a ProjectItem>>,
     includes_occurrence_pipeline: bool,
     next_id: &'a mut u64,
     animation_budget: &'a mut AnimationBudget,
@@ -119,7 +128,7 @@ struct Collector<'a> {
     warnings: Vec<String>,
     /// Set only after a caption output with its paint-Group fade commits.
     frame_fade_lowered: bool,
-    evaluated_shapes: HashMap<usize, EvaluatedProperty>,
+    evaluated_shapes: HashMap<usize, EvaluatedShape>,
     /// Lowered expression identities with every FX target they must keep.
     mapped_expressions: Vec<(PropertyIdentity, Vec<(LayerId, PropType)>)>,
 }
@@ -224,7 +233,7 @@ fn import_with_control_context<'items>(
     evaluations: Option<(u32, &ExpressionSamples)>,
 ) -> Result<ShapeImport, serde_json::Error> {
     let mut clock_warnings = Vec::new();
-    let evaluated_shapes = evaluations
+    let mut evaluated_shapes: HashMap<usize, EvaluatedShape> = evaluations
         .into_iter()
         .flat_map(|(comp_id, samples)| {
             samples.properties().iter().filter(move |sample| {
@@ -242,7 +251,7 @@ fn import_with_control_context<'items>(
                 layer,
                 NumericAnimationClock::source_local(),
             ) {
-                Ok(rebased) => Some((run.as_ptr() as usize, rebased)),
+                Ok(rebased) => Some((run.as_ptr() as usize, EvaluatedShape::Numeric(rebased))),
                 Err(error) => {
                     clock_warnings.push(format!(
                         "{:?}: {error}; expression samples not lowered",
@@ -253,7 +262,33 @@ fn import_with_control_context<'items>(
             }
         })
         .collect();
+    if let Some((comp_id, samples)) = evaluations {
+        for sample in &samples.paths {
+            if sample.composition_id != comp_id || sample.layer_id != layer.record.id() {
+                continue;
+            }
+            if let PropertyIdentity::Shape { path } = &sample.property
+                && let Some(run) = resolve_shape_run(layer, path)
+            {
+                evaluated_shapes
+                    .insert(run.as_ptr() as usize, EvaluatedShape::Path(sample.clone()));
+            }
+        }
+        for error in samples.errors() {
+            if error.composition_id() != comp_id || error.layer_id() != layer.record.id() {
+                continue;
+            }
+            if let PropertyIdentity::Shape { path } = error.property()
+                && let Some(run) = resolve_shape_run(layer, path)
+            {
+                evaluated_shapes
+                    .entry(run.as_ptr() as usize)
+                    .or_insert_with(|| EvaluatedShape::Unsupported(error.property().clone()));
+            }
+        }
+    }
     let mut collector = Collector {
+        source_items,
         includes_occurrence_pipeline,
         next_id,
         animation_budget,
@@ -579,7 +614,7 @@ impl Collector<'_> {
             .find(|(leaf_name, _)| *leaf_name == name)
             .and_then(|(_, run)| self.evaluated_shapes.get(&(run.as_ptr() as usize)))
             .cloned();
-        let Some(samples) = samples else {
+        let Some(EvaluatedShape::Numeric(samples)) = samples else {
             self.add_numeric(name, numeric, targets);
             return;
         };
@@ -628,6 +663,24 @@ impl Collector<'_> {
             {
                 match result {
                     Ok((entries, warnings)) => {
+                        if let Ok(leaf) = path::property_run(run)
+                            && let Some(record) =
+                                self.evaluated_shapes.get(&(leaf.as_ptr() as usize))
+                        {
+                            let identity = match record {
+                                EvaluatedShape::Path(sample) => Some(sample.property.clone()),
+                                EvaluatedShape::Unsupported(identity) => Some(identity.clone()),
+                                EvaluatedShape::Numeric(_) => None,
+                            };
+                            if let Some(identity) = identity {
+                                let targets = entries
+                                    .iter()
+                                    .filter_map(|entry| entry.target.as_property())
+                                    .map(|target| (target.layer_id(), target.property_type()))
+                                    .collect();
+                                self.mapped_expressions.push((identity, targets));
+                            }
+                        }
                         self.animations.extend(entries);
                         self.warnings.extend(warnings);
                         return;
@@ -635,6 +688,31 @@ impl Collector<'_> {
                     Err(error) => self.warnings.push(format!(
                         "Path expression not lowered ({error}); initial editable outline retained"
                     )),
+                }
+            }
+            if let Some((owner, _)) = control_context
+                && let Ok(leaf) = path::property_run(run)
+                && let Some(EvaluatedShape::Path(sample)) =
+                    self.evaluated_shapes.get(&(leaf.as_ptr() as usize))
+            {
+                let (entries, warnings) = path::expression_entries(
+                    sample,
+                    owner,
+                    NumericAnimationClock::source_local(),
+                    PropertyTarget::layer(target_id, PropType::ShapePath),
+                    self.animation_budget,
+                );
+                let successful = !entries.is_empty();
+                if successful {
+                    self.mapped_expressions.push((
+                        sample.property.clone(),
+                        vec![(target_id, PropType::ShapePath)],
+                    ));
+                }
+                self.animations.extend(entries);
+                self.warnings.extend(warnings);
+                if successful {
+                    return;
                 }
             }
             let (entries, warnings) = path::entries(
@@ -884,18 +962,19 @@ impl Collector<'_> {
             return Ok(None);
         }
         let resolved = (|| {
-            let (_, composition) =
+            let (owner, composition) =
                 control_context.ok_or(PropertyError::Layout("Color Control scope missing"))?;
             let property = super::control_links::unique_run(&leaves, property_name)?;
             super::control_links::lower_static_color_control(
                 unique_list(property, *b"tdbs")?,
                 composition,
-                None,
+                self.source_items,
+                Some(owner),
             )
         })();
         match resolved {
             Ok(color) => {
-                self.warnings.push(format!("{property_name}: complete static sibling Color Control alias copied into editable paint; live controller linkage is lost"));
+                self.warnings.push(format!("{property_name}: complete static Color Control alias copied into editable paint; live controller linkage is lost"));
                 Ok(Some(color))
             }
             Err(error) => {
@@ -1169,7 +1248,11 @@ impl Collector<'_> {
         let Some(numeric) = numeric_leaf(leaves, name, &mut self.warnings) else {
             return;
         };
-        if numeric.keyframes.is_empty() {
+        let evaluated = leaves
+            .iter()
+            .find(|(leaf_name, _)| *leaf_name == name)
+            .and_then(|(_, run)| self.evaluated_shapes.get(&(run.as_ptr() as usize)));
+        if numeric.keyframes.is_empty() && !matches!(evaluated, Some(EvaluatedShape::Numeric(_))) {
             return;
         }
         if !supported {
@@ -1179,7 +1262,8 @@ impl Collector<'_> {
             return;
         }
         for target_id in targets {
-            self.add_numeric(
+            self.add_leaf_numeric(
+                leaves,
                 name,
                 &numeric,
                 &[NumericAnimationTarget::color(
@@ -2053,6 +2137,7 @@ mod tests {
         let mut next_id = u64::MAX - 1;
         let mut budget = AnimationBudget::default();
         let mut collector = Collector {
+            source_items: None,
             includes_occurrence_pipeline: true,
             next_id: &mut next_id,
             animation_budget: &mut budget,
@@ -2129,6 +2214,7 @@ mod tests {
         let mut next_id = 10;
         let mut budget = AnimationBudget::default();
         let mut collector = Collector {
+            source_items: None,
             includes_occurrence_pipeline: true,
             next_id: &mut next_id,
             animation_budget: &mut budget,
@@ -2362,6 +2448,179 @@ mod tests {
     }
 
     #[test]
+    fn static_local_color_control_alias_keeps_editable_rect_fill() {
+        for expression in [
+            "effect(\"Background\")(\"Color\")",
+            "thisLayer.effect(\"Background\")(1)",
+        ] {
+            let (composition, mut owner) = color_alias_probe(expression, "");
+            owner.content[0].children_mut().unwrap().extend(
+                composition.layers[0].content[0]
+                    .children()
+                    .unwrap()
+                    .iter()
+                    .cloned(),
+            );
+            let imported = import_owner(&owner, &composition);
+            assert_eq!(
+                imported_rect(&imported.layers).unwrap().rect.fill_color,
+                [0.0, 0.0, 0.0, 1.0],
+                "{expression} must use the owner's controller, not cached red paint"
+            );
+            assert!(imported.animations.is_empty());
+            assert!(
+                imported
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.contains("live controller linkage is lost"))
+            );
+            assert!(
+                !imported
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.contains("Color Control consumer missing"))
+            );
+        }
+    }
+
+    #[test]
+    fn local_color_control_alias_chain_keeps_editable_shape_paint() {
+        for expression in [
+            "effect(\"Background\")(\"Color\")",
+            "thisLayer.effect(\"Background\")(1)",
+        ] {
+            for source_expression in [
+                "",
+                "thisComp.layer(\"Color Controller\").effect(\"Background\")(\"Color\")",
+            ] {
+                let (composition, mut owner) = color_alias_probe(expression, "");
+                let mut local_controls = composition.layers[0].content.clone();
+                if !source_expression.is_empty() {
+                    assert!(replace_property(
+                        &mut local_controls,
+                        "ADBE Color Control-0001",
+                        test_color([255.0, 255.0, 0.0, 0.0], source_expression),
+                    ));
+                }
+                owner.content[0]
+                    .children_mut()
+                    .unwrap()
+                    .extend(local_controls[0].children().unwrap().iter().cloned());
+                let imported = import_owner(&owner, &composition);
+                assert_eq!(
+                    imported_rect(&imported.layers).unwrap().rect.fill_color,
+                    [0.0, 0.0, 0.0, 1.0],
+                    "{expression} via {source_expression:?} must resolve the owner control",
+                );
+                assert!(imported.animations.is_empty());
+                assert!(!imported.warnings.iter().any(|warning| {
+                    warning.contains("unsupported expression retained at authored color")
+                }));
+            }
+        }
+    }
+
+    #[test]
+    fn local_color_control_alias_rejects_cycles_and_programs() {
+        for source_expression in ["effect(\"Background\")(\"Color\")", "[0, 0, 0, 1]"] {
+            let (composition, mut owner) = color_alias_probe("effect(\"Background\")(1)", "");
+            let mut local_controls = composition.layers[0].content.clone();
+            assert!(replace_property(
+                &mut local_controls,
+                "ADBE Color Control-0001",
+                test_color([255.0, 255.0, 0.0, 0.0], source_expression),
+            ));
+            owner.content[0]
+                .children_mut()
+                .unwrap()
+                .extend(local_controls[0].children().unwrap().iter().cloned());
+            let imported = import_owner(&owner, &composition);
+            assert_eq!(
+                imported_rect(&imported.layers).unwrap().rect.fill_color,
+                [1.0, 0.0, 0.0, 1.0],
+            );
+            assert!(imported.warnings.iter().any(|warning| {
+                warning.contains("unsupported expression retained at authored color")
+            }));
+        }
+    }
+
+    #[test]
+    fn legacy_expr_color_alias_keeps_editable_shape_paint() {
+        fn legacy(chunks: &mut [Chunk]) {
+            for chunk in chunks {
+                if chunk.id() == *b"Utf8" {
+                    *chunk = Chunk::data(*b"expr", chunk.data_payload().unwrap()).unwrap();
+                } else if let Some(children) = chunk.children_mut() {
+                    legacy(children);
+                }
+            }
+        }
+        let (composition, mut owner) = color_alias_probe(
+            "thisComp.layer(\"Color Controller\").effect(\"Background\")(\"Color\")\0",
+            "",
+        );
+        legacy(&mut owner.content);
+        let imported = import_owner(&owner, &composition);
+        assert_eq!(
+            imported_rect(&imported.layers).unwrap().rect.fill_color,
+            [0.0, 0.0, 0.0, 1.0]
+        );
+        assert!(imported.animations.is_empty());
+        assert!(
+            imported
+                .warnings
+                .iter()
+                .any(|w| w.contains("live controller linkage is lost"))
+        );
+    }
+
+    #[test]
+    fn cross_composition_color_alias_keeps_editable_shape_paint() {
+        let (source_composition, owner) = color_alias_probe(
+            "comp(\"Color Source\").layer(\"Color Controller\").effect(\"Background\")(\"Color\")",
+            "",
+        );
+        let mut project = read_project(include_bytes!(
+            "../../tests/fixtures/geometry/geometry_probe.aep"
+        ))
+        .unwrap();
+        let mut source = project.item(14).unwrap().clone();
+        source.id = 99_999;
+        source.name = "Color Source".into();
+        source.kind = ItemKind::Composition(Box::new(source_composition));
+        project.items.push(source);
+        let ItemKind::Composition(composition) = &project.item(14).unwrap().kind else {
+            panic!("probe composition")
+        };
+        let items = project.items.iter().map(|item| (item.id, item)).collect();
+        let imported = import_with_composition(
+            &owner,
+            composition,
+            &items,
+            true,
+            &super::super::group(LayerId::new(100), "owner".into(), None, full_active_range()),
+            16,
+            &mut 10_000,
+            &mut OutputBudget::default(),
+            &mut AnimationBudget::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            imported_rect(&imported.layers).unwrap().rect.fill_color,
+            [0.0, 0.0, 0.0, 1.0],
+            "cross-composition paint must use the static controller, not authored red"
+        );
+        assert!(imported.animations.is_empty());
+        assert!(
+            imported
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("live controller linkage is lost"))
+        );
+    }
+
+    #[test]
     fn numeric_color_control_index_one_keeps_editable_rect_fill() {
         let indexed = "thisComp.layer(\"Color Controller\").effect(\"Background\")(1)";
         let (composition, owner) = color_alias_probe(indexed, "");
@@ -2490,7 +2749,7 @@ mod tests {
             imported
                 .warnings
                 .iter()
-                .any(|warning| warning.contains("static and expression-free"))
+                .any(|warning| warning.contains("not a direct Color Control composition alias"))
         );
     }
 
@@ -2585,6 +2844,7 @@ mod tests {
                     composition_id: 14,
                     composition: Some(composition),
                     items: Some(&items),
+                    effect_definitions: &[],
                 },
                 &owner,
                 [1920, 1080],
@@ -2616,6 +2876,7 @@ mod tests {
                 |_: &super::super::MediaAssetRequest| super::super::MediaResolution::Unavailable;
             let mut converter = super::super::Converter {
                 text_overrides: Default::default(),
+                effect_definitions: &[],
                 expression_samples: &samples,
                 expression_evaluations: Default::default(),
                 items: project.items.iter().map(|item| (item.id, item)).collect(),
@@ -2699,6 +2960,7 @@ mod tests {
                 composition_id: 14,
                 composition: Some(&local),
                 items: Some(&items),
+                effect_definitions: &[],
             },
             &owner,
             [1920, 1080],
@@ -2806,6 +3068,7 @@ mod tests {
                 composition_id: 14,
                 composition: Some(composition),
                 items: Some(&items),
+                effect_definitions: &[],
             },
             &owner,
             [1920, 1080],
@@ -2827,6 +3090,79 @@ mod tests {
             imported.warnings
         );
         assert!(imported.animations.is_empty());
+    }
+
+    #[test]
+    fn static_local_color_alias_keeps_editable_shadow_rgb_and_opacity() {
+        for expression in [
+            "effect(\"Background\")(\"ADBE Color Control-0001\")",
+            "thisLayer.effect(\"Background\")(1)",
+        ] {
+            for source_expression in ["", "value * 0.5"] {
+                let (mut composition, mut owner) = color_alias_probe("", source_expression);
+                owner.content = composition.layers[0].content.clone();
+                let root = owner.content[0].children_mut().unwrap();
+                let parade = root[1].children_mut().unwrap();
+                parade.extend([
+                    test_match_name("ADBE Drop Shadow"),
+                    test_list(
+                        b"sspc",
+                        vec![
+                            test_data(b"tdsb", [0, 0, 0, 1]),
+                            test_list(
+                                b"tdgp",
+                                vec![
+                                    test_match_name("ADBE Drop Shadow-0001"),
+                                    test_color([255.0, 255.0, 255.0, 255.0], expression),
+                                    test_match_name("ADBE Drop Shadow-0002"),
+                                    test_numeric(&[127.5], ""),
+                                ],
+                            ),
+                        ],
+                    ),
+                ]);
+                composition.layers = vec![owner.clone()];
+                let items = std::collections::HashMap::new();
+                let imported = super::super::effects::import_with_context(
+                    super::super::effects::ImportContext {
+                        evaluations: &crate::expression_samples::ExpressionSamples::default(),
+                        composition_id: 14,
+                        composition: Some(&composition),
+                        items: Some(&items),
+                        effect_definitions: &[],
+                    },
+                    &owner,
+                    [1920, 1080],
+                    [1920, 1080],
+                    &mut 10_000,
+                    &mut AnimationBudget::default(),
+                );
+                assert_eq!(imported.effects.len(), 1, "{:?}", imported.warnings);
+                let effect = serde_json::to_value(&imported.effects[0]).unwrap();
+                let rgb = if source_expression.is_empty() {
+                    0.0
+                } else {
+                    1.0
+                };
+                assert_eq!(effect["effect"]["type"], "dropShadow");
+                assert_eq!(
+                    effect["effect"]["color"],
+                    serde_json::json!([rgb, rgb, rgb, 0.5])
+                );
+                assert!(imported.animations.is_empty());
+                assert!(
+                    imported.warnings.iter().any(|warning| {
+                        if source_expression.is_empty() {
+                            warning.contains("live controller linkage is lost")
+                        } else {
+                            warning.contains("static Color Control alias not lowered")
+                        }
+                    }),
+                    "{:?}",
+                    imported.warnings
+                );
+            }
+        }
     }
 
     #[test]
@@ -3021,6 +3357,7 @@ mod tests {
         let mut next_id = 1;
         let mut budget = AnimationBudget::default();
         let mut collector = Collector {
+            source_items: None,
             includes_occurrence_pipeline: true,
             next_id: &mut next_id,
             animation_budget: &mut budget,
@@ -4081,6 +4418,7 @@ mod tests {
             let mut next_id = 10;
             let mut animation_budget = AnimationBudget::default();
             let mut collector = Collector {
+                source_items: None,
                 includes_occurrence_pipeline: true,
                 next_id: &mut next_id,
                 animation_budget: &mut animation_budget,
@@ -4283,6 +4621,7 @@ mod tests {
         let mut next_id = 10;
         let mut animation_budget = AnimationBudget::default();
         let mut collector = Collector {
+            source_items: None,
             includes_occurrence_pipeline: true,
             next_id: &mut next_id,
             animation_budget: &mut animation_budget,

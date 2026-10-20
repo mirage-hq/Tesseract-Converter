@@ -26,7 +26,7 @@ fn descriptor(layer: &Layer) -> Result<Option<&[Chunk]>, TextError> {
     enabled_expression_descriptor(unique_list(document.1, *b"btds")?)
 }
 
-fn uniform_styles(document: &Value, kind: &str) -> bool {
+pub(super) fn uniform_styles(document: &Value, kind: &str) -> bool {
     let Some(runs) =
         at(document, &[Key::Name("0"), Key::Name(kind), Key::Name("0")]).and_then(Value::as_array)
     else {
@@ -63,11 +63,22 @@ pub(super) fn uniform_mapped_paragraphs(document: &Value) -> bool {
             .all(|run| at(run, &path).and_then(Value::as_i64) == code)
 }
 
+enum AliasRejection {
+    AuthoredFallback(String),
+    EvaluatedTarget,
+}
+
+impl From<String> for AliasRejection {
+    fn from(reason: String) -> Self {
+        Self::AuthoredFallback(reason)
+    }
+}
+
 fn resolve(
     layer: &Layer,
     composition: &Composition,
     source: &SourceText,
-) -> Result<Option<(String, u32)>, String> {
+) -> Result<Option<(String, u32)>, AliasRejection> {
     let Some(metadata) = descriptor(layer).map_err(|error| error.to_string())? else {
         return Ok(None);
     };
@@ -82,19 +93,29 @@ fn resolve(
             .iter()
             .any(|chunk| chunk.list_kind() == Some(*b"list"))
     {
-        return Err("consumer must have one unkeyed Source Text document".into());
+        return Err("consumer must have one unkeyed Source Text document"
+            .to_owned()
+            .into());
     }
     let document = &source.documents[0];
     let (editable, _) = convert_document(document, &source.fonts, source.frame.as_ref());
     if editable.box_text || !uniform_styles(document, "6") || !uniform_mapped_paragraphs(document) {
-        return Err("consumer box or mixed-run layout cannot reuse cached text geometry".into());
+        return Err(
+            "consumer box or mixed-run layout cannot reuse cached text geometry"
+                .to_owned()
+                .into(),
+        );
     }
     if source.path_options.iter().any(|(name, value)| {
         name == "ADBE Text Path"
             && (value.as_ref().map_or(true, numeric_has_keyframes)
                 || scalar_property_value(&source.path_options, name) != Some(0.0))
     }) {
-        return Err("consumer text-path ownership is unsupported for a content alias".into());
+        return Err(
+            "consumer text-path ownership is unsupported for a content alias"
+                .to_owned()
+                .into(),
+        );
     }
     let mut targets = composition
         .layers
@@ -104,13 +125,24 @@ fn resolve(
         .next()
         .ok_or_else(|| format!("target {name:?} is missing"))?;
     if targets.next().is_some() || target.record.id() == layer.record.id() {
-        return Err(format!("target {name:?} is ambiguous or self-referential"));
+        return Err(format!("target {name:?} is ambiguous or self-referential").into());
     }
     let target_source = read_source(target)
         .map_err(|error| error.to_string())?
         .ok_or_else(|| format!("target {name:?} is not text"))?;
     if !target_source.document_is_static || target_source.documents.len() != 1 {
-        return Err(format!("target {name:?} is keyed or expression-backed"));
+        // An unkeyed expression-backed target can still be read by the general
+        // evaluator. Keyed/malformed targets retain the alias fallback policy.
+        if target_source.documents.len() == 1
+            && let Some(metadata) = descriptor(target).map_err(|error| error.to_string())?
+            && only_data(metadata, *b"tdb4").map_err(|error| error.to_string())?[68] == 0
+            && !metadata
+                .iter()
+                .any(|chunk| chunk.list_kind() == Some(*b"list"))
+        {
+            return Err(AliasRejection::EvaluatedTarget);
+        }
+        return Err(format!("target {name:?} is keyed or expression-backed").into());
     }
     let text = at(
         &target_source.documents[0],
@@ -121,15 +153,18 @@ fn resolve(
     Ok(Some((text.to_owned(), target.record.id())))
 }
 
-pub(super) fn lower(layer: &Layer, composition: &Composition, source: &mut SourceText) {
+/// Returns true when alias admission rejects the expression, so generic samples
+/// cannot replace the authored fallback that this path promises to retain.
+pub(super) fn lower(layer: &Layer, composition: &Composition, source: &mut SourceText) -> bool {
     let resolved = match resolve(layer, composition, source) {
         Ok(Some(resolved)) => resolved,
-        Ok(None) => return,
-        Err(reason) => {
+        Ok(None) => return false,
+        Err(AliasRejection::EvaluatedTarget) => return false,
+        Err(AliasRejection::AuthoredFallback(reason)) => {
             source.warnings.push(format!(
                 "Source Text direct content alias not lowered ({reason}); authored content retained"
             ));
-            return;
+            return true;
         }
     };
     if at(
@@ -157,13 +192,13 @@ pub(super) fn lower(layer: &Layer, composition: &Composition, source: &mut Sourc
     // Only replace the decoded string. Consumer style stays local; no target COS
     // layout, font table, glyph bounds or text animator is transplanted.
     let Value::Dict(document) = &mut source.documents[0] else {
-        return;
+        return false;
     };
     let Some(Value::Dict(text)) = document.get_mut("0") else {
-        return;
+        return false;
     };
     if !matches!(text.get("0"), Some(Value::String(_))) {
-        return;
+        return false;
     }
     text.insert("0".into(), Value::String(resolved.0));
     source.frame = None;
@@ -176,4 +211,5 @@ pub(super) fn lower(layer: &Layer, composition: &Composition, source: &mut Sourc
     ));
     // Keep document_is_static=false: resolving content does not admit the old
     // cached caption-width/geometry profile for this expression owner.
+    false
 }

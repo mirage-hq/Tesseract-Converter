@@ -40,7 +40,11 @@ pub struct FXComposition(crate::stored::Stored<CompositionData>);
 
 impl<'de> Deserialize<'de> for FXComposition {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let composition = Self(crate::stored::Stored::deserialize(deserializer)?);
+        let value = Value::deserialize(deserializer)?;
+        crate::reject_nested_color_management(&value).map_err(serde::de::Error::custom)?;
+        crate::validate_render_domain_nesting(&value).map_err(serde::de::Error::custom)?;
+        let composition =
+            Self(crate::stored::Stored::from_value(value).map_err(serde::de::Error::custom)?);
         composition.validate().map_err(serde::de::Error::custom)?;
         Ok(composition)
     }
@@ -157,11 +161,17 @@ impl FXComposition {
             || self.dynamics().has_unknown_fields()
     }
 
-    pub fn unknown_fields(&self) -> impl Iterator<Item = (String, Value)> {
+    /// Projects the recognized schema recursively, excluding retained extensions.
+    pub fn known_value(&self) -> Value {
         let mut known =
             serde_json::to_value(self.0.data()).expect("checked composition data serializes");
         known["layers"] = Value::Array(self.layers().iter().map(Layer::known_value).collect());
         known["dynamics"] = self.dynamics().known_value();
+        known
+    }
+
+    pub fn unknown_fields(&self) -> impl Iterator<Item = (String, Value)> {
+        let known = self.known_value();
         let mut fields = Vec::new();
         collect_unknown(self.0.wire_value(), &known, "", &mut fields);
         fields.into_iter()

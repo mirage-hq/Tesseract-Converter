@@ -19,10 +19,17 @@ macro_rules! define_editable_document_schema {
                 schema: String,
                 format_version: u8,
                 dimensions: DimensionsWire,
+                /// Document-owned policy; omission means today's legacy behavior.
+                #[serde(default)]
+                color_management: ColorManagement,
                 #[serde(with = "crate::time::serde_secs::duration")]
                 duration: crate::time::Duration,
                 #[serde(skip_serializing_if = "Option::is_none")]
                 background_color: Option<Color>,
+                /// HDR rendering only: cd/m² of SDR graphics white (color 1.0) for
+                /// every non-video source. Absent = renderer default (≈609).
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                hdr_graphics_white_nits: Option<f64>,
                 #[serde(serialize_with = "serialize_composition")]
                 composition: C,
                 #[serde(flatten)]

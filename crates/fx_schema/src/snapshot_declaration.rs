@@ -4,7 +4,7 @@
 #[doc(hidden)]
 #[macro_export]
 macro_rules! define_snapshot_schema {
-    ($emit:ident, $background_write:meta) => {
+    ($emit:ident, $background_write:meta, $defaults:meta) => {
         $emit! {
             /// Root FX composition document.
             #[ts(export_to = "project_types.d.ts", rename = "FxComposition", rename_all = "camelCase", concrete(C = Composition))]
@@ -14,6 +14,9 @@ macro_rules! define_snapshot_schema {
                 /// Readers do not reject a newer revision by itself. Compatibility is
                 /// determined by the actual fields.
                 pub version: u8,
+                /// Document-owned policy inherited by all nested content.
+                #[$defaults]
+                pub color_management: ColorManagement,
                 #[$background_write]
                 pub background_color: Option<Color>,
                 /// The single root composition rendered for this document.

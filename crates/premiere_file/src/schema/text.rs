@@ -124,7 +124,14 @@ impl PrTextBackground {
     }
 }
 
-/// The Source Text document of one single-style text layer.
+/// A static fill override in rendered Unicode-scalar character coordinates.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PrTextFillSpan {
+    pub(crate) range: std::ops::Range<usize>,
+    pub(crate) color: PrRgb,
+}
+
+/// The Source Text document of one text layer.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PrTextDocument {
     /// Text with `\n` line breaks.
@@ -134,6 +141,7 @@ pub(crate) struct PrTextDocument {
     pub(crate) size: f32,
     /// `None` when the fill is disabled.
     pub(crate) fill: Option<PrRgb>,
+    pub(crate) fill_spans: Vec<PrTextFillSpan>,
     pub(crate) stroke: Option<PrTextStroke>,
     /// `None` when the shadow is disabled. [`PrText::validate`] leaves its
     /// ranges to the conversion, which omits only an out-of-range shadow.
@@ -210,6 +218,7 @@ impl std::fmt::Display for SourceTextField {
 /// One editable text layer: its Essential Graphics name, document, and transform.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PrText {
+    pub(crate) mask: Option<PrMask>,
     /// Static Horizontal Scale when Uniform Scale is off. `transform.scale`
     /// and its Scale keys then affect only the vertical axis.
     pub(crate) horizontal_scale: Option<f64>,
@@ -268,16 +277,21 @@ impl PrTextLines {
         crate::format::ensure_valid!(
             first.justification != PrJustification::Justify
                 && self.documents.iter().all(|document| {
-                    document.leading == 0.0
+                    document.leading.is_finite()
+                        && document.leading == first.leading
+                        && (f64::from(1.2_f32 * document.size) + f64::from(document.leading)) > 0.0
                         && document.frame == first.frame
                         && document.justification == first.justification
                         && document.shadow == first.shadow
                         && document.background.is_none()
                 }),
-            "mixed point text requires automatic leading, common alignment and shadow, and no background"
+            "mixed point text requires common leading, alignment and shadow, positive line spacing, and no background"
         );
         for document in &self.documents {
-            document.validate()?;
+            // Leading belongs to the line placements, not the single-line children.
+            let mut line = document.clone();
+            line.leading = 0.0;
+            line.validate()?;
         }
         validate_transform(&self.transform, "text block")?;
         validate_animations(&self.animations, &TEXT_PARAMS, "text block")
@@ -477,6 +491,8 @@ fn corner_ratios(path: &PrShapePath) -> Option<Vec<f64>> {
 pub(crate) struct PrShapeStroke {
     pub(crate) color: PrRgb,
     pub(crate) width: f32,
+    /// Explicit legacy join; absent uses the calibrated modern-payload mapping.
+    pub(crate) join: Option<StrokeJoin>,
 }
 
 /// What a Shape's Appearance fills its path with.
@@ -646,6 +662,8 @@ pub(crate) struct PrShape {
     /// scales x by it and y by `transform.scale`, before the rotation
     /// (fixture render G7). `None` scales both axes by `transform.scale`.
     pub(crate) horizontal_scale: Option<f64>,
+    /// Import-only Scale keys on the generator clock.
+    pub(crate) animations: Vec<PrPropertyAnimation>,
     /// Static owner-only mask in graphic-frame coordinates, after the object transform.
     pub(crate) mask: Option<PrMask>,
 }
@@ -678,7 +696,8 @@ impl PrShape {
                 .any(|spec| spec.role == HorizontalScale && spec.holds(scale))),
             "shape Horizontal Scale must be within Premiere's bounds"
         );
-        validate_transform(&self.transform, "shape")
+        validate_transform(&self.transform, "shape")?;
+        validate_animations(&self.animations, &SHAPE_PARAMS, "shape")
     }
 
     /// The warnings, one per approximation, for converting this shape's
@@ -841,10 +860,13 @@ impl PrGraphicObject {
     ) -> bool {
         let mut composed = self.clone();
         match &mut composed {
-            Self::Text(text) => text.compose_static_vector_motion(motion, frame),
+            Self::Text(text) if text.mask.is_none() => {
+                text.compose_static_vector_motion(motion, frame)
+            }
+            Self::Text(_) => return false,
             // Keep the graphic motion as the common parent of the line block.
             Self::TextLines(_) | Self::Group(_) => return false,
-            Self::Shape(shape) if shape.mask.is_none() => {
+            Self::Shape(shape) if shape.mask.is_none() && shape.animations.is_empty() => {
                 shape.compose_static_vector_motion(motion)
             }
             Self::Shape(_) => return false,
@@ -1077,6 +1099,22 @@ impl PrTextDocument {
     /// the supported subset, for both conversion directions.
     pub(crate) fn validate(&self) -> crate::format::Result<()> {
         let document = self;
+        let character_count = if self.all_caps {
+            self.text.to_uppercase().chars().count()
+        } else {
+            self.text.chars().count()
+        };
+        let mut previous_end = 0;
+        for span in &self.fill_spans {
+            crate::format::ensure_valid!(
+                self.fill.is_some()
+                    && span.range.start >= previous_end
+                    && span.range.start < span.range.end
+                    && span.range.end <= character_count,
+                "invalid static text fill span"
+            );
+            previous_end = span.range.end;
+        }
         crate::format::ensure_valid!(
             !document
                 .text
@@ -1158,6 +1196,10 @@ impl PrText {
         let fixed = [
             (keys.clone().any(|key| key.font != first.font), "font"),
             (
+                keys.clone().any(|key| key.fill_spans != first.fill_spans),
+                "fill spans",
+            ),
+            (
                 keys.clone()
                     .any(|key| key.justification != first.justification),
                 "justification",
@@ -1225,6 +1267,9 @@ impl PrText {
     /// keys of the transform, for both conversion directions.
     pub(crate) fn validate(&self) -> crate::format::Result<()> {
         self.document.validate()?;
+        if let Some(mask) = &self.mask {
+            mask.validate()?;
+        }
         let keys = &self.source_text_keys;
         crate::format::ensure_valid!(
             keys.windows(2)
@@ -1298,7 +1343,9 @@ impl PrText {
                 }
                 PrPropertyAnimation::Opacity(_) => {}
                 // No text keys these (`validate_animations`).
-                PrPropertyAnimation::AnchorPoint(_) | PrPropertyAnimation::ScaleWidth(_) => {}
+                PrPropertyAnimation::AnchorPoint(_)
+                | PrPropertyAnimation::ScaleWidth(_)
+                | PrPropertyAnimation::ScaleHeight(_) => {}
             }
         }
     }
@@ -1863,7 +1910,11 @@ mod tests {
                 unreachable!("the test graphic holds one shape");
             };
             let color = PrRgb([0, 255, 64]);
-            shape.appearance.stroke = Some(PrShapeStroke { color, width });
+            shape.appearance.stroke = Some(PrShapeStroke {
+                color,
+                width,
+                join: None,
+            });
             shape.horizontal_scale = Some(horizontal_scale);
             shape.validate().map_err(|error| error.to_string())
         };

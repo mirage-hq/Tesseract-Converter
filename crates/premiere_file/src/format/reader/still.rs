@@ -147,6 +147,7 @@ pub(super) fn keep_occurrence(
     clip: &PrVideoOccurrence,
     kind: PrMediaKind,
     track_index: i64,
+    at_sequence_end: bool,
     omissions: &mut Vec<Omission>,
 ) -> bool {
     let (media, picture) = match kind {
@@ -174,7 +175,8 @@ pub(super) fn keep_occurrence(
     let edits = clip.edits();
     let sharp_matte_crop = matches!(kind, PrMediaKind::ColorMatte(_))
         && clip.crop.edge_feather == 0.0
-        && clip.effects.is_empty()
+        && (clip.effects.is_empty()
+            || crate::schema::color_matte::cropped_transform(clip).is_some())
         && clip
             .source_effects
             .as_ref()
@@ -197,7 +199,9 @@ pub(super) fn keep_occurrence(
             !(adjustment::retains_edit(**edit)
                 || matches!(**edit, OccurrenceEdit::Position | OccurrenceEdit::Scale)
                     && adjustment::supports_motion_coverage(clip)
-                || **edit == OccurrenceEdit::LinearWipe && adjustment::supports_wipe_coverage(clip))
+                || **edit == OccurrenceEdit::LinearWipe
+                    && adjustment::supports_wipe_coverage(clip, at_sequence_end)
+                || **edit == OccurrenceEdit::Crop && adjustment::supports_crop_coverage(clip))
         }
         PrMediaKind::Still { .. }
         | PrMediaKind::OpenExr {
@@ -315,7 +319,7 @@ mod tests {
         plain.crop.left = 50.0;
         plain.opacity = 47.0;
         let mut omissions = Vec::new();
-        assert!(keep_occurrence(&plain, matte, 0, &mut omissions));
+        assert!(keep_occurrence(&plain, matte, 0, false, &mut omissions));
         assert!(omissions.is_empty());
         type EditOccurrence = fn(&mut PrVideoOccurrence);
         let supported: [EditOccurrence; 3] = [
@@ -339,7 +343,7 @@ mod tests {
             let mut clip = plain.clone();
             edit(&mut clip);
             let mut omissions = Vec::new();
-            assert!(keep_occurrence(&clip, matte, 0, &mut omissions));
+            assert!(keep_occurrence(&clip, matte, 0, false, &mut omissions));
             assert!(omissions.is_empty());
         }
         let cases: [(&str, EditOccurrence); 7] = [
@@ -380,7 +384,7 @@ mod tests {
             edit(&mut clip);
             let mut omissions = Vec::new();
             assert!(
-                !keep_occurrence(&clip, matte, 0, &mut omissions),
+                !keep_occurrence(&clip, matte, 0, false, &mut omissions),
                 "{reason}"
             );
             assert_eq!(omissions.len(), 1);

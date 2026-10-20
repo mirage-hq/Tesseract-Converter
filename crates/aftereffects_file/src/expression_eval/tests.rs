@@ -1,11 +1,23 @@
 #[path = "api_tests.rs"]
 mod api_tests;
+#[path = "compatibility_tests.rs"]
+mod compatibility_tests;
 #[path = "expression_apis2_tests.rs"]
 mod expression_apis2_tests;
 #[path = "expression_apis_tests.rs"]
 mod expression_apis_tests;
+#[path = "native_compatibility_tests.rs"]
+mod native_compatibility_tests;
+#[path = "native_path_tests.rs"]
+mod native_path_tests;
 #[path = "random_tests.rs"]
 mod random_tests;
+#[path = "selector_targets_tests.rs"]
+mod selector_targets_tests;
+#[path = "source_text_dependency_tests.rs"]
+mod source_text_dependency_tests;
+#[path = "sparse_slider_tests.rs"]
+mod sparse_slider_tests;
 #[path = "wiggle_coverage_tests.rs"]
 mod wiggle_coverage_tests;
 #[path = "wiggle_targets_tests.rs"]
@@ -79,6 +91,80 @@ fn expression_evaluator_matches_pinned_adobe_position_oracle() {
             .unwrap()
             .to_ascii_lowercase()
             .contains("jsscript")
+    );
+}
+
+#[test]
+fn legacy_expr_chunks_keep_evaluated_editable_position() {
+    use crate::{aep::Project, rifx::Chunk};
+
+    fn legacy_expressions(chunks: &mut [Chunk]) -> usize {
+        let mut count = 0;
+        for chunk in chunks {
+            if chunk.list_kind() == Some(*b"tdbs") {
+                for leaf in chunk.children_mut().unwrap() {
+                    if leaf.id() == *b"Utf8" {
+                        let mut bytes = leaf.data_payload().unwrap().to_vec();
+                        bytes.push(0);
+                        *leaf = Chunk::data(*b"expr", bytes).unwrap();
+                        count += 1;
+                    }
+                }
+            } else if let Some(children) = chunk.children_mut() {
+                count += legacy_expressions(children);
+            }
+        }
+        count
+    }
+
+    const SOURCE: &[u8] =
+        include_bytes!("../../tests/fixtures/expression_samples/sampled_position_expression.aep");
+    let mut file = Project::parse(SOURCE).unwrap();
+    assert_eq!(legacy_expressions(&mut file.chunks), 1);
+    let bytes = file.encode().unwrap();
+    let project = crate::structure::read_project(&bytes).unwrap();
+    let items = project.items.iter().map(|item| (item.id, item)).collect();
+    let crate::structure::ItemKind::Composition(comp) = &project.item(1).unwrap().kind else {
+        panic!("composition missing");
+    };
+    let oracle = ExpressionSamples::from_json_for_source(
+        include_bytes!(
+            "../../tests/fixtures/expression_samples/sampled_position_expression.v2.json"
+        ),
+        SOURCE,
+    )
+    .unwrap();
+    let observed = oracle.properties().first().unwrap();
+    let model = Model::new(&items, 1, comp, true);
+    let slot = model
+        .properties
+        .iter()
+        .position(|property| {
+            property.layer_id == observed.layer_id() && &property.identity == observed.property()
+        })
+        .unwrap();
+    let actual = evaluate_grid(
+        &mut prepare(&model).unwrap(),
+        slot,
+        observed.sample_times_seconds(),
+    )
+    .unwrap();
+    for (actual, expected) in actual.iter().zip(observed.values()) {
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert!((actual - expected).abs() <= 1e-8);
+        }
+    }
+    let converted =
+        crate::structure_document::to_structural_fx_document(&project, Some(1)).unwrap();
+    assert!(
+        persisted_position_errors(
+            &converted,
+            observed.sample_times_seconds(),
+            observed.values(),
+        )
+        .is_some(),
+        "editable Position keys omitted: {:?}",
+        converted.diagnostics
     );
 }
 
@@ -284,6 +370,11 @@ fn property(comp_id: u32, layer_id: u32, code: &str, dimension: usize) -> Proper
         notes: Vec::new(),
         range: None,
         text: None,
+        text_style: None,
+        text_keys: Vec::new(),
+        text_bounds: None,
+        path: None,
+        path_keys: Vec::new(),
     }
 }
 fn model(code: &str, dimension: usize) -> Model {
@@ -304,7 +395,14 @@ fn model(code: &str, dimension: usize) -> Model {
         masks: Vec::new(),
         content: Vec::new(),
         source_text: None,
+        markers: model::MarkerModel {
+            times: Vec::new(),
+            names: Vec::new(),
+            names_error: None,
+            error: None,
+        },
         effects: Vec::new(),
+        effect_inventory_complete: true,
     };
     let controller = LayerModel {
         id: 2,
@@ -323,7 +421,14 @@ fn model(code: &str, dimension: usize) -> Model {
         masks: Vec::new(),
         content: Vec::new(),
         source_text: None,
+        markers: model::MarkerModel {
+            times: vec![0.2, 0.7],
+            names: vec!["reveal".into(), "exit".into()],
+            names_error: None,
+            error: None,
+        },
         effects: vec![Effect {
+            enabled: true,
             name: "amount".into(),
             match_name: "ADBE Slider Control".into(),
             index: 1,
@@ -334,6 +439,7 @@ fn model(code: &str, dimension: usize) -> Model {
                 slot: 1,
             }],
         }],
+        effect_inventory_complete: true,
     };
     Model {
         allow_foreign: true,
@@ -366,6 +472,16 @@ fn evaluate(code: &str, time: f64, expected: &[f64]) {
     }
 }
 #[test]
+fn marker_time_offsets_sample_authored_keys_without_covering_the_stack() {
+    let code = "var n=thisComp.layer('controller').marker.nearestKey(time).index; if(time<thisComp.layer('controller').marker.key(n).time) n--; if(n==0) n=1; thisProperty.valueAtTime(time-thisComp.layer('controller').marker.key(n).time)";
+    evaluate(code, 0.1, &[0.0]);
+    evaluate(code, 0.2, &[0.0]);
+    evaluate(code, 0.5, &[30.0]);
+    evaluate(code, 0.7, &[0.0]);
+    evaluate(code, 0.9, &[20.0]);
+}
+
+#[test]
 fn expression_named_helpers_use_native_key_records_and_recoverable_ranges() {
     evaluate(
         "function sample(t) { var n=nearestKey(t).index; if(key(n).time>t) { n--; } try { var a=key(n); var b=key(n+1); } catch(e) { return null; } return linear(t,a.time,b.time,a.value,b.value); } sample(time) || value",
@@ -387,6 +503,61 @@ fn expression_named_helpers_use_native_key_records_and_recoverable_ranges() {
         evaluate_grid(&mut prepared, 0, &[0.25]).is_err(),
         "catch must not clear a fatal dependency failure"
     );
+}
+
+#[test]
+fn expression_numeric_parameter_redeclarations_keep_editable_samples() {
+    evaluate(
+        "function amplitude(a,p) { var p=0.81; var a=50; return a*p; } amplitude(1,2)",
+        0.25,
+        &[40.5],
+    );
+    evaluate("var a=1; var a=time*100; [a,a]", 0.25, &[25.0, 25.0]);
+    for code in [
+        "var a=thisLayer; var a=1; a",
+        "var a=1; var a=thisLayer; a",
+        "var a=points(); var a=[[0,0]]; a",
+        "function sample(){return 1;} var sample=2; sample",
+    ] {
+        assert!(
+            matches!(syntax::compile(code), Err(EvaluationError::Unsupported(_))),
+            "redeclaration must not bypass API/Path/helper admission: {code}"
+        );
+    }
+}
+
+#[test]
+fn expression_copied_path_array_failures_remain_sticky() {
+    let path = crate::properties::NativePathValue {
+        vertices: vec![[0.0, 0.0]],
+        in_tangents: vec![[0.0, 0.0]],
+        out_tangents: vec![[0.0, 0.0]],
+        closed: false,
+    };
+    for operation in ["a[i]=[0,0]", "a[i][0]"] {
+        let code = format!(
+            "var a=points();var i=-1;try{{{operation};}}catch(e){{}}createPath([[0,0]],[],[],false);"
+        );
+        let mut direct = model(&code, 1);
+        direct.properties[0].path = Some(path.clone());
+        let error = evaluate_grid(&mut prepare(&direct).unwrap(), 0, &[0.0]).unwrap_err();
+        assert!(
+            error.to_string().contains("invalid Path array index"),
+            "{error}"
+        );
+
+        let mut dependency = model(
+            "try { thisComp.layer('controller').effect('amount')(1).value; } catch(e) { 7; }",
+            1,
+        );
+        dependency.properties[1].expression = Some(super::syntax::compile(&code).unwrap());
+        dependency.properties[1].path = Some(path.clone());
+        let error = evaluate_grid(&mut prepare(&dependency).unwrap(), 0, &[0.0]).unwrap_err();
+        assert!(
+            error.to_string().contains("invalid Path array index"),
+            "{error}"
+        );
+    }
 }
 
 #[test]
@@ -553,6 +724,24 @@ fn layer_effect_transform_and_foreign_aliases_resolve_lazy_dependencies() {
         &[25.0, 25.0],
     );
 }
+#[test]
+fn implicit_transform_self_reads_use_authored_values() {
+    evaluate(
+        "[position[0]+index*5,position[1]-10,position[2]+index*2]",
+        0.25,
+        &[30.0, 15.0, 27.0],
+    );
+    evaluate("position.valueAtTime(time-0.1)", 0.5, &[40.0, 40.0]);
+    // Other shorthand properties must still evaluate their expressions.
+    let mut model = model("position + scale", 1);
+    model.comps[0].layers[0].transform.insert("scale".into(), 1);
+    let mut prepared = prepare(&model).unwrap();
+    assert_eq!(
+        evaluate_grid(&mut prepared, 0, &[0.25]).unwrap(),
+        vec![vec![75.0]]
+    );
+}
+
 #[test]
 fn cycles_missing_references_dimensions_and_nonfinite_fail_atomically() {
     for code in [

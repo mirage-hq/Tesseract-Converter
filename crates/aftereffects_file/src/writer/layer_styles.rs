@@ -808,7 +808,7 @@ mod tests {
                 "-_0_/-",
                 vec![(
                     "ADBE Layer Styles",
-                    views::group(3, "-_0_/-", entries).unwrap(),
+                    views::group(1, "-_0_/-", entries).unwrap(),
                 )],
             )
             .unwrap(),

@@ -196,19 +196,12 @@ fn easing(from: &NumericKeyframe, to: &NumericKeyframe) -> Result<PropertyKeyfra
     if from.out_interpolation == 1 && to.in_interpolation == 1 {
         return Ok(PropertyKeyframeEasing::Linear);
     }
-    if (from.out_interpolation == 1 || to.in_interpolation == 1)
-        && to.time_secs - from.time_secs != 2.0
-    {
-        return Err(
-            "mixed Linear/Bezier Path easing outside the pinned two-second segment is unproved"
-                .into(),
-        );
-    }
     let side = |kind: u8, speed: &[f64], influence: &[f64]| -> Result<(f64, f64), String> {
         match kind {
-            // Pinned AE26 Path valueAtTime samples establish the mixed
-            // Linear/Bezier side's diagonal handle at one sixth, not the
-            // generic numeric property's stored (zero) influence.
+            // Pinned AE26 one- and two-second Path valueAtTime samples
+            // establish the mixed side's normalized diagonal handle at one
+            // sixth. Like Path speeds, it does not scale with duration; the
+            // generic numeric property's stored (zero) influence is not used.
             1 => Ok((1.0 / 6.0, 1.0 / 6.0)),
             2 => {
                 let speed = speed.first().copied().ok_or("missing Path ease speed")?;

@@ -408,6 +408,7 @@ pub struct FxPagLayerConfig {
 #[ts(export_to = "project_types.d.ts")]
 pub struct FxPagLayerConfigSolid {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::deserialize_optional_extended_color")]
     pub color: Option<Color>,
 }
 
@@ -420,12 +421,14 @@ pub struct FxPagLayerConfigText {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_size: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::deserialize_optional_extended_color")]
     pub color: Option<Color>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_family: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_style: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::deserialize_optional_extended_color")]
     pub stroke_color: Option<Color>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stroke_width: Option<f64>,
@@ -495,6 +498,7 @@ impl Serialize for FxPagItemDurationType {
 pub struct PagColorInsert {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::deserialize_optional_extended_color")]
     pub color: Option<Color>,
 }
 
@@ -532,10 +536,13 @@ pub struct PagTextInsert {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stroke_width: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::deserialize_optional_extended_color")]
     pub fill_color: Option<Color>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::deserialize_optional_extended_color")]
     pub stroke_color: Option<Color>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::deserialize_optional_extended_color")]
     pub background_color: Option<Color>,
 }
 

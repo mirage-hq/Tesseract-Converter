@@ -3,7 +3,7 @@
 
 use super::{
     animation::NumericAnimationClock,
-    animation_budget::AnimationBudget,
+    animation_budget::{AnimationBudget, committed_entry_reservation_bytes},
     control_links::{display_name, expression, finished, quoted, token, unique_run},
     self_inverse_matte::{self, Profile, static_values},
     shapes::path,
@@ -257,6 +257,65 @@ fn provider<'a>(
     Ok(Some((provider, meta.expression_enabled)))
 }
 
+/// Native admission may supersede sampled paths, but only after the entire
+/// foreign stage succeeds. Failure preserves the generic fallback and budget.
+pub(super) fn apply_with_sampled_paths(
+    context: Context<'_>,
+    layer: &Layer,
+    owner: &mut GroupLayer,
+    animations: &mut Vec<AnimationGraphEntry>,
+    next_id: &mut u64,
+    budget: &mut AnimationBudget,
+    sampled_paths: &[PropertyTarget],
+) -> Result<Option<Vec<AnimationGraphEntry>>, String> {
+    if sampled_paths.is_empty() {
+        return apply(context, layer, owner, animations, next_id, budget);
+    }
+    // Only an enabled one-hop alias can replace its sampled observations.
+    // Native equal-path profiles retain their existing animation admission.
+    let Some((_, true)) = provider(layer, &context)? else {
+        return apply(context, layer, owner, animations, next_id, budget);
+    };
+    let mut sampled_bytes = 0_usize;
+    let mut retained = Vec::with_capacity(animations.len());
+    for entry in animations.iter() {
+        if sampled_paths.contains(&entry.target) {
+            sampled_bytes = sampled_bytes
+                .checked_add(committed_entry_reservation_bytes(entry).map_err(|e| e.to_string())?)
+                .ok_or("sampled path reservation overflow")?;
+        } else {
+            retained.push(entry.clone());
+        }
+    }
+    budget.release(sampled_bytes).map_err(|e| e.to_string())?;
+    // A checkpoint cannot restore released reservations. Checkpoint the native
+    // attempt after release, then re-reserve the fallback on failure.
+    let checkpoint = budget.checkpoint();
+    let mut candidate = owner.clone();
+    let mut id = *next_id;
+    let applied = apply(
+        context,
+        layer,
+        &mut candidate,
+        &mut retained,
+        &mut id,
+        budget,
+    );
+    match applied {
+        Ok(Some(entries)) => {
+            *owner = candidate;
+            *animations = retained;
+            *next_id = id;
+            Ok(Some(entries))
+        }
+        other => {
+            budget.rollback(checkpoint);
+            budget.reserve(sampled_bytes).map_err(|e| e.to_string())?;
+            other
+        }
+    }
+}
+
 pub(super) fn apply(
     context: Context<'_>,
     layer: &Layer,
@@ -286,6 +345,13 @@ pub(super) fn apply(
             budget,
         )?;
         return Ok(applied.then(Vec::new));
+    }
+    let destination_path = properties::unique_list(mask_path(layer)?, *b"om-s")
+        .and_then(|outline| properties::unique_list(outline, *b"tdbs"))
+        .and_then(properties::read_path_metadata)
+        .map_err(|e| e.to_string())?;
+    if destination_path.animated || !destination_path.keyframes.is_empty() {
+        return Err("destination guide already has authored animation".into());
     }
     let resolved = resolved(layer, provider)?;
     let size = source

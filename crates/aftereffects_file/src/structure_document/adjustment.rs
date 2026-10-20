@@ -301,6 +301,7 @@ impl Converter<'_> {
             );
         }
 
+        let track_matte = self.shape_coverage(context, layer, &mut guides)?;
         Ok((
             AdjustmentLayer {
                 id: actual.id,
@@ -309,7 +310,7 @@ impl Converter<'_> {
                 is_hidden: actual.is_hidden || unsafe_partial_chain,
                 parent: Some(context.parent),
                 blend_mode: outer.blend_mode,
-                track_matte: None,
+                track_matte,
                 masks: actual.masks.clone(),
                 active_range,
                 effects: actual.effects.clone(),
@@ -317,6 +318,64 @@ impl Converter<'_> {
             },
             guides,
         ))
+    }
+}
+
+impl Converter<'_> {
+    /// Shape adjustment paint is coverage of the lower stack, not visible paint.
+    /// Sample only its source geometry; owner opacity and masks remain on the gate.
+    fn shape_coverage(
+        &mut self,
+        context: &LayerContext<'_>,
+        layer: &Layer,
+        guides: &mut Vec<FxLayer>,
+    ) -> Result<Option<fx_schema::TrackMatte>, DocumentError> {
+        if layer.record.layer_type() != 4 {
+            return Ok(None);
+        }
+        // A type-4 record without a vector root can be a damaged carrier (or
+        // a controls-only inspection snapshot), not a proven empty alpha plane.
+        if !crate::properties::root_runs(&layer.content).is_ok_and(|roots| {
+            roots
+                .iter()
+                .any(|(name, _)| *name == "ADBE Root Vectors Group")
+        }) {
+            self.warn(Limitation::Properties, Some(context.comp_id), Some(layer.record.id()),
+                "Shape Adjustment coverage has no decodable vector root; existing full-canvas Adjustment fallback retained rather than inventing an empty alpha guide".into());
+            return Ok(None);
+        }
+        let flags = layer.record.flags();
+        if flags.three_d_layer
+            || flags.preserve_transparency
+            || compositing::matte_layer(&layer.record).is_some()
+        {
+            self.warn(Limitation::Properties, Some(context.comp_id), Some(layer.record.id()),
+                "Shape Adjustment coverage with 3D, Preserve Underlying Transparency or a native track matte is not mapped; ordinary full-canvas Adjustment fallback retained (converter gap)".into());
+            return Ok(None);
+        }
+        let mut source = layer.clone();
+        match source.record.with_adjustment_layer(false) {
+            Ok(record) => source.record = record,
+            Err(error) => {
+                self.warn(Limitation::Properties, Some(context.comp_id), Some(layer.record.id()),
+                    format!("Shape Adjustment coverage could not decode the source switch: {error}; ordinary full-canvas Adjustment fallback retained"));
+                return Ok(None);
+            }
+        }
+        let mut guide = self.layer(
+            context,
+            &source,
+            LayerPurpose::MatteSample(super::set_matte::MatteSampleStage::Source),
+        )?;
+        guide.name.push_str(" (adjustment coverage)");
+        let matte = fx_schema::TrackMatte {
+            layer: guide.id,
+            mode: fx_schema::TrackMatteType::Alpha,
+        };
+        guides.push(FxLayer::Group(guide));
+        self.warn(Limitation::Properties, Some(context.comp_id), Some(layer.record.id()),
+            "Shape Adjustment coverage retained as an independent editable source-alpha guide with native geometry, paint and Transform clocks; effects apply only through the coverage gate. Owner opacity and masks remain separate. Native edge alpha, dry-plus-wet replacement and effect kernels remain unverified".into());
+        Ok(Some(matte))
     }
 }
 

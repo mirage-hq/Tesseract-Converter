@@ -76,6 +76,11 @@ impl VideoFitting {
                         key.value *= self.scale[0];
                     }
                 }
+                PrPropertyAnimation::ScaleHeight(keys) => {
+                    for key in keys {
+                        key.value *= self.scale[1];
+                    }
+                }
                 PrPropertyAnimation::UniformScale(keys) => {
                     if self.scale[0] != self.scale[1] {
                         lost_scale = true;

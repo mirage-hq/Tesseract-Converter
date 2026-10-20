@@ -281,6 +281,73 @@ fn opacity_mask_record_versions_and_display_labels_do_not_drop_picture() {
     }
 }
 
+/// Older saved masks leave four inactive controls without public IDs.
+fn mask_with_unassigned_controls() -> String {
+    let mut records = keyed_mask(300, &two_path_keys());
+    for id in [12, 13, 14, 15] {
+        records = records.replace(
+            &format!("<ParameterID>{id}</ParameterID>"),
+            "<ParameterID>-1</ParameterID>",
+        );
+    }
+    records
+}
+
+#[test]
+fn opacity_mask_unassigned_default_controls_keep_editable_path_and_keys() {
+    let records = mask_with_unassigned_controls();
+    let (clip, omissions) = read(&masked_clip(records, &[]));
+    assert!(
+        omissions
+            .iter()
+            .all(|o| o.scope != OmissionScope::Occurrence),
+        "{omissions:?}"
+    );
+    assert!(omissions
+        .iter()
+        .any(|o| o.reason.contains("unassigned inactive mask control")));
+    assert_eq!(clip.opacity, 50.0);
+    let mask = clip.opacity_mask.unwrap();
+    assert_eq!(mask.path.vertices, pen_path());
+    assert_eq!(
+        (mask.feather, mask.opacity, mask.expansion, mask.inverted),
+        (30.0, 100.0, 0.0, false)
+    );
+    assert_eq!(mask.path_keys.len(), 2);
+    assert_eq!(mask.path_keys[0].source_ticks, 0);
+    assert_eq!(mask.path_keys[1].source_ticks, TICKS);
+    assert_eq!(mask.path_keys[1].path.vertices.len(), 4);
+}
+
+#[test]
+fn opacity_mask_unassigned_controls_do_not_relax_coverage_or_default_checks() {
+    for records in [
+        edit_start(mask_with_unassigned_controls(), 314, "<IsTimeVarying>false</IsTimeVarying>", "<IsTimeVarying>true</IsTimeVarying>"),
+        edit_start(mask_with_unassigned_controls(), 314, "<ParameterControlType>16</ParameterControlType>", "<ParameterControlType>16</ParameterControlType><Keyframes>0,false,0,0,0,0,0,0;</Keyframes>"),
+        mask_with_unassigned_controls().replace(
+            &format!("<StartKeyframe>{STATIC},0.5,"),
+            &format!("<StartKeyframe>{STATIC},0.75,"),
+        ),
+        mask_with_unassigned_controls().replace(
+            "<ParameterID>6</ParameterID>",
+            "<ParameterID>-1</ParameterID>",
+        ),
+        mask_with_unassigned_controls().replace(
+            "<Param Index=\"4\" ObjectRef=\"314\"/>",
+            "<Param Index=\"4\" ObjectRef=\"313\"/>",
+        ),
+    ] {
+        let (_, omissions) =
+            inspect_project_with_omissions(&masked_clip(records, &[]), None).unwrap();
+        assert!(
+            omissions
+                .iter()
+                .any(|o| o.scope == OmissionScope::Occurrence),
+            "{omissions:?}"
+        );
+    }
+}
+
 const MASK_RECORDS: &str = include_str!("../../../tests/fixtures/opacity-mask-records.xml");
 
 #[test]
@@ -504,10 +571,10 @@ fn opacity_masks_outside_the_supported_form_omit_the_occurrence() {
         &format!("<ParameterControlType>11</ParameterControlType><StartKeyframe>{STATIC},false,"),
         &format!("<ParameterControlType>11</ParameterControlType><StartKeyframe>{STATIC},true,"),
     );
-    // `vhsvertical` writes `ParameterID` -1 on its two v8 tracking booleans.
+    // Unassigned inactive controls have a bounded mapping; arbitrary IDs do not.
     let unknown_id = mask(300, true).replace(
         "<ParameterID>15</ParameterID>",
-        "<ParameterID>-1</ParameterID>",
+        "<ParameterID>99</ParameterID>",
     );
     let two_masks = masked_clip(mask(300, true) + &mask(400, true), &[]).replace(
         "<SubComponent Index=\"0\" ObjectRef=\"300\"/>",

@@ -58,6 +58,60 @@ fn singular_scale_finite_temporal_ease_retains_owner_and_authored_keys() {
 }
 
 #[test]
+fn repeated_singular_ease_retains_all_authored_segments() {
+    let original = modify(&source(), |raw| {
+        raw["composition"]["layers"][0]["activeRange"]["duration"] = json!(8000);
+        let keys: Vec<_> = (0..=40)
+            .map(|index| {
+                json!({
+                    "id": format!("scale-{index}"),
+                    "layerTime": index * 200,
+                    "value": {"type": "float", "value": if index % 2 == 0 {100} else {0}},
+                    "easing": {"type": "cubicBezier", "x1": 0.55, "y1": 0,
+                               "x2": 1, "y2": 0.45}
+                })
+            })
+            .collect();
+        raw["composition"]["dynamics"]["entries"][0]["animator"]["keyframes"] = json!(keys);
+    });
+    let before = original.to_json_value().unwrap();
+    let prepared = prepare(&original).unwrap();
+    let native = crate::export_document::to_aep(&prepared.document).unwrap();
+    assert!(
+        !native
+            .diagnostics
+            .iter()
+            .any(|d| d.layer_id == Some(LayerId::new(7)))
+    );
+    let authored = original.composition().dynamics().entries()[0]
+        .animator
+        .keyframe_track()
+        .unwrap();
+    let keys = track(&prepared, 0).keyframes();
+    assert_eq!(keys.len(), 41);
+    for (key, original) in keys.iter().zip(authored.keyframes()) {
+        assert_eq!(key.id(), original.id());
+        assert_eq!(key.layer_time(), original.layer_time());
+        assert_eq!(key.value(), original.value());
+    }
+    for key in &keys[1..] {
+        let PropertyKeyframeEasing::CubicBezier { x1, y1, x2, y2 } = key.easing() else {
+            panic!("finite native cubic expected");
+        };
+        assert_eq!((x1, y1, x2), (0.55, 0.0, 0.999));
+        assert!((y2 - 0.44499078).abs() < 1e-6);
+    }
+    assert_eq!(prepared.diagnostics.len(), 40);
+    assert!(
+        prepared
+            .diagnostics
+            .iter()
+            .all(|d| d.message.contains("0.158"))
+    );
+    assert_eq!(original.to_json_value().unwrap(), before);
+}
+
+#[test]
 fn singular_scale_disabled_ordinary_and_spatial_profiles_remain_unchanged() {
     for (property, enabled, x2, y2) in [
         ("scaleY", false, 1.0, 0.45),

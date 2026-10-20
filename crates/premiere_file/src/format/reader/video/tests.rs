@@ -63,6 +63,38 @@ fn native_after_effects_link_is_not_decoded_video() {
 }
 
 #[test]
+fn after_effects_link_unknown_colour_domain_preserves_pinned_source_geometry() {
+    let original = native_link_xml();
+    let changed = original.replace("BT.709 RGB Full", "Future RGB");
+    assert_ne!(changed, original);
+    let graph = Graph::parse(&changed).unwrap();
+    let record = graph
+        .locate_uid("cb0ef24b-d73e-428b-b00e-52eb2abb1038", "pinned native link")
+        .unwrap();
+    let mut omissions = Vec::new();
+    let media = read_media(
+        &graph,
+        graph
+            .decode_as::<Media>(record, "source regression")
+            .unwrap(),
+        &mut omissions,
+    )
+    .unwrap();
+    assert_eq!(
+        media.after_effects_composition(),
+        linked_source(&original)
+            .unwrap()
+            .after_effects_composition()
+    );
+    let video = media.video.as_ref().unwrap();
+    assert_eq!((video.width, video.height), (320, 180));
+    assert_eq!(video.intrinsic_ticks, 2 * TICKS);
+    assert!(omissions.iter().any(|omission| omission
+        .to_string()
+        .contains("Unrecognized linked-AEP source colour domain")));
+}
+
+#[test]
 fn after_effects_link_rejects_unrepresented_stream_semantics() {
     for (from, to, reason) in [
         (
@@ -80,7 +112,6 @@ fn after_effects_link_rejects_unrepresented_stream_semantics() {
             "<OriginalFieldType>1</OriginalFieldType>",
             "progressive",
         ),
-        ("BT.709 RGB Full", "BT.709 YUV", "color interpretation"),
         (
             "<AlphaType>1</AlphaType>",
             "<AlphaType>1</AlphaType><IgnoreAlpha>true</IgnoreAlpha>",

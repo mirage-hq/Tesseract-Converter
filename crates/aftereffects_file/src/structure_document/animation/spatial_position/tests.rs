@@ -260,6 +260,33 @@ fn unsupported_distance_ease_is_diagnosed_and_hold_remains_discrete() {
 }
 
 #[test]
+fn speed_limited_exact_lowering_requires_monotone_axis_geometry() {
+    let mut numeric = circle();
+    let (first, last) = numeric.keyframes.split_at_mut(1);
+    first[0].time_secs = 0.;
+    first[0].values = vec![0., 0., 0.];
+    first[0].spatial_out = vec![0., 20., 0.];
+    first[0].out_speed = vec![600.];
+    first[0].out_influence = vec![60.];
+    last[0].time_secs = 1.;
+    last[0].values = vec![0., 100., 0.];
+    last[0].spatial_in = vec![0., -30., 0.];
+    let prepared = prepare(&numeric).unwrap().unwrap();
+    assert_eq!(prepared.keyframes.len(), 2);
+    assert_eq!(prepared.keyframes[0].out_speed, vec![0., 600., 0.]);
+    assert_eq!(prepared.keyframes[0].out_influence, vec![100. / 6.; 3]);
+    assert_eq!(prepared.keyframes[0].out_interpolation, 2);
+    assert_eq!(prepared.keyframes[1].in_interpolation, 2);
+    assert_eq!(prepared.keyframes[1].values, vec![0., 100., 0.]);
+
+    // Bent and retracing geometry still needs distance-space preparation.
+    for tangent in [vec![1., 20., 0.], vec![0., 80., 0.], vec![0., -1., 0.]] {
+        numeric.keyframes[0].spatial_out = tangent;
+        assert!(prepare(&numeric).unwrap_err().contains("nonmonotone"));
+    }
+}
+
+#[test]
 fn total_work_limit_is_shared_and_checked_before_generated_allocations() {
     let mut remaining = 8;
     let mut table = vec![];

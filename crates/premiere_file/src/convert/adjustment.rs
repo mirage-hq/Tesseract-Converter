@@ -125,6 +125,11 @@ pub(super) fn import_adjustment(
             crate::schema::adjustment::supports_motion_coverage(clip),
             "{record}: adjustment Motion coverage is unsupported"
         );
+        if clip.effects.iter().any(|effect| {
+            effect.enabled && matches!(effect.params, crate::schema::PrEffectParams::Offset(_))
+        }) {
+            approximate(omissions, record, "Offset on moved/scaled adjustment retains static rectangular Motion coverage and editable center keys; MotionTile wrapping, mask/effect order and native edge sampling can differ");
+        }
         let guide_id = LayerId::new(*scope.next_index as u64 + 1);
         let mask_id = FxItemId::new(*scope.next_index as u64 + 2);
         *scope.next_index += 2;

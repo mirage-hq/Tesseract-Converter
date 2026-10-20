@@ -9,7 +9,13 @@ use ts_rs::TS;
 pub mod animator;
 pub mod asset_metadata;
 pub mod asset_refs;
+mod color_management;
 pub mod composed_edit;
+pub use color_management::{
+    reject_nested_color_management, reject_scoped_color_management, validate_render_domain_nesting,
+    validate_render_domains, AcesPolicy, ColorManagement, ColorManagementError, Compositing,
+    OutputTransform, RenderDomain, RenderDomainDiagnostic, WorkingSpace,
+};
 pub mod editable_document;
 pub mod effect;
 mod snapshot;
@@ -21,7 +27,7 @@ pub use composed_edit::{FXComposition, ValidationError};
 pub use editable_document::{
     EditableFxCompositionDocument, EditableFxDocument, EditableFxDocumentError,
     EDITABLE_FX_COMPOSITION_SCHEMA, EDITABLE_FX_DOCUMENT_FORMAT_VERSION,
-    EDITABLE_FX_DOCUMENT_SCHEMA_URL,
+    EDITABLE_FX_DOCUMENT_SCHEMA_URL, HDR_GRAPHICS_WHITE_NITS_RANGE,
 };
 pub use snapshot::{
     Composition, CompositionData as SnapshotCompositionData, FxComposition, FxCompositionDocument,
@@ -32,7 +38,9 @@ mod canvas;
 pub use canvas::{Dimensions, MotionBlurSettings};
 mod caption_presentation;
 pub mod color;
+pub mod color_tools;
 pub mod curves;
+pub use color_tools::{ChannelMixer, HueCurves, SelectiveColor};
 pub mod font_metadata;
 pub mod id;
 pub mod layer;
@@ -59,11 +67,11 @@ pub use caption_presentation::{
 };
 pub use color::{
     ColorEncodingId, ColorEncodingIdError, ColorLutInterpolation, ColorTransform,
-    ColorTransformSemanticVersion, InputTransform, NormalizedColorMix, NormalizedColorMixError,
-    PersistedInputTransform, PrimaryGrade, PrimaryGradeError, PrimaryGradeSemanticVersion,
-    TonalColor, TonalColorError, TonalColorSemanticVersion, INPUT_TRANSFORM_SEMANTIC_ID,
-    LOOK_TRANSFORM_SEMANTIC_ID, PRIMARY_GRADE_SEMANTIC_ID, SDR_REC709_DISPLAY_ENCODING_ID,
-    TONAL_COLOR_SEMANTIC_ID,
+    ColorTransformSemanticVersion, InputColorTransform, InputTransform, NormalizedColorMix,
+    NormalizedColorMixError, PersistedInputTransform, PrimaryGrade, PrimaryGradeError,
+    PrimaryGradeSemanticVersion, TonalColor, TonalColorError, TonalColorSemanticVersion,
+    ACESCCT_ENCODING_ID, INPUT_TRANSFORM_SEMANTIC_ID, LOOK_TRANSFORM_SEMANTIC_ID,
+    PRIMARY_GRADE_SEMANTIC_ID, SDR_REC709_DISPLAY_ENCODING_ID, TONAL_COLOR_SEMANTIC_ID,
 };
 pub use curves::{
     ColorCurve, ColorCurveError, ColorCurvePoint, ColorCurves, ColorCurvesSemanticVersion,
@@ -114,25 +122,74 @@ pub use time::{Duration, Time, TimeOffset, TimeRange};
 pub const FX_COMPOSITION_SCHEMA: &str = include_str!("../fx_composition.schema.json");
 
 /// FX composition schema revision.
-pub const FX_SCHEMA_REVISION: u8 = 70;
+pub const FX_SCHEMA_REVISION: u8 = 77;
 
 /// Backward-compatible schema revision name.
 pub const SCHEMA_VERSION: u8 = FX_SCHEMA_REVISION;
 
-/// Normalized RGBA color matching AE/PAG floating-point color channels.
+/// Extended-sRGB RGBA paint: finite RGB 0..64, alpha 0..1.
 pub type Color = [f64; 4];
+/// Deserialize bounded extended-sRGB paint while keeping alpha as coverage.
+pub fn deserialize_extended_color<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Color, D::Error> {
+    let color = Color::deserialize(deserializer)?;
+    if !has_valid_extended_color(&color) {
+        return Err(de::Error::custom(
+            "RGB must be finite in 0..=64 and alpha in 0..=1",
+        ));
+    }
+    Ok(color)
+}
+
+/// Deserialize an optional authored paint without changing absent/null semantics.
+pub fn deserialize_optional_extended_color<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Color>, D::Error> {
+    let color = Option::<Color>::deserialize(deserializer)?;
+    if color
+        .as_ref()
+        .is_some_and(|color| !has_valid_extended_color(color))
+    {
+        return Err(de::Error::custom(
+            "RGB must be finite in 0..=64 and alpha in 0..=1",
+        ));
+    }
+    Ok(color)
+}
+
 /// Two-dimensional `[x, y]` vector.
 pub type Vector2 = [f64; 2];
 /// Three-dimensional `[x, y, z]` vector.
 pub type Vector3 = [f64; 3];
 /// AE/PAG-style scalar property with no domain bound.
 pub type ScalarProperty = f64;
+
+/// Implicit AE camera distance for 2.5D layers, in composition widths.
+pub const DEFAULT_CAMERA_DISTANCE_PER_WIDTH: f64 = 1.388;
 /// AE/PAG-style 2D vector property.
 pub type Vector2Property = Vector2;
 /// AE/PAG-style 3D vector property.
 pub type Vector3Property = Vector3;
 /// AE/PAG-style RGBA color property.
 pub type ColorProperty = Color;
+
+/// Maximum encoded extended-sRGB channel for editable shape and solid paint.
+/// This keeps continued-EOTF values representable in the HDR float target.
+pub const MAX_EXTENDED_COLOR_CHANNEL: f64 = 64.0;
+
+/// Validates extended-sRGB shape/solid RGB and normalized coverage alpha.
+#[must_use]
+pub fn has_valid_extended_color(color: &ColorProperty) -> bool {
+    color.iter().enumerate().all(|(index, channel)| {
+        let maximum = if index == 3 {
+            1.0
+        } else {
+            MAX_EXTENDED_COLOR_CHANNEL
+        };
+        channel.is_finite() && (0.0..=maximum).contains(channel)
+    })
+}
 
 /// Finite scalar greater than or equal to zero.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, TS)]

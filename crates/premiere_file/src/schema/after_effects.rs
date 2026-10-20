@@ -13,6 +13,22 @@ pub(crate) const CODEC: &str = "1145854285";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PrAfterEffectsComposition(Uuid);
 
+/// Native AEP source interpretation, separate from composition UUID identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PrAfterEffectsSource {
+    pub composition: PrAfterEffectsComposition,
+    pub working_hdr: Option<fx_conv::HdrTransfer>,
+}
+
+impl From<PrAfterEffectsComposition> for PrAfterEffectsSource {
+    fn from(composition: PrAfterEffectsComposition) -> Self {
+        Self {
+            composition,
+            working_hdr: None,
+        }
+    }
+}
+
 impl PrAfterEffectsComposition {
     pub(crate) fn parse(value: &str) -> Option<Self> {
         let guid = Uuid::parse_str(value).ok()?;

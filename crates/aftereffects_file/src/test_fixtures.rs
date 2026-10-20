@@ -6,7 +6,9 @@ use std::{
     path::Path,
 };
 
-const MAX_DECODED_BYTES: u64 = 16 * 1024 * 1024;
+// Native float-PCS HDR fixtures include a 31.5 MB ICC-bearing AEP; keep a
+// bounded 32 MiB test-only allowance rather than bypassing provenance checks.
+const MAX_DECODED_BYTES: u64 = 32 * 1024 * 1024;
 
 pub(crate) fn read(path: impl AsRef<Path>) -> Vec<u8> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -48,7 +50,7 @@ fn compressed_references_match_all_original_provenance_pins() {
                     .get("path")
                     .or_else(|| object.get("file"))
                     .and_then(Value::as_str)
-                    .filter(|name| name.ends_with(".json.gz"))
+                    .filter(|name| name.ends_with(".json.gz") || name.ends_with(".aep.gz"))
                 {
                     let path = directory.join(name);
                     let bytes = read(&path);

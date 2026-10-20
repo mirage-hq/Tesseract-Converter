@@ -71,18 +71,28 @@ pub(crate) fn frame_asset(base: &AssetId, index: usize) -> AssetId {
 /// Keep the source clock independent of sequence/output cadence. Clock edits
 /// not proved by this mapping omit only their occurrence, never sibling media.
 pub(crate) fn unsupported_occurrence(clip: &PrVideoOccurrence) -> Option<&'static str> {
-    if clip.playback_rate != 1.0 || clip.time_remap.is_some() {
-        Some("only unit forward playback without Time Remapping is supported")
+    if !(clip.playback_rate.is_finite() && clip.playback_rate > 0.0 || clip.playback_rate == -1.0)
+        || clip.time_remap.is_some()
+    {
+        Some("only positive forward or unit reverse playback without Time Remapping is supported")
+    } else if clip.playback_rate != 1.0 && !clip.animations.is_empty() {
+        Some("Motion/Opacity keys on retimed numbered images are unsupported")
+    } else if clip.playback_rate != 1.0 && clip.playback_rate != -1.0 && clip.track_matte.is_some()
+    {
+        Some("Track Matte Key on retimed numbered images is unsupported")
     } else if clip.frame_blending.is_some() {
         Some("numbered-image frame blending is unsupported")
     } else if !clip.effects.is_empty() || clip.active_transforms != 0 {
         Some("effects on numbered images are unsupported")
-    } else if !clip.crop.is_default()
-        || clip.linear_wipe.is_some()
-        || clip.opacity_mask.is_some()
-        || clip.track_matte.is_some()
+    } else if !clip.crop.is_default() || clip.linear_wipe.is_some() || clip.opacity_mask.is_some() {
+        Some("masks on numbered images are unsupported")
+    } else if clip.track_matte.is_some()
+        && (clip.transform != crate::schema::PrStaticTransform::default()
+            || clip.animations.iter().any(|animation| {
+                !matches!(animation, crate::schema::PrPropertyAnimation::Opacity(_))
+            }))
     {
-        Some("masks or track mattes on numbered images are unsupported")
+        Some("Track Matte Key on numbered images requires neutral consumer Motion")
     } else if clip.stroke.is_some() {
         Some("Film Impact Stroke on numbered images is unsupported")
     } else {

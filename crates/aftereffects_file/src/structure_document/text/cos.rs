@@ -522,7 +522,9 @@ fn decode_string(bytes: &[u8]) -> Result<String, Error> {
             return Err(Error::Encoding);
         }
         let units = bytes
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| u16::from_be_bytes([pair[0], pair[1]]));
         return String::from_utf16(&units.collect::<Vec<_>>()).map_err(|_| Error::Encoding);
     }
@@ -531,7 +533,9 @@ fn decode_string(bytes: &[u8]) -> Result<String, Error> {
             return Err(Error::Encoding);
         }
         let units = bytes
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| u16::from_le_bytes([pair[0], pair[1]]));
         return String::from_utf16(&units.collect::<Vec<_>>()).map_err(|_| Error::Encoding);
     }

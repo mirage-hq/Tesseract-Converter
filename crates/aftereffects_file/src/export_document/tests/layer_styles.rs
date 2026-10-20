@@ -131,6 +131,125 @@ fn clocked_drop_shadow_group(playback: Value, include_sibling: bool) -> Value {
 }
 
 #[test]
+fn outer_glow_keeps_independent_vector_content_when_text_bounds_are_unknown() {
+    let proof: Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/layer_styles/styles_static_adobe.readback.json"
+    ))
+    .unwrap();
+    let native_size = proof["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["feature"] == "OuterGlow")
+        .unwrap()["controls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|control| control["match_name"] == "outerGlow/blur")
+        .unwrap()["value"]
+        .as_f64()
+        .unwrap();
+    assert_eq!(native_size, 14.0);
+    let mut input = mixed_scene_with_text_branch();
+    let scene = &mut input["composition"]["layers"][0];
+    scene["transform"]["scale"] = json!([80.0, 80.0]);
+    scene["effects"] = json!([{
+        "id": 60_300, "enabled": true,
+        "effect": {"type":"outerGlow", "enabled":true,
+            "color":[0.1,0.8,1.0,0.85], "size":native_size,
+            "spread":0.25, "range":0.75, "blendMode":"screen"}
+    }]);
+    let mut unmapped_effect = input.clone();
+    unmapped_effect["composition"]["layers"][0]["effects"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id":60_301, "enabled":true,
+            "effect":{"type":"unmappedRecoveryProbe"}
+        }));
+    let rejected = export(unmapped_effect);
+    assert!(rejected.omitted_layer_ids.contains(&LayerId::new(60_000)));
+    let mut pixel_effect = input.clone();
+    pixel_effect["composition"]["layers"][0]["effects"][0]["effect"] =
+        json!({"type":"gaussianBlur", "blurriness":7});
+    let rejected = export(pixel_effect);
+    assert!(rejected.omitted_layer_ids.contains(&LayerId::new(60_000)));
+    let parent = tempfile::tempdir().unwrap();
+    let input_path = parent.path().join("source.tsrct");
+    tesseract_file::TesseractFileBuilder::from_project_json(&serde_json::to_vec(&input).unwrap())
+        .unwrap()
+        .write(&input_path)
+        .unwrap();
+    let archive = tesseract_file::TesseractFile::open(&input_path).unwrap();
+    let output = crate::AfterEffects
+        .stage_picture_layers(
+            &archive,
+            archive.project(),
+            0..1,
+            parent.path(),
+            &crate::AfterEffectsExportOptions::default(),
+        )
+        .unwrap();
+    assert!(
+        !output.omitted_layer_ids().contains(&LayerId::new(60_000)),
+        "{:?}",
+        output.report().diagnostics
+    );
+    assert!(!output.omitted_layer_ids().contains(&LayerId::new(60_100)));
+    assert!(output.omitted_layer_ids().contains(&LayerId::new(60_061)));
+    assert!(
+        output
+            .report()
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.message.contains("Text-only branch omitted") })
+    );
+    let bytes = std::fs::read(output.directory().join("project.aep")).unwrap();
+    let native = read_project(&bytes).unwrap();
+    let scene = layers(&native)
+        .iter()
+        .find(|layer| layer.name.as_ref() == "S06 scene")
+        .expect("styled native occurrence retained");
+    let styles = crate::layer_styles::read(&scene.content, [320.0, 180.0]);
+    let [crate::layer_styles::NativeLayerStyle::OuterGlow(glow)] = styles.styles.as_slice() else {
+        panic!("native Outer Glow must remain on the retained occurrence")
+    };
+    assert_eq!(glow.size, native_size);
+    assert_eq!(glow.spread, 0.25);
+    assert_eq!(glow.range, 0.75);
+    let roundtrip = to_structural_fx_document(&native, Some(1)).unwrap();
+    assert!(has_descendant_named(
+        roundtrip.document.composition().layers(),
+        "S06 shoe"
+    ));
+    assert!(!has_descendant_named(
+        roundtrip.document.composition().layers(),
+        "S06 title"
+    ));
+    assert!(
+        roundtrip
+            .document
+            .composition()
+            .dynamics()
+            .entries()
+            .iter()
+            .any(|entry| {
+                entry.target.as_property().is_some_and(|target| {
+                    target.property_type() == PropType::PositionX
+                        && entry.animator.keyframe_track().is_some_and(|track| {
+                            track.keyframes().len() == 2
+                                && matches!(
+                                    (track.keyframes()[0].value(), track.keyframes()[1].value()),
+                                    (PropertyValue::Float(first), PropertyValue::Float(last))
+                                        if (last - first - 120.0).abs() < 0.001
+                                )
+                        })
+                })
+            })
+    );
+}
+
+#[test]
 fn outer_glow_exports_as_native_layer_style_and_freshly_imports_as_editable_effect() {
     let mut input: Value = serde_json::from_str(TEMPLATE).unwrap();
     input["composition"]["layers"][0]["effects"] = json!([{

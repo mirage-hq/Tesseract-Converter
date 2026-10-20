@@ -1,4 +1,34 @@
 use super::*;
+
+#[test]
+fn explicit_hdr_native_rgb_converts_extended_meaning_before_eight_bit_storage() {
+    for transfer in [fx_conv::HdrTransfer::Pq, fx_conv::HdrTransfer::Hlg] {
+        let bridge = fx_conv::HdrColorBridge::new(transfer, Some(203.0)).unwrap();
+        let input = [1.2, 0.5, 0.25, 1.0];
+        let expected = bridge.to_native(input).unwrap();
+        let actual = rgb_with_hdr(input, "HDR text fill", Some(bridge)).unwrap();
+        assert_eq!(
+            actual.0,
+            [expected[0], expected[1], expected[2]].map(|value| (value * 255.0).round() as u8)
+        );
+        assert_ne!(actual, rgb(input, "legacy text fill").unwrap());
+        assert!(rgb_with_hdr([64.0, 0.0, 0.0, 1.0], "HDR text fill", Some(bridge)).is_err());
+    }
+}
+
+#[test]
+fn extended_native_text_rgb_clips_before_rounding_and_rejects_extended_alpha() {
+    assert_eq!(
+        rgb([2.0, 0.5, 0.25, 1.0], "text fill").unwrap(),
+        PrRgb([255, 128, 64])
+    );
+    assert_eq!(
+        rgb([64.0, 2.0, 1.0, 1.0], "text fill").unwrap(),
+        PrRgb([255; 3])
+    );
+    assert!(rgb([2.0, 0.0, 0.0, 1.1], "text fill").is_err());
+    assert!(rgb([65.0, 0.0, 0.0, 1.0], "text fill").is_err());
+}
 #[path = "effect_mask.rs"]
 mod effect_mask;
 use crate::{
@@ -80,6 +110,23 @@ fn convert(wire: Value) -> Result<PrProjectFile> {
 
 /// The shared one-clip document, claiming the length of the source that
 /// `convert` inspects.
+#[test]
+fn color_management_legacy_marker_does_not_change_native_export_semantics() {
+    let absent = document();
+    let mut explicit = absent.clone();
+    explicit["colorManagement"] = json!({"version":1,"workingSpace":"legacyDisplay"});
+    assert_eq!(
+        format!("{:?}", convert(absent).unwrap()),
+        format!("{:?}", convert(explicit).unwrap())
+    );
+    let mut unsupported = document();
+    unsupported["colorManagement"] = json!({"version":1,"workingSpace":"futureSpace"});
+    assert!(EditableFxCompositionDocument::from_json_value(unsupported)
+        .unwrap_err()
+        .to_string()
+        .contains("requires a newer Jerboa"));
+}
+
 fn document() -> Value {
     let mut document = editable_document();
     document["composition"]["layers"][0]["sourceIntrinsicDuration"] = json!(SOURCE_MILLIS);
@@ -7080,7 +7127,8 @@ fn off_grid_audio_end_extends_the_document_and_survives_native_export() {
         }
         let (loaded, omissions) = PrProjectFile::load(&path).unwrap();
         assert!(omissions.is_empty(), "{omissions:?}");
-        assert_eq!(loaded.sequences[0].timeline_end_ticks, 5 * TICKS);
+        // Audio item ends participate without snapping to the picture grid.
+        assert_eq!(loaded.sequences[0].timeline_end_ticks, end);
         assert_eq!(loaded.sequences[0].end_ticks(), end);
         let document =
             crate::tests::support::project_document_with_media(&loaded.sequences[0], &loaded.media);
@@ -8766,6 +8814,7 @@ fn text_layers_export_their_current_document() {
             font: "Inter-Bold".into(),
             size: 80.0,
             fill: Some(PrRgb([255, 0, 0])),
+            fill_spans: Vec::new(),
             stroke: Some(PrTextStroke {
                 color: PrRgb([0, 0, 255]),
                 width: 5.0,
@@ -8929,7 +8978,7 @@ fn unsupported_text_layer_values_are_omitted_with_layer_context() {
         ),
         (
             json!({"sourceText": {"fillColor": [1, 0, 0, 0.5]}}),
-            "opaque color",
+            "opaque with finite RGB",
         ),
         (
             json!({"pathOptions": {"id": 51, "pathLayer": 2}}),
@@ -9194,6 +9243,67 @@ fn two_layer_keys(layer: u64, property: &str, values: [f64; 2], easing: Value) -
 }
 
 #[test]
+fn single_axis_position_keys_keep_static_partner_and_source_clock() {
+    use crate::tests::support::{project_document, video_sequence};
+    for (property, axis, values) in [
+        ("positionX", 0, [960.0, 480.0]),
+        ("positionY", 1, [540.0, 345.0]),
+    ] {
+        for easing in [
+            json!({"type": "linear"}),
+            json!({"type": "hold"}),
+            json!({"type": "cubicBezier", "x1": 0.15, "y1": 0.0, "x2": 0.25, "y2": 1.0}),
+        ] {
+            let mut sequence = video_sequence();
+            let clip = sequence.video_tracks[0].clip_mut(0);
+            clip.in_ticks = TICKS;
+            clip.out_ticks = 3 * TICKS;
+            clip.end_ticks = 2 * TICKS;
+            sequence.timeline_end_ticks = 2 * TICKS;
+            let mut wire = project_document(&sequence);
+            wire["composition"]["dynamics"] = json!({"entries": [
+                two_layer_keys(1, property, values, easing.clone())
+            ]});
+            let (project, omissions) = convert_with_omissions(wire).unwrap();
+            let clip = first_clip(&project);
+            let keys = clip
+                .animations
+                .iter()
+                .find_map(|animation| match animation {
+                    PrPropertyAnimation::Position(keys) => Some(keys),
+                    _ => None,
+                })
+                .expect("a single keyed axis must produce editable Position keys");
+            assert_eq!(keys.len(), 2);
+            assert_eq!(keys[0].source_ticks, TICKS);
+            assert_eq!(keys[1].source_ticks, 2 * TICKS);
+            let dimension = [1920.0, 1080.0][axis];
+            assert_eq!(keys[0].value[axis], values[0] / dimension);
+            assert_eq!(keys[1].value[axis], values[1] / dimension);
+            assert_eq!(keys[0].value[1 - axis], 0.5);
+            assert_eq!(keys[1].value[1 - axis], 0.5);
+            let expected = match easing["type"].as_str().unwrap() {
+                "hold" => PrKeyframeEasing::Hold,
+                "linear" => PrKeyframeEasing::Linear,
+                _ => PrKeyframeEasing::CubicBezier {
+                    x1: 0.15,
+                    y1: 0.0,
+                    x2: 0.25,
+                    y2: 1.0,
+                },
+            };
+            assert_eq!(keys[1].easing, expected);
+            assert!(
+                !omissions
+                    .iter()
+                    .any(|item| item.reason.contains("unpaired Position")),
+                "{omissions:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn retimed_clip_keeps_its_static_crop_when_its_position_keys_are_omitted() {
     use crate::tests::support::{project_document, video_sequence};
     // 4 s of source over 2 s in reverse writes a -2x clip, which omits the
@@ -9267,15 +9377,6 @@ fn unwritten_motion_keys_leave_a_static_crop_and_omit_a_flat_wiped_clip() {
     // which a canonical Crop, whose guide repeats the keys, follows exactly. A
     // flat Linear Wipe guide is the clip frame only without Motion keys.
     let unwritten = [
-        (
-            vec![two_layer_keys(
-                1,
-                "positionX",
-                [960.0, 480.0],
-                linear.clone(),
-            )],
-            "unpaired Position keyframes were not exported",
-        ),
         (
             vec![two_layer_keys(1, "scaleY", [100.0, 150.0], linear.clone())],
             "nonuniform or unpaired Scale keyframes were not exported",
@@ -9452,9 +9553,7 @@ fn keyed_document(
 /// The keyed clips of `project` as (track, start seconds, Track Matte Key)
 /// and the rotation of the clip on each track, bottom first.
 fn keyed_clips(project: &PrProjectFile) -> Vec<(usize, i64, Option<crate::schema::PrTrackMatte>)> {
-    project
-        .single_sequence()
-        .unwrap()
+    crate::tests::support::picture_sequence(project)
         .video_tracks
         .iter()
         .enumerate()
@@ -9631,9 +9730,13 @@ fn track_mattes_export_as_the_key_with_the_source_above_every_keyed_clip() {
             PrMatteChannel::Luma,
         ),
     ] {
-        let source = wire.pointer_mut(source).unwrap();
+        let source = crate::tests::support::picture_composition_mut(&mut wire)
+            .pointer_mut(source.strip_prefix("/composition").unwrap())
+            .unwrap();
         source["blendMode"] = json!("darkerColor");
         let record = format!("layer {} ({})", source["id"], source["name"]);
+        let pictures = crate::tests::support::picture_composition(&wire);
+        let sequence_record = format!("layer {} ({})", pictures["id"], pictures["name"]);
         let (project, omissions) = convert_with_omissions(wire).unwrap();
         assert_eq!(
             omissions,
@@ -9642,6 +9745,11 @@ fn track_mattes_export_as_the_key_with_the_source_above_every_keyed_clip() {
                 kind: OmissionKind::Omitted,
                 record,
                 reason: "unsupported blend mode was not exported (using normal)".into(),
+            }, crate::Omission {
+                scope: crate::OmissionScope::Feature,
+                kind: OmissionKind::Approximated,
+                record: sequence_record,
+                reason: "the nested sequence composites alone in Premiere, but its FX group passes the blend modes of the layers inside it through to the layers below the group at the frames where its Opacity is full, so there they also blend with those where the nested sequence is not opaque (content-dependent error)".into(),
             }]
         );
         let key = Some(PrTrackMatte {
@@ -9653,7 +9761,7 @@ fn track_mattes_export_as_the_key_with_the_source_above_every_keyed_clip() {
                 keyed_clips(project),
                 [(0, 0, key), (0, 5, None), (1, 0, None)]
             );
-            let tracks = &project.single_sequence().unwrap().video_tracks;
+            let tracks = &crate::tests::support::picture_sequence(project).video_tracks;
             assert_eq!(
                 [tracks[0].clip(0), tracks[0].clip(1), tracks[1].clip(0)]
                     .map(|clip| clip.blend_mode),
@@ -10022,7 +10130,7 @@ fn a_keyed_nest_exports_its_key_on_the_placement() {
     )
     .unwrap();
     assert!(omissions.is_empty(), "{omissions:?}");
-    let sequence = project.single_sequence().unwrap();
+    let sequence = crate::tests::support::picture_sequence(&project);
     let nest = sequence.nest_occurrences().next().unwrap();
     assert_eq!(
         nest.sequence

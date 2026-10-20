@@ -82,7 +82,7 @@ fn static_cross_comp_slider_scale_replaces_the_cached_transform() {
     assert!(
         warnings
             .iter()
-            .any(|warning| warning.contains("static cross-composition Slider"))
+            .any(|warning| warning.contains("static composition Slider"))
     );
     let duplicate = item(
         5,
@@ -101,6 +101,66 @@ fn static_cross_comp_slider_scale_replaces_the_cached_transform() {
     )
     .unwrap();
     assert!(property(&properties, "ADBE Scale").expression_enabled);
+}
+
+#[test]
+fn native_static_sibling_slider_repeated_xy_scale_imports_editable_values() {
+    let mut project = read_project(include_bytes!(
+        "../../../../tests/fixtures/expression_samples/sampled_position_expression.aep"
+    ))
+    .unwrap();
+    let readback: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../tests/fixtures/expression_samples/sampled_position_expression.readback.json"
+    ))
+    .unwrap();
+    let slider_value = readback["controller"]["effect"]["control"]["value"]
+        .as_f64()
+        .unwrap();
+    assert_eq!(slider_value, 35.0);
+    let ItemKind::Composition(composition) = &mut project
+        .items
+        .iter_mut()
+        .find(|item| item.id == 1)
+        .unwrap()
+        .kind
+    else {
+        panic!("native target must be a composition");
+    };
+    let subject = composition
+        .layers
+        .iter_mut()
+        .find(|layer| layer.record.id() == 17)
+        .unwrap();
+    subject.content = transform_content(vec![(
+        "ADBE Scale",
+        numeric(
+            &[1.0, 1.0],
+            Some(
+                "temp = thisComp.layer(\"Controller\").effect(\"Amplitude\")(\"Slider\"); [temp, temp]",
+            ),
+        ),
+    )]);
+    let converted =
+        crate::structure_document::to_structural_fx_document(&project, Some(1)).unwrap();
+    fn find(layers: &[fx_schema::Layer]) -> Option<&fx_schema::GroupLayer> {
+        for layer in layers {
+            if let fx_schema::LayerData::Group(group) = layer.data() {
+                if group.description.contains("AEP comp=1 layer=17 kind=") {
+                    return Some(group);
+                }
+                if let Some(found) = find(&group.layers) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    let subject = find(converted.document.composition().layers()).unwrap();
+    assert_eq!(subject.transform.scale, [slider_value; 2]);
+    assert!(
+        !subject.layers.is_empty(),
+        "editable source content survives"
+    );
 }
 
 fn template() -> (Layer, Composition) {

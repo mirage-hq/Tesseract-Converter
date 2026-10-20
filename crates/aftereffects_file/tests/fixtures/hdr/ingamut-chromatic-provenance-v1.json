@@ -1,0 +1,654 @@
+{
+  "cases": [
+    {
+      "case_id": "eng2019-ingamut-pq-v1",
+      "feature": "in-gamut saturated BT709 colors including above graphics white",
+      "source": {
+        "file": "ingamut-chromatic-pq-v1.aep.gz",
+        "sha256_uncompressed": "9ebe1a704e756c77674191dfde0313c54806f3f9382aa53d23670fab947c6d9b",
+        "composition_id": 14,
+        "author_job": 5093,
+        "application": "After Effects",
+        "version": "26.5x89",
+        "saved_reopened": {
+          "bpc": 32,
+          "composition_id": "14",
+          "duration": 1,
+          "dynamic_link_guid": "0000000e-0000-0000-0000-000000000000",
+          "editable_solids": 10,
+          "fps": 30,
+          "height": 512,
+          "linear_blending": false,
+          "linearize": false,
+          "name": "eng2019-ingamut-pq-owned-v1",
+          "paints": [
+            {
+              "height": 256,
+              "name": "red-white",
+              "position": [
+                128,
+                128,
+                0
+              ],
+              "rgb": [
+                0.52661406993866,
+                0.38537961244583,
+                0.28296294808388
+              ],
+              "width": 256
+            },
+            {
+              "height": 256,
+              "name": "green-white",
+              "position": [
+                384,
+                128,
+                0
+              ],
+              "rgb": [
+                0.45448258519173,
+                0.5492599606514,
+                0.38962149620056
+              ],
+              "width": 256
+            },
+            {
+              "height": 256,
+              "name": "blue-white",
+              "position": [
+                640,
+                128,
+                0
+              ],
+              "rgb": [
+                0.34963643550873,
+                0.34590864181519,
+                0.55925327539444
+              ],
+              "width": 256
+            },
+            {
+              "height": 256,
+              "name": "yellow-white",
+              "position": [
+                896,
+                128,
+                0
+              ],
+              "rgb": [
+                0.54857605695724,
+                0.54363977909088,
+                0.35966694355011
+              ],
+              "width": 256
+            },
+            {
+              "height": 256,
+              "name": "midtone",
+              "position": [
+                1152,
+                128,
+                0
+              ],
+              "rgb": [
+                0.50957345962524,
+                0.50957345962524,
+                0.50957345962524
+              ],
+              "width": 256
+            },
+            {
+              "height": 256,
+              "name": "red-above-white",
+              "position": [
+                128,
+                384,
+                0
+              ],
+              "rgb": [
+                0.67231756448746,
+                0.51805418729782,
+                0.39941582083702
+              ],
+              "width": 256
+            },
+            {
+              "height": 256,
+              "name": "green-above-white",
+              "position": [
+                384,
+                384,
+                0
+              ],
+              "rgb": [
+                0.59468853473663,
+                0.69624978303909,
+                0.52282965183258
+              ],
+              "width": 256
+            },
+            {
+              "height": 256,
+              "name": "blue-above-white",
+              "position": [
+                640,
+                384,
+                0
+              ],
+              "rgb": [
+                0.47740739583969,
+                0.47312444448471,
+                0.70674872398376
+              ],
+              "width": 256
+            },
+            {
+              "height": 256,
+              "name": "yellow-above-white",
+              "position": [
+                896,
+                384,
+                0
+              ],
+              "rgb": [
+                0.69552993774414,
+                0.6903287768364,
+                0.48888957500458
+              ],
+              "width": 256
+            },
+            {
+              "height": 256,
+              "name": "peak",
+              "position": [
+                1152,
+                384,
+                0
+              ],
+              "rgb": [
+                0.69790679216385,
+                0.69790679216385,
+                0.69790679216385
+              ],
+              "width": 256
+            }
+          ],
+          "width": 1280,
+          "working_space": "Jerboa BT.2100 PQ BT.2020 D65 W203 v2"
+        },
+        "source_kind": "independently Adobe-authored solids using generated owned-v2 profile; not converter writer output"
+      },
+      "author_script": {
+        "file": "author-ingamut-chromatic-v1.jsx",
+        "sha256": "7e9cec10a7d4aca58d3f2d3875007f016d518d4ce6cba04f06c3d661dc766d77"
+      },
+      "author_input": {
+        "case_id": "eng2019-ingamut-pq-owned-v1",
+        "case_name": "eng2019-ingamut-pq-owned-v1",
+        "profile_kind": "owned",
+        "profile_name": "Jerboa BT.2100 PQ BT.2020 D65 W203 v2",
+        "working_rgb": [
+          [
+            0.5266140862907905,
+            0.38537961894109485,
+            0.28296294293131524
+          ],
+          [
+            0.45448259442141253,
+            0.5492599652014295,
+            0.389621489294469
+          ],
+          [
+            0.3496364357170027,
+            0.34590864329073673,
+            0.5592532900617824
+          ],
+          [
+            0.5485760493015763,
+            0.5436397986212984,
+            0.35966694796073057
+          ],
+          [
+            0.5095734436684075,
+            0.5095734436684075,
+            0.5095734436684075
+          ],
+          [
+            0.6723175590849205,
+            0.5180541669064689,
+            0.399415812089064
+          ],
+          [
+            0.5946885362135782,
+            0.6962498078420049,
+            0.5228296624495378
+          ],
+          [
+            0.4774073900196108,
+            0.4731244563235032,
+            0.7067487047420339
+          ],
+          [
+            0.6955299221670003,
+            0.6903287973643994,
+            0.4888895883319983
+          ],
+          [
+            0.697906790218915,
+            0.697906790218915,
+            0.697906790218915
+          ]
+        ],
+        "paint_names": [
+          "red-white",
+          "green-white",
+          "blue-white",
+          "yellow-white",
+          "midtone",
+          "red-above-white",
+          "green-above-white",
+          "blue-above-white",
+          "yellow-above-white",
+          "peak"
+        ],
+        "linear_bt709_rgb": [
+          [
+            0.9,
+            0.08,
+            0.02
+          ],
+          [
+            0.03,
+            0.8,
+            0.08
+          ],
+          [
+            0.04,
+            0.08,
+            0.9
+          ],
+          [
+            0.8,
+            0.7,
+            0.03
+          ],
+          [
+            0.5,
+            0.5,
+            0.5
+          ],
+          [
+            3.6,
+            0.32,
+            0.08
+          ],
+          [
+            0.12,
+            3.2,
+            0.32
+          ],
+          [
+            0.16,
+            0.32,
+            3.6
+          ],
+          [
+            3.2,
+            2.8,
+            0.12
+          ],
+          [
+            3,
+            3,
+            3
+          ]
+        ],
+        "sampling_declaration_sha256": "a679671e04e6795c292705c5826ad7bb0669ef8f8885fbc326819ee6e962cc77"
+      },
+      "native_oracle": {
+        "source_sha256": "aa68c20fee641abccb05e268cb691b0f0309966d04ffb5b40f5d197232f517a2",
+        "composition_id": 1,
+        "builtin_working_space": "Rec.2100 PQ W203",
+        "reference_sha256": "4033fcfa1261fcefca80cd3d921d57e5973b4832c519fb3a09095d6c777e6dbe",
+        "reference_job": 5097,
+        "format": "native AME ProRes422HQ MOV",
+        "full_canvas": true,
+        "fps": "30",
+        "duration_seconds": "1",
+        "independent_profile_bytes": "not extracted or redistributed",
+        "public_30fps_mp4_delivery": "MISSING — native HDR MP4/public delivery remains a blocker; no resampling or relabeling"
+      },
+      "sampling_declaration": "ingamut-chromatic-case-v1.json",
+      "editable_assertion": "native_ingamut_chromatic_import_preserves_saturation_headroom_and_geometry",
+      "import_structure": "PASS shared Rust5102 targeted; full converter5107 PASS; fresh fixed5077 CLI imports succeeded",
+      "visual_comparison": "FAIL: all30 frames measured with predeclared interiors; see chromatic-continuation-evidence-v3.json. Native public30fpsHDRMP4 delivery remains missing.",
+      "edited_fx_to_aep_export": "UNPROVED; this case does not establish export",
+      "alpha_precision_audio": "UNPROVED"
+    },
+    {
+      "case_id": "eng2019-ingamut-hlg-v1",
+      "feature": "in-gamut saturated BT709 colors including above graphics white",
+      "source": {
+        "file": "ingamut-chromatic-hlg-v1.aep.gz",
+        "sha256_uncompressed": "b3d2f9e3ba8e3d29bcd2ce2ec0b75fc06b9fa7927e8ad85ec8895d2d7d9c8c75",
+        "composition_id": 14,
+        "author_job": 5095,
+        "application": "After Effects",
+        "version": "26.5x89",
+        "saved_reopened": {
+          "bpc": 32,
+          "composition_id": "14",
+          "duration": 1,
+          "dynamic_link_guid": "0000000e-0000-0000-0000-000000000000",
+          "editable_solids": 10,
+          "fps": 30,
+          "height": 512,
+          "linear_blending": false,
+          "linearize": false,
+          "name": "eng2019-ingamut-hlg-owned-v1",
+          "paints": [
+            {
+              "height": 256,
+              "name": "red-white",
+              "position": [
+                128,
+                128,
+                0
+              ],
+              "rgb": [
+                0.64365178346634,
+                0.32876631617546,
+                0.17765472829342
+              ],
+              "width": 256
+            },
+            {
+              "height": 256,
+              "name": "green-white",
+              "position": [
+                384,
+                128,
+                0
+              ],
+              "rgb": [
+                0.47656083106995,
+                0.68948322534561,
+                0.33661738038063
+              ],
+              "width": 256
+            },
+            {
+              "height": 256,
+              "name": "blue-white",
+              "position": [
+                640,
+                128,
+                0
+              ],
+              "rgb": [
+                0.26809367537498,
+                0.2622976899147,
+                0.70906692743301
+              ],
+              "width": 256
+            },
+            {
+              "height": 256,
+              "name": "yellow-white",
+              "position": [
+                896,
+                128,
+                0
+              ],
+              "rgb": [
+                0.68812984228134,
+                0.67830872535706,
+                0.2841705083847
+              ],
+              "width": 256
+            },
+            {
+              "height": 256,
+              "name": "midtone",
+              "position": [
+                1152,
+                128,
+                0
+              ],
+              "rgb": [
+                0.60753118991852,
+                0.60753118991852,
+                0.60753118991852
+              ],
+              "width": 256
+            },
+            {
+              "height": 256,
+              "name": "red-above-white",
+              "position": [
+                128,
+                384,
+                0
+              ],
+              "rgb": [
+                0.9140031337738,
+                0.62570703029633,
+                0.35530945658684
+              ],
+              "width": 256
+            },
+            {
+              "height": 256,
+              "name": "green-above-white",
+              "position": [
+                384,
+                384,
+                0
+              ],
+              "rgb": [
+                0.77606409788132,
+                0.95500284433365,
+                0.63576501607895
+              ],
+              "width": 256
+            },
+            {
+              "height": 256,
+              "name": "blue-above-white",
+              "position": [
+                640,
+                384,
+                0
+              ],
+              "rgb": [
+                0.53404122591019,
+                0.52357572317123,
+                0.97283899784088
+              ],
+              "width": 256
+            },
+            {
+              "height": 256,
+              "name": "yellow-above-white",
+              "position": [
+                896,
+                384,
+                0
+              ],
+              "rgb": [
+                0.95377677679062,
+                0.94490617513657,
+                0.56122517585754
+              ],
+              "width": 256
+            },
+            {
+              "height": 256,
+              "name": "peak",
+              "position": [
+                1152,
+                384,
+                0
+              ],
+              "rgb": [
+                0.95782333612442,
+                0.95782333612442,
+                0.95782333612442
+              ],
+              "width": 256
+            }
+          ],
+          "width": 1280,
+          "working_space": "Jerboa BT.2100 HLG BT.2020 D65 W203 v2"
+        },
+        "source_kind": "independently Adobe-authored solids using generated owned-v2 profile; not converter writer output"
+      },
+      "author_script": {
+        "file": "author-ingamut-chromatic-v1.jsx",
+        "sha256": "7e9cec10a7d4aca58d3f2d3875007f016d518d4ce6cba04f06c3d661dc766d77"
+      },
+      "author_input": {
+        "case_id": "eng2019-ingamut-hlg-owned-v1",
+        "case_name": "eng2019-ingamut-hlg-owned-v1",
+        "profile_kind": "owned",
+        "profile_name": "Jerboa BT.2100 HLG BT.2020 D65 W203 v2",
+        "working_rgb": [
+          [
+            0.6436517546144566,
+            0.328766315375795,
+            0.17765472846058455
+          ],
+          [
+            0.47656082968209273,
+            0.6894831999162504,
+            0.3366173781898259
+          ],
+          [
+            0.26809367731752587,
+            0.26229768801099107,
+            0.709066951230786
+          ],
+          [
+            0.6881298238807902,
+            0.6783087093547747,
+            0.28417051281826816
+          ],
+          [
+            0.6075311730172552,
+            0.6075311730172552,
+            0.6075311730172552
+          ],
+          [
+            0.9140031344535102,
+            0.6257070394203369,
+            0.3553094569211691
+          ],
+          [
+            0.7760641217893592,
+            0.9550028335174272,
+            0.6357650374866206
+          ],
+          [
+            0.5340412250798037,
+            0.5235757046370199,
+            0.9728390101986331
+          ],
+          [
+            0.953776775646904,
+            0.9449061467969033,
+            0.5612251665058618
+          ],
+          [
+            0.957823340029929,
+            0.957823340029929,
+            0.957823340029929
+          ]
+        ],
+        "paint_names": [
+          "red-white",
+          "green-white",
+          "blue-white",
+          "yellow-white",
+          "midtone",
+          "red-above-white",
+          "green-above-white",
+          "blue-above-white",
+          "yellow-above-white",
+          "peak"
+        ],
+        "linear_bt709_rgb": [
+          [
+            0.9,
+            0.08,
+            0.02
+          ],
+          [
+            0.03,
+            0.8,
+            0.08
+          ],
+          [
+            0.04,
+            0.08,
+            0.9
+          ],
+          [
+            0.8,
+            0.7,
+            0.03
+          ],
+          [
+            0.5,
+            0.5,
+            0.5
+          ],
+          [
+            3.6,
+            0.32,
+            0.08
+          ],
+          [
+            0.12,
+            3.2,
+            0.32
+          ],
+          [
+            0.16,
+            0.32,
+            3.6
+          ],
+          [
+            3.2,
+            2.8,
+            0.12
+          ],
+          [
+            3,
+            3,
+            3
+          ]
+        ],
+        "sampling_declaration_sha256": "a679671e04e6795c292705c5826ad7bb0669ef8f8885fbc326819ee6e962cc77"
+      },
+      "native_oracle": {
+        "source_sha256": "95db02bc0832379faa2298e99494d9ee8548cf838f7a5c2cdae9cd4736d7706c",
+        "composition_id": 1,
+        "builtin_working_space": "Rec.2100 HLG W203",
+        "reference_sha256": "c7c7a325a38e9b44fe53e6d158dc27fcd451bc22cdc4e484d51825381ea7e409",
+        "reference_job": 5098,
+        "format": "native AME ProRes422HQ MOV",
+        "full_canvas": true,
+        "fps": "30",
+        "duration_seconds": "1",
+        "independent_profile_bytes": "not extracted or redistributed",
+        "public_30fps_mp4_delivery": "MISSING — native HDR MP4/public delivery remains a blocker; no resampling or relabeling"
+      },
+      "sampling_declaration": "ingamut-chromatic-case-v1.json",
+      "editable_assertion": "native_ingamut_chromatic_import_preserves_saturation_headroom_and_geometry",
+      "import_structure": "PASS shared Rust5102 targeted; full converter5107 PASS; fresh fixed5077 CLI imports succeeded",
+      "visual_comparison": "FAIL: all30 frames measured with predeclared interiors; see chromatic-continuation-evidence-v3.json. Native public30fpsHDRMP4 delivery remains missing.",
+      "edited_fx_to_aep_export": "UNPROVED; this case does not establish export",
+      "alpha_precision_audio": "UNPROVED"
+    }
+  ]
+}

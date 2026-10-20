@@ -141,7 +141,9 @@ fn text_path_keys(layer: &crate::structure::Layer) -> (Vec<f64>, Vec<TextPathGeo
             let points = data(unique_list(shape, *b"list").unwrap(), *b"ldat").unwrap();
             assert_eq!(points.len(), 9 * 8, "three complete vertex/control triples");
             let points = points
-                .chunks_exact(8)
+                .as_chunks::<8>()
+                .0
+                .iter()
                 .map(|point| {
                     std::array::from_fn(|axis| {
                         let normalized = f64::from(f32::from_be_bytes(
@@ -461,7 +463,7 @@ fn pr4442_static_mask_parade_and_text_guide_use_stable_one_based_indices() {
     assert_eq!(authored.source_size, [1920, 1080]);
     assert_eq!(authored.mode, NativeMaskMode::Subtract);
     assert!(authored.inverted);
-    assert_eq!(authored.feather, [4.0, 6.0]);
+    assert_eq!(authored.feather, [8.0, 12.0]);
     assert_eq!(authored.opacity, 0.75);
     assert_eq!(authored.expansion, 3.0);
     assert_eq!(authored.feather_track, None);
@@ -655,8 +657,10 @@ fn legacy_inline_closed_loop_exports_closed_native_group_mask() {
         "native mask must be closed"
     );
     let bounds: Vec<_> = header[4..20]
-        .chunks_exact(4)
-        .map(|bytes| f32::from_be_bytes(bytes.try_into().unwrap()))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|bytes| f32::from_be_bytes(*bytes))
         .collect();
     // The fractional child bounds produce a 51 × 21 source. Native masks
     // store translated coordinates normalized to that source, not pixels.

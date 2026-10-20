@@ -209,6 +209,87 @@ fn exported_effects(project: &PrProjectFile) -> Vec<PrEffect> {
         .clone()
 }
 
+/// Synthetic saved profile, no licensed corpus bytes or media.
+fn ultra_key_xml(color: PrColour, output: u32) -> String {
+    use crate::schema::ultra_key::ULTRA_KEY;
+    let mut refs = String::new();
+    let mut records = String::new();
+    for (index, param) in ULTRA_KEY.params.iter().enumerate() {
+        let id = 9000 + index;
+        refs.push_str(&format!("<Param Index=\"{index}\" ObjectRef=\"{id}\"/>"));
+        let value = match param.id {
+            1 => output.to_string(),
+            2 => "0".into(),
+            3 => color.native().to_string(),
+            5 => "45".into(),
+            8 => "50".into(),
+            9 => "10".into(),
+            24 | 26 => "100".into(),
+            _ if param.control == "11" || param.control == "12" => "false".into(),
+            _ => "0".into(),
+        };
+        records.push_str(&format!("<VideoComponentParam ObjectID=\"{id}\" ClassID=\"{}\" Version=\"9\"><Name>{}</Name><IsTimeVarying>false</IsTimeVarying><ParameterControlType>{}</ParameterControlType><StartKeyframe>-91445760000000000,{value},0,0,0,0,0,0</StartKeyframe><LowerBound>{}</LowerBound><UpperBound>{}</UpperBound><ParameterID>{}</ParameterID></VideoComponentParam>", param.record.class_id, param.name, param.control, param.lower_bound, param.upper_bound, param.id));
+    }
+    find_edges_native_xml(&format!("<PremiereData Version=\"3\"><VideoFilterComponent ObjectID=\"537\" ClassID=\"d10da199-beea-4dd1-b941-ed3a78766d50\" Version=\"8\"><Component Version=\"6\"><Params Version=\"1\">{refs}</Params><ID>3</ID><DisplayName>Ultra Key</DisplayName><Bypass>false</Bypass><Intrinsic>false</Intrinsic><ArchivedType>0</ArchivedType></Component><MatchName>AE.ADBE Ultra Key</MatchName><VideoFilterType>2</VideoFilterType></VideoFilterComponent>{records}</PremiereData>"))
+}
+
+#[test]
+fn ultra_key_static_import_retains_editable_video_and_keyer() {
+    for color in [PrColour { rgb: [0, 255, 0] }, PrColour::BLACK] {
+        let xml = ultra_key_xml(color, 0);
+        let (wire, notes) = find_edges_import(&xml);
+        let layer = &wire["composition"]["layers"][0];
+        assert_eq!(layer["source"]["assetId"], "premiere-video-1");
+        let effect = &layer["effects"][0]["effect"];
+        assert_eq!(effect["type"], "customShader");
+        for (index, value) in color
+            .rgb
+            .into_iter()
+            .map(|v| f64::from(v) / 255.0)
+            .chain([50.0, 10.0, 45.0])
+            .enumerate()
+        {
+            assert_eq!(effect["params"][index]["default"], value);
+        }
+        assert!(effect["wgsl"]
+            .as_str()
+            .unwrap()
+            .contains("pixel.rgb / pixel.a"));
+        assert!(notes
+            .iter()
+            .any(|note| note.reason.contains("RGB-distance")));
+        let (bypassed, _) =
+            find_edges_import(&xml.replace("<Bypass>false</Bypass>", "<Bypass>true</Bypass>"));
+        assert_eq!(
+            bypassed["composition"]["layers"][0]["effects"][0]["enabled"],
+            false
+        );
+    }
+}
+
+#[test]
+fn ultra_key_unmapped_coverage_does_not_expose_unkeyed_video() {
+    for xml in [
+        ultra_key_xml(PrColour::BLACK, 1),
+        ultra_key_xml(PrColour::BLACK, 0).replace(
+            "<IsTimeVarying>false</IsTimeVarying>",
+            "<IsTimeVarying>true</IsTimeVarying>",
+        ),
+        ultra_key_xml(PrColour::BLACK, 0).replace(
+            "<ParameterID>8</ParameterID>",
+            "<ParameterID>99</ParameterID>",
+        ),
+    ] {
+        // The sole occurrence is unsafe: an unusable sequence is rejected,
+        // rather than successfully exposing its unkeyed source video.
+        let error = crate::format::inspect_project_with_omissions(&xml, None).unwrap_err();
+        assert!(matches!(&error, crate::error::BuildError::Unsupported(_)));
+        let reason = error.to_string();
+        assert!(reason.contains("no convertible video or audio occurrences"));
+        assert!(reason.contains("Ultra Key"));
+    }
+}
+
 fn legacy_luma_xml() -> String {
     let fragment = include_str!("../../../tests/fixtures/legacy-luma-key.xml")
         .replace("<PremiereData>", "<PremiereData Version=\"3\">");
@@ -514,12 +595,14 @@ fn legacy_luma_key_bezier_export_preserves_values_times_and_hold() {
             (2 * TICKS, 20.0, PrKeyframeEasing::Hold)
         ]
     );
-    assert!(notes.iter().any(|n| n
-        .reason
-        .contains("Cutoff Bezier keys approximated as Linear")));
-    assert!(notes.iter().any(|n| n
-        .reason
-        .contains("Cutoff falloff below 0.01 percent was raised")));
+    assert!(notes.iter().any(|n| {
+        n.reason
+            .contains("Cutoff Bezier keys approximated as Linear")
+    }));
+    assert!(notes.iter().any(|n| {
+        n.reason
+            .contains("Cutoff falloff below 0.01 percent was raised")
+    }));
 }
 
 #[test]
@@ -1555,7 +1638,9 @@ fn still_effects_before_a_still_mask_or_on_a_matte_are_reported_and_the_mask_kep
         ]
     };
     let before_mask = |mask: &str| {
-        both(&format!("it applies before the still's {mask}, which FX applies before the image layer's effects, and a still imports no stage group"))
+        both(&format!(
+            "it applies before the still's {mask}, which FX applies before the image layer's effects, and a still imports no stage group"
+        ))
     };
     type Edit = fn(&mut crate::schema::PrVideoOccurrence);
     // (case, still edit, whether a Track Matte Key on the video below uses the
@@ -1601,14 +1686,20 @@ fn still_effects_before_a_still_mask_or_on_a_matte_are_reported_and_the_mask_kep
             |still| (still.start_ticks, still.end_ticks) = (0, 5 * TICKS),
             true,
             None,
-            both("the still is a Track Matte Key's matte, which converts without effects: a key over a matte still with effects is unmeasured"),
+            both(
+                "the still is a Track Matte Key's matte, which converts without effects: a key over a matte still with effects is unmeasured",
+            ),
             false,
         ),
         // Only a media clip's stage group carries a Transform; the effects on
         // either side of it keep their order.
         (
             "a Transform between the effects",
-            |still| still.effects.insert(1, transform_effect(DEFAULT_PR_TRANSFORM, Vec::new())),
+            |still| {
+                still
+                    .effects
+                    .insert(1, transform_effect(DEFAULT_PR_TRANSFORM, Vec::new()))
+            },
             false,
             None,
             vec![format!(
@@ -2129,9 +2220,10 @@ fn alpha_glow_native_animated_brightness_and_modes_keep_first_value() {
         .unwrap();
     assert_eq!((clip.crop.left, clip.crop.top), (25.0, 25.0));
     assert!(clip.effects.is_empty());
-    assert!(notes.iter().any(|n| n
-        .reason
-        .contains("invalid Alpha Glow Use End Color boolean")));
+    assert!(notes.iter().any(|n| {
+        n.reason
+            .contains("invalid Alpha Glow Use End Color boolean")
+    }));
 }
 
 #[test]
@@ -4150,6 +4242,75 @@ fn edited_tints_export_eight_bit_colours_and_colour_keys() {
 }
 
 #[test]
+fn extended_generator_tint_constants_and_keys_clip_with_diagnostics() {
+    let mut fields = tint_fields(([0, 0, 0], [255, 255, 255], 100.0));
+    fields["blackR"] = json!(2.0);
+    fields["blackB"] = json!(4.0);
+    let tracks: Vec<_> = [("whiteR", 4.0), ("whiteG", 2.0), ("whiteB", 0.5)]
+        .into_iter()
+        .map(|(name, value)| {
+            (
+                name,
+                json!([
+                    fx_key(&format!("{name}-a"), 0, 1.0, json!({"type":"linear"})),
+                    fx_key(&format!("{name}-b"), 500, value, json!({"type":"linear"}))
+                ]),
+            )
+        })
+        .collect();
+    let (project, omissions) = export(document_with_tint(true, fields, &tracks));
+    let effects = exported_effects(&project);
+    let tint = effects
+        .iter()
+        .find(|effect| matches!(effect.params, PrEffectParams::Tint(_)))
+        .unwrap();
+    let PrEffectParams::Tint(values) = &tint.params else {
+        unreachable!()
+    };
+    assert_eq!(values.black, PrColour::from_fx([1.0, 0.0, 1.0]).unwrap());
+    let PrEffectParamKeys::Colour(keys) = &tint.animations[0].keys else {
+        panic!("color keys")
+    };
+    assert_eq!(keys.len(), 2);
+    assert_eq!(
+        keys[1].source_ticks - keys[0].source_ticks,
+        500 * TICKS_PER_MILLISECOND
+    );
+    assert_eq!(keys[1].value, PrColour::from_fx([1.0, 1.0, 0.5]).unwrap());
+    assert!(omissions
+        .iter()
+        .any(|loss| loss.reason.contains("Map Black To")
+            && loss.reason.contains("clamped to native")));
+    assert!(omissions
+        .iter()
+        .any(|loss| loss.reason.contains("Map White To")
+            && loss.reason.contains("clamped to native")));
+}
+
+#[test]
+fn extended_generator_ramp_constants_clip_with_diagnostics() {
+    let mut fields = ramp_fields(([0.5, 0.0], [0.5, 1.0]), ([0, 0, 0], [255, 255, 255]), 0.0);
+    fields["startR"] = json!(2.0);
+    fields["startG"] = json!(4.0);
+    let (project, omissions) = export(document_with_ramp(fields, &[], json!({}), &[]));
+    let effects = exported_effects(&project);
+    let ramp = effects
+        .iter()
+        .find_map(|effect| match &effect.params {
+            PrEffectParams::Ramp(ramp) => Some(ramp),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        ramp.start_colour,
+        PrColour::from_fx([1.0, 1.0, 0.0]).unwrap()
+    );
+    assert!(omissions.iter().any(
+        |loss| loss.reason.contains("Start Color") && loss.reason.contains("clamped to native")
+    ));
+}
+
+#[test]
 fn tints_premiere_cannot_represent_are_not_exported() {
     let linear = || json!({"type": "linear"});
     let bezier = || json!({"type": "cubicBezier", "x1": 0.25, "y1": 0.1, "x2": 0.75, "y2": 0.9});
@@ -4180,15 +4341,12 @@ fn tints_premiere_cannot_represent_are_not_exported() {
     let tints = [
         (without("whiteB"), vec![], "whiteB has no value; only a tintTritone with all seven values exports"),
         (without("amount"), vec![], "amount has no value; only a tintTritone with all seven values exports"),
-        (with("blackR", 1.2), vec![], "Map Black To [1.2, 0.0, 0.0] has a channel outside 0 to 1"),
-        (with("whiteG", -0.01), vec![], "Map White To [1.0, -0.01, 1.0] has a channel outside 0 to 1"),
         (with("amount", 100.5), vec![], "Amount to Tint 100.5 is outside Premiere's 0 to 100 range"),
         (full(), vec![("amount", json!([fx_key("a", 0, 0.0, linear()), fx_key("b", 500, 101.0, linear())]))], "Amount to Tint key value 101 is outside Premiere's 0 to 100 range"),
         // One keyed channel, channels keyed at different times, a channel
         // key outside 0 to 1, and a Bezier segment between colours.
         (full(), vec![white_track("whiteR", 0.0, linear())], "its Map White To whiteR, whiteG and whiteB keys must all be keyed, but whiteG is not; Premiere keys a colour as one track"),
         (full(), vec![white_track("whiteR", 0.0, linear()), white_track("whiteG", 0.0, linear()), ("whiteB", json!([fx_key("c", 0, 1.0, linear()), fx_key("d", 600, 0.0, linear())]))], "its Map White To whiteR, whiteG and whiteB keys differ in time or easing, but Premiere keys a colour as one track"),
-        (full(), vec![white_track("whiteR", 1.5, linear()), white_track("whiteG", 0.0, linear()), white_track("whiteB", 0.0, linear())], "Map White To [1.5, 0.0, 0.0] has a channel outside 0 to 1 at 500 ms"),
         (full(), vec![white_track("whiteR", 0.0, bezier()), white_track("whiteG", 0.0, bezier()), white_track("whiteB", 0.0, bezier())], "Map White To key at 500 ms has Bezier easing; Premiere's Bezier interpolation between colours is unverified"),
     ];
     for (fields, tracks, reason) in tints {
@@ -4227,6 +4385,7 @@ fn ramp(
         mask: None,
         enabled,
         params: PrEffectParams::Ramp(PrRamp {
+            radial: false,
             start,
             start_colour: PrColour { rgb: start_colour },
             end,
@@ -4603,7 +4762,6 @@ fn ramps_premiere_cannot_represent_are_not_exported() {
         (full(), vec![track("endX", [0.5, 0.6])], json!({}), vec![], "Start of Ramp 0.5:0 to End of Ramp 0.5:1 is not aligned with the frame at every time; Premiere measures a ramp in clip pixels and the FX gradientRamp in frame UV, which agree only along the frame's axes".to_owned()),
         (full(), vec![track("endY", [1.0, 0.0])], json!({}), vec![], "Start of Ramp and End of Ramp meet: their y coordinates reach 0..0 and 0..1 over their keys, and a ramp of zero length is not converted".to_owned()),
         (full(), vec![track("endY", [1.0, 0.002])], json!({}), vec![], "Start of Ramp and End of Ramp come within 0.0020 of the frame of each other along y (their coordinates reach 0..0 and 0.002..1 over their keys); a ramp shorter than 0.0032 of the frame is not converted, because the FX gradientRamp floors its squared length at 1e-5 and would stretch it over 0.0032 of the frame".to_owned()),
-        (with(&[("startR", 1.2)]), vec![], json!({}), vec![], "Start Color [1.2, 0.0, 0.0] has a channel outside 0 to 1".to_owned()),
         (with(&[("blend", 2.0)]), vec![], json!({}), vec![], "Blend With Original -1 is outside Premiere's 0 to 1 range".to_owned()),
         (full(), vec![track("blend", [1.0, 2.0])], json!({}), vec![], "Blend With Original key value -1 is outside Premiere's 0 to 1 range".to_owned()),
         // A host whose frame is not the canvas.
@@ -4933,7 +5091,9 @@ fn mosaics_premiere_cannot_represent_are_not_exported() {
         )
     };
     let whole = |what: &str, value: &str| {
-        format!("{what} {value} is not a whole number of blocks; Premiere counts whole blocks and no rounding is applied")
+        format!(
+            "{what} {value} is not a whole number of blocks; Premiere counts whole blocks and no rounding is applied"
+        )
     };
     let hold_rule = "; only Hold keys convert, because the FX mosaic renders fractional block counts between keys and Premiere's stepping there is unmeasured";
     // (fields, tracks, the reason)
@@ -5300,7 +5460,9 @@ fn replicates_premiere_cannot_represent_are_not_exported() {
     };
     let grid_rule = super::REPLICATE_GRID_RULE;
     let no_grid = |[width, height, x, y]: [&str; 4]| {
-        format!("tileWidth {width}, tileHeight {height}, tileCenterX {x} and tileCenterY {y} draw no Replicate grid: {grid_rule}")
+        format!(
+            "tileWidth {width}, tileHeight {height}, tileCenterX {x} and tileCenterY {y} draw no Replicate grid: {grid_rule}"
+        )
     };
     let tracks = tile_count_tracks([2, 4, 3]);
     let edit_track = |name: &str, edit: &dyn Fn(&mut Value)| {
@@ -5525,9 +5687,11 @@ fn noise_authorable_intensity_keys_export_and_conflicting_aliases_omit() {
         wire["composition"]["dynamics"]["entries"] = entries;
         let (project, warnings) = export(wire.clone());
         assert!(exported_effects(&project).is_empty());
-        assert!(warnings.iter().any(|warning| warning
-            .reason
-            .contains("multiple amount/intensity animation tracks")));
+        assert!(warnings.iter().any(|warning| {
+            warning
+                .reason
+                .contains("multiple amount/intensity animation tracks")
+        }));
     }
 }
 
@@ -6068,18 +6232,68 @@ fn levels_premiere_cannot_represent_omit_the_levels() {
     // 0 to 117 it reaches 158.9, below output white 159.4 rounded to 159.
     let overshoot = || json!({"type": "cubicBezier", "x1": 0.2, "y1": 0.0, "x2": 0.6, "y2": 2.2});
     for (enabled, fx, keys, reason) in [
-        (true, with(0, 255.5), None, "(RGB) Black Input Level 255.5 is outside Premiere's 0 to 255 range"),
-        (true, with(2, 10.5), None, "(RGB) Gamma 10.5 is outside Premiere's 0 to 10 range"),
-        (true, with(3, -0.4), None, "(RGB) Black Output Level -0.4 is outside Premiere's 0 to 255 range"),
-        (true, neutral, Some(("gamma", [1.0, 10.01], linear())), "(RGB) Gamma key value 10.01 is outside Premiere's 0 to 10 range"),
-        (false, neutral, None, "a disabled Levels has no verified Premiere bypass form"),
-        (true, [200.0, 100.0, 1.0, 0.0, 255.0], None, "input black 200 reaches input white 100, a Levels form that no Adobe render measured"),
-        (true, [0.0, 255.0, 1.0, 200.0, 100.0], None, "output black 200 exceeds output white 100, a Levels form that no Adobe render measured"),
+        (
+            true,
+            with(0, 255.5),
+            None,
+            "(RGB) Black Input Level 255.5 is outside Premiere's 0 to 255 range",
+        ),
+        (
+            true,
+            with(2, 10.5),
+            None,
+            "(RGB) Gamma 10.5 is outside Premiere's 0 to 10 range",
+        ),
+        (
+            true,
+            with(3, -0.4),
+            None,
+            "(RGB) Black Output Level -0.4 is outside Premiere's 0 to 255 range",
+        ),
+        (
+            true,
+            neutral,
+            Some(("gamma", [1.0, 10.01], linear())),
+            "(RGB) Gamma key value 10.01 is outside Premiere's 0 to 10 range",
+        ),
+        (
+            false,
+            neutral,
+            None,
+            "a disabled Levels has no verified Premiere bypass form",
+        ),
+        (
+            true,
+            [200.0, 100.0, 1.0, 0.0, 255.0],
+            None,
+            "input black 200 reaches input white 100, a Levels form that no Adobe render measured",
+        ),
+        (
+            true,
+            [0.0, 255.0, 1.0, 200.0, 100.0],
+            None,
+            "output black 200 exceeds output white 100, a Levels form that no Adobe render measured",
+        ),
         // Reversed outputs that round to 100 and 100.
-        (true, [0.0, 255.0, 1.0, 100.4, 100.3], None, "output black 100.4 exceeds output white 100.3, a Levels form that no Adobe render measured"),
+        (
+            true,
+            [0.0, 255.0, 1.0, 100.4, 100.3],
+            None,
+            "output black 100.4 exceeds output white 100.3, a Levels form that no Adobe render measured",
+        ),
         // Ordered inputs that round to 101 and 101.
-        (true, [100.6, 100.9, 1.0, 0.0, 255.0], None, "input black 101 reaches input white 101, a Levels form that no Adobe render measured"),
-        (true, with(4, 159.4), Some(("outputBlack", [0.0, 117.4], overshoot())), "output black 159.4483673469388 exceeds output white 159.4, a Levels form that no Adobe render measured"),
+        (
+            true,
+            [100.6, 100.9, 1.0, 0.0, 255.0],
+            None,
+            "input black 101 reaches input white 101, a Levels form that no Adobe render measured",
+        ),
+        (
+            true,
+            with(4, 159.4),
+            Some(("outputBlack", [0.0, 117.4], overshoot())),
+            "output black 159.4483673469388 exceeds output white 159.4, a Levels form that no Adobe render measured",
+        ),
     ] {
         let [input_black, input_white, gamma, output_black, output_white] = fx;
         let mut wire = document_with_effects(json!([
@@ -6097,8 +6311,13 @@ fn levels_premiere_cannot_represent_omit_the_levels() {
             }]});
         }
         let (project, omissions) = export(wire);
-        if assert_recovered_scalar_keys(&project,&omissions,reason) {continue;}
-        assert_eq!(exported_effects(&project), [exported_blur(true, 10.0, false)]);
+        if assert_recovered_scalar_keys(&project, &omissions, reason) {
+            continue;
+        }
+        assert_eq!(
+            exported_effects(&project),
+            [exported_blur(true, 10.0, false)]
+        );
         assert_eq!(omissions.len(), 1, "{omissions:?}");
         assert_eq!(
             omissions[0].reason,
@@ -6944,7 +7163,9 @@ fn source_effects_keep_the_frame_rules_of_the_picture_they_draw_on() {
     let reason = |name: &str, why: String| {
         omitted(
             "source",
-            format!("{name} effect at source stack position 1 of {SOURCE_MASTER} was not imported: {why}"),
+            format!(
+                "{name} effect at source stack position 1 of {SOURCE_MASTER} was not imported: {why}"
+            ),
         )
     };
     let linked = omitted(SOURCE_MASTER, super::LINKED_SOURCE_EDITING_REASON);
@@ -7024,7 +7245,9 @@ fn source_effects_keep_the_frame_rules_of_the_picture_they_draw_on() {
     let staged = |position: u32, name: &str, why: &str| {
         omitted(
             "source",
-            format!("{name} effect at source stack position {position} of {SOURCE_MASTER} was not imported: {why}"),
+            format!(
+                "{name} effect at source stack position {position} of {SOURCE_MASTER} was not imported: {why}"
+            ),
         )
     };
     assert_eq!(
@@ -7629,6 +7852,273 @@ fn find_edges_unsupported_controls_keep_the_clip() {
     );
 }
 
+fn native_drop_shadow_xml() -> String {
+    let controls = [
+        (
+            1,
+            "Shadow Color",
+            "5",
+            "0",
+            "18446744073709551615",
+            "18374702976238409216",
+            String::new(),
+        ),
+        (2, "Opacity", "2", "0", "255", "255", String::new()),
+        (3, "Direction", "3", "-32768", "32767", "180", String::new()),
+        (
+            4,
+            "Distance",
+            "2",
+            "0",
+            "4000",
+            "999",
+            format!(
+                "<Keyframes>{},120,4,0,0,0,0,0;{},0,0,0,0,0,0,0;</Keyframes>",
+                TICKS,
+                2 * TICKS
+            ),
+        ),
+        (5, "Softness", "2", "0", "30000", "0", String::new()),
+        (
+            6,
+            "Shadow Only",
+            "4",
+            "false",
+            "true",
+            "false",
+            String::new(),
+        ),
+    ];
+    let mut params = String::new();
+    let mut references = String::new();
+    for (id, name, control, lower, upper, value, keys) in controls {
+        let object = 537 + id;
+        references.push_str(&format!(
+            "<Param Index=\"{}\" ObjectRef=\"{object}\"/>",
+            id - 1
+        ));
+        params.push_str(&format!("<VideoComponentParam ObjectID=\"{object}\"><Name>{name}</Name><ParameterControlType>{control}</ParameterControlType><StartKeyframe>-91445760000000000,{value},0,0,0,0,0,0</StartKeyframe>{keys}<LowerBound>{lower}</LowerBound><UpperBound>{upper}</UpperBound><ParameterID>{id}</ParameterID></VideoComponentParam>"));
+    }
+    find_edges_native_xml(&format!("<PremiereData Version=\"3\"><VideoFilterComponent ObjectID=\"537\" Version=\"7\"><Component Version=\"5\"><Params>{references}</Params><ID>3</ID><DisplayName>Drop Shadow</DisplayName><Bypass>false</Bypass><Intrinsic>false</Intrinsic></Component><MatchName>AE.ADBE Drop Shadow</MatchName><VideoFilterType>2</VideoFilterType></VideoFilterComponent>{params}</PremiereData>"))
+}
+
+#[test]
+fn native_drop_shadow_retains_color_and_editable_distance() {
+    let (wire, omissions) = find_edges_import(&native_drop_shadow_xml());
+    let effects = wire["composition"]["layers"][0]["effects"]
+        .as_array()
+        .expect("native shadow must remain editable");
+    assert_eq!(effects.len(), 1, "{omissions:?}");
+    let shadow = &effects[0]["effect"];
+    assert_eq!(shadow["type"], "dropShadow");
+    assert_eq!(
+        shadow["color"],
+        json!([15.0 / 255.0, 232.0 / 255.0, 214.0 / 255.0, 1.0])
+    );
+    assert_eq!(shadow["blurRadius"], 0.0);
+    assert!((shadow["offset"][1].as_f64().unwrap() - 120.0).abs() < 1e-9);
+    let entries = wire["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["target"]["effectId"], effects[0]["id"]);
+    assert_eq!(entries[0]["target"]["paramName"], "offset");
+    let keys = entries[0]["animator"]["keyframes"].as_array().unwrap();
+    assert_eq!(keys[0]["layerTime"], 1000);
+    assert_eq!(keys[1]["layerTime"], 2000);
+    assert!((keys[0]["value"]["value"][1].as_f64().unwrap() - 120.0).abs() < 1e-9);
+    assert_eq!(keys[1]["value"]["value"], json!([0.0, 0.0]));
+    assert_eq!(keys[1]["easing"]["type"], "hold");
+    assert!(
+        omissions
+            .iter()
+            .any(|note| note.kind == OmissionKind::Approximated
+                && note.reason.contains("Drop Shadow"))
+    );
+}
+
+#[test]
+fn native_drop_shadow_static_controls_and_unsupported_modes_are_local() {
+    let xml = native_drop_shadow_xml();
+    let static_xml = xml
+        .replace("<StartKeyframe>-91445760000000000,180,", "<StartKeyframe>-91445760000000000,90,")
+        .replace("<StartKeyframe>-91445760000000000,255,", "<StartKeyframe>-91445760000000000,128,")
+        .replace("<Name>Softness</Name>", "<Name>Softness</Name><Keyframes>0,20,0,0,0,0,0,0;254016000000,40,0,0,0,0,0,0;</Keyframes>")
+        .replace("<Bypass>false</Bypass>", "<Bypass>true</Bypass>");
+    let (wire, _) = find_edges_import(&static_xml);
+    let effect = &wire["composition"]["layers"][0]["effects"][0];
+    assert_eq!(effect["enabled"], false);
+    assert_eq!(effect["effect"]["color"][3], 128.0 / 255.0);
+    assert_eq!(effect["effect"]["blurRadius"], 10.0);
+    assert!((effect["effect"]["offset"][0].as_f64().unwrap() - 120.0).abs() < 1e-9);
+    let entries = wire["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    assert_eq!(entries.len(), 2);
+    let softness = entries
+        .iter()
+        .find(|entry| entry["target"]["paramName"] == "blurRadius")
+        .unwrap();
+    assert_eq!(softness["animator"]["keyframes"][1]["value"]["value"], 20.0);
+
+    for (from, to, reason) in [
+        ("00000000,false,", "00000000,true,", "Shadow Only"),
+        (
+            "<Name>Direction</Name>",
+            "<Name>Direction</Name><IsTimeVarying>true</IsTimeVarying>",
+            "keyframed Direction",
+        ),
+        (
+            "<Name>Opacity</Name>",
+            "<Name>Opacity</Name><IsTimeVarying>true</IsTimeVarying>",
+            "keyframed Opacity",
+        ),
+        ("00000000,180,", "00000000,NaN,", "Direction"),
+    ] {
+        let (wire, omissions) = find_edges_import(&xml.replacen(from, to, 1));
+        let picture = &wire["composition"]["layers"][0];
+        assert_eq!(picture["source"]["assetId"], "premiere-video-1");
+        assert!(picture["effects"].as_array().is_none_or(Vec::is_empty));
+        assert!(
+            omissions.iter().any(|note| note.reason.contains(reason)),
+            "{omissions:?}"
+        );
+    }
+}
+
+/// Synthetic controls on the public one-clip host; no licensed source bytes.
+fn proc_amp_xml(brightness: &str) -> String {
+    let controls = [
+        (1, "Brightness", "2", "-100", "100", "0", brightness),
+        (2, "Contrast", "2", "0", "200", "100", ""),
+        (3, "Hue", "3", "-32768", "32767", "0", ""),
+        (4, "Saturation", "2", "0", "200", "100", ""),
+        (5, " ", "4", "false", "true", "false", ""),
+        (6, "Split Percent", "2", "0", "100", "50", ""),
+    ];
+    let mut params = String::new();
+    let mut references = String::new();
+    for (id, name, control, lower, upper, value, keys) in controls {
+        let object = 537 + id;
+        references.push_str(&format!(
+            "<Param Index=\"{}\" ObjectRef=\"{object}\"/>",
+            id - 1
+        ));
+        params.push_str(&format!("<VideoComponentParam ObjectID=\"{object}\"><Name>{name}</Name><ParameterControlType>{control}</ParameterControlType><StartKeyframe>-91445760000000000,{value},0,0,0,0,0,0</StartKeyframe>{keys}<LowerBound>{lower}</LowerBound><UpperBound>{upper}</UpperBound><ParameterID>{id}</ParameterID></VideoComponentParam>"));
+    }
+    find_edges_native_xml(&format!("<PremiereData Version=\"3\"><VideoFilterComponent ObjectID=\"537\" Version=\"7\"><Component Version=\"5\"><Params>{references}</Params><ID>3</ID><DisplayName>ProcAmp</DisplayName><Bypass>false</Bypass><Intrinsic>false</Intrinsic></Component><MatchName>AE.ADBE ProcAmp</MatchName><VideoFilterType>2</VideoFilterType></VideoFilterComponent>{params}</PremiereData>"))
+}
+
+#[test]
+fn proc_amp_brightness_imports_editable_offset_on_the_source_clock() {
+    let keys = format!("<Keyframes>{},-40,4,0,0,0,0,0;{},80,0,0,0,0,0,0;{},0,5,0,0,0,0,0.25;{},50,0,0,0,0.25,0,0;</Keyframes><CurrentValue>99</CurrentValue>", TICKS, 2 * TICKS, 3 * TICKS, 4 * TICKS);
+    let xml = proc_amp_xml(&keys);
+    let (wire, omissions) = find_edges_import(&xml);
+    let effects = wire["composition"]["layers"][0]["effects"]
+        .as_array()
+        .expect("ProcAmp must retain an editable effect");
+    assert_eq!(effects.len(), 1, "{omissions:?}");
+    assert_eq!(effects[0]["effect"]["type"], "exposure");
+    assert_eq!(effects[0]["effect"]["exposure"], 0.0);
+    assert_eq!(effects[0]["effect"]["offset"], -0.4);
+    assert_eq!(effects[0]["effect"]["gammaCorrection"], 1.0);
+    let entries = wire["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["target"]["effectId"], effects[0]["id"]);
+    assert_eq!(entries[0]["target"]["paramName"], "offset");
+    let keys = entries[0]["animator"]["keyframes"].as_array().unwrap();
+    assert_eq!(keys.len(), 4);
+    for (key, (time, value)) in
+        keys.iter()
+            .zip([(1000, -0.4), (2000, 0.8), (3000, 0.0), (4000, 0.5)])
+    {
+        assert_eq!(key["layerTime"], time);
+        assert_eq!(key["value"]["value"], value);
+    }
+    // FX stores incoming interval easing; native keys store outgoing modes.
+    assert_eq!(keys[1]["easing"]["type"], "hold");
+    assert_eq!(keys[2]["easing"]["type"], "linear");
+    assert_eq!(keys[3]["easing"]["type"], "cubicBezier");
+    assert!(
+        omissions
+            .iter()
+            .any(|note| note.kind == OmissionKind::Approximated
+                && note.reason.contains("ProcAmp")
+                && note.reason.contains("offset")),
+        "{omissions:?}"
+    );
+
+    let trimmed_xml = xml
+        .replace(
+            "<InPoint>0</InPoint>",
+            &format!("<InPoint>{TICKS}</InPoint>"),
+        )
+        .replace(
+            "<OutPoint>1270080000000</OutPoint>",
+            &format!("<OutPoint>{}</OutPoint>", 6 * TICKS),
+        );
+    let (trimmed_wire, _) = find_edges_import(&trimmed_xml);
+    let trimmed_keys = trimmed_wire["composition"]["dynamics"]["entries"][0]["animator"]
+        ["keyframes"]
+        .as_array()
+        .unwrap();
+    for (original, trimmed) in keys.iter().zip(trimmed_keys) {
+        assert_eq!(
+            trimmed["layerTime"],
+            original["layerTime"].as_i64().unwrap() - 1000
+        );
+        assert_eq!(trimmed["value"], original["value"]);
+        assert_eq!(trimmed["easing"], original["easing"]);
+    }
+
+    let static_xml = proc_amp_xml("").replacen(
+        "<StartKeyframe>-91445760000000000,0,",
+        "<StartKeyframe>-91445760000000000,25,",
+        1,
+    );
+    let (static_wire, _) = find_edges_import(&static_xml);
+    assert_eq!(
+        static_wire["composition"]["layers"][0]["effects"][0]["effect"]["offset"],
+        0.25
+    );
+}
+
+#[test]
+fn proc_amp_unsupported_controls_omit_only_the_effect_and_bypass_survives() {
+    let xml = proc_amp_xml("");
+    for (from, to, reason) in [
+        ("00000000,100,", "00000000,125,", "nonneutral Contrast"),
+        ("00000000,false,", "00000000,true,", "split view"),
+        (
+            "<Name>Contrast</Name>",
+            "<Name>Contrast</Name><IsTimeVarying>true</IsTimeVarying>",
+            "keyframed Contrast",
+        ),
+        (
+            "<ParameterID>6</ParameterID>",
+            "<ParameterID>5</ParameterID>",
+            "duplicate",
+        ),
+    ] {
+        let (wire, omissions) = find_edges_import(&xml.replacen(from, to, 1));
+        let layers = wire["composition"]["layers"].as_array().unwrap();
+        assert_eq!(layers[0]["source"]["assetId"], "premiere-video-1");
+        assert!(layers[0]["effects"].as_array().is_none_or(Vec::is_empty));
+        assert!(
+            omissions.iter().any(|note| note.reason.contains(reason)),
+            "{omissions:?}"
+        );
+    }
+    let (wire, _) =
+        find_edges_import(&xml.replace("<Bypass>false</Bypass>", "<Bypass>true</Bypass>"));
+    assert_eq!(
+        wire["composition"]["layers"][0]["effects"][0]["enabled"],
+        false
+    );
+}
+
 // Native human-inputs-20261004.prproj SHA-256
 // e74d088116570ddb7178b127129036755be2f8e553dea80f98aa59b601585b76,
 // effects sequence b3aecac7-c452-48ba-a5e1-737807cb32ee: component 557,
@@ -7664,9 +8154,13 @@ fn human_lumetri_saved_contrast_replacement_imports_and_exports_edits() {
         .reason
         .contains("not an equivalent Lumetri transfer"));
     let (mut wire, _) = imported_with_omissions(sequence, &native.media);
-    assert_eq!(
-        wire["composition"]["layers"][0]["effects"][0]["effect"]["exposure"],
-        1.0
+    assert!(
+        (wire["composition"]["layers"][0]["effects"][0]["effect"]["exposure"]
+            .as_f64()
+            .unwrap()
+            - 1.0 / 2.2)
+            .abs()
+            < 1e-9
     );
     assert_eq!(
         wire["composition"]["layers"][0]["effects"][2]["effect"]["saturation"],
@@ -7765,6 +8259,56 @@ fn human_lumetri_replacement_rejects_ambiguous_or_unsupported_selected_controls(
             "{omissions:?}"
         );
     }
+}
+
+#[test]
+fn human_lumetri_exposure_projects_linear_stops_to_display_code_values() {
+    let source = include_str!("../../../tests/fixtures/human_lumetri_contrast.xml");
+    for stops in [-5.0_f64, -2.2, 0.0, 2.2, 5.0] {
+        let xml = source.replace(
+            "-91445760000000000,1.,",
+            &format!("-91445760000000000,{stops},"),
+        );
+        let (native, omissions) =
+            crate::format::inspect_project_with_omissions(&xml, None).unwrap();
+        assert_eq!(omissions.len(), 1, "{omissions:?}");
+        let (wire, losses) =
+            imported_with_omissions(native.single_sequence().unwrap(), &native.media);
+        assert!(losses.is_empty(), "{losses:?}");
+        let effects = wire["composition"]["layers"][0]["effects"]
+            .as_array()
+            .unwrap();
+        assert_eq!(effects.len(), 6);
+        let exposure = &effects[0]["effect"];
+        assert_eq!(exposure["type"], "exposure");
+        assert!((exposure["exposure"].as_f64().unwrap() - stops / 2.2).abs() < 1e-9);
+        assert_eq!(exposure["offset"], 0.0);
+        assert_eq!(exposure["gammaCorrection"], 1.0);
+    }
+    let start = source
+        .find("<VideoComponentParam ObjectID=\"791\"")
+        .unwrap();
+    let end = start + source[start..].find("</VideoComponentParam>").unwrap();
+    let keyed = format!(
+        "{}{}<IsTimeVarying>true</IsTimeVarying><Keyframes>0,-2.2,0,0,0,0,0,0;127008000000,2.2,0,0,0,0,0,0;</Keyframes>{}",
+        &source[..start], &source[start..end], &source[end..]
+    );
+    let (native, _) = crate::format::inspect_project_with_omissions(&keyed, None).unwrap();
+    let (wire, losses) = imported_with_omissions(native.single_sequence().unwrap(), &native.media);
+    assert!(losses.is_empty(), "{losses:?}");
+    let entries = wire["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    let exposure = entries
+        .iter()
+        .find(|entry| entry["target"]["paramName"] == "exposure")
+        .unwrap();
+    let keys = exposure["animator"]["keyframes"].as_array().unwrap();
+    assert_eq!(keys.len(), 2);
+    assert_eq!(keys[0]["value"]["value"], -1.0);
+    assert_eq!(keys[1]["value"]["value"], 1.0);
+    assert_eq!(keys[0]["layerTime"], 0);
+    assert_eq!(keys[1]["layerTime"], 500);
 }
 
 #[test]
@@ -8181,7 +8725,8 @@ fn human_lumetri_white_balance_affine_keys_and_invalid_control_preserve_siblings
             .find(&format!("<VideoComponentParam ObjectID=\"{id}\""))
             .unwrap();
         let end = start + keyed[start..].find("</VideoComponentParam>").unwrap();
-        let replacement = keyed[start..end].replace("-91445760000000000,0.,", "-91445760000000000,-300.,")
+        let replacement = keyed[start..end]
+            .replace("-91445760000000000,0.,", "-91445760000000000,-300.,")
             + "<IsTimeVarying>true</IsTimeVarying><Keyframes>0,-300.,0,0,0,0,0,0;127008000000,300.,0,0,0,0,0,0;</Keyframes>";
         keyed.replace_range(start..end, &replacement);
     }
@@ -8308,16 +8853,14 @@ fn premiere_alpha_video_occurrence_keeps_clock_visibility_and_transfer() {
             _ => clip.blend_mode = crate::schema::PrBlendMode::Multiply,
         };
         let wire = project_document(&seq);
-        assert_eq!(
-            wire["composition"]["layers"][0]["type"], "Video",
-            "{boundary}: {wire}"
-        );
-        assert_eq!(
-            wire["composition"]["layers"][0]["source"],
-            original["source"]
-        );
+        let picture = &crate::tests::support::picture_composition(&wire)["layers"][0];
+        assert_eq!(picture["type"], "Video", "{boundary}: {wire}");
+        assert_eq!(picture["source"], original["source"]);
         let (native, _) = export(wire);
-        let clip = native.sequences[0].video_occurrences().next().unwrap();
+        let clip = crate::tests::support::picture_sequence(&native)
+            .video_occurrences()
+            .next()
+            .unwrap();
         if boundary == "disabled" {
             assert!(!clip.enabled);
         }

@@ -77,7 +77,10 @@ fn b_frame_mov_exports_unchanged_and_responds_to_authored_rate_edit() {
             .export_from_tesseract(
                 &archive_path,
                 &output,
-                &AfterEffectsExportOptions { fps: 30.0 },
+                &AfterEffectsExportOptions {
+                    fps: 30.0,
+                    ..Default::default()
+                },
                 ConversionMode::Write,
             )
             .unwrap();

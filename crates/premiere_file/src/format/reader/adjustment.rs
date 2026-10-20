@@ -10,6 +10,40 @@ use crate::schema::{
     records, PrMedia, PrMediaKind, PrVideoStream,
 };
 
+/// A hard single-edge Crop has the same coverage as a cardinal Wipe. Keep
+/// the existing lower-composite boundary rather than masking only the adjustment.
+pub(super) fn normalize_cardinal_crop(clip: &mut crate::schema::PrVideoOccurrence) {
+    if clip.crop.edge_feather != 0.0 || clip.linear_wipe.is_some() {
+        return;
+    }
+    let edges = [
+        (clip.crop.left, 90),
+        (clip.crop.top, 0),
+        (clip.crop.right, 270),
+        (clip.crop.bottom, 180),
+    ];
+    let mut active = edges.into_iter().filter(|(value, _)| *value != 0.0);
+    let Some((completion, angle_degrees)) = active.next() else {
+        return;
+    };
+    if active.next().is_some() || !(0.0..=100.0).contains(&completion) {
+        return;
+    }
+    let crop = std::mem::take(&mut clip.crop);
+    clip.linear_wipe = Some(crate::schema::PrLinearWipe {
+        initial_completion: completion,
+        completion: Vec::new(),
+        angle_degrees,
+        feather: 0.0,
+    });
+    if clip.effects_above_mask != clip.effects.len()
+        || !crate::schema::adjustment::supports_wipe_coverage(clip, false)
+    {
+        clip.crop = crop;
+        clip.linear_wipe = None;
+    }
+}
+
 /// Whether the placement carries the native adjustment flag.
 /// Traversal failures remain the media reader's errors; `read_placement`
 /// reads the flag strictly.

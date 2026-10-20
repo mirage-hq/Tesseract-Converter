@@ -13,6 +13,8 @@ pub enum Limitation {
     ProjectMetadata,
     /// Composition settings do not all have a document equivalent.
     CompositionSettings,
+    /// Native colour meaning requires an explicit binding or approximation.
+    ColorManagement,
     /// Group bounds differ from a fixed composition canvas.
     GroupBounds,
     /// Shared source compositions become independently editable occurrences.
@@ -51,6 +53,7 @@ impl Limitation {
             Self::Selection => "AE-SELECTION",
             Self::ProjectMetadata => "AE-PROJECT-METADATA",
             Self::CompositionSettings => "AE-COMPOSITION-SETTINGS",
+            Self::ColorManagement => "AE-COLOR-MANAGEMENT",
             Self::GroupBounds => "AE-GROUP-BOUNDS",
             Self::IndependentCopies => "AE-INDEPENDENT-COPIES",
             Self::Placeholder => "AE-PLACEHOLDER",

@@ -255,7 +255,7 @@ fn certify(
             }
         })
         .collect();
-    result.sort_by(|a, b| b.depth.cmp(&a.depth));
+    result.sort_by_key(|contour| std::cmp::Reverse(contour.depth));
     Ok(Certificate {
         result: Contours {
             contours: result,

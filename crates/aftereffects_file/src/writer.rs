@@ -77,6 +77,7 @@ pub(crate) use solids::TransformAnimations;
 pub use solids::{SolidLayerSpec, SolidTransform, write_solid_composition};
 pub(crate) use stroke::StrokeAnimations;
 pub(crate) use transform3d::{NativeTransform3d, Transform3dAnimations};
+pub(crate) use views::ValueKind;
 
 use thiserror::Error;
 

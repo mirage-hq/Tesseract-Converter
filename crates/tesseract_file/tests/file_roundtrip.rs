@@ -281,6 +281,34 @@ fn media_only_metadata_omits_empty_font_registry() {
     assert!(metadata.get("fonts").is_none());
 }
 
+#[test]
+fn unknown_metadata_fields_survive_edits_saves_and_optimize_until_removed() {
+    let directory = tempfile::tempdir().unwrap();
+    let package = directory.path().join("unknown.tsrct");
+    let mut file = TesseractFileBuilder::new(test_document())
+        .write(&package)
+        .unwrap();
+    let value = json!({"key": "value"});
+    file.set_unknown_metadata_field("unknown_field", Some(value.clone()));
+    file.save().unwrap();
+
+    let mut file = TesseractFile::open(&package).unwrap();
+    enable_motion_blur(&mut file);
+    file.save().unwrap();
+    let mut file = TesseractFile::open(&package).unwrap();
+    file.optimize().unwrap();
+    let mut file = TesseractFile::open(&package).unwrap();
+    assert_eq!(
+        file.metadata().unknown_fields.get("unknown_field"),
+        Some(&value)
+    );
+
+    file.set_unknown_metadata_field("unknown_field", None);
+    file.save().unwrap();
+    let file = TesseractFile::open(&package).unwrap();
+    assert!(file.metadata().unknown_fields.is_empty());
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn project_only_save_does_not_rewrite_stored_media_on_apfs() {
@@ -336,7 +364,11 @@ fn legacy_records_and_required_asset_survive_archive_edit_and_reopen() {
         .unwrap()
         .write(&output)
         .unwrap();
-    assert_eq!(file.project_json_bytes(), bytes);
+    assert_ne!(file.project_json_bytes(), bytes);
+    assert_eq!(
+        file.project_json().unwrap()["colorManagement"]["workingSpace"],
+        "legacyDisplay"
+    );
     enable_motion_blur(&mut file);
     file.save().unwrap();
     let reopened = TesseractFile::open(&output).unwrap();
@@ -347,6 +379,7 @@ fn legacy_records_and_required_asset_survive_archive_edit_and_reopen() {
         .as_object_mut()
         .unwrap()
         .remove("motionBlur");
+    saved.as_object_mut().unwrap().remove("colorManagement");
     assert_eq!(saved, original);
 }
 
@@ -375,7 +408,11 @@ fn json_builder_preserves_unknown_fields_and_generator() {
         .unwrap()
         .write(&output)
         .unwrap();
-    assert_eq!(file.project_json_bytes(), project_json);
+    assert_ne!(file.project_json_bytes(), project_json);
+    assert_eq!(
+        file.project_json().unwrap()["colorManagement"]["workingSpace"],
+        "legacyDisplay"
+    );
     enable_motion_blur(&mut file);
     assert_ne!(file.project_json_bytes(), project_json);
     file.save().unwrap();
@@ -566,6 +603,82 @@ fn save_as_preserves_source_file() {
     assert_ne!(std::fs::read(&revised_path).unwrap(), original);
 }
 
+#[test]
+fn atomic_replacement_keeps_existing_readers_and_reopens_immediately() {
+    for operation in ["save", "save_as", "optimize"] {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.tsrct");
+        let destination = if operation == "save_as" {
+            directory.path().join("existing.tsrct")
+        } else {
+            source.clone()
+        };
+        let mut file = TesseractFileBuilder::new(test_document())
+            .write(&source)
+            .unwrap();
+        let original = std::fs::read(&source).unwrap();
+        if operation == "save_as" {
+            std::fs::write(&destination, &original).unwrap();
+        }
+        let mut reader = std::fs::File::open(&destination).unwrap();
+        let mut previous = TesseractFile::open(&destination).unwrap();
+        enable_motion_blur(&mut file);
+
+        match operation {
+            "save" => file.save(),
+            "save_as" => file.save_as(&destination),
+            "optimize" => file.optimize(),
+            _ => unreachable!(),
+        }
+        .unwrap();
+
+        let reopened = TesseractFile::open(&destination).unwrap();
+        assert!(reopened.project().composition().motion_blur().enabled);
+        assert!(!previous.project().composition().motion_blur().enabled);
+        let mut held_bytes = Vec::new();
+        reader.read_to_end(&mut held_bytes).unwrap();
+        assert_eq!(held_bytes, original);
+        if operation == "save_as" {
+            assert_eq!(std::fs::read(&source).unwrap(), original);
+        }
+        // A stale live archive must not save over the replacement.
+        assert!(previous
+            .save()
+            .unwrap_err()
+            .to_string()
+            .contains("changed after it was opened"));
+        file.save().unwrap();
+    }
+}
+
+#[test]
+fn failed_publication_removes_temporary_file_and_keeps_source_retryable() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("source.tsrct");
+    let blocked = directory.path().join("blocked");
+    std::fs::create_dir(&blocked).unwrap();
+    let mut file = TesseractFileBuilder::new(test_document())
+        .write(&source)
+        .unwrap();
+    let original = std::fs::read(&source).unwrap();
+    enable_motion_blur(&mut file);
+
+    assert!(file.save_as(&blocked).is_err());
+    assert_eq!(std::fs::read(&source).unwrap(), original);
+    assert!(blocked.is_dir());
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
+
+    file.save().unwrap();
+    assert!(
+        TesseractFile::open(&source)
+            .unwrap()
+            .project()
+            .composition()
+            .motion_blur()
+            .enabled
+    );
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn review_equal_size_and_mtime_replacement_is_rejected_before_publication() {
@@ -710,6 +823,226 @@ fn review_failed_save_and_optimize_retain_configured_writer() {
             .unwrap(),
         b"original"
     );
+}
+
+#[test]
+fn color_management_commit_normalizes_omission_and_preserves_explicit_bytes() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("color.tsrct");
+    let checkout = directory.path().join("project.json");
+    let mut file = TesseractFileBuilder::new(test_document())
+        .write(&output)
+        .unwrap();
+    file.checkout_project_json(&checkout).unwrap();
+    let mut historical = file.project_json().unwrap();
+    historical
+        .as_object_mut()
+        .unwrap()
+        .remove("colorManagement");
+    std::fs::write(&checkout, serde_json::to_vec(&historical).unwrap()).unwrap();
+    file.commit_project_json(&checkout).unwrap();
+    assert_eq!(
+        file.project_json().unwrap()["colorManagement"],
+        json!({"workingSpace":"legacyDisplay"})
+    );
+    file.save().unwrap();
+    file.save_as(directory.path().join("copy.tsrct")).unwrap();
+    file.optimize().unwrap();
+    assert_eq!(
+        file.project_json().unwrap()["colorManagement"]["workingSpace"],
+        "legacyDisplay"
+    );
+
+    let explicit = format!(
+        "  {}  ",
+        String::from_utf8(file.project_json_bytes().to_vec()).unwrap()
+    );
+    std::fs::write(&checkout, explicit.as_bytes()).unwrap();
+    file.commit_project_json(&checkout).unwrap();
+    assert_eq!(file.project_json_bytes(), explicit.as_bytes());
+    file.save().unwrap();
+    assert_eq!(file.project_json_bytes(), explicit.as_bytes());
+    let before = file.project_json_bytes().to_vec();
+    let mut unsupported = file.project_json().unwrap();
+    unsupported["colorManagement"]["workingSpace"] = json!("futureSpace");
+    std::fs::write(&checkout, serde_json::to_vec(&unsupported).unwrap()).unwrap();
+    let error = file.commit_project_json(&checkout).unwrap_err().to_string();
+    assert!(error.contains("requires a newer Jerboa"));
+    assert_eq!(file.project_json_bytes(), before);
+    assert!(
+        TesseractFileBuilder::from_project_json(&serde_json::to_vec(&unsupported).unwrap())
+            .is_err()
+    );
+}
+
+fn assert_no_obsolete_records(path: &std::path::Path) {
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
+    let mut ranges = Vec::new();
+    for index in 0..archive.len() {
+        let entry = archive.by_index_raw(index).unwrap();
+        ranges.push((
+            entry.header_start(),
+            entry.data_start() + entry.compressed_size(),
+        ));
+    }
+    ranges.sort_unstable();
+    let mut end = 0;
+    for (start, next_end) in ranges {
+        assert_eq!(
+            start, end,
+            "unreferenced bytes before local record in {path:?}"
+        );
+        end = next_end;
+    }
+    assert_eq!(
+        end,
+        archive.central_directory_start(),
+        "unreferenced ZIP suffix"
+    );
+}
+
+#[test]
+fn repeated_saves_replace_document_records_without_archive_growth() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("source.mp4");
+    std::fs::write(&source, b"0123456789-user-video").unwrap();
+    let output = directory.path().join("repeated.tsrct");
+    let mut file = TesseractFileBuilder::new(test_document())
+        .add_asset("video", &source, AssetKind::Video)
+        .unwrap()
+        .write(&output)
+        .unwrap();
+    let mut saved_size = None;
+    for _ in 0..100 {
+        enable_motion_blur(&mut file);
+        file.save().unwrap();
+        assert_no_obsolete_records(&output);
+        let size = std::fs::metadata(&output).unwrap().len();
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(&output).unwrap()).unwrap();
+        // RFC 3339 fractional-second precision can change metadata length.
+        let metadata_size = archive.by_name("metadata.json").unwrap().size();
+        if let Some(previous) = saved_size {
+            assert_eq!(
+                size - metadata_size,
+                previous,
+                "unchanged content must not accumulate old records"
+            );
+        }
+        saved_size = Some(size - metadata_size);
+        let reopened = TesseractFile::open(&output).unwrap();
+        assert!(reopened.project().composition().motion_blur().enabled);
+        assert_eq!(
+            reopened
+                .asset("video")
+                .unwrap()
+                .read_verified_bytes(1024)
+                .unwrap(),
+            b"0123456789-user-video"
+        );
+    }
+}
+
+#[test]
+fn normal_save_removes_legacy_obsolete_records_and_preserves_save_as_source() {
+    use std::io::Write;
+
+    let directory = tempfile::tempdir().unwrap();
+    let media = directory.path().join("video.mp4");
+    std::fs::write(&media, b"unchanged-media").unwrap();
+    let original = directory.path().join("original.tsrct");
+    TesseractFileBuilder::new(test_document())
+        .add_asset("video", &media, AssetKind::Video)
+        .unwrap()
+        .write(&original)
+        .unwrap();
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(&original).unwrap()).unwrap();
+    let obsolete = archive.by_name("project.json").unwrap();
+    let start = obsolete.header_start() as usize;
+    let end = (obsolete.data_start() + obsolete.compressed_size()) as usize;
+    drop(obsolete);
+    let bytes = std::fs::read(&original).unwrap();
+    let legacy = directory.path().join("legacy.tsrct");
+    let mut output = std::fs::File::create(&legacy).unwrap();
+    // A physically present old project record omitted from the final directory,
+    // as left by the old writer. Current records have absolute offsets after it.
+    output.write_all(&bytes[start..end]).unwrap();
+    let mut writer = zip::ZipWriter::new(output);
+    for index in 0..archive.len() {
+        writer
+            .raw_copy_file(archive.by_index_raw(index).unwrap())
+            .unwrap();
+    }
+    writer.finish().unwrap();
+    let legacy_bytes = std::fs::read(&legacy).unwrap();
+    let mut file = TesseractFile::open(&legacy).unwrap();
+    let saved = directory.path().join("saved.tsrct");
+    file.save_as(&saved).unwrap();
+    assert_no_obsolete_records(&saved);
+    assert_eq!(std::fs::read(&legacy).unwrap(), legacy_bytes);
+    let reopened = TesseractFile::open(&saved).unwrap();
+    assert_eq!(
+        reopened
+            .asset("video")
+            .unwrap()
+            .read_verified_bytes(1024)
+            .unwrap(),
+        b"unchanged-media"
+    );
+    let mut file = TesseractFile::open(&legacy).unwrap();
+    file.save().unwrap();
+    assert_no_obsolete_records(&legacy);
+}
+
+#[test]
+fn asset_import_replacement_and_removal_do_not_leave_obsolete_records() {
+    let directory = tempfile::tempdir().unwrap();
+    let first = directory.path().join("first.mp4");
+    let second = directory.path().join("second.mp4");
+    std::fs::write(&first, b"first-media").unwrap();
+    std::fs::write(&second, b"second-media").unwrap();
+    let output = directory.path().join("assets.tsrct");
+    let mut file = TesseractFileBuilder::new(test_document())
+        .add_asset("first", &first, AssetKind::Video)
+        .unwrap()
+        .write(&output)
+        .unwrap();
+    file.add_asset("second", &second, AssetKind::Video).unwrap();
+    file.save().unwrap();
+    assert_no_obsolete_records(&output);
+    std::fs::write(&first, b"replacement-media").unwrap();
+    file.remove_asset("first").unwrap();
+    file.add_asset("first", &first, AssetKind::Video).unwrap();
+    file.save().unwrap();
+    assert_no_obsolete_records(&output);
+    assert_eq!(
+        file.asset("first")
+            .unwrap()
+            .read_verified_bytes(1024)
+            .unwrap(),
+        b"replacement-media"
+    );
+    assert_eq!(
+        file.asset("second")
+            .unwrap()
+            .read_verified_bytes(1024)
+            .unwrap(),
+        b"second-media"
+    );
+    file.remove_asset("second").unwrap();
+    file.save().unwrap();
+    assert_no_obsolete_records(&output);
+    assert!(TesseractFile::open(&output)
+        .unwrap()
+        .asset("second")
+        .is_err());
+    file.remove_asset("first").unwrap();
+    file.save().unwrap();
+    assert_no_obsolete_records(&output);
+    assert!(TesseractFile::open(&output)
+        .unwrap()
+        .metadata()
+        .assets
+        .is_empty());
 }
 
 #[test]

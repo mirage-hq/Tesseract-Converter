@@ -137,6 +137,7 @@ fn gradient_fill_and_solid_stroke_retain_parametric_rect_and_group_ownership() {
         let mut next_id = 500;
         let mut animation_budget = AnimationBudget::default();
         let mut collector = Collector {
+            source_items: None,
             includes_occurrence_pipeline: true,
             next_id: &mut next_id,
             animation_budget: &mut animation_budget,
@@ -257,6 +258,7 @@ fn gradient_pair_does_not_freeze_axes_during_rect_geometry_motion() {
         let mut next_id = 500;
         let mut animation_budget = AnimationBudget::default();
         let mut collector = Collector {
+            source_items: None,
             includes_occurrence_pipeline: true,
             next_id: &mut next_id,
             animation_budget: &mut animation_budget,

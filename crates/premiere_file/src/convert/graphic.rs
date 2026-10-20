@@ -55,8 +55,11 @@ mod capsule;
 mod capsule_picture;
 pub(super) use capsule_picture::import_capsule;
 mod contours;
+mod geometry2;
 
 use self::contours::ContourRole;
+#[cfg(test)]
+use super::tesseract_to_premiere::rgb;
 use super::{
     background::{identity_transform, plain_group},
     fonts, keyframes,
@@ -69,8 +72,7 @@ use super::{
     tesseract_to_premiere::{
         consumed_layer_ids, export_position_keys, export_scalar_keys, graphic_mask, graphic_of,
         graphic_opacity_mask, has_background, layer_animations, mask_guide_ids, omit_object_blend,
-        rgb, scale_tracks_match, text_document, text_object, unexported_layer_fields, ClipLayer,
-        WrittenAnimation,
+        scale_tracks_match, text_object, unexported_layer_fields, ClipLayer, WrittenAnimation,
     },
     text::{
         automatic_line_spacing, glyph_interior, is_outline_only, OUTLINE_ONLY_GLYPH_CUTOUT,
@@ -87,9 +89,9 @@ use crate::{
             omitted_part, stroke_join, unverified_mask_composite, GraphicParamSpec, PrAppearance,
             PrFill, PrGradient, PrGradientKind, PrGradientOpacityStop, PrGradientStop,
             PrGraphicGroup, PrGraphicObject, PrMaskSource, PrPathVertex, PrRgb, PrShape,
-            PrShapePath, PrShapeStroke, PrSourceTextKey, PrText, PrTextBackground, PrTextFrame,
-            PrTextLines, PrTextTransform, PrVectorMotion, PrVerticalAlign, SourceTextField,
-            StrokeJoin, GRADIENT_Y_UNCONVERTED, OPAQUE_OPACITY_STOPS, TEXT_PARAMS,
+            PrShapePath, PrShapeStroke, PrSourceTextKey, PrText, PrTextBackground, PrTextDocument,
+            PrTextFrame, PrTextLines, PrTextTransform, PrVectorMotion, PrVerticalAlign,
+            SourceTextField, StrokeJoin, GRADIENT_Y_UNCONVERTED, OPAQUE_OPACITY_STOPS, TEXT_PARAMS,
             VECTOR_MOTION_PARAMS,
         },
         PrAnimatedProperty, PrBlendMode, PrPropertyAnimation, PrScalarKeyframe, PrStaticTransform,
@@ -160,6 +162,7 @@ fn property_name(property: PrAnimatedProperty) -> &'static str {
         PrAnimatedProperty::Rotation => "Rotation",
         PrAnimatedProperty::UniformScale => "Scale",
         PrAnimatedProperty::ScaleWidth => "Scale Width",
+        PrAnimatedProperty::ScaleHeight => "Scale Height",
     }
 }
 
@@ -172,6 +175,53 @@ fn property_name(property: PrAnimatedProperty) -> &'static str {
 /// layer and the guide of the clip Opacity mask, the root's sibling, or
 /// no occurrence when every object was lost with its mask composite.
 pub(super) fn import_graphic(
+    graphic: &PrGraphic,
+    dimensions: [u32; 2],
+    layer_id: LayerId,
+    index: usize,
+    scope: &mut LayerScope<'_, '_>,
+    dynamics: &mut AnimationGraph,
+    omissions: &mut Vec<Omission>,
+) -> Result<Option<(Layer, Option<Layer>)>> {
+    let existing_targets: std::collections::BTreeSet<_> = dynamics
+        .entries()
+        .iter()
+        .map(|entry| entry.target.clone())
+        .collect();
+    let result = import_graphic_unbound(
+        graphic, dimensions, layer_id, index, scope, dynamics, omissions,
+    )?;
+    let (Some(transfer), Some((layer, guide))) = (graphic.hdr, result.as_ref()) else {
+        return Ok(result);
+    };
+    let record = graphic.id().unwrap_or("graphic");
+    let mut messages = Vec::new();
+    let mut binding = fx_conv::GeneratedHdrColorBinding::new(transfer, &mut messages);
+    let mut value = serde_json::to_value(layer)?;
+    binding.layer(&mut value);
+    let layer = serde_json::from_value(value)?;
+    let mut graph = dynamics.wire_value().clone();
+    if let Some(entries) = graph
+        .get_mut("entries")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for entry in entries {
+            let target: fx_schema::PropertyTarget =
+                serde_json::from_value(entry["target"].clone())?;
+            if !existing_targets.contains(&target) {
+                binding.entry(entry, &format!("Graphic {record} target {target:?}"));
+            }
+        }
+    }
+    *dynamics = serde_json::from_value(graph)?;
+    for message in messages {
+        approximate(omissions, record, message);
+    }
+    approximate(omissions, record, "declared HDR Graphic source point colours normalized to FX white 609; native 8-bit storage, encoded interpolation, effects/blends and destination white/tone/gamut adaptation remain unproved");
+    Ok(Some((layer, guide.clone())))
+}
+
+fn import_graphic_unbound(
     graphic: &PrGraphic,
     dimensions: [u32; 2],
     layer_id: LayerId,
@@ -215,11 +265,12 @@ pub(super) fn import_graphic(
         || graphic
             .effect_loss
             .as_ref()
-            .is_some_and(|loss| !loss.mapped_ramps.is_empty())
+            .is_some_and(|loss| !loss.mapped_effects.is_empty())
         || graphic.objects.iter().any(|object| {
             object.mask_source().is_some()
                 || matches!(object, PrGraphicObject::Group(_))
                 || matches!(object, PrGraphicObject::Shape(shape) if shape.mask.is_some())
+                || matches!(object, PrGraphicObject::Text(text) if text.mask.is_some())
         })
         || motion.is_some()
         || graphic.opacity != 100.0
@@ -230,6 +281,7 @@ pub(super) fn import_graphic(
     // The group takes the placement's range and visibility; its objects start
     // with it, so all keep the graphic's clock.
     let group_id = grouped.then(|| next_layer_id(scope));
+    let stage_ids = geometry2::stage_ids(graphic, scope);
     let mut objects = ObjectImport {
         graphic,
         dimensions,
@@ -243,7 +295,11 @@ pub(super) fn import_graphic(
         dynamics,
         omissions,
     };
-    let parent = group_id.or(objects.scope.parent);
+    let parent = stage_ids
+        .last()
+        .copied()
+        .or(group_id)
+        .or(objects.scope.parent);
     let mut layers = objects.level(&graphic.objects, parent)?;
     let mask_sources = objects.mask_sources;
     let (scope, dynamics, omissions) = (objects.scope, objects.dynamics, objects.omissions);
@@ -296,8 +352,21 @@ pub(super) fn import_graphic(
             omissions,
         ));
     }
-    let (effects, effect_tracks) =
-        super::effects::import_graphic_ramps(graphic, group_id, scope.effect_ids, omissions);
+    let mapped_effects = graphic
+        .effect_loss
+        .as_ref()
+        .map_or(&[][..], |loss| loss.mapped_effects.as_slice());
+    let (effects, effect_tracks) = super::effects::import_graphic_effects(
+        graphic,
+        if stage_ids.is_empty() {
+            mapped_effects
+        } else {
+            &[]
+        },
+        group_id,
+        scope.effect_ids,
+        omissions,
+    );
     set_tracks(dynamics, tracks)?;
     for (target, track) in effect_tracks {
         dynamics
@@ -328,7 +397,15 @@ pub(super) fn import_graphic(
     let window = tick_range(graphic.start_ticks, graphic.end_ticks)?;
     let (mask, guide) =
         clip_opacity_mask(graphic, dimensions, index, scope, dynamics, omissions)?.unzip();
+    let painted = in_paint_order(layers)
+        .iter()
+        .map(Layer::from_data)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let painted = geometry2::import_stages(
+        graphic, dimensions, group_id, &stage_ids, painted, scope, dynamics, omissions,
+    )?;
     let group = Layer::from_data(&LayerData::Group(GroupLayer {
+        render_domain: None,
         id: group_id,
         name: format!("Premiere graphic {}", index + 1),
         description: String::new(),
@@ -359,10 +436,7 @@ pub(super) fn import_graphic(
         corner_radius_bottom_right: radius,
         corner_radius_bottom_left: radius,
         transform,
-        layers: in_paint_order(layers)
-            .iter()
-            .map(Layer::from_data)
-            .collect::<std::result::Result<_, _>>()?,
+        layers: painted,
     }))?;
     Ok(Some((group, guide)))
 }
@@ -608,6 +682,7 @@ impl ObjectImport<'_, '_, '_, '_> {
                     id
                 };
                 let mut layer = text_layer(graphic, text, paint_id, self.index)?;
+                import_fill_spans(&mut layer, &text.document, self.scope);
                 // What of the text does not import, reported once whether
                 // it can keep a mask is known.
                 let mut parts = Vec::new();
@@ -686,16 +761,43 @@ impl ObjectImport<'_, '_, '_, '_> {
                     &mut layer.is_hidden,
                     &mut layer.active_range,
                 );
+                let guide = if let Some(mask) = &text.mask {
+                    let guide_id = next_layer_id(self.scope);
+                    let mask_id = FxItemId::new(*self.scope.next_index as u64 + 1);
+                    *self.scope.next_index += 1;
+                    layer
+                        .masks
+                        .push(opacity_path_mask(mask_id, guide_id, mask)?);
+                    Some(shape_guide(
+                        guide_id,
+                        format!("{} mask", layer.name),
+                        parent,
+                        layer.active_range,
+                        identity_transform(),
+                        scaled_path(&fx_path(&mask.path), self.dimensions.map(f64::from)),
+                    ))
+                } else {
+                    None
+                };
                 let layer = if let Some(cutout) = cutout {
                     LayerData::Group(outside_stroke_group(layer, cutout, id)?)
                 } else {
                     LayerData::Text(layer)
                 };
-                Ok(ObjectLayerImport::Kept(Box::new((layer, None))))
+                Ok(ObjectLayerImport::Kept(Box::new((layer, guide))))
             }
             PrGraphicObject::Shape(shape) => {
                 let mut layer = shape_layer(graphic, shape, id, self.index)?;
                 let mut parts = Vec::new();
+                let tracks = object_tracks(
+                    &shape.animations,
+                    shape.horizontal_scale.is_none(),
+                    graphic.in_ticks,
+                    id,
+                    self.dimensions,
+                    record,
+                    &mut parts,
+                );
                 let shadow = text_shadow::import_shape_shadow(
                     shape,
                     motion,
@@ -711,6 +813,7 @@ impl ObjectImport<'_, '_, '_, '_> {
                         shape.name
                     )));
                 }
+                set_tracks(self.dynamics, tracks)?;
                 for warning in shape.gradient_approximations(graphic, shadow.is_some()) {
                     approximate(self.omissions, record, warning);
                 }
@@ -819,8 +922,8 @@ fn lost_mask_parts(
     None
 }
 
-/// Map a graphic that its own static clip Motion moves (a Source Graphic
-/// placement) to a group that holds the root layer [`import_graphic`] makes
+/// Map a graphic moved by static or keyed clip Motion to a group that holds
+/// the root layer [`import_graphic`] makes
 /// of it, which keeps the Vector Motion, clip Opacity and blend mode as for
 /// any graphic. The group takes the placement's range, visibility and clip
 /// Motion, so the Motion moves the whole converted graphic once, as Premiere
@@ -839,6 +942,7 @@ pub(super) fn import_moved_graphic(
     graphic.validate_clip_motion_mask()?;
     let content = PrGraphic {
         clip_motion: PrStaticTransform::default(),
+        clip_motion_animations: Vec::new(),
         enabled: true,
         ..graphic.clone()
     };
@@ -861,6 +965,18 @@ pub(super) fn import_moved_graphic(
         active_range.duration,
         scope.on_document_clock && active_range.start == Time::ZERO,
     )?;
+    let tracks = super::premiere_to_tesseract::motion_tracks(
+        &graphic.clip_motion_animations,
+        graphic.in_ticks,
+        None,
+        group_id,
+        None,
+        dimensions,
+        dimensions,
+        graphic.id.as_deref().unwrap_or("graphic"),
+        omissions,
+    );
+    super::premiere_to_tesseract::set_tracks(dynamics, tracks)?;
     Ok(Some(Layer::from_data(&LayerData::Group(GroupLayer {
         is_hidden: !graphic.enabled,
         parent: scope.parent,
@@ -923,6 +1039,30 @@ struct TextBlockPlacement {
     inside_graphic: bool,
 }
 
+fn import_fill_spans(
+    layer: &mut TextLayer,
+    document: &PrTextDocument,
+    scope: &mut LayerScope<'_, '_>,
+) {
+    for span in &document.fill_spans {
+        let id = FxItemId::new(next_layer_id(scope).value());
+        let selector_id = FxItemId::new(next_layer_id(scope).value());
+        layer.animators.push(TextAnimator {
+            id,
+            name: "Source Text fill".into(),
+            fill_color: Some(rgba(span.color)),
+            selectors: vec![fx_schema::RangeSelector {
+                id: selector_id,
+                start: span.range.start as f64,
+                end: span.range.end as f64,
+                units: fx_schema::text_animator::SelectorUnits::Index,
+                ..fx_schema::RangeSelector::default()
+            }],
+            ..TextAnimator::default()
+        });
+    }
+}
+
 fn import_text_lines(
     graphic: &PrGraphic,
     text: &PrTextLines,
@@ -954,11 +1094,13 @@ fn import_text_lines(
     let mut layers = Vec::with_capacity(text.documents.len());
     for (line, (document, baseline)) in text.documents.iter().zip(baselines).enumerate() {
         let mut document = document.clone();
+        document.leading = 0.0;
         document.frame = PrTextFrame::Point {
             vertical: PrVerticalAlign::Top,
         };
         document.shadow = None;
         let object = PrText {
+            mask: None,
             horizontal_scale: None,
             mask_source: None,
             name: format!("{} — line {}", text.name, line + 1),
@@ -1019,6 +1161,7 @@ fn import_text_lines(
         shadow_document.fill = None;
     }
     let shadow_owner = PrText {
+        mask: None,
         horizontal_scale: None,
         mask_source: None,
         name: text.name.clone(),
@@ -1042,6 +1185,7 @@ fn import_text_lines(
     };
     let zero = NonNegativeProperty::new(0.0).expect("zero is nonnegative");
     Ok(GroupLayer {
+        render_domain: None,
         id: placement.id,
         name: text.name.clone(),
         description: String::new(),
@@ -1130,7 +1274,9 @@ fn object_tracks(
                 }
             }
             // No graphic parameter keys these clip Motion properties.
-            PrAnimatedProperty::AnchorPoint | PrAnimatedProperty::ScaleWidth => Err(unsupported(
+            PrAnimatedProperty::AnchorPoint
+            | PrAnimatedProperty::ScaleWidth
+            | PrAnimatedProperty::ScaleHeight => Err(unsupported(
                 "a graphic object has no keyable clip Motion Anchor Point or Scale Width",
             )),
         };
@@ -2264,7 +2410,11 @@ fn unsupported_graphic_group(
 /// 100 and rotation 0 they translate the text, and both engines translate
 /// the box with it. The group's own Vector Motion scales or rotates box and
 /// text together in both engines and stays allowed.
-fn group_background(group: &GroupLayer, text: &PrText) -> Result<Option<PrTextBackground>> {
+fn group_background(
+    group: &GroupLayer,
+    text: &PrText,
+    hdr: Option<fx_conv::HdrColorBridge>,
+) -> Result<Option<PrTextBackground>> {
     if !has_background(group) {
         return Ok(None);
     }
@@ -2306,7 +2456,7 @@ fn group_background(group: &GroupLayer, text: &PrText) -> Result<Option<PrTextBa
         "a text background fill blends normally at full opacity"
     );
     let background = PrTextBackground {
-        color: rgb(color, "text background fill")?,
+        color: super::tesseract_to_premiere::rgb_with_hdr(color, "text background fill", hdr)?,
         opacity: 100.0,
         size: padding as f32,
         radius: radius as f32,
@@ -2424,8 +2574,16 @@ fn object_part(
                     }
                 };
             Some(
-                text_object(layer, parent, font, context.dynamics, omissions, record)
-                    .map(|text| (PrGraphicObject::Text(text), Vec::new())),
+                super::tesseract_to_premiere::text_object_with_hdr(
+                    layer,
+                    parent,
+                    font,
+                    context.dynamics,
+                    omissions,
+                    record,
+                    context.hdr,
+                )
+                .map(|text| (PrGraphicObject::Text(text), Vec::new())),
             )
         }
         ObjectLayer::Shape(layer) => {
@@ -2441,7 +2599,7 @@ fn object_part(
                 }
             }
             omit_object_blend(layer.id, layer.blend_mode, omissions, record);
-            let part = shape_object(layer, motion_scale).map(|shape| {
+            let part = shape_object_with_hdr(layer, motion_scale, context.hdr).map(|shape| {
                 let ShapeObject { object, near } = shape;
                 let mut approximations = Vec::new();
                 if let PrGraphicObject::Group(pieces) = &object {
@@ -2658,9 +2816,14 @@ fn export_objects(
                 ensure!(tracks.is_empty(), "keyed graphic shapes are unsupported");
                 continue;
             };
-            if let Err(error) =
-                prepare_source_text(text, layer, &mut tracks, context.dynamics, graphic.in_ticks)
-            {
+            if let Err(error) = prepare_source_text(
+                text,
+                layer,
+                &mut tracks,
+                context.dynamics,
+                graphic.in_ticks,
+                context.hdr,
+            ) {
                 omit(
                     omissions,
                     OmissionScope::Feature,
@@ -2748,6 +2911,25 @@ fn export_objects(
                 .map(|(id, reason)| (id, Unexported::Unrendered(reason))),
             );
             for (object, native) in kept.iter().zip(&graphic.objects) {
+                if let ObjectLayer::Shape(layer) = object {
+                    let extended = layer
+                        .shape
+                        .fills
+                        .iter()
+                        .map(|fill| &fill.paint)
+                        .chain(layer.shape.strokes.iter().map(|stroke| &stroke.paint))
+                        .any(|paint| match paint {
+                            ShapePaint::Solid { color } => {
+                                color[..3].iter().any(|channel| *channel > 1.0)
+                            }
+                            ShapePaint::Gradient { stops, .. } => stops
+                                .iter()
+                                .any(|stop| stop.color[..3].iter().any(|channel| *channel > 1.0)),
+                        });
+                    if extended && context.hdr.is_none() {
+                        approximate(omissions, object.record(), "Extended-sRGB shape/solid/gradient RGB above 1 was clamped to native 0..=1; HDR brightness and channel ratios are not retained. Existing native paint alpha restrictions are unchanged.");
+                    }
+                }
                 let shape = match native {
                     PrGraphicObject::Shape(shape) => Some(shape),
                     PrGraphicObject::Group(pieces) => {
@@ -2813,7 +2995,7 @@ fn apply_group(
     // The background is classified on the text's own transform, before the
     // group's motion folds into it.
     if let [PrGraphicObject::Text(text)] = graphic.objects.as_mut_slice() {
-        match group_background(group, text) {
+        match group_background(group, text, context.hdr) {
             Ok(background) => text.document.background = background,
             Err(error) => omit(
                 omissions,
@@ -3235,6 +3417,7 @@ fn prepare_source_text(
     tracks: &mut BTreeMap<PropType, &PropertyKeyframeTrack>,
     dynamics: &AnimationGraph,
     in_ticks: i64,
+    hdr: Option<fx_conv::HdrColorBridge>,
 ) -> Result<()> {
     let mut source_text: BTreeMap<_, _> = SOURCE_TEXT_PROPERTIES
         .iter()
@@ -3255,7 +3438,13 @@ fn prepare_source_text(
     // This is only the prospective native text object, not an FX layer
     // clone/retry: the already validated base remains untouched on failure.
     let mut prepared = PrText {
-        source_text_keys: source_text_keys(&source_text, &base, &text.document.font, in_ticks)?,
+        source_text_keys: source_text_keys(
+            &source_text,
+            &base,
+            &text.document.font,
+            in_ticks,
+            hdr,
+        )?,
         ..text.clone()
     };
     if let Some(anchor) = anchor {
@@ -3279,6 +3468,7 @@ fn source_text_keys(
     source_text: &TextDocument,
     font: &str,
     in_ticks: i64,
+    hdr: Option<fx_conv::HdrColorBridge>,
 ) -> Result<Vec<PrSourceTextKey>> {
     let mut times = BTreeSet::new();
     for (field, track) in tracks {
@@ -3352,7 +3542,8 @@ fn source_text_keys(
                 }
             }
         }
-        let (document, _) = text_document(&doc, font.to_owned())?;
+        let (document, _) =
+            super::tesseract_to_premiere::text_document_with_hdr(&doc, font.to_owned(), hdr)?;
         keys.push(PrSourceTextKey {
             source_ticks: keyframes::source_ticks(in_ticks, millis)?,
             document,
@@ -3475,7 +3666,7 @@ const ONE_CONTOUR: &str = "a Premiere shape path holds one contour; holes need M
 /// range and visibility: its path in layer pixels, its fill ([`fx_fill`]),
 /// which FX draws on an open path as if closed, as Premiere does, and its
 /// centred stroke, which FX draws over the fill as Premiere does, with butt
-/// caps and the join that [`stroke_join`] proves.
+/// caps and an explicit legacy join or the join that [`stroke_join`] proves.
 fn shape_layer(
     graphic: &PrGraphic,
     shape: &PrShape,
@@ -3489,7 +3680,10 @@ fn shape_layer(
             let width = NonNegativeProperty::new(f64::from(stroke.width))
                 .ok_or_else(|| unsupported("shape stroke width must be nonnegative"))?;
             let mut style = ShapeStrokeStyle::solid(rgba(stroke.color), width);
-            match stroke_join(&shape.path, None).map_err(unsupported)? {
+            match stroke
+                .join
+                .map_or_else(|| stroke_join(&shape.path, None).map_err(unsupported), Ok)?
+            {
                 StrokeJoin::Miter(limit) => style.miter_limit = limit,
                 StrokeJoin::Bevel => style.join = ShapeLineJoin::Bevel,
                 StrokeJoin::Round => style.join = ShapeLineJoin::Round,
@@ -3863,6 +4057,14 @@ pub(super) fn premiere_path(path: &ShapePath) -> Result<PrShapePath> {
 /// says that any two may when that has no positive lower bound. That
 /// construction has retained native hole-control evidence, not general parity.
 fn shape_object(layer: &ShapeLayer, motion_scale: Option<f64>) -> Result<ShapeObject> {
+    shape_object_with_hdr(layer, motion_scale, None)
+}
+
+fn shape_object_with_hdr(
+    layer: &ShapeLayer,
+    motion_scale: Option<f64>,
+    hdr: Option<fx_conv::HdrColorBridge>,
+) -> Result<ShapeObject> {
     let content = &layer.shape;
     ensure!(
         content.round_corners.is_none()
@@ -3910,6 +4112,7 @@ fn shape_object(layer: &ShapeLayer, motion_scale: Option<f64>) -> Result<ShapeOb
             opacity: transform.opacity.value(),
         },
         horizontal_scale: (horizontal != vertical).then_some(horizontal),
+        animations: Vec::new(),
         mask: None,
     };
     let contour_count = content
@@ -3920,9 +4123,11 @@ fn shape_object(layer: &ShapeLayer, motion_scale: Option<f64>) -> Result<ShapeOb
         .count();
     if contour_count <= 1 {
         let path = premiere_path(&content.path)?;
-        let fill = fill.map(|fill| premiere_fill(fill, false)).transpose()?;
+        let fill = fill
+            .map(|fill| premiere_fill(fill, false, hdr))
+            .transpose()?;
         let stroke = stroke
-            .map(|stroke| shape_stroke(stroke, &path))
+            .map(|stroke| shape_stroke(stroke, &path, hdr))
             .transpose()?;
         return Ok(ShapeObject {
             object: PrGraphicObject::Shape(shape(path, fill, stroke)),
@@ -3944,7 +4149,9 @@ fn shape_object(layer: &ShapeLayer, motion_scale: Option<f64>) -> Result<ShapeOb
         .map(|motion| horizontal.abs().min(vertical.abs()) / 100.0 * motion)
         .filter(|scale| *scale > 0.0);
     let fill_rule = fill.map(|fill| fill.fill_rule);
-    let fill = fill.map(|fill| premiere_fill(fill, true)).transpose()?;
+    let fill = fill
+        .map(|fill| premiere_fill(fill, true, hdr))
+        .transpose()?;
     let contours::Contours { contours, near } = contours::contours(
         &content.path,
         fill_rule,
@@ -3960,7 +4167,7 @@ fn shape_object(layer: &ShapeLayer, motion_scale: Option<f64>) -> Result<ShapeOb
     for contour in contours {
         let path = premiere_path(&contour.path)?;
         let stroke = stroke
-            .map(|stroke| shape_stroke(stroke, &path))
+            .map(|stroke| shape_stroke(stroke, &path, hdr))
             .transpose()?;
         match contour.role {
             ContourRole::Filled => pieces.push(shape(path, fill.clone(), stroke)),
@@ -4088,7 +4295,19 @@ pub(super) fn smallest_scale(group: &GroupLayer, context: &LayerExport<'_, '_>) 
 /// opacity stop at each too unless every stop is opaque ([`OPAQUE_OPACITY_STOPS`]).
 /// Coordinates, positions and opacities narrow to f32, colors to 8 bits;
 /// `PrShape::validate` checks the axis and the stops.
-fn premiere_fill(fill: &ShapeFillStyle, compound: bool) -> Result<PrFill> {
+fn shape_rgb(color: [f64; 4], paint: &str, hdr: Option<fx_conv::HdrColorBridge>) -> Result<PrRgb> {
+    ensure!(
+        fx_schema::has_valid_extended_color(&color),
+        "{paint} exceeds the extended shape-paint range"
+    );
+    super::tesseract_to_premiere::rgb_with_hdr(color, paint, hdr)
+}
+
+fn premiere_fill(
+    fill: &ShapeFillStyle,
+    compound: bool,
+    hdr: Option<fx_conv::HdrColorBridge>,
+) -> Result<PrFill> {
     ensure!(
         (compound || fill.fill_rule == ShapeFillRule::NonZeroWinding)
             && fill.blend_mode == BlendMode::Normal
@@ -4096,7 +4315,9 @@ fn premiere_fill(fill: &ShapeFillStyle, compound: bool) -> Result<PrFill> {
         "shape fills blend normally at full opacity with the nonzero rule"
     );
     let (gradient_type, start, end, stops) = match &fill.paint {
-        ShapePaint::Solid { color } => return Ok(PrFill::Solid(rgb(*color, "shape fill")?)),
+        ShapePaint::Solid { color } => {
+            return Ok(PrFill::Solid(shape_rgb(*color, "shape fill", hdr)?))
+        }
         ShapePaint::Gradient {
             gradient_type,
             start,
@@ -4131,7 +4352,11 @@ fn premiere_fill(fill: &ShapeFillStyle, compound: bool) -> Result<PrFill> {
             let [red, green, blue, _] = stop.color;
             Ok(PrGradientStop {
                 position: stop.offset as f32,
-                color: rgb([red, green, blue, 1.0], "gradient stop")?,
+                color: super::tesseract_to_premiere::rgb_with_hdr(
+                    [red, green, blue, 1.0],
+                    "gradient stop",
+                    hdr,
+                )?,
             })
         })
         .collect::<Result<_>>()?;
@@ -4159,7 +4384,7 @@ pub(super) fn unexported_gradient(layer: &ShapeLayer) -> Option<String> {
     if !matches!(fill.paint, ShapePaint::Gradient { .. }) {
         return None;
     }
-    match premiere_fill(fill, false) {
+    match premiere_fill(fill, false, None) {
         Ok(PrFill::Gradient(gradient)) => gradient.validate().err().map(|error| error.to_string()),
         Ok(PrFill::Solid(_)) => None,
         Err(error) => Some(error.to_string()),
@@ -4169,7 +4394,11 @@ pub(super) fn unexported_gradient(layer: &ShapeLayer) -> Option<String> {
 /// The centred stroke of an FX shape stroke on `path`: an enabled, solid,
 /// undashed, normal-blend stroke with butt caps, which Premiere draws
 /// (calibration-2), and a join that [`stroke_join`] proves.
-fn shape_stroke(stroke: &ShapeStrokeStyle, path: &PrShapePath) -> Result<PrShapeStroke> {
+fn shape_stroke(
+    stroke: &ShapeStrokeStyle,
+    path: &PrShapePath,
+    hdr: Option<fx_conv::HdrColorBridge>,
+) -> Result<PrShapeStroke> {
     ensure!(stroke.enabled, "a disabled shape stroke is unsupported");
     let ShapePaint::Solid { color } = stroke.paint else {
         return Err(unsupported("gradient shape strokes are unsupported"));
@@ -4193,8 +4422,9 @@ fn shape_stroke(stroke: &ShapeStrokeStyle, path: &PrShapePath) -> Result<PrShape
     };
     stroke_join(path, Some(join)).map_err(unsupported)?;
     Ok(PrShapeStroke {
-        color: rgb(color, "shape stroke")?,
+        color: shape_rgb(color, "shape stroke", hdr)?,
         width: stroke.width.value() as f32,
+        join: None,
     })
 }
 

@@ -140,8 +140,10 @@ fn validate_flat_profile(bytes: &[u8]) -> Result<(), String> {
         return Err("unknown custom-profile framing or interpolation flags".into());
     }
     if !bytes[4..1028]
-        .chunks_exact(4)
-        .all(|b| f32::from_le_bytes(b.try_into().expect("four-byte sample")) == 1.0)
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .all(|b| f32::from_le_bytes(*b) == 1.0)
     {
         return Err("only finite flat unit profiles are approximated".into());
     }

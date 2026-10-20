@@ -32,6 +32,31 @@ pub(super) fn prepare(
             .iter()
             .chain(&pair[1].spatial_in)
             .any(|v| *v != 0.)
+            || axis_aligned_segment(&pair[0], &pair[1]).is_some_and(|(_, _, distance)| {
+                let duration = pair[1].time_secs - pair[0].time_secs;
+                [
+                    (
+                        &pair[0].out_speed,
+                        &pair[0].out_influence,
+                        pair[0].out_interpolation,
+                    ),
+                    (
+                        &pair[1].in_speed,
+                        &pair[1].in_influence,
+                        pair[1].in_interpolation,
+                    ),
+                ]
+                .into_iter()
+                .any(|(speed, influence, interpolation)| {
+                    interpolation == 2
+                        && speed
+                            .first()
+                            .zip(influence.first())
+                            .is_some_and(|(speed, influence)| {
+                                speed * duration * (influence / 100.) > distance
+                            })
+                })
+            })
     }) {
         return Ok(None);
     }
@@ -145,6 +170,9 @@ pub(super) fn prepare(
         if let PropertyKeyframeEasing::CubicBezier { y1, y2, .. } = easing
             && !(0. <= y1 && y1 <= y2 && y2 <= 1.)
         {
+            if retain_axis_aligned_segment(from, to, &mut prepared.keyframes) {
+                continue;
+            }
             return Err("nonmonotone spatial Position temporal distance".into());
         }
         let evaluate = |time: f64| {
@@ -191,6 +219,83 @@ pub(super) fn prepare(
         )?;
     }
     Ok(Some(prepared))
+}
+
+fn retain_axis_aligned_segment(
+    from: &NumericKeyframe,
+    to: &NumericKeyframe,
+    output: &mut Vec<NumericKeyframe>,
+) -> bool {
+    let Some((axis, sign, delta)) = axis_aligned_segment(from, to) else {
+        return false;
+    };
+    let Some(previous) = output.last_mut() else {
+        return false;
+    };
+    // AE shortens spatial temporal handles that would travel beyond the path;
+    // scalar-value overshoot must not be applied to distance along that path.
+    let duration = to.time_secs - from.time_secs;
+    previous.out_interpolation = from.out_interpolation;
+    previous.out_influence =
+        vec![
+            limited_influence(from.out_speed[0], from.out_influence[0], duration, delta);
+            from.values.len()
+        ];
+    previous.out_speed = vec![0.; from.values.len()];
+    previous.out_speed[axis] = sign * from.out_speed[0];
+    let mut next = linear_key(to);
+    next.in_interpolation = to.in_interpolation;
+    next.in_influence = vec![
+        limited_influence(to.in_speed[0], to.in_influence[0], duration, delta);
+        to.values.len()
+    ];
+    next.in_speed = vec![0.; to.values.len()];
+    next.in_speed[axis] = sign * to.in_speed[0];
+    output.push(next);
+    true
+}
+
+fn limited_influence(speed: f64, influence: f64, duration: f64, distance: f64) -> f64 {
+    influence.min(100. * (distance / duration) / speed)
+}
+
+fn axis_aligned_segment(from: &NumericKeyframe, to: &NumericKeyframe) -> Option<(usize, f64, f64)> {
+    let dimensions = from.values.len();
+    if !(2..=3).contains(&dimensions)
+        || to.values.len() != dimensions
+        || from.spatial_out.len() != dimensions
+        || to.spatial_in.len() != dimensions
+    {
+        return None;
+    }
+    let mut moving = from
+        .values
+        .iter()
+        .zip(&to.values)
+        .enumerate()
+        .filter(|(_, (a, b))| a != b);
+    let (axis, (a, b)) = moving.next()?;
+    if moving.next().is_some() {
+        return None;
+    }
+    let sign = (b - a).signum();
+    let delta = (b - a).abs();
+    if super::spatial_displacement_is_rounding(from, to, *a, *b) {
+        return None;
+    }
+    let outgoing = from.spatial_out[axis] * sign;
+    let incoming = delta + to.spatial_in[axis] * sign;
+    if !(0. <= outgoing && outgoing <= incoming && incoming <= delta)
+        || from
+            .spatial_out
+            .iter()
+            .zip(&to.spatial_in)
+            .enumerate()
+            .any(|(index, (out, input))| index != axis && (*out != 0. || *input != 0.))
+    {
+        return None;
+    }
+    Some((axis, sign, delta))
 }
 
 fn curve_controls_overflow(from: &NumericKeyframe, to: &NumericKeyframe) -> bool {

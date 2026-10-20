@@ -25,6 +25,71 @@ fn one_second_xml(relative_paths: &str) -> String {
         )
 }
 
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn short_bt709_8bit_source_profile_retains_editable_video_and_media() {
+    use fx_conv::{ConversionMode, ImportToTesseract};
+
+    let (directory, project, packaged, _) =
+        native_media_fixture("<RelativePath>media/source.mp4</RelativePath>");
+    fs::write(&packaged, MEDIA).unwrap();
+    for (index, data) in ["", r#""colorProfileData":"AQAAAP////8=","#]
+        .into_iter()
+        .enumerate()
+    {
+        let profile = format!(
+            r#"{{"baseColorProfile":{{{data}"colorProfileName":"BT.709,8-bit,Display-Referred"}},"baseProfileType":1}}"#
+        );
+        let xml = one_second_xml("<RelativePath>media/source.mp4</RelativePath>").replace(
+            "<VideoStream ObjectID=\"8\">",
+            &format!(
+                "<VideoStream ObjectID=\"8\"><OriginalColorSpace>{profile}</OriginalColorSpace>"
+            ),
+        );
+        write_prproj(&project, &xml);
+        let output = directory.path().join(format!("profile-{index}"));
+        let report = crate::Premiere
+            .import_to_tesseract(
+                &project,
+                &output,
+                &crate::PremiereImportOptions::default(),
+                ConversionMode::Write,
+            )
+            .unwrap();
+        assert!(
+            !report
+                .diagnostics
+                .iter()
+                .any(|note| note.reason.contains("OriginalColorSpace")),
+            "{report:?}"
+        );
+        let archive = TesseractFile::open(output.join("project.tsrct")).unwrap();
+        let document = archive.project_json().unwrap();
+        let videos: Vec<_> = document["composition"]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|layer| layer["type"] == "Video")
+            .collect();
+        assert_eq!(videos.len(), 1);
+        let video = videos[0];
+        assert_eq!(
+            *crate::test_support::layer_range(video),
+            json!({"start":0,"duration":1000})
+        );
+        assert_eq!(video["sourceRange"], json!({"start":0,"duration":1000}));
+        let asset_id = video["source"]["assetId"].as_str().unwrap();
+        assert_eq!(
+            archive
+                .asset(asset_id)
+                .unwrap()
+                .read_verified_bytes(10_000_000)
+                .unwrap(),
+            MEDIA
+        );
+    }
+}
+
 fn h264_bytes() -> Vec<u8> {
     MEDIA.to_vec()
 }

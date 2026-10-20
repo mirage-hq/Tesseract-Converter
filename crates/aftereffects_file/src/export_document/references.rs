@@ -58,7 +58,7 @@ impl fmt::Display for ReferenceAnalysisError {
 
 /// Canonical inbound-reference sets for one complete FX composition.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct DocumentReferenceFacts {
+pub(in crate::export_document) struct DocumentReferenceFacts {
     layer_ids: BTreeSet<LayerId>,
     nested_or_parented: BTreeSet<LayerId>,
     owns_masks_or_matte: BTreeSet<LayerId>,
@@ -81,7 +81,7 @@ impl DocumentReferenceFacts {
     /// Walks the actual typed tree and graph before any occurrence identity is
     /// allocated. Duplicate identities are fatal because reminting around an
     /// ambiguous original cannot preserve references deterministically.
-    pub(super) fn analyze(
+    pub(in crate::export_document) fn analyze(
         layers: &[Layer],
         segment_layer_ids: &[LayerId],
         dynamics: &[AnimationGraphEntry],
@@ -127,7 +127,7 @@ impl DocumentReferenceFacts {
         Ok(facts)
     }
 
-    pub(super) fn occupied_layer_ids(&self) -> BTreeSet<LayerId> {
+    pub(in crate::export_document) fn occupied_layer_ids(&self) -> BTreeSet<LayerId> {
         // Reserve references as well as definitions, without pretending that
         // dangling IDs have owners for source-variant eligibility analysis.
         [
@@ -146,7 +146,10 @@ impl DocumentReferenceFacts {
         .collect()
     }
 
-    pub(super) fn eligibility(&self, layer_id: LayerId) -> SourceVariantEligibility {
+    pub(in crate::export_document) fn eligibility(
+        &self,
+        layer_id: LayerId,
+    ) -> SourceVariantEligibility {
         SourceVariantEligibility {
             nested_or_parented: self.nested_or_parented.contains(&layer_id),
             owns_masks_or_matte: self.owns_masks_or_matte.contains(&layer_id),

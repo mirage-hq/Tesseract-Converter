@@ -93,6 +93,7 @@ pub(crate) fn save_tesseract_as_premiere_with_progress(
         &file,
         file.project(),
         &crate::PremiereExportOptions {
+            hdr: None,
             frame_rate: Some(frame_rate),
         },
         progress,

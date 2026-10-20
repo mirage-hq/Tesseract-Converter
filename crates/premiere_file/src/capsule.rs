@@ -698,7 +698,9 @@ fn decode_string(
         return Err(invalid("odd UTF-16LE capsule byte length"));
     }
     let units: Vec<_> = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
         .collect();
     Ok(String::from_utf16(&units)?)

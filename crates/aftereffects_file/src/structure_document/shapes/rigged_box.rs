@@ -295,7 +295,7 @@ fn require_expression(
             "Rigged Box expression is not enabled",
         ));
     }
-    let expression = std::str::from_utf8(properties::data(body, *b"Utf8")?)
+    let expression = std::str::from_utf8(properties::expression_data(body)?)
         .map_err(|_| PropertyError::Layout("invalid Rigged Box expression text"))?;
     if canonical(expression) != canonical(expected) {
         return Err(PropertyError::Layout("unrecognized Rigged Box expression"));

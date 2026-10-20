@@ -2086,7 +2086,7 @@ fn xsi_nil_cannot_erase_semantic_content() {
 fn source_duration_and_role_specific_color_profiles_are_not_rewritten_silently() {
     for (name, xml, expected) in [
         ("source-duration", SOURCE.replace("<OriginalDuration>2540160000000</OriginalDuration>", "<OriginalDuration>5080320000000</OriginalDuration>"), "source OriginalDuration"),
-        ("source-profile", SOURCE.replace("<VideoStream ObjectID=\"8\">", r#"<VideoStream ObjectID="8"><OriginalColorSpace>{"baseColorProfile":{"colorProfileName":"BT.709,8-bit,Display-Referred"},"baseProfileType":1}</OriginalColorSpace>"#), "OriginalColorSpace profile"),
+        ("source-profile", SOURCE.replace("<VideoStream ObjectID=\"8\">", r#"<VideoStream ObjectID="8"><OriginalColorSpace>{"baseColorProfile":{"colorProfileName":"BT.709,12-bit,Display-Referred"},"baseProfileType":1}</OriginalColorSpace>"#), "OriginalColorSpace profile"),
         ("profile-payload", SOURCE.replace("<VideoStream ObjectID=\"8\">", r#"<VideoStream ObjectID="8"><OriginalColorSpace>{"baseColorProfile":{"colorProfileData":"different","colorProfileName":"BT.709,32f,Display-Referred"},"baseProfileType":1}</OriginalColorSpace>"#), "OriginalColorSpace profile"),
     ] {
         if name=="source-duration" {
@@ -2113,6 +2113,117 @@ fn with_original_color_space(profile: &str) -> String {
         "<VideoStream ObjectID=\"8\">",
         &format!("<VideoStream ObjectID=\"8\"><OriginalColorSpace>{profile}</OriginalColorSpace>"),
     )
+}
+
+#[test]
+fn smpte170m_video_profile_retains_editable_picture_with_color_diagnostic() {
+    let profile = json!({
+        "baseColorProfile": {
+            "colorProfileData": "AQAAAP////8=",
+            "colorProfileName": "6,6,6,Narrow,YCC,8-bit,Display-Referred"
+        },
+        "baseProfileType": 1
+    });
+    let (project, notes) =
+        inspect_project_with_omissions(&with_original_color_space(&profile.to_string()), None)
+            .unwrap();
+    let sequence = project.single_sequence().unwrap();
+    let clips: Vec<_> = sequence.video_occurrences().collect();
+    assert_eq!(clips.len(), 1, "{notes:?}");
+    let clip = clips[0];
+    assert_eq!(
+        (
+            clip.start_ticks,
+            clip.end_ticks,
+            clip.in_ticks,
+            clip.out_ticks
+        ),
+        (0, 5 * TICKS, 0, 5 * TICKS)
+    );
+    assert_eq!(project.media(clip).unwrap().name, "source.mp4");
+    let ids = crate::tesseract_output::asset_ids_in_order(sequence, &project.media);
+    let document =
+        crate::convert::premiere_to_tesseract(sequence, &project.media, &ids, &mut Vec::new())
+            .unwrap()
+            .to_json_value()
+            .unwrap();
+    let video = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Video")
+        .unwrap();
+    assert_eq!(video["source"]["assetId"], json!(ids[&clip.media].as_str()));
+    assert_eq!(video["sourceRange"], json!({"start": 0, "duration": 5000}));
+    assert_eq!(
+        *crate::test_support::layer_range(video),
+        json!({"start": 0, "duration": 5000})
+    );
+    assert!(
+        notes.iter().any(|note| note.reason.contains("SMPTE 170M")
+            && note.reason.contains("original video bytes")),
+        "{notes:?}"
+    );
+
+    for (field, value) in [
+        ("colorProfileData", json!("different")),
+        (
+            "colorProfileName",
+            json!("6,6,6,Narrow,YCC,10-bit,Display-Referred"),
+        ),
+    ] {
+        let mut invalid = profile.clone();
+        invalid["baseColorProfile"][field] = value;
+        assert!(inspect_project(&with_original_color_space(&invalid.to_string()), None).is_err());
+    }
+    let mut invalid = profile.clone();
+    invalid["baseProfileType"] = json!(2);
+    assert!(inspect_project(&with_original_color_space(&invalid.to_string()), None).is_err());
+    let mut invalid = profile;
+    invalid["colorSpaceMetadata"] = json!({"peakLuminance": 1000});
+    assert!(inspect_project(&with_original_color_space(&invalid.to_string()), None).is_err());
+}
+
+#[test]
+fn short_bt709_8bit_source_profile_checks_native_role_and_payload() {
+    let profile = json!({
+        "baseColorProfile": {"colorProfileName": "BT.709,8-bit,Display-Referred"},
+        "baseProfileType": 1
+    });
+    let project =
+        inspect_project_with_media(&with_original_color_space(&profile.to_string()), None).unwrap();
+    let clips: Vec<_> = project
+        .single_sequence()
+        .unwrap()
+        .video_occurrences()
+        .collect();
+    assert_eq!(clips.len(), 1);
+    assert_eq!(
+        (
+            clips[0].start_ticks,
+            clips[0].end_ticks,
+            clips[0].in_ticks,
+            clips[0].out_ticks
+        ),
+        (0, 5 * TICKS, 0, 5 * TICKS)
+    );
+    for (field, value) in [
+        ("colorProfileData", json!("different")),
+        ("colorProfileData", serde_json::Value::Null),
+        ("colorProfileName", json!("BT.2020,8-bit,Display-Referred")),
+    ] {
+        let mut invalid = profile.clone();
+        invalid["baseColorProfile"][field] = value;
+        assert!(inspect_project(&with_original_color_space(&invalid.to_string()), None).is_err());
+    }
+    for (field, value) in [
+        ("baseProfileType", json!(2)),
+        ("colorSpaceMetadata", json!({"peakLuminance":100})),
+    ] {
+        let mut invalid = profile.clone();
+        invalid[field] = value;
+        assert!(inspect_project(&with_original_color_space(&invalid.to_string()), None).is_err());
+    }
 }
 
 #[test]
@@ -2144,25 +2255,22 @@ fn premiere_26_5_short_rgb_full_source_profile_reads_as_sdr() {
 }
 
 #[test]
-fn color_profiles_reject_unknown_working_spaces_roles_and_fields() {
+fn output_profiles_warn_without_discarding_sources_but_source_roles_and_fields_still_reject() {
     const UNKNOWN_FIELD: &str = "unknown field `unexpected`";
-    const SEQUENCE: &str = "unsupported OutputColorSpace profile for its native role";
-    for (profile, expected) in [
-        (
-            r#"{"baseColorProfile":{"colorProfileName":"BT.2020,10-bit,Display-Referred"},"baseProfileType":1}"#,
-            SEQUENCE,
-        ),
-        (
-            r#"{"baseColorProfile":{"colorProfileName":"BT.709,8-bit,Display-Referred"},"baseProfileType":2}"#,
-            SEQUENCE,
-        ),
-        (
-            r#"{"baseColorProfile":{"colorProfileName":"BT.709,8-bit,Display-Referred"},"baseProfileType":1,"unexpected":0}"#,
-            UNKNOWN_FIELD,
-        ),
+    for profile in [
+        r#"{"baseColorProfile":{"colorProfileName":"BT.2020,10-bit,Display-Referred"},"baseProfileType":1}"#,
+        r#"{"baseColorProfile":{"colorProfileName":"BT.709,8-bit,Display-Referred"},"baseProfileType":2}"#,
+        r#"{"baseColorProfile":{"colorProfileName":"BT.709,8-bit,Display-Referred"},"baseProfileType":1,"unexpected":0}"#,
     ] {
-        let error = inspect_project(&with_output_color_space(profile), None).unwrap_err();
-        assert!(error.to_string().contains(expected), "{profile}: {error}");
+        let (project, diagnostics) =
+            inspect_project_with_omissions(&with_output_color_space(profile), None).unwrap();
+        assert!(project.sequences[0].video_items().next().is_some());
+        assert!(
+            diagnostics.iter().any(|diagnostic| diagnostic
+                .to_string()
+                .contains("unknown sequence OutputColorSpace")),
+            "{profile}: {diagnostics:?}"
+        );
     }
     const MEDIA: &str = "unsupported OriginalColorSpace profile for its native role";
     for (profile, expected) in [
@@ -2298,16 +2406,17 @@ fn premiere_26_5_hdr_source_profiles_read_as_video_sources() {
 }
 
 #[test]
-fn hdr_profiles_reject_on_a_sequence_or_without_their_saved_data() {
+fn hdr_source_profiles_on_a_sequence_warn_but_missing_source_payload_still_rejects() {
     for profile in HDR_SOURCE_PROFILES {
-        // Sequence-level HDR working spaces stay rejected.
-        let error = inspect_project(&with_output_color_space(profile), None).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("unsupported OutputColorSpace profile for its native role"),
-            "{profile}: {error}"
-        );
+        // A source profile is not an admitted output profile, but independent
+        // footage must survive this unknown destination-domain approximation.
+        let (sequence, omissions) =
+            inspect_project_with_omissions(&with_output_color_space(profile), None).unwrap();
+        assert!(sequence.sequences[0].video_items().next().is_some());
+        assert!(sequence.sequences[0].hdr.is_none());
+        assert!(omissions.iter().any(|omission| omission
+            .to_string()
+            .contains("unknown sequence OutputColorSpace")));
         let short = profile.replace(r#""colorProfileData":"AQAAAP////8=","#, "");
         let error = inspect_project(&with_original_color_space(&short), None).unwrap_err();
         assert!(

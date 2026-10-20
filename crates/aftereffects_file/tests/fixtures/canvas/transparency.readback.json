@@ -1,0 +1,119 @@
+{
+  "application_version": "26.5x89",
+  "compositions": [
+    {
+      "duration": 1,
+      "fps": 24,
+      "height": 90,
+      "id": 1,
+      "layers": [
+        {
+          "color": [
+            1,
+            0.20000000298023,
+            0.10000000149012
+          ],
+          "height": 20,
+          "id": 15,
+          "index": 1,
+          "name": "Authored foreground",
+          "position": [
+            80,
+            45,
+            0
+          ],
+          "source_id": 14,
+          "width": 40
+        }
+      ],
+      "name": "CanvasTransparent",
+      "preview_background": [
+        0.2,
+        0.4,
+        0.6
+      ],
+      "width": 160
+    },
+    {
+      "duration": 1,
+      "fps": 24,
+      "height": 90,
+      "id": 16,
+      "layers": [
+        {
+          "color": [
+            1,
+            0.20000000298023,
+            0.10000000149012
+          ],
+          "height": 20,
+          "id": 31,
+          "index": 1,
+          "name": "Authored foreground",
+          "position": [
+            80,
+            45,
+            0
+          ],
+          "source_id": 30,
+          "width": 40
+        },
+        {
+          "color": [
+            0.10000000149012,
+            0.30000001192093,
+            0.5
+          ],
+          "height": 90,
+          "id": 29,
+          "index": 2,
+          "name": "Authored background",
+          "position": [
+            80,
+            45,
+            0
+          ],
+          "source_id": 28,
+          "width": 160
+        }
+      ],
+      "name": "CanvasAuthoredBackground",
+      "preview_background": [
+        0.8,
+        0.10196078431373,
+        0.30196078431373
+      ],
+      "width": 160
+    },
+    {
+      "duration": 1,
+      "fps": 24,
+      "height": 90,
+      "id": 32,
+      "layers": [
+        {
+          "color": null,
+          "height": 90,
+          "id": 44,
+          "index": 1,
+          "name": "Authored precomposition",
+          "position": [
+            80,
+            45,
+            0
+          ],
+          "source_id": 1,
+          "width": 160
+        }
+      ],
+      "name": "CanvasNestedTransparent",
+      "preview_background": [
+        0.70196078431373,
+        0.6,
+        0.2
+      ],
+      "width": 160
+    }
+  ],
+  "feature": "preview_background_is_not_render_content"
+}

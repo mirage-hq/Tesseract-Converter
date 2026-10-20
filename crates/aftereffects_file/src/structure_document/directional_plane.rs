@@ -139,7 +139,7 @@ mod tests {
             if chunk.id() == *b"cdat" {
                 let mut bytes = chunk.data_payload().unwrap().to_vec();
                 assert!(bytes.len() >= values.len() * 8);
-                for (slot, value) in bytes.chunks_exact_mut(8).zip(values) {
+                for (slot, value) in bytes.as_chunks_mut::<8>().0.iter_mut().zip(values) {
                     slot.copy_from_slice(&value.to_be_bytes());
                 }
                 *chunk = crate::rifx::Chunk::data(*b"cdat", bytes).unwrap();

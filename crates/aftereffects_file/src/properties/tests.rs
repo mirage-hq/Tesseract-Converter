@@ -185,6 +185,27 @@ fn legacy_expression_chunk_prevents_static_evaluation_without_marker() {
 }
 
 #[test]
+fn legacy_expr_source_rejects_ambiguous_and_embedded_terminators() {
+    for tag in [*b"Utf8", *b"expr"] {
+        let chunk = Chunk::data(tag, b"value + 2\0\0").unwrap();
+        assert_eq!(
+            expression_data(std::slice::from_ref(&chunk)).unwrap(),
+            b"value + 2"
+        );
+        assert!(expression_data(&[chunk.clone(), chunk]).is_err());
+        assert!(expression_data(&[Chunk::data(tag, b"value\0 + 2").unwrap()]).is_err());
+    }
+    assert!(
+        expression_data(&[
+            Chunk::data(*b"Utf8", b"value").unwrap(),
+            Chunk::data(*b"expr", b"value").unwrap(),
+        ])
+        .is_err()
+    );
+    assert!(expression_data(&[]).is_err());
+}
+
+#[test]
 fn group_enabled_reads_only_its_own_header_and_not_collapse_state() {
     for flags in 0..4 {
         let run = vec![Chunk::list(
@@ -309,12 +330,14 @@ fn animated_colors_decode_native_argb_units_without_clamping() {
         item[4] = 1;
         item[5] = 2;
         for (slot, value) in item[24..56]
-            .chunks_exact_mut(8)
+            .as_chunks_mut::<8>()
+            .0
+            .iter_mut()
             .zip([2.0_f64, 0.25, 3.0, 0.75])
         {
             slot.copy_from_slice(&value.to_be_bytes());
         }
-        for (slot, value) in item[56..88].chunks_exact_mut(8).zip(native) {
+        for (slot, value) in item[56..88].as_chunks_mut::<8>().0.iter_mut().zip(native) {
             slot.copy_from_slice(&value.to_be_bytes());
         }
         let chunks = [Chunk::list(

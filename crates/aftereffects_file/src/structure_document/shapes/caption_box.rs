@@ -582,7 +582,7 @@ fn expression<'a>(leaves: &[(&str, &'a [Chunk])], property: &str) -> Option<&'a 
     if !numeric.expression_enabled || numeric.animated || !numeric.keyframes.is_empty() {
         return None;
     }
-    std::str::from_utf8(properties::data(body, *b"Utf8").ok()?).ok()
+    std::str::from_utf8(properties::expression_data(body).ok()?).ok()
 }
 
 fn require_expression(

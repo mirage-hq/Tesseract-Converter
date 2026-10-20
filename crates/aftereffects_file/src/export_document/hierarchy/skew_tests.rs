@@ -662,7 +662,9 @@ fn short_skew_group_preserves_occurrence_and_child_clocks() {
         else {
             panic!("skew source composition")
         };
-        assert!((source.duration_secs - 2.449).abs() < 1.0 / 24_576.0);
+        // Pad only the container to 59 frames at 24fps; occurrence and child
+        // windows above/below retain their exact authored source clocks.
+        assert_eq!(source.duration_secs, 59.0 / 24.0);
         assert_eq!(source.layers.len(), 4);
         for child in &source.layers[..3] {
             assert!(child.record.in_point().unwrap().abs() < 1e-9);

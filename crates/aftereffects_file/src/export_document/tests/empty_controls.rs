@@ -129,6 +129,78 @@ fn empty_controls_affine_windows_keep_native_null_and_visible_sibling() {
     }
 }
 
+#[test]
+fn planar_parent_keeps_sibling_of_clocked_unbounded_spatial_scene() {
+    let mut value = imported();
+    value["duration"] = json!(2.0);
+    let mut owner = value["composition"]["layers"][0].clone();
+    owner["id"] = json!(9000);
+    owner["name"] = json!("Planar owner");
+    owner["parent"] = Value::Null;
+    owner["playback"] = fixture_linear_playback(
+        json!({"start":0,"duration":2000}),
+        json!({"start":0,"duration":2000}),
+    );
+    owner["effects"] = json!([]);
+    owner["masks"] = json!([]);
+    owner["fills"] = json!([]);
+    owner["trackMatte"] = Value::Null;
+    owner["motionBlur"] = json!(false);
+    owner["transform"] = json!({
+        "anchorPoint":[0.0,0.0], "position":[30.0,40.0],
+        "scale":[100.0,100.0], "opacity":100.0, "rotation":0.0,
+        "rotationX":0.0, "rotationY":0.0, "orientation":[0.0,0.0,0.0],
+        "skew":0.0, "skewAxis":0.0
+    });
+    let mut scene = owner.clone();
+    scene["id"] = json!(9001);
+    scene["name"] = json!("Clocked spatial scene");
+    scene["parent"] = json!(9000);
+    scene["playback"] = fixture_linear_playback(
+        json!({"start":500,"duration":1000}),
+        json!({"start":0,"duration":1000}),
+    );
+    let mut text = super::review_regressions::review_text_layer(
+        &value,
+        9002,
+        "Unbounded spatial text",
+        false,
+        None,
+    );
+    text["transform"]["position"] = json!([0.0, 0.0, 50.0]);
+    text["transform"]["rotationY"] = json!(25.0);
+    text["playback"] = fixture_linear_playback(
+        json!({"start":0,"duration":1000}),
+        json!({"start":0,"duration":1000}),
+    );
+    scene["layers"] = json!([text]);
+    let mut solid = rect(&value, 9003);
+    solid["parent"] = json!(9000);
+    solid["playback"] = fixture_linear_playback(
+        json!({"start":0,"duration":2000}),
+        json!({"start":0,"duration":2000}),
+    );
+    owner["layers"] = json!([scene, solid]);
+    value["composition"]["layers"] = json!([owner]);
+    value["composition"]["dynamics"]["entries"] = json!([]);
+    let output = export(value);
+    let native = read_project(&output.bytes).unwrap();
+    let owner = layers(&native)
+        .iter()
+        .find(|layer| layer.name.as_ref() == "Planar owner")
+        .unwrap_or_else(|| panic!("outer parent omitted: {:?}", output.diagnostics));
+    assert!(owner.record.flags().null_layer);
+    let position = super::stroke_keys::numeric(&owner.content, "ADBE Position").unwrap();
+    assert_eq!(&position.values[..2], &[30.0, 40.0]);
+    assert!(
+        layers(&native)
+            .iter()
+            .any(|layer| layer.name.as_ref() == "Current solid 9003")
+    );
+    assert!(!output.omitted_layer_ids.contains(&LayerId::new(9000)));
+    assert!(!output.omitted_layer_ids.contains(&LayerId::new(9003)));
+}
+
 fn reduced(mut numerator: i64, mut denominator: i64) -> (i32, u32) {
     let (mut a, mut b) = (numerator.abs(), denominator);
     while b != 0 {

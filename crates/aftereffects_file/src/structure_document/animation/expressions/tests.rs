@@ -45,6 +45,94 @@ fn converter_frame_samples_reuse_fitting_without_claiming_adobe_provenance() {
 }
 
 #[test]
+fn evaluated_vector2_provenance_reports_rounded_compound_fit() {
+    let target = NumericAnimationTarget::vector2(
+        PropertyTarget::layer(LayerId::new(42), PropType::RectSize),
+        [0, 1],
+        [1.0; 2],
+    );
+    for frame_sampled in [false, true] {
+        let mut input = samples(vec![vec![10.0, 20.0], vec![30.0, 40.0]]);
+        input.frame_sampled = frame_sampled;
+        input.sample_times_seconds = vec![2.0004, 2.5004];
+        let (entries, warnings) = evaluated_numeric_entries(
+            "Rectangle Size",
+            &input,
+            std::slice::from_ref(&target),
+            &[],
+            &mut AnimationBudget::default(),
+        );
+        assert_eq!(entries.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("editable Vector2 keys"));
+        assert!(warnings[0].contains("rounded integer-millisecond observations"));
+        assert!(!warnings[0].contains("1e-8"));
+        assert!(!warnings[0].contains("scalar keys"));
+    }
+}
+
+#[test]
+fn evaluated_text_animator_colors_keep_rgba_and_atomic_budget() {
+    let address = PropertyTarget::fx_item(fx_schema::FxItemId::new(7), "fillColor");
+    let target = NumericAnimationTarget::color(address.clone(), [0, 1, 2, 3], [1.0; 4]);
+    let mut input = samples(vec![
+        vec![1.0, 0.0, 0.0, 0.25],
+        vec![0.5, 0.5, 0.0, 0.5],
+        vec![0.0, 1.0, 0.0, 0.75],
+    ]);
+    input.frame_sampled = true;
+    input.sample_times_seconds = vec![2.0, 2.5, 3.0];
+    let (entries, warnings) = evaluated_numeric_entries(
+        "Text Animator Fill Color",
+        &input,
+        std::slice::from_ref(&target),
+        &[],
+        &mut AnimationBudget::default(),
+    );
+    assert_eq!(entries.len(), 1, "{warnings:?}");
+    assert_eq!(entries[0].target, address);
+    assert!(!entries[0].animator.is_js_script());
+    let keys = entries[0].animator.keyframe_track().unwrap().keyframes();
+    assert_eq!(keys.len(), 2);
+    assert_eq!(keys[0].layer_time().as_millis(), 2000);
+    assert_eq!(keys[1].layer_time().as_millis(), 3000);
+    assert_eq!(
+        keys[0].value(),
+        &PropertyValue::Color([1.0, 0.0, 0.0, 0.25])
+    );
+    assert_eq!(
+        keys[1].value(),
+        &PropertyValue::Color([0.0, 1.0, 0.0, 0.75])
+    );
+    assert_eq!(keys[1].easing(), PropertyKeyframeEasing::Linear);
+    assert!(warnings[0].contains("Color"));
+    assert!(!warnings[0].contains("1e-8"));
+    fx_schema::AnimationGraph::from_entries(entries).unwrap();
+
+    for (input, mut budget) in [
+        (input.clone(), AnimationBudget::with_limit(1)),
+        (
+            samples(vec![vec![1.0, 0.0, 0.0]]),
+            AnimationBudget::default(),
+        ),
+        (
+            samples(vec![vec![f64::NAN, 0.0, 0.0, 1.0]]),
+            AnimationBudget::default(),
+        ),
+    ] {
+        let (entries, warnings) = evaluated_numeric_entries(
+            "Text Animator Fill Color",
+            &input,
+            std::slice::from_ref(&target),
+            &[],
+            &mut budget,
+        );
+        assert!(entries.is_empty(), "{warnings:?}");
+        assert!(warnings[0].contains("static authored/default value retained"));
+        assert_eq!(budget.used(), 0);
+    }
+}
+
+#[test]
 fn expression_override_invalidation_is_composition_local() {
     use std::collections::{HashMap, HashSet};
 
@@ -78,6 +166,7 @@ fn expression_override_invalidation_is_composition_local() {
             let mut resolver = |_: &MediaAssetRequest| MediaResolution::Unavailable;
             let mut converter = Converter {
                 text_overrides: Default::default(),
+                effect_definitions: &[],
                 expression_samples: captures,
                 expression_evaluations: Default::default(),
                 items: project.items.iter().map(|item| (item.id, item)).collect(),
@@ -320,6 +409,47 @@ fn fitted_linear_and_step_segments_keep_their_interpolation() {
             .iter()
             .any(|key| key.easing() == PropertyKeyframeEasing::Hold)
     );
+}
+
+#[test]
+fn observed_interior_hold_key_keeps_its_new_value() {
+    use fx_keyframe_bake::curve_fit::FittedKey;
+
+    let curve = FittedCurve {
+        keys: vec![
+            FittedKey {
+                offset_ms: 0,
+                value: 0.0,
+                easing: FittedEasing::Hold,
+            },
+            FittedKey {
+                offset_ms: 2,
+                value: 10.0,
+                easing: FittedEasing::Hold,
+            },
+            FittedKey {
+                offset_ms: 4,
+                value: 20.0,
+                easing: FittedEasing::Linear,
+            },
+        ],
+        tolerance: FIT_TOLERANCE,
+    };
+    let address = PropertyTarget::layer(LayerId::new(42), PropType::PositionX);
+    let key = fitted_key(&curve, 1, &address, 0).unwrap();
+    assert_eq!(key.layer_time().as_millis(), 2);
+    assert_eq!(key.easing(), PropertyKeyframeEasing::Hold);
+    assert_eq!(key.value(), &PropertyValue::Float(10.0));
+    let mut segment = 0;
+    for (time, expected) in [
+        (1.5, 0.0),
+        (2.0, 10.0),
+        (2.5, 12.5),
+        (4.0, 20.0),
+        (5.0, 20.0),
+    ] {
+        assert_eq!(fitted_value_at(&curve, time, &mut segment), expected);
+    }
 }
 
 #[test]

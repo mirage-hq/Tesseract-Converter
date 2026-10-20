@@ -22,6 +22,60 @@ fn native_remap(chunks: &[crate::rifx::Chunk]) -> Option<properties::NumericProp
 }
 
 #[test]
+fn timed_vector_layers_preserve_exact_millisecond_boundaries() {
+    let source = read_project(include_bytes!(
+        "../../../tests/fixtures/properties/import_temporal_clock_cases.aep"
+    ))
+    .unwrap();
+    let authored = source
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ItemKind::Composition(comp) => Some(comp),
+            _ => None,
+        })
+        .flat_map(|comp| &comp.layers)
+        .find(|layer| layer.record.id() == 70)
+        .unwrap();
+    // Native timing fields have independent rational denominators, not one fixed tick rate.
+    assert_eq!(authored.record.start_time_fraction(), (9_216, 36_864));
+    assert_eq!(authored.record.in_point_fraction(), (0, 24_576));
+    assert_eq!(authored.record.out_point_fraction(), (73_728, 24_576));
+
+    for (start, end) in [(0, 1600), (1600, 1733), (1933, 2700)] {
+        for fps in [24.0, 30.0, 60.0] {
+            let mut value = imported();
+            let mut cover = rect(&value, 40010);
+            cover["activeRange"] = json!({"start": start, "duration": end - start});
+            value["composition"]["layers"] = json!([cover]);
+            value["composition"]["dynamics"] = json!({"entries": []});
+            let document = EditableFxCompositionDocument::from_json_value(value).unwrap();
+            let output = to_aep_with_fps(&document, fps).unwrap();
+            assert!(
+                output.omitted_layer_ids.is_empty(),
+                "{:?}",
+                output.diagnostics
+            );
+            let native = read_project(&output.bytes).unwrap();
+            let [layer] = layers(&native) else {
+                panic!("one editable vector layer must survive export")
+            };
+            let (numerator, denominator) = layer.record.start_time_fraction();
+            assert_eq!(i64::from(numerator) * 1000, start * i64::from(denominator));
+            assert_eq!(layer.record.in_point(), Some(0.0));
+            let (numerator, denominator) = layer.record.out_point_fraction();
+            assert_eq!(
+                i64::from(numerator) * 1000,
+                (end - start) * i64::from(denominator)
+            );
+            if start == 1600 {
+                assert_eq!(layer.record.start_time(), Some(48.0 / 30.0));
+            }
+        }
+    }
+}
+
+#[test]
 fn native_time_remap_endpoints_export_with_the_selected_composition_clock() {
     let bytes =
         include_bytes!("../../../tests/fixtures/pr4442_native/sources/timing_time_remap_hold.aep");
@@ -454,24 +508,33 @@ fn finite_identity_group_exports_and_reimports_its_painted_child() {
         .document
         .to_json_value()
         .unwrap();
-    fn painted_rects(layers: &[Value]) -> usize {
-        layers
-            .iter()
-            .map(|layer| {
-                usize::from(
-                    layer["type"] == "Rect"
-                        && layer["rect"]["size"] == json!([220.0, 140.0])
-                        && layer["rect"]["fillColor"]
-                            .as_array()
-                            .is_some_and(|color| color[3] == 1.0),
-                ) + layer["layers"]
+    fn painted_rects(layer: &Value, mask_only: bool) -> usize {
+        usize::from(
+            !mask_only
+                && layer["type"] == "Rect"
+                && layer["rect"]["size"] == json!([220.0, 140.0])
+                && layer["rect"]["fillColor"]
                     .as_array()
-                    .map_or(0, |children| painted_rects(children))
-            })
-            .sum()
+                    .is_some_and(|color| color[3] == 1.0),
+        ) + layer["layers"].as_array().map_or(0, |children| {
+            children
+                .iter()
+                .map(|child| {
+                    let guide = layer["masks"]
+                        .as_array()
+                        .is_some_and(|masks| masks.iter().any(|mask| mask["layer"] == child["id"]));
+                    painted_rects(child, mask_only || guide)
+                })
+                .sum::<usize>()
+        })
     }
     assert_eq!(
-        painted_rects(reopened["composition"]["layers"].as_array().unwrap()),
+        reopened["composition"]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|layer| painted_rects(layer, false))
+            .sum::<usize>(),
         1
     );
 }

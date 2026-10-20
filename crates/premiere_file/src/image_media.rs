@@ -211,6 +211,43 @@ pub(crate) fn inspect_png_pixel_aspect(
     }
 }
 
+/// JFIF requires its APP0 directly after SOI. Density is pixels per unit,
+/// including unit zero (aspect only), so pixel width/height is Y/X. Non-JFIF
+/// JPEG has no inferred square default here; Exif density is not interpreted.
+pub(crate) fn inspect_jpeg_pixel_aspect(
+    mut reader: impl Read,
+) -> Result<(crate::schema::records::PixelAspectRatio, &'static str)> {
+    let mut header = [0; 20];
+    reader.read_exact(&mut header).map_err(|error| {
+        if error.kind() == ErrorKind::UnexpectedEof {
+            unsupported("JPEG JFIF pixel-aspect header is truncated")
+        } else {
+            BuildError::Io(error)
+        }
+    })?;
+    if &header[..4] != b"\xff\xd8\xff\xe0" || &header[6..11] != b"JFIF\0" {
+        return Err(unsupported(
+            "missing native PAR override: JPEG has no leading JFIF density metadata",
+        ));
+    }
+    let length = u16::from_be_bytes([header[4], header[5]]);
+    let thumbnail_length = 3 * u32::from(header[18]) * u32::from(header[19]);
+    if u32::from(length) != 16 + thumbnail_length
+        || header[11] != 1
+        || header[12] > 2
+        || header[13] > 2
+    {
+        return Err(unsupported("JPEG JFIF density header is invalid"));
+    }
+    Ok((
+        crate::schema::records::PixelAspectRatio::new(
+            u64::from(u16::from_be_bytes([header[16], header[17]])),
+            u64::from(u16::from_be_bytes([header[14], header[15]])),
+        )?,
+        "JPEG JFIF density metadata",
+    ))
+}
+
 fn decoded_facts(format: ImageFormat, mut decoder: impl ImageDecoder) -> Result<ValidatedImage> {
     let orientation = decoder.orientation().map_err(undecodable)?;
     if orientation != Orientation::NoTransforms {
@@ -284,6 +321,35 @@ mod tests {
             }));
             assert!(super::inspect_png_pixel_aspect(std::io::Cursor::new(bytes)).is_err());
         }
+    }
+
+    #[test]
+    fn jpeg_pixel_aspect_uses_jfif_density_not_dimensions() {
+        let original = fixture("opaque.jpg");
+        for unit in 0..=2 {
+            let mut bytes = original.clone();
+            bytes[13] = unit;
+            bytes[14..16].copy_from_slice(&72_u16.to_be_bytes());
+            bytes[16..18].copy_from_slice(&144_u16.to_be_bytes());
+            let (aspect, origin) = inspect_jpeg_pixel_aspect(Cursor::new(&bytes)).unwrap();
+            assert_eq!(aspect.terms(), (144, 72));
+            assert!(origin.contains("JFIF density"));
+        }
+        assert!(inspect_jpeg_pixel_aspect(Cursor::new(&original))
+            .unwrap()
+            .0
+            .is_square());
+        for (index, value) in [(4, 0xff), (5, 17), (6, b'X'), (11, 2), (12, 3), (13, 3)] {
+            let mut bytes = original.clone();
+            bytes[index] = value;
+            assert!(inspect_jpeg_pixel_aspect(Cursor::new(bytes)).is_err());
+        }
+        for density in [14..16, 16..18] {
+            let mut bytes = original.clone();
+            bytes[density].fill(0);
+            assert!(inspect_jpeg_pixel_aspect(Cursor::new(bytes)).is_err());
+        }
+        assert!(inspect_jpeg_pixel_aspect(Cursor::new(&original[..19])).is_err());
     }
 
     use super::{ImageFormat::*, *};

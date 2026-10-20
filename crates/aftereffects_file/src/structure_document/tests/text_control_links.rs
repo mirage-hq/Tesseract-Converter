@@ -78,7 +78,7 @@ fn edited_keys(storage: &[Chunk], edit: impl Fn(usize, &mut [u8])) -> Chunk {
         .find(|chunk| chunk.id() == *b"ldat")
         .unwrap();
     let mut bytes = items.data_payload().unwrap().to_vec();
-    for (index, item) in bytes.chunks_exact_mut(48).enumerate() {
+    for (index, item) in bytes.as_chunks_mut::<48>().0.iter_mut().enumerate() {
         edit(index, item);
     }
     *items = Chunk::data(*b"ldat", bytes).unwrap();
@@ -576,7 +576,7 @@ fn renamed_control_rig_lowers_both_selectors_to_ordinary_editable_curves() {
 }
 
 #[test]
-fn unprovable_offset_links_keep_stored_values_with_a_reason() {
+fn unprovable_control_links_use_numeric_evaluation_or_diagnosed_fallback() {
     let replaced = |text: String| {
         move |native: &Layer| Spec {
             sweep_offset: stored(&[-100.0], Some(text.as_str())),
@@ -654,9 +654,21 @@ fn unprovable_offset_links_keep_stored_values_with_a_reason() {
             close(follow.offset, 0.45),
             "{case}: stored 45%, never a guess"
         );
-        for selector in [sweep, follow] {
-            assert!(track(&converted, selector.id, "offset").is_none(), "{case}");
+        let evaluated = match case {
+            "extra statement" => Some((0.05, 0.05)),
+            "clamp crossing" | "Bezier input" => Some((-1.0, 0.4)),
+            _ => None,
+        };
+        let keys = track(&converted, sweep.id, "offset");
+        if let Some((first, last)) = evaluated {
+            let keys = keys.unwrap_or_else(|| panic!("{case}: missing numeric evaluation"));
+            assert!(close(keys.first().unwrap().1, first), "{case}: {keys:?}");
+            assert!(close(keys.last().unwrap().1, last), "{case}: {keys:?}");
+        } else {
+            assert!(keys.is_none(), "{case}");
         }
+        // The numeric evaluator still declines text.animator selector aliases.
+        assert!(track(&converted, follow.id, "offset").is_none(), "{case}");
         for context in [SWEEP_OFFSET, FOLLOW_OFFSET] {
             assert!(
                 mentions(&converted, &[context, "not lowered", reason]),
@@ -696,7 +708,7 @@ fn disabled_offset_expression_keeps_authored_keys_for_itself_and_its_alias() {
 }
 
 #[test]
-fn animated_span_lowers_start_but_rejects_its_linear_bound() {
+fn animated_span_lowers_start_and_evaluates_its_changing_linear_bound() {
     let converted = convert(|native| Spec {
         span: Chunk::list(*b"tdbs", native_progress(native)),
         ..Spec::standard(native)
@@ -709,7 +721,13 @@ fn animated_span_lowers_start_but_rejects_its_linear_bound() {
             [(500, 1.0), (2_000, 0.0)],
             name,
         );
-        assert!(track(&converted, selector.id, "offset").is_none(), "{name}");
+        if name == "Sweep" {
+            let keys = track(&converted, selector.id, "offset").unwrap();
+            assert!(close(keys.first().unwrap().1, -1.0), "{keys:?}");
+            assert!(close(keys.last().unwrap().1, 1.0), "{keys:?}");
+        } else {
+            assert!(track(&converted, selector.id, "offset").is_none(), "{name}");
+        }
     }
     assert!(mentions(&converted, &[SWEEP_OFFSET, "not lowered"]));
 }

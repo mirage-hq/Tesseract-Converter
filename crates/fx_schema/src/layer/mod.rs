@@ -1,5 +1,8 @@
 //! Canonical persisted layer schema.
 
+/// Shared maximum nesting depth for editable layer groups.
+pub const MAX_GROUP_DEPTH: usize = 256;
+
 mod ai_edit;
 mod audio;
 mod boolean;

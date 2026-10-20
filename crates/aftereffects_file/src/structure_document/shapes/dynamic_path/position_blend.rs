@@ -262,7 +262,7 @@ fn combined_position_body(layer: &Layer) -> Result<&[Chunk], String> {
 }
 
 fn expression(body: &[Chunk]) -> Result<&str, String> {
-    std::str::from_utf8(properties::data(body, *b"Utf8").map_err(|error| error.to_string())?)
+    std::str::from_utf8(properties::expression_data(body).map_err(|error| error.to_string())?)
         .map_err(|_| "Position blend expression is not UTF-8".into())
 }
 

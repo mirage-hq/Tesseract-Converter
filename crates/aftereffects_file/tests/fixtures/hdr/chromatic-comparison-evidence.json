@@ -1,0 +1,773 @@
+{
+  "status": "partial proof: measured failures / one unscorable fullframe; HDR feature proof remains incomplete",
+  "native_author_jobs": [
+    5048,
+    5049,
+    5050,
+    5051
+  ],
+  "native_reference_jobs": [
+    5057,
+    5058,
+    5059,
+    5060
+  ],
+  "stale_canvas_failed_reference_jobs_retained": [
+    5052,
+    5053,
+    5054,
+    5055
+  ],
+  "fixed_converter_build_job": 5077,
+  "fixed_renderer_build_job": 5078,
+  "fresh_candidate_export_jobs": [
+    5080,
+    5081
+  ],
+  "gates_unchanged": {
+    "p99_normalized_max": 1,
+    "normalized_denominator": "max(2 nits, .01*abs(reference channel))",
+    "every_channel_pixel": "abs(error)<=max(5 nits,.02*abs(reference channel))",
+    "patch_channel_mae": "MAE<=max(1 nit,.005*abs(reference patch channel mean))"
+  },
+  "native_source_provenance": "provenance.json: independently authored geometry/colors after deleting owned-profile seed content; exact gzip-decoded AEP bytes pinned. Builtin profiles used in-app by name, no vendor ICC extraction.",
+  "mandatory_delivery_blockers": [
+    "independent native HDR30fps MP4 references not delivered publicly; existing oracles are immutable private ProRes MOV",
+    "complete independently asserted edited-FX native export",
+    "native chromatic profile differences and renderer gamut approximation fail strict fidelity",
+    "1024 native authored levels do not prove rendered precision; native10bit limited-range luma cannot retain all1024 neutral samples",
+    "ACES, linked-source, Premiere feature-fidelity, alpha and audio evidence remain incomplete"
+  ],
+  "comparisons": [
+    {
+      "case": "pq-owned-vs-builtin",
+      "receipt_sha256": "7cf0d92ddb667d4270a57d1642905a9b6c1924491daf5bdf00b6bd8bc9d3c58d",
+      "spec_fingerprint_sha256": "1fa8cf36cde9568b51448aaa5d2c6daab4a95b3a4d47054c9a9ae7511ab2ed03",
+      "signal_domain": "signed-reconstruction-v1",
+      "normative_bt2100_domain": false,
+      "full_canvas": [
+        4096,
+        256
+      ],
+      "fps": 30,
+      "duration_seconds": 1,
+      "expected_frames": 30,
+      "decoded_frames_per_role": 30,
+      "measured_frames": 30,
+      "fidelity_measured": true,
+      "numeric_gates_passed": false,
+      "reference_sha256": "7e114cee20ee9ef083abfb5744b7c350e464053e1ed0243ad2845d563bcdb03b",
+      "candidate_sha256": "e2145fe6e1260920a7a462fa3cd9f5d32ff47edd5dc17eec7ce79952233626f4",
+      "reference_layout": "yuv422p10le",
+      "candidate_layout": "yuv422p10le",
+      "reference_matrix": "bt2020nc",
+      "candidate_matrix": "bt2020nc",
+      "limited_range_policy": "codec-defined nominal video range for ProRes; explicit limited nclx for HEVC",
+      "worst_absolute_pixel": {
+        "frame_id": 0,
+        "x": 4084,
+        "y": 128,
+        "channel": 0,
+        "absolute_error_nits": 107.22782697868206,
+        "normalized_error": 1.0959147210066622,
+        "reference_nits": 9784.322166982754,
+        "candidate_nits": 9891.549993961436
+      },
+      "worst_normalized_pixel": {
+        "frame_id": 0,
+        "x": 3200,
+        "y": 0,
+        "channel": 2,
+        "absolute_error_nits": 35.766236882692056,
+        "normalized_error": 7.431929829406779,
+        "reference_nits": 481.2510034899904,
+        "candidate_nits": 445.48476660729835
+      },
+      "maximum_frame_p99_normalized_error": 1.0852959566738112,
+      "reference_distinct_ramp_luma_codes_at_fixed_cell_centers": 877,
+      "candidate_distinct_ramp_luma_codes_at_fixed_cell_centers": 695,
+      "precision_pipeline_proved": false,
+      "alpha_fidelity_measured": false,
+      "audio_fidelity_measured": false,
+      "negative_encoded_rgb_pixels_frame0": {
+        "reference": 245504,
+        "candidate": 409088
+      },
+      "patches_frame0": [
+        {
+          "name": "chromatic-0",
+          "reference_mean_rgb_nits": [
+            987.5691899723053,
+            1.263754168894282e-05,
+            8.492271202788081e-07
+          ],
+          "candidate_mean_rgb_nits": [
+            990.2422121623384,
+            0.025378680958661748,
+            -0.005604069186835633
+          ],
+          "mean_absolute_rgb_error_nits": [
+            2.6730221897959416,
+            0.02536604341697443,
+            0.00560491841395622
+          ],
+          "reference_mean_luminance_nits": 259.434434824337,
+          "candidate_mean_luminance_nits": 260.1535035594335,
+          "passed": true
+        },
+        {
+          "name": "chromatic-1",
+          "reference_mean_rgb_nits": [
+            -1.5104429461374545e-05,
+            978.6544849323071,
+            -1.623630186793826e-06
+          ],
+          "candidate_mean_rgb_nits": [
+            0.006437771753674464,
+            983.7566150613633,
+            -0.0016017852232574925
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.0064528761831375535,
+            5.102130129220313,
+            0.0016001615930707432
+          ],
+          "reference_mean_luminance_nits": 663.5277367198894,
+          "candidate_mean_luminance_nits": 666.9885812283803,
+          "passed": false
+        },
+        {
+          "name": "chromatic-2",
+          "reference_mean_rgb_nits": [
+            5.224010193030063e-07,
+            6.05869144030052e-08,
+            983.7888774724714
+          ],
+          "candidate_mean_rgb_nits": [
+            -0.007990114776555398,
+            -0.005704957856432312,
+            991.1857394799736
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.007990637177576391,
+            0.0057050184433460735,
+            7.396862007481136
+          ],
+          "reference_mean_luminance_nits": 58.33868061243023,
+          "candidate_mean_luminance_nits": 58.77134738658397,
+          "passed": false
+        },
+        {
+          "name": "chromatic-3",
+          "reference_mean_rgb_nits": [
+            982.6107639826832,
+            983.1050686277946,
+            -1.4782376527194084e-07
+          ],
+          "candidate_mean_rgb_nits": [
+            987.1666798659271,
+            980.3129507920253,
+            -0.007036611048818417
+          ],
+          "mean_absolute_rgb_error_nits": [
+            4.555915883499088,
+            2.792117835749771,
+            0.007036463225054371
+          ],
+          "reference_mean_luminance_nits": 924.6770842191296,
+          "candidate_mean_luminance_nits": 923.980450166737,
+          "passed": true
+        },
+        {
+          "name": "chromatic-4",
+          "reference_mean_rgb_nits": [
+            -1.1305598270756697e-05,
+            978.9260457611974,
+            982.389831362292
+          ],
+          "candidate_mean_rgb_nits": [
+            0.016224444711454154,
+            988.6143537861725,
+            978.7171740550585
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.01623575030972141,
+            9.688308025032494,
+            3.672657307189855
+          ],
+          "reference_mean_luminance_nits": 721.9675730558952,
+          "candidate_mean_luminance_nits": 728.3227224501157,
+          "passed": false
+        },
+        {
+          "name": "chromatic-5",
+          "reference_mean_rgb_nits": [
+            988.3401251586183,
+            1.3994951989209106e-05,
+            984.7782987989631
+          ],
+          "candidate_mean_rgb_nits": [
+            984.4689536634708,
+            -0.029700191486796253,
+            985.5299753502015
+          ],
+          "mean_absolute_rgb_error_nits": [
+            3.8711714953096816,
+            0.029714186438782562,
+            0.7516765512333762
+          ],
+          "reference_mean_luminance_nits": 318.034313486525,
+          "candidate_mean_luminance_nits": 317.04178493583265,
+          "passed": true
+        },
+        {
+          "name": "midtone",
+          "reference_mean_rgb_nits": [
+            92.24570899406534,
+            92.24570899406534,
+            92.24570899406534
+          ],
+          "candidate_mean_rgb_nits": [
+            93.30640983176349,
+            93.30640983176349,
+            93.30640983176349
+          ],
+          "mean_absolute_rgb_error_nits": [
+            1.0607008376985565,
+            1.0607008376985565,
+            1.0607008376985565
+          ],
+          "reference_mean_luminance_nits": 92.24570899406534,
+          "candidate_mean_luminance_nits": 93.30640983176349,
+          "passed": false
+        },
+        {
+          "name": "peak",
+          "reference_mean_rgb_nits": [
+            10000.0,
+            10000.0,
+            10000.0
+          ],
+          "candidate_mean_rgb_nits": [
+            10000.0,
+            10000.0,
+            10000.0
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "reference_mean_luminance_nits": 10000.0,
+          "candidate_mean_luminance_nits": 10000.0,
+          "passed": true
+        }
+      ],
+      "all30_patch_results_identical": true
+    },
+    {
+      "case": "pq-jerboa-vs-builtin",
+      "receipt_sha256": "e19b032d30abe18638701b37d927582c7d0d556be5291058f96d41efaed3ab53",
+      "spec_fingerprint_sha256": "c8545d49aeffaa89c46d0f07c79e8a8bb170674be9c764549d7872f959bffd01",
+      "signal_domain": "signed-reconstruction-v1",
+      "normative_bt2100_domain": false,
+      "full_canvas": [
+        4096,
+        256
+      ],
+      "fps": 30,
+      "duration_seconds": 1,
+      "expected_frames": 30,
+      "decoded_frames_per_role": 30,
+      "measured_frames": 30,
+      "fidelity_measured": true,
+      "numeric_gates_passed": false,
+      "reference_sha256": "7e114cee20ee9ef083abfb5744b7c350e464053e1ed0243ad2845d563bcdb03b",
+      "candidate_sha256": "cd138ab485a6133820a333ac98edf6b4dec6fc054806538d208beae55ce78b2b",
+      "reference_layout": "yuv422p10le",
+      "candidate_layout": "yuv420p10le",
+      "reference_matrix": "bt2020nc",
+      "candidate_matrix": "bt709",
+      "limited_range_policy": "codec-defined nominal video range for ProRes; explicit limited nclx for HEVC",
+      "worst_absolute_pixel": {
+        "frame_id": 7,
+        "x": 2560,
+        "y": 96,
+        "channel": 2,
+        "absolute_error_nits": 830.8950824401961,
+        "normalized_error": 415.44754122009806,
+        "reference_nits": 116.0764554791071,
+        "candidate_nits": 946.9715379193033
+      },
+      "worst_normalized_pixel": {
+        "frame_id": 7,
+        "x": 2560,
+        "y": 96,
+        "channel": 2,
+        "absolute_error_nits": 830.8950824401961,
+        "normalized_error": 415.44754122009806,
+        "reference_nits": 116.0764554791071,
+        "candidate_nits": 946.9715379193033
+      },
+      "maximum_frame_p99_normalized_error": 170.52603738079767,
+      "reference_distinct_ramp_luma_codes_at_fixed_cell_centers": 877,
+      "candidate_distinct_ramp_luma_codes_at_fixed_cell_centers": 774,
+      "precision_pipeline_proved": false,
+      "alpha_fidelity_measured": false,
+      "audio_fidelity_measured": false,
+      "negative_encoded_rgb_pixels_frame0": {
+        "reference": 245504,
+        "candidate": 1220
+      },
+      "patches_frame0": [
+        {
+          "name": "chromatic-0",
+          "reference_mean_rgb_nits": [
+            987.5691899723053,
+            1.263754168894282e-05,
+            8.492271202788081e-07
+          ],
+          "candidate_mean_rgb_nits": [
+            745.4404538066452,
+            83.43561483768052,
+            82.67448775090466
+          ],
+          "mean_absolute_rgb_error_nits": [
+            242.1287361658179,
+            83.43560220013546,
+            82.6744869016841
+          ],
+          "reference_mean_luminance_nits": 259.434434824337,
+          "candidate_mean_luminance_nits": 257.29915119858174,
+          "passed": false
+        },
+        {
+          "name": "chromatic-1",
+          "reference_mean_rgb_nits": [
+            -1.5104429461374545e-05,
+            978.6544849323071,
+            -1.623630186793826e-06
+          ],
+          "candidate_mean_rgb_nits": [
+            308.1754307444608,
+            839.5701693038533,
+            310.2324247597231
+          ],
+          "mean_absolute_rgb_error_nits": [
+            308.17544584892426,
+            139.0843156282777,
+            310.23242638326343
+          ],
+          "reference_mean_luminance_nits": 663.5277367198894,
+          "candidate_mean_luminance_nits": 668.583043232834,
+          "passed": false
+        },
+        {
+          "name": "chromatic-2",
+          "reference_mean_rgb_nits": [
+            5.224010193030063e-07,
+            6.05869144030052e-08,
+            983.7888774724714
+          ],
+          "candidate_mean_rgb_nits": [
+            32.31164239603051,
+            32.16106787635327,
+            477.45372302957935
+          ],
+          "mean_absolute_rgb_error_nits": [
+            32.31164187362309,
+            32.16106781576095,
+            506.335154443048
+          ],
+          "reference_mean_luminance_nits": 58.33868061243023,
+          "candidate_mean_luminance_nits": 58.606478253258786,
+          "passed": false
+        },
+        {
+          "name": "chromatic-3",
+          "reference_mean_rgb_nits": [
+            982.6107639826832,
+            983.1050686277946,
+            -1.4782376527194084e-07
+          ],
+          "candidate_mean_rgb_nits": [
+            977.1815902257855,
+            971.465954975166,
+            104.19769107317781
+          ],
+          "mean_absolute_rgb_error_nits": [
+            5.4291737566818075,
+            11.639113652859397,
+            104.19769122102115
+          ],
+          "reference_mean_luminance_nits": 924.6770842191296,
+          "candidate_mean_luminance_nits": 921.5384443061159,
+          "passed": false
+        },
+        {
+          "name": "chromatic-4",
+          "reference_mean_rgb_nits": [
+            -1.1305598270756697e-05,
+            978.9260457611974,
+            982.389831362292
+          ],
+          "candidate_mean_rgb_nits": [
+            341.0520634559751,
+            865.0400692426705,
+            859.4155447084759
+          ],
+          "mean_absolute_rgb_error_nits": [
+            341.0520747615955,
+            113.88597651849638,
+            122.97428665377512
+          ],
+          "reference_mean_luminance_nits": 721.9675730558952,
+          "candidate_mean_luminance_nits": 727.0548858176279,
+          "passed": false
+        },
+        {
+          "name": "chromatic-5",
+          "reference_mean_rgb_nits": [
+            988.3401251586183,
+            1.3994951989209106e-05,
+            984.7782987989631
+          ],
+          "candidate_mean_rgb_nits": [
+            794.4413415451869,
+            92.89006182489275,
+            793.2618986081934
+          ],
+          "mean_absolute_rgb_error_nits": [
+            193.89878361362008,
+            92.89004782993969,
+            191.51640019076908
+          ],
+          "reference_mean_luminance_nits": 318.034313486525,
+          "candidate_mean_luminance_nits": 318.71963292866377,
+          "passed": false
+        },
+        {
+          "name": "midtone",
+          "reference_mean_rgb_nits": [
+            92.24570899406534,
+            92.24570899406534,
+            92.24570899406534
+          ],
+          "candidate_mean_rgb_nits": [
+            92.24570899406534,
+            92.24570899406534,
+            92.24570899406534
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "reference_mean_luminance_nits": 92.24570899406534,
+          "candidate_mean_luminance_nits": 92.24570899406534,
+          "passed": true
+        },
+        {
+          "name": "peak",
+          "reference_mean_rgb_nits": [
+            10000.0,
+            10000.0,
+            10000.0
+          ],
+          "candidate_mean_rgb_nits": [
+            10000.0,
+            10000.0,
+            10000.0
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "reference_mean_luminance_nits": 10000.0,
+          "candidate_mean_luminance_nits": 10000.0,
+          "passed": true
+        }
+      ],
+      "all30_patch_results_identical": true
+    },
+    {
+      "case": "hlg-owned-vs-builtin",
+      "receipt_sha256": "46c8bb97e305692c3b800b84c00660b7f6be3731378af427fb48357f89e48594",
+      "spec_fingerprint_sha256": "19e6712456e87dda5895bd3407b09d6b66b52eacee39b9ddcba46986096b70d4",
+      "signal_domain": "signed-reconstruction-v1",
+      "normative_bt2100_domain": false,
+      "full_canvas": [
+        4096,
+        256
+      ],
+      "fps": 30,
+      "duration_seconds": 1,
+      "expected_frames": 30,
+      "decoded_frames_per_role": 30,
+      "measured_frames": 30,
+      "fidelity_measured": true,
+      "numeric_gates_passed": false,
+      "reference_sha256": "8eb49ad067388ae52ce09fefb8a30bb5489564cec487c85bc52ef2f8eaac8635",
+      "candidate_sha256": "2c4d77e4cbcbf4274a6582d81f7adc5ec1025a9e7e1a7bf09c2ecf86e35b17ad",
+      "reference_layout": "yuv422p10le",
+      "candidate_layout": "yuv422p10le",
+      "reference_matrix": "bt2020nc",
+      "candidate_matrix": "bt2020nc",
+      "limited_range_policy": "codec-defined nominal video range for ProRes; explicit limited nclx for HEVC",
+      "worst_absolute_pixel": {
+        "frame_id": 0,
+        "x": 4004,
+        "y": 128,
+        "channel": 0,
+        "absolute_error_nits": 19.631793141898925,
+        "normalized_error": 2.2624325611925244,
+        "reference_nits": 867.72942887416,
+        "candidate_nits": 887.361222016059
+      },
+      "worst_normalized_pixel": {
+        "frame_id": 0,
+        "x": 4004,
+        "y": 128,
+        "channel": 0,
+        "absolute_error_nits": 19.631793141898925,
+        "normalized_error": 2.2624325611925244,
+        "reference_nits": 867.72942887416,
+        "candidate_nits": 887.361222016059
+      },
+      "maximum_frame_p99_normalized_error": 2.2377963382939052,
+      "reference_distinct_ramp_luma_codes_at_fixed_cell_centers": 877,
+      "candidate_distinct_ramp_luma_codes_at_fixed_cell_centers": 860,
+      "precision_pipeline_proved": false,
+      "alpha_fidelity_measured": false,
+      "audio_fidelity_measured": false,
+      "negative_encoded_rgb_pixels_frame0": {
+        "reference": 245504,
+        "candidate": 490752
+      },
+      "patches_frame0": [
+        {
+          "name": "chromatic-0",
+          "reference_mean_rgb_nits": [
+            155.93501987657513,
+            4.786627475167683e-05,
+            2.3494665661122003e-06
+          ],
+          "candidate_mean_rgb_nits": [
+            155.45594416188055,
+            0.0011812769512952739,
+            -0.00014088230603847649
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.4790757146839802,
+            0.0011334106765435975,
+            0.00014323177260457636
+          ],
+          "reference_mean_luminance_nits": 40.96416231423393,
+          "candidate_mean_luminance_nits": 40.839069082778245,
+          "passed": true
+        },
+        {
+          "name": "chromatic-1",
+          "reference_mean_rgb_nits": [
+            -7.113881163401124e-05,
+            187.3592381242818,
+            -5.6863643372410825e-06
+          ],
+          "candidate_mean_rgb_nits": [
+            0.0011852608852969035,
+            188.14790343538266,
+            -0.0002931490400938407
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.0012563996969310856,
+            0.7886653110791141,
+            0.0002874626757565339
+          ],
+          "reference_mean_luminance_nits": 127.02954442289585,
+          "candidate_mean_luminance_nits": 127.56457251348594,
+          "passed": true
+        },
+        {
+          "name": "chromatic-2",
+          "reference_mean_rgb_nits": [
+            1.0509100994372874e-06,
+            1.3283161887957876e-07,
+            115.49234758922005
+          ],
+          "candidate_mean_rgb_nits": [
+            -0.0007016657853133127,
+            -0.0008621747074665988,
+            115.36047380909679
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.0007027166954127145,
+            0.000862307539085398,
+            0.1318737800850417
+          ],
+          "reference_mean_luminance_nits": 6.848696578174669,
+          "candidate_mean_luminance_nits": 6.840107214825975,
+          "passed": true
+        },
+        {
+          "name": "chromatic-3",
+          "reference_mean_rgb_nits": [
+            200.58730259112892,
+            200.64328946026,
+            -5.237491296981431e-07
+          ],
+          "candidate_mean_rgb_nits": [
+            200.6143313583598,
+            200.8580480014656,
+            -0.001162064757248214
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.02702876725538772,
+            0.2147585412114992,
+            0.0011615410081186614
+          ],
+          "reference_mean_luminance_nits": 188.73043461368752,
+          "candidate_mean_luminance_nits": 188.88307248239468,
+          "passed": true
+        },
+        {
+          "name": "chromatic-4",
+          "reference_mean_rgb_nits": [
+            -5.165320647687574e-05,
+            190.5688622270998,
+            190.9426882313517
+          ],
+          "candidate_mean_rgb_nits": [
+            -5.165320647687574e-05,
+            190.5688622270998,
+            190.9426882313517
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "reference_mean_luminance_nits": 140.5285764327955,
+          "candidate_mean_luminance_nits": 140.5285764327955,
+          "passed": true
+        },
+        {
+          "name": "chromatic-5",
+          "reference_mean_rgb_nits": [
+            162.48621533996797,
+            5.61390116221146e-05,
+            162.16094072782374
+          ],
+          "candidate_mean_rgb_nits": [
+            161.42060800509722,
+            -0.00013049610457249687,
+            162.82913108037388
+          ],
+          "mean_absolute_rgb_error_nits": [
+            1.0656073348475186,
+            0.0001866351161946014,
+            0.6681903525580208
+          ],
+          "reference_mean_luminance_nits": 52.301310617219414,
+          "candidate_mean_luminance_nits": 52.06087271964631,
+          "passed": false
+        },
+        {
+          "name": "midtone",
+          "reference_mean_rgb_nits": [
+            50.697028491100376,
+            50.697028491100376,
+            50.697028491100376
+          ],
+          "candidate_mean_rgb_nits": [
+            50.97583632686281,
+            50.97583632686281,
+            50.97583632686281
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.27880783576205204,
+            0.27880783576205204,
+            0.27880783576205204
+          ],
+          "reference_mean_luminance_nits": 50.69702849110038,
+          "candidate_mean_luminance_nits": 50.97583632686281,
+          "passed": true
+        },
+        {
+          "name": "peak",
+          "reference_mean_rgb_nits": [
+            1000.0000292399249,
+            1000.0000292399249,
+            1000.0000292399249
+          ],
+          "candidate_mean_rgb_nits": [
+            1000.0000292399249,
+            1000.0000292399249,
+            1000.0000292399249
+          ],
+          "mean_absolute_rgb_error_nits": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "reference_mean_luminance_nits": 1000.000029239925,
+          "candidate_mean_luminance_nits": 1000.000029239925,
+          "passed": true
+        }
+      ],
+      "all30_patch_results_identical": true
+    },
+    {
+      "case": "hlg-jerboa-vs-builtin",
+      "receipt_sha256": "57fe4a5b84247ea6422cbc24d2e06b7fa031d0e2175415d7694bf901e68c9e06",
+      "spec_fingerprint_sha256": "c846ef8625372060fbfe18b60a9188536c83aacd65d09fefb69954b935a9030e",
+      "signal_domain": "signed-reconstruction-v1",
+      "normative_bt2100_domain": false,
+      "full_canvas": [
+        4096,
+        256
+      ],
+      "fps": 30,
+      "duration_seconds": 1,
+      "expected_frames": 30,
+      "decoded_frames_per_role": 30,
+      "measured_frames": 0,
+      "fidelity_measured": false,
+      "numeric_gates_passed": false,
+      "reference_sha256": "8eb49ad067388ae52ce09fefb8a30bb5489564cec487c85bc52ef2f8eaac8635",
+      "candidate_sha256": "5c091dd2db19fe0c004be92566f8302dc09e0f9f76170c2102ed4317d02b3718",
+      "reference_layout": "yuv422p10le",
+      "candidate_layout": "yuv420p10le",
+      "reference_matrix": "bt2020nc",
+      "candidate_matrix": "bt709",
+      "limited_range_policy": "codec-defined nominal video range for ProRes; explicit limited nclx for HEVC",
+      "worst_absolute_pixel": null,
+      "worst_normalized_pixel": null,
+      "maximum_frame_p99_normalized_error": null,
+      "reference_distinct_ramp_luma_codes_at_fixed_cell_centers": 877,
+      "candidate_distinct_ramp_luma_codes_at_fixed_cell_centers": 774,
+      "precision_pipeline_proved": false,
+      "alpha_fidelity_measured": false,
+      "audio_fidelity_measured": false,
+      "domain_blocker": {
+        "role": "candidate",
+        "x": 0,
+        "y": 128,
+        "encoded_rgb": [
+          0.0,
+          0.0008362690755832535,
+          -0.00828392857142857
+        ],
+        "reason": "Signed HLG reconstruction requires positive coupled luminance or exact black"
+      },
+      "predeclared_patch_diagnostics_only": {
+        "receipt_sha256": "0dab9afcdf07cc84197d1aa137bd0475d05a2bd33b3b3158afcc0d607c5de1f2",
+        "frames": 30,
+        "fullframe_gate_replacement": false,
+        "maximum_absolute_patch_error_nits": 66.58768733870563,
+        "six_chromatic_patch_gates_fail_all_frames": true,
+        "midtone_and_peak_pass_all_frames": true
+      }
+    }
+  ]
+}

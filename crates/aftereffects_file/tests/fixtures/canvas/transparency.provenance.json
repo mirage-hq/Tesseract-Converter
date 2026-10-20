@@ -1,0 +1,15 @@
+{
+  "source_sha256": "e43aa8b1c9b296adda1d35670d166eab89855ce3c4d2255061e13924c0c1202f",
+  "script_sha256": "c8c4d51fe20e98ca8b1b25ce9e012e5aad6ca392e0d98b4c0a7764c851ff56ac",
+  "application": "26.5x89",
+  "operation": "headless-adobe run_jsx",
+  "authoring_job": 3712,
+  "ready": true,
+  "native_fps": 24,
+  "composition_ids": [
+    1,
+    16,
+    32
+  ],
+  "proof_status": "native author/save/control readback only; rendering/import assertions pending"
+}

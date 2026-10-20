@@ -1,6 +1,9 @@
+#[path = "color_matte_crop_transform.rs"]
+mod crop_transform;
+
 use super::{
     adjustment::opacity,
-    animation::animation_fixture::{animated_xml, SOURCE},
+    animation::animation_fixture::{animated_xml, track_matte_key_xml, with_matte_track, SOURCE},
     effects::{blur, tint, with_chain, DEFAULT_FLAGS},
     reader::version_6_dissolve,
 };
@@ -204,6 +207,70 @@ fn a_color_matte_occurrence_reads_its_colour_infinite_source_and_name() {
     );
 }
 
+#[test]
+fn static_color_matte_subclip_offset_keeps_editable_fill_and_placement() {
+    let native = matte_xml("ZEGlAAEAAAA=");
+    let expected = convert_matte_effects(&native).0;
+    for offset in [-TICKS, TICKS] {
+        let changed = native.replace(
+            "<ClipTrackItem>",
+            &format!(
+                "<ClipTrackItem><OriginalSubClipTimeOffset>{offset}</OriginalSubClipTimeOffset>"
+            ),
+        );
+        assert_ne!(changed, native);
+        let (document, notes, mapping_notes) = convert_matte_effects(&changed);
+        assert_eq!(document, expected);
+        assert!(mapping_notes.is_empty(), "{mapping_notes:?}");
+        assert!(
+            notes.iter().any(|note| {
+                note.kind == OmissionKind::Approximated
+                    && note.reason.contains("OriginalSubClipTimeOffset")
+                    && note.reason.contains("constant generator")
+            }),
+            "{notes:?}"
+        );
+        let solid = &document["composition"]["layers"][0];
+        assert_eq!(solid["type"], "Rect");
+        assert_eq!(solid["activeRange"], json!({"start": 0, "duration": 5000}));
+        assert_eq!(
+            solid["rect"]["fillColor"],
+            json!([100.0 / 255.0, 65.0 / 255.0, 165.0 / 255.0, 1.0])
+        );
+    }
+}
+
+#[test]
+fn solid_subclip_offset_does_not_admit_files_effects_or_invalid_generators() {
+    let effect = with_chain(SOURCE, DEFAULT_FLAGS, &[(20, tint(20))]);
+    for native in [SOURCE.to_owned(), as_matte(&effect, "ZEGlAAEAAAA=")] {
+        let changed = native.replace(
+            "<ClipTrackItem>",
+            "<ClipTrackItem><OriginalSubClipTimeOffset>1</OriginalSubClipTimeOffset>",
+        );
+        let error = inspect_project_with_omissions(&changed, Some("sequence-1"))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("nonzero OriginalSubClipTimeOffset"),
+            "{error}"
+        );
+    }
+    let invalid = matte_xml("ZEGlAAEAAAA=")
+        .replace("<Infinite>true</Infinite>", "<Infinite>false</Infinite>")
+        .replace(
+            "<ClipTrackItem>",
+            "<ClipTrackItem><OriginalSubClipTimeOffset>1</OriginalSubClipTimeOffset>",
+        );
+    let error = inspect_project_with_omissions(&invalid, Some("sequence-1"))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("Color Matte media must be Infinite"),
+        "{error}"
+    );
+}
+
 /// Convert a native Color Matte source through the public editable-document
 /// path, retaining format-reader and mapping diagnostics separately.
 fn convert_matte_effects(xml: &str) -> (Value, Vec<Omission>, Vec<Omission>) {
@@ -363,6 +430,96 @@ fn malformed_or_non_colr_generator_media_is_omitted_precisely() {
             .unwrap_err()
             .to_string();
         assert!(error.contains(expected), "{expected}: {error}");
+    }
+}
+
+#[test]
+fn oversized_static_color_matte_retains_full_canvas_fill() {
+    let native = as_matte(&animated_xml(""), "ZEGlAAEAAAA=");
+    let oversized = with_stream_frame(&native, 8, "<FrameRect>0,0,3840,2160</FrameRect>");
+    let (document, notes, mapping_notes) = convert_matte_effects(&oversized);
+    assert!(mapping_notes.is_empty(), "{mapping_notes:?}");
+    assert!(
+        notes
+            .iter()
+            .any(|note| note.kind == OmissionKind::Approximated
+                && note.reason.contains("full-canvas solid")),
+        "{notes:?}"
+    );
+    let solid = &document["composition"]["layers"][0];
+    assert_eq!(solid["type"], "Rect");
+    assert_eq!(solid["rect"]["size"], json!([1920.0, 1080.0]));
+    assert_eq!(
+        solid["rect"]["fillColor"],
+        json!([100.0 / 255.0, 65.0 / 255.0, 165.0 / 255.0, 1.0])
+    );
+    assert_eq!(solid["transform"]["position"], json!([0.0, 0.0]));
+    assert_eq!(solid["activeRange"], json!({"start": 0, "duration": 5000}));
+}
+
+#[test]
+fn oversized_static_color_matte_keeps_track_matte_coverage_and_opacity() {
+    let native = with_matte_track(
+        &as_matte(&animated_xml(""), "ZEGlAAEAAAA="),
+        &[
+            (20, track_matte_key_xml(20, 7, 0, true)),
+            (50, opacity("60.", "")),
+        ],
+    );
+    let native = with_stream_frame(&native, 8, "<FrameRect>0,0,3840,2160</FrameRect>");
+    let native = native.replacen("<DefaultOpacity>true</DefaultOpacity>", "", 1);
+    let (document, notes, mapping_notes) = convert_matte_effects(&native);
+    assert!(mapping_notes.is_empty(), "{mapping_notes:?}");
+    assert!(
+        notes.iter().any(|note| note
+            .reason
+            .contains("retained Track Matte coverage uses sequence coordinates")),
+        "{notes:?}"
+    );
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    let solid = layers
+        .iter()
+        .find(|layer| layer["trackMatte"].is_object())
+        .unwrap();
+    assert_eq!(solid["transform"]["opacity"], 60.0);
+    assert_eq!(solid["trackMatte"]["mode"], "alphaInverted");
+    let provider = layers
+        .iter()
+        .find(|layer| layer["id"] == solid["trackMatte"]["layer"])
+        .unwrap();
+    assert_eq!(provider["type"], "Rect");
+    assert_eq!(provider["rect"]["size"], json!([1920.0, 1080.0]));
+    assert_eq!(provider["activeRange"], solid["activeRange"]);
+}
+
+#[test]
+fn oversized_solid_normalization_never_expands_partial_or_processed_content() {
+    let native = as_matte(&animated_xml(""), "ZEGlAAEAAAA=");
+    let native = with_stream_frame(&native, 8, "<FrameRect>0,0,3840,2160</FrameRect>");
+    for changed in [
+        native.replace(
+            "100.,0,0,0,0,0,0</StartKeyframe>",
+            "49.,0,0,0,0,0,0</StartKeyframe>",
+        ),
+        native.replace("0.5:0.5,", "2.:0.5,"),
+        native.replace(
+            "<ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,0.,",
+            "<ParameterID>5</ParameterID><StartKeyframe>-91445760000000000,1.,",
+        ),
+        with_stream_frame(
+            &as_matte(
+                &with_chain(SOURCE, DEFAULT_FLAGS, &[(20, blur(20))]),
+                "ZEGlAAEAAAA=",
+            ),
+            8,
+            "<FrameRect>0,0,3840,2160</FrameRect>",
+        ),
+    ] {
+        assert_ne!(changed, native);
+        let error = inspect_project_with_omissions(&changed, Some("sequence-1"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("only static full-canvas solids"), "{error}");
     }
 }
 
@@ -1021,7 +1178,10 @@ fn unsafe_matte_dissolve_clocks_and_bindings_are_reported_not_keyed() {
         } else {
             assert!(entries.is_none_or(Vec::is_empty), "{reason}: {document}");
         }
-        assert_static_matte(&document["composition"]["layers"][0], reason);
+        assert_static_matte(
+            &crate::tests::support::picture_composition(&document)["layers"][0],
+            reason,
+        );
     }
 
     // A saved nondefault control is the reader's rejection: no transition is
@@ -1057,7 +1217,9 @@ fn a_track_matte_key_source_gets_no_head_dissolve_whether_its_keyed_clip_convert
     let (read, _) =
         inspect_project_with_omissions(&matte_with_head_dissolve(), Some("sequence-1")).unwrap();
     let unresolved_composition = PrMediaKind::AfterEffectsComposition(
-        PrAfterEffectsComposition::parse("00000001-0000-0000-0000-000000000000").unwrap(),
+        PrAfterEffectsComposition::parse("00000001-0000-0000-0000-000000000000")
+            .unwrap()
+            .into(),
     );
     for (keyed_media, kind, keyed_converts) in [
         (

@@ -247,15 +247,19 @@ pub struct TextAnimator {
     /// multiplicatively from opaque by selector weight.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opacity: Option<ScalarProperty>,
-    /// Per-character fill color override (RGBA `[0, 1]`). A hard override,
+    /// Per-character fill color override: extended-sRGB RGB `0..=64` with
+    /// coverage alpha `0..=1`. A hard override,
     /// not a blend: applied only where the combined selector weight exceeds
     /// 0.5.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::deserialize_optional_extended_color")]
     pub fill_color: Option<ColorProperty>,
-    /// Per-character stroke color override (RGBA `[0, 1]`). A hard override
+    /// Per-character stroke color override: extended-sRGB RGB `0..=64` with
+    /// coverage alpha `0..=1`. A hard override
     /// like [`Self::fill_color`]: applied only where the combined selector
     /// weight exceeds 0.5.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::deserialize_optional_extended_color")]
     pub stroke_color: Option<ColorProperty>,
     /// Extra inter-line leading in pixels (AE *Line Spacing*).
     #[serde(default, skip_serializing_if = "Option::is_none")]

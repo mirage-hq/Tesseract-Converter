@@ -1055,6 +1055,49 @@ fn nested_precomposition_effects_stay_on_each_level_and_do_not_leak_to_root_sibl
 }
 
 #[test]
+fn display_rgb_exposure_exports_bypass_native_linear_light_conversion() {
+    let lowered = super::super::effects::lower(
+        &[
+            record(
+                6,
+                true,
+                json!({"type":"exposure","exposure":-0.65,"offset":0.02,"gammaCorrection":1.2}),
+            ),
+            record(
+                7,
+                false,
+                json!({"type":"temperatureTint","temperature":-8.0,"tint":6.0}),
+            ),
+        ],
+        &[linear_entry(6, "exposure", -0.65, 0.15)],
+        [320.0, 180.0],
+    );
+    assert_eq!(lowered.effects.len(), 3);
+    for effect in &lowered.effects {
+        assert_eq!(effect.match_name, "ADBE Exposure2");
+        let bypass = native_property(effect, "ADBE Exposure2-0022");
+        assert_eq!(bypass.values, [1.0]);
+        assert!(bypass.animation.is_none());
+    }
+    let master = &lowered.effects[0];
+    assert!(master.enabled);
+    assert_eq!(
+        native_property(master, "ADBE Exposure2-0004").values,
+        [0.02]
+    );
+    assert_eq!(native_property(master, "ADBE Exposure2-0005").values, [1.2]);
+    let keys = &native_property(master, "ADBE Exposure2-0003")
+        .animation
+        .as_ref()
+        .unwrap()
+        .keys;
+    assert_eq!(keys[0].values, [-0.65]);
+    assert_eq!(keys[1].values, [0.15]);
+    assert!(!lowered.effects[1].enabled);
+    assert!(!lowered.effects[2].enabled);
+}
+
+#[test]
 fn temperature_tint_export_preserves_independent_scalar_keys_and_bypass() {
     let lowered = super::super::effects::lower(
         &[record(

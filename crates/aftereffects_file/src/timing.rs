@@ -59,6 +59,22 @@ impl FrameRate {
         self.duration_frames(frames)
     }
 
+    /// Pad a generated source container to native frame cadence without moving
+    /// child clocks. Allow one tick of prior upward quantization at exact frame
+    /// boundaries; otherwise Adobe's nearest-frame normalization can lose the
+    /// last source sample. Only the empty tail of the container is extended.
+    pub(crate) fn enclosing_duration(
+        self,
+        duration: Duration24,
+    ) -> Result<Duration24, RecordError> {
+        let numerator = u128::from(duration.ticks().saturating_sub(1)) * u128::from(self.0);
+        let frames = numerator.div_ceil(24_576 * 65_536).max(1);
+        let frames = u32::try_from(frames)
+            .map_err(|_| RecordError::Invalid("invalid composition frame count"))?;
+        self.duration_frames(f64::from(frames))
+            .map(|(_, duration)| duration)
+    }
+
     fn duration_frames(self, frames: f64) -> Result<(u32, Duration24), RecordError> {
         if !frames.is_finite() || frames < 1.0 || frames > u32::MAX as f64 {
             return Err(RecordError::Invalid("invalid composition frame count"));
@@ -122,6 +138,29 @@ impl Duration24 {
 #[cfg(test)]
 mod tests {
     use super::{Duration24, FrameRate};
+    #[test]
+    fn generated_source_padding_keeps_exact_frames_and_bounds() {
+        for fps in [24.0, 30.0, 60.0, 29.97] {
+            let rate = FrameRate::new(fps).unwrap();
+            for millis in [1, 1000, 1001, 16_480, 16_500] {
+                let raw = Duration24::from_ticks((millis * 24_576_u32).div_ceil(1000)).unwrap();
+                let padded = rate.enclosing_duration(raw).unwrap();
+                let (frames, expected) = rate.duration(u64::from(millis)).unwrap();
+                assert_eq!(padded, expected);
+                assert_eq!(rate.enclosing_duration(padded).unwrap(), padded);
+                assert_eq!(
+                    (f64::from(padded.ticks()) / 24_576.0 * fps).round(),
+                    f64::from(frames)
+                );
+            }
+        }
+        let rate = FrameRate::new(30.0).unwrap();
+        assert!(
+            rate.enclosing_duration(Duration24::from_ticks(i32::MAX as u32).unwrap())
+                .is_err()
+        );
+    }
+
     #[test]
     fn authored_duration_preserves_native_null_frame_endpoint() {
         let rate = FrameRate::new(30.0).unwrap();

@@ -84,6 +84,7 @@ mod tests {
         let mut id = 77;
         let mut animation_budget = AnimationBudget::default();
         let mut collector = Collector {
+            source_items: None,
             includes_occurrence_pipeline: true,
             next_id: &mut id,
             animation_budget: &mut animation_budget,

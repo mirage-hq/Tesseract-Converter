@@ -78,6 +78,7 @@ pub(super) fn prepare(
             "selected-channel media identity collision"
         );
         let mono = InspectedMedia {
+            normalized_still: None,
             delayed_audio: None,
             audio_omission: None,
             hash: crate::hash::hash(&path)?,

@@ -8,6 +8,405 @@ use std::{fs, path::Path};
 use tesseract_file::TesseractFile;
 
 #[test]
+fn diagonal_adjustment_wipe_keeps_completion_keys_and_unmasked_boundaries() {
+    assert_diagonal_adjustment_wipe(false, false, 0);
+}
+
+#[test]
+fn diagonal_adjustment_wipe_keeps_following_effect_outside_coverage_group() {
+    assert_diagonal_adjustment_wipe(true, false, 0);
+}
+
+#[test]
+fn adjustment_wipe_at_sequence_tail_retains_keys_beyond_trim() {
+    assert_diagonal_adjustment_wipe(false, true, 0);
+}
+
+#[test]
+fn adjustment_wipe_holds_delayed_first_key_from_placement_start() {
+    assert_diagonal_adjustment_wipe(false, false, 500);
+    assert_diagonal_adjustment_wipe(true, true, 500);
+}
+
+fn assert_diagonal_adjustment_wipe(
+    effects_after: bool,
+    sequence_tail: bool,
+    first_key_delay_ms: i64,
+) {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let mut xml = read_xml(&fixtures.join("feature_adjustment_motion_wipe_26_5_strict.prproj"));
+    if effects_after {
+        xml = xml
+            .replace(
+                "<Component Index=\"0\" ObjectRef=\"126\"",
+                "<Component Index=\"0\" ObjectRef=\"127\"",
+            )
+            .replace(
+                "<Component Index=\"1\" ObjectRef=\"127\"",
+                "<Component Index=\"1\" ObjectRef=\"126\"",
+            );
+    }
+    if sequence_tail {
+        xml = xml.replace("<End>1905120000000</End>", "<End>2540160000000</End>");
+        let graph = roxmltree::Document::parse(&xml).unwrap();
+        let clip = graph
+            .descendants()
+            .find(|node| node.attribute("ObjectID") == Some("128"))
+            .unwrap()
+            .range();
+        let replacement = xml[clip.clone()].replace(
+            "<OutPoint>914838624000000</OutPoint>",
+            "<OutPoint>915473664000000</OutPoint>",
+        );
+        xml.replace_range(clip, &replacement);
+    }
+    let graph = roxmltree::Document::parse(&xml).unwrap();
+    let param = graph
+        .descendants()
+        .find(|node| node.attribute("ObjectID") == Some("178"))
+        .unwrap()
+        .range();
+    let replacement = xml[param.clone()].replace("<LowerBound>", "<Keyframes>914457600000000,50,0,0,0,0,0,0;914711616000000,25,0,0,0,0,0,0;</Keyframes><LowerBound>");
+    let replacement = if sequence_tail {
+        replacement.replace("914711616000000,25", "915727680000000,25")
+    } else {
+        replacement
+    };
+    let replacement = replacement.replace(
+        "914457600000000,50,",
+        &format!(
+            "{},40,",
+            914457600000000_i64 + first_key_delay_ms * 254016000
+        ),
+    );
+    xml.replace_range(param, &replacement);
+    let graph = roxmltree::Document::parse(&xml).unwrap();
+    let param = graph
+        .descendants()
+        .find(|node| node.attribute("ObjectID") == Some("179"))
+        .unwrap()
+        .range();
+    let replacement = xml[param.clone()].replace(",90.,", ",45.,");
+    xml.replace_range(param, &replacement);
+    let dir = tempfile::tempdir().unwrap();
+    fs::copy(
+        fixtures.join("a3_base_grid.png"),
+        dir.path().join("a3_base_grid.png"),
+    )
+    .unwrap();
+    let source = dir.path().join("animated-wipe.prproj");
+    crate::test_support::write_prproj(&source, &xml);
+    let output = dir.path().join("import");
+    let omissions = premiere_to_tesseract(
+        &source,
+        &output,
+        Some("b5dcf675-953c-4fa3-b318-3924d9e4f9c7"),
+        false,
+    )
+    .unwrap();
+    assert!(
+        !omissions
+            .iter()
+            .any(|omission| omission.record == "VideoClipTrackItem:74"
+                && omission.scope == premiere_file::OmissionScope::Occurrence),
+        "{omissions:?}"
+    );
+    let document = TesseractFile::open(first_project(&output))
+        .unwrap()
+        .project_json()
+        .unwrap();
+    fn find_guide(value: &serde_json::Value) -> Option<&serde_json::Value> {
+        if value["name"] == "Premiere adjustment Wipe guide"
+            && value["transform"]["rotation"] == -135.0
+        {
+            return Some(value);
+        }
+        match value {
+            serde_json::Value::Object(map) => map.values().find_map(find_guide),
+            serde_json::Value::Array(items) => items.iter().find_map(find_guide),
+            _ => None,
+        }
+    }
+    let guide =
+        find_guide(&document).expect("animated diagonal adjustment must mask its lower composite");
+    fn find_layer(value: &serde_json::Value, id: &serde_json::Value) -> Option<serde_json::Value> {
+        if value["id"] == *id && value["type"] == "Group" {
+            return Some(value.clone());
+        }
+        match value {
+            serde_json::Value::Object(map) => map.values().find_map(|value| find_layer(value, id)),
+            serde_json::Value::Array(items) => items.iter().find_map(|value| find_layer(value, id)),
+            _ => None,
+        }
+    }
+    let owner = find_layer(&document, &guide["parent"]).unwrap();
+    assert_eq!(
+        crate::test_support::layer_range(&owner),
+        &json!({"start":0,"duration":10000})
+    );
+    assert_eq!(owner["masks"][0]["layer"], guide["id"]);
+    assert_eq!(
+        owner["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|layer| layer["type"] == "Image")
+            .count(),
+        2
+    );
+    let adjustments = owner["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|layer| layer["type"] == "Adjustment")
+        .count();
+    assert_eq!(adjustments, usize::from(!effects_after), "{owner}");
+    let entries = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    let entry = entries
+        .iter()
+        .find(|entry| entry["target"]["layerId"] == guide["id"])
+        .unwrap();
+    assert_eq!(entry["target"]["propertyType"], "scaleY");
+    let keys = entry["animator"]["keyframes"].as_array().unwrap();
+    let mut expected = if sequence_tail {
+        vec![
+            (0, 1.0, "hold"),
+            (6000, 0.6, "hold"),
+            (11000, 0.75, "linear"),
+        ]
+    } else {
+        vec![
+            (0, 1.0, "hold"),
+            (6000, 0.6, "hold"),
+            (7000, 0.75, "linear"),
+            (7500, 1.0, "hold"),
+        ]
+    };
+    if first_key_delay_ms != 0 {
+        expected.insert(2, (6000 + first_key_delay_ms, 0.6, "hold"));
+    }
+    assert_eq!(keys.len(), expected.len());
+    let full = 3000.0 / 2.0_f64.sqrt() / 1080.0 * 100.0;
+    for (key, (time, fraction, easing)) in keys.iter().zip(expected) {
+        assert_eq!(key["layerTime"], time);
+        assert!((key["value"]["value"].as_f64().unwrap() - full * fraction).abs() < 1e-9);
+        assert_eq!(key["easing"]["type"], easing);
+    }
+    assert!((guide["transform"]["scale"][1].as_f64().unwrap() - full).abs() < 1e-9);
+}
+
+#[test]
+fn static_adjustment_crop_keeps_native_edge_and_lower_composite() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let mut xml = read_xml(&fixtures.join("feature_adjustment_motion_wipe_26_5_strict.prproj"));
+    let crop = fs::read_to_string(fixtures.join("cap2-native-static-crop.xml")).unwrap();
+    let native_crop = roxmltree::Document::parse(&crop).unwrap();
+    let records: String = native_crop
+        .root_element()
+        .children()
+        .filter(|node| {
+            matches!(
+                node.attribute("ObjectID"),
+                Some("403" | "817" | "818" | "819" | "820" | "821" | "822")
+            )
+        })
+        .map(|node| &crop[node.range()])
+        .collect();
+    // Rehost the saved Right Crop on the native adjustment's existing mask boundary.
+    let records = records.replace("ObjectID=\"403\"", "ObjectID=\"126\"");
+    let native = roxmltree::Document::parse(&xml).unwrap();
+    let wipe = native
+        .descendants()
+        .find(|node| node.attribute("ObjectID") == Some("126"))
+        .unwrap()
+        .range();
+    xml.replace_range(wipe, &records);
+    let dir = tempfile::tempdir().unwrap();
+    fs::copy(
+        fixtures.join("a3_base_grid.png"),
+        dir.path().join("a3_base_grid.png"),
+    )
+    .unwrap();
+    let source = dir.path().join("crop.prproj");
+    crate::test_support::write_prproj(&source, &xml);
+    let output = dir.path().join("import");
+    let omissions = premiere_to_tesseract(
+        &source,
+        &output,
+        Some("b5dcf675-953c-4fa3-b318-3924d9e4f9c7"),
+        false,
+    )
+    .unwrap();
+    assert!(
+        !omissions
+            .iter()
+            .any(|omission| omission.scope == premiere_file::OmissionScope::Occurrence),
+        "{omissions:?}"
+    );
+    let document = TesseractFile::open(first_project(&output))
+        .unwrap()
+        .project_json()
+        .unwrap();
+    let group = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Group" && layer["masks"].is_array())
+        .expect("Crop must mask the lower composite");
+    let children = group["layers"].as_array().unwrap();
+    assert_eq!(
+        children
+            .iter()
+            .filter(|layer| layer["type"] == "Image")
+            .count(),
+        2
+    );
+    let adjustment = children
+        .iter()
+        .find(|layer| layer["type"] == "Adjustment")
+        .unwrap();
+    assert_eq!(
+        crate::test_support::layer_range(adjustment),
+        &json!({"start":6000,"duration":1500})
+    );
+    assert_eq!(adjustment["effects"][0]["effect"]["type"], "levels");
+    let guide_id = &group["masks"][0]["layer"];
+    let guide = children
+        .iter()
+        .find(|layer| &layer["id"] == guide_id)
+        .unwrap();
+    assert_eq!(guide["transform"]["anchorPoint"], json!([0.0, 0.0]));
+    assert_eq!(guide["transform"]["position"], json!([0.0, 0.0]));
+    let entry = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| &entry["target"]["layerId"] == guide_id)
+        .unwrap();
+    let keys: Vec<_> = entry["animator"]["keyframes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|key| {
+            (
+                key["layerTime"].as_i64().unwrap(),
+                key["value"]["value"].as_f64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        keys,
+        vec![(0, 100.0), (6000, 50.892425537109), (7500, 100.0)]
+    );
+}
+
+#[test]
+fn static_multiedge_adjustment_crop_masks_the_lower_composite() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let mut xml = read_xml(&fixtures.join("feature_adjustment_motion_wipe_26_5_strict.prproj"));
+    let crop = fs::read_to_string(fixtures.join("cap2-native-static-crop.xml")).unwrap();
+    let native_crop = roxmltree::Document::parse(&crop).unwrap();
+    let records: String = native_crop
+        .root_element()
+        .children()
+        .filter(|node| {
+            matches!(
+                node.attribute("ObjectID"),
+                Some("403" | "817" | "818" | "819" | "820" | "821" | "822")
+            )
+        })
+        .map(|node| &crop[node.range()])
+        .collect();
+    // Keep the saved Right edge and set the other three edges to 10%.
+    let records = records
+        .replace("ObjectID=\"403\"", "ObjectID=\"126\"")
+        .replace(
+            ",0.,0,0,0,0,0,0</StartKeyframe>",
+            ",10.,0,0,0,0,0,0</StartKeyframe>",
+        );
+    let native = roxmltree::Document::parse(&xml).unwrap();
+    let wipe = native
+        .descendants()
+        .find(|node| node.attribute("ObjectID") == Some("126"))
+        .unwrap()
+        .range();
+    xml.replace_range(wipe, &records);
+    // Isolate Crop from the donor's Levels effect.
+    assert!(xml.contains("<Component Index=\"1\" ObjectRef=\"127\"/>"));
+    xml = xml.replace("<Component Index=\"1\" ObjectRef=\"127\"/>", "");
+    let dir = tempfile::tempdir().unwrap();
+    fs::copy(
+        fixtures.join("a3_base_grid.png"),
+        dir.path().join("a3_base_grid.png"),
+    )
+    .unwrap();
+    let source = dir.path().join("crop.prproj");
+    crate::test_support::write_prproj(&source, &xml);
+    let output = dir.path().join("import");
+    let omissions = premiere_to_tesseract(
+        &source,
+        &output,
+        Some("b5dcf675-953c-4fa3-b318-3924d9e4f9c7"),
+        false,
+    )
+    .unwrap();
+    assert!(
+        !omissions
+            .iter()
+            .any(|omission| omission.scope == premiere_file::OmissionScope::Occurrence),
+        "{omissions:?}"
+    );
+    let document = TesseractFile::open(first_project(&output))
+        .unwrap()
+        .project_json()
+        .unwrap();
+    let group = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["name"] == "Premiere adjustment Crop composite")
+        .expect("Crop must mask the lower composite, not only the adjustment");
+    let children = group["layers"].as_array().unwrap();
+    assert_eq!(
+        children
+            .iter()
+            .filter(|layer| layer["type"] == "Image")
+            .count(),
+        2
+    );
+    let guide_id = &group["masks"][0]["layer"];
+    let entries = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    for (property, value, full) in [
+        ("positionX", 192.0, 0.0),
+        ("positionY", 108.0, 0.0),
+        ("scaleX", 40.892425537109, 100.0),
+        ("scaleY", 80.0, 100.0),
+    ] {
+        let entry = entries
+            .iter()
+            .find(|entry| {
+                &entry["target"]["layerId"] == guide_id
+                    && entry["target"]["propertyType"] == property
+            })
+            .unwrap();
+        let keys = entry["animator"]["keyframes"].as_array().unwrap();
+        assert_eq!(keys.len(), 3);
+        for (key, (time, expected)) in keys.iter().zip([(0, full), (6000, value), (7500, full)]) {
+            assert_eq!(key["layerTime"], time);
+            assert!(
+                (key["value"]["value"].as_f64().unwrap() - expected).abs() < 1e-8,
+                "{property}: {key}"
+            );
+            assert_eq!(key["easing"]["type"], "hold");
+        }
+    }
+}
+
+#[test]
 fn successive_adjustment_wipes_keep_their_nested_guides() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let mut xml = read_xml(&fixtures.join("feature_adjustment_motion_wipe_26_5_strict.prproj"));
@@ -252,6 +651,94 @@ fn native_adjustment_wipe_masks_the_lower_composite_and_exports_editable() {
         })
         .collect();
     assert_eq!(again_keys, [(0, 100.0), (6000, 35.0), (7500, 100.0)]);
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn diagonal_linear_wipe_imports_editable_rotated_coverage() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    // Supplemental variant of the native cardinal fixture: only angle and
+    // feather change; its two completion keys remain 100 -> 0 over one second.
+    let xml = read_xml(&fixtures.join("feature_linear_wipe_strict.prproj"))
+        .replace(
+            "-91445760000000000,270.,0,0,0,0,0,0",
+            "-91445760000000000,45.,0,0,0,0,0,0",
+        )
+        .replace(
+            "-91445760000000000,5.,0,0,0,0,0,0",
+            "-91445760000000000,0.,0,0,0,0,0,0",
+        );
+    let dir = tempfile::tempdir().unwrap();
+    for name in [
+        "feature_two_tracks_gap_clip_a.mp4",
+        "feature_two_tracks_gap_clip_b.mp4",
+    ] {
+        fs::copy(fixtures.join(name), dir.path().join(name)).unwrap();
+    }
+    let source = dir.path().join("diagonal.prproj");
+    crate::test_support::write_prproj(&source, &xml);
+    let output = dir.path().join("import");
+    let omissions = premiere_to_tesseract(
+        &source,
+        &output,
+        Some("49b892d1-dfc3-4be2-a83a-93789626be7c"),
+        false,
+    )
+    .unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    let document = TesseractFile::open(first_project(&output))
+        .unwrap()
+        .project_json()
+        .unwrap();
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    assert_eq!(
+        layers
+            .iter()
+            .filter(|layer| layer["type"] == "Video")
+            .count(),
+        2
+    );
+    let picture = layers
+        .iter()
+        .find(|layer| layer["type"] == "Video" && layer["masks"].is_array())
+        .unwrap();
+    let guide = layers
+        .iter()
+        .find(|layer| layer["id"] == picture["masks"][0]["layer"])
+        .unwrap();
+    let transform = &guide["transform"];
+    assert_eq!(transform["rotation"], -135.0);
+    assert_eq!(transform["anchorPoint"], json!([960.0, 1080.0]));
+    let close = |value: &serde_json::Value, expected: f64| {
+        assert!(
+            (value.as_f64().unwrap() - expected).abs() < 1e-9,
+            "{value} != {expected}"
+        )
+    };
+    // The far corner projected onto the 45-degree normal anchors the sweep.
+    close(&transform["position"][0], 1710.0);
+    close(&transform["position"][1], -210.0);
+    close(
+        &transform["scale"][0],
+        3000.0 / 2.0_f64.sqrt() / 1920.0 * 100.0,
+    );
+    close(&transform["scale"][1], 0.0);
+    let entry = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["target"]["layerId"] == guide["id"])
+        .unwrap();
+    assert_eq!(entry["target"]["propertyType"], "scaleY");
+    let keys = entry["animator"]["keyframes"].as_array().unwrap();
+    assert_eq!(keys.len(), 2);
+    assert_eq!(keys[0]["layerTime"], 0);
+    close(&keys[0]["value"]["value"], 0.0);
+    assert_eq!(keys[1]["layerTime"], 1000);
+    close(
+        &keys[1]["value"]["value"],
+        3000.0 / 2.0_f64.sqrt() / 1080.0 * 100.0,
+    );
 }
 
 #[cfg(feature = "ffmpeg-library")]

@@ -64,7 +64,7 @@ static ALLOCATOR: CountingAllocator = CountingAllocator;
 fn write_releases_serialized_project_before_reopening() {
     // Whitespace makes the wire buffer large without introducing a second large
     // parsed field. The archive must preserve it byte-for-byte, not normalize it.
-    let json = br#"{"$schema":"https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json","formatVersion":1,"dimensions":{"width":1080,"height":1920},"duration":6,"composition":{"id":"memory-test","name":"Test","layers":[]}}"#;
+    let json = br#"{"$schema":"https://jerboa.dev/schemas/fx-composition/editable/v1/document.schema.json","formatVersion":1,"dimensions":{"width":1080,"height":1920},"duration":6,"colorManagement":{"version":1,"workingSpace":"legacyDisplay"},"composition":{"id":"memory-test","name":"Test","layers":[]}}"#;
     let mut bytes = json.to_vec();
     bytes.resize(LARGE_BUFFER + 137, b' ');
     let builder = TesseractFileBuilder::from_project_json(&bytes).unwrap();

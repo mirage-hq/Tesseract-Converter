@@ -19,18 +19,20 @@ pub(super) enum ConversionOption {
     MediaMap,
     MediaRelink,
     Fps,
+    Hdr,
     Sequence,
     FilmImpactPop,
 }
 
 impl ConversionOption {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 9] = [
         Self::Composition,
         Self::ExpressionSamples,
         Self::AvailableFonts,
         Self::MediaMap,
         Self::MediaRelink,
         Self::Fps,
+        Self::Hdr,
         Self::Sequence,
         Self::FilmImpactPop,
     ];
@@ -43,6 +45,7 @@ impl ConversionOption {
             Self::MediaMap => request.media_map.is_some(),
             Self::MediaRelink => request.media_relink.is_some(),
             Self::Fps => request.fps.is_some(),
+            Self::Hdr => request.hdr.is_some(),
             Self::Sequence => request.sequence.is_some(),
             Self::FilmImpactPop => request.allow_film_impact_pop,
         }
@@ -65,6 +68,9 @@ impl ConversionOption {
             }
             Self::Fps => {
                 "--fps is only supported for Tesseract to Premiere or After Effects conversion"
+            }
+            Self::Hdr => {
+                "--hdr is only supported for Tesseract to Premiere or After Effects conversion"
             }
             Self::Sequence => "--sequence is only supported for Premiere to Tesseract conversion",
             Self::FilmImpactPop => {
@@ -228,7 +234,7 @@ const PREMIERE_IMPORT_OPTIONS: &[ConversionOption] = &[
     ConversionOption::MediaMap,
     ConversionOption::MediaRelink,
 ];
-const EXPORT_OPTIONS: &[ConversionOption] = &[ConversionOption::Fps];
+const EXPORT_OPTIONS: &[ConversionOption] = &[ConversionOption::Fps, ConversionOption::Hdr];
 
 static AFTER_EFFECTS_IMPORT: ImportRoute = ImportRoute {
     list_targets: after_effects_targets,
@@ -455,6 +461,7 @@ mod tests {
             media_map: None,
             media_relink: None,
             fps: None,
+            hdr: None,
             mode: ConversionMode::Check,
             progress: fx_conv::Progress::default(),
         };

@@ -186,7 +186,7 @@ static MAPPINGS: &[Mapping] = &[
         field!("CS Vignette-0002", "radius", 0, Scale::Factor(1.0 / 60.0), 0.0, false, true)),
     mapping!("ADBE Find Edges" => "findEdges", "Blend With Original omitted.";
         field!("ADBE Find Edges-0001", "invert")),
-    mapping!("ADBE Exposure2" => "exposure", "Master RGB only; individual-channel and linear-light bypass controls omitted.";
+    mapping!("ADBE Exposure2" => "exposure", "Master RGB only; native linear-light import semantics remain approximate. Export bypasses native linear-light conversion to retain FX display-RGB arithmetic.";
         field!("ADBE Exposure2-0003", "exposure"), field!("ADBE Exposure2-0004", "offset"),
         field!("ADBE Exposure2-0005", "gammaCorrection")),
     mapping!("ADBE Vibrance" => "vibrance", "Engine preset approximates Adobe color math.";
@@ -207,7 +207,7 @@ static MAPPINGS: &[Mapping] = &[
         field!("ADBE Luma Key-0003", "softness", 0, Scale::Factor(0.01), 0.0, false, true)),
     mapping!("ADBE Simple Choker" => "simpleChoker", "Matte view mode omitted.";
         field!("ADBE Simple Choker-0002", "choke")),
-    mapping!("VISINF Grain Implant" => "grain", "Only core Add Grain controls; unrepresented channel, application, matching, masking and animation sub-settings use the plugin's untouched raw native state. Preview mode retains its owner-relative default region and guide box.";
+    mapping!("VISINF Grain Implant" => "grain", "Only core Add Grain controls; unrepresented channel, application, matching, masking and animation sub-settings use the plugin's untouched raw native state. Preview-region and guide controls are not represented in FX.";
         Field { param: "intensity", ..field!("VISINF Grain Implant-0008", "amount") }, field!("VISINF Grain Implant-0007", "size"),
         field!("VISINF Grain Implant-0130", "softness"), field!("VISINF Grain Implant-0030", "aspectRatio"),
         field!("VISINF Grain Implant-0013", "seed")),
@@ -259,13 +259,18 @@ static FILL_IMPORT_MAPPING: Mapping = mapping!("ADBE Fill" => "tintTritone", "AE
     field!("ADBE Fill-0005", "amount", 0, Scale::Factor(100.0), 0.0, false, true));
 
 // Import-only: exported Levels continue to use the established native Levels writer.
-const INVERT_IMPORT_MAPPING: Mapping = mapping!("ADBE Invert" => "levels", "Static RGB inversion; alpha is preserved. Other channels and animated/expression controls are omitted.";
-    field!("ADBE Invert-0002", "outputBlack", 0, Scale::Factor(-2.55), 255.0, false, false),
-    field!("ADBE Invert-0002", "outputWhite", 0, Scale::Factor(2.55), 0.0, false, false));
+const INVERT_IMPORT_MAPPING: Mapping = mapping!("ADBE Invert" => "levels", "RGB inversion with editable Blend With Original keys; alpha is preserved. Other channels and expression controls are omitted; native RGB/alpha fidelity is unverified.";
+    field!("ADBE Invert-0002", "outputBlack", 0, Scale::Factor(-2.55), 255.0, false, true),
+    field!("ADBE Invert-0002", "outputWhite", 0, Scale::Factor(2.55), 0.0, false, true));
 
 // Import-only: the legacy scalar-only profile has no modern dimensions/edge controls.
 const LEGACY_GAUSSIAN_IMPORT_MAPPING: Mapping = mapping!("ADBE Gaussian Blur" => "gaussianBlur", "Legacy scalar Blurriness and authored keys map to editable GaussianBlur. Native legacy kernel, radius calibration and edge alpha are unverified; modern dimensions/repeat-edge controls are not inferred. Export uses the existing modern Gaussian Blur writer, not legacy plugin restoration.";
     field!("ADBE Gaussian Blur-0001", "blurriness"));
+
+// Import-only approximation: keep modern Gaussian export identity unchanged.
+const FAST_BLUR_IMPORT_MAPPING: Mapping = mapping!("ADBE Fast Blur" => "gaussianBlur", "Legacy Fast Blur approximated by editable GaussianBlur with unchanged Blurriness and authored keys. Native kernel, radius calibration and edge alpha differ or are unverified; only static Both dimensions and Repeat Edge Pixels are supported. Export uses the modern Gaussian writer, not legacy plugin restoration.";
+    field!("ADBE Fast Blur-0001", "blurriness"),
+    field!("ADBE Fast Blur-0003", "repeatEdgePixels", 0, Scale::Identity, 0.0, true, false));
 
 #[cfg(test)]
 pub(crate) fn mappings() -> &'static [Mapping] {
@@ -285,6 +290,9 @@ pub(crate) fn by_native(native: &str) -> Option<&'static Mapping> {
     }
     if native == FILL_IMPORT_MAPPING.native {
         return Some(&FILL_IMPORT_MAPPING);
+    }
+    if native == FAST_BLUR_IMPORT_MAPPING.native {
+        return Some(&FAST_BLUR_IMPORT_MAPPING);
     }
     if native == LEGACY_GAUSSIAN_IMPORT_MAPPING.native {
         return Some(&LEGACY_GAUSSIAN_IMPORT_MAPPING);

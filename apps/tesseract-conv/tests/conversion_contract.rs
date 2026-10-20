@@ -169,7 +169,10 @@ fn after_effects_obeys_both_direction_contracts() {
         &AfterEffects,
         &imported.join("project.tsrct"),
         &exported,
-        &AfterEffectsExportOptions { fps: 60.0 },
+        &AfterEffectsExportOptions {
+            fps: 60.0,
+            ..Default::default()
+        },
     );
     assert_eq!(report.artifacts, [Artifact::project("project.aep")]);
     let native = aftereffects_file::structure::read_project(

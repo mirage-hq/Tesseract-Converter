@@ -562,7 +562,7 @@ fn is_default_miter_limit(value: &ScalarProperty) -> bool {
 }
 
 /// Wire-boundary error for an explicitly authored invalid rectangle paint.
-const RECT_FILL_PAINT_WIRE_ERROR: &str = "rectangle fill paint must contain finite colors and coordinates, colors and ordered stop offsets between zero and one, and at least two gradient stops";
+const RECT_FILL_PAINT_WIRE_ERROR: &str = "rectangle paint requires finite extended-sRGB RGB in 0..=64 and alpha in 0..=1; gradients require extended colors, ordered offsets and at least two stops";
 
 impl Serialize for RectShape {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -583,10 +583,11 @@ impl<'de> Deserialize<'de> for RectShape {
             .fill_paint
             .as_ref()
             .is_some_and(|paint| !paint.has_valid_values())
-            || !shape
-                .fill_color
-                .iter()
-                .all(|channel| channel.is_finite() && (0.0..=1.0).contains(channel))
+            || !crate::has_valid_extended_color(&shape.fill_color)
+            || shape
+                .stroke_color
+                .as_ref()
+                .is_some_and(|color| !crate::has_valid_extended_color(color))
         {
             return Err(serde::de::Error::custom(RECT_FILL_PAINT_WIRE_ERROR));
         }
@@ -672,15 +673,20 @@ pub struct TextDocument {
     /// Whether the glyph fill is painted (default true).
     #[serde(default = "default_true")]
     pub apply_fill: bool,
-    /// Glyph fill color (RGBA, channels 0..1).
+    /// Glyph fill: finite extended-sRGB RGB 0..64, coverage alpha 0..1.
+    #[serde(deserialize_with = "crate::deserialize_extended_color")]
     pub fill_color: ColorProperty,
     /// Whether the glyph stroke is painted (default false).
     #[serde(default)]
     pub apply_stroke: bool,
-    /// Glyph stroke color (RGBA, channels 0..1). This is the whole-string
+    /// Glyph stroke: extended-sRGB RGB 0..64, coverage alpha 0..1. This is the whole-string
     /// text stroke — distinct from the `stroke` layer-style entry (a
     /// silhouette outline) and from Rect/Shape stroke properties.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "crate::deserialize_optional_extended_color"
+    )]
     pub stroke_color: Option<ColorProperty>,
     /// Glyph stroke width in pixels (non-negative).
     #[serde(default)]

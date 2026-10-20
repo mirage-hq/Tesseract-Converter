@@ -212,6 +212,44 @@ fn assembly_preserves_aep_local_dependency_layout_and_bytes() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn publication_from_read_only_assembly_preserves_bytes_and_rollback() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    fs::write(&source, b"source").unwrap();
+    let digest = sha256(&source).unwrap();
+    let assembly = root.path().join("assembly");
+    fs::create_dir(&assembly).unwrap();
+    fs::write(assembly.join("first"), b"artifact").unwrap();
+    let permissions = fs::metadata(&assembly).unwrap().permissions();
+    fs::set_permissions(&assembly, fs::Permissions::from_mode(0o555)).unwrap();
+    let output = root.path().join("output");
+    let result = publish(
+        &assembly,
+        &output,
+        &[Artifact::project("first")],
+        &source,
+        &digest,
+    );
+    let partial = root.path().join("partial");
+    let failure = publish(
+        &assembly,
+        &partial,
+        &[Artifact::project("first"), Artifact::media("missing")],
+        &source,
+        &digest,
+    );
+    fs::set_permissions(&assembly, permissions).unwrap();
+    result.unwrap();
+    assert_eq!(fs::read(output.join("first")).unwrap(), b"artifact");
+    assert!(failure.is_err());
+    assert!(!partial.exists());
+    assert_eq!(fs::read(assembly.join("first")).unwrap(), b"artifact");
+}
+
 #[test]
 fn publication_failure_removes_only_owned_links_and_directories() {
     let root = tempfile::tempdir().unwrap();
@@ -238,17 +276,27 @@ fn copy_fallback_verifies_bytes_and_rolls_back_partial_files() {
     fs::create_dir(&output).unwrap();
     let mut installed = Installation {
         files: Vec::new(),
-        directories: vec![output.clone()],
+        directories: vec![InstalledPath {
+            path: output.clone(),
+            identity: Some(FileIdentity::Handle(
+                same_file::Handle::from_path(&output).unwrap(),
+            )),
+        }],
         committed: false,
     };
     let no_links = |_: &Path, _: &Path| Err(std::io::Error::from(std::io::ErrorKind::Unsupported));
     install_file(&source, &output.join("first"), &mut installed, no_links).unwrap();
     assert_eq!(fs::read(output.join("first")).unwrap(), b"verified");
+    let disappearing = root.path().join("disappearing");
+    fs::write(&disappearing, b"removed before copy").unwrap();
     assert!(install_file(
-        &root.path().join("missing"),
+        &disappearing,
         &output.join("partial"),
         &mut installed,
-        no_links
+        |source, _| {
+            fs::remove_file(source)?;
+            Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
+        }
     )
     .is_err());
     assert!(output.join("partial").exists());
@@ -260,6 +308,253 @@ fn copy_fallback_verifies_bytes_and_rolls_back_partial_files() {
     fs::write(&foreign, b"keep").unwrap();
     assert!(install_file(&source, &foreign, &mut installed, no_links).is_err());
     assert_eq!(fs::read(&foreign).unwrap(), b"keep");
+}
+
+#[test]
+fn directory_identity_failure_reports_and_preserves_unverified_paths() {
+    for child in [false, true] {
+        for replace in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let source = root.path().join("source");
+            fs::write(&source, b"source").unwrap();
+            let digest = sha256(&source).unwrap();
+            let output = root.path().join("output");
+            let failed = if child {
+                output.join("b")
+            } else {
+                output.clone()
+            };
+            let original = root.path().join("original");
+            let error = publish_with_directory_identity(
+                root.path(),
+                &output,
+                &[Artifact::media("a/file"), Artifact::media("b/file")],
+                &source,
+                &digest,
+                |path| {
+                    if path == failed {
+                        if replace {
+                            fs::rename(path, &original)?;
+                            fs::create_dir(path)?;
+                        }
+                        return Err(std::io::Error::other("injected directory identity failure"));
+                    }
+                    same_file::Handle::from_path(path)
+                },
+            )
+            .unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains("injected directory identity failure"));
+            assert!(message.contains(&failed.display().to_string()));
+            assert!(message.contains("ownership unverified"));
+            assert!(message.contains("manual inspection and cleanup required"));
+            assert!(failed.is_dir());
+            assert!(
+                !output.join("a").exists(),
+                "verified sibling must be cleaned"
+            );
+            if replace {
+                assert!(original.is_dir());
+            }
+            // Publication has already dropped its Installation; neither the
+            // unverified original nor an empty replacement may be retried.
+            assert_eq!(fs::read_dir(&failed).unwrap().count(), 0);
+        }
+    }
+}
+
+#[test]
+fn copied_file_identity_failure_reports_and_preserves_unverified_paths() {
+    for replace in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let verified = root.path().join("verified");
+        let destination = root.path().join("unverified");
+        let original = root.path().join("original");
+        let directory = root.path().join("verified-directory");
+        fs::write(&source, b"source").unwrap();
+        let mut installed = Installation {
+            files: Vec::new(),
+            directories: Vec::new(),
+            committed: false,
+        };
+        installed
+            .create_directory(&directory, &mut |path| same_file::Handle::from_path(path))
+            .unwrap();
+        install_file(&source, &verified, &mut installed, |source, target| {
+            fs::hard_link(source, target)
+        })
+        .unwrap();
+        let error = install_file_with_identity(
+            &source,
+            &destination,
+            &mut installed,
+            |_, _| Err(std::io::Error::from(std::io::ErrorKind::Unsupported)),
+            |file| {
+                if replace {
+                    fs::rename(&destination, &original)?;
+                    fs::write(&destination, b"replacement")?;
+                }
+                drop(file);
+                Err(std::io::Error::other(
+                    "injected copied-file identity failure",
+                ))
+            },
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("injected copied-file identity failure"));
+        let cleanup = installed.rollback().unwrap_err().to_string();
+        assert!(cleanup.contains(&destination.display().to_string()));
+        assert!(cleanup.contains("ownership unverified"));
+        assert!(cleanup.contains("manual inspection and cleanup required"));
+        assert!(!verified.exists());
+        assert!(!directory.exists());
+        let expected = if replace {
+            b"replacement".as_slice()
+        } else {
+            b""
+        };
+        assert_eq!(fs::read(&destination).unwrap(), expected);
+        drop(installed);
+        assert_eq!(fs::read(&destination).unwrap(), expected);
+        if replace {
+            assert_eq!(fs::read(&original).unwrap(), b"");
+        }
+    }
+}
+
+#[test]
+fn rollback_preserves_same_bytes_file_replacement() {
+    for use_copy in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let destination = root.path().join("installed");
+        let original = root.path().join("original");
+        fs::write(&source, b"same bytes").unwrap();
+        let mut installed = Installation {
+            files: Vec::new(),
+            directories: Vec::new(),
+            committed: false,
+        };
+        install_file(&source, &destination, &mut installed, |source, target| {
+            if use_copy {
+                Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
+            } else {
+                fs::hard_link(source, target)
+            }
+        })
+        .unwrap();
+        // Keep the installed inode alive so its identity cannot be reused.
+        fs::rename(&destination, &original).unwrap();
+        fs::write(&destination, b"same bytes").unwrap();
+        let result = installed.rollback();
+        assert_eq!(fs::read(&destination).unwrap(), b"same bytes");
+        assert!(
+            result.is_err(),
+            "replacement must be reported, copy={use_copy}"
+        );
+        drop(installed);
+        assert_eq!(fs::read(&destination).unwrap(), b"same bytes");
+        assert_eq!(fs::read(&original).unwrap(), b"same bytes");
+        assert_eq!(fs::read(&source).unwrap(), b"same bytes");
+    }
+}
+
+#[test]
+fn rollback_preserves_directory_replacement() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    let destination = root.path().join("installed");
+    let directory = root.path().join("directory");
+    let original = root.path().join("original-directory");
+    fs::write(&source, b"owned file").unwrap();
+    fs::create_dir(&directory).unwrap();
+    let mut installed = Installation {
+        files: Vec::new(),
+        directories: vec![InstalledPath {
+            path: directory.clone(),
+            identity: Some(FileIdentity::Handle(
+                same_file::Handle::from_path(&directory).unwrap(),
+            )),
+        }],
+        committed: false,
+    };
+    install_file(&source, &destination, &mut installed, |source, target| {
+        fs::hard_link(source, target)
+    })
+    .unwrap();
+    fs::rename(&directory, &original).unwrap();
+    // An empty replacement must survive, not merely a nonempty directory that
+    // remove_dir would already refuse to delete.
+    fs::create_dir(&directory).unwrap();
+    let result = installed.rollback();
+    assert!(directory.is_dir());
+    assert!(result.is_err(), "directory replacement must be reported");
+    assert!(
+        !destination.exists(),
+        "unreplaced owned file must be removed"
+    );
+    drop(installed);
+    assert!(directory.is_dir());
+    assert!(original.is_dir());
+    assert_eq!(fs::read(&source).unwrap(), b"owned file");
+}
+
+#[cfg(unix)]
+#[test]
+fn rollback_preserves_symlink_replacement() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    let destination = root.path().join("installed");
+    let original = root.path().join("original");
+    let foreign = root.path().join("foreign");
+    fs::write(&source, b"owned file").unwrap();
+    fs::write(&foreign, b"foreign file").unwrap();
+    let mut installed = Installation {
+        files: Vec::new(),
+        directories: Vec::new(),
+        committed: false,
+    };
+    install_file(&source, &destination, &mut installed, |source, target| {
+        fs::hard_link(source, target)
+    })
+    .unwrap();
+    fs::rename(&destination, &original).unwrap();
+    std::os::unix::fs::symlink(&foreign, &destination).unwrap();
+    let result = installed.rollback();
+    assert_eq!(fs::read_link(&destination).unwrap(), foreign);
+    assert!(result.is_err(), "symlink replacement must be reported");
+    drop(installed);
+    assert_eq!(fs::read_link(&destination).unwrap(), foreign);
+    assert_eq!(fs::read(&foreign).unwrap(), b"foreign file");
+    assert_eq!(fs::read(&original).unwrap(), b"owned file");
+}
+
+#[cfg(unix)]
+#[test]
+fn rollback_preserves_symlink_to_owned_inode() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    let destination = root.path().join("installed");
+    fs::write(&source, b"owned file").unwrap();
+    let mut installed = Installation {
+        files: Vec::new(),
+        directories: Vec::new(),
+        committed: false,
+    };
+    install_file(&source, &destination, &mut installed, |source, target| {
+        fs::hard_link(source, target)
+    })
+    .unwrap();
+    fs::remove_file(&destination).unwrap();
+    std::os::unix::fs::symlink(&source, &destination).unwrap();
+    assert!(installed.rollback().is_err());
+    assert_eq!(fs::read_link(&destination).unwrap(), source);
+    drop(installed);
+    assert_eq!(fs::read_link(&destination).unwrap(), source);
+    assert_eq!(fs::read(&source).unwrap(), b"owned file");
 }
 
 #[test]

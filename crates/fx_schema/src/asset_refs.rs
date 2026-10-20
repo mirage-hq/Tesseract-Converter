@@ -110,8 +110,10 @@ fn collect_layer_asset_refs<'a>(layers: &'a [Layer], refs: &mut Vec<AssetRef<'a>
                 crate::EffectData::Identified { effect, .. }
                 | crate::EffectData::Legacy(effect) => effect,
             };
-            if let crate::EffectPayload::Known(LayerEffect::LookTransform { transform, .. }) =
-                effect
+            if let crate::EffectPayload::Known(LayerEffect::LookTransform {
+                transform: Some(transform),
+                ..
+            }) = effect
             {
                 collect_color_transform_asset_ref(transform, refs);
             }
@@ -128,12 +130,12 @@ fn collect_layer_asset_refs<'a>(layers: &'a [Layer], refs: &mut Vec<AssetRef<'a>
                     .as_ref()
                     .and_then(crate::PersistedInputTransform::as_supported)
                 {
-                    collect_color_transform_asset_ref(&input.transform, refs);
+                    collect_input_transform_asset_ref(&input.transform, refs);
                 }
             }
             LayerData::Video(video) => {
                 if let Some(input) = video.source.input_transform() {
-                    collect_color_transform_asset_ref(&input.transform, refs);
+                    collect_input_transform_asset_ref(&input.transform, refs);
                 }
                 refs.push(AssetRef {
                     kind: AssetKind::Video,
@@ -157,7 +159,7 @@ fn collect_layer_asset_refs<'a>(layers: &'a [Layer], refs: &mut Vec<AssetRef<'a>
             }
             LayerData::Image(image) => {
                 if let Some(input) = image.source.input_transform() {
-                    collect_color_transform_asset_ref(&input.transform, refs);
+                    collect_input_transform_asset_ref(&input.transform, refs);
                 }
                 let crate::ImageSource::Asset(source) = &image.source;
                 refs.push(AssetRef {
@@ -208,6 +210,19 @@ fn collect_color_transform_asset_ref<'a>(
         kind: AssetKind::Lut,
         asset_id: asset_id.as_str(),
     });
+}
+
+fn collect_input_transform_asset_ref<'a>(
+    transform: &'a crate::InputColorTransform,
+    refs: &mut Vec<AssetRef<'a>>,
+) {
+    match transform {
+        crate::InputColorTransform::Lut3d { asset_id, .. } => refs.push(AssetRef {
+            kind: AssetKind::Lut,
+            asset_id: asset_id.as_str(),
+        }),
+        crate::InputColorTransform::CameraInput { .. } => {}
+    }
 }
 
 fn collect_pag_asset_refs<'a>(sequence: &'a crate::PagLayer, refs: &mut Vec<AssetRef<'a>>) {

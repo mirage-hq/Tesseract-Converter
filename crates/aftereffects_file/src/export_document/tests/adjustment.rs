@@ -14,10 +14,11 @@ fn fresh_native(source: &str) -> (ExportedDocument, StructuralProject) {
     let value = document(source);
     let output = export(value.clone());
     {
-        let directory = crate::adobe_test_support::artifact_directory();
+        // A fresh destination keeps CPU tests independent of previous runs;
+        // these supplementary artifacts are not pinned Adobe evidence.
+        let directory = tempfile::tempdir().unwrap();
         let name = value["composition"]["name"].as_str().unwrap();
-        let path = std::path::Path::new(&directory).join(name);
-        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.path().join(name);
         std::fs::write(path.with_extension("fx.json"), source).unwrap();
         std::fs::write(path.with_extension("aep"), &output.bytes).unwrap();
         let document = EditableFxCompositionDocument::from_json_value(value).unwrap();

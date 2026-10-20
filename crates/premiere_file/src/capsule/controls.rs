@@ -1,7 +1,7 @@
 //! Saved instance values are optional overrides, not template admission gates.
 
 use super::*;
-use crate::{format::Element, schema::PrColour};
+use crate::format::Element;
 
 fn encoded_value(param: Element<'_>) -> Result<Option<EncodedValue>, CapsuleError> {
     let values = param
@@ -135,13 +135,24 @@ pub(super) fn saved_numeric(
             _ => Err("invalid boolean override".into()),
         },
         3 => {
-            let native = fields[1]
+            let native: u64 = fields[1]
                 .parse()
                 .map_err(|_| "invalid packed colour override")?;
-            let colour = PrColour::from_native(native)?;
-            // The ordinary Premiere colour decoder establishes RGB, not Capsule
-            // alpha semantics. Keep the exact template property's alpha.
-            Ok(SavedGraphicNumeric::ColourRgb(colour.fx()))
+            // Saved Capsule RGB uses 8.8 channels, with white at 0xff00.
+            // Unlike the ordinary 8-bit effect mapper, the template override
+            // accepts fractional channels without rounding away their low byte.
+            let channels = [32, 16, 0].map(|shift| {
+                // Fits: the mask restricts each native channel to 16 bits.
+                ((native >> shift) & 0xffff) as u16
+            });
+            if channels.iter().any(|channel| *channel > 0xff00) {
+                return Err("packed colour override RGB channel exceeds white (0xff00)".into());
+            }
+            // Capsule alpha semantics remain unverified. Keep the exact
+            // template property's alpha, as for integral RGB overrides.
+            Ok(SavedGraphicNumeric::ColourRgb(
+                channels.map(|channel| f64::from(channel) / 65280.0),
+            ))
         }
         6 => {
             let (x, y) = fields[1].split_once(':').ok_or("invalid point override")?;

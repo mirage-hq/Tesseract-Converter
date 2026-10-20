@@ -216,6 +216,8 @@ pub(crate) fn read(content: &[Chunk], size: [f64; 2]) -> DecodedLayerStyles {
         }
         return result;
     };
+    let master_enabled =
+        style_group_enabled_or_warn(style_root, "ADBE Layer Styles", &mut result.warnings);
     let groups = match properties::unique_list(style_root, *b"tdgp").and_then(properties::runs) {
         Ok(groups) => groups,
         Err(error) => {
@@ -230,7 +232,8 @@ pub(crate) fn read(content: &[Chunk], size: [f64; 2]) -> DecodedLayerStyles {
         if name == "ADBE Blend Options Group" {
             continue;
         }
-        let enabled = properties::group_enabled_or_warn(run, name, &mut result.warnings);
+        let style_enabled = style_group_enabled_or_warn(run, name, &mut result.warnings);
+        let enabled = master_enabled && style_enabled;
         let leaves = match properties::unique_list(run, *b"tdgp").and_then(properties::runs) {
             Ok(leaves) => leaves,
             Err(error) => {
@@ -289,6 +292,32 @@ pub(crate) fn read(content: &[Chunk], size: [f64; 2]) -> DecodedLayerStyles {
         }
     }
     result
+}
+
+fn style_group_enabled_or_warn(run: &[Chunk], name: &str, warnings: &mut Vec<String>) -> bool {
+    let decode = || {
+        let group = properties::unique_list(run, *b"tdgp")?;
+        if !group.iter().any(|chunk| chunk.id() == *b"tdsb") {
+            return Ok(true);
+        }
+        let flags = properties::data(group, *b"tdsb")?;
+        let [_, _, _, flags] = flags else {
+            return Err(properties::PropertyError::Layout(
+                "group enable flags length",
+            ));
+        };
+        // Native Layer Styles use low bits 01 for enabled; 11 is bypassed in Adobe.
+        Ok(flags & 3 == 1)
+    };
+    match decode() {
+        Ok(enabled) => enabled,
+        Err(error) => {
+            warnings.push(format!(
+                "{name} enable flag malformed: {error}; enabled retained"
+            ));
+            true
+        }
+    }
 }
 
 fn style_label(name: &str) -> Option<&'static str> {

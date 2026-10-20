@@ -13,8 +13,22 @@ use crate::schema::{
 };
 
 pub(in crate::format::writer) fn group_record(spec: &PrSequence, ids: &SequenceGraphIds) -> Record {
-    let output_color = serde_json::to_string(&ColorSpace::sequence_sdr())
-        .expect("native sequence color fields serialize");
+    let output_color = serde_json::to_string(
+        &spec
+            .hdr
+            .map_or_else(ColorSpace::sequence_sdr, ColorSpace::sequence_hdr),
+    )
+    .expect("native sequence color fields serialize");
+    let color_management = spec
+        .hdr
+        .map(|settings| {
+            serde_json::json!({
+                "autoToneMapEnabled":true,"enableLogColorManagement":2,
+                "graphicsWhiteLuminance":settings.graphics_white,"lutInterpolationMethod":1
+            })
+            .to_string()
+        })
+        .unwrap_or_else(|| records::COLOR_MANAGEMENT_SETTINGS.into());
     Record::VideoTrackGroup(VideoTrackGroup {
         object_id: ids.sequence.video_group,
         class_id: Some(records::VIDEO_TRACK_GROUP.class_id.into()),
@@ -25,9 +39,18 @@ pub(in crate::format::writer) fn group_record(spec: &PrSequence, ids: &SequenceG
             frame_rate: Some(spec.frame_rate.ticks_per_frame().to_string()),
             next_track_id: (ids.sequence.video_tracks.len() + 1).into(),
         }),
-        color_management_settings: Some(records::COLOR_MANAGEMENT_SETTINGS.into()),
+        color_management_settings: Some(color_management),
         immersive_video_vr_configuration: Some(records::IMMERSIVE_VIDEO_VR_CONFIGURATION.into()),
         output_color_space: Some(output_color),
+        working_color_space: spec.hdr.map(|settings| serde_json::to_string(&ColorSpace::working_hdr(settings))
+            .expect("native working RGB profile serializes")),
+        working_color_space_configuration: spec.hdr.map(|settings| serde_json::json!({
+            "workingSpaceConfigVersion":1,"workingSpaceID":settings.working_name(),"workingSpaceIsLinearized":0
+        }).to_string()),
+        // Legacy FX opacity blends display-space values, not linear light.
+        allow_linear_compositing: Some("false".into()),
+        tone_mapping_algorithm: spec.hdr.map(|_| "5".into()),
+        gamut_compression_algorithm: spec.hdr.map(|_| "1".into()),
         auto_input_gamut_compression_enabled: Some("true".into()),
         is_graphics_white_same_as_project: Some("false".into()),
         is_color_aware_effects_enabled_same_as_project: Some("false".into()),

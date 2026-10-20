@@ -802,7 +802,7 @@ impl Lowering<'_, '_, '_, '_> {
                 return Ok(None);
             };
             let source_id = source.id();
-            let layer = match source {
+            let mut layer = match source {
                 Producer::Shape(source) => {
                     let mut shape = source.clone();
                     shape.id = id;
@@ -853,6 +853,31 @@ impl Lowering<'_, '_, '_, '_> {
                     FxLayer::Rect(rect)
                 }
             };
+            let normalized_scale = if let FxLayer::Shape(shape) = &mut layer
+                && let Some(owner) = transport.producer
+            {
+                let normalized = ellipse_scale::normalize(
+                    shape,
+                    source_id,
+                    owner,
+                    &mut self.collector.animations,
+                    self.collector.animation_budget,
+                )?;
+                if normalized {
+                    self.collector.warnings.push(format!(
+                        "{}: centered uniform ellipse geometry scale folded into editable Size; outer Stroke width and dashes remain in paint space; copied controls no longer share source edit identity",
+                        self.name
+                    ));
+                } else if !shape.shape.strokes.is_empty() {
+                    self.collector.warnings.push(format!(
+                        "{}: shared geometry transform retained on paint; unsupported non-centered/non-uniform or modified geometry can also transform outer Stroke width and dashes",
+                        self.name
+                    ));
+                }
+                normalized
+            } else {
+                false
+            };
             // Copy native typed keys onto the visible paint rather than
             // emitting a JS dependency on the hidden producer. Each source is
             // measured and reserved before its animator/value clone.
@@ -869,6 +894,13 @@ impl Lowering<'_, '_, '_, '_> {
                     property.layer_id() == producer && property.property_type() != PropType::Opacity
                 });
                 if !(source_property || transform_property)
+                    || (normalized_scale
+                        && ((source_property && property.property_type() == PropType::EllipseSize)
+                            || (transform_property
+                                && matches!(
+                                    property.property_type(),
+                                    PropType::ScaleX | PropType::ScaleY
+                                ))))
                     || !entry.dependencies.is_empty()
                     || entry.animator.is_js_script()
                     || (transport.keyframes_only
@@ -909,6 +941,81 @@ impl Lowering<'_, '_, '_, '_> {
                 self.name
             ));
             return Ok(Some(layer));
+        }
+        if geometry.len() > 1
+            && self.remaining_depth > 0
+            && !stage_rounds
+            && style.round_corners.is_none()
+            && style.offset_paths.is_none()
+            && geometry.iter().all(|id| {
+                let node = &self.program.geometry[id.0];
+                node.owner == owner
+                    && node.modifiers.len() <= 1
+                    && node.modifiers.iter().all(|modifier| {
+                        modifier.operation.name == "ADBE Vector Filter - Trim"
+                            && (modifier.owner == owner
+                                || modifiers::ancestor_trim(
+                                    self.program,
+                                    geometry,
+                                    owner,
+                                    modifier,
+                                    &self.modifiers,
+                                ))
+                    })
+                    && node.modifiers.len() == self.program.geometry[geometry[0].0].modifiers.len()
+                    && node
+                        .modifiers
+                        .iter()
+                        .zip(&self.program.geometry[geometry[0].0].modifiers)
+                        .all(|(a, b)| modifiers::same(a, b))
+                    && self.sources[id.0]
+                        .as_ref()
+                        .and_then(Producer::shape)
+                        .and_then(|shape| shape.shape.ellipse.as_ref())
+                        .is_some_and(|ellipse| !ellipse.reversed)
+            })
+        {
+            let Some(id) = self.collector.allocate() else {
+                return Ok(None);
+            };
+            let mut layers = Vec::with_capacity(geometry.len());
+            for &operand in geometry {
+                // The shared modifier stage belongs after the complete Union, not on each operand.
+                let Some(layer) = self.geometry_without_modifiers(
+                    &[operand],
+                    owner,
+                    id,
+                    &Decorations::default(),
+                    false,
+                )?
+                else {
+                    return Ok(None);
+                };
+                layers.push(layer);
+            }
+            self.collector.warnings.push(format!(
+                "{}: compound Ellipse Union approximation retains native editable ellipses and their animation under one paint; overlapping contour strokes, winding/fill rules and shared Trim lengths may differ from native Append",
+                self.name
+            ));
+            return Ok(Some(FxLayer::BooleanOperation(BooleanOperationLayer {
+                id,
+                name: self.name.into(),
+                description: "Editable Union approximation of compound AE ellipses".into(),
+                is_hidden: false,
+                parent: Some(parent),
+                blend_mode: Default::default(),
+                track_matte: None,
+                masks: Vec::new(),
+                active_range: full_active_range(),
+                effects: Vec::new(),
+                motion_blur: false,
+                transform: identity_transform(),
+                op: BooleanOp::Union,
+                layers: super::super::stored_layers(layers)?,
+                fills: style.fills.clone(),
+                strokes: style.strokes.clone(),
+                trim: style.trim,
+            })));
         }
         let mut inputs = Vec::new();
         let mut initial = Vec::new();

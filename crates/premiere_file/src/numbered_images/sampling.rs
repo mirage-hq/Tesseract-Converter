@@ -40,6 +40,64 @@ pub(crate) fn boundary(ticks: i64, rate: FrameRate) -> Result<Time> {
 pub(crate) struct SampledOccurrence {
     pub(crate) window: fx_schema::TimeRangeProperty,
     pub(crate) frames: Vec<(usize, fx_schema::TimeRangeProperty)>,
+    pub(crate) playback: Option<fx_schema::LayerPlayback>,
+}
+
+/// Keep native frame holds on the source clock instead of resampling a retime
+/// onto the containing sequence grid.
+pub(crate) fn source_clock_occurrence(
+    clip: &crate::schema::PrVideoOccurrence,
+    source: &crate::schema::PrVideoStream,
+) -> Result<SampledOccurrence> {
+    use crate::schema::TICKS_PER_MILLISECOND;
+    use fx_schema::{LayerPlayback, TimeRangeProperty};
+
+    let exact_time = |ticks: i64| -> Result<Time> {
+        ensure!(
+            ticks % TICKS_PER_MILLISECOND == 0,
+            "retimed numbered-image bounds and source cadence require exact milliseconds"
+        );
+        let millis = u64::try_from(ticks / TICKS_PER_MILLISECOND).map_err(|_| {
+            unsupported("negative retimed numbered-image source or placement bound")
+        })?;
+        Ok(Time::from_millis(millis))
+    };
+    let exact_range = |start, end| -> Result<TimeRangeProperty> {
+        let (start, end) = (exact_time(start)?, exact_time(end)?);
+        ensure!(end > start, "empty retimed numbered-image interval");
+        Ok(TimeRangeProperty::new(start, end.saturating_sub(start)))
+    };
+    let window = exact_range(clip.start_ticks, clip.end_ticks)?;
+    let trim = exact_range(clip.in_ticks, clip.out_ticks)?;
+    ensure!(
+        clip.out_ticks <= source.intrinsic_ticks,
+        "retimed numbered-image trim exceeds its finite source"
+    );
+    ensure!(
+        trim.duration.as_millis() as f64 / window.duration.as_millis() as f64 == clip.playback_rate,
+        "retimed numbered-image source span must exactly match PlaybackSpeed"
+    );
+    let step = source.frame_rate.ticks_per_frame();
+    exact_time(step)?;
+    let mut frames = Vec::new();
+    for index in 0..super::frame_count(source)? {
+        // frame_count bounds the source index and its product by intrinsic_ticks.
+        let start = (index as i64 * step).max(clip.in_ticks);
+        let end = ((index as i64 + 1) * step).min(clip.out_ticks);
+        if end > start {
+            frames.push((index, exact_range(start, end)?));
+        }
+    }
+    ensure!(
+        !frames.is_empty(),
+        "retimed numbered-image trim contains no frame"
+    );
+    let playback = LayerPlayback::linear(window, window, trim, 0).map_err(unsupported)?;
+    Ok(SampledOccurrence {
+        window,
+        frames,
+        playback: Some(playback),
+    })
 }
 
 pub(crate) fn occurrence(
@@ -68,21 +126,46 @@ pub(crate) fn occurrence(
         Duration::from_millis(end.as_millis() - start.as_millis()),
     );
     let step = i128::from(source.frame_rate.ticks_per_frame());
+    let reverse = clip.playback_rate == -1.0;
+    let (source_in, source_out) = if reverse {
+        ensure!(
+            source.frame_rate.ticks_per_frame() == rate.ticks_per_frame()
+                && i128::from(clip.in_ticks) % step == 0
+                && i128::from(clip.out_ticks) % step == 0
+                && clip.out_ticks <= source.intrinsic_ticks,
+            "reversed numbered images require matching frame clocks and source-frame-aligned bounds"
+        );
+        // Premiere's reverse In/Out remain ascending on the reflected clock.
+        (
+            i128::from(source.intrinsic_ticks) - i128::from(clip.out_ticks),
+            i128::from(source.intrinsic_ticks) - i128::from(clip.in_ticks),
+        )
+    } else {
+        (i128::from(clip.in_ticks), i128::from(clip.out_ticks))
+    };
     let mut frames = Vec::new();
     for index in 0..super::frame_count(source)? {
-        let source_start = (index as i128 * step).max(i128::from(clip.in_ticks));
-        let source_end = ((index as i128 + 1) * step).min(i128::from(clip.out_ticks));
+        let source_start = (index as i128 * step).max(source_in);
+        let source_end = ((index as i128 + 1) * step).min(source_out);
         if source_start >= source_end {
             continue;
         }
         let placed = |source_time: i128| -> Result<Time> {
-            let ticks = i128::from(clip.start_ticks) + source_time - i128::from(clip.in_ticks);
+            let offset = if reverse {
+                source_out - source_time
+            } else {
+                source_time - source_in
+            };
+            let ticks = i128::from(clip.start_ticks) + offset;
             let ticks = i64::try_from(ticks)
                 .map_err(|_| unsupported("numbered-image placement overflows"))?;
             boundary(ticks.clamp(clip.start_ticks, clip.end_ticks), rate)
         };
-        let left = placed(source_start)?;
-        let right = placed(source_end)?;
+        let (left, right) = if reverse {
+            (placed(source_end)?, placed(source_start)?)
+        } else {
+            (placed(source_start)?, placed(source_end)?)
+        };
         if left == right {
             continue;
         }
@@ -102,7 +185,14 @@ pub(crate) fn occurrence(
         !frames.is_empty(),
         "numbered-image source covers no selected sequence samples"
     );
-    Ok(SampledOccurrence { window, frames })
+    if reverse {
+        frames.reverse();
+    }
+    Ok(SampledOccurrence {
+        window,
+        frames,
+        playback: None,
+    })
 }
 
 #[cfg(test)]

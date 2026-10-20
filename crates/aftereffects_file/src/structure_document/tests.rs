@@ -11,14 +11,19 @@ use crate::{schema::layer_records::LayerRecord, structure::read_project};
 mod adjustment;
 mod adobe_feature_additions;
 mod adobe_vector_panel;
+mod axial_camera;
+mod cc_composite;
 mod essential;
 mod footage_anchor;
+mod hdr_native;
 mod implemented_core_additions;
 mod implemented_shape_additions;
 mod implemented_text_additions;
 mod media;
+mod mixed_temporal_easing;
 mod mosaic_derived;
 mod mosaic_effect_alias;
+mod native_canvas_transparency;
 mod native_general_cases;
 mod native_layer_styles;
 mod native_shape_cases;
@@ -28,6 +33,7 @@ mod parent_lookup;
 mod pr4442_general_cases;
 mod pr4442_text_cases;
 mod pr4442_vector_cases;
+mod protected_time;
 mod still_layers_and_frame_fades;
 mod text_control_links;
 
@@ -365,7 +371,7 @@ fn unsupported_static_position_expression_preserves_authored_base() {
             .children_mut()
             .unwrap();
         let leaves = property_root[1].children_mut().unwrap();
-        for pair in leaves.chunks_exact_mut(2) {
+        for pair in leaves.as_chunks_mut::<2>().0.iter_mut() {
             let is_position = pair[0]
                 .data_payload()
                 .unwrap()
@@ -494,7 +500,7 @@ fn native_animation_targets_occurrence_transform_and_separated_position_is_stati
 }
 
 #[test]
-fn spatial_position_axis_with_noise_equal_endpoints_stays_put_on_occurrence_and_parent_copy() {
+fn spatial_position_speed_limits_keep_occurrence_and_parent_copy() {
     use crate::rifx::Chunk;
     use fx_schema::{PropType, PropertyKeyframeEasing, PropertyTarget};
 
@@ -575,7 +581,10 @@ fn spatial_position_axis_with_noise_equal_endpoints_stays_put_on_occurrence_and_
 
     // The arriving easing of each Position axis on native layer 29's occurrence
     // and on the transform-only parent copy that carries its motion for 31.
-    fn arriving_easings(project: &StructuralProject) -> Vec<(PropType, PropertyKeyframeEasing)> {
+    fn arriving_easings(
+        project: &StructuralProject,
+        expected: [[f64; 2]; 2],
+    ) -> Vec<(PropType, PropertyKeyframeEasing)> {
         fn owners(layers: &[fx_schema::Layer], found: &mut Vec<LayerId>) {
             for layer in layers {
                 if let FxLayer::Group(group) = layer.data() {
@@ -595,7 +604,10 @@ fn spatial_position_axis_with_noise_equal_endpoints_stays_put_on_occurrence_and_
         let entries = converted.document.composition().dynamics().entries();
         let mut easings = Vec::new();
         for id in found {
-            for axis in [PropType::PositionX, PropType::PositionY] {
+            for (component, axis) in [PropType::PositionX, PropType::PositionY]
+                .into_iter()
+                .enumerate()
+            {
                 let keys = entries
                     .iter()
                     .find(|entry| entry.target == PropertyTarget::layer(id, axis))
@@ -603,6 +615,12 @@ fn spatial_position_axis_with_noise_equal_endpoints_stays_put_on_occurrence_and_
                     .unwrap_or_else(|| panic!("{axis:?} keys on {id:?}"))
                     .keyframes();
                 assert_eq!(keys.len(), 2);
+                for (key, value) in keys.iter().zip(expected) {
+                    assert_eq!(
+                        key.value(),
+                        &fx_schema::PropertyValue::Float(value[component])
+                    );
+                }
                 assert_eq!(
                     keys[1].spatial_in_tangent(),
                     None,
@@ -617,7 +635,8 @@ fn spatial_position_axis_with_noise_equal_endpoints_stays_put_on_occurrence_and_
     // AE keeps a duplicated key's incoming path speed although the copy sits
     // 2 ULPs from the original: this segment has no path to traverse.
     let noise = with_position_keys([[220.0, 350.000_000_000_000_1], [220.0, 350.0]], 6.25);
-    for (axis, easing) in arriving_easings(&noise) {
+    for (axis, easing) in arriving_easings(&noise, [[220.0, 350.000_000_000_000_1], [220.0, 350.0]])
+    {
         assert_eq!(easing, PropertyKeyframeEasing::Linear, "{axis:?}");
     }
 
@@ -631,12 +650,16 @@ fn spatial_position_axis_with_noise_equal_endpoints_stays_put_on_occurrence_and_
             .collect::<Vec<_>>()
     };
     let tiny = 0.0009765625; // 2^-10 px: sub-pixel, yet ~1.7e10 ULPs at 350.
-    // The second pair overshoots its arriving handle below zero, unclamped.
-    for (to, speed, y2) in [(350.0 + tiny, 0.000244140625, 0.8125), (650.0, 600.0, -0.5)] {
-        for easing in arriving_y(arriving_easings(&with_position_keys(
+    // Spatial speed shortens the second pair's incoming influence from 60% to
+    // 100 * 300 / (600 * 1.25) = 40%; scalar-value overshoot is not appropriate.
+    for (to, speed, expected_x2, y2) in [
+        (350.0 + tiny, 0.000244140625, 0.4, 0.8125),
+        (650.0, 600.0, 0.6, 0.0),
+    ] {
+        for easing in arriving_y(arriving_easings(
+            &with_position_keys([[220.0, 350.0], [220.0, to]], speed),
             [[220.0, 350.0], [220.0, to]],
-            speed,
-        ))) {
+        )) {
             let PropertyKeyframeEasing::CubicBezier {
                 x1,
                 y1,
@@ -646,8 +669,48 @@ fn spatial_position_axis_with_noise_equal_endpoints_stays_put_on_occurrence_and_
             else {
                 panic!("real motion to {to} lost its native ease: {easing:?}");
             };
-            assert!((x1 - 0.6).abs() < 1e-12 && y1 == 0.0 && (x2 - 0.4).abs() < 1e-12);
+            assert!((x1 - 0.6).abs() < 1e-12 && y1 == 0.0);
+            assert!((x2 - expected_x2).abs() < 1e-12, "to {to}: x2 {x2}");
             assert!((actual - y2).abs() < 1e-9, "to {to}: y2 {actual}");
+        }
+    }
+
+    // Nonuniform spatial parameter speed does not change distance on a straight
+    // monotone path. Keep the fixture's native 1.25 s / 60% temporal controls.
+    for (from, to, sign) in [(350.0, 650.0, 1.0), (650.0, 350.0, -1.0)] {
+        let mut project = with_position_keys([[220.0, from], [220.0, to]], 600.0);
+        let layer = composition_mut(&mut project, 16)
+            .layers
+            .iter_mut()
+            .find(|layer| layer.record.id() == 29)
+            .unwrap();
+        let properties = layer
+            .content
+            .iter_mut()
+            .find(|chunk| chunk.list_kind() == Some(*b"tdgp"))
+            .and_then(Chunk::children_mut)
+            .unwrap();
+        let transform = named_list(properties, "ADBE Transform Group", *b"tdgp");
+        let position = named_list(transform, "ADBE Position", *b"tdbs");
+        let keys = position
+            .iter_mut()
+            .find(|chunk| chunk.list_kind() == Some(*b"list"))
+            .and_then(Chunk::children_mut)
+            .unwrap();
+        let data = keys
+            .iter_mut()
+            .find(|chunk| chunk.id() == *b"ldat")
+            .unwrap();
+        let mut bytes = data.data_payload().unwrap().to_vec();
+        bytes[112..120].copy_from_slice(&(sign * 20.0_f64).to_be_bytes());
+        bytes[128 + 88..128 + 96].copy_from_slice(&(-sign * 40.0_f64).to_be_bytes());
+        *data = Chunk::data(*b"ldat", bytes).unwrap();
+        for easing in arriving_y(arriving_easings(&project, [[220.0, from], [220.0, to]])) {
+            let PropertyKeyframeEasing::CubicBezier { x1, y1, x2, y2 } = easing else {
+                panic!("straight path lost its temporal curve: {easing:?}");
+            };
+            assert!((x1 - 0.6).abs() < 1e-12 && y1 == 0.0 && (x2 - 0.6).abs() < 1e-12);
+            assert!(y2.abs() < 1e-12, "{easing:?}");
         }
     }
 }
@@ -1488,7 +1551,10 @@ fn remap_clocks(converted: &StructuralConversion) -> (&GroupLayer, Option<&Group
     let remap = gate
         .layers
         .iter()
-        .map(as_group)
+        .filter_map(|layer| match layer.data() {
+            FxLayer::Group(group) => Some(group),
+            _ => None,
+        })
         .find(|group| group.name == "Authored source remap");
     (gate, remap)
 }
@@ -1630,6 +1696,76 @@ fn cycled_remap_project(expression: &str, enabled: bool) -> StructuralProject {
     project
 }
 
+const MARKER_HOLD_REVERSE: &str = r#"try {
+  var k1 = key(1).time, k2 = key(2).time;
+  var nm = thisComp.marker.numKeys;
+  if (nm >= 2) {
+    var mIn = thisComp.marker.key(1).time;
+    var mOut = thisComp.marker.key(nm).time;
+    if (time <= k1) { 0; }
+    else if (time > k1 && time < k2 && time < mIn) { linear(time, 0, mIn, k1, k2); }
+    else if (time >= mIn && time <= mOut) { k2; }
+    else if (time > mOut) { linear(time, mOut, mOut + (mIn - k1), k2, k1); }
+  } else { value; }
+} catch(e) { value; }"#;
+
+#[test]
+fn marker_hold_reverse_remap_retains_editable_source_clock() {
+    let mut project = fixture("avlayer_flags.aep");
+    let comp = composition_mut(&mut project, 125);
+    comp.marker_times = Ok(vec![2.0, 3.0]);
+    let layer = &mut comp.layers[0];
+    set_layer_clock(layer, [(0, 1), (0, 1), (10, 1)]);
+    set_time_remap_keys(layer, &[(0, 0.0), (2, 2.0), (10, 10.0)]);
+    set_time_remap_expression(layer, MARKER_HOLD_REVERSE, true);
+    let converted = to_structural_fx_document(&project, Some(125)).unwrap();
+    let (_, remap) = remap_clocks(&converted);
+    let remap = playback(remap.expect("marker-driven editable remap"));
+    assert_eq!(
+        key_millis(remap),
+        [(0, 0), (2000, 2000), (3000, 2000), (5000, 0)]
+    );
+    assert_eq!(
+        (remap.before(), remap.after()),
+        (TimeRemapExtrapolation::Hold, TimeRemapExtrapolation::Hold)
+    );
+    EditableFxCompositionDocument::from_json_slice(&converted.document.to_json_vec().unwrap())
+        .unwrap();
+}
+
+#[test]
+fn marker_hold_reverse_remap_guards_gaps_and_keeps_value_fallback() {
+    for markers in [
+        Ok(Vec::new()),
+        Ok(vec![3.0, 4.0]),
+        Err("invalid marker list".into()),
+    ] {
+        let mut project = fixture("avlayer_flags.aep");
+        let comp = composition_mut(&mut project, 125);
+        let fallback = markers.as_ref().is_ok_and(Vec::is_empty);
+        comp.marker_times = markers;
+        let layer = &mut comp.layers[0];
+        set_layer_clock(layer, [(0, 1), (0, 1), (10, 1)]);
+        set_time_remap_keys(layer, &[(0, 0.0), (2, 2.0), (10, 10.0)]);
+        set_time_remap_expression(layer, MARKER_HOLD_REVERSE, true);
+        let converted = to_structural_fx_document(&project, Some(125)).unwrap();
+        let (_, remap) = remap_clocks(&converted);
+        if fallback {
+            assert_eq!(
+                key_millis(playback(remap.expect("authored value fallback"))),
+                [(0, 0), (2000, 2000), (10000, 10000)]
+            );
+        } else {
+            assert!(remap.is_none());
+            assert!(
+                remap_diagnostics(&converted)
+                    .iter()
+                    .any(|message| message.contains("authored remap omitted"))
+            );
+        }
+    }
+}
+
 #[test]
 fn exact_two_sided_cycle_expression_loops_the_authored_keys() {
     for expression in [
@@ -1734,9 +1870,17 @@ fn repeated_and_nested_sources_get_distinct_editable_occurrences() {
     fn walk(group: &GroupLayer, ids: &mut HashSet<LayerId>) {
         assert!(ids.insert(group.id));
         for layer in &group.layers {
-            let child = as_group(layer);
-            assert_eq!(child.parent, Some(group.id));
-            walk(child, ids);
+            assert_eq!(layer.parent_id(), Some(group.id));
+            if let FxLayer::Group(child) = layer.data() {
+                walk(child, ids);
+            } else {
+                assert!(
+                    group
+                        .masks
+                        .iter()
+                        .any(|mask| mask.layer == Some(layer.id()))
+                );
+            }
         }
     }
     walk(root(&converted), &mut ids);

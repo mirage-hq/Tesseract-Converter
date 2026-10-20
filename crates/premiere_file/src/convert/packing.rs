@@ -151,6 +151,8 @@ impl PicturePackingRecipe {
 /// One actual Dynamic Link picture supplied by the coordinator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AfterEffectsPicture {
+    /// Actual AEP working HDR domain, independent of the destination sequence.
+    pub working_hdr: Option<fx_conv::HdrTransfer>,
     /// Existing native Dynamic Link composition GUID.
     pub composition_guid: String,
     /// Canonical package-relative AEP path, for example
@@ -191,6 +193,7 @@ pub(crate) struct PicturePacker {
 
 #[derive(Debug, Clone)]
 struct ContainerHeader {
+    hdr: Option<crate::schema::SequenceHdr>,
     name: String,
     top_level: bool,
     dimensions: [u32; 2],
@@ -275,6 +278,7 @@ impl PicturePacker {
                 ContainerHeader {
                     name: name.to_owned(),
                     top_level: true,
+                    hdr: None,
                     dimensions,
                     frame_rate,
                     timeline_end_ticks,
@@ -291,6 +295,17 @@ impl PicturePacker {
             next_boundary: 0,
             next_placement: 0,
         }
+    }
+
+    /// Set the explicit export target before capturing generated child containers.
+    pub(crate) fn with_hdr(mut self, hdr: Option<crate::schema::SequenceHdr>) -> Self {
+        self.recipe
+            .containers
+            .get_mut(&self.recipe.root)
+            .expect("new picture capture always contains its root")
+            .header
+            .hdr = hdr;
+        self
     }
 
     pub(crate) fn root(&self) -> PictureContainerToken {
@@ -412,6 +427,7 @@ impl PicturePacker {
                 ContainerHeader {
                     name: name.to_owned(),
                     top_level: false,
+                    hdr: self.recipe.containers[&self.recipe.root].header.hdr,
                     dimensions,
                     frame_rate,
                     timeline_end_ticks,
@@ -668,6 +684,7 @@ impl ContainerRecipe {
 
     fn empty_sequence(&self) -> PrSequence {
         PrSequence {
+            hdr: self.header.hdr,
             native_frame_ticks: None,
             id: None,
             name: self.header.name.clone(),
@@ -678,6 +695,7 @@ impl ContainerRecipe {
             width: self.header.dimensions[0],
             height: self.header.dimensions[1],
             timeline_end_ticks: self.header.timeline_end_ticks,
+            adjustment_only_template: false,
         }
     }
 }
@@ -1449,7 +1467,12 @@ fn foreign_item(
                 frame_rate: (picture.frame_rate).into(),
                 width: picture.dimensions[0],
                 height: picture.dimensions[1],
-                kind: PrMediaKind::AfterEffectsComposition(identity),
+                kind: PrMediaKind::AfterEffectsComposition(
+                    crate::schema::after_effects::PrAfterEffectsSource {
+                        composition: identity,
+                        working_hdr: picture.working_hdr,
+                    },
+                ),
             }),
             audio: None,
         },

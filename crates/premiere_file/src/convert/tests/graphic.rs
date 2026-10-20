@@ -73,7 +73,7 @@ fn a_blended_graphic_groups_its_object_and_writes_the_blend_back() {
         let (mut document, omissions) = imported(graphic);
         // One object at the clip's defaults otherwise stays ungrouped; the
         // group blends the whole graphic.
-        let group = &document["composition"]["layers"][0];
+        let group = &crate::tests::support::picture_composition(&document)["layers"][0];
         assert_eq!(
             (&group["type"], &group["blendMode"]),
             (&json!("Group"), &json!("lighterColor"))
@@ -87,8 +87,8 @@ fn a_blended_graphic_groups_its_object_and_writes_the_blend_back() {
                 .collect()
         };
         assert_eq!(reports(&omissions), [OmissionKind::Approximated]);
-        // A graphic-only export: drop the video layer and keep the black canvas.
-        document["composition"]["layers"]
+        // Export the graphic without its sibling video.
+        crate::tests::support::picture_composition_mut(&mut document)["layers"]
             .as_array_mut()
             .unwrap()
             .remove(1);
@@ -113,7 +113,7 @@ fn a_blended_graphic_groups_its_object_and_writes_the_blend_back() {
             .unwrap();
         let (reopened, _) = PrProjectFile::load(&path).unwrap();
         for project in [&project, &reopened] {
-            let exported = project.sequences[0]
+            let exported = crate::tests::support::picture_sequence(project)
                 .video_items()
                 .find_map(PrVideoItem::graphic)
                 .unwrap();
@@ -3104,6 +3104,127 @@ fn exported_shape(
     (shape, omissions)
 }
 
+/// Graphics white follows the graphics the selected sequence actually shows:
+/// an HDR Graphic inside a placed nest counts, while an SDR sequence without
+/// one keeps the legacy (absent) graphics white.
+#[test]
+fn hdr_graphics_white_follows_graphics_reachable_from_the_selected_sequence() {
+    use crate::tests::support::{nest_of, sequence_of};
+    let convert = |sequence: &crate::schema::PrSequence| {
+        let media = video_media();
+        premiere_to_tesseract(
+            sequence,
+            &media,
+            &crate::tesseract_output::asset_ids_in_order(sequence, &media),
+            &mut Vec::new(),
+        )
+        .unwrap()
+        .to_json_value()
+        .unwrap()
+    };
+    let track = |items: Vec<PrVideoItem>, nests| PrVideoTrack {
+        items,
+        transitions: Vec::new(),
+        nests,
+    };
+    let mut hdr = shape_graphic();
+    hdr.hdr = Some(fx_conv::HdrTransfer::Pq);
+    let inner = sequence_of(
+        "Inner",
+        vec![track(vec![PrVideoItem::Graphic(hdr)], Vec::new())],
+    );
+    let end = inner.end_ticks();
+    let mut outer = sequence_of(
+        "Outer",
+        vec![track(Vec::new(), vec![nest_of(inner, 0..end, 0)])],
+    );
+    outer.timeline_end_ticks = end;
+    assert_eq!(convert(&outer)["hdrGraphicsWhiteNits"], json!(609.0));
+
+    let sdr = sequence_of(
+        "SDR",
+        vec![track(
+            vec![PrVideoItem::Graphic(shape_graphic())],
+            Vec::new(),
+        )],
+    );
+    assert!(convert(&sdr)
+        .get("hdrGraphicsWhiteNits")
+        .is_none_or(serde_json::Value::is_null));
+}
+
+#[test]
+fn hdr_graphic_source_decodes_points_without_rewriting_earlier_sibling_animators() {
+    for transfer in [fx_conv::HdrTransfer::Pq, fx_conv::HdrTransfer::Hlg] {
+        let legacy = keyed_graphic();
+        let (before, _) = imported(legacy.clone());
+        let mut hdr = shape_graphic();
+        hdr.hdr = Some(transfer);
+        let crate::schema::text::PrGraphicObject::Shape(shape) = &mut hdr.objects[0] else {
+            panic!("shape fixture");
+        };
+        shape.appearance.fill = Some(crate::schema::text::PrFill::Solid(
+            crate::schema::text::PrRgb([128, 128, 128]),
+        ));
+        let (document, warnings) = imported_graphics(vec![legacy, hdr]);
+        assert_eq!(document["hdrGraphicsWhiteNits"], json!(609.0));
+        let before = before["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap();
+        let after = document["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap();
+        assert_eq!(before.len(), after.len());
+        for (old, new) in before.iter().zip(after) {
+            assert_eq!(
+                old["animator"], new["animator"],
+                "previous sibling animation must not be decoded again"
+            );
+        }
+        let shape = document["composition"]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["type"] == "Shape")
+            .unwrap();
+        let actual: [f64; 4] =
+            serde_json::from_value(shape["shape"]["fills"][0]["paint"]["color"].clone()).unwrap();
+        let expected = fx_conv::HdrColorBridge::new(transfer, None)
+            .unwrap()
+            .to_fx([128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0])
+            .unwrap();
+        for (actual, expected) in actual.into_iter().zip(expected) {
+            assert!((actual - expected).abs() < 1e-10);
+        }
+        assert!(warnings
+            .iter()
+            .any(|warning| warning.to_string().contains("HDR Graphic source")));
+        assert!(!warnings.iter().any(|warning| warning
+            .to_string()
+            .contains("admitted key endpoints decoded")));
+    }
+}
+
+#[test]
+fn extended_shape_color_exports_clipped_with_contextual_diagnostic() {
+    let mut layer = imported_object(shape_graphic());
+    layer["shape"]["fills"][0]["paint"] = json!({"type":"solid", "color":[2.0, 1.0, 0.5, 1.0]});
+    let (shape, omissions) = exported_shape(layer, Vec::new());
+    assert_eq!(
+        shape.unwrap().appearance.fill,
+        Some(PrFill::Solid(PrRgb([255, 255, 128])))
+    );
+    assert!(omissions
+        .iter()
+        .any(|omission| omission.to_string().contains("Extended-sRGB")
+            && omission.to_string().contains("clamped")));
+    assert_eq!(
+        rgb([2.0, 1.0, 0.5, 1.0], "text fill").unwrap(),
+        PrRgb([255, 255, 128])
+    );
+    assert!(rgb([65.0, 1.0, 0.5, 1.0], "text fill").is_err());
+}
+
 #[test]
 fn legacy_json_appearance_placements_edit_apart_and_export_their_current_modern_paint() {
     use crate::format::shape_payload::{decode_appearance, encode_appearance};
@@ -3315,6 +3436,7 @@ fn shape_stroke_joins_convert_only_at_the_corners_calibration_two_measured() {
         shape.appearance.stroke = Some(PrShapeStroke {
             color: PrRgb([0, 255, 64]),
             width: 24.0,
+            join: None,
         });
         assert_eq!(stroke_join(&shape.path, None), import, "{angle}");
         if let Ok(join) = import {
@@ -4841,7 +4963,14 @@ fn source_text_tracks_export_as_one_held_document_per_key_time() {
         (SourceTextField::Size, &size),
         (SourceTextField::StrokeEnabled, &stroke),
     ]);
-    let keys = source_text_keys(&tracks, &layer.source_text, "OpenSans-Bold", EXPORT_IN).unwrap();
+    let keys = source_text_keys(
+        &tracks,
+        &layer.source_text,
+        "OpenSans-Bold",
+        EXPORT_IN,
+        None,
+    )
+    .unwrap();
     // One key per distinct time; each field holds its last key, and the
     // first key before it. The FX line spacing 146 px stays, so the native
     // leading above 120 % of the size shrinks as the size grows.
@@ -5225,7 +5354,7 @@ fn a_clip_motion_moves_the_graphic_root_once_from_a_group() {
         enabled: false,
         ..text_graphic()
     });
-    let moved = &document["composition"]["layers"][0];
+    let moved = &crate::tests::support::picture_composition(&document)["layers"][0];
     let [content] = moved["layers"].as_array().unwrap().as_slice() else {
         panic!("a Motion group holds one root: {moved}");
     };

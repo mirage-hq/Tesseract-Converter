@@ -17,6 +17,7 @@ pub(crate) fn plain_group(
     layers: Vec<Layer>,
 ) -> Result<GroupLayer> {
     Ok(GroupLayer {
+        render_domain: None,
         id,
         name,
         description: String::new(),

@@ -13,6 +13,87 @@ use crate::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
+// Classify native membership, not retained output: a failed ordinary picture
+// must never be mistaken for an intentionally adjustment-only mix template.
+fn adjustment_only_template(graph: &Graph<'_>, groups: &[Record<'_>]) -> bool {
+    let mut adjustments = 0;
+    for group in groups {
+        let Ok(references) = group.track_references() else {
+            return false;
+        };
+        for reference in references {
+            let Ok(track) = graph.locate(&reference, "template membership") else {
+                return false;
+            };
+            if !track.has_referenced_track_items() {
+                continue;
+            }
+            if group.tag() != records::VIDEO_TRACK_GROUP.tag
+                || track.tag() != records::VIDEO_CLIP_TRACK.tag
+            {
+                return false;
+            }
+            let items = track.track_item_references();
+            if items.is_empty() {
+                return false;
+            }
+            for reference in items {
+                let Ok(record) = graph.locate(&reference, "template item") else {
+                    return false;
+                };
+                let Ok(item) = graph.decode::<crate::schema::native::VideoClipTrackItem>(record)
+                else {
+                    return false;
+                };
+                if !super::adjustment::is_flagged(graph, &item) {
+                    return false;
+                }
+                adjustments += 1;
+            }
+        }
+    }
+    adjustments > 0
+}
+
+// Only native membership can distinguish an empty source from failed conversion.
+fn empty_native_sequence(graph: &Graph<'_>, groups: &[Record<'_>]) -> bool {
+    groups.iter().all(|group| {
+        if group.tag() == records::VIDEO_TRACK_GROUP.tag {
+            let Ok(video) = graph.decode::<VideoTrackGroup>(*group) else {
+                return false;
+            };
+            if let Some(reference) = video
+                .value
+                .component_owner
+                .and_then(|owner| owner.components)
+            {
+                let Ok(chain) = graph.follow::<crate::schema::native::VideoComponentChain>(
+                    &reference,
+                    &video.identity,
+                ) else {
+                    return false;
+                };
+                if !super::animation::chain_components(&chain)
+                    .is_ok_and(|components| components.is_empty())
+                {
+                    return false;
+                }
+            }
+        } else if group.tag() != records::AUDIO_TRACK_GROUP.tag
+            && group.tag() != records::DATA_TRACK_GROUP.tag
+        {
+            return false;
+        }
+        group.track_references().is_ok_and(|references| {
+            references.iter().all(|reference| {
+                graph
+                    .locate(reference, "empty sequence membership")
+                    .is_ok_and(|track| !track.has_referenced_track_items())
+            })
+        })
+    })
+}
+
 fn report_non_video_tracks(graph: &Graph<'_>, group: Record<'_>, omissions: &mut Vec<Omission>) {
     let identity = group.identity();
     let references = match group.track_references() {
@@ -135,15 +216,19 @@ pub(super) fn read_sequence_tracks_at(
         "TrackGroups",
     )?;
     let mut groups = Vec::with_capacity(track_groups.groups.len());
+    let mut all_groups_resolved = true;
     for entry in track_groups.groups {
         match graph.locate(&entry.target, &sequence.identity) {
             Ok(group) => groups.push(group),
-            Err(error) => omit(
-                omissions,
-                OmissionScope::Feature,
-                &sequence.identity,
-                format!("track group not converted: {error}"),
-            ),
+            Err(error) => {
+                all_groups_resolved = false;
+                omit(
+                    omissions,
+                    OmissionScope::Feature,
+                    &sequence.identity,
+                    format!("track group not converted: {error}"),
+                );
+            }
         }
     }
     let data_groups: Vec<_> = groups
@@ -161,12 +246,15 @@ pub(super) fn read_sequence_tracks_at(
         "{}: expected one video track group",
         sequence.identity
     );
+    let adjustment_only_template = all_groups_resolved
+        && selected_video_track.is_none()
+        && adjustment_only_template(graph, &groups);
     let mut audio_occurrences = Vec::new();
     let mut nest_sounds = Vec::new();
     // Camera selection is picture-only. Do not resolve source-sequence sound
     // or captions: only the outer sequence's saved items may play them.
     if selected_video_track.is_none() {
-        for group in groups {
+        for group in groups.iter().copied() {
             match group.tag() {
                 tag if tag == records::VIDEO_TRACK_GROUP.tag => {}
                 tag if tag == records::AUDIO_TRACK_GROUP.tag => {
@@ -210,6 +298,11 @@ pub(super) fn read_sequence_tracks_at(
             "ColorManagementSettings",
             "ImmersiveVideoVRConfiguration",
             "OutputColorSpace",
+            "WorkingColorSpace",
+            "WorkingColorSpaceConfiguration",
+            "AllowLinearCompositing",
+            "ToneMappingAlgorithm",
+            "GamutCompressionAlgorithm",
             "AutoInputGamutCompressionEnabled",
             "IsGraphicsWhiteSameAsProject",
             "IsColorAwareEffectsEnabledSameAsProject",
@@ -240,12 +333,36 @@ pub(super) fn read_sequence_tracks_at(
         );
     }
     let video = graph.decode::<VideoTrackGroup>(video_record)?;
+    let hdr = super::hdr::sequence(graph, &video, omissions);
     let native_frame_ticks = video
         .value
         .track_group
         .as_ref()
         .and_then(|group| group.frame_rate.as_deref())
         .and_then(|ticks| ticks.parse::<i64>().ok());
+    // A valid audio placement still sets the sequence end when its sound is
+    // omitted. Camera selection remains picture-only, as above.
+    let sequence_end = |video_frame_ticks| {
+        std::iter::once(video_record)
+            .chain(groups.iter().copied().filter(|group| {
+                selected_video_track.is_none() && group.tag() == records::AUDIO_TRACK_GROUP.tag
+            }))
+            .map(|group| {
+                timeline_end::read_sequence_end(
+                    graph,
+                    group,
+                    if group.tag() == records::AUDIO_TRACK_GROUP.tag {
+                        // Audio placements keep their exact sample-clock end;
+                        // snapping upward would lengthen otherwise retained sound.
+                        1
+                    } else {
+                        video_frame_ticks
+                    },
+                )
+            })
+            .max()
+            .unwrap_or(0)
+    };
     let (frame_rate, [width, height], mut video_tracks) = video::read_tracks(
         graph,
         video,
@@ -253,20 +370,18 @@ pub(super) fn read_sequence_tracks_at(
         nesting,
         omissions,
         selected_video_track,
+        sequence_end(1),
     )?;
+    let timeline_end_ticks =
+        sequence_end(native_frame_ticks.unwrap_or(frame_rate.ticks_per_frame()));
     audio::clamp_short_fades(&mut audio_occurrences, frame_rate, omissions);
     let alone = super::nested::pair_sounds(&mut video_tracks, nest_sounds, omissions)?;
-    // Converted audio extends this video end exactly in PrSequence::end_ticks.
-    let timeline_end_ticks = timeline_end::read_sequence_end(
-        graph,
-        video_record,
-        native_frame_ticks.unwrap_or(frame_rate.ticks_per_frame()),
-    );
     let sequence_id = sequence
         .value
         .object_uid
         .ok_or_else(|| unsupported("sequence GUID missing"))?;
     let mut parsed = PrSequence {
+        hdr,
         native_frame_ticks: native_frame_ticks
             .filter(|ticks| *ticks != frame_rate.ticks_per_frame()),
         id: Some(sequence_id),
@@ -278,23 +393,55 @@ pub(super) fn read_sequence_tracks_at(
         width,
         height,
         timeline_end_ticks,
+        adjustment_only_template,
     };
     super::nested::play_alone(graph, alone, &mut parsed, media, nesting, omissions);
     if selected_video_track.is_none() {
         super::caption::read_caption_tracks(graph, &data_groups, &mut parsed, nesting, omissions);
+    }
+    // Graphic placements retain exact tick endpoints, unlike sampled media.
+    // Nearest-frame timeline inference must not end before retained text/shape
+    // content and turn an otherwise valid nested sequence into an omission.
+    let graphic_end = parsed
+        .video_items()
+        .filter_map(crate::schema::PrVideoItem::graphic)
+        .map(|graphic| graphic.end_ticks)
+        .max()
+        .unwrap_or(0);
+    if graphic_end > parsed.timeline_end_ticks {
+        parsed.timeline_end_ticks = graphic_end;
+        crate::approximate(
+            omissions,
+            &sequence_identity,
+            "sequence end retains the exact graphic endpoint instead of rounding before editable content; native partial-frame sampling is unverified",
+        );
     }
     // An adjustment layer has no picture of its own, so it is not content.
     let has_content = parsed.video_items().any(|item| {
         item.media()
             .is_none_or(|clip| !media[&clip.media].is_adjustment())
     });
-    if !has_content && parsed.nest_occurrences().next().is_none() && parsed.audio.is_empty() {
+    if !has_content
+        && parsed.nest_occurrences().next().is_none()
+        && parsed.audio.is_empty()
+        && !(parsed.adjustment_only_template && parsed.timeline_end_ticks > 0)
+    {
+        if nesting.reads_inner_timeline()
+            && all_groups_resolved
+            && empty_native_sequence(graph, &groups)
+        {
+            return Err(BuildError::EmptyNativeSequence(sequence_identity));
+        }
         return Err(unsupported(format!(
             "no convertible video or audio occurrences: {}",
             omissions[first_omission..]
                 .last()
                 .map_or("none", |item| item.reason.as_str())
         )));
+    }
+    if !has_content && parsed.adjustment_only_template {
+        crate::approximate(omissions, &sequence_identity,
+            "adjustment-only sequence retains its timed editable black canvas; omitted adjustment processing is not restored and RGB/alpha/audio fidelity is unverified");
     }
     parsed.validate_timeline(media)?;
     Ok(parsed)

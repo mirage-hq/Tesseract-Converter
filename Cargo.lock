@@ -2888,7 +2888,7 @@ dependencies = [
 
 [[package]]
 name = "tsrct-conv"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "aftereffects_file",
  "anyhow",
@@ -2900,6 +2900,7 @@ dependencies = [
  "media_transcode",
  "premiere_file",
  "roxmltree",
+ "same-file",
  "serde",
  "serde_json",
  "sha2 0.10.9",

@@ -79,7 +79,8 @@ macro_rules! define_shape_styles_schema {
         pub enum ShapePaint {
             /// Solid RGBA paint.
             Solid {
-                /// Solid color.
+                /// Extended-sRGB RGB (0..64), coverage alpha (0..1).
+                #[serde(deserialize_with = "deserialize_extended_color")]
                 color: ColorProperty,
             },
             /// Gradient paint.
@@ -107,6 +108,16 @@ macro_rules! define_shape_styles_schema {
             Radial,
             Conic,
             $($historical)*
+        }
+        fn deserialize_extended_color<'de, D>(deserializer: D) -> Result<ColorProperty, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            let color = ColorProperty::deserialize(deserializer)?;
+            if !$crate::has_valid_extended_color(&color) {
+                return Err(serde::de::Error::custom("solid paint requires finite RGB in 0..=64 and alpha in 0..=1"));
+            }
+            Ok(color)
         }
     };
 }
@@ -165,6 +176,7 @@ pub struct ShapeGradientStop {
     /// Stop offset along the gradient axis, normalized 0..1.
     pub offset: ScalarProperty,
     /// Stop RGBA color.
+    #[serde(deserialize_with = "crate::deserialize_extended_color")]
     pub color: ColorProperty,
 }
 
@@ -204,13 +216,8 @@ impl ShapePaint {
     /// Returns whether every authored paint component satisfies the persisted finite/range contract.
     #[must_use]
     pub fn has_valid_values(&self) -> bool {
-        let valid_color = |color: &ColorProperty| {
-            color
-                .iter()
-                .all(|channel| channel.is_finite() && (0.0..=1.0).contains(channel))
-        };
         match self {
-            Self::Solid { color } => valid_color(color),
+            Self::Solid { color } => crate::has_valid_extended_color(color),
             Self::Gradient {
                 start, end, stops, ..
             } => {
@@ -219,7 +226,7 @@ impl ShapePaint {
                     && stops.iter().all(|stop| {
                         stop.offset.is_finite()
                             && (0.0..=1.0).contains(&stop.offset)
-                            && valid_color(&stop.color)
+                            && crate::has_valid_extended_color(&stop.color)
                     })
                     && stops
                         .windows(2)

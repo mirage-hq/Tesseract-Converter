@@ -65,6 +65,11 @@ mod lumetri;
 mod offset;
 
 const COMPONENT: &str = "Component";
+const LEGACY_BLACK_WHITE: EffectSpec = EffectSpec {
+    match_name: "PR.ADBE Black & White",
+    filter_type: "1",
+    ..BLACK_WHITE
+};
 const GEOMETRY2: EffectSpec = EffectSpec {
     match_name: "AE.ADBE Geometry2",
     ..TRANSFORM
@@ -90,7 +95,12 @@ const PARAM_CHILDREN: [&str; 13] = [
 /// Effect Controls UI state. Other component properties, such as the
 /// `ParentPinID` of Essential Graphics layers, can change what an effect
 /// applies to and are rejected.
-const UI_PROPERTIES: [&str; 2] = ["ECP.Filter.Expanded", "BE.VideoComponentChain.ChildPinID"];
+const UI_PROPERTIES: [&str; 3] = [
+    "ECP.Filter.Expanded",
+    "BE.VideoComponentChain.ChildPinID",
+    // Saved subcomponent allocation state, not a picture control or mask reference.
+    "BE.VideoFilterComponent.NextComponentNumber",
+];
 
 /// Keep the native affine kind until point-basis validation: Geometry2 and
 /// ordinary Transform both lower to `PrEffectParams::Transform`.
@@ -183,6 +193,8 @@ pub(super) struct EffectOwner<'a> {
     /// measured.
     pub(super) source_is_canvas: bool,
     pub(super) adjustment: bool,
+    /// Keep the affine controls for the solid host's source-Crop admission.
+    pub(super) solid_crop: bool,
 }
 
 impl SplitChain<'_, '_> {
@@ -239,28 +251,38 @@ impl SplitChain<'_, '_> {
                 read_effect_mask(graph, record, &mut Vec::new())?;
                 continue;
             }
-            let reason = if native.match_name == Some(LEGACY_LUMA_KEY_MATCH_NAME) {
-                let admission = if self.ordered {
-                    read_legacy_luma(graph, record, &native).map(|_| ())
-                } else {
-                    Err(unsupported(
-                        "Legacy Luma requires an unambiguous effect stack order",
-                    ))
-                };
-                if let Err(error) = admission {
-                    reason(error)
+            let reason =
+                if native.match_name == Some(crate::schema::ultra_key::ULTRA_KEY.match_name) {
+                    if self.ordered && carries_mask(graph, record)?.is_none() {
+                        match read_ultra_key(graph, record, &native) {
+                            Ok(_) => continue,
+                            Err(error) => reason(error),
+                        }
+                    } else {
+                        "Ultra Key requires an ordered unmasked static stack".to_owned()
+                    }
+                } else if native.match_name == Some(LEGACY_LUMA_KEY_MATCH_NAME) {
+                    let admission = if self.ordered {
+                        read_legacy_luma(graph, record, &native).map(|_| ())
+                    } else {
+                        Err(unsupported(
+                            "Legacy Luma requires an unambiguous effect stack order",
+                        ))
+                    };
+                    if let Err(error) = admission {
+                        reason(error)
+                    } else if let Some(mask) = carries_mask(graph, record)? {
+                        format!("carries a mask ({mask} sub-component)")
+                    } else {
+                        continue;
+                    }
+                } else if is_coverage_effect(native.match_name, native.display_name) {
+                    "changes what the clip covers or its transparency".to_owned()
                 } else if let Some(mask) = carries_mask(graph, record)? {
                     format!("carries a mask ({mask} sub-component)")
                 } else {
                     continue;
-                }
-            } else if is_coverage_effect(native.match_name, native.display_name) {
-                "changes what the clip covers or its transparency".to_owned()
-            } else if let Some(mask) = carries_mask(graph, record)? {
-                format!("carries a mask ({mask} sub-component)")
-            } else {
-                continue;
-            };
+                };
             return Err(unsupported(format!(
                 "{} at stack position {position}: {reason}; the clip is not converted without it",
                 native.identify()
@@ -440,18 +462,21 @@ impl SplitChain<'_, '_> {
         }
     }
 
-    /// Moved/scaled adjustments have measured coverage only with no active
-    /// standard effect or static full RGB Invert. Check native records before
-    /// ordinary effect omissions erase an unsupported active effect.
+    /// Check native records before effect omissions can erase coverage-critical
+    /// controls. Offset uses a diagnosed rectangular-coverage approximation.
     pub(super) fn reject_unmeasured_adjustment_coverage(&self, graph: &Graph<'_>) -> Result<()> {
         for &record in &self.standard {
             let native = NativeEffect::inspect(record);
             if native.bypass == Some("true") {
                 continue;
             }
+            if self.ordered && native.match_name == Some(crate::schema::OFFSET.match_name) {
+                offset::read(graph, record, &native)?;
+                continue;
+            }
             ensure!(
                 self.ordered && native.match_name == Some(INVERT.match_name),
-                "{}: nondefault adjustment Motion supports only static RGB Invert or no active effect",
+                "{}: nondefault adjustment Motion supports only Offset, static RGB Invert or no active effect",
                 native.identify()
             );
             let effect = read_invert(graph, record, &native)?;
@@ -473,6 +498,19 @@ impl SplitChain<'_, '_> {
         self.standard
             .iter()
             .filter(|&&record| NativeEffect::inspect(record).is_active_transform())
+            .count()
+    }
+
+    /// Solid source-Crop staging counts both native affine record kinds.
+    pub(super) fn active_solid_transforms(&self) -> usize {
+        self.standard
+            .iter()
+            .filter(|&&record| {
+                let native = NativeEffect::inspect(record);
+                native.bypass != Some("true")
+                    && matches!(native.match_name, Some(name)
+                    if name == TRANSFORM.match_name || name == GEOMETRY2.match_name)
+            })
             .count()
     }
 
@@ -515,12 +553,17 @@ impl SplitChain<'_, '_> {
     }
 
     /// Dropping an active Corner Pin would expose a full-frame nest over
-    /// underlying content; the picture Group has no established pin frame.
+    /// underlying content. Only an isolated pin has a normalized frame mapping.
     pub(super) fn has_active_nest_corner_pin(&self) -> bool {
         self.standard.iter().any(|&record| {
             let native = NativeEffect::inspect(record);
             native.bypass != Some("true") && native.match_name == Some(CORNER_PIN.match_name)
         })
+    }
+
+    /// The bounded nested pin mapping owns the entire standard picture stack.
+    pub(super) fn is_isolated_nest_corner_pin(&self) -> bool {
+        self.ordered && self.standard.len() == 1 && self.has_active_nest_corner_pin()
     }
 
     /// Inspect the native stack before any lossy effect conversion. This is
@@ -529,13 +572,15 @@ impl SplitChain<'_, '_> {
         &self,
         graph: &Graph<'_>,
         owner: &EffectOwner<'_>,
+        has_coverage: bool,
         omissions: &mut Vec<Omission>,
-    ) -> Result<Vec<NativeNestEffect>> {
+    ) -> Result<(Vec<NativeNestEffect>, usize)> {
         ensure!(
             self.ordered,
             "nested affine component Index values disagree with their order"
         );
         let mut effects = Vec::new();
+        let mut mask_boundary = None;
         // `standard` is already in native render order, not document order.
         // Keep affine controls as separate stages; do not multiply matrices
         // or move a colour effect across a spatial transform.
@@ -544,10 +589,16 @@ impl SplitChain<'_, '_> {
             if native.bypass == Some("true") {
                 continue;
             }
+            if native.is_active_mask() {
+                if has_coverage {
+                    mask_boundary.get_or_insert(effects.len());
+                }
+                continue;
+            }
             if native.match_name == Some(TRANSFORM.match_name)
                 || native.match_name == Some(GEOMETRY2.match_name)
             {
-                let geometry2_masks = if native.match_name == Some(GEOMETRY2.match_name) {
+                let mut geometry2_masks = if native.match_name == Some(GEOMETRY2.match_name) {
                     read_nested_geometry2_masks(graph, record, omissions)?
                 } else {
                     ensure!(
@@ -556,8 +607,8 @@ impl SplitChain<'_, '_> {
                     );
                     Vec::new()
                 };
-                let effect = read_transform(graph, record, &native)?;
-                let PrEffectParams::Transform(transform) = &effect.params else {
+                let mut effect = read_transform(graph, record, &native)?;
+                let PrEffectParams::Transform(transform) = &mut effect.params else {
                     return Err(unsupported("nested Transform has no affine parameters"));
                 };
                 ensure!(transform.motion_blur_shutter_angle().is_none() && !transform.bicubic_sampling
@@ -566,6 +617,17 @@ impl SplitChain<'_, '_> {
                         && !(transform.uniform_scale && animation.param.id == TRANSFORM_SCALE_WIDTH.id)),
                     "nested Transform requires fully retained controls and keys without motion blur or bicubic sampling");
                 if !geometry2_masks.is_empty() {
+                    // A transparent identity effect removes only its masked region.
+                    if transform.opacity == 0.0
+                        && transform.position == transform.anchor_point
+                        && effect.animations.is_empty()
+                        && geometry2_masks.len() == 1
+                        && geometry2_masks[0].opacity == 100.0
+                        && geometry2_masks[0].opacity_keys.is_empty()
+                    {
+                        geometry2_masks[0].inverted = !geometry2_masks[0].inverted;
+                        transform.opacity = 100.0;
+                    }
                     ensure!(transform.uniform_scale && transform.scale_height == 100.0
                         && transform.scale_width == 100.0 && transform.skew == 0.0
                         && transform.skew_axis == 0.0 && transform.rotation == 0.0
@@ -596,7 +658,12 @@ impl SplitChain<'_, '_> {
                 }));
             }
         }
-        Ok(effects)
+        let before_mask = mask_boundary.unwrap_or(0);
+        ensure!(
+            before_mask == 0 || before_mask == effects.len(),
+            "nested affine effects on both sides of coverage have no staged mask boundary"
+        );
+        Ok((effects, before_mask))
     }
 
     /// Only the measured sole standard Stroke can own occurrence geometry.
@@ -755,6 +822,23 @@ impl SplitChain<'_, '_> {
                     }
                 })
                 .map(|effect| vec![effect])
+            } else if self.ordered
+                && native.match_name == Some(GEOMETRY2.match_name)
+                && has_matte
+                && read_transform(graph, record, &native).is_ok_and(|effect| {
+                    effect
+                        .animations
+                        .iter()
+                        .any(|animation| animation.param.id == TRANSFORM_POSITION.id)
+                })
+            {
+                Err(unsupported("Geometry2 Position with Track Matte Key is outside the measured Transform/matte pair; translation was not imported"))
+            } else if self.ordered
+                && owner.solid_crop
+                && owner.source_is_canvas
+                && native.match_name == Some(GEOMETRY2.match_name)
+            {
+                read_transform(graph, record, &native).map(|effect| vec![effect])
             } else if self.ordered && native.match_name == Some(GEOMETRY2.match_name) {
                 let zoom = if owner.source_is_canvas && owner.source.is_none() {
                     read_geometry2_with_notes(
@@ -779,6 +863,11 @@ impl SplitChain<'_, '_> {
             } else if self.ordered && native.match_name == Some(LEGACY_LUMA_KEY_MATCH_NAME) {
                 read_legacy_luma_with_notes(graph, record, &native, &mut approximations)
                     .map(|e| vec![e])
+            } else if self.ordered
+                && native.match_name == Some(crate::schema::ultra_key::ULTRA_KEY.match_name)
+            {
+                approximations.push(crate::schema::ultra_key::APPROXIMATION.to_owned());
+                read_ultra_key(graph, record, &native).map(|effect| vec![effect])
             } else if self.ordered && native.match_name == Some(lumetri::MATCH_NAME) {
                 lumetri::read(graph, record, &native, &mut omitted_controls)
             } else if self.ordered && native.match_name == Some(crate::schema::OFFSET.match_name) {
@@ -865,6 +954,12 @@ impl SplitChain<'_, '_> {
                             format!("{description}: {}", offset::REPLACEMENT),
                         );
                     }
+                    if native.match_name == Some(crate::schema::DROP_SHADOW.match_name) {
+                        crate::approximate(omissions, &native.identity, format!("{description}: Drop Shadow retains color, opacity, static direction and editable distance/softness; softness uses half-radius Gaussian blur. Native group bounds, Motion scaling, color/alpha and edge sampling are unmeasured; Shadow Only and animated color/opacity/direction are unsupported"));
+                    }
+                    if native.match_name == Some(crate::schema::PROC_AMP.match_name) {
+                        crate::approximate(omissions, &native.identity, format!("{description}: ProcAmp Brightness is replaced by FX Exposure offset (saved percentage / 100), with neutral exposure/gamma; native YUV/RGB processing and alpha fidelity are unmeasured"));
+                    }
                     effects.extend(effect);
                     converted_effects.push((native.identity, description));
                 }
@@ -920,16 +1015,21 @@ fn standard_effect_reader(
         Some(lumetri::MATCH_NAME) => lumetri::reject_interpretation,
         Some("AE.ADBE Offset") => offset::reject_interpretation,
         Some(name) if name == BRIGHTNESS_CONTRAST.match_name => read_brightness_contrast,
+        Some(name) if name == crate::schema::PROC_AMP.match_name => read_proc_amp,
+        Some(name) if name == crate::schema::DROP_SHADOW.match_name => read_drop_shadow,
         Some(name) if name == INVERT.match_name => read_invert,
         Some(name) if name == FIND_EDGES.match_name => read_find_edges,
         Some(name) if name == TINT.match_name => read_tint,
-        Some(name) if name == BLACK_WHITE.match_name => read_black_white,
+        Some(name) if name == BLACK_WHITE.match_name || name == LEGACY_BLACK_WHITE.match_name => {
+            read_black_white
+        }
         Some(name) if name == RAMP.match_name => read_ramp,
         Some(name) if name == MOSAIC.match_name => read_mosaic,
         Some(name) if name == REPLICATE.match_name => read_replicate,
         Some(name) if name == POSTERIZE.match_name => read_posterize,
         Some(name) if name == SHARPEN.match_name => read_sharpen,
         Some(LEGACY_LUMA_KEY_MATCH_NAME) => read_legacy_luma,
+        Some("AE.ADBE Ultra Key") => read_ultra_key,
         Some(name) if name == NOISE.match_name => read_noise,
         Some("AE.ADBE_Noise_FX") => read_modern_noise,
         Some(name) if name == POSTERIZE_TIME.match_name => read_posterize_time,
@@ -1017,8 +1117,8 @@ fn read_nested_geometry2_masks(
                 super::mask::read_opacity_mask(graph, &filter.identity, &single, omissions)?
             {
                 ensure!(
-                    mask.raster.is_none() && mask.path_keys.is_empty(),
-                    "nested Geometry2 requires a static vector effect-mask outline"
+                    mask.raster.is_none(),
+                    "nested Geometry2 requires a vector effect-mask outline"
                 );
                 masks.push(mask);
             }
@@ -1573,9 +1673,65 @@ fn private_values(graph: &Graph<'_>, record: Record<'_>) -> Result<Vec<u16>> {
         LEVELS.params.len()
     );
     Ok(bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
         .collect())
+}
+
+fn read_drop_shadow(
+    graph: &Graph<'_>,
+    record: Record<'_>,
+    native: &NativeEffect<'_>,
+) -> Result<PrEffect> {
+    let spec = &crate::schema::DROP_SHADOW;
+    let values = param_values(graph, record, spec)?;
+    ensure!(
+        values.get(&spec.params[5])? == "false",
+        "Drop Shadow Shadow Only has no mapping; picture retained"
+    );
+    Ok(PrEffect {
+        mask: None,
+        enabled: native.enabled()?,
+        params: PrEffectParams::DropShadow {
+            color: values.colour(&spec.params[0])?,
+            opacity: values.scalar(&spec.params[1])?,
+            direction: values.scalar(&spec.params[2])?,
+            distance: values.scalar(&spec.params[3])?,
+            softness: values.scalar(&spec.params[4])?,
+        },
+        animations: values.animations,
+    })
+}
+
+fn read_proc_amp(
+    graph: &Graph<'_>,
+    record: Record<'_>,
+    native: &NativeEffect<'_>,
+) -> Result<PrEffect> {
+    use crate::schema::{PROC_AMP, PROC_AMP_BRIGHTNESS};
+    let enabled = native.enabled()?;
+    let values = param_values(graph, record, &PROC_AMP)?;
+    for (param, neutral) in PROC_AMP.params[1..4].iter().zip([100.0, 0.0, 100.0]) {
+        ensure!(
+            values.scalar(param)? == neutral,
+            "ProcAmp nonneutral {} has no mapping; effect omitted, picture retained",
+            param.name
+        );
+    }
+    ensure!(
+        values.get(&PROC_AMP.params[4])? == "false",
+        "ProcAmp split view has no mapping; effect omitted, picture retained"
+    );
+    // Split Percent is inactive with split view off, but still validate its value.
+    values.scalar(&PROC_AMP.params[5])?;
+    Ok(PrEffect {
+        mask: None,
+        enabled,
+        params: PrEffectParams::ProcAmpBrightness(values.scalar(&PROC_AMP_BRIGHTNESS)?),
+        animations: values.animations,
+    })
 }
 
 fn read_brightness_contrast(
@@ -1663,15 +1819,19 @@ fn read_tint(graph: &Graph<'_>, record: Record<'_>, native: &NativeEffect<'_>) -
     })
 }
 
-/// A Black & White has no parameters; `param_values` still checks the record's
-/// shape (Premiere 26.5.1 saves it without a `Params` element).
+/// Both saved grayscale forms have no controls; the legacy form carries an empty arb slot.
 fn read_black_white(
     graph: &Graph<'_>,
     record: Record<'_>,
     native: &NativeEffect<'_>,
 ) -> Result<PrEffect> {
     let enabled = native.enabled()?;
-    let values = param_values(graph, record, &BLACK_WHITE)?;
+    let spec = if native.match_name == Some(LEGACY_BLACK_WHITE.match_name) {
+        &LEGACY_BLACK_WHITE
+    } else {
+        &BLACK_WHITE
+    };
+    let values = param_values(graph, record, spec)?;
     Ok(PrEffect {
         mask: None,
         enabled,
@@ -1680,13 +1840,28 @@ fn read_black_white(
     })
 }
 
-/// A Ramp converts only as a linear ramp without scatter whose axis stays
-/// aligned with the frame ([`PrRamp::ensure_aligned`]); the converter adds the
-/// host rule (a frame-size clip at identity Motion).
-/// Read the same saved controls for a graphic's leading Ramp. Its caller
-/// retains the independent graphic-host coverage limitation.
-pub(super) fn read_graphic_ramp(graph: &Graph<'_>, record: Record<'_>) -> Result<PrEffect> {
-    read_ramp(graph, record, &NativeEffect::inspect(record))
+/// Read the same saved Ramp, Gaussian Blur, Tint or affine Geometry2 controls for a graphic's leading
+/// effect. Its caller retains the independent graphic-host coverage limitation.
+pub(super) fn read_graphic_effect(graph: &Graph<'_>, record: Record<'_>) -> Result<PrEffect> {
+    let native = NativeEffect::inspect(record);
+    match native.match_name {
+        Some(name) if name == GEOMETRY2.match_name => read_transform(graph, record, &native),
+        Some(name) if name == TINT.match_name => read_tint(graph, record, &native),
+        Some(name) if name == GAUSSIAN_BLUR.match_name => {
+            read_gaussian_blur(graph, record, &native)
+        }
+        _ => {
+            let effect = read_ramp(graph, record, &native)?;
+            ensure!(
+                !matches!(
+                    effect.params,
+                    PrEffectParams::Ramp(PrRamp { radial: true, .. })
+                ),
+                "radial Ramp on a graphic is not converted; native generator bounds are unverified"
+            );
+            Ok(effect)
+        }
+    }
 }
 
 fn read_ramp(graph: &Graph<'_>, record: Record<'_>, native: &NativeEffect<'_>) -> Result<PrEffect> {
@@ -1694,23 +1869,40 @@ fn read_ramp(graph: &Graph<'_>, record: Record<'_>, native: &NativeEffect<'_>) -
     let values = param_values(graph, record, &RAMP)?;
     let shape = values.get(&RAMP_SHAPE)?;
     ensure!(
-        shape == RAMP_SHAPE_LINEAR,
-        "Ramp Shape {shape:?} is not linear ({RAMP_SHAPE_LINEAR}); a radial ramp is not converted, because Premiere measures its radius in clip pixels and the FX gradientRamp in frame UV"
+        shape == RAMP_SHAPE_LINEAR || shape == "1",
+        "unknown Ramp Shape {shape:?}"
     );
+    let radial = shape == "1";
     let scatter = values.scalar(&RAMP_SCATTER)?;
     ensure!(
-        scatter == 0.0,
+        radial || scatter == 0.0,
         "Ramp Scatter {scatter} is not converted; FX has no scatter"
     );
     let ramp = PrRamp {
+        radial,
         start: values.point(&RAMP_START)?,
         start_colour: values.colour(&RAMP_START_COLOR)?,
         end: values.point(&RAMP_END)?,
         end_colour: values.colour(&RAMP_END_COLOR)?,
         blend: values.scalar(&RAMP_BLEND)?,
     };
-    ramp.ensure_aligned(&values.animations)
-        .map_err(unsupported)?;
+    if radial {
+        ensure!(
+            !values.animations.iter().any(|animation| {
+                animation.param.id == RAMP_START.id || animation.param.id == RAMP_END.id
+            }),
+            "radial Ramp endpoint keys are not converted; only static radial geometry is approximated"
+        );
+        let radius = (ramp.end[0] - ramp.start[0]).hypot(ramp.end[1] - ramp.start[1]);
+        let supported_radius = radius >= PrRamp::MIN_LENGTH;
+        ensure!(
+            supported_radius,
+            "radial Ramp radius is too short for the FX gradientRamp"
+        );
+    } else {
+        ramp.ensure_aligned(&values.animations)
+            .map_err(unsupported)?;
+    }
     Ok(PrEffect {
         mask: None,
         enabled,
@@ -2347,17 +2539,20 @@ fn read_centred_geometry2_with_notes(
         return Err(unsupported("Geometry2 has no Transform parameters"));
     };
     ensure!(
-        transform.anchor_point == [0.5; 2] && transform.position == [0.5; 2],
+        transform.anchor_point == [0.5; 2]
+            && transform.position == [0.5; 2]
+            && !effect.animations.iter().any(|animation| animation.param.id == TRANSFORM_POSITION.id),
         "an off-centre Geometry2 zoom on media that is rotated or not sequence-sized is not converted: the frame that Premiere normalizes its Anchor Point and Position to is unmeasured there"
     );
     geometry2_zoom(effect, transform, approximations, omitted_controls)
 }
 
-/// The native Geometry2 affine scale, represented by an editable Corner Pin.
+/// The native Geometry2 affine scale or straight translation, represented by an editable Corner Pin.
 /// As the Transform effect does, it lands the Anchor Point on the Position,
 /// both normalized to the clip frame, so each frame corner `c` lands at
 /// `Position + Scale / 100 × (c − Anchor)`. At most one rendered scale track
-/// converts, preserving its authored times and temporal easing exactly.
+/// converts, or one straight Position track with static scale, preserving its
+/// authored times and temporal easing exactly.
 fn read_geometry2(
     graph: &Graph<'_>,
     record: Record<'_>,
@@ -2428,8 +2623,9 @@ fn geometry2_zoom(
                 id if id == TRANSFORM_SCALE_HEIGHT.id
                     || id == TRANSFORM_SCALE_WIDTH.id
                     || id == TRANSFORM_SHUTTER_ANGLE.id
+                    || id == TRANSFORM_POSITION.id
             )),
-        "Geometry2 converts only scale with static Anchor Point and Position, full Opacity, no Skew or Rotation and bilinear Sampling"
+        "Geometry2 converts only scale or straight Position keys with static Anchor Point, full Opacity, no Skew or Rotation and bilinear Sampling"
     );
 
     let height_animation = effect
@@ -2441,6 +2637,24 @@ fn geometry2_zoom(
         .iter()
         .find(|animation| animation.param.id == TRANSFORM_SCALE_WIDTH.id);
     let rendered_width_animation = width_animation.filter(|_| !transform.uniform_scale);
+    let position_animation = effect
+        .animations
+        .iter()
+        .find(|animation| animation.param.id == TRANSFORM_POSITION.id);
+    ensure!(
+        position_animation.is_none()
+            || (height_animation.is_none() && rendered_width_animation.is_none()),
+        "Geometry2 with simultaneously keyed Position and rendered Scale is not converted"
+    );
+    if let Some(animation) = position_animation {
+        let keys = animation
+            .keys
+            .point()
+            .ok_or_else(|| unsupported("Geometry2 Position keys are not points"))?;
+        if crate::schema::spatial::curved_segment(keys).is_some() {
+            approximations.push("Geometry2 Position spatial curvature/backtracking was approximated by straight Corner Pin translation between saved positions with retained temporal easing; spatial handles were omitted, so intermediate positions can differ".to_owned());
+        }
+    }
     ensure!(
         height_animation.is_none() || rendered_width_animation.is_none(),
         "Geometry2 with independently keyed Scale Height and Scale Width is not converted"
@@ -2529,6 +2743,34 @@ fn geometry2_zoom(
             });
         }
     }
+    if let Some(animation) = position_animation {
+        let keys = animation
+            .keys
+            .point()
+            .ok_or_else(|| unsupported("Geometry2 Position keys are not points"))?;
+        let base_corners = corners(static_scale);
+        for (index, param) in CORNER_PIN.params.iter().enumerate() {
+            animations.push(PrEffectParamAnimation {
+                param,
+                keys: PrEffectParamKeys::Point(
+                    keys.iter()
+                        .map(|key| PrPointKeyframe {
+                            source_ticks: key.source_ticks,
+                            value: [
+                                base_corners[index][0] + (key.value[0] - position_x),
+                                base_corners[index][1] + (key.value[1] - position_y),
+                            ],
+                            easing: key.easing,
+                            // Corner Pin has independent scalar coordinates, not
+                            // the paired spatial traversal of Group Position.
+                            spatial_in_tangent: None,
+                            spatial_out_tangent: None,
+                        })
+                        .collect(),
+                ),
+            });
+        }
+    }
     // This affine lowering intentionally permits an axis to collapse or cross
     // zero. Generic Corner Pin admission rejects those degenerate/mirrored
     // quads, but Geometry2 renders them and the renderer safely discards the
@@ -2583,22 +2825,51 @@ fn param_values_with_notes(
         .child(COMPONENT)
         .ok_or_else(|| unsupported("missing Component"))?;
     let component_children: &[&str] = if spec.match_name == LENS_DISTORTION.match_name {
-        &["Node", "Params", "ID", "DisplayName", "Bypass"]
+        &[
+            "Node",
+            "Params",
+            "ID",
+            "DisplayName",
+            "InstanceName",
+            "Bypass",
+        ]
+    } else if spec.match_name == LEVELS.match_name {
+        &[
+            "Node",
+            "Params",
+            "ID",
+            "DisplayName",
+            "InstanceName",
+            "Bypass",
+            "Intrinsic",
+            "ArchivedType",
+        ]
     } else if spec.premiere_native {
-        &["Node", "Params", "ID", "DisplayName"]
+        &["Node", "Params", "ID", "DisplayName", "InstanceName"]
     } else {
         &[
             "Node",
             "Params",
             "ID",
             "DisplayName",
+            "InstanceName",
             "Bypass",
             "Intrinsic",
             "ArchivedType",
             "Unique",
         ]
     };
+    // InstanceName is the user/preset label, not an effect discriminator.
+    // MatchName and the checked parameter profile still determine semantics.
     only_children(component, component_children, "Component/")?;
+    if spec.match_name == LEVELS.match_name {
+        // Older saves spell out inactive metadata; a bypassed Levels is not mapped.
+        let bypass = component.child("Bypass").and_then(Element::text);
+        ensure!(
+            bypass.is_none_or(|value| value == "false"),
+            "unsupported Levels Bypass {bypass:?}"
+        );
+    }
     if let Some(node) = component.child("Node") {
         only_children(node, &["Properties"], "Component/Node/")?;
         if let Some(properties) = node.child("Properties") {
@@ -2625,13 +2896,53 @@ fn param_values_with_notes(
         "unsupported VideoFilterType {:?}",
         filter.value.video_filter_type
     );
-    let params = filter
+    let mut params = filter
         .value
         .component
         .and_then(|body| body.params)
         .map_or_else(Vec::new, |params| params.items);
+    if spec.match_name == LEGACY_BLACK_WHITE.match_name {
+        ensure!(
+            params.len() == 1,
+            "legacy Black & White requires one empty arb slot"
+        );
+        let reference = &params[0];
+        ensure!(
+            reference.index.as_deref() == Some("0"),
+            "invalid legacy Black & White slot Index"
+        );
+        let slot = graph.locate(reference, &filter.identity)?;
+        ensure!(
+            slot.tag() == "ArbVideoComponentParam",
+            "invalid legacy Black & White slot type"
+        );
+        only_children(
+            slot.element(),
+            &[
+                "IsTimeVarying",
+                "ParameterControlType",
+                "StartKeyframePosition",
+                "ParameterID",
+            ],
+            "legacy Black & White slot ",
+        )?;
+        let slot = graph.decode::<crate::schema::native::ArbVideoComponentParam>(slot)?;
+        ensure!(
+            slot.value.class_id.as_deref() == Some("313e54d4-6903-49ad-b0bf-8262cdd10f4e")
+                && slot.value.is_time_varying.as_deref() == Some("false")
+                && slot.value.parameter_control_type.as_deref() == Some("9")
+                && slot.value.start_keyframe_position.as_deref() == Some("-91445760000000000")
+                && slot.value.parameter_id == "-1",
+            "unsupported legacy Black & White slot layout"
+        );
+        params.clear();
+    }
+    let legacy_bilinear = spec.match_name == TRANSFORM.match_name
+        && element.attribute("Version") == Some("7")
+        && component.attribute("Version") == Some("5")
+        && params.len() + 1 == spec.params.len();
     ensure!(
-        params.len() == spec.params.len(),
+        params.len() == spec.params.len() || legacy_bilinear,
         "expected {} parameters, found {}",
         spec.params.len(),
         params.len()
@@ -2689,6 +3000,15 @@ fn param_values_with_notes(
                     ))
                 })?
         };
+        if spec.match_name == crate::schema::ultra_key::ULTRA_KEY.match_name {
+            ensure!(
+                param.value.class_id.as_deref() == Some(param_spec.record.class_id)
+                    && param.value.parameter_control_type.as_deref() == Some(param_spec.control)
+                    && param.value.lower_bound.as_deref() == Some(param_spec.lower_bound)
+                    && param.value.upper_bound.as_deref() == Some(param_spec.upper_bound),
+                "unsupported Ultra Key parameter layout"
+            );
+        }
         if spec.match_name == crate::schema::MODERN_NOISE.match_name {
             ensure!(
                 param.value.class_id.as_deref() == Some(param_spec.record.class_id),
@@ -2827,6 +3147,17 @@ fn param_values_with_notes(
                 keys,
             }),
         }
+    }
+    if legacy_bilinear {
+        // The older Transform profile can omit Sampling at its bilinear default.
+        ensure!(
+            !ids.contains(&TRANSFORM_SAMPLING.id),
+            "legacy Transform is missing a control other than Sampling"
+        );
+        values.statics.insert(
+            TRANSFORM_SAMPLING.id,
+            TRANSFORM_SAMPLING_BILINEAR.to_owned(),
+        );
     }
     // The counts match and no ParameterID repeats, so every parameter has a
     // static value or keys.
@@ -3086,6 +3417,48 @@ fn param_value_with_notes(
     // Static StartKeyframe is authored state. Native Crop records prove that
     // CurrentValue can retain unrelated UI readback and does not override it.
     Ok(ParamValue::Static(value.to_owned()))
+}
+
+/// Static Composite Output only. All saved controls are validated, including
+/// omitted refinements, so animation cannot silently become static coverage.
+fn read_ultra_key(
+    graph: &Graph<'_>,
+    record: Record<'_>,
+    native: &NativeEffect<'_>,
+) -> Result<PrEffect> {
+    use crate::schema::ultra_key::{PrUltraKey, ULTRA_KEY};
+    let values = param_values(graph, record, &ULTRA_KEY)?;
+    ensure!(
+        values.animations.is_empty() && values.flattened_controls.is_empty(),
+        "Ultra Key animated controls are unsupported"
+    );
+    for param in ULTRA_KEY.params {
+        if param.id == 3 {
+            values.colour(param)?;
+        } else if param.record.class_id == records::VIDEO_BOOL_COMPONENT_PARAM.class_id {
+            ensure!(
+                matches!(values.get(param)?, "false" | "true"),
+                "invalid Ultra Key group toggle"
+            );
+        } else {
+            values.scalar(param)?;
+        }
+    }
+    ensure!(
+        values.scalar(&ULTRA_KEY.params[0])? == 0.0,
+        "Ultra Key requires Composite Output"
+    );
+    Ok(PrEffect {
+        mask: None,
+        enabled: native.enabled()?,
+        params: PrEffectParams::UltraKey(PrUltraKey {
+            color: values.colour(&ULTRA_KEY.params[2])?,
+            transparency: values.scalar(&ULTRA_KEY.params[4])?,
+            tolerance: values.scalar(&ULTRA_KEY.params[7])?,
+            pedestal: values.scalar(&ULTRA_KEY.params[8])?,
+        }),
+        animations: Vec::new(),
+    })
 }
 
 fn read_legacy_luma(

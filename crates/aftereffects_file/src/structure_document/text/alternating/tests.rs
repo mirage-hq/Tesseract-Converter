@@ -207,6 +207,7 @@ fn text_must_be_one_static_printable_ascii_line() {
     timed.document_starts = vec![0.0];
     let mut expression = base();
     expression.percent = Some(PercentHolds {
+        style: None,
         starts: Vec::new(),
         texts: vec!["5%".into()],
     });

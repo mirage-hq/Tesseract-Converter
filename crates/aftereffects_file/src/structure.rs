@@ -4,6 +4,8 @@
 //! reference graphs. It retains unsupported layer content for later conversion
 //! diagnostics while keeping the strict empty-project reader unchanged.
 
+#[path = "structure_effect_defaults.rs"]
+mod effect_defaults;
 #[path = "solid.rs"]
 mod solid;
 pub use crate::media::{
@@ -53,11 +55,36 @@ pub enum StructureError {
 /// A structurally decoded AEP project in file encounter order.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StructuralProject {
+    /// Native project colour interpretation; never inferred from source media.
+    pub color: ProjectColorContext,
     /// Binary format revision from the `head` record.
     pub format_version: u8,
+    /// File-local Effect definitions, retained separately from untouched layer content.
+    /// Used only when an occurrence's own declaration table is empty.
+    pub effect_definitions: Vec<Chunk>,
     /// Project items, recursively flattened in folder/file encounter order.
     pub items: Vec<ProjectItem>,
 }
+
+/// Native working-domain admission for best-effort colour import.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum ProjectColorContext {
+    /// No declared working profile; retain the existing legacy interpretation.
+    #[default]
+    Legacy,
+    /// Exact owned ICC bytes in a non-linearized native working space.
+    Hdr {
+        transfer: fx_conv::HdrTransfer,
+        linear_blending: bool,
+    },
+    /// An explicit domain that has no proved point-colour binding yet.
+    Unsupported {
+        profile: String,
+        reason: &'static str,
+    },
+}
+
+mod markers;
 
 impl StructuralProject {
     /// Looks up a project item by its project-wide identity.
@@ -128,6 +155,8 @@ pub enum ItemKind {
 /// Structural composition metadata and timeline layers.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Composition {
+    /// Source-only marker times for bounded timing expressions; malformed storage is diagnosed.
+    pub(crate) marker_times: Result<Vec<f64>, String>,
     /// Canvas width in pixels.
     pub width: u16,
     /// Canvas height in pixels.
@@ -177,13 +206,38 @@ pub(crate) fn read_project_with_header(
 ) -> Result<(StructuralProject, HeadRecord), StructureError> {
     let mut project = aep::Project::parse(bytes)?;
     let head = HeadRecord::decode(only_data(&project.chunks, *b"head")?)?;
+    let color = crate::hdr::import_context(&project);
+    let mut effect_definitions: Vec<_> = project
+        .chunks
+        .iter()
+        .filter(|chunk| chunk.list_kind() == Some(*b"EfdG"))
+        .cloned()
+        .collect();
+    effect_defaults::restore(&mut project.chunks);
     let root = only_list_mut(&mut project.chunks, *b"Fold")?;
     let mut state = ReadState::default();
     state.read_items(root, None)?;
     state.resolve_inherited_layer_names();
+    if effect_definitions.is_empty() {
+        let definitions: Vec<_> = state
+            .items
+            .iter()
+            .filter_map(|item| match &item.kind {
+                ItemKind::Composition(comp) => Some(comp),
+                _ => None,
+            })
+            .flat_map(|comp| &comp.layers)
+            .flat_map(|layer| crate::essential::instance_definitions(&layer.content))
+            .collect();
+        if !definitions.is_empty() {
+            effect_definitions.push(Chunk::list(*b"EfdG", definitions));
+        }
+    }
     Ok((
         StructuralProject {
+            color,
             format_version: head.format_version(),
+            effect_definitions,
             items: state.items,
         },
         head,
@@ -298,6 +352,7 @@ impl ReadState {
         }
         let (width, height) = record.dimensions();
         Ok(Composition {
+            marker_times: markers::times(children),
             width,
             height,
             duration_secs: f64::from(duration_numerator) / f64::from(duration_denominator),

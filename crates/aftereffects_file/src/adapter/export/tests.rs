@@ -219,7 +219,10 @@ fn export_options_apply_fps_in_check_and_write_without_publishing_invalid_rates(
     let tmp = tempfile::tempdir().unwrap();
     let input = import_solid(tmp.path());
     let output = tmp.path().join("rated");
-    let options = AfterEffectsExportOptions { fps: 29.97 };
+    let options = AfterEffectsExportOptions {
+        fps: 29.97,
+        ..Default::default()
+    };
     let check = AfterEffects
         .export_from_tesseract(&input, &output, &options, ConversionMode::Check)
         .unwrap();
@@ -240,7 +243,10 @@ fn export_options_apply_fps_in_check_and_write_without_publishing_invalid_rates(
                 .export_from_tesseract(
                     &input,
                     &invalid,
-                    &AfterEffectsExportOptions { fps },
+                    &AfterEffectsExportOptions {
+                        fps,
+                        ..Default::default()
+                    },
                     ConversionMode::Write
                 )
                 .is_err()

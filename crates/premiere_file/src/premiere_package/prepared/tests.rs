@@ -366,6 +366,7 @@ fn source_slot_stage_reuses_preparation_and_retains_native_audio() {
         container: recipe.root(),
         boundaries: vec![boundary.token],
         picture: crate::AfterEffectsPicture {
+            working_hdr: None,
             composition_guid: "00000001-0000-0000-0000-000000000000".into(),
             relative_path: "media/ae-0001/compositions.aep".into(),
             dimensions: container.dimensions,
@@ -471,6 +472,7 @@ fn rejected_video_picture_keeps_embedded_sound_once_through_replacement() {
         container: recipe.root(),
         boundaries: container.boundaries,
         picture: crate::AfterEffectsPicture {
+            working_hdr: None,
             composition_guid: "00000001-0000-0000-0000-000000000000".into(),
             relative_path: "media/ae-0001/compositions.aep".into(),
             dimensions: container.dimensions,
@@ -688,6 +690,94 @@ fn no_native_content_retains_inspection_but_keeps_the_old_emission_error() {
 
 #[cfg(feature = "ffmpeg-library")]
 #[test]
+fn hdr_extended_paint_stages_without_false_sdr_clipping_loss() {
+    for transfer in [fx_conv::HdrTransfer::Pq, fx_conv::HdrTransfer::Hlg] {
+        let root = tempfile::tempdir().unwrap();
+        let mut value = crate::test_support::editable_document();
+        value["composition"]["layers"] = json!([{
+            "id":7, "type":"Rect", "name":"extended HDR paint",
+            "activeRange":{"start":0,"duration":1000},
+            "transform":{"anchorPoint":[50,50],"position":[500,500],
+                "scale":[100,100],"rotation":0,"opacity":100},
+            "rect":{"size":[100,100],"fillColor":[1.2,0.5,0.25,1],
+                "strokeEnabled":false}
+        }]);
+        let file = archive(root.path(), &value);
+        let prepared = Premiere
+            .prepare_export(
+                &file,
+                file.project(),
+                &PremiereExportOptions {
+                    hdr: Some(transfer),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let staged = prepared
+            .stage_with_picture_replacements(root.path(), &root.path().join("output"), &[])
+            .unwrap();
+        assert!(!format!("{:?}", staged.report()).contains("was clamped to native"));
+        let bytes = fs::read(staged.directory().join("project.prproj")).unwrap();
+        let mut xml = String::new();
+        flate2::read::GzDecoder::new(bytes.as_slice())
+            .read_to_string(&mut xml)
+            .unwrap();
+        assert!(xml.contains("BT.2100"));
+        assert!(!xml.contains("compositions.aep"));
+    }
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn hdr_empty_root_target_survives_picture_staging() {
+    for transfer in [fx_conv::HdrTransfer::Pq, fx_conv::HdrTransfer::Hlg] {
+        let root = tempfile::tempdir().unwrap();
+        let mut value = crate::test_support::editable_document();
+        value["composition"]["layers"] = json!([]);
+        let file = archive(root.path(), &value);
+        let prepared = Premiere
+            .prepare_export(
+                &file,
+                file.project(),
+                &PremiereExportOptions {
+                    hdr: Some(transfer),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let ticks = crate::schema::TICKS;
+        let picture = AfterEffectsPicture {
+            working_hdr: Some(transfer),
+            composition_guid: "00000001-0000-0000-0000-000000000000".into(),
+            relative_path: "media/ae-0001/compositions.aep".into(),
+            dimensions: [1920, 1080],
+            frame_rate: FrameRate::Fps30,
+            intrinsic_duration_ticks: ticks,
+            timeline_ticks: 0..ticks,
+            source_ticks: 0..ticks,
+            enabled: true,
+        };
+        let staged = prepared
+            .stage_empty_root_with_after_effects(root.path(), &root.path().join("output"), &picture)
+            .unwrap();
+        let bytes = fs::read(staged.directory().join("project.prproj")).unwrap();
+        let mut xml = String::new();
+        flate2::read::GzDecoder::new(bytes.as_slice())
+            .read_to_string(&mut xml)
+            .unwrap();
+        let name = match transfer {
+            fx_conv::HdrTransfer::Pq => "BT.2100 PQ RGB Full",
+            fx_conv::HdrTransfer::Hlg => "BT.2100 HLG RGB Full",
+        };
+        assert!(xml.contains(name), "staging lost {name}");
+        assert!(xml.contains(&format!("<OriginalColorSpace>{{\"baseColorProfile\":{{\"colorProfileName\":\"{name}\"}},\"baseProfileType\":1}}</OriginalColorSpace>")), "staging lost actual AEP source domain");
+        assert!(xml.contains("<WorkingColorSpace>"));
+        assert!(xml.contains("<AllowLinearCompositing>false</AllowLinearCompositing>"));
+    }
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
 fn empty_root_link_checks_original_content_and_full_clock_before_staging() {
     let ticks = crate::schema::TICKS;
     for (has_layers, partial, emptied_view) in [
@@ -712,6 +802,7 @@ fn empty_root_link_checks_original_content_and_full_clock_before_staging() {
             .prepare_export(&file, &view, &Default::default())
             .unwrap();
         let picture = AfterEffectsPicture {
+            working_hdr: None,
             composition_guid: "00000001-0000-0000-0000-000000000000".into(),
             relative_path: "media/ae-0001/compositions.aep".into(),
             dimensions: [1920, 1080],
@@ -899,6 +990,7 @@ fn supplied_view_not_archive_document_is_retained_and_emitted() {
             &file,
             &view,
             &crate::PremiereExportOptions {
+                hdr: None,
                 frame_rate: Some(FrameRate::Fps25),
             },
         )

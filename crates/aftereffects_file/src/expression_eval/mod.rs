@@ -2,6 +2,8 @@
 //! Never emits FX script code.
 
 mod model;
+#[cfg(test)]
+mod path_tests;
 mod syntax;
 #[cfg(test)]
 mod tests;
@@ -19,6 +21,7 @@ use crate::{
 use model::Model;
 
 const SHIM: &str = include_str!("shim.js");
+const PATH: &str = include_str!("path.js");
 const RANDOM: &str = include_str!("random.js");
 const LOOP_ITERATION_LIMIT: u64 = 1_000_000;
 
@@ -64,8 +67,7 @@ pub(crate) fn evaluate_occurrence(
     )
 }
 
-/// Evaluate one overridden occurrence without changing serialized Adobe sidecars.
-/// Successful random samples report approximation separately from fatal failures.
+#[cfg(test)]
 pub(crate) fn evaluate_occurrence_with_diagnostics(
     items: &HashMap<u32, &ProjectItem>,
     comp_id: u32,
@@ -73,6 +75,28 @@ pub(crate) fn evaluate_occurrence_with_diagnostics(
     captured: &ExpressionSamples,
     has_overrides: bool,
     approximations: &mut Vec<Approximation>,
+) -> ExpressionSamples {
+    evaluate_occurrence_with_definitions(
+        items,
+        comp_id,
+        comp,
+        captured,
+        has_overrides,
+        approximations,
+        &[],
+    )
+}
+
+/// Evaluate one overridden occurrence without changing serialized Adobe sidecars.
+/// Successful random samples report approximation separately from fatal failures.
+pub(crate) fn evaluate_occurrence_with_definitions(
+    items: &HashMap<u32, &ProjectItem>,
+    comp_id: u32,
+    comp: &Composition,
+    captured: &ExpressionSamples,
+    has_overrides: bool,
+    approximations: &mut Vec<Approximation>,
+    effect_definitions: &[crate::rifx::Chunk],
 ) -> ExpressionSamples {
     let mut result = ExpressionSamples::default();
     if !has_overrides {
@@ -94,7 +118,8 @@ pub(crate) fn evaluate_occurrence_with_diagnostics(
         );
     }
     // Source-ID-only Adobe records cannot describe an overridden occurrence.
-    let model = Model::new(items, comp_id, comp, !has_overrides);
+    let model =
+        Model::with_effect_definitions(items, comp_id, comp, !has_overrides, effect_definitions);
     let enabled: Vec<_> = model
         .properties
         .iter()
@@ -134,7 +159,54 @@ pub(crate) fn evaluate_occurrence_with_diagnostics(
         }
         Ok(times)
     });
+    let mut path_coordinates = 0usize;
     for (slot, layer_id, property, key_notes) in enabled {
+        if matches!(&property,crate::expression_samples::PropertyIdentity::Shape {path}
+            if path.last().is_some_and(|segment|segment.match_name=="ADBE Vector Shape"))
+            || matches!(&property,crate::expression_samples::PropertyIdentity::Mask {match_name,..} if match_name=="ADBE Mask Shape")
+        {
+            let values = grid
+                .as_ref()
+                .map_err(|error| EvaluationError::Unsupported(error.clone()))
+                .and_then(|times| {
+                    evaluate_path_grid(
+                        &mut prepared,
+                        slot,
+                        times,
+                        250_000usize.saturating_sub(path_coordinates),
+                    )
+                });
+            match values {
+                Ok(values) => {
+                    path_coordinates += values
+                        .iter()
+                        .map(|value| value.vertices.len() * 6)
+                        .sum::<usize>();
+                    if !prepared.approximated.is_empty() || !key_notes.is_empty() {
+                        approximations.push(Approximation {
+                            layer_id,
+                            property: property.clone(),
+                            apis: prepared.approximated.clone(),
+                            key_notes,
+                        });
+                    }
+                    result.paths.push(crate::expression_samples::EvaluatedPath {
+                        composition_id: comp_id,
+                        layer_id,
+                        property,
+                        sample_times_seconds: grid.as_ref().cloned().unwrap_or_default(),
+                        values,
+                    });
+                }
+                Err(error) => result.errors.push(ExpressionEvaluationError {
+                    composition_id: comp_id,
+                    layer_id,
+                    property,
+                    message: error.to_string(),
+                }),
+            }
+            continue;
+        }
         if matches!(
             property,
             crate::expression_samples::PropertyIdentity::SourceText {}
@@ -142,9 +214,15 @@ pub(crate) fn evaluate_occurrence_with_diagnostics(
             let texts = grid
                 .as_ref()
                 .map_err(|error| EvaluationError::Unsupported(error.clone()))
-                .and_then(|times| evaluate_text_grid(&mut prepared, slot, times));
+                .and_then(|times| evaluate_text_samples(&mut prepared, slot, times));
             match texts {
-                Ok(texts) => {
+                Ok(samples) => {
+                    let style_source = samples.styles.first().copied().flatten().filter(|source| {
+                        samples
+                            .styles
+                            .iter()
+                            .all(|value| value.as_ref() == Some(source))
+                    });
                     if !prepared.approximated.is_empty() {
                         approximations.push(Approximation {
                             layer_id,
@@ -156,8 +234,9 @@ pub(crate) fn evaluate_occurrence_with_diagnostics(
                     result.texts.push(crate::expression_samples::EvaluatedText {
                         composition_id: comp_id,
                         layer_id,
+                        style_source,
                         sample_times_seconds: grid.as_ref().cloned().unwrap_or_default(),
-                        texts,
+                        texts: samples.texts,
                     });
                 }
                 Err(error) => result.errors.push(ExpressionEvaluationError {
@@ -239,7 +318,7 @@ fn prepare(model: &Model) -> Result<Prepared, EvaluationError> {
         runtime,
         input,
         dimensions: model.properties.iter().map(|p| p.initial.len()).collect(),
-        shim: format!("{RANDOM}\n{SHIM}"),
+        shim: format!("{RANDOM}\n{PATH}\n{SHIM}"),
         approximated: BTreeSet::new(),
     })
 }
@@ -330,11 +409,26 @@ fn evaluate_grid(
         .collect()
 }
 /// Source Text samples: the shim returns the expression's string result.
+#[cfg(test)]
 fn evaluate_text_grid(
     prepared: &mut Prepared,
     slot: usize,
     times: &[f64],
 ) -> Result<Vec<String>, EvaluationError> {
+    evaluate_text_samples(prepared, slot, times).map(|samples| samples.texts)
+}
+
+struct TextSamples {
+    texts: Vec<String>,
+    styles: Vec<Option<[u32; 2]>>,
+}
+
+fn evaluate_text_samples(
+    prepared: &mut Prepared,
+    slot: usize,
+    times: &[f64],
+) -> Result<TextSamples, EvaluationError> {
+    let mut styles = Vec::with_capacity(times.len());
     prepared.approximated.clear();
     prepared
         .input
@@ -345,7 +439,7 @@ fn evaluate_text_grid(
             prepared.runtime.context_mut(),
         )
         .map_err(ScriptError::from)?;
-    times
+    let texts = times
         .iter()
         .map(|seconds| {
             prepared
@@ -375,6 +469,11 @@ fn evaluate_text_grid(
             {
                 prepared.approximated.insert(api.to_owned());
             }
+            styles.push(serde_json::from_value(
+                json.get("styleSource")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            )?);
             json.get("value")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_owned)
@@ -382,7 +481,77 @@ fn evaluate_text_grid(
                     EvaluationError::Unsupported("Source Text result is not text".into())
                 })
         })
-        .collect()
+        .collect::<Result<Vec<_>, EvaluationError>>()?;
+    Ok(TextSamples { texts, styles })
+}
+
+fn evaluate_path_grid(
+    prepared: &mut Prepared,
+    slot: usize,
+    times: &[f64],
+    budget: usize,
+) -> Result<Vec<crate::properties::NativePathValue>, EvaluationError> {
+    if times.len().saturating_mul(6) > budget {
+        return Err(EvaluationError::Unsupported(
+            "Path observation coordinate budget exceeded".into(),
+        ));
+    }
+    prepared.approximated.clear();
+    prepared
+        .input
+        .set(
+            js_string!("slot"),
+            slot as f64,
+            true,
+            prepared.runtime.context_mut(),
+        )
+        .map_err(ScriptError::from)?;
+    let mut coordinates = 0usize;
+    let mut values = Vec::with_capacity(times.len());
+    for seconds in times {
+        prepared
+            .input
+            .set(
+                js_string!("seconds"),
+                *seconds,
+                true,
+                prepared.runtime.context_mut(),
+            )
+            .map_err(ScriptError::from)?;
+        let result = prepared
+            .runtime
+            .call(&prepared.shim, prepared.input.clone().into())?;
+        let json = result
+            .to_json(prepared.runtime.context_mut())
+            .map_err(ScriptError::from)?
+            .ok_or_else(|| {
+                EvaluationError::Unsupported("Path expression returned no value".into())
+            })?;
+        for api in json
+            .get("approximated")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_str)
+        {
+            prepared.approximated.insert(api.to_owned());
+        }
+        let value: crate::properties::NativePathValue =
+            serde_json::from_value(json.get("value").cloned().ok_or_else(|| {
+                EvaluationError::Unsupported("Path expression returned no typed value".into())
+            })?)?;
+        value
+            .validate()
+            .map_err(|error| EvaluationError::Unsupported(error.to_string()))?;
+        coordinates = coordinates
+            .checked_add(value.vertices.len().saturating_mul(6))
+            .filter(|count| *count <= budget)
+            .ok_or_else(|| {
+                EvaluationError::Unsupported("Path observation coordinate budget exceeded".into())
+            })?;
+        values.push(value);
+    }
+    Ok(values)
 }
 
 fn frame_grid(duration: f64, fps: f64) -> Result<Vec<f64>, String> {

@@ -63,6 +63,8 @@ pub struct PremiereImportOptionsWithConsent {
 pub struct PremiereExportOptions {
     /// Sequence frame rate; `None` exports 30 fps.
     pub frame_rate: Option<FrameRate>,
+    /// Explicit native PQ/HLG working/output target; omitted keeps legacy SDR.
+    pub hdr: Option<fx_conv::HdrTransfer>,
 }
 
 impl Premiere {

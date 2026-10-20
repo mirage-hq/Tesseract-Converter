@@ -174,11 +174,23 @@ def stage_case(case, output, *, reuse=False):
         if not reuse or not output.is_dir() or output.is_symlink():
             raise FixtureError(f"destination already exists: {output}")
         for file in case["files"]:
-            path = output / file["path"]
-            if not path.is_file() or path.is_symlink():
+            relative = relative_path(file["path"], f"{case['id']}.staged.path")
+            path = output / relative
+            if (not path.is_file() or path.is_symlink()
+                    or any((output / parent).is_symlink() for parent in relative.parents)):
                 raise FixtureError(f"missing or unsafe staged file: {path}")
             if "sha256" in file:
                 verify_bytes(path, file, f"{case['id']}.staged.{file['path']}")
+            else:
+                # Unhashed inputs are versioned in Git, but the reusable cache is
+                # not. A stale or edited font must not become the scoring input.
+                with path.open("rb") as staged, (REPO_ROOT / file["repo_path"]).open("rb") as source:
+                    while True:
+                        chunk = source.read(1024 * 1024)
+                        if staged.read(1024 * 1024) != chunk:
+                            raise FixtureError(f"staged file differs from checked-in input: {path}")
+                        if not chunk:
+                            break
         print(f"reused verified {case['id']} -> {output}")
         return
     if not output.parent.is_dir():

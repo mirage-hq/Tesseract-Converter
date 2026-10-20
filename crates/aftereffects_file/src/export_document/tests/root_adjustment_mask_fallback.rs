@@ -181,7 +181,7 @@ fn supported_root_adjustment_mask_keeps_native_gate_and_source_consumption() {
         panic!("editable native Adjustment")
     };
     assert_eq!(adjustment.masks.len(), 1);
-    assert_eq!(adjustment.masks[0].feather, [8.0, 8.0]);
+    assert_eq!(adjustment.masks[0].feather, [16.0, 16.0]);
     assert!(
         retained
             .composition()

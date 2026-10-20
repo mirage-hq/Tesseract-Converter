@@ -245,30 +245,21 @@ mod tests {
     }
 
     #[test]
-    fn spatial_shadow_exception_requires_active_shadow() {
+    fn disabled_shadow_stacks_keep_bounds_eligibility() {
         let dynamics = crate::export_document::AnimationIndex::new(&[]);
-        assert!(!super::super::has_active_shadow(&[]));
+        assert!(super::super::static_shadow_stack(&[], &dynamics));
         let active = shadow([0.0; 2], 0.0, 0.0);
-        assert!(super::super::has_active_shadow(std::slice::from_ref(
-            &active
-        )));
         for (record_enabled, shadow_enabled) in [(false, true), (true, false), (false, false)] {
             let mut value = serde_json::to_value(&active).unwrap();
             value["enabled"] = serde_json::json!(record_enabled);
             value["effect"]["enabled"] = serde_json::json!(shadow_enabled);
             let disabled = serde_json::from_value(value).unwrap();
-            assert!(!super::super::has_active_shadow(std::slice::from_ref(
-                &disabled
-            )));
             assert!(super::super::static_shadow_stack(&[disabled], &dynamics));
         }
         let unsupported: EffectRecord = serde_json::from_value(serde_json::json!({
             "id": 811, "enabled": false, "effect": {"type": "unsupportedSpatialEffect"}
         }))
         .unwrap();
-        assert!(!super::super::has_active_shadow(std::slice::from_ref(
-            &unsupported
-        )));
         assert!(super::super::static_shadow_stack(&[unsupported], &dynamics));
     }
 

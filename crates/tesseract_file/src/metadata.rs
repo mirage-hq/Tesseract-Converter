@@ -12,7 +12,7 @@ const MAX_ZIP_ENTRY_NAME_BYTES: usize = u16::MAX as usize;
 
 /// Metadata stored at the root of every `.tsrct` file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct TesseractFileMetadata {
     /// Stable JSON Schema identifier for this metadata major version.
     #[serde(rename = "$schema")]
@@ -41,6 +41,9 @@ pub struct TesseractFileMetadata {
     /// `assets`. Kept separate so [`AssetDescriptor`] remains transport-only.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub fonts: BTreeMap<String, FontAssetProperties>,
+    /// Top-level fields this version doesn't define, kept as-is across saves.
+    #[serde(flatten)]
+    pub unknown_fields: BTreeMap<String, serde_json::Value>,
 }
 
 /// Identifies the runtime that last wrote a `.tsrct` file.

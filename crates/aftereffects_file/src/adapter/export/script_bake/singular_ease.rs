@@ -5,7 +5,7 @@ use crate::export_document::effects::{bezier, invert_bezier};
 // Independently observed AE26.5 KeyframeEase minimum: 0.1 percent.
 const MIN_INFLUENCE: f64 = 0.001;
 const FIT_INTERVALS: u32 = 16_384;
-// Bound the expensive minimax scans per preparation, including repeated curves.
+// Bound distinct expensive minimax scans per preparation, not repeated segments.
 const MAX_FITS: usize = 32;
 
 fn charge_fit(fits: &mut usize) -> Result<(), AepWriteError> {
@@ -127,6 +127,9 @@ pub(super) fn prepare<'a>(
     let mut raw = None;
     let mut diagnostics = Vec::new();
     let mut fits = 0;
+    // Normalized fitting depends only on the controls, not time, value or owner.
+    // Keep failures too, so an unfit repeated curve cannot consume extra scans.
+    let mut fitted_curves = BTreeMap::new();
     for (index, entry) in document
         .composition()
         .dynamics()
@@ -176,8 +179,14 @@ pub(super) fn prepare<'a>(
             {
                 continue;
             }
-            charge_fit(&mut fits)?;
-            let Some((easing, normalized_error)) = fit(controls) else {
+            let fitted = match fitted_curves.entry(controls.map(f64::to_bits)) {
+                std::collections::btree_map::Entry::Occupied(entry) => *entry.get(),
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    charge_fit(&mut fits)?;
+                    *entry.insert(fit(controls))
+                }
+            };
+            let Some((easing, normalized_error)) = fitted else {
                 continue;
             };
             let error = normalized_error * (to - from).abs();

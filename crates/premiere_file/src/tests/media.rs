@@ -934,10 +934,20 @@ fn irregular_presentation_source_admission_checks_native_count_and_endpoint() {
         .contains("tick range"));
     source.intrinsic_ticks = 6 * FrameRate::Fps24.ticks_per_frame();
     source.frame_rate = FrameRate::Fps24.into();
-    assert!(
-        file.validate_source(&source).is_err(),
-        "listed native interpretation cannot imply an irregular physical clock"
-    );
+    file.validate_source(&source).unwrap();
+    assert!(matches!(
+        file.timing.clock,
+        crate::media::SampleClock::Irregular { .. }
+    ));
+    source.intrinsic_ticks += 1;
+    assert!(file.validate_source(&source).is_err());
+    source.frame_rate = FrameRate::Fps60.into();
+    source.intrinsic_ticks = 6 * FrameRate::Fps60.ticks_per_frame();
+    assert!(file
+        .validate_source(&source)
+        .unwrap_err()
+        .to_string()
+        .contains("more than one native frame period"));
 }
 
 #[cfg(feature = "ffmpeg-library")]
@@ -984,7 +994,8 @@ fn irregular_approximation_preserves_original_bytes_and_once_per_media_warning()
     };
     use std::sync::Arc;
     let bytes = irregular_b_frame_bytes();
-    let native_step = FrameRate::Fps24.ticks_per_frame() + 1;
+    // A listed native rate is a descriptor, not proof of a constant physical grid.
+    let native_step = FrameRate::Fps24.ticks_per_frame();
     for in_nest in [false, true] {
         let root = tempfile::tempdir().unwrap();
         fs::write(root.path().join("source.mp4"), &bytes).unwrap();
@@ -1700,6 +1711,58 @@ fn selected_partial_edit_rejects_crossing_later_segments_and_ambiguous_origin() 
             "{offset}/{value}"
         );
     }
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn constant_native_last_sample_endpoint_requires_complete_exact_grid() {
+    let usage = crate::media::VideoUse {
+        ranges: std::iter::once(0..crate::schema::TICKS / 2).collect(),
+        uses_audio: false,
+    };
+    let file = inspect_selected(MEDIA, usage.ranges.clone(), false).unwrap();
+    let mut source = crate::tests::support::video_media()
+        .remove(&crate::format::MediaId("source".into()))
+        .unwrap()
+        .video
+        .unwrap();
+    let (rate, duration) = file.timing.supported().unwrap();
+    source.frame_rate = rate.into();
+    source.intrinsic_ticks = duration - rate.ticks_per_frame();
+    assert!(file.validate_source(&source).is_err());
+    assert!(file.has_native_last_sample_endpoint(&source).unwrap());
+    let mut exact = source.clone();
+    exact.intrinsic_ticks = duration;
+    assert!(!file.has_native_last_sample_endpoint(&exact).unwrap());
+    assert!(file.validate_source_for_use(&source, None).unwrap());
+    assert!(file.validate_source_for_use(&source, Some(&usage)).unwrap());
+    let sound = crate::media::VideoUse {
+        ranges: usage.ranges.clone(),
+        uses_audio: true,
+    };
+    assert!(file.validate_source_for_use(&source, Some(&sound)).unwrap());
+    source.interpretation = crate::schema::SourceInterpretation::Rate(FrameRate::Fps24.into());
+    let interpreted = crate::media::InterpretedPictureClock::bind(&source, &file).unwrap();
+    assert_eq!(interpreted.ratio(), (4, 5));
+    assert_eq!(interpreted.duration_millis(), 1000);
+    let mut file = file;
+    file.timing.partial_timeline = true;
+    assert!(!file.has_native_last_sample_endpoint(&source).unwrap());
+    assert!(file.validate_source_for_use(&source, None).is_err());
+    assert!(file.validate_source_for_use(&source, Some(&usage)).is_err());
+    assert!(crate::media::InterpretedPictureClock::bind(&source, &file).is_err());
+    file.timing.partial_timeline = false;
+    for delta in [-rate.ticks_per_frame(), -1, 1, 2 * rate.ticks_per_frame()] {
+        source.intrinsic_ticks += delta;
+        assert!(!file.has_native_last_sample_endpoint(&source).unwrap());
+        assert!(
+            file.validate_source_for_use(&source, Some(&usage)).is_err(),
+            "{delta}"
+        );
+        source.intrinsic_ticks -= delta;
+    }
+    source.frame_rate = FrameRate::Fps24.into();
+    assert!(file.validate_source_for_use(&source, Some(&usage)).is_err());
 }
 
 #[cfg(feature = "ffmpeg-library")]
@@ -2795,9 +2858,8 @@ fn irregular_active_replacement_exports_original_pts_bytes_and_shared_retimes() 
                 assert_eq!(video["sourceRange"], mapping["output"]);
                 continue;
             }
-            // Public import retains each native part: reverse bounds are
-            // reflected about the physical source end, holds keep a constant
-            // key pair, and all exposed times use nearest milliseconds.
+            // Reverse bounds reflect about the source end; holds keep constant
+            // values. Forward controls may extend past the visible window to keep rate.
             let held = clip.time_remap.is_some();
             let (first, last) = if held {
                 (clip.in_ticks, clip.in_ticks)
@@ -2813,14 +2875,21 @@ fn irregular_active_replacement_exports_original_pts_bytes_and_shared_retimes() 
             assert_eq!(mapping["type"], "timeRemap");
             let keys = mapping["property"]["keyframes"].as_array().unwrap();
             assert_eq!(keys.len(), 2);
-            assert_eq!(
-                (keys[0]["time"].as_i64(), keys[1]["time"].as_i64()),
-                (Some(start), Some(end))
-            );
-            assert_eq!(
-                (keys[0]["value"].as_i64(), keys[1]["value"].as_i64()),
-                (Some(first), Some(last))
-            );
+            assert_eq!(keys[0]["time"], start);
+            assert_eq!(keys[0]["value"], first);
+            if !held && clip.playback_rate > 0.0 {
+                let control_end = keys[1]["time"].as_i64().unwrap();
+                let control_last = keys[1]["value"].as_i64().unwrap();
+                assert!(control_end >= end && control_end - start <= 2 * (end - start));
+                assert_eq!(
+                    i128::from(control_last - first)
+                        * i128::from(clip.end_ticks - clip.start_ticks),
+                    i128::from(control_end - start) * i128::from(clip.out_ticks - clip.in_ticks)
+                );
+            } else {
+                assert_eq!(keys[1]["time"], end);
+                assert_eq!(keys[1]["value"], last);
+            }
             assert!(keys.iter().all(|key| key["easing"]["type"] == "linear"));
             let extrapolation = if held { "continue" } else { "inactive" };
             assert_eq!(mapping["property"]["before"], extrapolation);
@@ -2882,6 +2951,9 @@ fn irregular_nominal_descriptor_rejects_ambiguous_listed_rate_and_partial_edit()
 
 #[cfg(feature = "ffmpeg-library")]
 mod declared_tail;
+
+#[cfg(feature = "ffmpeg-library")]
+mod terminal_sample;
 
 #[cfg(feature = "ffmpeg-library")]
 mod presentation_origin;

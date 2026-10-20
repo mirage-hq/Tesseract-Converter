@@ -11,6 +11,40 @@ fn named(value: &str) -> Chunk {
 }
 
 #[test]
+fn sparse_fill_does_not_replace_a_malformed_explicit_color() {
+    let content = vec![Chunk::list(
+        *b"tdgp",
+        vec![
+            named("ADBE Effect Parade"),
+            Chunk::list(
+                *b"tdgp",
+                vec![
+                    named("ADBE Fill"),
+                    Chunk::list(
+                        *b"sspc",
+                        vec![
+                            Chunk::list(*b"parT", vec![]),
+                            Chunk::list(
+                                *b"tdgp",
+                                vec![named("ADBE Fill-0002"), Chunk::list(*b"tdbs", vec![])],
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )];
+    let (effects, _) = read_effects(&content, [120.0, 80.0]);
+    let color = effects[0]
+        .parameters
+        .iter()
+        .find(|parameter| parameter.match_name == "ADBE Fill-0002")
+        .unwrap();
+    assert!(color.numeric.is_err());
+    assert_eq!(value(&effects[0], "-0005"), [1.0]);
+}
+
+#[test]
 fn review_audit_duplicate_effect_parades_are_diagnosed_not_selected() {
     let content = vec![Chunk::list(
         *b"tdgp",

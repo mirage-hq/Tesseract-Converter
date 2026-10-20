@@ -1,6 +1,7 @@
 //! Geometry2 on a continuously rasterized 2D Shape runs after its layer Transform;
-//! on a footage still it runs on the source plane, before the layer Transform.
-//! Other owner/effect-stage combinations remain explicitly unsupported.
+//! on a footage still or bounded 2D precomposition it is mapped on the source
+//! plane before the layer Transform. Bounded collapsed precomposition translations
+//! compensate the static owner scale; other mixed stages remain unsupported.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -272,7 +273,8 @@ fn static_transform(source: &DecodedEffect) -> Result<Transform, String> {
     for parameter in &source.parameters {
         if !matches!(
             parameter.match_name.as_str(),
-            "ADBE Geometry2-0001"
+            "ADBE Geometry2-0000"
+                | "ADBE Geometry2-0001"
                 | "ADBE Geometry2-0002"
                 | "ADBE Geometry2-0003"
                 | "ADBE Geometry2-0004"
@@ -318,22 +320,25 @@ fn static_transform(source: &DecodedEffect) -> Result<Transform, String> {
     })
 }
 
-/// Geometry2 on a footage still transforms the source image plane, before the
-/// owner Transform: an editable Group between the owner and its content.
+/// Geometry2 transforms the raster source plane before the owner Transform:
+/// an editable Group between the owner and its content.
 pub(super) struct StillStage {
     name: String,
     transform: Transform,
     anchor: Option<NumericProperty>,
     position: Option<NumericProperty>,
+    point_scale: [f64; 2],
 }
 
 /// Maps native static or keyed points in source pixels with static scalar
-/// controls. Point expressions and owner effects, styles or masks, whose FX
-/// order would differ from the native stage order, are not mapped.
-pub(super) fn prepare_still(
+/// controls. A raster precomposition can also retain a following Fill on its
+/// owner: the current alpha-preserving Tint approximation commutes with the
+/// owner transform. Other mixed stages, styles and masks remain unsupported.
+pub(super) fn prepare_source(
     owner: &Layer,
     size: [u16; 2],
     converted: &GroupLayer,
+    precomposition: bool,
 ) -> Result<Option<StillStage>, String> {
     let (effects, _) = native::read_effects(&owner.content, size.map(f64::from));
     let mut instances = effects
@@ -351,16 +356,35 @@ pub(super) fn prepare_still(
     }
     if flags.three_d_layer || flags.adjustment_layer || flags.preserve_transparency {
         return Err(
-            "a still-image stage requires a 2D owner without preserved transparency".into(),
+            "a raster-source stage requires a 2D owner without preserved transparency".into(),
         );
     }
-    if !converted.effects.is_empty() || !converted.masks.is_empty() {
+    let following_fill = precomposition
+        && source.index == 1
+        && effects
+            .iter()
+            .skip(1)
+            .all(|effect| effect.match_name == "ADBE Fill")
+        && converted.effects.iter().all(|record| {
+            let payload = match record.data() {
+                fx_schema::EffectData::Identified { effect, .. }
+                | fx_schema::EffectData::Legacy(effect) => effect,
+            };
+            matches!(
+                payload,
+                fx_schema::EffectPayload::Known(fx_schema::LayerEffect::TintTritone { .. })
+            )
+        });
+    if (!converted.effects.is_empty() && !following_fill)
+        || !converted.masks.is_empty()
+        || (precomposition && !following_fill)
+    {
         return Err(
             "owner effects, Layer Styles or masks would change the native stage order".into(),
         );
     }
     if size.contains(&0) {
-        return Err("source image dimensions are unavailable".into());
+        return Err("source plane dimensions are unavailable".into());
     }
     let (descriptor, controls) = instance(owner, source.index)?;
     validate_controls(controls)?;
@@ -382,14 +406,58 @@ pub(super) fn prepare_still(
     };
     let (position, initial_position) = point("ADBE Geometry2-0002")?;
     let (anchor, initial_anchor) = point("ADBE Geometry2-0001")?;
-    transform.anchor_point = initial_anchor;
-    transform.position = Position::TwoD(initial_position);
+    let point_scale = if precomposition && flags.collapse_transformation {
+        collapsed_translation_scale(owner, converted, &transform)?
+    } else {
+        [1.0; 2]
+    };
+    transform.anchor_point = std::array::from_fn(|axis| initial_anchor[axis] * point_scale[axis]);
+    transform.position = Position::TwoD(std::array::from_fn(|axis| {
+        initial_position[axis] * point_scale[axis]
+    }));
     Ok(Some(StillStage {
         name: name.to_owned(),
         transform,
         anchor,
         position,
+        point_scale,
     }))
+}
+
+fn collapsed_translation_scale(
+    owner: &Layer,
+    converted: &GroupLayer,
+    effect: &Transform,
+) -> Result<[f64; 2], String> {
+    let transform = &converted.transform;
+    if owner.record.parent_id() != 0
+        || owner.record.flags().auto_orient_along_path
+        || transform.rotation != 0.0
+        || transform.skew != 0.0
+        || effect.scale != [100.0; 2]
+        || effect.rotation != 0.0
+        || transform
+            .scale
+            .iter()
+            .any(|scale| !scale.is_finite() || *scale == 0.0)
+    {
+        return Err("collapsed precomposition requires a translation effect and an unparented, unrotated, invertible static owner scale".into());
+    }
+    for property in properties::read_transform(&owner.content).map_err(|e| e.to_string())? {
+        if matches!(
+            property.match_name.as_str(),
+            "ADBE Scale" | "ADBE Rotate Z" | "ADBE Skew" | "ADBE Skew Axis"
+        ) {
+            let numeric = property.numeric.map_err(|e| e.to_string())?;
+            if numeric.animated || !numeric.keyframes.is_empty() || numeric.expression_enabled {
+                return Err(
+                    "collapsed precomposition owner scale/rotation/skew must be static".into(),
+                );
+            }
+        }
+    }
+    // T * Translate(delta / scale) = Translate(delta) * T, even with keyed T.position.
+    Ok(transform.scale.map(|scale| 100.0 / scale))
 }
 
 /// The plugin descriptor and explicit controls of one one-based instance.
@@ -491,8 +559,8 @@ impl StillStage {
                 control,
                 keys,
                 &[
-                    NumericAnimationTarget::float(x, 0, 1.0),
-                    NumericAnimationTarget::float(y, 1, 1.0),
+                    NumericAnimationTarget::float(x, 0, self.point_scale[0]),
+                    NumericAnimationTarget::float(y, 1, self.point_scale[1]),
                 ],
                 clock,
                 budget,
@@ -521,7 +589,7 @@ impl StillStage {
             TimeRangeProperty::new(Time::ZERO, Duration::from_secs(super::MAX_TIME_SECS)),
         );
         stage.transform = self.transform;
-        stage.description = "editable Geometry2 on the still source plane before the owner Transform; native point keys; raster sampling and motion blur remain approximate".into();
+        stage.description = "editable Geometry2 on the raster source plane before the owner Transform; native point keys; raster sampling and effect motion blur remain approximate".into();
         content.parent = Some(id);
         stage
             .layers

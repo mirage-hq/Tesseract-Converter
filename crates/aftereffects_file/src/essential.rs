@@ -340,9 +340,18 @@ pub(crate) fn overrides(layer_content: &[Chunk], controllers: &[Controller]) -> 
 /// `Err` guarantees that the layer was not changed. `Ok` can contain warnings
 /// for unsupported source metadata which was deliberately replaced along with
 /// the overridden native storage.
+#[cfg(test)]
 pub(crate) fn apply(
     layer: &mut Layer,
     property_override: &Override,
+) -> Result<Vec<Warning>, Warning> {
+    apply_with_definitions(layer, property_override, &[])
+}
+
+pub(crate) fn apply_with_definitions(
+    layer: &mut Layer,
+    property_override: &Override,
+    effect_definitions: &[Chunk],
 ) -> Result<Vec<Warning>, Warning> {
     let (path, chunks) = match &property_override.value {
         OverrideValue::Media { source_id } => {
@@ -385,7 +394,7 @@ pub(crate) fn apply(
             "source property root is opaque".into(),
         )
     })?;
-    apply_path(root, path, None, chunks)
+    apply_path_with_definitions(root, path, None, chunks, effect_definitions)
 }
 
 fn parse_controller(children: &[Chunk]) -> Result<Controller, String> {
@@ -598,11 +607,100 @@ fn run_ranges(children: &[Chunk]) -> Result<Vec<RunRange>, Warning> {
     Ok(result)
 }
 
-fn apply_path<'a>(
+/// Older files store a shared declaration only on the first effect instance.
+/// Keep native identities and descriptors; do not mutate the source layer tree.
+pub(crate) fn instance_definitions(content: &[Chunk]) -> Vec<Chunk> {
+    let Ok(roots) = properties::root_runs(content) else {
+        return Vec::new();
+    };
+    let parades: Vec<_> = roots
+        .into_iter()
+        .filter(|(name, _)| *name == "ADBE Effect Parade")
+        .collect();
+    let [(_, parade)] = parades.as_slice() else {
+        return Vec::new();
+    };
+    let Ok(children) = properties::unique_list(parade, *b"tdgp") else {
+        return Vec::new();
+    };
+    let Ok(ranges) = run_ranges(children) else {
+        return Vec::new();
+    };
+    ranges
+        .into_iter()
+        .filter_map(|range| {
+            let run = &children[range.marker..range.end];
+            let has_declarations = run
+                .iter()
+                .filter(|chunk| chunk.list_kind() == Some(*b"sspc"))
+                .filter_map(Chunk::children)
+                .any(|descriptor| {
+                    descriptor.iter().any(|chunk| {
+                        chunk.list_kind() == Some(*b"parT")
+                            && chunk.children().is_none_or(|table| !table.is_empty())
+                    })
+                });
+            has_declarations.then(|| Chunk::list(*b"EfDf", run.to_vec()))
+        })
+        .collect()
+}
+
+/// Resolve only the same file's unique effect declaration, never a catalog default.
+/// A nonempty instance table stays authoritative, including stale/invalid entries.
+pub(crate) fn file_effect_declarations<'a>(
+    definitions: &'a [Chunk],
+    match_name: &str,
+) -> Result<&'a [Chunk], Warning> {
+    let unresolved = |error| {
+        warning(
+            WarningKind::UnresolvedSourcePath,
+            format!("source effect {match_name} file declarations: {error}"),
+        )
+    };
+    let group = properties::unique_list(definitions, *b"EfdG").map_err(unresolved)?;
+    let mut matches = group.iter().filter_map(|chunk| {
+        if chunk.list_kind() != Some(*b"EfDf") {
+            return None;
+        }
+        let children = chunk.children()?;
+        let names: Vec<_> = children.iter().filter_map(decode_match_name).collect();
+        (names.as_slice() == [match_name]).then_some(children)
+    });
+    let Some(effect) = matches.next() else {
+        return Err(unresolved(properties::PropertyError::Layout(
+            "effect identity absent or malformed",
+        )));
+    };
+    let descriptor = properties::unique_list(effect, *b"sspc").map_err(unresolved)?;
+    let table = properties::unique_list(descriptor, *b"parT").map_err(unresolved)?;
+    for other in matches {
+        let descriptor = properties::unique_list(other, *b"sspc").map_err(unresolved)?;
+        let other_table = properties::unique_list(descriptor, *b"parT").map_err(unresolved)?;
+        if table != other_table {
+            return Err(unresolved(properties::PropertyError::Layout(
+                "conflicting effect declarations",
+            )));
+        }
+    }
+    Ok(table)
+}
+
+#[cfg(test)]
+fn apply_path(
+    children: &mut Vec<Chunk>,
+    path: &[SourcePropertyRef],
+    parent_name: Option<&str>,
+    replacement: &[Chunk],
+) -> Result<Vec<Warning>, Warning> {
+    apply_path_with_definitions(children, path, parent_name, replacement, &[])
+}
+
+fn apply_path_with_definitions<'a>(
     children: &mut Vec<Chunk>,
     path: &'a [SourcePropertyRef],
     mut parent_name: Option<&'a str>,
     replacement: &[Chunk],
+    effect_definitions: &[Chunk],
 ) -> Result<Vec<Warning>, Warning> {
     if path.is_empty() {
         return Err(warning(
@@ -806,6 +904,11 @@ fn apply_path<'a>(
                         ),
                     )
                 })?;
+            let declaration_storage = if run_ranges(declaration_storage)?.is_empty() {
+                file_effect_declarations(effect_definitions, &head.match_name)?
+            } else {
+                declaration_storage
+            };
             let declarations = run_ranges(declaration_storage)?;
             let next = &path[position + 1];
             let matches: Vec<_> = declarations
@@ -1344,6 +1447,107 @@ mod tests {
             count, 2,
             "native Fill and Brightness controls must both be exercised"
         );
+    }
+
+    #[test]
+    fn empty_instance_declarations_use_file_effect_identity() {
+        let envelope = aep::Project::parse(AEP).unwrap();
+        let controllers = controllers(find_controller_item(&envelope.chunks).unwrap());
+        let project = structure::read_project(AEP).unwrap();
+        let layer = |id| {
+            project
+                .items
+                .iter()
+                .find_map(|item| match &item.kind {
+                    structure::ItemKind::Composition(comp) => {
+                        comp.layers.iter().find(|layer| layer.record.id() == id)
+                    }
+                    _ => None,
+                })
+                .unwrap()
+        };
+        let overrides = overrides(&layer(28).content, &controllers.values);
+        let fill = overrides
+            .values
+            .iter()
+            .find(|entry| {
+                matches!(
+                    &entry.value, OverrideValue::Property { path, .. }
+                        if path.last().is_some_and(|node| node.match_name == "ADBE Fill-0002")
+                )
+            })
+            .unwrap();
+        let mut fill = fill.clone();
+        let OverrideValue::Property { chunks, .. } = &mut fill.value else {
+            unreachable!()
+        };
+        let storage = chunks
+            .iter_mut()
+            .find(|chunk| chunk.list_kind() == Some(*b"tdbs"))
+            .unwrap()
+            .children_mut()
+            .unwrap();
+        let color = storage
+            .iter_mut()
+            .find(|chunk| chunk.id() == *b"cdat")
+            .unwrap();
+        let mut bytes = color.data_payload().unwrap().to_vec();
+        for (index, value) in [255.0_f64, 0.0, 0.0, 255.0].into_iter().enumerate() {
+            bytes[index * 8..index * 8 + 8].copy_from_slice(&value.to_be_bytes());
+        }
+        *color = Chunk::data(*b"cdat", bytes).unwrap();
+        let mut source = layer(15).clone();
+        fn empty_tables(chunks: &mut [Chunk]) {
+            for chunk in chunks {
+                if chunk.list_kind() == Some(*b"parT") {
+                    chunk.children_mut().unwrap().clear();
+                } else if let Some(children) = chunk.children_mut() {
+                    empty_tables(children);
+                }
+            }
+        }
+        empty_tables(&mut source.content);
+        let before = source.clone();
+        // Legacy files omit EfdG and share the first instance's declarations.
+        let mut legacy_envelope = envelope.clone();
+        legacy_envelope
+            .chunks
+            .retain(|chunk| chunk.list_kind() != Some(*b"EfdG"));
+        let legacy_project = structure::read_project(&legacy_envelope.encode().unwrap()).unwrap();
+        assert!(!legacy_project.effect_definitions.is_empty());
+        let mut legacy = before.clone();
+        apply_with_definitions(&mut legacy, &fill, &legacy_project.effect_definitions).unwrap();
+        apply_with_definitions(&mut source, &fill, &project.effect_definitions)
+            .expect("file declarations must admit the saved Fill override");
+        let (effects, _) = crate::effects::native::read_effects(&source.content, [1.0, 1.0]);
+        let color = effects
+            .iter()
+            .flat_map(|effect| &effect.parameters)
+            .find(|parameter| parameter.match_name == "ADBE Fill-0002")
+            .unwrap();
+        assert_eq!(color.numeric.as_ref().unwrap().values, [0.0, 0.0, 1.0, 1.0]);
+        assert_ne!(source.content, before.content);
+        assert_eq!(source.record, before.record);
+        assert_eq!(legacy, source);
+        for definitions in [
+            Vec::new(),
+            [
+                project.effect_definitions.clone(),
+                project.effect_definitions.clone(),
+            ]
+            .concat(),
+        ] {
+            let mut rejected = before.clone();
+            assert!(apply_with_definitions(&mut rejected, &fill, &definitions).is_err());
+            assert_eq!(rejected, before);
+        }
+        let OverrideValue::Property { path, .. } = &mut fill.value else {
+            unreachable!()
+        };
+        path.last_mut().unwrap().child_index = Some(0);
+        let mut rejected = before.clone();
+        assert!(apply_with_definitions(&mut rejected, &fill, &project.effect_definitions).is_err());
+        assert_eq!(rejected, before);
     }
 
     #[test]

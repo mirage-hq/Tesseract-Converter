@@ -16,6 +16,7 @@ mod effects_edge_coverage;
 mod effects_native_coverage;
 mod effects_native_panel;
 mod empty_controls;
+mod hdr;
 mod hold_endpoints;
 mod implemented_feature_additions;
 mod inert_trim;
@@ -33,6 +34,7 @@ mod paired_transform;
 mod parametric_placeholder;
 mod path_keys;
 mod point_zero_speed;
+mod pointwise_adjustment_group;
 mod pr4442_media_cases;
 mod pr4442_scene_cases;
 mod pr4442_text_cases;
@@ -90,6 +92,32 @@ pub(super) fn rect(value: &Value, id: u64) -> Value {
     rect["parent"] = Value::Null;
     rect["name"] = json!(format!("Current solid {id}"));
     rect
+}
+
+#[test]
+fn color_management_aces_export_is_explicitly_unsupported() {
+    let mut value = imported();
+    assert_eq!(
+        value["colorManagement"],
+        json!({"workingSpace":"legacyDisplay"})
+    );
+    for compositing in ["footageOnly", "wholeProgram", "perClip"] {
+        value["colorManagement"] =
+            json!({"workingSpace":"acescct","outputTransform":"aces2.0","compositing":compositing});
+        let document = EditableFxCompositionDocument::from_json_value(value.clone()).unwrap();
+        let error = to_aep(&document)
+            .err()
+            .expect("ACES must not be exported as legacy");
+        assert!(
+            error
+                .to_string()
+                .contains("acescct color management cannot be exported")
+        );
+        assert_eq!(
+            document.to_json_value().unwrap()["colorManagement"],
+            value["colorManagement"]
+        );
+    }
 }
 
 fn export(value: Value) -> ExportedDocument {
@@ -185,6 +213,40 @@ fn review_export_imported_group_solid_falls_back_to_native_hierarchy() {
             .diagnostics
             .iter()
             .any(|d| d.message.contains("subtree omitted"))
+    );
+}
+
+#[test]
+fn extended_solid_color_exports_clipped_with_contextual_diagnostic() {
+    let mut value = imported();
+    let mut solid = rect(&value, 100);
+    solid["rect"]["fillColor"] = json!([2.0, 1.0, 0.5, 1.0]);
+    value["composition"]["layers"] = json!([solid]);
+    let output = export(value);
+    assert!(output.diagnostics.iter().any(|diagnostic| {
+        diagnostic.layer_id == Some(LayerId::new(100))
+            && diagnostic.message.contains("Extended-sRGB")
+            && diagnostic.message.contains("clamped")
+    }));
+    let native = read_project(&output.bytes).unwrap();
+    assert_eq!(layers(&native).len(), 1);
+    let converted = to_structural_fx_document(&native, Some(1))
+        .unwrap()
+        .document
+        .to_json_value()
+        .unwrap();
+    fn find_color(value: &Value) -> Option<&Value> {
+        if let Some(color) = value.get("rect").and_then(|rect| rect.get("fillColor")) {
+            return Some(color);
+        }
+        value
+            .get("layers")
+            .and_then(Value::as_array)
+            .and_then(|layers| layers.iter().find_map(find_color))
+    }
+    assert_eq!(
+        find_color(&converted["composition"]).unwrap(),
+        &json!([1.0, 1.0, 0.5, 1.0])
     );
 }
 

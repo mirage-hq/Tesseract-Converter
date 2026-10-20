@@ -1,6 +1,6 @@
 //! Canonical JSON persistence boundary for an editable FX composition.
 
-use crate::{Color, Dimensions, FXComposition};
+use crate::{Color, ColorManagement, Dimensions, FXComposition};
 use serde::{ser::SerializeMap, Deserialize, Serialize};
 use serde_json::{value::RawValue, Value};
 use std::collections::BTreeMap;
@@ -25,6 +25,9 @@ pub enum EditableFxDocumentError {
     /// A document-level invariant is invalid or unsupported.
     #[error("invalid editable FX document: {0}")]
     Invalid(String),
+    /// Root color policy and domain compatibility.
+    #[error(transparent)]
+    ColorManagement(#[from] crate::ColorManagementError),
 }
 
 #[path = "editable_document_declaration.rs"]
@@ -52,6 +55,10 @@ macro_rules! editable_document_wire {
         struct EditableFxDocumentWire<C> { $($fields)* }
     };
 }
+/// Accepted `hdrGraphicsWhiteNits` values in cd/m². Above ≈766 (3.77 × 203)
+/// SDR white exceeds the HLG signal peak and anti-aliased edges clip.
+pub const HDR_GRAPHICS_WHITE_NITS_RANGE: std::ops::RangeInclusive<f64> = 100.0..=1000.0;
+
 crate::define_editable_document_schema!(editable_document_wire);
 type EditableFxCompositionDocumentWire = EditableFxDocumentWire<FXComposition>;
 
@@ -60,6 +67,11 @@ pub type EditableFxCompositionDocument = EditableFxDocument<FXComposition>;
 
 impl<C: AsRef<FXComposition>> Serialize for EditableFxDocument<C> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        crate::validate_render_domains(
+            &self.color_management,
+            &serde_json::to_value(self.composition.as_ref()).map_err(serde::ser::Error::custom)?,
+        )
+        .map_err(serde::ser::Error::custom)?;
         // The stored schema composition already owns its lossless wire value.
         // Serialize it by reference instead of cloning the full FX tree into a
         // second Value. Insert at the same sorted key position as Map::insert.
@@ -95,8 +107,10 @@ where
             schema: self.schema,
             format_version: self.format_version,
             dimensions: self.dimensions,
+            color_management: self.color_management,
             duration: self.duration,
             background_color: self.background_color,
+            hdr_graphics_white_nits: self.hdr_graphics_white_nits,
             composition: self.composition.into(),
             unknown_fields: self.unknown_fields,
             envelope: self.envelope,
@@ -114,8 +128,10 @@ where
             schema: EDITABLE_FX_DOCUMENT_SCHEMA_URL.to_owned(),
             format_version: EDITABLE_FX_DOCUMENT_FORMAT_VERSION,
             dimensions: dimensions.into(),
+            color_management: ColorManagement::default(),
             duration,
             background_color,
+            hdr_graphics_white_nits: None,
             composition,
             unknown_fields: BTreeMap::new(),
             envelope: serde_json::Map::new(),
@@ -123,6 +139,10 @@ where
         document.validate()?;
         document.envelope = serde_json::Map::from_iter([
             ("$schema".to_owned(), Value::from(document.schema.clone())),
+            (
+                "colorManagement".to_owned(),
+                serde_json::to_value(document.color_management)?,
+            ),
             (
                 "formatVersion".to_owned(),
                 Value::from(document.format_version),
@@ -147,19 +167,25 @@ where
         // Retain only the small document envelope: the composition has already
         // been decoded into the typed wire and must not become another Value.
         let raw_fields: BTreeMap<&str, &RawValue> = serde_json::from_slice(bytes)?;
-        let envelope = raw_fields
+        let mut envelope = raw_fields
             .into_iter()
             .filter(|(name, _)| *name != "composition")
             .map(|(name, raw)| {
                 serde_json::from_str(raw.get()).map(|value| (name.to_owned(), value))
             })
             .collect::<Result<serde_json::Map<String, Value>, _>>()?;
+        envelope.insert(
+            "colorManagement".into(),
+            serde_json::to_value(wire.color_management)?,
+        );
         let document = Self {
             schema: wire.schema,
             format_version: wire.format_version,
             dimensions: wire.dimensions,
+            color_management: wire.color_management,
             duration: wire.duration,
             background_color: wire.background_color,
+            hdr_graphics_white_nits: wire.hdr_graphics_white_nits,
             composition: C::from(wire.composition),
             unknown_fields: wire.unknown_fields,
             envelope,
@@ -196,6 +222,27 @@ where
         self.dimensions.into()
     }
 
+    /// Returns the validated document policy, not a per-tree setting.
+    pub fn color_management(&self) -> ColorManagement {
+        self.color_management
+    }
+
+    /// Transfers the document policy at an envelope/host boundary.
+    pub fn set_color_management(&mut self, policy: ColorManagement) {
+        self.color_management = policy;
+        self.envelope.insert(
+            "colorManagement".into(),
+            serde_json::to_value(policy).expect("validated policy serializes"),
+        );
+    }
+
+    /// Validate the mutable tree before rendering.
+    pub fn render_preflight(&self) -> Result<(), EditableFxDocumentError> {
+        self.validate()?;
+        self.color_management.render_preflight()?;
+        Ok(())
+    }
+
     /// Returns the document duration.
     #[must_use]
     pub fn duration(&self) -> crate::time::Duration {
@@ -206,6 +253,13 @@ where
     #[must_use]
     pub fn background_color(&self) -> Option<Color> {
         self.background_color
+    }
+
+    /// HDR rendering only: cd/m² of SDR graphics white, or `None` for the
+    /// renderer default.
+    #[must_use]
+    pub fn hdr_graphics_white_nits(&self) -> Option<f64> {
+        self.hdr_graphics_white_nits
     }
 
     /// Names of unrecognized document fields retained during loading.
@@ -254,6 +308,10 @@ where
     }
 
     fn validate(&self) -> Result<(), EditableFxDocumentError> {
+        crate::validate_render_domains(
+            &self.color_management,
+            &serde_json::to_value(self.composition.as_ref())?,
+        )?;
         self.composition
             .as_ref()
             .validate()
@@ -280,14 +338,23 @@ where
                 "duration must be greater than zero".to_owned(),
             ));
         }
-        if self.background_color.is_some_and(|color| {
-            color
-                .iter()
-                .any(|channel| !channel.is_finite() || !(0.0..=1.0).contains(channel))
-        }) {
+        if self
+            .background_color
+            .is_some_and(|color| !crate::has_valid_extended_color(&color))
+        {
             return Err(EditableFxDocumentError::Invalid(
-                "backgroundColor channels must be finite values from 0 through 1".to_owned(),
+                "backgroundColor requires finite RGB in 0..=64 and alpha in 0..=1".to_owned(),
             ));
+        }
+        if self
+            .hdr_graphics_white_nits
+            .is_some_and(|nits| !HDR_GRAPHICS_WHITE_NITS_RANGE.contains(&nits))
+        {
+            return Err(EditableFxDocumentError::Invalid(format!(
+                "hdrGraphicsWhiteNits must be from {} through {}",
+                HDR_GRAPHICS_WHITE_NITS_RANGE.start(),
+                HDR_GRAPHICS_WHITE_NITS_RANGE.end()
+            )));
         }
         Ok(())
     }
@@ -317,6 +384,7 @@ mod tests {
         json!({
             "$schema": EDITABLE_FX_DOCUMENT_SCHEMA_URL,
             "formatVersion": 1,
+            "colorManagement": { "workingSpace": "legacyDisplay" },
             "dimensions": { "width": 1080, "height": 1920 },
             "duration": 6.0,
             "backgroundColor": [0.0, 0.0, 0.0, 1.0],
@@ -328,6 +396,38 @@ mod tests {
             },
             "futureEnvelopeField": { "alsoKept": true }
         })
+    }
+
+    #[test]
+    fn hdr_graphics_white_nits_is_optional_bounded_and_round_trips() {
+        let absent = EditableFxCompositionDocument::from_json_value(minimal_document()).unwrap();
+        assert_eq!(absent.hdr_graphics_white_nits(), None);
+        assert!(absent
+            .to_json_value()
+            .unwrap()
+            .get("hdrGraphicsWhiteNits")
+            .is_none());
+
+        let mut value = minimal_document();
+        value["hdrGraphicsWhiteNits"] = json!(203.0);
+        let document = EditableFxCompositionDocument::from_json_value(value).unwrap();
+        assert_eq!(document.hdr_graphics_white_nits(), Some(203.0));
+        assert!(!document
+            .unknown_field_names()
+            .any(|name| name == "hdrGraphicsWhiteNits"));
+        assert_eq!(
+            document.to_json_value().unwrap()["hdrGraphicsWhiteNits"],
+            203.0
+        );
+
+        for invalid in [json!(99.0), json!(1000.5), json!("bright")] {
+            let mut value = minimal_document();
+            value["hdrGraphicsWhiteNits"] = invalid.clone();
+            assert!(
+                EditableFxCompositionDocument::from_json_value(value).is_err(),
+                "accepted {invalid}"
+            );
+        }
     }
 
     #[test]

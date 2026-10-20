@@ -19,7 +19,9 @@ fn linked_project() -> PrProjectFile {
         .as_mut()
         .unwrap();
     video.kind = PrMediaKind::AfterEffectsComposition(
-        PrAfterEffectsComposition::parse("00000001-0000-0000-0000-000000000000").unwrap(),
+        PrAfterEffectsComposition::parse("00000001-0000-0000-0000-000000000000")
+            .unwrap()
+            .into(),
     );
     video.intrinsic_ticks = 2 * TICKS_PER_SECOND;
     project
@@ -276,8 +278,9 @@ fn after_effects_link_writer_does_not_invent_a_guid_from_media_identity() {
         .video
         .as_mut()
         .unwrap()
-        .kind =
-        PrMediaKind::AfterEffectsComposition(PrAfterEffectsComposition::parse(guid).unwrap());
+        .kind = PrMediaKind::AfterEffectsComposition(
+        PrAfterEffectsComposition::parse(guid).unwrap().into(),
+    );
     let xml = project_xml(&project).unwrap();
     let readback = crate::format::inspect_project_with_media(&xml, None).unwrap();
     assert_eq!(
@@ -291,6 +294,180 @@ fn after_effects_link_writer_does_not_invent_a_guid_from_media_identity() {
             .dynamic_link_guid(),
         guid
     );
+}
+
+#[test]
+fn hdr_unknown_linked_source_domain_retains_geometry_with_explicit_numeric_approximation() {
+    let xml = project_xml(&linked_project()).unwrap();
+    let original = serde_json::to_string(&crate::schema::ColorSpace::sequence_sdr()).unwrap();
+    let original = format!("<OriginalColorSpace>{original}</OriginalColorSpace>");
+    assert!(xml.contains(&original));
+    let unknown = xml.replace(&original, r#"<OriginalColorSpace>{"baseColorProfile":{"colorProfileName":"Future RGB"},"baseProfileType":1}</OriginalColorSpace>"#);
+    let (readback, diagnostics) =
+        crate::format::inspect_project_with_omissions(&unknown, None).unwrap();
+    assert!(readback.sequences[0].video_items().next().is_some());
+    let source = readback
+        .media
+        .values()
+        .next()
+        .unwrap()
+        .video
+        .as_ref()
+        .unwrap();
+    let PrMediaKind::AfterEffectsComposition(source) = source.kind else {
+        panic!("linked composition");
+    };
+    assert_eq!(source.working_hdr, None);
+    assert!(diagnostics.iter().any(|diagnostic| diagnostic
+        .to_string()
+        .contains("Unrecognized linked-AEP source colour domain")));
+    let malformed = xml.replace(&original, "<OriginalColorSpace>[]</OriginalColorSpace>");
+    assert!(crate::format::inspect_project_with_media(&malformed, None).is_err());
+}
+
+#[test]
+fn hdr_sequence_target_roundtrip_requires_agreement_without_retagging_sources() {
+    for transfer in [fx_conv::HdrTransfer::Pq, fx_conv::HdrTransfer::Hlg] {
+        let mut project = linked_project();
+        let settings = crate::schema::SequenceHdr {
+            transfer,
+            graphics_white: 203.0,
+        };
+        project.sequences[0].hdr = Some(settings);
+        let xml = project_xml(&project).unwrap();
+        let (readback, diagnostics) =
+            crate::format::inspect_project_with_omissions(&xml, None).unwrap();
+        assert_eq!(readback.sequences[0].hdr, Some(settings), "{diagnostics:?}");
+        let PrMediaKind::AfterEffectsComposition(source) = readback
+            .media
+            .values()
+            .next()
+            .unwrap()
+            .video
+            .as_ref()
+            .unwrap()
+            .kind
+        else {
+            panic!("linked source");
+        };
+        assert_eq!(
+            source.working_hdr, None,
+            "target HDR must not become source HDR"
+        );
+        let tree = roxmltree::Document::parse(&xml).unwrap();
+        let root = tree
+            .root_element()
+            .children()
+            .find(|node| node.has_tag_name("Project") && node.attribute("ObjectRef").is_some())
+            .unwrap();
+        let root_xml = &xml[root.range()];
+        let project = tree
+            .root_element()
+            .children()
+            .find(|node| {
+                node.has_tag_name("Project")
+                    && node.attribute("ObjectID") == root.attribute("ObjectRef")
+            })
+            .unwrap();
+        let project_xml = &xml[project.range()];
+        let settings_reference = project
+            .children()
+            .find(|node| node.has_tag_name("ProjectSettings"))
+            .unwrap();
+        let settings = tree
+            .root_element()
+            .children()
+            .find(|node| {
+                node.has_tag_name("ProjectSettings")
+                    && node.attribute("ObjectID") == settings_reference.attribute("ObjectRef")
+            })
+            .unwrap();
+        let settings_xml = &xml[settings.range()];
+        let wrong_root = format!(
+            "<Project ObjectRef=\"{}\"/>",
+            settings_reference.attribute("ObjectRef").unwrap()
+        );
+        let settings_ref_xml = format!(
+            "<ProjectSettings ObjectRef=\"{}\"/>",
+            settings_reference.attribute("ObjectRef").unwrap()
+        );
+        assert!(project_xml.contains(&settings_ref_xml));
+        for modified in [
+            xml.replace(
+                project_xml,
+                &project_xml.replace(
+                    &settings_ref_xml,
+                    &format!("{settings_ref_xml}{settings_ref_xml}"),
+                ),
+            ),
+            xml.replace(root_xml, &format!("{root_xml}{root_xml}")),
+            xml.replace(root_xml, &wrong_root),
+            xml.replace(
+                settings_xml,
+                &settings_xml.replace(
+                    "\"graphicsWhiteLuminance\":203.0",
+                    "\"graphicsWhiteLuminance\":300.0",
+                ),
+            ),
+            xml.replace(
+                "<AllowLinearCompositing>false</AllowLinearCompositing>",
+                "<AllowLinearCompositing>true</AllowLinearCompositing>",
+            ),
+            xml.replace(
+                "\"workingSpaceIsLinearized\":0",
+                "\"workingSpaceIsLinearized\":1",
+            ),
+            xml.replace(
+                "\"graphicsWhiteLuminance\":203.0",
+                "\"graphicsWhiteLuminance\":99.0",
+            ),
+        ] {
+            assert_ne!(modified, xml);
+            let readback = crate::format::inspect_project_with_media(&modified, None).unwrap();
+            assert!(readback.sequences[0].hdr.is_none());
+            assert!(
+                readback
+                    .media
+                    .values()
+                    .next()
+                    .unwrap()
+                    .after_effects_composition()
+                    .is_some(),
+                "independent source geometry survives unknown target"
+            );
+        }
+    }
+}
+
+#[test]
+fn after_effects_link_hdr_source_is_independent_of_sdr_sequence_and_guid() {
+    for transfer in [fx_conv::HdrTransfer::Pq, fx_conv::HdrTransfer::Hlg] {
+        let mut project = linked_project();
+        let video = project
+            .media
+            .values_mut()
+            .next()
+            .unwrap()
+            .video
+            .as_mut()
+            .unwrap();
+        let PrMediaKind::AfterEffectsComposition(source) = &mut video.kind else {
+            panic!("test requires linked AEP source");
+        };
+        let composition = source.composition;
+        source.working_hdr = Some(transfer);
+        assert!(project.sequences[0].hdr.is_none());
+        let xml = project_xml(&project).unwrap();
+        let readback = crate::format::inspect_project_with_media(&xml, None).unwrap();
+        assert!(readback.sequences[0].hdr.is_none());
+        let source = readback.media.values().next().unwrap();
+        assert_eq!(source.after_effects_composition(), Some(composition));
+        let PrMediaKind::AfterEffectsComposition(source) = source.video.as_ref().unwrap().kind
+        else {
+            panic!("source profile must not reclassify AEP as ordinary video");
+        };
+        assert_eq!(source.working_hdr, Some(transfer));
+    }
 }
 
 #[test]

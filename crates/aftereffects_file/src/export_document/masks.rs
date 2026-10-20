@@ -191,7 +191,7 @@ fn lower_mask(
         (Some(_), Some(_)) => return Err("mask has both legacy inline and guide-layer geometry"),
         (None, None) => return Err("mask has no geometry source"),
     };
-    let (feather, feather_track, mut diagnostics) = mask_property(
+    let (feather, mut feather_track, mut diagnostics) = mask_property(
         mask.id,
         "feather",
         PropertyValue::Vector2(mask.feather),
@@ -237,6 +237,19 @@ fn lower_mask(
     let PropertyValue::Vector2(feather) = feather else {
         return Err("mask Feather constant has the wrong type");
     };
+    // Native Feather uses a narrower Gaussian footprint than FX at equal values;
+    // doubling its width approximates FX without reconstructing the edge kernel.
+    let feather = feather.map(|value| value * 2.0);
+    if let Some(track) = &mut feather_track {
+        for key in &mut track.keys {
+            for value in &mut key.values {
+                *value *= 2.0;
+            }
+        }
+    }
+    if feather != [0.0; 2] || feather_track.is_some() {
+        diagnostics.push("Feather radius approximated as native Feather = 2 * FX radius; Gaussian kernels and edge coverage may differ".into());
+    }
     let PropertyValue::Float(opacity) = opacity else {
         return Err("mask Opacity constant has the wrong type");
     };
@@ -1155,7 +1168,7 @@ mod tests {
         for spec in &output.masks {
             assert_eq!(spec.mode, NativeMaskMode::Subtract);
             assert!(!spec.inverted);
-            assert_eq!(spec.feather, [15.0; 2]);
+            assert_eq!(spec.feather, [30.0; 2]);
             assert_eq!(spec.expansion, 40.0);
             assert_eq!(spec.opacity, 1.0);
             assert_eq!(spec.source_size, [512, 512]);
@@ -1202,6 +1215,101 @@ mod tests {
         )];
         let animated = crate::export_document::AnimationIndex::new(&entries);
         assert!(lower(&[mask], None, owner, &[], &animated).masks.is_empty());
+    }
+
+    #[test]
+    fn exported_mask_feather_converts_radius_to_native_width() {
+        let mask: PathMask = serde_json::from_value(serde_json::json!({
+            "id":91,"mode":"add","inverted":true,"opacity":1.0,
+            "feather":[0.0,40.0],"expansion":0.0,
+            "path":{"commands":[
+                {"type":"moveTo","x":0.0,"y":30.0},
+                {"type":"lineTo","x":320.0,"y":30.0},
+                {"type":"lineTo","x":320.0,"y":150.0},
+                {"type":"lineTo","x":0.0,"y":150.0},
+                {"type":"close"}
+            ]}
+        }))
+        .unwrap();
+        let identity = Transform {
+            anchor_point: [0.0; 2],
+            position: Position::TwoD([0.0; 2]),
+            scale: [100.0; 2],
+            rotation: 0.0,
+            skew: 0.0,
+            skew_axis: 0.0,
+            rotation_x: 0.0,
+            rotation_y: 0.0,
+            orientation: [0.0; 3],
+            opacity: fx_schema::PercentageProperty::new(100.0).unwrap(),
+        };
+        let owner = MaskOwner {
+            coordinate_owner: Some(LayerId::new(1)),
+            parent: None,
+            transform: &identity,
+            source_size: [320, 180],
+            clock: None,
+        };
+        let disabled = [disabled_entry(
+            mask.id,
+            "feather",
+            [
+                PropertyValue::Vector2([1.0, 2.0]),
+                PropertyValue::Vector2([3.0, 4.0]),
+            ],
+            PropertyValue::Vector2([5.0, 7.0]),
+        )];
+        for (entries, expected) in [(&[][..], [0.0, 80.0]), (&disabled[..], [10.0, 14.0])] {
+            let dynamics = crate::export_document::AnimationIndex::new(entries);
+            let output = lower(std::slice::from_ref(&mask), None, owner, &[], &dynamics);
+            assert_eq!(output.masks.len(), 1, "{:?}", output.diagnostics);
+            let native = &output.masks[0];
+            assert_eq!(native.feather, expected);
+            assert!(native.inverted);
+            assert_eq!(native.path, *mask.legacy_path.as_ref().unwrap());
+            assert_eq!(native.expansion, 0.0);
+            assert!(native.feather_track.is_none());
+            assert!(
+                output
+                    .diagnostics
+                    .iter()
+                    .any(|message| message.contains("Feather radius"))
+            );
+        }
+        let easing = PropertyKeyframeEasing::CubicBezier {
+            x1: 0.2,
+            y1: 0.1,
+            x2: 0.8,
+            y2: 0.9,
+        };
+        let keys = [
+            ([0.0, 10.0], PropertyKeyframeEasing::Hold),
+            ([20.0, 30.0], easing),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, (value, easing))| {
+            PropertyKeyframe::new(
+                KeyframeId::new(format!("feather-{index}")),
+                TimeOffset::from_millis(i64::try_from(index).unwrap() * 500),
+                PropertyValue::Vector2(value),
+                easing,
+            )
+        })
+        .collect();
+        let entries = [AnimationGraphEntry {
+            animator: PropertyAnimator::keyframes(PropertyKeyframeTrack::new(keys).unwrap()),
+            ..disabled[0].clone()
+        }];
+        let dynamics = crate::export_document::AnimationIndex::new(&entries);
+        let output = lower(&[mask], None, owner, &[], &dynamics);
+        let track = output.masks[0].feather_track.as_ref().unwrap();
+        assert_eq!(track.keys[0].values, [0.0, 20.0]);
+        assert_eq!(track.keys[1].values, [40.0, 60.0]);
+        assert_eq!(track.keys[0].time_millis, 0);
+        assert_eq!(track.keys[1].time_millis, 500);
+        assert_eq!(track.keys[0].easing, [KeyframeEasing::Hold; 2]);
+        assert_eq!(track.keys[1].easing, [native_easing(easing); 2]);
     }
 
     #[test]

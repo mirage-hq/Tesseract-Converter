@@ -226,6 +226,128 @@ fn native_matte_interval_wire(
     (document, omissions)
 }
 
+fn consecutive_native_matte_xml() -> String {
+    let mut xml =
+        with_nested_matte_consumer(native_matte_interval_control(NativeMatteCoverage::Full));
+    let parsed = roxmltree::Document::parse(&xml).unwrap();
+    let record = |id| {
+        let node = parsed
+            .root_element()
+            .children()
+            .find(|node| node.attribute("ObjectID") == Some(id))
+            .unwrap();
+        xml[node.range()].to_owned()
+    };
+    let provider = record("138");
+    let subclip = record("183");
+    let source = record("240");
+    let still_in = 914_449_132_800_000_i64;
+    let second = provider
+        .replace("ObjectID=\"138\"", "ObjectID=\"10138\"")
+        .replace("ObjectRef=\"183\"", "ObjectRef=\"10183\"")
+        .replace("<End>", &format!("<Start>{TICKS}</Start><End>"))
+        + &subclip
+            .replace("ObjectID=\"183\"", "ObjectID=\"10183\"")
+            .replace("ObjectRef=\"240\"", "ObjectRef=\"10240\"")
+        + &source
+            .replace("ObjectID=\"240\"", "ObjectID=\"10240\"")
+            .replace(
+                &format!("<InPoint>{still_in}</InPoint>"),
+                &format!("<InPoint>{}</InPoint>", still_in + TICKS),
+            );
+    xml = xml.replace(&provider, &provider.replace("<End>508032000000</End>", &format!("<End>{TICKS}</End>")))
+        .replace(&source, &source.replace("<OutPoint>914957164800000</OutPoint>",
+                   &format!("<OutPoint>{}</OutPoint>", still_in + TICKS)))
+        .replace("<TrackItem Index=\"0\" ObjectRef=\"138\"/>",
+                 "<TrackItem Index=\"0\" ObjectRef=\"138\"/><TrackItem Index=\"1\" ObjectRef=\"10138\"/>");
+    with_records(&xml, &second)
+}
+
+#[test]
+fn consecutive_track_mattes_keep_nested_picture_and_source_clock() {
+    let xml = consecutive_native_matte_xml();
+    let (project, mut omissions) =
+        inspect_project_with_omissions(&xml, Some("3776e3eb-791f-4e6a-a2bb-7e77eff235ef")).unwrap();
+    let sequence = project.single_sequence().unwrap();
+    let ids = crate::tesseract_output::asset_ids_in_order(sequence, &project.media);
+    let document =
+        crate::convert::premiere_to_tesseract(sequence, &project.media, &ids, &mut omissions)
+            .unwrap()
+            .to_json_value()
+            .unwrap();
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    let mut consumers: Vec<_> = layers
+        .iter()
+        .filter(|layer| layer["trackMatte"].is_object())
+        .collect();
+    consumers.sort_by_key(|layer| layer["playback"]["inputRange"]["start"].as_i64().unwrap());
+    assert_eq!(consumers.len(), 2, "{omissions:?}");
+    for (index, consumer) in consumers.iter().enumerate() {
+        assert_eq!(consumer["type"], "Group");
+        assert_eq!(
+            consumer["playback"]["inputRange"],
+            serde_json::json!({"start": index * 1000, "duration": 1000})
+        );
+        let child = consumer["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["type"] == "Video")
+            .unwrap();
+        assert_eq!(
+            child["sourceRange"],
+            serde_json::json!({"start": index * 1000, "duration": 1000})
+        );
+        let provider = layers
+            .iter()
+            .find(|layer| layer["id"] == consumer["trackMatte"]["layer"])
+            .unwrap();
+        assert_eq!(provider["activeRange"], consumer["playback"]["inputRange"]);
+    }
+    assert_ne!(
+        consumers[0]["trackMatte"]["layer"],
+        consumers[1]["trackMatte"]["layer"]
+    );
+    fx_schema::EditableFxCompositionDocument::from_json_value(document).unwrap();
+}
+
+#[test]
+fn consecutive_track_mattes_reject_gaps_and_overlaps() {
+    let xml = consecutive_native_matte_xml();
+    for start in [TICKS / 2, 3 * TICKS / 2] {
+        let xml = xml.replace(
+            &format!("<Start>{TICKS}</Start>"),
+            &format!("<Start>{start}</Start>"),
+        );
+        let (project, omissions) =
+            inspect_project_with_omissions(&xml, Some("3776e3eb-791f-4e6a-a2bb-7e77eff235ef"))
+                .unwrap();
+        let keyed = project
+            .single_sequence()
+            .unwrap()
+            .nest_occurrences()
+            .filter(|nest| nest.track_matte.is_some())
+            .count();
+        if start < TICKS {
+            assert_eq!(keyed, 1);
+            assert!(
+                omissions
+                    .iter()
+                    .any(|loss| loss.reason.contains("overlaps another occurrence")),
+                "{omissions:?}"
+            );
+        } else {
+            assert_eq!(keyed, 0);
+            assert!(
+                omissions
+                    .iter()
+                    .any(|loss| loss.reason.contains("only one unambiguous provider")),
+                "{omissions:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn track_matte_provider_interval_full_coverage_keeps_native_source_clock() {
     let (document, _) =
@@ -787,6 +909,82 @@ fn keyed_nest_xml(motion: Option<&str>) -> String {
     with_records(SOURCE, &records)
 }
 
+fn empty_keyed_nest_xml() -> String {
+    with_records(
+        &keyed_nest_xml(None).replace(
+            "<Sequence ObjectURef=\"sequence-1\"/>",
+            "<Sequence ObjectURef=\"empty\"/>",
+        ),
+        &sequence_records("empty", "Empty", 200, &[]),
+    )
+}
+
+#[test]
+fn empty_native_nest_does_not_claim_its_matte_picture() {
+    let xml = empty_keyed_nest_xml();
+    let (project, omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+    let sequence = project.single_sequence().unwrap();
+    assert_eq!(sequence.nest_occurrences().count(), 0);
+    let pictures: Vec<_> = sequence.video_occurrences().collect();
+    assert_eq!(pictures.len(), 2, "{omissions:?}");
+    assert_eq!(pictures[0].id.as_deref(), Some("VideoClipTrackItem:120"));
+    assert_eq!(pictures[0].timeline_ticks(), 0..2 * TICKS);
+    assert!(pictures[0].track_matte.is_none());
+    assert!(omissions
+        .iter()
+        .any(|item| item.reason.contains("empty native sequence")));
+    let document = crate::tests::support::project_document_with_media(sequence, &project.media);
+    let layers = document["composition"]["layers"].as_array().unwrap();
+    let videos: Vec<_> = layers
+        .iter()
+        .filter(|layer| layer["type"] == "Video")
+        .collect();
+    assert_eq!(videos.len(), 2);
+    assert!(videos
+        .iter()
+        .all(|layer| layer["isHidden"] != true && layer.get("trackMatte").is_none()));
+}
+
+#[test]
+fn empty_native_nest_with_disabled_consumer_retains_matte_concealment() {
+    for (before, after) in [
+        (
+            "<VideoClipTrackItem ObjectID=\"110\"><ClipTrackItem>",
+            "<VideoClipTrackItem ObjectID=\"110\"><ClipTrackItem><IsMuted>true</IsMuted>",
+        ),
+        (
+            "<VideoClipTrack ObjectUID=\"outer-track\"><ClipTrack><Track><ID>1</ID>",
+            "<VideoClipTrack ObjectUID=\"outer-track\"><ClipTrack><Track><ID>1</ID><IsMuted>true</IsMuted>",
+        ),
+    ] {
+        let xml = empty_keyed_nest_xml().replace(before, after);
+        let (project, omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+        let pictures: Vec<_> = project.single_sequence().unwrap().video_occurrences().collect();
+        assert_eq!(pictures.len(), 1, "{omissions:?}");
+        assert_eq!(pictures[0].id.as_deref(), Some("VideoClipTrackItem:125"));
+        assert!(omissions.iter().any(|item| item.reason.contains("matte source of the omitted clip")));
+    }
+}
+
+#[test]
+fn empty_native_nest_with_group_processing_retains_matte_concealment() {
+    let xml = empty_keyed_nest_xml().replace(
+        "<VideoComponentChain ObjectID=\"201\"><ComponentChain/></VideoComponentChain>",
+        "<VideoComponentChain ObjectID=\"201\"><ComponentChain><Components><Component Index=\"0\" ObjectRef=\"130\"/></Components></ComponentChain></VideoComponentChain>",
+    );
+    let (project, omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+    let pictures: Vec<_> = project
+        .single_sequence()
+        .unwrap()
+        .video_occurrences()
+        .collect();
+    assert_eq!(pictures.len(), 1);
+    assert_eq!(pictures[0].id.as_deref(), Some("VideoClipTrackItem:125"));
+    assert!(omissions
+        .iter()
+        .any(|item| item.reason.contains("matte source of the omitted clip")));
+}
+
 #[test]
 fn nested_geometry2_stack_keeps_curved_position_tint_picture_and_matte_consumers() {
     const CURVED_POSITION_WARNING: &str = "Transform Position curved spatial path retains editable tangents but FX traverses parametrically rather than native constant-speed distance";
@@ -1166,6 +1364,461 @@ fn a_masked_nest_keeps_mapped_effect_keys_children_and_concealed_provider() {
 }
 
 #[test]
+fn fixed_pivot_scale_keeps_nested_picture_and_moves_its_matte() {
+    let keys = format!("<Keyframes>0,50.,0,0,0,0,0,0;{TICKS},100.,0,0,0,0,0,0;</Keyframes>");
+    // Native Track Matte saves 50% Scale; native static Motion saves Anchor 0.25:0.75.
+    let scale_keys = [("Scale", keys.as_str())];
+    for (pivot, pixels, animated, start) in [
+        ("0.5:0.5", [960.0, 540.0], false, 0),
+        ("0.5:0.5", [960.0, 540.0], true, TICKS),
+        ("0.25:0.75", [480.0, 810.0], false, 0),
+        ("0.25:0.75", [480.0, 810.0], true, TICKS),
+        ("0.5:1", [960.0, 1080.0], true, 0),
+        ("1:0.5", [1920.0, 540.0], true, 0),
+    ] {
+        let motion = corpus_motion_component(
+            300,
+            &[
+                ("Scale", "50."),
+                ("Scale Width", "50."),
+                ("Position", pivot),
+                ("Anchor Point", pivot),
+            ],
+            if animated { &scale_keys } else { &[] },
+        );
+        let mut xml = keyed_nest_xml(Some(&motion));
+        if start != 0 {
+            xml = xml.replace(
+                &format!("<Start>0</Start><End>{}</End>", 2 * TICKS),
+                &format!("<Start>{start}</Start><End>{}</End>", start + 2 * TICKS),
+            );
+        }
+        let (project, omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+        let outer = project.single_sequence().unwrap();
+        assert_eq!(outer.nest_occurrences().count(), 1, "{omissions:?}");
+        let document = crate::tests::support::project_document_with_media(outer, &project.media);
+        let roots = document["composition"]["layers"].as_array().unwrap();
+        let consumer = roots.iter().find(|layer| layer["type"] == "Group").unwrap();
+        assert_eq!(
+            consumer["transform"]["scale"],
+            serde_json::json!([50.0, 50.0])
+        );
+        assert_eq!(consumer["transform"]["position"], serde_json::json!(pixels));
+        assert_eq!(
+            consumer["transform"]["anchorPoint"],
+            serde_json::json!(pixels)
+        );
+        assert_eq!(consumer["trackMatte"]["mode"], "luma");
+        assert_eq!(
+            consumer["playback"]["inputRange"]["start"],
+            start / (TICKS / 1000)
+        );
+        let children = consumer["layers"].as_array().unwrap();
+        let provider = children
+            .iter()
+            .find(|layer| layer["id"] == consumer["trackMatte"]["layer"])
+            .unwrap();
+        assert_eq!(provider["type"], "Video");
+        assert_eq!(provider["parent"], consumer["id"]);
+        assert_eq!(
+            provider["playback"]["inputRange"],
+            serde_json::json!({"start": 0, "duration": 2000})
+        );
+        assert_eq!(
+            children
+                .iter()
+                .filter(|layer| layer["type"] == "Video")
+                .count(),
+            2
+        );
+        assert_eq!(
+            roots
+                .iter()
+                .filter(|layer| layer["type"] == "Video")
+                .count(),
+            1
+        );
+        if animated {
+            let entries = document["composition"]["dynamics"]["entries"]
+                .as_array()
+                .unwrap();
+            for property in ["scaleX", "scaleY"] {
+                let entry = entries
+                    .iter()
+                    .find(|entry| {
+                        entry["target"]["layerId"] == consumer["id"]
+                            && entry["target"]["propertyType"] == property
+                    })
+                    .unwrap();
+                let keys = entry["animator"]["keyframes"].as_array().unwrap();
+                assert_eq!(keys.len(), 2);
+                for (key, (time, value)) in keys.iter().zip([(0, 50.0), (1000, 100.0)]) {
+                    assert_eq!(key["layerTime"], time);
+                    assert_eq!(key["value"]["value"], value);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn translated_nested_matte_keeps_picture_coverage_and_static_pivots() {
+    for values in [
+        [
+            ("Scale", "50."),
+            ("Position", "0.5:0.5"),
+            ("Anchor Point", "0.25:0.75"),
+        ],
+        [
+            ("Scale", "50."),
+            ("Position", "0.25:0.75"),
+            ("Anchor Point", "0.5:0.5"),
+        ],
+    ] {
+        let motion = corpus_motion_component(300, &values, &[]);
+        let (project, omissions) =
+            inspect_project_with_omissions(&keyed_nest_xml(Some(&motion)), Some("outer")).unwrap();
+        let outer = project.single_sequence().unwrap();
+        assert_eq!(outer.nest_occurrences().count(), 1, "{omissions:?}");
+        let document = crate::tests::support::project_document_with_media(outer, &project.media);
+        let roots = document["composition"]["layers"].as_array().unwrap();
+        let consumer = roots.iter().find(|layer| layer["type"] == "Group").unwrap();
+        let (position, anchor) = if values[1].1 == "0.5:0.5" {
+            ([960.0, 540.0], [480.0, 810.0])
+        } else {
+            ([480.0, 810.0], [960.0, 540.0])
+        };
+        assert_eq!(
+            consumer["transform"]["position"],
+            serde_json::json!(position)
+        );
+        assert_eq!(
+            consumer["transform"]["anchorPoint"],
+            serde_json::json!(anchor)
+        );
+        assert_eq!(
+            consumer["transform"]["scale"],
+            serde_json::json!([50.0, 50.0])
+        );
+        let children = consumer["layers"].as_array().unwrap();
+        let provider = children
+            .iter()
+            .find(|layer| layer["id"] == consumer["trackMatte"]["layer"])
+            .unwrap();
+        assert_eq!(provider["parent"], consumer["id"]);
+        assert_eq!(provider["type"], "Video");
+        assert_eq!(consumer["trackMatte"]["mode"], "luma");
+        assert_eq!(
+            children
+                .iter()
+                .filter(|layer| layer["type"] == "Video")
+                .count(),
+            2
+        );
+        assert_eq!(
+            roots
+                .iter()
+                .filter(|layer| layer["type"] == "Video")
+                .count(),
+            1
+        );
+    }
+}
+
+#[test]
+fn translated_nested_matte_retains_an_editable_solid_provider() {
+    let motion = corpus_motion_component(300, &[("Scale", "50."), ("Position", "0.25:0.75")], &[]);
+    let (mut project, mut omissions) =
+        inspect_project_with_omissions(&keyed_nest_xml(Some(&motion)), Some("outer")).unwrap();
+    for media in project.media.values_mut() {
+        if let Some(video) = &mut media.video {
+            video.kind = PrMediaKind::ColorMatte(PrColorMatte { rgb: [12, 34, 56] });
+        }
+    }
+    let sequence = project.single_sequence().unwrap();
+    let ids = crate::tesseract_output::asset_ids_in_order(sequence, &project.media);
+    let document =
+        crate::convert::premiere_to_tesseract(sequence, &project.media, &ids, &mut omissions)
+            .unwrap()
+            .to_json_value()
+            .unwrap();
+    let consumer = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Group")
+        .unwrap_or_else(|| panic!("{omissions:?}"));
+    let provider = consumer["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["id"] == consumer["trackMatte"]["layer"])
+        .unwrap();
+    assert_eq!(provider["type"], "Rect");
+    assert_eq!(provider["parent"], consumer["id"]);
+    assert_eq!(
+        consumer["transform"]["position"],
+        serde_json::json!([480.0, 810.0])
+    );
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn translated_short_canvas_matte_preserves_public_import_and_provider_tail() {
+    let motion = corpus_motion_component(
+        300,
+        &[
+            ("Scale", "50."),
+            ("Position", "0.25:0.75"),
+            ("Anchor Point", "0.5:0.5"),
+        ],
+        &[],
+    );
+    short_canvas_matte_preserves_public_import_and_provider_tail(
+        Some(&motion),
+        [480.0, 810.0],
+        50.0,
+    );
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn default_motion_short_canvas_matte_preserves_public_import_and_provider_tail() {
+    short_canvas_matte_preserves_public_import_and_provider_tail(None, [960.0, 540.0], 100.0);
+}
+
+#[cfg(feature = "ffmpeg-library")]
+fn short_canvas_matte_preserves_public_import_and_provider_tail(
+    motion: Option<&str>,
+    position: [f64; 2],
+    scale: f64,
+) {
+    let mut xml = keyed_nest_xml(motion);
+    let canvas = "</TrackGroup><FrameRect>0,0,1920,1080</FrameRect><ComponentOwner><Components ObjectRef=\"2\"/>";
+    assert_eq!(xml.matches(canvas).count(), 1);
+    xml = xml.replace(canvas, &canvas.replace("1920,1080", "1920,200"));
+    let occurrence_frame =
+        "<SubClip ObjectRef=\"5\"/></ClipTrackItem><FrameRect>0,0,1920,1080</FrameRect>";
+    assert_eq!(xml.matches(occurrence_frame).count(), 1);
+    xml = xml.replace(
+        occurrence_frame,
+        &occurrence_frame.replace("1920,1080", "1920,200"),
+    );
+    let original = placement_records(
+        120,
+        7,
+        &Placement {
+            start: 0,
+            end: 2 * TICKS,
+            source_in: 0,
+        },
+    );
+    let extended = placement_records(
+        120,
+        7,
+        &Placement {
+            start: 0,
+            end: 3 * TICKS,
+            source_in: 0,
+        },
+    );
+    assert_eq!(xml.matches(&original).count(), 1);
+    xml = xml.replace(&original, &extended);
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir(directory.path().join("media")).unwrap();
+    std::fs::copy(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/feature_timecoded_source.mp4"),
+        directory.path().join("media/source.mp4"),
+    )
+    .unwrap();
+    let source = directory.path().join("source.prproj");
+    std::fs::write(&source, xml).unwrap();
+    let output = directory.path().join("converted");
+    let omissions = crate::premiere_to_tesseract(&source, &output, Some("outer"), false).unwrap();
+    let file = tesseract_file::TesseractFile::open(output.join("project.tsrct")).unwrap();
+    let document = file.project_json().unwrap();
+    let roots = document["composition"]["layers"].as_array().unwrap();
+    let consumer = roots
+        .iter()
+        .find(|layer| layer["type"] == "Group")
+        .unwrap_or_else(|| panic!("{omissions:?}"));
+    assert_eq!(
+        consumer["transform"]["position"],
+        serde_json::json!(position)
+    );
+    assert_eq!(
+        consumer["transform"]["anchorPoint"],
+        serde_json::json!([960.0, 100.0])
+    );
+    assert_eq!(
+        consumer["transform"]["scale"],
+        serde_json::json!([scale, scale])
+    );
+    let children = consumer["layers"].as_array().unwrap();
+    let matte = children
+        .iter()
+        .find(|layer| layer["id"] == consumer["trackMatte"]["layer"])
+        .unwrap();
+    assert_eq!(matte["type"], "Group");
+    assert_eq!(matte["parent"], consumer["id"]);
+    assert_eq!(
+        matte["transform"]["position"],
+        serde_json::json!([0.0, 0.0])
+    );
+    assert_eq!(matte["transform"]["scale"][0], 100.0);
+    assert!(
+        (matte["transform"]["scale"][1].as_f64().unwrap() - 100.0 * 200.0 / 1080.0).abs() < 1e-12
+    );
+    let provider = &matte["layers"][0];
+    assert_eq!(provider["type"], "Video");
+    assert_eq!(provider["parent"], matte["id"]);
+    assert_eq!(
+        provider["playback"]["inputRange"],
+        serde_json::json!({"start": 0, "duration": 2000})
+    );
+    let tails: Vec<_> = roots
+        .iter()
+        .filter(|layer| layer["type"] == "Video")
+        .collect();
+    assert_eq!(tails.len(), 2);
+    let tail = tails
+        .iter()
+        .find(|layer| layer["playback"]["inputRange"]["start"] == 2000)
+        .unwrap();
+    assert_eq!(tail["playback"]["inputRange"]["duration"], 1000);
+    assert_eq!(
+        tail["playback"]["mapping"]["output"],
+        serde_json::json!({"start": 2000, "duration": 1000})
+    );
+    assert_eq!(provider["source"]["assetId"], tail["source"]["assetId"]);
+    assert_eq!(
+        children
+            .iter()
+            .filter(|layer| layer["type"] == "Video")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn scaled_nested_matte_keeps_unsafe_provider_omissions() {
+    let motion = corpus_motion_component(300, &[("Scale", "50.")], &[]);
+    let original = placement_records(
+        120,
+        7,
+        &Placement {
+            start: 0,
+            end: 2 * TICKS,
+            source_in: 0,
+        },
+    );
+    let retimed = original.replace(
+        &format!("<VideoClip ObjectID=\"123\"><Clip><Source ObjectRef=\"7\"/><InPoint>0</InPoint><OutPoint>{}</OutPoint>", 2 * TICKS),
+        &format!("<VideoClip ObjectID=\"123\"><Clip><Source ObjectRef=\"7\"/><PlaybackSpeed>0.5</PlaybackSpeed><InPoint>0</InPoint><OutPoint>{TICKS}</OutPoint>"),
+    );
+    assert_ne!(retimed, original);
+    let cropped = original.replace(
+        "<VideoComponentChain ObjectID=\"121\"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>",
+        &placement_chain(121, "<DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity>", &[(500, top_crop(500))]),
+    );
+    assert_ne!(cropped, original);
+    for (replacement, reason, nests) in [
+        (retimed, "independent linear Video or Group provider", 1),
+        (cropped, "the matte clip has its own Crop", 0),
+    ] {
+        let xml = keyed_nest_xml(Some(&motion)).replace(&original, &replacement);
+        let (project, mut omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
+        let outer = project.single_sequence().unwrap();
+        assert_eq!(outer.nest_occurrences().count(), nests, "{omissions:?}");
+        let ids = crate::tesseract_output::asset_ids_in_order(outer, &project.media);
+        let document =
+            crate::convert::premiere_to_tesseract(outer, &project.media, &ids, &mut omissions)
+                .unwrap()
+                .to_json_value()
+                .unwrap();
+        assert!(
+            omissions.iter().any(|note| note.reason.contains(reason)),
+            "{omissions:?}"
+        );
+        let roots = document["composition"]["layers"].as_array().unwrap();
+        assert!(roots.iter().all(|layer| layer["type"] != "Group"));
+        assert_eq!(
+            roots
+                .iter()
+                .filter(|layer| layer["type"] == "Video")
+                .count(),
+            1
+        );
+    }
+}
+
+#[test]
+fn neutral_position_keys_keep_nested_track_matte_picture() {
+    let keys = format!(
+        "<Keyframes>0,0.5:0.5,0,0,0,0.16666666666666666,0,0.16666666666666666,0,2,0,0,0,0;{TICKS},0.5:0.5,5,0,0,0.33333333333333331,0,0.16666666666666666,0,4,0,0,0,0;</Keyframes>"
+    );
+    let motion = corpus_motion_component(300, &[], &[("Position", &keys)]);
+    let (project, omissions) =
+        inspect_project_with_omissions(&keyed_nest_xml(Some(&motion)), Some("outer")).unwrap();
+    let outer = project.single_sequence().unwrap();
+    assert_eq!(outer.nest_occurrences().count(), 1, "{omissions:?}");
+    let document = crate::tests::support::project_document_with_media(outer, &project.media);
+    let roots = document["composition"]["layers"].as_array().unwrap();
+    let consumer = roots.iter().find(|layer| layer["type"] == "Group").unwrap();
+    assert_eq!(consumer["trackMatte"]["mode"], "luma");
+    let provider = roots
+        .iter()
+        .find(|layer| layer["id"] == consumer["trackMatte"]["layer"])
+        .unwrap();
+    assert_eq!(provider["type"], "Video");
+    assert!(consumer["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|layer| layer["type"] == "Video"));
+    assert_eq!(
+        consumer["transform"]["position"],
+        serde_json::json!([960.0, 540.0])
+    );
+    let entries = document["composition"]["dynamics"]["entries"]
+        .as_array()
+        .unwrap();
+    for (property, expected) in [("positionX", 960.0), ("positionY", 540.0)] {
+        let entry = entries
+            .iter()
+            .find(|entry| {
+                entry["target"]["layerId"] == consumer["id"]
+                    && entry["target"]["propertyType"] == property
+            })
+            .unwrap();
+        let keys = entry["animator"]["keyframes"].as_array().unwrap();
+        assert_eq!(keys.len(), 2);
+        for (index, key) in keys.iter().enumerate() {
+            assert_eq!(key["layerTime"], index * 1000);
+            assert_eq!(key["value"]["value"], expected);
+        }
+    }
+
+    for changed in [
+        keys.replace(&format!("{TICKS},0.5:0.5"), &format!("{TICKS},0.6:0.5")),
+        keys.replace("0,4,0,0,0,0;", "5,4,0.1,0,0,0;"),
+    ] {
+        let motion = corpus_motion_component(300, &[], &[("Position", &changed)]);
+        let (project, _) =
+            inspect_project_with_omissions(&keyed_nest_xml(Some(&motion)), Some("outer")).unwrap();
+        assert_eq!(
+            project
+                .single_sequence()
+                .unwrap()
+                .nest_occurrences()
+                .count(),
+            0
+        );
+    }
+}
+
+#[test]
 fn a_nested_placement_keeps_its_track_matte_key() {
     let xml = keyed_nest_xml(None);
     let (project, omissions) = inspect_project_with_omissions(&xml, Some("outer")).unwrap();
@@ -1216,29 +1869,20 @@ fn a_nested_placement_keeps_its_track_matte_key() {
     let nest = faded_sequence.nest_occurrences().next().expect("the nest");
     assert_eq!((nest.opacity, nest.track_matte.is_some()), (60.0, true));
 
-    // A keyed nest moves only without a Track Matte Key: with one, the order
-    // of the key against its Motion is unmeasured, so the nest is omitted.
-    // Its matte clip then draws nothing either; the clip at 3-4 s converts.
+    // Centred Scale keys retain both picture and matte for common staging.
     let motion = super::nested::keyed_motion(300);
     let (project, omissions) =
         inspect_project_with_omissions(&keyed_nest_xml(Some(&motion)), Some("outer")).unwrap();
-    assert!(
-        omissions.iter().any(|omission| omission.record == "110"
-            && omission.reason.ends_with(
-                "VideoClipTrackItem:110: Motion with a Track Matte Key on a nested sequence occurrence is not converted"
-            )),
-        "{omissions:?}"
-    );
+    assert!(omissions.is_empty(), "{omissions:?}");
     let outer = &project.sequences[0];
-    assert_eq!(outer.nest_occurrences().count(), 0);
+    assert_eq!(outer.nest_occurrences().count(), 1);
     let kept: Vec<_> = outer
         .video_items()
         .filter_map(crate::schema::PrVideoItem::id)
         .collect();
-    assert_eq!(kept, ["VideoClipTrackItem:125"]);
+    assert_eq!(kept, ["VideoClipTrackItem:120", "VideoClipTrackItem:125"]);
 
-    // So is a nest of another canvas at default Motion, which places that
-    // canvas in the outer one and so would move the keyed picture.
+    // Another canvas retains its source-frame matte owner at default Motion.
     let sized = xml
         .replacen(
             r#"</TrackGroup><FrameRect>0,0,1920,1080</FrameRect><ComponentOwner><Components ObjectRef="2"/>"#,
@@ -1260,21 +1904,13 @@ fn a_nested_placement_keeps_its_track_matte_key() {
         &mut omissions,
     );
     let sequence = read.unwrap();
-    assert_eq!(sequence.nest_occurrences().count(), 0);
-    assert_eq!(sequence.video_occurrences().count(), 1);
-    assert!(
-        omissions.iter().any(|omission| omission.record == "110"
-            && omission.reason.ends_with(
-                "VideoClipTrackItem:110: a Track Matte Key on a nested sequence occurrence of another canvas is not converted"
-            )),
-        "{omissions:?}"
-    );
+    assert_eq!(sequence.nest_occurrences().count(), 1);
+    assert_eq!(sequence.video_occurrences().count(), 2);
+    assert!(omissions.is_empty(), "{omissions:?}");
 }
 
-/// A keyed nest moves only without a Track Matte Key, whose order against its
-/// Motion is unmeasured: a keyed nest with static Motion is omitted, and so is
-/// its matte clip, which Premiere does not draw while the key names its track.
-/// The clip after it converts.
+/// Rotated matte-keyed Motion stays outside the admitted Scale form;
+/// its otherwise hidden provider must not become ordinary visible content.
 #[test]
 fn a_keyed_nest_with_static_motion_is_omitted_with_its_matte_clip() {
     let motion = corpus_motion_component(300, MOTION, &[]);
@@ -1876,6 +2512,73 @@ const PREMIERE_26_5_CHAIN_F: &str = r#"<VideoComponentChain ObjectID="178" Class
 	</VideoComponentParam>"#;
 
 #[test]
+fn numbered_images_native_track_matte_survives_public_import() {
+    use fx_conv::{ConversionMode, ImportToTesseract};
+
+    for (records, id, mode) in [
+        (PREMIERE_26_5_KEY_A, 220, "alpha"),
+        (PREMIERE_26_5_KEY_D, 233, "alphaInverted"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let xml = with_matte_track(SOURCE, &[(id, records.to_owned())])
+            .replace("<ID>7</ID><Index>1</Index>", "<ID>3</ID><Index>1</Index>")
+            .replace("8467200000", "10160640000")
+            .replace("1270080000000", "20321280000")
+            .replace("2540160000000", "20321280000")
+            .replace("1920,1080", "2,1")
+            .replace("media/source.mp4", "media/frame_00000.png")
+            .replace(
+                "<VideoStream ObjectID=\"8\">",
+                "<VideoStream ObjectID=\"8\"><IsNumberedStills>true</IsNumberedStills><AlphaType>1</AlphaType>",
+            );
+        std::fs::create_dir(dir.path().join("media")).unwrap();
+        for index in 0..2 {
+            image::RgbaImage::from_pixel(2, 1, image::Rgba([255, 0, 0, 128]))
+                .save(dir.path().join(format!("media/frame_{index:05}.png")))
+                .unwrap();
+        }
+        let source = dir.path().join("source.prproj");
+        std::fs::write(&source, xml).unwrap();
+        let output = dir.path().join("converted");
+        let report = crate::Premiere
+            .import_to_tesseract(
+                &source,
+                &output,
+                &crate::PremiereImportOptions::default(),
+                ConversionMode::Write,
+            )
+            .unwrap();
+        let archive = tesseract_file::TesseractFile::open(output.join("project.tsrct")).unwrap();
+        let value = archive.project_json().unwrap();
+        let layers = value["composition"]["layers"].as_array().unwrap();
+        let consumer = layers
+            .iter()
+            .find(|layer| layer["trackMatte"].is_object())
+            .unwrap_or_else(|| panic!("missing numbered-image consumer: {:?}", report.diagnostics));
+        let provider = layers
+            .iter()
+            .find(|layer| layer["id"] == consumer["trackMatte"]["layer"])
+            .unwrap();
+        assert_eq!(consumer["trackMatte"]["mode"], mode);
+        for group in [consumer, provider] {
+            assert_eq!(group["type"], "Group");
+            let frames = group["layers"].as_array().unwrap();
+            assert_eq!(frames.len(), 2);
+            for (index, frame) in frames.iter().enumerate() {
+                assert_eq!(frame["type"], "Image");
+                assert_eq!(frame["parent"], group["id"]);
+                assert_eq!(
+                    frame["source"]["assetId"],
+                    format!("premiere-video-1-frame-{index}")
+                );
+                assert_eq!(crate::test_support::layer_range(frame)["start"], index * 40);
+                assert_eq!(crate::test_support::layer_range(frame)["duration"], 40);
+            }
+        }
+    }
+}
+
+#[test]
 fn premiere_26_5_track_matte_keys_read_as_saved() {
     // The matte track takes the fixture's V3 `Track/ID` 3; the records are
     // otherwise as saved.
@@ -2158,6 +2861,94 @@ fn a_graphic_matte_clip_with_a_clip_opacity_mask_is_a_masked_matte() {
                 .to_owned()
         )
     );
+}
+
+#[test]
+fn chained_track_mattes_keep_each_editable_coverage_owner() {
+    for nested in [false, true] {
+        let mut sequence = keyed_sequence(PrMatteChannel::Alpha);
+        let key = PrTrackMatte {
+            track_index: 2,
+            channel: PrMatteChannel::AlphaInverted,
+        };
+        if nested {
+            let inner = sequence_of(
+                "Provider content",
+                vec![PrVideoTrack::media([clip_of("source", 0..5 * TICKS, 0)])],
+            );
+            let mut provider = nest_of(inner, 0..5 * TICKS, 0);
+            provider.track_matte = Some(key);
+            sequence.video_tracks[1] = PrVideoTrack {
+                items: Vec::new(),
+                nests: vec![provider],
+                transitions: Vec::new(),
+            };
+        } else {
+            sequence.video_tracks[1].clip_mut(0).track_matte = Some(key);
+        }
+        sequence.video_tracks.push(PrVideoTrack::media([clip_of(
+            "source",
+            0..5 * TICKS,
+            TICKS,
+        )]));
+        let media = video_media();
+        assert_eq!(
+            check_track_matte(
+                &sequence.video_tracks,
+                0,
+                0..5 * TICKS,
+                PrTrackMatte {
+                    track_index: 1,
+                    channel: PrMatteChannel::Alpha
+                },
+            ),
+            Ok(()),
+            "nested={nested}"
+        );
+        let ids = crate::tesseract_output::asset_ids_in_order(&sequence, &media);
+        let mut omissions = Vec::new();
+        let document =
+            crate::convert::premiere_to_tesseract(&sequence, &media, &ids, &mut omissions)
+                .unwrap()
+                .to_json_value()
+                .unwrap();
+        fx_schema::EditableFxCompositionDocument::from_json_value(document.clone()).unwrap();
+        let layers = document["composition"]["layers"].as_array().unwrap();
+        let consumer = layers
+            .iter()
+            .find(|layer| layer["trackMatte"]["mode"] == "alpha")
+            .unwrap();
+        let provider = layers
+            .iter()
+            .find(|layer| layer["id"] == consumer["trackMatte"]["layer"])
+            .unwrap();
+        assert_eq!(provider["trackMatte"]["mode"], "alphaInverted");
+        let guide = layers
+            .iter()
+            .find(|layer| layer["id"] == provider["trackMatte"]["layer"])
+            .unwrap();
+        assert!(guide["trackMatte"].is_null());
+        assert_eq!(provider["type"], if nested { "Group" } else { "Video" });
+        assert_eq!(guide["type"], "Video");
+        assert_eq!(consumer["playback"]["inputRange"]["duration"], 5000);
+        assert_eq!(guide["playback"]["mapping"]["output"]["start"], 1000);
+        assert!(
+            omissions
+                .iter()
+                .all(|note| note.scope != OmissionScope::Occurrence),
+            "{omissions:?}"
+        );
+
+        sequence.video_tracks[0].clip_mut(0).transform.position[0] = 0.6;
+        let mut omissions = Vec::new();
+        crate::convert::premiere_to_tesseract(&sequence, &media, &ids, &mut omissions).unwrap();
+        assert!(
+            omissions.iter().any(|note| note
+                .reason
+                .contains("cannot move its provider without its coverage dependencies")),
+            "nested={nested}: {omissions:?}"
+        );
+    }
 }
 
 /// A 30 fps 1080p sequence: the 0-5 s source on track 0 keyed by `channel`

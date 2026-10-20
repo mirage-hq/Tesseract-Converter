@@ -31,6 +31,8 @@ pub(super) fn prepare(
     );
     let container = packer.root();
     let mut local = LayerExport {
+        hdr: context.hdr,
+        hdr_settings: context.hdr_settings,
         dynamics: context.dynamics,
         property_tracks: &mut properties,
         written: &mut written,

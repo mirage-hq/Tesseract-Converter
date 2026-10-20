@@ -7,6 +7,8 @@ use thiserror::Error;
 pub(crate) enum AliasDecodeError {
     #[error("invalid alias JSON")]
     Json(#[from] serde_json::Error),
+    #[error("unsupported or malformed legacy Windows file alias")]
+    LegacyWindows,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -51,6 +53,46 @@ impl RelativeLocation {
             ..self
         })
     }
+}
+
+/// The bounded ANSI Windows file profile predating JSON Als2 aliases.
+/// Its path length is little-endian even inside a big-endian RIFX file.
+pub(crate) fn decode_legacy_windows(bytes: &[u8]) -> Result<AliasMetadata, AliasDecodeError> {
+    let invalid = || AliasDecodeError::LegacyWindows;
+    if bytes.get(..12) != Some(&[1, 0, 0, 13, 255, 255, 255, 255, 0, 0, 0, 0]) {
+        return Err(invalid());
+    }
+    let length = u16::from_le_bytes(
+        bytes
+            .get(12..14)
+            .ok_or_else(invalid)?
+            .try_into()
+            .map_err(|_| invalid())?,
+    ) as usize;
+    let end = 14 + length;
+    if bytes.len() != end + 2 || bytes.get(end) != Some(&1) {
+        return Err(invalid());
+    }
+    let path = bytes.get(14..end).ok_or_else(invalid)?;
+    let path = path
+        .strip_suffix(&[0])
+        .and_then(|path| path.strip_prefix(b"\\"))
+        .ok_or_else(invalid)?;
+    // Other code pages cannot be interpreted losslessly without their encoding metadata.
+    if !path.is_ascii()
+        || path.contains(&0)
+        || path.len() < 4
+        || !path[0].is_ascii_alphabetic()
+        || path[1..3] != *b":\\"
+    {
+        return Err(invalid());
+    }
+    Ok(AliasMetadata {
+        fullpath: Some(std::str::from_utf8(path).map_err(|_| invalid())?.to_owned()),
+        target_is_folder: false,
+        relative_location: None,
+        relative_hint_malformed: false,
+    })
 }
 
 #[derive(Deserialize)]

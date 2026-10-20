@@ -75,8 +75,40 @@ pub(crate) fn nested_transform_canvas_reason(
     None
 }
 
-/// Import-only equal-height translation and same-width taller rotation envelopes.
-/// Both use source/source Geometry2 before source/parent Motion and retain the
+/// Static rectangular-canvas admission shared with its approximation diagnostic.
+pub(crate) fn nested_transform_static_canvas_approximation(
+    frame: [u32; 2],
+    canvas: [u32; 2],
+    motion: &PrStaticTransform,
+    opacity: f64,
+    animations: &[PrPropertyAnimation],
+    effect: &PrEffect,
+) -> bool {
+    let PrEffectParams::Transform(transform) = &effect.params else {
+        return false;
+    };
+    frame.into_iter().chain(canvas).all(|size| size > 0)
+        && animations.is_empty()
+        && effect.animations.is_empty()
+        && effect.enabled
+        && effect.mask.is_none()
+        && motion.scale[0] > 0.0
+        && motion.scale[0] == motion.scale[1]
+        && motion.rotation == 0.0
+        && opacity == 100.0
+        && transform.uniform_scale
+        && transform.scale_height > 0.0
+        && transform.rotation == 0.0
+        && transform.skew == 0.0
+        && transform.skew_axis == 0.0
+        && transform.opacity == 100.0
+        && transform.motion_blur_shutter_angle().is_none()
+        && !transform.bicubic_sampling
+}
+
+/// Import-only static rectangular-canvas approximation, equal-height translation
+/// same-width taller rotation and shorter-source straight Position/Scale keys.
+/// These use source/source Geometry2 before source/parent Motion and retain the
 /// pre-effect source guide without a stationary post-effect clip. Native reading
 /// separately requires Geometry2; ordinary Transform and export keep the old gate.
 /// Translation changes no colour/opacity control, so intrinsic Opacity retains
@@ -89,6 +121,9 @@ pub(crate) fn nested_transform_import_canvas_reason(
     animations: &[PrPropertyAnimation],
     effect: &PrEffect,
 ) -> Option<&'static str> {
+    if short_canvas_transform_keys(frame, canvas, motion, opacity, animations, effect) {
+        return None;
+    }
     let reason = nested_transform_canvas_reason(
         frame,
         canvas,
@@ -101,6 +136,11 @@ pub(crate) fn nested_transform_import_canvas_reason(
     let PrEffectParams::Transform(transform) = &effect.params else {
         return reason;
     };
+    if nested_transform_static_canvas_approximation(
+        frame, canvas, motion, opacity, animations, effect,
+    ) {
+        return None;
+    }
     let bounded_easing = |easing| match easing {
         PrKeyframeEasing::Linear => true,
         PrKeyframeEasing::CubicBezier { y1, y2, .. } => {
@@ -122,7 +162,8 @@ pub(crate) fn nested_transform_import_canvas_reason(
             .all(|key| (0.0..=100.0).contains(&key.value) && bounded_easing(key.easing)),
         PrPropertyAnimation::AnchorPoint(_)
         | PrPropertyAnimation::Rotation(_)
-        | PrPropertyAnimation::ScaleWidth(_) => false,
+        | PrPropertyAnimation::ScaleWidth(_)
+        | PrPropertyAnimation::ScaleHeight(_) => false,
     });
     let [animation] = effect.animations.as_slice() else {
         return reason;
@@ -207,6 +248,67 @@ pub(crate) fn nested_transform_import_canvas_reason(
     }
 }
 
+// Geometry2 points use source axes; outer Motion translates in parent axes.
+// Straight source-space translation does not change either point basis.
+fn short_canvas_transform_keys(
+    frame: [u32; 2],
+    canvas: [u32; 2],
+    motion: &PrStaticTransform,
+    opacity: f64,
+    animations: &[PrPropertyAnimation],
+    effect: &PrEffect,
+) -> bool {
+    let PrEffectParams::Transform(transform) = &effect.params else {
+        return false;
+    };
+    frame[0] > 0
+        && frame[0] == canvas[0]
+        && frame[1] > 0
+        && frame[1] < canvas[1]
+        && motion.anchor_point == [0.5; 2]
+        && motion.scale == [100.0; 2]
+        && motion.rotation == 0.0
+        && opacity == 100.0
+        && animations.iter().all(|animation| match animation {
+            PrPropertyAnimation::Position(keys) => {
+                keys.iter().all(|key| match key.easing {
+                    PrKeyframeEasing::Linear => true,
+                    PrKeyframeEasing::CubicBezier { y1, y2, .. } => {
+                        (0.0..=1.0).contains(&y1) && (0.0..=1.0).contains(&y2)
+                    }
+                    PrKeyframeEasing::Hold => false,
+                }) && super::spatial::curved_segment(keys).is_none()
+            }
+            _ => false,
+        })
+        && effect.enabled
+        && effect.mask.is_none()
+        && transform.anchor_point == [0.5; 2]
+        && transform.uniform_scale
+        && transform.scale_height > 0.0
+        && transform.rotation == 0.0
+        && transform.skew == 0.0
+        && transform.skew_axis == 0.0
+        && transform.opacity == 100.0
+        && transform.motion_blur_shutter_angle().is_none()
+        && !transform.bicubic_sampling
+        && !effect.animations.is_empty()
+        && effect
+            .animations
+            .iter()
+            .all(|animation| match &animation.keys {
+                PrEffectParamKeys::Point(keys) => {
+                    animation.param.id == super::TRANSFORM_POSITION.id
+                        && super::spatial::curved_segment(keys).is_none()
+                }
+                PrEffectParamKeys::Scalar(keys) => {
+                    animation.param.id == super::TRANSFORM_SCALE_HEIGHT.id
+                        && keys.iter().all(|key| key.value > 0.0)
+                }
+                PrEffectParamKeys::Colour(_) => false,
+            })
+}
+
 /// One placement of another sequence on a video track.
 #[derive(Debug, Clone)]
 pub(crate) struct PrNestOccurrence {
@@ -248,15 +350,15 @@ pub(crate) struct PrNestOccurrence {
     /// Occurrence effects in native render order, after the inner picture and
     /// before intrinsic Motion. Import reuses clip mappings on a picture Group;
     /// intrinsic Opacity coverage has a separate owner above it. Effect-owned
-    /// masks and combinations with Crop or Track Matte remain excluded. The
-    /// separate unmasked Transform path retains one affine effect; differing
+    /// masks and combinations with Track Matte remain excluded. The
+    /// separate Transform path retains static Crop on either side; differing
     /// canvases require the static measured envelope. Edited native export
     /// remains without independent Adobe proof.
     pub(crate) effects: Vec<PrEffect>,
     /// Converter-only output coverage for a native nested Geometry2 stage,
     /// keyed by its index in `effects`. Never persisted as a new FX field.
     pub(crate) geometry2_masks: BTreeMap<usize, Vec<PrMask>>,
-    /// Retained effects before Linear Wipe, using the clip mask-boundary count.
+    /// Retained effects before Crop or Linear Wipe, using the clip mask-boundary count.
     pub(crate) effects_above_mask: usize,
     /// Effective picture output, flattened from clip Enable and track output
     /// as for a media occurrence (`PrVideoOccurrence::enabled`).
@@ -334,7 +436,7 @@ impl PrNestOccurrence {
         );
         ensure_valid!(
             self.effects_above_mask == 0 || self.effects_above_mask == self.effects.len(),
-            "nested effects must stay on one side of Linear Wipe"
+            "nested effects must stay on one side of Crop or Linear Wipe"
         );
         PrVideoOccurrence::validate_edits(
             self.opacity,
@@ -361,19 +463,18 @@ impl PrNestOccurrence {
             for mask in masks {
                 mask.validate()?;
                 ensure_valid!(
-                    mask.raster.is_none() && mask.path_keys.is_empty(),
-                    "nested Geometry2 requires static vector mask outlines"
+                    mask.raster.is_none(),
+                    "nested Geometry2 requires vector mask outlines"
                 );
             }
         }
         if let Some(mask) = &self.opacity_mask {
             mask.validate()?;
             ensure_valid!(
-                mask.raster.is_none() && mask.path_keys.is_empty()
-                    && self.crop.is_default() && self.linear_wipe.is_none()
+                mask.raster.is_none() && self.crop.is_default() && self.linear_wipe.is_none()
                     && self.track_matte.is_none() && self.playback_rate == 1.0
                     && self.time_remap.is_none() && self.sequence.frame_rate == frame_rate,
-                "nested Opacity mask requires a static vector outline, a unit-forward matching clock and no other masks"
+                "nested Opacity mask requires a vector outline, a unit-forward matching clock and no other masks"
             );
         }
         let inner = &self.sequence;
@@ -710,6 +811,40 @@ mod tests {
             keys: PrEffectParamKeys::Scalar(vec![first, scalar(0.0, super::super::TICKS)]),
         }];
         (motion, animations, effect)
+    }
+
+    #[test]
+    fn static_canvas_approximation_excludes_rotation_envelopes() {
+        let (motion, animations, mut effect) = tall_rotation_profile();
+        assert!(!nested_transform_static_canvas_approximation(
+            [1920, 2900],
+            [1920, 1080],
+            &motion,
+            100.0,
+            &animations,
+            &effect,
+        ));
+        effect.animations.clear();
+        assert!(!nested_transform_static_canvas_approximation(
+            [1920, 2900],
+            [1920, 1080],
+            &motion,
+            100.0,
+            &[],
+            &effect,
+        ));
+        let PrEffectParams::Transform(transform) = &mut effect.params else {
+            unreachable!()
+        };
+        transform.rotation = 0.0;
+        assert!(nested_transform_static_canvas_approximation(
+            [1920, 2900],
+            [1920, 1080],
+            &motion,
+            100.0,
+            &[],
+            &effect,
+        ));
     }
 
     #[test]

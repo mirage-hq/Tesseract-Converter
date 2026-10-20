@@ -11,6 +11,37 @@ use serde_json::json;
 const THIRTY_FPS_TICKS: i64 = FrameRate::Fps30.ticks_per_frame();
 
 #[test]
+fn empty_canvas_requires_positive_duration_and_native_template_membership() {
+    for template in [false, true] {
+        for end in [0, TICKS] {
+            let mut sequence = video_sequence();
+            sequence.video_tracks.clear();
+            sequence.adjustment_only_template = template;
+            sequence.timeline_end_ticks = end;
+            let result = sequence.validate_timeline(&video_media());
+            if template && end > 0 {
+                result.unwrap();
+            } else {
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("requires at least one media occurrence"));
+            }
+        }
+    }
+
+    // The template flag never suppresses validation of retained occurrences.
+    let mut sequence = video_sequence();
+    sequence.adjustment_only_template = true;
+    sequence.video_tracks[0].clip_mut(0).end_ticks = 0;
+    assert!(sequence
+        .validate_timeline(&video_media())
+        .unwrap_err()
+        .to_string()
+        .contains("invalid timeline/source ranges"));
+}
+
+#[test]
 fn source_span_consistency_preserves_saved_native_rate() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/native-constant-rate-timing.xml");

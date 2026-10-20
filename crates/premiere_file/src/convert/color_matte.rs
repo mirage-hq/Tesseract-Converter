@@ -151,11 +151,22 @@ pub(super) fn exported_matte(
     context: &LayerExport<'_, '_>,
     [width, height]: [u32; 2],
 ) -> Option<PrColorMatte> {
+    // No measured HDR Color Matte importer interpretation. Use the editable
+    // Graphic Shape path, which binds RGB samples and their source profile.
+    if context.hdr.is_some() {
+        return None;
+    }
     let animated = context.property_tracks.contains_key(&rect.id);
     let dissolve = super::cross_dissolve::matte_animation(rect, context).is_some();
     let mut normalized = rect.clone();
     if dissolve {
         normalized.transform.opacity = identity_transform().opacity;
+        normalized.rect.fill_color[3] = 1.0;
+    } else if !animated
+        && rect.blend_mode == BlendMode::Normal
+        && (0.0..=1.0).contains(&rect.rect.fill_color[3])
+    {
+        // One plain fill has no overlapping paints: its alpha is clip Opacity.
         normalized.rect.fill_color[3] = 1.0;
     }
     solid_fill_matte(&normalized, parent, width, height, animated && !dissolve)
@@ -468,6 +479,11 @@ pub(super) fn export_rect_layer(
         .ok_or_else(|| unsupported("solid fill outlasts the Color Matte generator"))?;
     let animation = super::cross_dissolve::matte_animation(rect, context);
     let occurrence = PrVideoOccurrence {
+        opacity: if animation.is_some() {
+            100.0
+        } else {
+            rect.rect.fill_color[3] * 100.0
+        },
         animations: animation
             .into_iter()
             .map(crate::schema::PrPropertyAnimation::Opacity)

@@ -31557,6 +31557,225 @@
           }
         }
       ]
+    },
+    {
+      "source_path": "crates/aftereffects_file/tests/fixtures/expression_samples/expression_compatibility.aep",
+      "source_sha256": "82db8b7462a8784dcd7ba74ab1a5a777e4e0314e171f2614f0b44188958a1b6d",
+      "source_bytes": 244079,
+      "media_dependencies": [],
+      "compositions": [
+        {
+          "composition_id": 1,
+          "composition_name": "ExpressionCompatibility",
+          "width": 320,
+          "height": 180,
+          "fps_numerator": 30,
+          "fps_denominator": 1,
+          "duration_numerator": 1,
+          "duration_denominator": 1,
+          "frame_count": 30,
+          "display_start_numerator": 0,
+          "display_start_denominator": 1,
+          "pixel_aspect_numerator": 1,
+          "pixel_aspect_denominator": 1,
+          "status": "verified",
+          "expected_frame_count": 30,
+          "reference": {
+            "path": "tests/references/aep/expression_samples/expression_compatibility__composition_1.mp4",
+            "fps": 30,
+            "frame_count": 30,
+            "duration_seconds": 1.0,
+            "width": 320,
+            "height": 180,
+            "pixel_format": "yuv420p",
+            "color_space": "smpte170m",
+            "color_transfer": "smpte170m",
+            "color_primaries": "smpte170m",
+            "audio_streams": [],
+            "render_log_sha256": "4244dc48c1ed04331f5a8bf1cb7a50e6a3dfee0d5938da4d3242f35bdb0e8d85"
+          },
+          "verification": {
+            "native_render": true,
+            "full_decode": true,
+            "visual_inspection": "Agent inspected decoded native frames 0/12/24: white Lottie! above cyan Lottie, orange 3D source and blue world-position probe are visible; cyan Rotation probes include loop motion. No blank/error slate. No human Adobe UI inspection. Numeric controls use the separately pinned 310-observation readback; cached Text bounds remain an approximation.",
+            "fx_render_comparison": "not_run",
+            "alpha_fidelity": "unverified",
+            "audio_fidelity": "unverified"
+          }
+        }
+      ]
+    },
+    {
+      "source_path": "crates/aftereffects_file/tests/fixtures/expression_samples/expression_paths.aep",
+      "source_sha256": "f06e790dd67d78920dc72b8edcafb29f10e0bdb04567da5669b7c82411d539f6",
+      "source_bytes": 210235,
+      "media_dependencies": [],
+      "compositions": [
+        {
+          "composition_id": 1,
+          "composition_name": "ExpressionPaths",
+          "width": 320,
+          "height": 180,
+          "fps_numerator": 30,
+          "fps_denominator": 1,
+          "duration_numerator": 2,
+          "duration_denominator": 1,
+          "frame_count": 60,
+          "display_start_numerator": 0,
+          "display_start_denominator": 1,
+          "pixel_aspect_numerator": 1,
+          "pixel_aspect_denominator": 1,
+          "status": "verified",
+          "expected_frame_count": 60,
+          "reference": {
+            "path": "tests/references/aep/expression_samples/expression_paths__composition_1.mp4",
+            "fps": 30,
+            "frame_count": 60,
+            "duration_seconds": 2.0,
+            "width": 320,
+            "height": 180,
+            "pixel_format": "yuv420p",
+            "color_space": "smpte170m",
+            "color_transfer": "smpte170m",
+            "color_primaries": "smpte170m",
+            "audio_streams": [],
+            "render_log_sha256": "1e413aa6de5c7de80421e10d129c7faa4084564fe0c5504e783b54426c806d5b"
+          },
+          "verification": {
+            "native_render": true,
+            "full_decode": true,
+            "visual_inspection": "Agent inspected decoded native frames0/15/45: colored open/cubic outlines, masks and moving markers; no blank/error slate. Not human Adobe UI inspection or fresh-FX comparison.",
+            "fx_render_comparison": "not_run",
+            "alpha_fidelity": "unverified",
+            "audio_fidelity": "unverified"
+          }
+        }
+      ]
+    },
+    {
+      "source_path": "crates/aftereffects_file/tests/fixtures/canvas/transparency.aep",
+      "source_sha256": "e43aa8b1c9b296adda1d35670d166eab89855ce3c4d2255061e13924c0c1202f",
+      "source_bytes": 217921,
+      "media_dependencies": [],
+      "compositions": [
+        {
+          "composition_id": 1,
+          "composition_name": "CanvasTransparent",
+          "width": 160,
+          "height": 90,
+          "fps_numerator": 24,
+          "fps_denominator": 1,
+          "duration_numerator": 1,
+          "duration_denominator": 1,
+          "frame_count": 24,
+          "display_start_numerator": 0,
+          "display_start_denominator": 1,
+          "pixel_aspect_numerator": 1,
+          "pixel_aspect_denominator": 1,
+          "status": "verified",
+          "expected_frame_count": 30,
+          "reference": {
+            "path": "tests/references/aep/canvas/transparency__composition_1.mp4",
+            "fps": 30,
+            "frame_count": 30,
+            "duration_seconds": 1.0,
+            "width": 160,
+            "height": 90,
+            "pixel_format": "yuv420p",
+            "color_space": "smpte170m",
+            "color_transfer": "smpte170m",
+            "color_primaries": "smpte170m",
+            "audio_streams": [],
+            "render_log_sha256": "d6bd9b801ebc0b46e769d451265da4c07f36d83eefde44777d9a75ad624f4a11"
+          },
+          "verification": {
+            "native_render": true,
+            "full_decode": true,
+            "visual_inspection": "Not human UI inspection; all30 decoded alpha planes verified; targeted binary-alpha RGB/alpha comparison recorded in canvas-transparency-results.json.",
+            "fx_render_comparison": "not_run",
+            "alpha_fidelity": "exact all30 frames for this target",
+            "audio_fidelity": "unverified"
+          }
+        },
+        {
+          "composition_id": 16,
+          "composition_name": "CanvasAuthoredBackground",
+          "width": 160,
+          "height": 90,
+          "fps_numerator": 24,
+          "fps_denominator": 1,
+          "duration_numerator": 1,
+          "duration_denominator": 1,
+          "frame_count": 24,
+          "display_start_numerator": 0,
+          "display_start_denominator": 1,
+          "pixel_aspect_numerator": 1,
+          "pixel_aspect_denominator": 1,
+          "status": "verified",
+          "expected_frame_count": 30,
+          "reference": {
+            "path": "tests/references/aep/canvas/transparency__composition_16.mp4",
+            "fps": 30,
+            "frame_count": 30,
+            "duration_seconds": 1.0,
+            "width": 160,
+            "height": 90,
+            "pixel_format": "yuv420p",
+            "color_space": "smpte170m",
+            "color_transfer": "smpte170m",
+            "color_primaries": "smpte170m",
+            "audio_streams": [],
+            "render_log_sha256": "8df03a299d86c54d05231d27dd7d6b9cc8b414c3fb74d885f27fe7e4683fb4c3"
+          },
+          "verification": {
+            "native_render": true,
+            "full_decode": true,
+            "visual_inspection": "Not human UI inspection; all30 decoded alpha planes verified; targeted binary-alpha RGB/alpha comparison recorded in canvas-transparency-results.json.",
+            "fx_render_comparison": "not_run",
+            "alpha_fidelity": "exact all30 frames for this target",
+            "audio_fidelity": "unverified"
+          }
+        },
+        {
+          "composition_id": 32,
+          "composition_name": "CanvasNestedTransparent",
+          "width": 160,
+          "height": 90,
+          "fps_numerator": 24,
+          "fps_denominator": 1,
+          "duration_numerator": 1,
+          "duration_denominator": 1,
+          "frame_count": 24,
+          "display_start_numerator": 0,
+          "display_start_denominator": 1,
+          "pixel_aspect_numerator": 1,
+          "pixel_aspect_denominator": 1,
+          "status": "verified",
+          "expected_frame_count": 30,
+          "reference": {
+            "path": "tests/references/aep/canvas/transparency__composition_32.mp4",
+            "fps": 30,
+            "frame_count": 30,
+            "duration_seconds": 1.0,
+            "width": 160,
+            "height": 90,
+            "pixel_format": "yuv420p",
+            "color_space": "smpte170m",
+            "color_transfer": "smpte170m",
+            "color_primaries": "smpte170m",
+            "audio_streams": [],
+            "render_log_sha256": "28acd3ec514cc493b990dca1d3a1172437b284a1dc8849ceea207594a543072c"
+          },
+          "verification": {
+            "native_render": true,
+            "full_decode": true,
+            "visual_inspection": "Not human UI inspection; all30 decoded alpha planes verified; targeted binary-alpha RGB/alpha comparison recorded in canvas-transparency-results.json.",
+            "fx_render_comparison": "not_run",
+            "alpha_fidelity": "exact all30 frames for this target",
+            "audio_fidelity": "unverified"
+          }
+        }
+      ]
     }
   ]
 }

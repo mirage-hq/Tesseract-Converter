@@ -72,6 +72,7 @@ pub struct StagedAfterEffectsExport {
     pub(super) report: ConversionReport<ExportDiagnostic>,
     root: GeneratedRootComposition,
     omitted_layer_ids: BTreeSet<LayerId>,
+    unsupported_media_layer_ids: BTreeSet<LayerId>,
     generated_project_sha256: [u8; 32],
 }
 
@@ -136,6 +137,17 @@ impl StagedAfterEffectsPictureExport {
     /// Original selected FX layer owners dropped during lowering or dependency pruning.
     pub fn omitted_layer_ids(&self) -> &BTreeSet<LayerId> {
         self.staged.omitted_layer_ids()
+    }
+
+    /// Whether source-media admission omitted assets from this picture scope.
+    /// A coordinator must not replace native pictures retained for those sources.
+    pub fn has_unsupported_media(&self) -> bool {
+        !self.staged.unsupported_media_layer_ids.is_empty()
+    }
+
+    /// Source owners whose media could not be admitted, before dependent pruning.
+    pub fn unsupported_media_layer_ids(&self) -> &BTreeSet<LayerId> {
+        &self.staged.unsupported_media_layer_ids
     }
 
     /// Relative files to publish and ordinary best-effort conversion diagnostics.
@@ -442,6 +454,26 @@ fn prepare_with_writer(
     target: NativeWriteTarget<'_>,
     control: AepPreparationControl<'_>,
 ) -> Result<StagedAfterEffectsExport, AepConversionError> {
+    prepare_with_project_writer(
+        archive,
+        document,
+        directory,
+        options,
+        target,
+        control,
+        |path, bytes| std::fs::write(path, bytes),
+    )
+}
+
+fn prepare_with_project_writer(
+    archive: &TesseractFile,
+    document: &EditableFxCompositionDocument,
+    directory: tempfile::TempDir,
+    options: &AfterEffectsExportOptions,
+    target: NativeWriteTarget<'_>,
+    control: AepPreparationControl<'_>,
+    write_project: impl FnOnce(&Path, &[u8]) -> std::io::Result<()>,
+) -> Result<StagedAfterEffectsExport, AepConversionError> {
     control.check_cancelled()?;
     let progress = control.progress;
     let baked = match &target.roots {
@@ -454,8 +486,9 @@ fn prepare_with_writer(
         None => script_bake::prepare_with_progress(document, options, progress)?,
     };
     let fonts = crate::export_document::fonts::ArchiveFonts::prepare(archive)?;
-    let mut documents =
-        ExportDocumentViews::from_preparation(document, baked.document.as_ref()).with_fonts(&fonts);
+    let mut documents = ExportDocumentViews::from_preparation(document, baked.document.as_ref())
+        .with_fonts(&fonts)
+        .with_hdr(options.hdr);
     let prepare_media = target.roots.is_some();
     if let Some(roots) = target.roots {
         documents = documents.select_roots(roots)?;
@@ -488,8 +521,19 @@ fn prepare_with_writer(
         )?
     };
     control.check_cancelled()?;
-    let incomplete_scope =
-        prepare_media && (!prepared.unsupported.is_empty() || prepared.preparation_withheld);
+    let unsupported_assets: BTreeSet<_> = prepared
+        .unsupported
+        .iter()
+        .map(|(id, _)| id.as_str())
+        .collect();
+    let unsupported_media_layer_ids = requests
+        .iter()
+        .filter(|request| unsupported_assets.contains(request.asset_id.as_str()))
+        .map(|request| request.layer_id)
+        .collect();
+    let incomplete_scope = prepare_media
+        && (prepared.preparation_withheld
+            || (control.preserve_video_assets && !prepared.unsupported.is_empty()));
     let mut diagnostics = baked.diagnostics;
     for (asset_id, reason) in prepared.approximations {
         diagnostics.push(ExportDiagnostic {
@@ -498,7 +542,7 @@ fn prepare_with_writer(
         });
     }
     for (asset_id, reason) in prepared.unsupported {
-        let consequence = if prepare_media {
+        let consequence = if incomplete_scope {
             "complete selected picture dependency scope rejected"
         } else {
             "affected media layers omitted, convertible siblings retained"
@@ -508,8 +552,8 @@ fn prepare_with_writer(
             message: format!("Asset {asset_id}: {reason}; {consequence}."),
         });
     }
-    // A dependency-closed picture scope cannot promote one prepared half of an
-    // RGB/matte pair. The coordinator retains its complete native scope instead.
+    // Explicitly withheld preparation keeps the coordinator's complete native scope.
+    // Unsupported sources instead use the writer's transitive dependency pruning.
     if incomplete_scope {
         return Err(crate::writer::AepWriteError::NoConvertiblePicture(diagnostics).into());
     }
@@ -554,8 +598,9 @@ fn prepare_with_writer(
     progress.stage("write staged AEP");
     control.check_cancelled()?;
     let source = directory.path().join("project.aep");
-    std::fs::write(&source, &converted.bytes)
+    write_project(&source, &converted.bytes)
         .map_err(|error| AepConversionError::io("write staged AEP", &source, error))?;
+    control.check_cancelled()?;
     let artifacts = std::iter::once(Artifact::project("project.aep"))
         .chain(
             publication_files
@@ -570,6 +615,7 @@ fn prepare_with_writer(
         font_files,
         root: converted.root,
         omitted_layer_ids: converted.omitted_layer_ids,
+        unsupported_media_layer_ids,
         generated_project_sha256,
         report: ConversionReport {
             diagnostics: converted.diagnostics,

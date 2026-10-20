@@ -23,6 +23,7 @@ pub(super) struct ConversionRequest<'a> {
     pub(super) media_map: Option<&'a Path>,
     pub(super) media_relink: Option<&'a Path>,
     pub(super) fps: Option<&'a str>,
+    pub(super) hdr: Option<&'a str>,
     pub(super) mode: ConversionMode,
     pub(super) progress: fx_conv::Progress<'a>,
 }
@@ -157,11 +158,12 @@ fn read_available_fonts(path: &Path) -> anyhow::Result<std::collections::BTreeSe
 pub(super) fn export_after_effects(
     request: &ConversionRequest<'_>,
 ) -> anyhow::Result<ConversionReport> {
-    let options = request
+    let mut options = request
         .fps
         .map(after_effects_options)
         .transpose()?
         .unwrap_or_default();
+    options.hdr = request.hdr.map(hdr_transfer).transpose()?;
     run_export(&AfterEffects, request, &options)
 }
 
@@ -197,8 +199,17 @@ pub(super) fn import_premiere(request: &ConversionRequest<'_>) -> anyhow::Result
 pub(super) fn export_premiere(request: &ConversionRequest<'_>) -> anyhow::Result<ConversionReport> {
     let options = PremiereExportOptions {
         frame_rate: request.fps.map(premiere_rate).transpose()?,
+        hdr: request.hdr.map(hdr_transfer).transpose()?,
     };
     crate::hybrid::export(request, &options)
+}
+
+fn hdr_transfer(value: &str) -> anyhow::Result<fx_conv::HdrTransfer> {
+    match value {
+        "pq" => Ok(fx_conv::HdrTransfer::Pq),
+        "hlg" => Ok(fx_conv::HdrTransfer::Hlg),
+        _ => anyhow::bail!("--hdr {value} is unsupported; use pq or hlg"),
+    }
 }
 
 /// Premiere's exact sequence rate for an `--fps` value; other values reject.
@@ -224,7 +235,10 @@ fn after_effects_options(fps: &str) -> anyhow::Result<AfterEffectsExportOptions>
     let fps = fps
         .parse::<f64>()
         .map_err(|_| anyhow::anyhow!("--fps {fps} is not a number"))?;
-    Ok(AfterEffectsExportOptions { fps })
+    Ok(AfterEffectsExportOptions {
+        fps,
+        ..Default::default()
+    })
 }
 
 #[cfg(test)]
@@ -282,6 +296,7 @@ mod tests {
             media_map: None,
             media_relink: None,
             fps: Some("fast"),
+            hdr: None,
             mode: ConversionMode::Check,
             progress: fx_conv::Progress::default(),
         };

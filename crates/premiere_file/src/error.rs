@@ -42,6 +42,8 @@ pub(crate) enum BuildError {
     },
     #[error("unsupported conversion: {0}")]
     Unsupported(String),
+    #[error("empty native sequence {0}: no source occurrences")]
+    EmptyNativeSequence(String),
     #[error("unsupported conversion: {0}")]
     UnsupportedVideoCodec(String),
     #[error("missing media: {0}")]

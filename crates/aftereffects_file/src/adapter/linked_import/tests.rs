@@ -111,7 +111,9 @@ fn native_same_name_guids_import_distinct_editable_red_and_blue_compositions() {
             let bytes = STANDARD.decode(node.text().unwrap().trim()).unwrap();
             assert_eq!(bytes.len(), 72);
             let units: Vec<_> = bytes
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
                 .collect();
             String::from_utf16(&units).unwrap()
@@ -566,7 +568,7 @@ fn linked_picture_is_muted_and_uses_only_the_callers_identities() {
     assert!(picture.diagnostics.iter().any(|diagnostic| {
         diagnostic
             .message
-            .contains("preview background is not materialized")
+            .contains("AE preview RGB background is display-only and is not materialized")
     }));
     // The keyed Audio Levels that a document keeps are discarded by muting.
     let standalone = AfterEffects
@@ -580,10 +582,11 @@ fn linked_picture_is_muted_and_uses_only_the_callers_identities() {
             ConversionMode::Check,
         )
         .unwrap();
-    assert!(!standalone.diagnostics.iter().any(|diagnostic| {
+    // Standalone imports also preserve alpha instead of painting the viewer background.
+    assert!(standalone.diagnostics.iter().any(|diagnostic| {
         diagnostic
             .message
-            .contains("preview background is not materialized")
+            .contains("AE preview RGB background is display-only and is not materialized")
     }));
     // The WAV that the native relative location relinked is packaged once.
     let root = tempfile::tempdir().unwrap();
@@ -647,7 +650,7 @@ fn repeated_pictures_of_one_composition_have_disjoint_identities() {
 }
 
 #[test]
-fn a_linked_picture_takes_its_composition_motion_blur_switch() {
+fn a_linked_picture_uses_checked_layer_render_motion_blur() {
     const MOTION_BLUR: &[u8] =
         include_bytes!("../../../tests/fixtures/compositing/import_motion_blur_cases.aep");
     let root = tempfile::tempdir().unwrap();
@@ -660,15 +663,14 @@ fn a_linked_picture_takes_its_composition_motion_blur_switch() {
         all.iter()
             .any(|layer| matches!(layer.data(), LayerData::Group(group) if group.motion_blur))
     };
-    for (id, enabled) in [(1, false), (34, true)] {
+    for (id, enabled, checked) in [(1, true, true), (18, true, false), (34, true, true)] {
         let picture = prepared
             .resolve_composition(&guid(id))
             .unwrap()
             .import_picture(target(1, 10), &mut LinkedMedia::default())
             .unwrap();
-        // COMP_OFF blurs no layer in AE, although its layer switch is on.
         assert_eq!(picture.motion_blur.enabled, enabled, "{id}");
-        assert_eq!(blurred(&picture), enabled, "{id}");
+        assert_eq!(blurred(&picture), checked, "{id}");
     }
 }
 

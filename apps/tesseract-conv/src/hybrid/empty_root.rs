@@ -39,7 +39,10 @@ pub(super) fn stage(
         archive,
         document,
         parent,
-        &AfterEffectsExportOptions { fps },
+        &AfterEffectsExportOptions {
+            fps,
+            hdr: options.hdr,
+        },
         progress,
     )?;
     let composition = ae.root_composition();
@@ -68,6 +71,7 @@ pub(super) fn stage(
         .checked_mul(rate.ticks_per_frame())
         .context("empty-root clock overflow")?;
     let picture = AfterEffectsPicture {
+        working_hdr: options.hdr,
         composition_guid: composition.dynamic_link_guid().to_owned(),
         relative_path: package::scoped_aep_path(1)?,
         dimensions: [u32::from(width), u32::from(height)],

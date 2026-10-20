@@ -317,7 +317,21 @@ fn lightening_22_10_blend_pair_converts_as_screen_both_ways_and_reimports() {
     let blends = |output: &Path| -> Vec<(Value, Value)> {
         let file = TesseractFile::open(project_files(output).pop().unwrap()).unwrap();
         let document = file.project_json().unwrap();
-        let layers = video_layers(&document);
+        fn videos<'a>(layers: &'a [Value], found: &mut Vec<&'a Value>) {
+            for layer in layers {
+                if layer["type"] == "Video" {
+                    found.push(layer);
+                }
+                if let Some(children) = layer["layers"].as_array() {
+                    videos(children, found);
+                }
+            }
+        }
+        let mut layers = Vec::new();
+        videos(
+            document["composition"]["layers"].as_array().unwrap(),
+            &mut layers,
+        );
         [
             "feature_two_tracks_gap_clip_b.mp4",
             "feature_two_tracks_gap_clip_a.mp4",
@@ -345,10 +359,12 @@ fn lightening_22_10_blend_pair_converts_as_screen_both_ways_and_reimports() {
     let converted = project_files(&output).pop().unwrap();
     let native = dir.path().join("native");
     let omissions = tesseract_to_premiere(&converted, &native, false).unwrap();
+    assert_eq!(omissions.len(), 1, "{omissions:?}");
+    assert_eq!(omissions[0].kind, OmissionKind::Approximated);
     assert!(
-        omissions
-            .iter()
-            .all(|omission| !omission.reason.to_lowercase().contains("blend mode")),
+        omissions[0]
+            .reason
+            .starts_with("the nested sequence composites alone in Premiere"),
         "{omissions:?}"
     );
     // The two Blend Mode parameters hold the canonical pair (22, 10).
@@ -359,9 +375,29 @@ fn lightening_22_10_blend_pair_converts_as_screen_both_ways_and_reimports() {
         assert!(xml.contains(&start), "{value}");
     }
     let reimported = dir.path().join("reimported");
-    let omissions =
-        premiere_to_tesseract(native.join("project.prproj"), &reimported, None, false).unwrap();
-    assert!(omissions.is_empty(), "{omissions:?}");
+    let file = TesseractFile::open(&converted).unwrap();
+    let document = file.project_json().unwrap();
+    let (project, _) = PrProjectFile::load(native.join("project.prproj")).unwrap();
+    let selected = project
+        .sequences()
+        .find(|sequence| sequence.name() == document["composition"]["name"].as_str().unwrap())
+        .unwrap();
+    let omissions = premiere_to_tesseract(
+        native.join("project.prproj"),
+        &reimported,
+        selected.id(),
+        false,
+    )
+    .unwrap();
+    assert!(
+        omissions
+            .iter()
+            .all(|omission| omission.kind == OmissionKind::Approximated
+                && omission
+                    .reason
+                    .starts_with("the nested sequence composites alone in Premiere")),
+        "{omissions:?}"
+    );
     assert_eq!(blends(&reimported), expected);
 }
 
@@ -386,11 +422,23 @@ fn adobe_blend_code_chart_imports_each_measured_mode_and_writes_it_back() {
     let slots = |output: &Path| -> Vec<(String, Value, Value, Value)> {
         let file = TesseractFile::open(project_files(output).pop().unwrap()).unwrap();
         let document = file.project_json().unwrap();
-        let mut slots: Vec<_> = document["composition"]["layers"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|layer| layer["type"] == "Image")
+        fn images<'a>(layers: &'a [Value], found: &mut Vec<&'a Value>) {
+            for layer in layers {
+                if layer["type"] == "Image" {
+                    found.push(layer);
+                }
+                if let Some(children) = layer["layers"].as_array() {
+                    images(children, found);
+                }
+            }
+        }
+        let mut found = Vec::new();
+        images(
+            document["composition"]["layers"].as_array().unwrap(),
+            &mut found,
+        );
+        let mut slots: Vec<_> = found
+            .into_iter()
             .map(|layer| {
                 let asset = layer["source"]["assetId"].as_str().unwrap();
                 let name = Path::new(&file.metadata().assets[asset].path)
@@ -443,6 +491,18 @@ fn adobe_blend_code_chart_imports_each_measured_mode_and_writes_it_back() {
         false,
     )
     .unwrap();
+    let file = TesseractFile::open(project_files(&output).pop().unwrap()).unwrap();
+    let document = file.project_json().unwrap();
+    let group = &document["composition"]["layers"][0];
+    assert_eq!(group["type"], "Group");
+    assert_eq!(group["blendMode"], "normal");
+    let guide = &group["layers"][1];
+    assert_eq!(group["masks"][0]["layer"], guide["id"]);
+    assert_eq!(guide["rect"]["size"], json!([1920.0, 1080.0]));
+    assert_eq!(
+        document["composition"]["layers"][1]["name"],
+        "Premiere black canvas"
+    );
     assert_eq!(slots(&output), chart);
     let reports = blend_reports(&omissions);
     assert!(
@@ -457,7 +517,18 @@ fn adobe_blend_code_chart_imports_each_measured_mode_and_writes_it_back() {
         tesseract_to_premiere(project_files(&output).pop().unwrap(), &native, false).unwrap();
     assert_eq!(blend_reports(&omissions).len(), 2, "{omissions:?}");
     let reimported = dir.path().join("reimported");
-    premiere_to_tesseract(native.join("project.prproj"), &reimported, None, false).unwrap();
+    let (project, _) = PrProjectFile::load(native.join("project.prproj")).unwrap();
+    let selected = project
+        .sequences()
+        .find(|sequence| sequence.name() == document["composition"]["name"].as_str().unwrap())
+        .unwrap();
+    premiere_to_tesseract(
+        native.join("project.prproj"),
+        &reimported,
+        selected.id(),
+        false,
+    )
+    .unwrap();
     assert_eq!(slots(&reimported), chart);
 }
 
@@ -3028,6 +3099,100 @@ fn adobe_hold_scale_keeps_two_editable_axis_keys() {
         &SCALE_AXES,
         &[(500, 100.0, "linear"), (1500, 150.0, "hold")],
     );
+}
+
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn nonuniform_scale_width_preserves_native_scalar_easing_on_public_import() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    for (fixture, easing) in [
+        ("feature_motion_scale_bezier_strict.prproj", "cubicBezier"),
+        ("feature_motion_scale_hold_strict.prproj", "hold"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        fs::copy(
+            fixtures.join("feature_timecoded_source.mp4"),
+            dir.path().join("feature_timecoded_source.mp4"),
+        )
+        .unwrap();
+        let mut xml = read_xml(&fixtures.join(fixture));
+        // Move the native scalar curve from Height to Width, keeping its wire handles.
+        let parsed = roxmltree::Document::parse(&xml).unwrap();
+        let replacements: Vec<_> = parsed
+            .descendants()
+            .filter(|node| node.has_tag_name("VideoComponentParam"))
+            .filter_map(|node| {
+                let name = node
+                    .children()
+                    .find(|child| child.has_tag_name("Name"))?
+                    .text()?;
+                let (new_name, old_id, new_id) = match name {
+                    "Scale" => ("Scale Width", 2, 3),
+                    "Scale Width" => ("Scale", 3, 2),
+                    _ => return None,
+                };
+                let before = &xml[node.range()];
+                let after = before
+                    .replace(
+                        &format!("<Name>{name}</Name>"),
+                        &format!("<Name>{new_name}</Name>"),
+                    )
+                    .replace(
+                        &format!("<ParameterID>{old_id}</ParameterID>"),
+                        &format!("<ParameterID>{new_id}</ParameterID>"),
+                    );
+                Some((before.to_owned(), after))
+            })
+            .collect();
+        assert_eq!(replacements.len(), 2);
+        for (before, after) in replacements {
+            xml = xml.replace(&before, &after);
+        }
+        let uniform = "<StartKeyframe>-91445760000000000,true,0,0,0,0,0,0</StartKeyframe>";
+        assert_eq!(xml.matches(uniform).count(), 1);
+        xml = xml.replace(uniform, &uniform.replace("true", "false"));
+        let source = dir.path().join("width.prproj");
+        write_prproj(&source, &xml);
+        let output = dir.path().join("converted");
+        let omissions = premiere_to_tesseract(
+            &source,
+            &output,
+            Some("c8acf9c1-34b2-4086-9f55-d528950a7059"),
+            false,
+        )
+        .unwrap();
+        assert!(omissions.is_empty(), "{omissions:?}");
+        let file = TesseractFile::open(first_project(&output)).unwrap();
+        let document = file.project_json().unwrap();
+        let layers = video_layers(&document);
+        assert_eq!(layers.len(), 1);
+        assert!(layer_uses_media(
+            &file,
+            layers[0],
+            "feature_timecoded_source.mp4"
+        ));
+        assert_eq!(layers[0]["transform"]["scale"], json!([100.0, 100.0]));
+        let entries = document["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["target"]["layerId"], layers[0]["id"]);
+        assert_eq!(entries[0]["target"]["propertyType"], "scaleX");
+        let keys = entries[0]["animator"]["keyframes"].as_array().unwrap();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0]["layerTime"], 500);
+        assert_eq!(keys[0]["value"]["value"], 100.0);
+        assert_eq!(keys[0]["easing"]["type"], "linear");
+        assert_eq!(keys[1]["layerTime"], 1500);
+        assert_eq!(keys[1]["value"]["value"], 150.0);
+        assert_eq!(keys[1]["easing"]["type"], easing);
+        if easing == "cubicBezier" {
+            for (handle, expected) in [("x1", 0.4), ("y1", 0.024), ("x2", 1.0), ("y2", 1.0)] {
+                let actual = keys[1]["easing"][handle].as_f64().unwrap();
+                assert!((actual - expected).abs() < 1e-12, "{handle}: {actual}");
+            }
+        }
+    }
 }
 
 #[cfg(feature = "ffmpeg-library")]

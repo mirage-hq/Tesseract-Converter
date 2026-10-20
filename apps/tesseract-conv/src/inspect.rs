@@ -37,6 +37,9 @@ struct Composition {
     height: u16,
     frame_rate: f64,
     duration_secs: f64,
+    // Composition preview color (RGBA, 0-1). After Effects renders RGB output over it; it is not an
+    // authored background, so conversion keeps the canvas transparent.
+    background_color: [f64; 4],
     direct_layer_count: usize,
     direct_layers: Vec<DirectLayer>,
     // Distinct timeline layers across this composition and every reachable precomp.
@@ -140,6 +143,7 @@ fn compositions(project: &StructuralProject) -> Result<Vec<Composition>> {
             height: comp.height,
             frame_rate: comp.frame_rate,
             duration_secs: comp.duration_secs,
+            background_color: comp.record.background_color(),
             direct_layer_count: comp.layers.len(),
             direct_layers: comp
                 .layers

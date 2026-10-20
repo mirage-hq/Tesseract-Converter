@@ -167,7 +167,7 @@ fn recover(
     for (index, frame) in raster.frames.iter().enumerate() {
         let coverage = frame.coverage()?;
         let mut pixels = crate::format::object_mask::zeroed(coverage.len() * 4)?;
-        for (pixel, alpha) in pixels.chunks_exact_mut(4).zip(coverage) {
+        for (pixel, alpha) in pixels.as_chunks_mut::<4>().0.iter_mut().zip(coverage) {
             pixel.copy_from_slice(&[255, 255, 255, alpha]);
         }
         let path = directory.join(format!("{}-{index:06}.png", id.as_str()));
@@ -196,6 +196,7 @@ fn recover(
         .first()
         .ok_or_else(|| unsupported("Object Mask has no recovered frames"))?;
     let inspected = InspectedMedia {
+        normalized_still: None,
         delayed_audio: None,
         audio_omission: None,
         path: first.path.clone(),

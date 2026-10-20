@@ -314,6 +314,13 @@ fn source_text_alias_native_fixture_target_and_consumer_rejections() {
             "{case}: {:?}",
             result.warnings
         );
+        assert!(
+            !result.warnings.iter().any(
+                |warning| warning.contains("Source Text expression evaluated by the converter")
+            ),
+            "{case}: {:?}",
+            result.warnings
+        );
         if case != "disabled" {
             assert!(
                 result
@@ -358,6 +365,17 @@ fn source_text_alias_converter_paragraph_codes_and_unknown_fields() {
             .unwrap();
         *blob = Chunk::opaque_list(*b"btdk", payload.into_bytes());
         let converted = imported(&comp, owner);
+        if !admitted {
+            assert!(
+                !converted
+                    .warnings
+                    .iter()
+                    .any(|warning| warning
+                        .contains("Source Text expression evaluated by the converter")),
+                "{styles:?}: {:?}",
+                converted.warnings
+            );
+        }
         let [FxLayer::Text(text)] = converted.layers.as_slice() else {
             panic!()
         };
@@ -424,6 +442,7 @@ fn source_text_alias_converter_applies_occurrence_override_without_source_mutati
     let mut resolver = |_: &MediaAssetRequest| MediaResolution::Unavailable;
     let mut converter = Converter {
         text_overrides: Default::default(),
+        effect_definitions: &[],
         expression_samples: &samples,
         expression_evaluations: Default::default(),
         items: project.items.iter().map(|item| (item.id, item)).collect(),

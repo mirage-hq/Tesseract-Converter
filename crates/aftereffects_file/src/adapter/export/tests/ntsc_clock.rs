@@ -84,7 +84,10 @@ fn native_ntsc_source_descriptor_and_editable_rate_survive_fresh_export() {
             .write(&archive)
             .unwrap();
         let output = root.path().join(format!("export-{output_duration}"));
-        let options = AfterEffectsExportOptions { fps: 30.0 };
+        let options = AfterEffectsExportOptions {
+            fps: 30.0,
+            ..Default::default()
+        };
         let checked = AfterEffects
             .export_from_tesseract(&archive, &output, &options, ConversionMode::Check)
             .unwrap();

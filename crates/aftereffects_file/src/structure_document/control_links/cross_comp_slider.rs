@@ -1,4 +1,4 @@
-//! Exact repeated XY Scale binding to a static cross-composition Slider.
+//! Exact repeated XY Scale binding to a static composition Slider.
 //! No expression execution, clock conversion, or live controller linkage.
 
 use super::{
@@ -12,7 +12,7 @@ use crate::{
 
 #[derive(Debug)]
 struct Link<'a> {
-    composition: &'a str,
+    composition: Option<&'a str>,
     layer: &'a str,
     slider: super::Reference<'a>,
 }
@@ -20,17 +20,22 @@ struct Link<'a> {
 fn parse(mut text: &str) -> Option<Link<'_>> {
     let binding = super::slider::binding(&mut text)?;
     // Hoisted/reserved/global names can change the meaning of the RHS call.
-    const RESERVED: &str = "Infinity NaN arguments await break case catch class comp const continue debugger default delete do effect else enum eval export extends false finally for function if implements import in instanceof interface let new null package private protected public return static super switch this throw true try typeof undefined var void while with yield";
+    const RESERVED: &str = "Infinity NaN arguments await break case catch class comp const continue debugger default delete do effect else enum eval export extends false finally for function if implements import in instanceof interface let new null package private protected public return static super switch this thisComp throw true try typeof undefined var void while with yield";
     if RESERVED
         .split_ascii_whitespace()
         .any(|name| name == binding)
     {
         return None;
     }
-    token(&mut text, "comp")?;
-    token(&mut text, "(")?;
-    let composition = quoted(&mut text)?;
-    token(&mut text, ")")?;
+    let composition = if token(&mut text, "thisComp").is_some() {
+        None
+    } else {
+        token(&mut text, "comp")?;
+        token(&mut text, "(")?;
+        let composition = quoted(&mut text)?;
+        token(&mut text, ")")?;
+        Some(composition)
+    };
     token(&mut text, ".layer")?;
     token(&mut text, "(")?;
     let layer = quoted(&mut text)?;
@@ -72,15 +77,31 @@ pub(super) fn lower(
             ));
         }
         cross_comp::validate_destination(base, dimensions)?;
-        let source = cross_comp::source(
-            context,
-            cross_comp::Reference {
-                composition: link.composition,
-                layer: link.layer,
-                member: cross_comp::Member::Scale,
-            },
-        )?;
-        let root = properties::root_runs(&source.layer.content)?;
+        let source = if let Some(composition) = link.composition {
+            cross_comp::source(
+                context,
+                cross_comp::Reference {
+                    composition,
+                    layer: link.layer,
+                    member: cross_comp::Member::Scale,
+                },
+            )?
+            .layer
+        } else {
+            let mut matches = context
+                .composition
+                .layers
+                .iter()
+                .filter(|candidate| candidate.name.as_ref() == link.layer);
+            let source = matches
+                .next()
+                .ok_or(PropertyError::Layout("sibling Slider layer missing"))?;
+            if matches.next().is_some() {
+                return Err(PropertyError::Layout("ambiguous sibling Slider layer"));
+            }
+            source
+        };
+        let root = properties::root_runs(&source.content)?;
         let parade = unique_run(&root, "ADBE Effect Parade")?;
         let effects = properties::runs(properties::unique_list(parade, *b"tdgp")?)?;
         static_xy(resolve(&effects, link.slider)?)
@@ -96,7 +117,7 @@ fn static_xy(scalar: NumericProperty) -> Result<NumericProperty, PropertyError> 
         || !matches!(scalar.values.as_slice(), [value] if value.is_finite())
     {
         return Err(PropertyError::Layout(
-            "cross-composition Scale requires a static finite scalar Slider",
+            "Scale binding requires a static finite scalar Slider",
         ));
     }
     scale_vector(scalar, 2)
@@ -143,10 +164,12 @@ mod tests {
     fn grammar_requires_one_complete_repeated_xy_binding() {
         assert!(parse(EXPRESSION).is_some());
         assert!(parse(&format!("var {EXPRESSION};")).is_some());
+        assert!(parse(&EXPRESSION.replace("comp(\"Render\")", "thisComp")).is_some());
         assert!(parse(&EXPRESSION.replace("\"ADBE Slider Control-0001\"", "1")).is_some());
         for invalid in [
             format!("{EXPRESSION}; evil()"),
             EXPRESSION.replace("temp", "comp"),
+            EXPRESSION.replace("temp", "thisComp"),
             EXPRESSION.replace("temp", "var"),
             EXPRESSION.replace("temp", "Infinity"),
             EXPRESSION.replace("[temp, temp]", "[temp, other]"),

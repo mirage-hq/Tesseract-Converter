@@ -308,6 +308,12 @@ impl PropertyKeyframeTrack {
                     keyframe_id: keyframe.id.0.clone(),
                 });
             }
+            if matches!(&keyframe.value, PropertyValue::Color(color) if !crate::has_valid_extended_color(color))
+            {
+                return Err(PropertyKeyframeError::ColorOutOfRange {
+                    keyframe_id: keyframe.id.0.clone(),
+                });
+            }
             if keyframe
                 .spatial_in_tangent
                 .is_some_and(|tangent| !tangent.is_finite())
@@ -338,13 +344,7 @@ impl PropertyKeyframeTrack {
             }
             if index > 0
                 && keyframe.easing != PropertyKeyframeEasing::Hold
-                && !matches!(
-                    keyframe.value,
-                    PropertyValue::Float(_)
-                        | PropertyValue::Vector2(_)
-                        | PropertyValue::Color(_)
-                        | PropertyValue::Path(_)
-                )
+                && !keyframe.value.supports_continuous_interpolation()
             {
                 return Err(
                     PropertyKeyframeError::ContinuousEasingRequiresNumericValue {
@@ -672,6 +672,12 @@ pub enum PropertyKeyframeError {
         /// Rejected keyframe identity.
         keyframe_id: String,
     },
+    /// Color keys retain extended RGB, but alpha remains coverage.
+    #[error("property keyframe {keyframe_id:?} requires RGB 0..=64 and alpha 0..=1")]
+    ColorOutOfRange {
+        /// Rejected keyframe identity.
+        keyframe_id: String,
+    },
     /// Spatial tangent components must remain finite.
     #[error("property keyframe {keyframe_id:?} has a non-finite spatial tangent")]
     NonFiniteSpatialTangent {
@@ -890,6 +896,10 @@ fn property_value_kind_label(value: &PropertyValue) -> &'static str {
         PropertyValue::Path(_) => "path",
     }
 }
+
+#[cfg(test)]
+#[path = "spatial_keyframe_tests.rs"]
+mod spatial_tests;
 
 #[cfg(test)]
 mod tests {

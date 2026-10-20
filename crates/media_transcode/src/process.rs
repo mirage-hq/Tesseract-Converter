@@ -11,6 +11,53 @@ use std::{
 };
 
 const STDERR_RETAINED_BYTES: usize = 64 * 1024;
+const SPAWN_ATTEMPTS: usize = 5;
+const SPAWN_RETRY_DELAY: Duration = Duration::from_millis(20);
+
+fn spawn(command: &mut Command, cancelled: &AtomicBool) -> Result<Child, TranscodeError> {
+    spawn_with_retry(&format!("{command:?}"), cancelled, || command.spawn())
+}
+
+fn spawn_with_retry(
+    command: &str,
+    cancelled: &AtomicBool,
+    attempt: impl FnMut() -> io::Result<Child>,
+) -> Result<Child, TranscodeError> {
+    spawn_with_retry_budget(command, cancelled, SPAWN_ATTEMPTS, attempt)
+}
+
+fn spawn_with_retry_budget(
+    command: &str,
+    cancelled: &AtomicBool,
+    attempts: usize,
+    mut attempt: impl FnMut() -> io::Result<Child>,
+) -> Result<Child, TranscodeError> {
+    // Always make an initial attempt, even if the configured budget is zero.
+    let mut retries_remaining = attempts.saturating_sub(1);
+    loop {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(TranscodeError::Cancelled);
+        }
+        match attempt() {
+            Ok(child) => return Ok(child),
+            // On Linux, a concurrent fork can briefly inherit a writable descriptor
+            // for a just-created executable, even when that descriptor is CLOEXEC.
+            // Retry only failed execs; never rerun a child that actually started.
+            Err(source)
+                if source.kind() == io::ErrorKind::ExecutableFileBusy && retries_remaining > 0 =>
+            {
+                retries_remaining -= 1;
+                thread::sleep(SPAWN_RETRY_DELAY);
+            }
+            Err(source) => {
+                return Err(TranscodeError::Spawn {
+                    command: command.to_owned(),
+                    source,
+                });
+            }
+        }
+    }
+}
 
 pub(crate) struct Output {
     pub status: ExitStatus,
@@ -26,11 +73,7 @@ pub(crate) fn capture(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let display = format!("{command:?}");
-    let mut child = command.spawn().map_err(|source| TranscodeError::Spawn {
-        command: display.clone(),
-        source,
-    })?;
+    let mut child = spawn(command, cancelled)?;
     let stdout = child
         .stdout
         .take()
@@ -71,11 +114,7 @@ pub(crate) fn lines(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let display = format!("{command:?}");
-    let mut child = command.spawn().map_err(|source| TranscodeError::Spawn {
-        command: display,
-        source,
-    })?;
+    let mut child = spawn(command, cancelled)?;
     let pipes = (|| {
         let stdout = child
             .stdout
@@ -163,6 +202,140 @@ mod tests {
         let mut command = Command::new("/bin/sh");
         command.args(["-c", script]);
         command
+    }
+
+    #[test]
+    fn spawn_retries_only_transient_executable_contention() {
+        let mut attempts = 0;
+        let mut child = spawn_with_retry("mock", &AtomicBool::new(false), || {
+            attempts += 1;
+            if attempts == 1 {
+                Err(io::ErrorKind::ExecutableFileBusy.into())
+            } else {
+                shell("exit 0").spawn()
+            }
+        })
+        .unwrap();
+        assert!(child.wait().unwrap().success());
+        assert_eq!(attempts, 2);
+    }
+
+    #[test]
+    fn spawn_persistent_contention_preserves_error_and_stops() {
+        let mut attempts = 0;
+        let error = spawn_with_retry("mock", &AtomicBool::new(false), || {
+            attempts += 1;
+            Err(io::ErrorKind::ExecutableFileBusy.into())
+        })
+        .unwrap_err();
+        assert_eq!(attempts, SPAWN_ATTEMPTS);
+        assert!(matches!(error, TranscodeError::Spawn { command, source }
+            if command == "mock" && source.kind() == io::ErrorKind::ExecutableFileBusy));
+    }
+
+    #[test]
+    fn spawn_zero_one_and_default_budgets_preserve_terminal_error() {
+        for (budget, expected_attempts) in [(0, 1), (1, 1), (SPAWN_ATTEMPTS, 5)] {
+            let mut attempts = 0;
+            let error = spawn_with_retry_budget("mock", &AtomicBool::new(false), budget, || {
+                attempts += 1;
+                Err(io::Error::new(
+                    io::ErrorKind::ExecutableFileBusy,
+                    "original spawn failure",
+                ))
+            })
+            .unwrap_err();
+            assert_eq!(attempts, expected_attempts);
+            assert!(matches!(error, TranscodeError::Spawn { command, source }
+                if command == "mock"
+                    && source.kind() == io::ErrorKind::ExecutableFileBusy
+                    && source.to_string() == "original spawn failure"));
+        }
+    }
+
+    #[test]
+    fn spawn_cancelled_zero_budget_does_not_attempt() {
+        let error = spawn_with_retry_budget("mock", &AtomicBool::new(true), 0, || {
+            panic!("cancelled spawn must not be attempted")
+        })
+        .unwrap_err();
+        assert!(matches!(error, TranscodeError::Cancelled));
+    }
+
+    #[test]
+    fn spawn_cancellation_stops_contention_retry() {
+        let cancelled = AtomicBool::new(false);
+        let mut attempts = 0;
+        let error = spawn_with_retry("mock", &cancelled, || {
+            attempts += 1;
+            cancelled.store(true, Ordering::Relaxed);
+            Err(io::ErrorKind::ExecutableFileBusy.into())
+        })
+        .unwrap_err();
+        assert!(matches!(error, TranscodeError::Cancelled));
+        assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn spawn_other_errors_are_not_retried() {
+        let mut attempts = 0;
+        let error = spawn_with_retry("mock", &AtomicBool::new(false), || {
+            attempts += 1;
+            Err(io::ErrorKind::PermissionDenied.into())
+        })
+        .unwrap_err();
+        assert_eq!(attempts, 1);
+        assert!(matches!(error, TranscodeError::Spawn { source, .. }
+            if source.kind() == io::ErrorKind::PermissionDenied));
+    }
+
+    #[test]
+    fn cancelled_capture_and_lines_do_not_spawn() {
+        let cancelled = AtomicBool::new(true);
+        let mut command = Command::new("/nonexistent-media-transcode-tool");
+        assert!(matches!(
+            capture(&mut command, &cancelled),
+            Err(TranscodeError::Cancelled)
+        ));
+        assert!(matches!(
+            lines(&mut command, &cancelled, |_| panic!("must not start")),
+            Err(TranscodeError::Cancelled)
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn spawn_recovers_from_real_etxtbsy_after_writer_closes() {
+        use std::{fs, os::unix::fs::PermissionsExt};
+
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("mock.sh");
+        fs::write(&executable, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut writer = Some(
+            fs::OpenOptions::new()
+                .write(true)
+                .open(&executable)
+                .unwrap(),
+        );
+        let mut command = Command::new(&executable);
+        let mut attempts = 0;
+        let mut child = spawn_with_retry("mock", &AtomicBool::new(false), || {
+            attempts += 1;
+            let result = command.spawn();
+            if attempts == 1 {
+                assert_eq!(
+                    result.as_ref().unwrap_err().raw_os_error(),
+                    Some(libc::ETXTBSY)
+                );
+                // Release only after observing the real error, not after a timed sleep.
+                drop(writer.take());
+            }
+            result
+        })
+        .unwrap();
+        assert!(child.wait().unwrap().success());
+        assert_eq!(attempts, 2);
     }
 
     fn assert_reaped(pid: &str) {

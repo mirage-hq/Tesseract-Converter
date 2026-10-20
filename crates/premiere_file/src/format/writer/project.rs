@@ -1,7 +1,7 @@
 use super::graph::ProjectIds;
 use crate::schema::{native::*, records};
 
-pub(super) fn records(ids: &ProjectIds) -> Vec<Record> {
+pub(super) fn records(ids: &ProjectIds, graphics_white: Option<f64>) -> Vec<Record> {
     let shell = &ids.shell;
     let project = Project {
         object_id: shell.project,
@@ -68,7 +68,13 @@ pub(super) fn records(ids: &ProjectIds) -> Vec<Record> {
         audio_compile_settings: shell.audio_compile_settings.into(),
         capture_settings: shell.dummy_capture_settings.into(),
         default_sequence_settings: shell.default_sequence_settings.into(),
-        color_management_settings: records::PROJECT_COLOR_MANAGEMENT_SETTINGS,
+        color_management_settings: graphics_white
+            .map(|white| {
+                serde_json::json!({
+            "enableLogColorManagement":2,"graphicsWhiteLuminance":white,"lutInterpolationMethod":1
+        }).to_string()
+            })
+            .unwrap_or_else(|| records::PROJECT_COLOR_MANAGEMENT_SETTINGS.into()),
         video_time_display: "102",
         audio_time_display: "200",
         color_aware_effects_enabled: "0",

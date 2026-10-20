@@ -41,7 +41,11 @@ mod tests {
     use super::*;
 
     fn sampling(fps: f64) -> Sampling {
-        Sampling::new(&AfterEffectsExportOptions { fps }).unwrap()
+        Sampling::new(&AfterEffectsExportOptions {
+            fps,
+            ..Default::default()
+        })
+        .unwrap()
     }
 
     #[test]
@@ -82,7 +86,13 @@ mod tests {
     #[test]
     fn grid_rejects_invalid_rates() {
         for fps in [0.0, f64::NAN, f64::INFINITY, 241.0] {
-            assert!(Sampling::new(&AfterEffectsExportOptions { fps }).is_err());
+            assert!(
+                Sampling::new(&AfterEffectsExportOptions {
+                    fps,
+                    ..Default::default()
+                })
+                .is_err()
+            );
         }
     }
 }

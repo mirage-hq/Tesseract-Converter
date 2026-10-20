@@ -51,6 +51,96 @@ fn srgb_video() -> Vec<u8> {
     bytes
 }
 
+#[test]
+fn export_media_high10_bt709_keeps_native_picture_and_source_profile() {
+    // Supplementary High10 SPS/PPS over the public 8-bit movie's packets.
+    // This tests metadata/lowering only, not compressed-picture decoding.
+    let mut bytes = include_bytes!("../../../../tests/fixtures/video-30fps.mov").to_vec();
+    let mut parents = path(
+        &bytes,
+        &[b"moov", b"trak", b"mdia", b"minf", b"stbl", b"stsd"],
+    );
+    let entry = parents.last().unwrap() + 16;
+    parents.push(entry);
+    let avcc = entry + 86;
+    assert_eq!(&bytes[avcc + 4..avcc + 8], b"avcC");
+    let old_size = be32(&bytes, avcc);
+    // libx264 High10, 1920x1080p30, limited-range BT.709.
+    let sps = "676e0028a6cd940780227e5c05a808080a000003000200000300781e30632c";
+    let pps = "68ebe3cb22c0";
+    let decode = |hex: &str| {
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect::<Vec<_>>()
+    };
+    let (sps, pps) = (decode(sps), decode(pps));
+    let mut record = vec![1, 110, 0, 40, 0xff, 0xe1];
+    record.extend_from_slice(&u16::try_from(sps.len()).unwrap().to_be_bytes());
+    record.extend_from_slice(&sps);
+    record.push(1);
+    record.extend_from_slice(&u16::try_from(pps.len()).unwrap().to_be_bytes());
+    record.extend_from_slice(&pps);
+    record.extend_from_slice(&[0xfd, 0xfa, 0xfa, 0]);
+    let new_size = record.len() + 8;
+    let mut boxed = u32::try_from(new_size).unwrap().to_be_bytes().to_vec();
+    boxed.extend_from_slice(b"avcC");
+    boxed.extend_from_slice(&record);
+    bytes.splice(avcc..avcc + old_size, boxed);
+    for offset in parents {
+        let size = u32::try_from(be32(&bytes, offset) + new_size - old_size).unwrap();
+        bytes[offset..offset + 4].copy_from_slice(&size.to_be_bytes());
+    }
+    let root = tempfile::tempdir().unwrap();
+    let file = prepared_archive(root.path(), &bytes);
+    let operation = Premiere
+        .prepare_export(&file, file.project(), &Default::default())
+        .unwrap();
+    let stage = operation
+        .stage_with_picture_replacements(root.path(), &root.path().join("native-only"), &[])
+        .unwrap();
+    let native = read_native(&stage.directory().join("project.prproj"));
+    assert_eq!(
+        native
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .count(),
+        2
+    );
+    let compressed = fs::read(stage.directory().join("project.prproj")).unwrap();
+    let mut xml = String::new();
+    flate2::read::GzDecoder::new(compressed.as_slice())
+        .read_to_string(&mut xml)
+        .unwrap();
+    let exported = roxmltree::Document::parse(&xml).unwrap();
+    assert_eq!(
+        fs::read(stage.directory().join("media/source.mov")).unwrap(),
+        bytes
+    );
+    let records = roxmltree::Document::parse(include_str!(
+        "../../../../tests/fixtures/bt709-10bit-source-streams.xml"
+    ))
+    .unwrap();
+    let saved = records
+        .descendants()
+        .rfind(|node| node.has_tag_name("OriginalColorSpace"))
+        .unwrap()
+        .text()
+        .unwrap();
+    let saved: crate::schema::ColorSpace = serde_json::from_str(saved).unwrap();
+    assert!(
+        exported
+            .descendants()
+            .filter(|node| node.has_tag_name("OriginalColorSpace"))
+            .any(
+                |node| serde_json::from_str::<serde_json::Value>(node.text().unwrap()).unwrap()
+                    == serde_json::to_value(&saved).unwrap()
+            ),
+        "10-bit source must retain the native fixture's exact colour profile"
+    );
+}
+
 fn prepared_archive_with(
     root: &Path,
     bytes: &[u8],
@@ -129,6 +219,77 @@ fn with_leading_empty(mut bytes: Vec<u8>) -> Vec<u8> {
     let track_duration = u32::try_from(be32(&bytes, track + 28) + 33).unwrap();
     bytes[track + 28..track + 32].copy_from_slice(&track_duration.to_be_bytes());
     bytes
+}
+
+// Container-only control over public encoded pictures, not an Adobe oracle.
+fn terminal_zero_video() -> Vec<u8> {
+    let mut bytes = include_bytes!("../../../../tests/fixtures/video-30fps.mov").to_vec();
+    let parents = path(
+        &bytes,
+        &[b"moov", b"trak", b"mdia", b"minf", b"stbl", b"stts"],
+    );
+    let stts = parents[5];
+    assert_eq!(be32(&bytes, stts + 12), 1);
+    assert_eq!(be32(&bytes, stts + 16), 30);
+    bytes[stts + 12..stts + 16].copy_from_slice(&2_u32.to_be_bytes());
+    bytes[stts + 16..stts + 20].copy_from_slice(&29_u32.to_be_bytes());
+    bytes.splice(
+        stts + 24..stts + 24,
+        [1_u32.to_be_bytes(), 0_u32.to_be_bytes()].concat(),
+    );
+    for offset in parents {
+        let length = u32::try_from(be32(&bytes, offset) + 8).unwrap();
+        bytes[offset..offset + 4].copy_from_slice(&length.to_be_bytes());
+    }
+    let mdhd = path(&bytes, &[b"moov", b"trak", b"mdia", b"mdhd"])[3];
+    bytes[mdhd + 24..mdhd + 28].copy_from_slice(&(29_u32 * 512).to_be_bytes());
+    let edit = path(&bytes, &[b"moov", b"trak", b"edts", b"elst"])[3];
+    bytes[edit + 16..edit + 20].copy_from_slice(&967_u32.to_be_bytes());
+    let movie = path(&bytes, &[b"moov", b"mvhd"])[1];
+    bytes[movie + 24..movie + 28].copy_from_slice(&967_u32.to_be_bytes());
+    let track = path(&bytes, &[b"moov", b"trak", b"tkhd"])[2];
+    bytes[track + 28..track + 32].copy_from_slice(&967_u32.to_be_bytes());
+    bytes
+}
+
+#[test]
+fn export_media_terminal_zero_sample_keeps_positive_clock_and_editable_picture() {
+    let bytes = terminal_zero_video();
+    let crate::media::MediaFacts::Video(media) = export_facts(&bytes).unwrap() else {
+        panic!("validated endpoint source must remain editable native picture");
+    };
+    assert_eq!(media.timing.sample_count, 29);
+    assert_eq!(
+        media.timing.source_clock().unwrap().0,
+        crate::format::FrameRate::Fps30.into()
+    );
+    assert!(
+        crate::audio_media::PictureClock::of(&crate::media::MediaFacts::Video(media)).is_none()
+    );
+    let root = tempfile::tempdir().unwrap();
+    let file = prepared_archive(root.path(), &bytes);
+    let original = file.project_json().unwrap();
+    let operation = Premiere
+        .prepare_export(&file, file.project(), &Default::default())
+        .unwrap();
+    assert!(operation.packing_recipe().is_complete());
+    let stage = operation
+        .stage_with_picture_replacements(root.path(), &root.path().join("retained"), &[])
+        .unwrap();
+    let project = read_native(&stage.directory().join("project.prproj"));
+    assert_eq!(
+        project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .count(),
+        2
+    );
+    assert!(project.media.values().any(|media| media
+        .relative_path
+        .as_ref()
+        .is_some_and(|path| fs::read(stage.directory().join(path)).unwrap() == bytes)));
+    assert_eq!(file.project_json().unwrap(), original);
 }
 
 fn export_facts(bytes: &[u8]) -> crate::error::Result<crate::media::MediaFacts> {
@@ -299,6 +460,95 @@ fn edited_repeated_source_uses_one_order_independent_longest_authored_descriptor
             bytes
         );
     }
+}
+
+#[test]
+fn export_media_long_header_and_rounded_edit_keep_editable_picture() {
+    let mut bytes = include_bytes!("../../../../tests/fixtures/video-30fps.mov").to_vec();
+    let mdhd = path(&bytes, &[b"moov", b"trak", b"mdia", b"mdhd"])[3];
+    let scale = u32::try_from(be32(&bytes, mdhd + 20)).unwrap();
+    let duration = u32::try_from(be32(&bytes, mdhd + 24)).unwrap();
+    bytes[mdhd + 24..mdhd + 28].copy_from_slice(&(duration + 2 * scale / 30).to_be_bytes());
+    let edit = path(&bytes, &[b"moov", b"trak", b"edts", b"elst"])[3];
+    bytes[edit + 16..edit + 20].copy_from_slice(&999_u32.to_be_bytes());
+    let facts = export_facts(&bytes).unwrap();
+    let crate::media::MediaFacts::Video(video) = &facts else {
+        panic!("expected native picture");
+    };
+    assert_eq!(
+        video.timing.source_clock().unwrap().0,
+        crate::schema::SourceFrameRate::from(FrameRate::Fps30)
+    );
+    assert!(video.timing.authored_source_duration);
+    assert!(crate::audio_media::PictureClock::of(&facts).is_none());
+    assert!(
+        crate::media::inspect_video_media(
+            std::io::Cursor::new(&bytes),
+            std::io::Cursor::new(&bytes),
+            bytes.len() as u64,
+        )
+        .is_err(),
+        "import admission is unchanged"
+    );
+    let root = tempfile::tempdir().unwrap();
+    let file = prepared_archive(root.path(), &bytes);
+    let operation = Premiere
+        .prepare_export(&file, file.project(), &Default::default())
+        .unwrap();
+    assert!(operation.losses().losses.iter().any(|loss| loss
+        .omission
+        .reason
+        .contains("original media presentation edits retained unchanged")));
+    let stage = operation
+        .stage_with_picture_replacements(root.path(), &root.path().join("exported"), &[])
+        .unwrap();
+    let project = read_native(&stage.directory().join("project.prproj"));
+    assert_eq!(
+        project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .count(),
+        2
+    );
+    assert_eq!(
+        fs::read(stage.directory().join("media/source.mov")).unwrap(),
+        bytes
+    );
+}
+
+#[test]
+fn export_media_long_header_requires_explicit_playback_edits() {
+    let mut bytes = include_bytes!("../../../../tests/fixtures/video-30fps.mov").to_vec();
+    // Hide the edit container without moving any physical sample bytes.
+    let edits = path(&bytes, &[b"moov", b"trak", b"edts"])[2];
+    bytes[edits + 4..edits + 8].copy_from_slice(b"free");
+    export_facts(&bytes).unwrap();
+    let mdhd = path(&bytes, &[b"moov", b"trak", b"mdia", b"mdhd"])[3];
+    let scale = u32::try_from(be32(&bytes, mdhd + 20)).unwrap();
+    let duration = u32::try_from(be32(&bytes, mdhd + 24)).unwrap();
+    bytes[mdhd + 24..mdhd + 28].copy_from_slice(&(duration + scale).to_be_bytes());
+    let error = export_facts(&bytes).unwrap_err();
+    assert!(
+        error.to_string().contains("declared duration differs"),
+        "{error}"
+    );
+}
+
+#[test]
+fn export_media_long_header_cannot_extend_physical_playback() {
+    let mut bytes = include_bytes!("../../../../tests/fixtures/video-30fps.mov").to_vec();
+    let mdhd = path(&bytes, &[b"moov", b"trak", b"mdia", b"mdhd"])[3];
+    let scale = u32::try_from(be32(&bytes, mdhd + 20)).unwrap();
+    let duration = u32::try_from(be32(&bytes, mdhd + 24)).unwrap();
+    bytes[mdhd + 24..mdhd + 28].copy_from_slice(&(duration + scale).to_be_bytes());
+    let edit = path(&bytes, &[b"moov", b"trak", b"edts", b"elst"])[3];
+    bytes[edit + 16..edit + 20].copy_from_slice(&1100_u32.to_be_bytes());
+    let error = export_facts(&bytes).unwrap_err();
+    assert!(
+        error.to_string().contains("physical presentation endpoint"),
+        "{error}"
+    );
 }
 
 #[test]

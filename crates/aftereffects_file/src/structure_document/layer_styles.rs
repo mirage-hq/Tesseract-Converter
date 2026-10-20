@@ -1,5 +1,7 @@
 //! Best-effort import of native AE Layer Styles into existing FX `LayerEffect`s.
 
+pub(super) mod fill;
+
 use fx_schema::{
     EffectData, EffectId, EffectPayload, EffectRecord, LayerEffect, PropertyTarget,
     animator::AnimationGraphEntry,
@@ -96,6 +98,7 @@ fn import_animations(
 ) -> Vec<AnimationGraphEntry> {
     let mut animations = Vec::new();
     let clock = NumericAnimationClock::parent_identity(layer);
+    let stroke_opacity_target = stroke_opacity_target(style, source_properties, id);
     let drop_shadow_blur_is_compatible = !matches!(style, NativeLayerStyle::DropShadow(_))
         || drop_shadow_blur_animation_compatible(source_properties);
     for (name, numeric) in source_properties {
@@ -109,7 +112,18 @@ fn import_animations(
             warnings.push("Layer Style Drop Shadow / dropShadow/blur: animated native Size cannot become blurRadius while native Spread is nonzero or animated; initial value retained".into());
             continue;
         }
-        let Some((param, scale)) = animation_mapping(style, name) else {
+        if name == "frameFX/color" && stroke_opacity_target.is_some() && !numeric.expression_enabled
+        {
+            continue;
+        }
+        let target = if name == "frameFX/opacity" {
+            stroke_opacity_target.clone()
+        } else {
+            animation_mapping(style, name).map(|(param, scale)| {
+                NumericAnimationTarget::float(PropertyTarget::effect_param(id, param), 0, scale)
+            })
+        };
+        let Some(target) = target else {
             warnings.push(format!(
                 "Layer Style {} / {name}: no compatible editable animation target; initial value retained",
                 style_label(style)
@@ -132,8 +146,6 @@ fn import_animations(
                 continue;
             }
         };
-        let target =
-            NumericAnimationTarget::float(PropertyTarget::effect_param(id, param), 0, scale);
         let (entries, entry_warnings) =
             animation::numeric_entries(name, numeric, &[target], clock, budget);
         animations.extend(entries);
@@ -144,6 +156,39 @@ fn import_animations(
         );
     }
     animations
+}
+
+fn stroke_opacity_target(
+    style: &NativeLayerStyle,
+    source_properties: &[(String, NumericProperty)],
+    id: EffectId,
+) -> Option<NumericAnimationTarget> {
+    let NativeLayerStyle::Stroke(stroke) = style else {
+        return None;
+    };
+    let mut colors = source_properties
+        .iter()
+        .filter(|(name, _)| name == "frameFX/color");
+    let alpha = match colors.next() {
+        None => 1.0,
+        Some((_, color))
+            if colors.next().is_none()
+                && color.keyframes.is_empty()
+                && color.values.len() == 4
+                && color.values.iter().all(|v| v.is_finite()) =>
+        {
+            color.values[3].clamp(0.0, 1.0)
+        }
+        _ => return None,
+    };
+    // The shared scalar-alpha target uses 0–255; native styles use percent.
+    Some(
+        NumericAnimationTarget::opacity_color(
+            PropertyTarget::effect_param(id, "color"),
+            [stroke.color[0], stroke.color[1], stroke.color[2]],
+        )
+        .scaled(255.0 / 100.0 * alpha),
+    )
 }
 
 fn drop_shadow_blur_animation_compatible(source_properties: &[(String, NumericProperty)]) -> bool {
@@ -372,6 +417,115 @@ mod tests {
             keyframes: vec![key(0.0, 0.0), key(1.0, 10.0)],
             value_kind: NumericValueKind::Continuous,
         }
+    }
+
+    #[test]
+    fn stroke_opacity_keys_keep_rgb_and_animate_typed_color_alpha() {
+        let project = crate::structure::read_project(include_bytes!(
+            "../../tests/fixtures/layer_styles/styles_static_adobe.aep"
+        ))
+        .unwrap();
+        let crate::structure::ItemKind::Composition(comp) = &project.item(1).unwrap().kind else {
+            panic!("native composition")
+        };
+        let layer = &comp.layers[0];
+        let style = super::NativeLayerStyle::Stroke(crate::layer_styles::NativeStroke {
+            enabled: true,
+            color: [0.2, 0.4, 0.8, 0.0],
+            size: 3.0,
+            position: fx_schema::LayerStrokePosition::Inside,
+            blend_mode: fx_schema::BlendMode::Normal,
+            animations: Vec::new(),
+        });
+        let mut opacity = keyed_size_from_zero();
+        opacity.keyframes[1].values[0] = 100.0;
+        opacity.keyframes[0].out_interpolation = 2;
+        opacity.keyframes[0].out_influence = vec![33.0];
+        opacity.keyframes[1].in_interpolation = 2;
+        opacity.keyframes[1].in_influence = vec![33.0];
+        let mut color = scalar(0.0, true);
+        color.values = vec![0.2, 0.4, 0.8, 0.5];
+        color.value_kind = NumericValueKind::Color;
+        let mut properties = vec![
+            ("frameFX/color".into(), color),
+            ("frameFX/opacity".into(), opacity),
+        ];
+        let mut warnings = Vec::new();
+        let entries = super::import_animations(
+            layer,
+            &style,
+            &properties,
+            fx_schema::EffectId::new(42),
+            &mut super::AnimationBudget::default(),
+            &mut warnings,
+        );
+        assert_eq!(entries.len(), 1, "{warnings:?}");
+        assert_eq!(
+            entries[0].target,
+            fx_schema::PropertyTarget::effect_param(fx_schema::EffectId::new(42), "color")
+        );
+        let keys = entries[0].animator.keyframe_track().unwrap().keyframes();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0].layer_time().as_millis(), 0);
+        assert_eq!(keys[1].layer_time().as_millis(), 1000);
+        assert_eq!(
+            keys[0].value(),
+            &fx_schema::PropertyValue::Color([0.2, 0.4, 0.8, 0.0])
+        );
+        let fx_schema::PropertyValue::Color(color) = keys[1].value() else {
+            panic!("typed Color key")
+        };
+        assert_eq!(&color[..3], &[0.2, 0.4, 0.8]);
+        assert!((color[3] - 0.5).abs() < 1e-12);
+        assert!(matches!(
+            keys[1].easing(),
+            fx_schema::PropertyKeyframeEasing::CubicBezier { .. }
+        ));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let denied = super::import_animations(
+            layer,
+            &style,
+            &properties,
+            fx_schema::EffectId::new(42),
+            &mut super::AnimationBudget::with_limit(0),
+            &mut warnings,
+        );
+        assert!(
+            denied.is_empty(),
+            "no partial color track on budget failure"
+        );
+        properties[0].1.expression_enabled = true;
+        warnings.clear();
+        let cached = super::import_animations(
+            layer,
+            &style,
+            &properties,
+            fx_schema::EffectId::new(42),
+            &mut super::AnimationBudget::default(),
+            &mut warnings,
+        );
+        assert_eq!(
+            cached, entries,
+            "unsupported RGB expression must not discard independent opacity keys"
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("frameFX/color")
+                    && warning.contains("initial value retained"))
+        );
+        properties[0].1.expression_enabled = false;
+        properties[0].1.keyframes = keyed_size_from_zero().keyframes;
+        assert!(
+            super::stroke_opacity_target(&style, &properties, fx_schema::EffectId::new(42))
+                .is_none()
+        );
+        properties[0].1.keyframes.clear();
+        properties.push(properties[0].clone());
+        assert!(
+            super::stroke_opacity_target(&style, &properties, fx_schema::EffectId::new(42))
+                .is_none()
+        );
     }
 
     #[test]

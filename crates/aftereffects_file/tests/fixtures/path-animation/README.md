@@ -63,18 +63,20 @@ independent native controls, maximum geometry-coordinate error
 Cleanup and fresh READY succeeded. This proves bounded numeric editable Shape
 export, **not a native-render/RGB/alpha pass or Mask export acceptance**.
 
-**Import remains unchanged:** this mixed one-second profile still produces a
-contextual omission. The prior source-based RED1663 is preserved as an admission
-failure, not relabeled importGREEN. The earlier assumed250ms assertion for an
+**Later import-only correction:** the normalized mixed-ease mapping
+now admits this one-second profile without a duration-specific guard. The fresh
+import regression checks all four controls against the existing independent
+readback; this is numeric/structural evidence, not new raster proof. The prior
+source-based RED1663 remains historical admission failure evidence. The earlier assumed250ms assertion for an
 imported Mask guide was wrong: `NumericAnimationClock::parent_identity` maps
 native source-local250ms + native start2000ms to2250ms on the guide's identity
 composition clock (guide start0, identity owner playback). Shape source-content
 ownership uses a different source-local clock. The new clock characterization
-checks those actual fields without changing product import/shared clocks.
+checks those actual fields without changing product/shared clocks.
 
 Run `make test-aftereffects-file filter=mixed_one_second_path` in
 `opensource/conv`: explicit full export/input edit, narrow negative admission,
-pinned native stored clock and unchanged import guard, and Mask guide clock.
+pinned native stored clock and imported tracks, and Mask guide clock.
 Independent30fps render, long-term Asset publication, raster/RGB/alpha fidelity,
 original49 improvement and general mixed-ease support remain **unmeasured**.
 The bounded Shape-control profile can qualify for merge under the campaign policy;

@@ -95,7 +95,37 @@ fn native_appearance_optional_details_keep_published_shape_geometry() {
         ("mShadowSize", Some("0")),
         ("mFutureLayout", Some(r#"{"size":12}"#)),
     ]));
+    let mut missing_stroke_color = bytes(CENTRED);
+    // Remove only the color from the independently calibrated 24 px stroke.
+    let root = 12 + u32::from_le_bytes(missing_stroke_color[12..16].try_into().unwrap()) as usize;
+    let root_vtable = root
+        - i32::from_le_bytes(missing_stroke_color[root..root + 4].try_into().unwrap()) as usize;
+    let slot = root
+        + usize::from(u16::from_le_bytes(
+            missing_stroke_color[root_vtable + 4..root_vtable + 6]
+                .try_into()
+                .unwrap(),
+        ));
+    let style = slot
+        + u32::from_le_bytes(missing_stroke_color[slot..slot + 4].try_into().unwrap()) as usize;
+    let vtable = style
+        - i32::from_le_bytes(missing_stroke_color[style..style + 4].try_into().unwrap()) as usize;
+    let mut missing_stroke_width = missing_stroke_color.clone();
+    missing_stroke_color[vtable + 8..vtable + 10].fill(0);
+    missing_stroke_width[vtable + 12..vtable + 14].fill(0);
     for (name, payload, expected_color, diagnosed) in [
+        (
+            "missing-stroke-color",
+            missing_stroke_color,
+            [0.0, 96.0 / 255.0, 1.0],
+            false,
+        ),
+        (
+            "missing-stroke-width",
+            missing_stroke_width,
+            [0.0, 96.0 / 255.0, 1.0],
+            false,
+        ),
         ("legacy", legacy, [128.0 / 255.0; 3], true),
         (
             "missing-layout",
@@ -147,6 +177,17 @@ fn native_appearance_optional_details_keep_published_shape_geometry() {
             rectangle["shape"]["fills"][0]["paint"]["color"],
             serde_json::json!([expected_color[0], expected_color[1], expected_color[2], 1.0])
         );
+        if name.starts_with("missing-stroke-") {
+            assert!(rectangle["shape"]["strokes"]
+                .as_array()
+                .is_none_or(Vec::is_empty));
+            assert!(
+                omissions.iter().any(|omission| omission
+                    .reason
+                    .contains("enabled shape stroke lacks its color or width; stroke omitted")),
+                "{omissions:?}"
+            );
+        }
         assert_eq!(layers[0]["layers"][0]["type"], "Text");
         assert_eq!(
             layers[2]["layers"][1]["shape"]["path"]["commands"][1]["type"],
@@ -210,6 +251,7 @@ fn calibration_appearances_decode_to_what_ame_drew() {
         Some(PrShapeStroke {
             color: GREEN,
             width,
+            join: None,
         })
     };
     for (payload, (fill, stroke, shadow)) in [
@@ -258,6 +300,7 @@ fn the_writer_stores_the_calibrated_slots_and_reads_back() {
         stroke: Some(PrShapeStroke {
             color: GREEN,
             width: 8.0,
+            join: None,
         }),
         shadow: Some(PrTextShadow {
             color: PrRgb([10, 20, 30]),
@@ -340,7 +383,7 @@ fn optional_appearance_slots_do_not_discard_known_paint() {
             "shape strokes inside and outside the outline",
         ),
         (
-            vec![(3, Some(Field::U8(1)))],
+            vec![(3, Some(Field::U8(1))), (12, Some(Field::U8(1)))],
             "an enabled shape stroke lacks its color or width",
         ),
         (
@@ -443,6 +486,83 @@ fn legacy_json_appearance_v1_reads_a_gray_fill_and_the_fill_switch() {
 }
 
 #[test]
+fn legacy_json_appearance_retains_enabled_gray_stroke() {
+    use crate::tests::support::{legacy_appearance, legacy_json};
+    let payload = legacy_appearance(&legacy_json(&[
+        ("mStrokeVisible", Some("true")),
+        ("mStrokeColor", Some("3158064")),
+        ("mStrokeWidth", Some("12.5")),
+    ]));
+    let appearance = decode_appearance(&payload).unwrap();
+    assert_eq!(appearance.fill, Some(PrFill::Solid(PrRgb([128; 3]))));
+    assert_eq!(
+        appearance.stroke,
+        Some(PrShapeStroke {
+            color: PrRgb([48; 3]),
+            width: 25.0,
+            join: None,
+        })
+    );
+}
+
+#[test]
+fn legacy_round_join_is_explicit_without_changing_modern_payload_inference() {
+    use crate::{
+        schema::text::StrokeJoin,
+        tests::support::{legacy_appearance, legacy_json},
+    };
+    for value in ["1", "0", "2", "999", "\"round\"", "null"] {
+        let (appearance, notes) =
+            decode_appearance_with_notes(&legacy_appearance(&legacy_json(&[
+                ("mStrokeVisible", Some("true")),
+                ("mStrokeColor", Some("3158064")),
+                ("mLineJoinType", Some(value)),
+            ])))
+            .unwrap();
+        let stroke = appearance.stroke.unwrap();
+        assert_eq!(stroke.join, (value == "1").then_some(StrokeJoin::Round));
+        assert_eq!(
+            notes
+                .iter()
+                .any(|note| note.contains("mLineJoinType") && note.contains("not converted")),
+            value != "1"
+        );
+        if value == "1" {
+            assert!(encode_appearance(&appearance).is_err());
+        }
+    }
+}
+
+#[test]
+fn legacy_json_appearance_unsupported_stroke_keeps_fill_with_diagnostic() {
+    use crate::tests::support::{legacy_appearance, legacy_json};
+    for (field, value, reason) in [
+        ("mStrokeColor", None, "24-bit integer"),
+        ("mStrokeColor", Some("33554431"), "outside the 24-bit"),
+        ("mStrokeWidth", Some("-1"), "finite and nonnegative"),
+        ("mStrokeWidth", Some("1e100"), "f32 bounds"),
+        ("mStrokeWidth", Some("2e38"), "f32 bounds"),
+        ("mStrokeWidth", Some("\"wide\""), "finite and nonnegative"),
+        ("mStrokeWidth", None, "finite and nonnegative"),
+    ] {
+        let payload = legacy_appearance(&legacy_json(&[
+            ("mStrokeVisible", Some("true")),
+            ("mStrokeColor", Some("3158064")),
+            (field, value),
+        ]));
+        let (appearance, notes) = decode_appearance_with_notes(&payload).unwrap();
+        assert_eq!(appearance.fill, Some(PrFill::Solid(PrRgb([128; 3]))));
+        assert_eq!(appearance.stroke, None);
+        assert!(
+            notes
+                .iter()
+                .any(|note| note.contains("stroke omitted") && note.contains(reason)),
+            "{field}: {notes:?}"
+        );
+    }
+}
+
+#[test]
 fn legacy_json_appearance_keeps_required_framing_paint_and_mask_guards() {
     use crate::tests::support::{legacy_appearance, legacy_json};
     let payload = |changes: &[(&str, Option<&str>)]| legacy_appearance(&legacy_json(changes));
@@ -536,15 +656,6 @@ fn legacy_json_appearance_keeps_required_framing_paint_and_mask_guards() {
         (
             payload(&[("mFillColor", Some("33554431"))]),
             "mFillColor 0x1ffffff is outside the 24-bit color form".into(),
-        ),
-        // Only gray reads alike in either channel order.
-        (
-            payload(&[("mFillColor", Some("24831"))]),
-            "mFillColor 0x0060ff is not gray".into(),
-        ),
-        (
-            payload(&[("mStrokeVisible", Some("true"))]),
-            "an enabled stroke is unsupported".into(),
         ),
         (
             payload(&[("mShadowVisible", Some("true"))]),
@@ -718,6 +829,7 @@ fn premiere_gradient_appearances_decode_to_what_ame_drew() {
                 stroke: Some(PrShapeStroke {
                     color: PrRgb([0; 3]),
                     width: 12.0,
+                    join: None,
                 }),
                 shadow: None,
             },
@@ -881,6 +993,7 @@ fn appearance_mask_flags_round_trip_and_invert_alone_draws_the_shape() {
         stroke: Some(PrShapeStroke {
             color: GREEN,
             width: 12.0,
+            join: None,
         }),
         shadow: None,
         mask_source,

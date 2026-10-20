@@ -559,6 +559,7 @@ fn inspect_aep_json_exposes_exact_composition_identity_without_writing() {
     assert_eq!(comp["height"], 1080);
     assert_eq!(comp["duration_secs"], 1.0);
     assert!(comp["frame_rate"].as_f64().unwrap() > 0.0);
+    assert_eq!(comp["background_color"].as_array().unwrap().len(), 4);
     assert_eq!(comp["direct_layer_count"], 0);
     assert_eq!(comp["reachable_unique_layer_count"], 0);
     assert_eq!(object["font_inventory"], "unavailable");
@@ -1996,6 +1997,104 @@ fn hybrid_archive(root: &Path) {
     .unwrap()
     .write(root.join("hybrid.tsrct"))
     .unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn premiere_hybrid_many_media_publishes_under_descriptor_limit() {
+    use fx_conv::{ConversionMode, ImportToTesseract};
+    use premiere_file::{Premiere, PremiereImportOptions};
+    use tesseract_file::{AssetKind, TesseractFile, TesseractFileBuilder};
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let fixtures =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/premiere_file/tests/fixtures");
+    Premiere
+        .import_to_tesseract(
+            &fixtures.join("premiere_isolated_still_image.prproj"),
+            &root.join("imported"),
+            &PremiereImportOptions {
+                sequence: Some("c8acf9c1-34b2-4086-9f55-d528950a7059".into()),
+            },
+            ConversionMode::Write,
+        )
+        .unwrap();
+    let archive = TesseractFile::open(root.join("imported/project.tsrct")).unwrap();
+    let mut document = archive.project_json().unwrap();
+    let original = document["composition"]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["type"] == "Image" && layer["activeRange"]["start"] == 5000)
+        .unwrap()
+        .clone();
+    assert_eq!(original["transform"]["position"], json!([960.0, 540.0]));
+    let layers: Vec<_> = (0..300)
+        .map(|index| {
+            let mut layer = original.clone();
+            layer["id"] = json!(index + 1);
+            layer["source"]["assetId"] = json!(format!("picture-{index:04}"));
+            layer["activeRange"] = json!({"start":0,"duration":1000});
+            layer["motionBlur"] = json!(false);
+            layer
+        })
+        .collect();
+    document["composition"]["layers"] = json!([{
+        "type":"Group", "id":1000, "name":"Many stills",
+        "playback":{"type":"windowed", "inputRange":{"start":0,"duration":1000},
+            "mapping":{"type":"linear", "input":{"start":0,"duration":1000},
+                "output":{"start":0,"duration":1000}}, "inputOffsetMs":0},
+        "transform":original["transform"], "motionBlur":true, "layers":layers
+    }]);
+    document["composition"]["dynamics"] = json!({"entries":[]});
+    let mut builder =
+        TesseractFileBuilder::from_project_json(&serde_json::to_vec(&document).unwrap()).unwrap();
+    let media = fixtures.join("feature_still_transparent.png");
+    for index in 0..300 {
+        builder = builder
+            .add_asset(format!("picture-{index:04}"), &media, AssetKind::Image)
+            .unwrap();
+    }
+    builder.write(root.join("many.tsrct")).unwrap();
+    let result = Command::new("/bin/sh")
+        .args(["-c", "ulimit -n 256 && exec \"$@\"", "converter"])
+        .arg(env!("CARGO_BIN_EXE_tsrct-conv"))
+        .args([
+            "convert",
+            "many.tsrct",
+            "--to",
+            "premiere",
+            "--output",
+            "package",
+            "--fps",
+            "30",
+        ])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let packaged = root.join("package/media/ae-0001");
+    assert_eq!(fs::read_dir(packaged.join("media")).unwrap().count(), 300);
+    for entry in fs::read_dir(packaged.join("media")).unwrap() {
+        assert_eq!(
+            fs::read(entry.unwrap().path()).unwrap(),
+            fs::read(&media).unwrap()
+        );
+    }
+    let native = aftereffects_file::structure::read_project(
+        &fs::read(packaged.join("compositions.aep")).unwrap(),
+    )
+    .unwrap();
+    assert!(native.items.iter().any(|item| matches!(
+        &item.kind,
+        aftereffects_file::structure::ItemKind::Composition(comp) if comp.layers.len() == 300
+    )));
+    assert!(fs::read(root.join("package/project.prproj")).unwrap().len() > 100);
 }
 
 #[test]
@@ -3467,9 +3566,16 @@ fn warp_public_native_graphs_keep_current_edits_through_aep_package() {
                         .find(|node| {
                             node.get("masks")
                                 .and_then(Value::as_array)
-                                .is_some_and(|m| !m.is_empty())
+                                .is_some_and(|masks| {
+                                    masks.iter().any(|mask| {
+                                        mask["layer"]
+                                            .as_u64()
+                                            .and_then(|id| id_node(root, id))
+                                            .is_some_and(|guide| guide["type"] == "Shape")
+                                    })
+                                })
                         })
-                        .expect("each source half remains clipped before reflection");
+                        .expect("each source half retains its path clipping before reflection");
                     assert_mask_reference(root, masked);
                 }
             }

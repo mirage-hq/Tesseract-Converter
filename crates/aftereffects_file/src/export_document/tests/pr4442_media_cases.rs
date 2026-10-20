@@ -33,6 +33,7 @@ use crate::{
 mod p001_video_compositing;
 mod remapped_opacity;
 mod rounded_visibility;
+mod speed_gated_blending;
 
 fn document(
     layers: Vec<Value>,
@@ -123,6 +124,166 @@ fn resolved(
         audio_sample_rate,
         wave_metadata: None,
         native_duration: None,
+    }
+}
+
+#[test]
+fn unresolved_media_does_not_discard_nested_editable_siblings() {
+    for animated in [false, true] {
+        let mut paint = rect(&imported(), 710);
+        paint["transform"] = transform();
+        // A nested Video uses the current playback form, like its container.
+        let mut unsupported_video = video(711, "unsupported-video");
+        unsupported_video
+            .as_object_mut()
+            .unwrap()
+            .remove("activeRange");
+        unsupported_video["playback"] = fixture_linear_playback(
+            json!({"start": 1000, "duration": 1000}),
+            json!({"start": 500, "duration": 1000}),
+        );
+        let mut container = group(
+            700,
+            "retained container",
+            vec![unsupported_video, image(712, "unsupported-image"), paint],
+        );
+        container.as_object_mut().unwrap().remove("activeRange");
+        container["transform"]["scale"] = json!([80, 80]);
+        let entries = if animated {
+            vec![keyed_entry(
+                LayerId::new(710),
+                PropType::Rotation,
+                [
+                    (0, PropertyValue::Float(0.0)),
+                    (1000, PropertyValue::Float(30.0)),
+                ],
+            )]
+        } else {
+            vec![]
+        };
+        let doc = document(vec![container], entries);
+        let output = to_aep_with_media(&doc, &BTreeMap::new()).unwrap();
+        assert!(
+            !output.omitted_layer_ids.contains(&LayerId::new(700)),
+            "{animated}: {:?}",
+            output.diagnostics
+        );
+        assert!(!output.omitted_layer_ids.contains(&LayerId::new(710)));
+        for id in [711, 712] {
+            assert!(output.omitted_layer_ids.contains(&LayerId::new(id)));
+            assert!(
+                output
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.layer_id == Some(LayerId::new(id))
+                        && diagnostic.message.contains("not resolved/staged"))
+            );
+        }
+        assert!(output.emitted_media_paths.is_empty());
+        let native = read_project(&output.bytes).unwrap();
+        let paint = native
+            .items
+            .iter()
+            .filter_map(|item| match &item.kind {
+                ItemKind::Composition(comp) => comp
+                    .layers
+                    .iter()
+                    .find(|layer| layer.name.as_ref() == "Current solid 710"),
+                _ => None,
+            })
+            .next()
+            .expect("editable paint sibling must survive in a native composition");
+        if animated {
+            let rotation = super::stroke_keys::numeric(&paint.content, "ADBE Rotate Z").unwrap();
+            assert_eq!(rotation.keyframes.len(), 2);
+        }
+    }
+}
+
+#[test]
+fn tinted_finite_video_selection_ignores_unused_intrinsic_tail() {
+    let proof: Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/effects_coverage/aligned_color_cubic_reviewer_proof.json"
+    ))
+    .unwrap();
+    let amount = proof["native_key_edit"]["readback"]["reopened"]["amount"]
+        .as_f64()
+        .unwrap();
+    assert_eq!(amount, 73.0);
+    let sources = BTreeMap::from([(
+        "stripe".into(),
+        resolved(
+            "stripe",
+            "media/stripe.mov",
+            NativeSourceFormat::QuickTime,
+            [1920, 1080],
+            4000,
+            NativeFrameRate::integer(30),
+            0.0,
+        ),
+    )]);
+    for nested in [false, true] {
+        for intrinsic in [4000, 4400] {
+            let mut input = video(711, "stripe");
+            input.as_object_mut().unwrap().remove("activeRange");
+            input["playback"] = fixture_linear_playback(
+                json!({"start":1000,"duration":2000}),
+                json!({"start":500,"duration":1000}),
+            );
+            input["sourceIntrinsicDuration"] = json!(intrinsic);
+            input["effects"] = json!([{"id":712,"enabled":true,"effect":{
+                "type":"tintTritone", "amount":amount,
+                "blackR":0.0,"blackG":0.0,"blackB":0.0,
+                "whiteR":0.52,"whiteG":1.0,"whiteB":0.7
+            }}]);
+            let layers = if nested {
+                let mut container = group(700, "tinted scene", vec![input]);
+                container.as_object_mut().unwrap().remove("activeRange");
+                container["transform"]["scale"] = json!([80, 80]);
+                vec![container]
+            } else {
+                vec![input]
+            };
+            let output = to_aep_with_media(&document(layers, vec![]), &sources).unwrap();
+            assert!(
+                output.omitted_layer_ids.is_empty(),
+                "{nested}/{intrinsic}: {:?}",
+                output.diagnostics
+            );
+            assert_eq!(output.emitted_media_paths.len(), 1);
+            let native = read_project(&output.bytes).unwrap();
+            let owner = native
+                .items
+                .iter()
+                .find_map(|item| match &item.kind {
+                    ItemKind::Composition(comp) => comp
+                        .layers
+                        .iter()
+                        .find(|layer| layer.name.as_ref() == "video-711"),
+                    _ => None,
+                })
+                .expect("finite tinted footage must remain editable");
+            let movie = native
+                .items
+                .iter()
+                .filter_map(|item| item.media.as_ref())
+                .map(|media| media.as_ref().unwrap())
+                .find(|media| media.source_format == *b"MOoV")
+                .unwrap();
+            assert_eq!(movie.duration.seconds(), 4.0);
+            let (effects, _) =
+                crate::effects::native::read_effects(&owner.content, [1920.0, 1080.0]);
+            let tint = effects
+                .iter()
+                .find(|effect| effect.match_name == "ADBE Tint")
+                .unwrap();
+            let control = tint
+                .parameters
+                .iter()
+                .find(|parameter| parameter.match_name == "ADBE Tint-0003")
+                .unwrap();
+            assert_eq!(control.numeric.as_ref().unwrap().values, vec![amount]);
+        }
     }
 }
 

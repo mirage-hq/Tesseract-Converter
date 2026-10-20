@@ -223,6 +223,36 @@ fn sparse_geometry2_defaults_and_rejected_controls_are_explicit() {
 }
 
 #[test]
+fn collapsed_precomposition_translation_does_not_inherit_owner_scale() {
+    let (mut owner, _) = synthetic_owner(Vec::new(), None);
+    let mut record = owner.record.encode();
+    record[131] = 0;
+    owner.record = crate::schema::layer_records::LayerRecord::decode(&record)
+        .unwrap()
+        .with_collapse_transformations(true)
+        .unwrap();
+    let mut converted = empty_group();
+    converted.transform.scale = [400.0, 200.0];
+    let stage = prepare_source(&owner, [100, 40], &converted, true)
+        .unwrap()
+        .unwrap();
+    assert_effect(
+        &stage.transform,
+        [2.5, 10.0],
+        [7.5, 20.0],
+        [100.0, 100.0],
+        0.0,
+    );
+    for scale in [[0.0, 100.0], [f64::INFINITY, 100.0]] {
+        converted.transform.scale = scale;
+        assert!(prepare_source(&owner, [100, 40], &converted, true).is_err());
+    }
+    converted.transform.scale = [100.0; 2];
+    converted.transform.rotation = 10.0;
+    assert!(prepare_source(&owner, [100, 40], &converted, true).is_err());
+}
+
+#[test]
 fn geometry2_ignores_disabled_effect_stack_and_rejects_other_owner_stages() {
     let (mut owner, comp) = synthetic_owner(Vec::new(), None);
     let items = HashMap::new();

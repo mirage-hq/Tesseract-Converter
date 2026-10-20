@@ -268,6 +268,7 @@ fn replacement(
         container,
         boundaries,
         picture: AfterEffectsPicture {
+            working_hdr: None,
             composition_guid: "00000001-0000-0000-0000-000000000000".into(),
             relative_path: "media/ae-0001/compositions.aep".into(),
             dimensions: [1920, 1080],

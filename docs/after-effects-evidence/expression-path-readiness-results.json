@@ -1,0 +1,126 @@
+{
+  "case_id": "aep-expression-samples-expression-paths-c1",
+  "direction": "import",
+  "implementation_commit": "53d4550631fa9bc64d34b6cdf13aedfc5f84301d",
+  "source_sha256": "f06e790dd67d78920dc72b8edcafb29f10e0bdb04567da5669b7c82411d539f6",
+  "composition_id": 1,
+  "native_application": "26.5x89",
+  "native_rgba_job": 3693,
+  "native_ready": true,
+  "native_rgba_sha256": "7d5f3ed9b945da12cd4ada2b3d01bde704456feb2911fd65f0d8f703b9e6d16d",
+  "converter_build": "4479b6234b810ff4d726386c18b5251074ea74881c786fca75c04342ef544355",
+  "renderer_build": "32ce64609b3d243dbe96b044130356c004f028676f41e7437b5a625a7043ce0f",
+  "persisted_tsrct_sha256": "764cd48f9d9c567d7644173bd312862f1b308f4b4582d6bb899b1e5eab902e1c",
+  "fx_rgba_export_sha256": "ea81429b593534f6c7283d3ea56ad5be2864c8833da74c1a265fc59f2d715e9e",
+  "canvas": [
+    320,
+    180
+  ],
+  "fps": 30,
+  "duration_seconds": 2,
+  "fresh_archive_reloaded_and_rendered": true,
+  "editable_path_tracks": [
+    {
+      "target": {
+        "kind": "layer",
+        "layerId": 4,
+        "propertyType": "shapePath"
+      },
+      "keys": 1,
+      "start_ms": 0,
+      "end_ms": 0
+    },
+    {
+      "target": {
+        "kind": "layer",
+        "layerId": 20,
+        "propertyType": "shapePath"
+      },
+      "keys": 42,
+      "start_ms": 0,
+      "end_ms": 2000
+    },
+    {
+      "target": {
+        "kind": "layer",
+        "layerId": 25,
+        "propertyType": "shapePath"
+      },
+      "keys": 2,
+      "start_ms": 0,
+      "end_ms": 2000
+    },
+    {
+      "target": {
+        "kind": "layer",
+        "layerId": 29,
+        "propertyType": "shapePath"
+      },
+      "keys": 1,
+      "start_ms": 0,
+      "end_ms": 0
+    },
+    {
+      "target": {
+        "kind": "layer",
+        "layerId": 32,
+        "propertyType": "shapePath"
+      },
+      "keys": 2,
+      "start_ms": 0,
+      "end_ms": 2000
+    },
+    {
+      "target": {
+        "kind": "layer",
+        "layerId": 35,
+        "propertyType": "shapePath"
+      },
+      "keys": 42,
+      "start_ms": 0,
+      "end_ms": 2000
+    },
+    {
+      "target": {
+        "kind": "layer",
+        "layerId": 38,
+        "propertyType": "shapePath"
+      },
+      "keys": 2,
+      "start_ms": 0,
+      "end_ms": 2000
+    }
+  ],
+  "no_js_script": true,
+  "measurements": {
+    "rgb": {
+      "algorithm": "FFmpeg SSIM",
+      "frames": 60,
+      "mean": 0.9890402,
+      "minimum": 0.987643,
+      "worst_frame": 59,
+      "fidelity_pass_claimed": false
+    },
+    "alpha": {
+      "algorithm": "FFmpeg SSIM",
+      "frames": 60,
+      "mean": 0.19032526666666666,
+      "minimum": 0.188108,
+      "worst_frame": 18,
+      "fidelity_pass_claimed": false
+    }
+  },
+  "policy": [
+    "All 60 unique full-resolution frames. No frame resampling or source/oracle changes.",
+    "Input timebases expressed as 1/30 only for alignment; timestamps and pixel content preserved.",
+    "RGB planar GBR, alpha gray; descriptive FFmpeg measurements, not authoritative converter-suite similarity."
+  ],
+  "limitations": [
+    "Existing import materializes an opaque RGB canvas; original transparent composition alpha is lost.",
+    "Sparse copied Path tracks retain 42 of 61 observations; unsampled quantization and live expression/dependency restoration are not proven.",
+    "RGB and alpha are below 0.99; neither is a fidelity pass.",
+    "Supplementary native RGBA media and raw receipts retained locally, not a newly registered committed oracle.",
+    "Full pinned lottie-web surface and exhaustive independent PR review incomplete."
+  ],
+  "export_status": "unchanged; live expression restoration excluded by approved import-only scope"
+}

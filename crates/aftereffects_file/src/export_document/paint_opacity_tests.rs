@@ -49,7 +49,7 @@ fn single_paint_normalization_preserves_color_and_other_controls() {
     };
     *opacity = 10000.0;
     assert_eq!(
-        normalize_single_paint(&mut contents, 0.999, None),
+        normalize_single_paint(&mut contents, 0.999, None, Default::default()),
         Some(99.9)
     );
     let VectorContent::Paint(VectorPaintSpec::Fill {
@@ -64,6 +64,29 @@ fn single_paint_normalization_preserves_color_and_other_controls() {
     assert_eq!(*color, [0.2, 0.4, 0.6, 0.4]);
     assert_eq!(*opacity, 100.0);
     assert_eq!(*animations, VectorPaintAnimations::default());
+}
+
+#[test]
+fn additive_paint_keeps_static_product_but_rejects_saturation_crossings() {
+    let mut contents = vec![fill(1.0)];
+    let VectorContent::Paint(VectorPaintSpec::Fill { opacity, .. }) = &mut contents[0] else {
+        unreachable!()
+    };
+    *opacity = 10000.0;
+    let original = contents.clone();
+    let mut track = key(0.02);
+    track.keys[0].easing = vec![KeyframeEasing::Linear];
+    let original_track = track.clone();
+    assert_eq!(
+        normalize_single_paint(&mut contents, 2.0, Some(&mut track), BlendMode::Add),
+        None
+    );
+    assert_eq!(contents, original);
+    assert_eq!(track, original_track);
+    assert_eq!(
+        normalize_single_paint(&mut contents, 0.35, None, BlendMode::Add),
+        Some(35.0)
+    );
 }
 
 #[test]
@@ -101,7 +124,7 @@ fn single_paint_normalization_rejects_saturation_and_independent_animation() {
         let original = contents.clone();
         let layer_opacity = if kind == "saturated" { 2.0 } else { 0.999 };
         assert_eq!(
-            normalize_single_paint(&mut contents, layer_opacity, None),
+            normalize_single_paint(&mut contents, layer_opacity, None, Default::default()),
             None,
             "{kind}"
         );
@@ -123,7 +146,7 @@ fn animated_single_paint_rejects_unsupported_keys_without_partial_mutation() {
         "spatial",
         "empty",
     ] {
-        let mut contents = vec![fill(1.0)];
+        let mut contents = vec![fill(0.4)];
         let VectorContent::Paint(VectorPaintSpec::Fill { opacity, .. }) = &mut contents[0] else {
             unreachable!()
         };
@@ -149,13 +172,58 @@ fn animated_single_paint_rejects_unsupported_keys_without_partial_mutation() {
         // Debug comparison retains NaN while PartialEq intentionally doesn't.
         let original_track = format!("{track:?}");
         assert_eq!(
-            normalize_single_paint(&mut contents, 0.999, Some(&mut track)),
+            normalize_single_paint(&mut contents, 0.999, Some(&mut track), Default::default()),
             None,
             "{kind}"
         );
         assert_eq!(contents, original_contents, "{kind}");
         assert_eq!(format!("{track:?}"), original_track, "{kind}");
     }
+}
+
+#[test]
+fn opaque_gradient_saturation_keeps_the_paint_layer_product() {
+    let mut contents = vec![fill(1.0)];
+    let VectorContent::Paint(VectorPaintSpec::Fill { paint, opacity, .. }) = &mut contents[0]
+    else {
+        unreachable!()
+    };
+    *opacity = 10000.0;
+    *paint = serde_json::from_value(serde_json::json!({
+        "type":"gradient", "gradientType":"radial", "start":[0,0], "end":[64,0],
+        "stops":[{"offset":0,"color":[1,0,0,1]},{"offset":1,"color":[0,0,1,1]}]
+    }))
+    .unwrap();
+    let original_paint = paint.clone();
+    let mut track = key(1.0);
+    track.keys[0].time_millis = 0;
+    track.keys[0].easing = vec![KeyframeEasing::Linear];
+    let mut end = track.keys[0].clone();
+    end.time_millis = 1000;
+    end.values[0] = 0.0;
+    end.easing = vec![KeyframeEasing::CubicBezier {
+        x1: 0.5,
+        y1: 0.0,
+        x2: 0.75,
+        y2: 0.0,
+    }];
+    track.keys.push(end);
+    assert_eq!(
+        normalize_single_paint(&mut contents, 100.0, Some(&mut track), Default::default()),
+        Some(100.0)
+    );
+    assert_eq!(track.keys.len(), 3);
+    assert_eq!(track.keys[0].values, [1.0]);
+    assert!((990..1000).contains(&track.keys[1].time_millis));
+    assert_eq!(track.keys[1].values, [1.0]);
+    assert_eq!(track.keys[1].easing, [KeyframeEasing::Hold]);
+    assert_eq!(track.keys[2].time_millis, 1000);
+    assert_eq!(track.keys[2].values, [0.0]);
+    let VectorContent::Paint(VectorPaintSpec::Fill { paint, opacity, .. }) = &contents[0] else {
+        unreachable!()
+    };
+    assert_eq!(paint, &original_paint);
+    assert_eq!(*opacity, 100.0);
 }
 
 #[test]
@@ -168,7 +236,7 @@ fn keyed_opacity_uses_first_key_instead_of_unused_static_base() {
     let mut track = key(0.01);
     track.keys[0].easing = vec![KeyframeEasing::Linear];
     assert_eq!(
-        normalize_single_paint(&mut contents, 100.0, Some(&mut track)),
+        normalize_single_paint(&mut contents, 100.0, Some(&mut track), Default::default()),
         Some(100.0)
     );
     assert_eq!(track.keys[0].values, [1.0]);
@@ -201,7 +269,8 @@ fn bounded_cubic_keys_scale_without_changing_handles_or_clocks() {
     });
     let handles = track.keys[1].easing.clone();
     assert!(
-        (normalize_single_paint(&mut contents, 100.0, Some(&mut track)).unwrap()
+        (normalize_single_paint(&mut contents, 100.0, Some(&mut track), Default::default())
+            .unwrap()
             - 51.47528349381107)
             .abs()
             < 1.0e-10
@@ -257,7 +326,7 @@ fn cubic_overshoot_and_invalid_metadata_reject_atomically() {
         let original_contents = contents.clone();
         let original_track = format!("{track:?}");
         assert_eq!(
-            normalize_single_paint(&mut contents, 100.0, Some(&mut track)),
+            normalize_single_paint(&mut contents, 100.0, Some(&mut track), Default::default()),
             None
         );
         assert_eq!(contents, original_contents);
@@ -291,7 +360,7 @@ fn native_spark_tail_with_negative_interior_is_normalized() {
     });
     let handles = track.keys[1].easing.clone();
     assert_eq!(
-        normalize_single_paint(&mut contents, 100.0, Some(&mut track)),
+        normalize_single_paint(&mut contents, 100.0, Some(&mut track), Default::default()),
         Some(3.977429969141072)
     );
     assert_eq!(track.keys[0].values, [0.03977429969141072]);
@@ -327,7 +396,7 @@ fn bounded_cubic_admits_negative_control_without_interior_overshoot() {
     });
     let handles = track.keys[1].easing.clone();
     assert_eq!(
-        normalize_single_paint(&mut contents, 100.0, Some(&mut track)),
+        normalize_single_paint(&mut contents, 100.0, Some(&mut track), Default::default()),
         Some(50.0)
     );
     assert!((track.keys[1].values[0] - 0.9).abs() < 1.0e-14);

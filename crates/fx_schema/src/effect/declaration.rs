@@ -197,15 +197,16 @@ macro_rules! define_effect_payload_schema {
                 #[serde(default)]
                 sharp_colors: bool,
             },
-            /// Reader-only canonical creative look transform. It lowers at its exact
-            /// ordered effect-stack position; reader-only means authoring remains gated,
-            /// not that rendering ignores the persisted operation.
+            /// Creative look transform at its authored effect-stack position.
+            /// A missing transform is Creative LUT None: exact input pass-through.
             LookTransform {
                 /// Version fixing ordering, encoding, math, alpha, and fallback semantics.
                 #[ts(type = "number")]
                 semantic_version: crate::ColorTransformSemanticVersion,
-                /// Transform representation evaluated in the display-referred working encoding.
-                transform: crate::ColorTransform,
+                /// Optional transform evaluated in the display-referred working encoding.
+                /// None is canonically serialized as null and never references a LUT.
+                #[serde(default)]
+                transform: Option<crate::ColorTransform>,
                 /// Normalized wet/dry mix (`0` = exact bypass, `1` = fully applied).
                 #[serde(default = "crate::color::default_color_mix")]
                 #[ts(type = "number")]
@@ -216,6 +217,13 @@ macro_rules! define_effect_payload_schema {
             PrimaryGrade(crate::PrimaryGrade),
             /// Jerboa SDR tonal color v1, not vendor LGG/Offset.
             TonalColor(crate::TonalColor),
+            /// Static wrapped hue and saturation/luminance curves.
+            HueCurves(crate::HueCurves),
+            /// Static straight-RGB matrix with additive constants.
+            ChannelMixer(crate::ChannelMixer),
+            // Keep the nine-range payload from inflating every effect record.
+            /// Approximate nine-range subtractive ink adjustment.
+            SelectiveColor(Box<crate::SelectiveColor>),
             /// Reader-only, versioned Master/RGB curves in normalized display-referred SDR.
             /// Version 1 uses piecewise-linear interpolation on straight RGB, evaluates
             /// Master before the per-channel curves, and preserves alpha.
@@ -720,6 +728,29 @@ macro_rules! define_effect_payload_schema {
                 #[serde(default, skip_serializing_if = "Option::is_none")]
                 #[ts(optional)]
                 center_y: Option<f64>,
+            },
+            /// Film highlight bloom, evaluated on native scene light in HDR.
+            /// Tint is represented by three independently animatable RGB controls.
+            Halation {
+                threshold: NonNegativeProperty,
+                radius: NonNegativeProperty,
+                intensity: NonNegativeProperty,
+                tint_red: NonNegativeProperty,
+                tint_green: NonNegativeProperty,
+                tint_blue: NonNegativeProperty,
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                #[ts(optional)]
+                saturation: Option<NonNegativeProperty>,
+            },
+            /// Engine-owned spatial NoiseReduction layer effect: edge-preserving
+            /// smoothing of Rec.709 luma and chroma, each with its own strength.
+            NoiseReduction {
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                #[ts(optional)]
+                luminance: Option<f64>,
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                #[ts(optional)]
+                chrominance: Option<f64>,
             },
             /// ENG-1280 / JRB-1143: an author- or AI-provided WGSL fragment shader, run
             /// as a single post-process pass over the layer's rendered output. The

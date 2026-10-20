@@ -1,7 +1,10 @@
 use super::*;
 
 fn options() -> AfterEffectsExportOptions {
-    AfterEffectsExportOptions { fps: 30.0 }
+    AfterEffectsExportOptions {
+        fps: 30.0,
+        ..Default::default()
+    }
 }
 
 fn path_document(code: &str) -> EditableFxCompositionDocument {
@@ -13,7 +16,10 @@ fn path_document(code: &str) -> EditableFxCompositionDocument {
 #[test]
 fn fast_scalar_and_path_evaluate_only_the_grid_and_fresh_validation() {
     for original in [
-        document("return input.time.milliseconds;"),
+        modify(&document("return input.time.milliseconds;"), |raw| {
+            raw["composition"]["dynamics"]["entries"][0]["target"]["propertyType"] =
+                json!("opacity");
+        }),
         path_document("return {commands:[{type:'moveTo',x:input.time.milliseconds,y:0}]};"),
     ] {
         let entry = &original.composition().dynamics().entries()[0];

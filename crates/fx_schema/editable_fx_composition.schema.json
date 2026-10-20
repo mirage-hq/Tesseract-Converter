@@ -46,19 +46,49 @@
     "backgroundColor": {
       "anyOf": [
         {
+          "description": "Encoded extended-sRGB RGBA: RGB 0..64, alpha 0..1.",
           "type": "array",
           "minItems": 4,
           "maxItems": 4,
-          "items": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 1
-          }
+          "prefixItems": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 64
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 64
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 64
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          ]
         },
         {
           "type": "null"
         }
       ]
+    },
+    "hdrGraphicsWhiteNits": {
+      "description": "HDR rendering only: cd/m² of SDR graphics white (color 1.0) for every non-video source. Absent = renderer default (about 609).",
+      "type": "number",
+      "minimum": 100,
+      "maximum": 1000
+    },
+    "colorManagement": {
+      "$ref": "#/$defs/JBColorManagementModel",
+      "default": {
+        "workingSpace": "legacyDisplay"
+      }
     },
     "composition": {
       "$ref": "#/$defs/JBFXCompositionModel"
@@ -234,6 +264,43 @@
       "title": "JBAudioSourceEnhancementModel",
       "type": "object"
     },
+    "JBChannelMixerRowModel": {
+      "additionalProperties": false,
+      "properties": {
+        "blue": {
+          "maximum": 2.0,
+          "minimum": -2.0,
+          "title": "Blue",
+          "type": "number"
+        },
+        "constant": {
+          "maximum": 1.0,
+          "minimum": -1.0,
+          "title": "Constant",
+          "type": "number"
+        },
+        "green": {
+          "maximum": 2.0,
+          "minimum": -2.0,
+          "title": "Green",
+          "type": "number"
+        },
+        "red": {
+          "maximum": 2.0,
+          "minimum": -2.0,
+          "title": "Red",
+          "type": "number"
+        }
+      },
+      "required": [
+        "red",
+        "green",
+        "blue",
+        "constant"
+      ],
+      "title": "JBChannelMixerRowModel",
+      "type": "object"
+    },
     "JBColorCurvePointModel": {
       "additionalProperties": false,
       "properties": {
@@ -292,6 +359,101 @@
         "blue"
       ],
       "title": "JBColorCurvesModel",
+      "type": "object"
+    },
+    "JBColorManagementModel": {
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "outputTransform"
+                ]
+              },
+              {
+                "required": [
+                  "compositing"
+                ]
+              }
+            ]
+          },
+          "properties": {
+            "workingSpace": {
+              "const": "legacyDisplay"
+            }
+          }
+        },
+        {
+          "properties": {
+            "compositing": {
+              "enum": [
+                "footageOnly",
+                "wholeProgram",
+                "perClip"
+              ],
+              "type": "string"
+            },
+            "outputTransform": {
+              "const": "aces2.0",
+              "type": "string"
+            },
+            "workingSpace": {
+              "const": "acescct"
+            }
+          },
+          "required": [
+            "outputTransform",
+            "compositing"
+          ]
+        }
+      ],
+      "properties": {
+        "compositing": {
+          "anyOf": [
+            {
+              "enum": [
+                "footageOnly",
+                "wholeProgram",
+                "perClip"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Compositing"
+        },
+        "outputTransform": {
+          "anyOf": [
+            {
+              "const": "aces2.0",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Outputtransform"
+        },
+        "version": {},
+        "workingSpace": {
+          "enum": [
+            "legacyDisplay",
+            "acescct"
+          ],
+          "title": "Workingspace",
+          "type": "string"
+        }
+      },
+      "required": [
+        "workingSpace"
+      ],
+      "title": "JBColorManagementModel",
       "type": "object"
     },
     "JBColorTransformLut3dModel": {
@@ -1129,6 +1291,7 @@
               "bevelEmboss": "#/$defs/JBFXLayerEffectBevelEmbossModel",
               "brightnessContrast": "#/$defs/JBFXLayerEffectBrightnessContrastModel",
               "bulge": "#/$defs/JBFXLayerEffectBulgeModel",
+              "channelMixer": "#/$defs/JBFXLayerEffectChannelMixerModel",
               "chromaticAberration": "#/$defs/JBFXLayerEffectChromaticAberrationModel",
               "colorCurves": "#/$defs/JBFXLayerEffectColorCurvesModel",
               "cornerPin": "#/$defs/JBFXLayerEffectCornerPinModel",
@@ -1143,6 +1306,8 @@
               "gradientOverlay": "#/$defs/JBFXLayerEffectGradientOverlayModel",
               "gradientRamp": "#/$defs/JBFXLayerEffectGradientRampModel",
               "grain": "#/$defs/JBFXLayerEffectGrainModel",
+              "halation": "#/$defs/JBFXLayerEffectHalationModel",
+              "hueCurves": "#/$defs/JBFXLayerEffectHueCurvesModel",
               "hueSaturation": "#/$defs/JBFXLayerEffectHueSaturationModel",
               "innerGlow": "#/$defs/JBFXLayerEffectInnerGlowModel",
               "innerShadow": "#/$defs/JBFXLayerEffectInnerShadowModel",
@@ -1152,6 +1317,7 @@
               "lumaKey": "#/$defs/JBFXLayerEffectLumaKeyModel",
               "mosaic": "#/$defs/JBFXLayerEffectMosaicModel",
               "motionTile": "#/$defs/JBFXLayerEffectMotionTileModel",
+              "noiseReduction": "#/$defs/JBFXLayerEffectNoiseReductionModel",
               "outerGlow": "#/$defs/JBFXLayerEffectOuterGlowModel",
               "personMatte": "#/$defs/JBFXLayerEffectPersonMatteModel",
               "pixelMotionBlur": "#/$defs/JBFXLayerEffectPixelMotionBlurModel",
@@ -1161,6 +1327,7 @@
               "radialBlur": "#/$defs/JBFXLayerEffectRadialBlurModel",
               "ripple": "#/$defs/JBFXLayerEffectRippleModel",
               "satin": "#/$defs/JBFXLayerEffectSatinModel",
+              "selectiveColor": "#/$defs/JBFXLayerEffectSelectiveColorModel",
               "sharpen": "#/$defs/JBFXLayerEffectSharpenModel",
               "shiftChannels": "#/$defs/JBFXLayerEffectShiftChannelsModel",
               "simpleChoker": "#/$defs/JBFXLayerEffectSimpleChokerModel",
@@ -1203,6 +1370,15 @@
             },
             {
               "$ref": "#/$defs/JBFXLayerEffectTonalColorModel"
+            },
+            {
+              "$ref": "#/$defs/JBFXLayerEffectHueCurvesModel"
+            },
+            {
+              "$ref": "#/$defs/JBFXLayerEffectChannelMixerModel"
+            },
+            {
+              "$ref": "#/$defs/JBFXLayerEffectSelectiveColorModel"
             },
             {
               "$ref": "#/$defs/JBFXLayerEffectColorCurvesModel"
@@ -1314,6 +1490,12 @@
             },
             {
               "$ref": "#/$defs/JBFXLayerEffectFisheyeModel"
+            },
+            {
+              "$ref": "#/$defs/JBFXLayerEffectHalationModel"
+            },
+            {
+              "$ref": "#/$defs/JBFXLayerEffectNoiseReductionModel"
             },
             {
               "$ref": "#/$defs/JBFXLayerEffectCustomShaderModel"
@@ -1702,6 +1884,11 @@
           },
           "title": "Stickers",
           "type": "array"
+        },
+        "styleCleared": {
+          "default": false,
+          "title": "Stylecleared",
+          "type": "boolean"
         },
         "styleId": {
           "title": "Styleid",
@@ -2318,6 +2505,44 @@
         "bulgeHeight"
       ],
       "title": "JBFXLayerEffectBulgeModel",
+      "type": "object"
+    },
+    "JBFXLayerEffectChannelMixerModel": {
+      "additionalProperties": false,
+      "properties": {
+        "blue": {
+          "$ref": "#/$defs/JBChannelMixerRowModel"
+        },
+        "green": {
+          "$ref": "#/$defs/JBChannelMixerRowModel"
+        },
+        "monochrome": {
+          "title": "Monochrome",
+          "type": "boolean"
+        },
+        "red": {
+          "$ref": "#/$defs/JBChannelMixerRowModel"
+        },
+        "semanticVersion": {
+          "const": 1,
+          "title": "Semanticversion",
+          "type": "integer"
+        },
+        "type": {
+          "const": "channelMixer",
+          "default": "channelMixer",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "semanticVersion",
+        "red",
+        "green",
+        "blue",
+        "monochrome"
+      ],
+      "title": "JBFXLayerEffectChannelMixerModel",
       "type": "object"
     },
     "JBFXLayerEffectChromaticAberrationModel": {
@@ -3218,6 +3443,162 @@
       "title": "JBFXLayerEffectGrainModel",
       "type": "object"
     },
+    "JBFXLayerEffectHalationModel": {
+      "additionalProperties": false,
+      "properties": {
+        "intensity": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "radius": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "saturation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "threshold": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "tintBlue": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "tintGreen": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "tintRed": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "type": {
+          "const": "halation",
+          "default": "halation",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "threshold",
+        "radius",
+        "intensity",
+        "tintRed",
+        "tintGreen",
+        "tintBlue"
+      ],
+      "title": "JBFXLayerEffectHalationModel",
+      "type": "object"
+    },
+    "JBFXLayerEffectHueCurvesModel": {
+      "additionalProperties": false,
+      "properties": {
+        "hueVsHue": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/JBHueCurvePointModel"
+              },
+              "maxItems": 16,
+              "minItems": 2,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Huevshue"
+        },
+        "hueVsLuminance": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/JBHueCurvePointModel"
+              },
+              "maxItems": 16,
+              "minItems": 2,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Huevsluminance"
+        },
+        "hueVsSaturation": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/JBHueCurvePointModel"
+              },
+              "maxItems": 16,
+              "minItems": 2,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Huevssaturation"
+        },
+        "luminanceVsSaturation": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/JBHueCurvePointModel"
+              },
+              "maxItems": 16,
+              "minItems": 2,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Luminancevssaturation"
+        },
+        "saturationVsSaturation": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/JBHueCurvePointModel"
+              },
+              "maxItems": 16,
+              "minItems": 2,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Saturationvssaturation"
+        },
+        "semanticVersion": {
+          "const": 1,
+          "title": "Semanticversion",
+          "type": "integer"
+        },
+        "type": {
+          "const": "hueCurves",
+          "default": "hueCurves",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "semanticVersion"
+      ],
+      "title": "JBFXLayerEffectHueCurvesModel",
+      "type": "object"
+    },
     "JBFXLayerEffectHueSaturationModel": {
       "additionalProperties": false,
       "properties": {
@@ -3648,6 +4029,9 @@
                   },
                   {
                     "$ref": "#/$defs/JBOpaqueColorTransformModel"
+                  },
+                  {
+                    "type": "null"
                   }
                 ]
               }
@@ -3660,9 +4044,7 @@
           "transform": {},
           "type": {}
         },
-        "required": [
-          "transform"
-        ]
+        "required": []
       },
       "title": "JBFXLayerEffectLookTransformModel",
       "type": "object"
@@ -3797,6 +4179,43 @@
         "phase"
       ],
       "title": "JBFXLayerEffectMotionTileModel",
+      "type": "object"
+    },
+    "JBFXLayerEffectNoiseReductionModel": {
+      "additionalProperties": false,
+      "properties": {
+        "chrominance": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chrominance"
+        },
+        "luminance": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Luminance"
+        },
+        "type": {
+          "const": "noiseReduction",
+          "default": "noiseReduction",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "title": "JBFXLayerEffectNoiseReductionModel",
       "type": "object"
     },
     "JBFXLayerEffectOuterGlowModel": {
@@ -4444,6 +4863,72 @@
         "blendMode"
       ],
       "title": "JBFXLayerEffectSatinModel",
+      "type": "object"
+    },
+    "JBFXLayerEffectSelectiveColorModel": {
+      "additionalProperties": false,
+      "properties": {
+        "blacks": {
+          "$ref": "#/$defs/JBSelectiveColorAdjustmentModel"
+        },
+        "blues": {
+          "$ref": "#/$defs/JBSelectiveColorAdjustmentModel"
+        },
+        "cyans": {
+          "$ref": "#/$defs/JBSelectiveColorAdjustmentModel"
+        },
+        "greens": {
+          "$ref": "#/$defs/JBSelectiveColorAdjustmentModel"
+        },
+        "magentas": {
+          "$ref": "#/$defs/JBSelectiveColorAdjustmentModel"
+        },
+        "method": {
+          "enum": [
+            "relative",
+            "absolute"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "neutrals": {
+          "$ref": "#/$defs/JBSelectiveColorAdjustmentModel"
+        },
+        "reds": {
+          "$ref": "#/$defs/JBSelectiveColorAdjustmentModel"
+        },
+        "semanticVersion": {
+          "const": 1,
+          "title": "Semanticversion",
+          "type": "integer"
+        },
+        "type": {
+          "const": "selectiveColor",
+          "default": "selectiveColor",
+          "title": "Type",
+          "type": "string"
+        },
+        "whites": {
+          "$ref": "#/$defs/JBSelectiveColorAdjustmentModel"
+        },
+        "yellows": {
+          "$ref": "#/$defs/JBSelectiveColorAdjustmentModel"
+        }
+      },
+      "required": [
+        "semanticVersion",
+        "method",
+        "reds",
+        "yellows",
+        "greens",
+        "cyans",
+        "blues",
+        "magentas",
+        "whites",
+        "neutrals",
+        "blacks"
+      ],
+      "title": "JBFXLayerEffectSelectiveColorModel",
       "type": "object"
     },
     "JBFXLayerEffectSharpenModel": {
@@ -5732,6 +6217,22 @@
         "playback": {
           "$ref": "#/$defs/JBLayerPlaybackModel"
         },
+        "renderDomain": {
+          "anyOf": [
+            {
+              "enum": [
+                "scene",
+                "display"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Renderdomain"
+        },
         "trackMatte": {
           "anyOf": [
             {
@@ -5927,6 +6428,22 @@
           ],
           "default": null,
           "title": "Placement"
+        },
+        "renderDomain": {
+          "anyOf": [
+            {
+              "enum": [
+                "scene",
+                "display"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Renderdomain"
         },
         "source": {
           "$ref": "#/$defs/JBImageAssetSourceModel"
@@ -7229,6 +7746,22 @@
           "default": false,
           "title": "Preserveaudiopitch",
           "type": "boolean"
+        },
+        "renderDomain": {
+          "anyOf": [
+            {
+              "enum": [
+                "scene",
+                "display"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Renderdomain"
         },
         "source": {
           "$ref": "#/$defs/JBVideoSourceModel"
@@ -9869,6 +10402,29 @@
       "title": "JBFxPagVideoRefModel",
       "type": "object"
     },
+    "JBHueCurvePointModel": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "JBHueCurvePointModel",
+      "type": "object"
+    },
     "JBImageAssetSourceModel": {
       "additionalProperties": false,
       "properties": {
@@ -12031,6 +12587,43 @@
         "easing"
       ],
       "title": "JBPropertyKeyframeModel",
+      "type": "object"
+    },
+    "JBSelectiveColorAdjustmentModel": {
+      "additionalProperties": false,
+      "properties": {
+        "black": {
+          "maximum": 1.0,
+          "minimum": -1.0,
+          "title": "Black",
+          "type": "number"
+        },
+        "cyan": {
+          "maximum": 1.0,
+          "minimum": -1.0,
+          "title": "Cyan",
+          "type": "number"
+        },
+        "magenta": {
+          "maximum": 1.0,
+          "minimum": -1.0,
+          "title": "Magenta",
+          "type": "number"
+        },
+        "yellow": {
+          "maximum": 1.0,
+          "minimum": -1.0,
+          "title": "Yellow",
+          "type": "number"
+        }
+      },
+      "required": [
+        "cyan",
+        "magenta",
+        "yellow",
+        "black"
+      ],
+      "title": "JBSelectiveColorAdjustmentModel",
       "type": "object"
     },
     "JBShapeEllipseModel": {

@@ -48,6 +48,7 @@ fn caption_document(text: &str) -> PrTextDocument {
         font: "Arial-BoldMT".into(),
         size: 48.0,
         fill: Some(PrRgb([255; 3])),
+        fill_spans: Vec::new(),
         stroke: None,
         shadow: None,
         all_caps: false,

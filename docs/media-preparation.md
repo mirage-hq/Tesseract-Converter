@@ -1,11 +1,12 @@
 # Explicit media preparation
 
-Adobe import never starts FFmpeg or silently removes a used video because its
-container/codec is unsupported. Inspect and preparation are separate operations:
+Adobe import never silently transcodes a used video or removes it merely because
+its container/codec is unsupported. Inspect and preparation are separate operations:
 
 ```sh
 tsrct-conv inspect source.aep --composition 4 --json
-tsrct-conv transcode input.mov --output prepared.mov \
+mkdir -p prepared/media
+tsrct-conv transcode input.mov --output prepared/media/0000.mov \
   --backend external-ffmpeg-command --ffmpeg-path /path/to/ffmpeg \
   --ffprobe-path /path/to/ffprobe
 # Separately assemble a source-bound map if these bytes will replace project media.
@@ -147,7 +148,8 @@ first, then apply the separately hashed prepared replacement. The map's original
 is the real canonical local source, not the saved alias or a guessed basename.
 Both sidecars retain project/target binding, original/prepared hashes, path
 containment and pre-publication freshness checks. Prepared files are never
-relocation identities. Standalone audio is prepared as PCM WAVE
+relocation identities. CLI inspection does not accept `--media-relink`; validate
+that bound import with `convert ... --media-relink ... --check`. Standalone audio is prepared as PCM WAVE
 without silently reducing sample rate, channel layout or sample precision.
 AIFF/WAVE's implicit mono/stereo order is normalized when their demuxer omits a
 layout label; unknown multichannel layouts are not inferred.
@@ -156,7 +158,14 @@ New H.264 encoding starts with an independently decodable frame and uses a
 seek-friendly maximum one-second GOP with no B frames. Remuxing does not rewrite
 an existing GOP. Source frame cadence/count, dimensions, time origins, color
 metadata, alpha presence and audio layout/timing are checked again after output.
-Unknown/unsupported preservation cases (including VFR, HDR/wide gamut, interlace,
+HDR/wide-gamut general preparation admits only an already compatible codec in
+the same recognized container through a SHA-verified byte copy. All embedded
+color declarations/side data remain byte-identical; a warning distinguishes source
+preservation from Adobe working-space, sequence/output-target or ACES reconstruction.
+HDR/wide-gamut remux and encoding, including AE normalization, reject before
+encoder execution. This does not introduce tone mapping or HDR rendering.
+
+Unknown/unsupported preservation cases (including VFR, interlace,
 unsupported display transforms, ICC-managed sources, non-square pixels,
 nonzero starts and unsupported multi-stream layouts)
 are rejected rather than silently tone-mapped, resampled, downmixed or dropped.
@@ -297,11 +306,6 @@ All-frame alpha hashes, decoded frame counts, dimensions, frame rates, starts,
 durations, and timecode labels/packet payloads matched the inputs. RGB PSNR is a
 measurement, not a claim of lossless RGB or an Adobe-render acceptance threshold.
 
-An initial library run exposed missing `avg_frame_rate` on the copied timecode
-track. The fix has a regression test. Retrying the failed invocation retained the
-already verified external-backend output, rather than restarting a project batch.
-The generated smoke panel also covers this timecode path.
-
 Reinspection of composition 4 reports 26 audio/video sources and zero unassessed
 image-selector errors: 22 SWFs require external rendering, three original QTRLE
 sources remain transcode candidates, and one WAV is supported. The unchanged
@@ -317,6 +321,6 @@ renders or real codec-decoding proof. Actual generated-codec smoke runs, when
 recorded, establish only their measured frame/audio/alpha checks and admission.
 No new Adobe readback, independent native render comparison, Asset publication,
 or general alpha/color/audio fidelity claim is made by this feature. AE/Premiere
-**import** admission/preparation changes; FX-to-Adobe **export** is unchanged and
-has no new proof here. See the [AE limitation ledger](after-effects-support.md)
+**import** admission/preparation evidence does not establish FX-to-Adobe export
+fidelity; selected hybrid-export preparation is described separately above. See the [AE limitation ledger](after-effects-support.md)
 and [Premiere format notes](formats/premiere.md).

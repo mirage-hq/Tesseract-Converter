@@ -11,6 +11,7 @@ use boa_ast::{
     expression::{
         Call, Expression, Identifier,
         access::{PropertyAccess, PropertyAccessField},
+        literal::{LiteralKind, PropertyDefinition},
         operator::{
             assign::{Assign, AssignOp, AssignTarget},
             binary::{ArithmeticOp, BinaryOp},
@@ -27,6 +28,15 @@ use boa_parser::{Parser, Source};
 use super::EvaluationError;
 
 const GLOBALS: &[&str] = &[
+    "undefined",
+    "createPath",
+    "points",
+    "inTangents",
+    "outTangents",
+    "isClosed",
+    "pointOnPath",
+    "tangentOnPath",
+    "normalOnPath",
     "value",
     "time",
     "thisLayer",
@@ -39,6 +49,10 @@ const GLOBALS: &[&str] = &[
     "effect",
     "comp",
     "valueAtTime",
+    "velocityAtTime",
+    "sourceRectAtTime",
+    "substring",
+    "substr",
     "linear",
     "clamp",
     "Math",
@@ -53,6 +67,8 @@ const GLOBALS: &[&str] = &[
     "timeToFrames",
     "loopIn",
     "loopOut",
+    "loop_in",
+    "loop_out",
     "key",
     "nearestKey",
     "numKeys",
@@ -65,6 +81,8 @@ const GLOBALS: &[&str] = &[
     "easeIn",
     "easeOut",
     "degreesToRadians",
+    "degrees_to_radians",
+    "radians_to_degrees",
     "radiansToDegrees",
     "rgbToHsl",
     "hslToRgb",
@@ -77,6 +95,9 @@ const GLOBALS: &[&str] = &[
     "fromComp",
     "toWorld",
     "fromWorld",
+    "toWorldVec",
+    "fromWorldVec",
+    "fromCompToSurface",
     "velocity",
     "speed",
     "width",
@@ -89,6 +110,14 @@ const GLOBALS: &[&str] = &[
     "hasParent",
     "parent",
     "anchorPoint",
+    "anchor_point",
+    "xRotation",
+    "yRotation",
+    "zRotation",
+    "orientation",
+    "xPosition",
+    "yPosition",
+    "zPosition",
     "position",
     "scale",
     "rotation",
@@ -107,6 +136,8 @@ const SHADOWABLE: &[&str] = &[
     "easeIn",
     "easeOut",
     "degreesToRadians",
+    "degrees_to_radians",
+    "radians_to_degrees",
     "radiansToDegrees",
     "rgbToHsl",
     "hslToRgb",
@@ -119,6 +150,9 @@ const SHADOWABLE: &[&str] = &[
     "fromComp",
     "toWorld",
     "fromWorld",
+    "toWorldVec",
+    "fromWorldVec",
+    "fromCompToSurface",
     "velocity",
     "speed",
     "width",
@@ -131,6 +165,14 @@ const SHADOWABLE: &[&str] = &[
     "hasParent",
     "parent",
     "anchorPoint",
+    "anchor_point",
+    "xRotation",
+    "yRotation",
+    "zRotation",
+    "orientation",
+    "xPosition",
+    "yPosition",
+    "zPosition",
     "position",
     "scale",
     "rotation",
@@ -144,9 +186,21 @@ const SHADOWABLE: &[&str] = &[
     "isFinite",
 ];
 const FUNCTIONS: &[&str] = &[
+    "createPath",
+    "points",
+    "inTangents",
+    "outTangents",
+    "isClosed",
+    "pointOnPath",
+    "tangentOnPath",
+    "normalOnPath",
     "effect",
     "comp",
     "valueAtTime",
+    "velocityAtTime",
+    "sourceRectAtTime",
+    "substring",
+    "substr",
     "linear",
     "clamp",
     "posterizeTime",
@@ -160,6 +214,8 @@ const FUNCTIONS: &[&str] = &[
     "timeToFrames",
     "loopIn",
     "loopOut",
+    "loop_in",
+    "loop_out",
     "key",
     "nearestKey",
     "seedRandom",
@@ -171,6 +227,8 @@ const FUNCTIONS: &[&str] = &[
     "easeIn",
     "easeOut",
     "degreesToRadians",
+    "degrees_to_radians",
+    "radians_to_degrees",
     "radiansToDegrees",
     "rgbToHsl",
     "hslToRgb",
@@ -183,6 +241,9 @@ const FUNCTIONS: &[&str] = &[
     "fromComp",
     "toWorld",
     "fromWorld",
+    "toWorldVec",
+    "fromWorldVec",
+    "fromCompToSurface",
     "content",
     "mask",
     "smooth",
@@ -195,6 +256,8 @@ const FUNCTIONS: &[&str] = &[
 ];
 /// String/number methods admitted on plain (non-API) values.
 const VALUE_METHODS: &[&str] = &[
+    "exec",
+    "match",
     "toFixed",
     "toString",
     "toPrecision",
@@ -242,6 +305,11 @@ enum ApiKind {
     Transform,
     EffectSelector,
     Property,
+    TextStyle,
+    /// A sourceRectAtTime snapshot contains numeric data, not live API receivers.
+    Bounds,
+    /// A local shadows an ambient name without becoming an API receiver.
+    Value,
     Key,
     /// A Shape Contents item, Mask or nested member resolved by name at runtime.
     Group,
@@ -263,12 +331,17 @@ fn api_kind(
                 "transform" => Some(ApiKind::Transform),
                 "parent" if !aliases.contains_key(&name) => Some(ApiKind::Layer),
                 "text" if !aliases.contains_key(&name) => Some(ApiKind::Group),
-                "anchorPoint" | "position" | "scale" | "rotation" | "opacity"
+                "anchorPoint" | "anchor_point" | "position" | "scale" | "rotation"
+                | "zRotation" | "xRotation" | "yRotation" | "orientation" | "xPosition"
+                | "yPosition" | "zPosition" | "opacity"
                     if !aliases.contains_key(&name) =>
                 {
                     Some(ApiKind::Property)
                 }
-                _ => aliases.get(&name).copied(),
+                _ => aliases
+                    .get(&name)
+                    .copied()
+                    .filter(|kind| *kind != ApiKind::Value),
             }
         }
         Expression::Call(call) => match call.function().flatten() {
@@ -277,6 +350,12 @@ fn api_kind(
             }
             Expression::Identifier(name) if name.to_interned_string(interner) == "effect" => {
                 Some(ApiKind::EffectSelector)
+            }
+            Expression::Identifier(name)
+                if name.to_interned_string(interner) == "sourceRectAtTime"
+                    && !aliases.contains_key("sourceRectAtTime") =>
+            {
+                Some(ApiKind::Bounds)
             }
             Expression::Identifier(name)
                 if matches!(
@@ -302,20 +381,26 @@ fn api_kind(
                     field.to_interned_string(interner).as_str(),
                     api_kind(access.target(), interner, aliases),
                 ) {
+                    ("getStyleAt", Some(ApiKind::Property)) => Some(ApiKind::TextStyle),
                     ("layer", Some(ApiKind::Comp)) => Some(ApiKind::Layer),
+                    ("transform", Some(ApiKind::Layer)) => Some(ApiKind::Property),
+                    ("text", Some(ApiKind::Layer)) => Some(ApiKind::Property),
                     ("effect", Some(ApiKind::Layer)) => Some(ApiKind::EffectSelector),
                     ("key" | "nearestKey", Some(ApiKind::Property | ApiKind::Group)) => {
                         Some(ApiKind::Key)
                     }
+                    ("sourceRectAtTime", Some(ApiKind::Layer)) => Some(ApiKind::Bounds),
                     ("content", Some(ApiKind::Layer | ApiKind::Group))
-                    | ("mask" | "sourceRectAtTime", Some(ApiKind::Layer)) => Some(ApiKind::Group),
+                    | ("mask", Some(ApiKind::Layer)) => Some(ApiKind::Group),
                     _ => None,
                 }
             }
-            target if api_kind(target, interner, aliases) == Some(ApiKind::EffectSelector) => {
-                Some(ApiKind::Property)
-            }
-            _ => None,
+            target => match api_kind(target, interner, aliases) {
+                Some(ApiKind::EffectSelector | ApiKind::Transform) => Some(ApiKind::Property),
+                Some(ApiKind::Comp) => Some(ApiKind::Layer),
+                Some(ApiKind::Layer | ApiKind::Group) => Some(ApiKind::Group),
+                _ => None,
+            },
         },
         Expression::PropertyAccess(PropertyAccess::Simple(access)) => {
             let PropertyAccessField::Const(field) = access.field() else {
@@ -327,9 +412,14 @@ fn api_kind(
             ) {
                 ("transform", Some(ApiKind::Layer)) => Some(ApiKind::Transform),
                 ("parent", Some(ApiKind::Layer)) => Some(ApiKind::Layer),
-                ("text", Some(ApiKind::Layer)) => Some(ApiKind::Group),
+                ("text" | "marker", Some(ApiKind::Layer)) => Some(ApiKind::Group),
+                // Source Text's `.value` is plain data, not a nested API group.
+                ("sourceText", Some(ApiKind::Group)) => Some(ApiKind::Property),
+                ("style", Some(ApiKind::Property | ApiKind::Group)) => Some(ApiKind::TextStyle),
                 (
-                    "anchorPoint" | "position" | "scale" | "rotation" | "opacity",
+                    "anchorPoint" | "anchor_point" | "position" | "scale" | "rotation"
+                    | "zRotation" | "xRotation" | "yRotation" | "orientation" | "xPosition"
+                    | "yPosition" | "zPosition" | "opacity",
                     Some(ApiKind::Layer | ApiKind::Transform),
                 ) => Some(ApiKind::Property),
                 // Members of named Contents/Mask items resolve at runtime.
@@ -352,15 +442,101 @@ fn api_kind(
     }
 }
 
+#[derive(Clone, Copy)]
+enum PathArray {
+    Outer,
+    Row,
+}
+
+fn path_array(
+    expression: &Expression,
+    interner: &Interner,
+    arrays: &HashMap<String, PathArray>,
+) -> Option<PathArray> {
+    match expression.flatten() {
+        Expression::Identifier(name) => arrays.get(&name.to_interned_string(interner)).copied(),
+        Expression::Call(call) => match call.function().flatten() {
+            Expression::Identifier(name)
+                if matches!(
+                    name.to_interned_string(interner).as_str(),
+                    "points" | "inTangents" | "outTangents"
+                ) =>
+            {
+                Some(PathArray::Outer)
+            }
+            Expression::PropertyAccess(PropertyAccess::Simple(access)) if matches!(access.field(), PropertyAccessField::Const(field) if matches!(field.to_interned_string(interner).as_str(), "points" | "inTangents" | "outTangents")) => {
+                Some(PathArray::Outer)
+            }
+            _ => None,
+        },
+        Expression::PropertyAccess(PropertyAccess::Simple(access))
+            if matches!(access.field(), PropertyAccessField::Expr(_))
+                && matches!(
+                    path_array(access.target(), interner, arrays),
+                    Some(PathArray::Outer)
+                ) =>
+        {
+            Some(PathArray::Row)
+        }
+        _ => None,
+    }
+}
+
 pub(super) fn compile(source: &str) -> Result<String, EvaluationError> {
+    compile_with_implicit_aliases(source, true)
+}
+
+pub(super) fn compile_text(source: &str) -> Result<String, EvaluationError> {
+    // Keep Source Text's separate bounded expression profiles unchanged.
+    compile_with_implicit_aliases(source, false)
+}
+
+// Legacy AE accepts a numeric consequent immediately before `else` without `;`.
+// Admit only a complete numeric-branch conditional; the condition still passes all AST guards.
+fn legacy_numeric_conditional(source: &str) -> Option<String> {
+    let source = source.trim().trim_end_matches(';').trim_end();
+    let rest = source.strip_prefix("if")?.trim_start();
+    let rest = rest.strip_prefix('(')?;
+    let (consequent, alternate) = rest.rsplit_once("else")?;
+    let (condition, consequent) = consequent.rsplit_once(')')?;
+    let consequent = consequent.trim();
+    let alternate = alternate.trim();
+    let numeric = |value: &str| {
+        !value.is_empty()
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || b".+-eE".contains(&byte))
+            && value.parse::<f64>().is_ok_and(f64::is_finite)
+    };
+    if !(numeric(consequent) && numeric(alternate)) {
+        return None;
+    }
+    Some(format!(
+        "if ({condition}) {{ {consequent}; }} else {{ {alternate}; }}"
+    ))
+}
+
+fn compile_with_implicit_aliases(
+    source: &str,
+    allow_implicit_aliases: bool,
+) -> Result<String, EvaluationError> {
+    let source = source.trim_end_matches('\0');
+    let legacy = allow_implicit_aliases
+        .then(|| legacy_numeric_conditional(source))
+        .flatten();
+    let source = legacy.as_deref().unwrap_or(source);
     let mut interner = Interner::default();
-    let mut script = Parser::new(Source::from_bytes(source.trim_end_matches('\0')))
+    let mut script = Parser::new(Source::from_bytes(source))
         .parse_script(&Scope::new_global(), &mut interner)?;
     let mut bindings = Bindings {
         interner: &interner,
         names: HashSet::new(),
+        data_locals: HashSet::new(),
         aliases: HashMap::new(),
+        arrays: HashMap::new(),
         mutated: HashSet::new(),
+        implicit_aliases: HashSet::new(),
+        allow_implicit_aliases,
         root_names: HashSet::new(),
         functions: HashSet::new(),
         current_function: None,
@@ -369,11 +545,13 @@ pub(super) fn compile(source: &str) -> Result<String, EvaluationError> {
     if let ControlFlow::Break(reason) = script.visit_with(&mut bindings) {
         return Err(EvaluationError::Unsupported(reason));
     }
-    if bindings
-        .mutated
-        .iter()
-        .any(|name| bindings.aliases.contains_key(name))
-    {
+    if bindings.mutated.iter().any(|name| {
+        bindings
+            .aliases
+            .get(name)
+            .is_some_and(|kind| !matches!(kind, ApiKind::Bounds | ApiKind::Value))
+            || bindings.arrays.contains_key(name)
+    }) {
         return Err(EvaluationError::Unsupported(
             "mutable AE API aliases are not admitted".into(),
         ));
@@ -410,6 +588,7 @@ pub(super) fn compile(source: &str) -> Result<String, EvaluationError> {
         .mutated
         .iter()
         .filter(|name| !bindings.root_names.contains(*name))
+        .chain(bindings.implicit_aliases.iter())
         .cloned()
         .collect();
     implicit.sort();
@@ -425,10 +604,14 @@ pub(super) fn compile(source: &str) -> Result<String, EvaluationError> {
     let mut locals = bindings.names;
     locals.extend(implicit.iter().cloned());
     let functions = bindings.functions;
+    let arrays = bindings.arrays;
+    let data_locals = bindings.data_locals;
     let mut visitor = Admission {
         interner: &mut interner,
         locals,
+        data_locals,
         aliases,
+        arrays,
         functions,
     };
     if let ControlFlow::Break(reason) = script.visit_with_mut(&mut visitor) {
@@ -448,8 +631,12 @@ pub(super) fn compile(source: &str) -> Result<String, EvaluationError> {
 struct Bindings<'a> {
     interner: &'a Interner,
     names: HashSet<String>,
+    data_locals: HashSet<String>,
     aliases: HashMap<String, ApiKind>,
+    arrays: HashMap<String, PathArray>,
     mutated: HashSet<String>,
+    implicit_aliases: HashSet<String>,
+    allow_implicit_aliases: bool,
     root_names: HashSet<String>,
     functions: HashSet<String>,
     current_function: Option<String>,
@@ -473,13 +660,30 @@ impl<'ast> Visitor<'ast> for Bindings<'_> {
             self.root_names.insert(name.clone());
         }
         if !self.names.insert(name.clone()) {
-            return ControlFlow::Break("duplicate local bindings are not admitted".into());
+            // JavaScript permits var redeclarations, including helper parameters.
+            // Treat them conservatively as writes so API/Path aliases and helper
+            // identities still cannot be rebound through a second declaration.
+            self.mutated.insert(name.clone());
+        }
+        if variable
+            .init()
+            .is_some_and(|expression| api_kind(expression, self.interner, &self.aliases).is_none())
+        {
+            self.data_locals.insert(name.clone());
+        }
+        if let Some(kind) = variable
+            .init()
+            .and_then(|expression| path_array(expression, self.interner, &self.arrays))
+        {
+            self.arrays.insert(name.clone(), kind);
         }
         if let Some(kind) = variable
             .init()
             .and_then(|expression| api_kind(expression, self.interner, &self.aliases))
         {
             self.aliases.insert(name, kind);
+        } else if SHADOWABLE.contains(&name.as_str()) {
+            self.aliases.entry(name).or_insert(ApiKind::Value);
         }
         variable.visit_with(self)
     }
@@ -487,7 +691,28 @@ impl<'ast> Visitor<'ast> for Bindings<'_> {
         if let Expression::Assign(assign) = expression
             && let AssignTarget::Identifier(name) = assign.lhs()
         {
-            self.mutated.insert(name.to_interned_string(self.interner));
+            let name = name.to_interned_string(self.interner);
+            let kind = api_kind(assign.rhs(), self.interner, &self.aliases);
+            // A first top-level assignment is an implicit local initializer;
+            // subsequent writes must still invalidate live receiver aliases.
+            if self.allow_implicit_aliases
+                && self.current_function.is_none()
+                && assign.op() == AssignOp::Assign
+                && !self.names.contains(&name)
+                && !self.mutated.contains(&name)
+                && let Some(kind) = kind
+                && !matches!(kind, ApiKind::Bounds | ApiKind::Value | ApiKind::Ambiguous)
+            {
+                self.names.insert(name.clone());
+                self.implicit_aliases.insert(name.clone());
+                self.aliases.insert(name, kind);
+            } else {
+                self.mutated.insert(name.clone());
+                // Data snapshots can be rebound, unlike live receivers.
+                if kind == Some(ApiKind::Bounds) && !self.aliases.contains_key(&name) {
+                    self.aliases.insert(name, ApiKind::Bounds);
+                }
+            }
         }
         if let Expression::Call(call) = expression
             && let Expression::Identifier(target) = call.function().flatten()
@@ -505,6 +730,21 @@ impl<'ast> Visitor<'ast> for Bindings<'_> {
             self.mutated.insert(name.to_interned_string(self.interner));
         }
         expression.visit_with(self)
+    }
+    fn visit_catch(&mut self, catch: &'ast boa_ast::statement::Catch) -> ControlFlow<String> {
+        if let Some(binding) = catch.parameter() {
+            let Binding::Identifier(name) = binding else {
+                return ControlFlow::Break("catch destructuring is not admitted".into());
+            };
+            let name = name.to_interned_string(self.interner);
+            if GLOBALS.contains(&name.as_str()) || name.starts_with("__") {
+                return ControlFlow::Break("catch shadowing the AE API is not admitted".into());
+            }
+            if !self.names.insert(name.clone()) {
+                self.mutated.insert(name);
+            }
+        }
+        catch.visit_with(self)
     }
     fn visit_function_declaration(
         &mut self,
@@ -532,10 +772,28 @@ impl<'ast> Visitor<'ast> for Bindings<'_> {
 struct Admission<'a> {
     interner: &'a mut Interner,
     locals: HashSet<String>,
+    data_locals: HashSet<String>,
     aliases: HashMap<String, ApiKind>,
+    arrays: HashMap<String, PathArray>,
     functions: HashSet<String>,
 }
 impl Admission<'_> {
+    fn path_index(&self, index: &Expression) -> bool {
+        match index.flatten() {
+            Expression::Identifier(name) => {
+                let name = name.to_interned_string(self.interner);
+                self.locals.contains(&name)
+                    && !self.aliases.contains_key(&name)
+                    && !self.arrays.contains_key(&name)
+                    && !self.functions.contains(&name)
+            }
+            Expression::Literal(_) => index
+                .to_interned_string(self.interner)
+                .parse::<usize>()
+                .is_ok(),
+            _ => false,
+        }
+    }
     fn is_api_reference(&self, expression: &Expression) -> bool {
         // Native Key records are data, not live AE API receivers.
         matches!(
@@ -546,6 +804,7 @@ impl Admission<'_> {
                     | ApiKind::Transform
                     | ApiKind::EffectSelector
                     | ApiKind::Property
+                    | ApiKind::TextStyle
                     | ApiKind::Group
                     | ApiKind::Ambiguous
             )
@@ -574,8 +833,16 @@ impl Admission<'_> {
                 let name = name.to_interned_string(self.interner);
                 ((!self.locals.contains(&name) && FUNCTIONS.contains(&name.as_str()))
                     || self.functions.contains(&name))
-                    || api_kind(target, self.interner, &self.aliases)
-                        == Some(ApiKind::EffectSelector)
+                    || api_kind(target, self.interner, &self.aliases).is_some_and(|kind| {
+                        matches!(
+                            kind,
+                            ApiKind::EffectSelector
+                                | ApiKind::Comp
+                                | ApiKind::Layer
+                                | ApiKind::Transform
+                                | ApiKind::Group
+                        )
+                    })
             }
             Expression::PropertyAccess(access) => {
                 let Some(field) = self.field(access) else {
@@ -596,15 +863,32 @@ impl Admission<'_> {
                             field.as_str(),
                             api_kind(access.target(), self.interner, &self.aliases)
                         ),
-                        ("layer", Some(ApiKind::Comp))
-                            | ("effect", Some(ApiKind::Layer))
+                        ("setText", Some(ApiKind::TextStyle))
+                            | ("getStyleAt", Some(ApiKind::Property))
+                            | ("layer", Some(ApiKind::Comp))
+                            | ("effect" | "transform" | "text", Some(ApiKind::Layer))
                             | (
                                 "valueAtTime"
                                     | "key"
                                     | "nearestKey"
                                     | "velocityAtTime"
                                     | "speedAtTime"
-                                    | "smooth",
+                                    | "smooth"
+                                    | "loopIn"
+                                    | "loopOut"
+                                    | "loop_in"
+                                    | "loop_out"
+                                    | "loopInDuration"
+                                    | "loopOutDuration"
+                                    | "substring"
+                                    | "substr"
+                                    | "points"
+                                    | "inTangents"
+                                    | "outTangents"
+                                    | "isClosed"
+                                    | "pointOnPath"
+                                    | "tangentOnPath"
+                                    | "normalOnPath",
                                 Some(ApiKind::Property | ApiKind::Group)
                             )
                             | (
@@ -612,6 +896,9 @@ impl Admission<'_> {
                                     | "fromComp"
                                     | "toWorld"
                                     | "fromWorld"
+                                    | "toWorldVec"
+                                    | "fromWorldVec"
+                                    | "fromCompToSurface"
                                     | "sourceRectAtTime"
                                     | "content"
                                     | "mask",
@@ -623,7 +910,19 @@ impl Admission<'_> {
             }
             // The second call selects a parameter on an admitted effect accessor.
             Expression::Call(_) => {
-                api_kind(target, self.interner, &self.aliases) == Some(ApiKind::EffectSelector)
+                api_kind(target, self.interner, &self.aliases).is_some_and(|kind| {
+                    matches!(
+                        kind,
+                        ApiKind::EffectSelector
+                            | ApiKind::Comp
+                            | ApiKind::Layer
+                            | ApiKind::Transform
+                            | ApiKind::Group
+                    )
+                })
+            }
+            Expression::Conditional(choice) => {
+                self.call_allowed(choice.if_true()) && self.call_allowed(choice.if_false())
             }
             _ => false,
         }
@@ -690,6 +989,80 @@ impl<'ast> VisitorMut<'ast> for Admission<'_> {
         declaration.visit_with_mut(self)
     }
     fn visit_expression_mut(&mut self, expression: &'ast mut Expression) -> ControlFlow<String> {
+        let span = expression.span();
+        if let Expression::Assign(assign) = expression
+            && assign.op() == AssignOp::Assign
+            && let AssignTarget::Identifier(name) = assign.lhs()
+            && self
+                .data_locals
+                .contains(&name.to_interned_string(self.interner))
+            && !self
+                .aliases
+                .contains_key(&name.to_interned_string(self.interner))
+            && !self
+                .arrays
+                .contains_key(&name.to_interned_string(self.interner))
+            && !matches!(assign.rhs().flatten(), Expression::Identifier(_))
+            && api_kind(assign.rhs(), self.interner, &self.aliases) == Some(ApiKind::Property)
+        {
+            // Mutable data locals capture the current value, never a live receiver.
+            let mut rhs = assign.rhs().clone();
+            self.visit_expression_mut(&mut rhs)?;
+            let rhs = self.helper("__aeUnwrap", vec![rhs], span);
+            *expression = Assign::new(AssignOp::Assign, assign.lhs().clone(), rhs).into();
+            return ControlFlow::Continue(());
+        }
+        // Rewrite copied-Path accesses before walking children: an assignment LHS
+        // must never be transformed into a read call by the generic visitor.
+        if let Expression::Assign(assign) = expression
+            && let AssignTarget::Access(PropertyAccess::Simple(access)) = assign.lhs()
+            && path_array(access.target(), self.interner, &self.arrays).is_some()
+        {
+            let PropertyAccessField::Expr(index) = access.field() else {
+                return ControlFlow::Break("Path array property writes are not admitted".into());
+            };
+            if !self.path_index(index) {
+                return ControlFlow::Break("unsupported Path array index".into());
+            }
+            let operation = match assign.op() {
+                AssignOp::Assign => None,
+                AssignOp::Add => Some("__aeAdd"),
+                AssignOp::Sub => Some("__aeSub"),
+                AssignOp::Mul => Some("__aeMul"),
+                AssignOp::Div => Some("__aeDiv"),
+                _ => return ControlFlow::Break("unsupported Path array assignment".into()),
+            };
+            let mut target = access.target().clone();
+            let mut index = index.as_ref().clone();
+            let mut rhs = assign.rhs().clone();
+            self.visit_expression_mut(&mut target)?;
+            self.visit_expression_mut(&mut index)?;
+            self.visit_expression_mut(&mut rhs)?;
+            let reference = self.helper("__aePathSlot", vec![target, index], span);
+            let helper = match operation {
+                None => "__aePathSet",
+                Some("__aeAdd") => "__aePathSetAdd",
+                Some("__aeSub") => "__aePathSetSub",
+                Some("__aeMul") => "__aePathSetMul",
+                _ => "__aePathSetDiv",
+            };
+            *expression = self.helper(helper, vec![reference, rhs], span);
+            return ControlFlow::Continue(());
+        }
+        if let Expression::PropertyAccess(PropertyAccess::Simple(access)) = expression
+            && path_array(access.target(), self.interner, &self.arrays).is_some()
+            && let PropertyAccessField::Expr(index) = access.field()
+        {
+            if !self.path_index(index) {
+                return ControlFlow::Break("unsupported Path array index".into());
+            }
+            let mut target = access.target().clone();
+            let mut index = index.as_ref().clone();
+            self.visit_expression_mut(&mut target)?;
+            self.visit_expression_mut(&mut index)?;
+            *expression = self.helper("__aePathGet", vec![target, index], span);
+            return ControlFlow::Continue(());
+        }
         match expression {
             Expression::Identifier(name) => {
                 let name = name.to_interned_string(self.interner);
@@ -698,8 +1071,9 @@ impl<'ast> VisitorMut<'ast> for Admission<'_> {
                 }
             }
             Expression::Call(call)
-                if matches!(call.function().flatten(), Expression::Identifier(name)
+                if (matches!(call.function().flatten(), Expression::Identifier(name)
                     if self.functions.contains(&name.to_interned_string(self.interner)))
+                    || matches!(call.function().flatten(), Expression::Conditional(_)))
                     && call
                         .args()
                         .iter()
@@ -758,6 +1132,8 @@ impl<'ast> VisitorMut<'ast> for Admission<'_> {
                                     | "duration"
                                     | "frameDuration"
                                     | "displayStartTime"
+                                    | "_name"
+                                    | "numLayers"
                             ),
                             Some(ApiKind::Layer) => matches!(
                                 field.as_str(),
@@ -767,6 +1143,14 @@ impl<'ast> VisitorMut<'ast> for Admission<'_> {
                                     | "inPoint"
                                     | "outPoint"
                                     | "anchorPoint"
+                                    | "anchor_point"
+                                    | "xRotation"
+                                    | "yRotation"
+                                    | "zRotation"
+                                    | "orientation"
+                                    | "xPosition"
+                                    | "yPosition"
+                                    | "zPosition"
                                     | "position"
                                     | "scale"
                                     | "rotation"
@@ -774,6 +1158,7 @@ impl<'ast> VisitorMut<'ast> for Admission<'_> {
                                     | "width"
                                     | "height"
                                     | "name"
+                                    | "_name"
                                     | "active"
                                     | "parent"
                                     | "hasParent"
@@ -781,14 +1166,30 @@ impl<'ast> VisitorMut<'ast> for Admission<'_> {
                                     | "sourceRectAtTime"
                                     | "content"
                                     | "mask"
+                                    | "marker"
                                     | "toComp"
                                     | "fromComp"
                                     | "toWorld"
                                     | "fromWorld"
+                                    | "toWorldVec"
+                                    | "fromWorldVec"
+                                    | "fromCompToSurface"
                             ),
                             Some(ApiKind::Transform) => matches!(
                                 field.as_str(),
-                                "anchorPoint" | "position" | "scale" | "rotation" | "opacity"
+                                "anchorPoint"
+                                    | "anchor_point"
+                                    | "position"
+                                    | "scale"
+                                    | "rotation"
+                                    | "zRotation"
+                                    | "xRotation"
+                                    | "yRotation"
+                                    | "orientation"
+                                    | "xPosition"
+                                    | "yPosition"
+                                    | "zPosition"
+                                    | "opacity"
                             ),
                             Some(ApiKind::Property) => matches!(
                                 field.as_str(),
@@ -803,14 +1204,46 @@ impl<'ast> VisitorMut<'ast> for Admission<'_> {
                                     | "velocityAtTime"
                                     | "speedAtTime"
                                     | "smooth"
+                                    | "loopIn"
+                                    | "loopOut"
+                                    | "loop_in"
+                                    | "loop_out"
+                                    | "loopInDuration"
+                                    | "loopOutDuration"
+                                    | "style"
+                                    | "getStyleAt"
+                                    | "points"
+                                    | "inTangents"
+                                    | "outTangents"
+                                    | "isClosed"
+                                    | "pointOnPath"
+                                    | "tangentOnPath"
+                                    | "normalOnPath"
+                                    | "substring"
+                                    | "substr"
                             ),
+                            Some(ApiKind::TextStyle) => {
+                                matches!(field.as_str(), "fillColor" | "setText")
+                            }
+                            Some(ApiKind::Bounds) => {
+                                matches!(field.as_str(), "left" | "top" | "width" | "height")
+                            }
                             // The runtime object rejects members it cannot resolve.
                             Some(ApiKind::Group) => true,
                             Some(ApiKind::Key) => {
                                 matches!(field.as_str(), "time" | "index" | "value")
                             }
-                            Some(ApiKind::EffectSelector | ApiKind::Ambiguous) => false,
-                            None => field == "length" || VALUE_METHODS.contains(&field.as_str()),
+                            // Effect groups expose enablement, but not Property value/numKeys probes.
+                            Some(ApiKind::EffectSelector) => {
+                                matches!(field.as_str(), "numKeys" | "value" | "active")
+                            }
+                            Some(ApiKind::Ambiguous | ApiKind::Value) => false,
+                            None => {
+                                matches!(
+                                    field.as_str(),
+                                    "length" | "text" | "start" | "index" | "lastIndex" | "message"
+                                ) || VALUE_METHODS.contains(&field.as_str())
+                            }
                         }
                     };
                     if !allowed {
@@ -819,9 +1252,17 @@ impl<'ast> VisitorMut<'ast> for Admission<'_> {
                 } else if let PropertyAccessField::Expr(index) = simple.field() {
                     let printed = index.to_interned_string(self.interner);
                     if printed.parse::<usize>().is_err() {
-                        return ControlFlow::Break(
-                            "only literal vector indices are admitted".into(),
-                        );
+                        if api_kind(simple.target(), self.interner, &self.aliases).is_some() {
+                            return ControlFlow::Break(
+                                "dynamic API indices are not admitted".into(),
+                            );
+                        }
+                        let mut target = simple.target().clone();
+                        let mut index = index.as_ref().clone();
+                        self.visit_expression_mut(&mut target)?;
+                        self.visit_expression_mut(&mut index)?;
+                        *expression = self.helper("__aeDataIndex", vec![target, index], span);
+                        return ControlFlow::Continue(());
                     }
                 }
             }
@@ -829,7 +1270,10 @@ impl<'ast> VisitorMut<'ast> for Admission<'_> {
                 let AssignTarget::Identifier(name) = assign.lhs() else {
                     return ControlFlow::Break("property writes are not admitted".into());
                 };
-                if api_kind(assign.rhs(), self.interner, &self.aliases).is_some() {
+                if api_kind(assign.rhs(), self.interner, &self.aliases).is_some_and(|kind| {
+                    kind != ApiKind::Bounds
+                        && self.aliases.get(&name.to_interned_string(self.interner)) != Some(&kind)
+                }) {
                     return ControlFlow::Break(
                         "assigning AE API references is not admitted".into(),
                     );
@@ -900,8 +1344,44 @@ impl<'ast> VisitorMut<'ast> for Admission<'_> {
                     return ControlFlow::Break("only local updates are admitted".into());
                 }
             }
-            Expression::Literal(_)
-            | Expression::TemplateLiteral(_)
+            Expression::ObjectLiteral(object) => {
+                for property in object.properties() {
+                    let PropertyDefinition::Property(name, value) = property else {
+                        return ControlFlow::Break("only text data records are admitted".into());
+                    };
+                    if !matches!(
+                        name.to_interned_string(self.interner).as_str(),
+                        "text" | "start"
+                    ) || self.is_api_reference(value)
+                        || !matches!(
+                            value.flatten(),
+                            Expression::Literal(_)
+                                | Expression::Identifier(_)
+                                | Expression::PropertyAccess(_)
+                                | Expression::Call(_)
+                        )
+                    {
+                        return ControlFlow::Break(
+                            "only plain text/start data fields are admitted".into(),
+                        );
+                    }
+                }
+            }
+            Expression::RegExpLiteral(_) => {}
+            Expression::Literal(literal) => {
+                if let LiteralKind::String(symbol) = literal.kind_mut() {
+                    // Boa's AST printer quotes strings without escaping their contents.
+                    let escaped = self
+                        .interner
+                        .resolve_expect(*symbol)
+                        .to_string()
+                        .chars()
+                        .flat_map(char::escape_default)
+                        .collect::<String>();
+                    *symbol = self.interner.get_or_intern(escaped.as_str());
+                }
+            }
+            Expression::TemplateLiteral(_)
             | Expression::ArrayLiteral(_)
             | Expression::Parenthesized(_)
             | Expression::Binary(_)
@@ -918,6 +1398,16 @@ impl<'ast> VisitorMut<'ast> for Admission<'_> {
         let span = expression.span();
         match expression {
             Expression::Call(call) => {
+                if let Expression::PropertyAccess(PropertyAccess::Simple(access)) =
+                    call.function().flatten()
+                    && matches!(access.field(), PropertyAccessField::Const(name) if name.to_interned_string(self.interner)=="substr")
+                    && api_kind(access.target(), self.interner, &self.aliases).is_none()
+                {
+                    let mut args = vec![access.target().clone()];
+                    args.extend_from_slice(call.args());
+                    *expression = self.helper("__aeSubstr", args, span);
+                    return ControlFlow::Continue(());
+                }
                 if let Expression::Identifier(name) = call.function().flatten() {
                     let name = name.to_interned_string(self.interner);
                     if !self.locals.contains(&name)
@@ -982,6 +1472,10 @@ impl<'ast> VisitorMut<'ast> for Admission<'_> {
 }
 
 #[cfg(test)]
+#[path = "path_array_tests.rs"]
+mod path_array_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     #[test]
@@ -1027,6 +1521,11 @@ mod tests {
                 "{code}: {error}"
             );
         }
+    }
+
+    #[test]
+    fn marker_key_time_receivers_are_admitted() {
+        compile("var n=thisComp.layer('controller').marker.nearestKey(time).index; thisProperty.valueAtTime(time-thisComp.layer('controller').marker.key(n).time)").unwrap();
     }
 
     #[test]

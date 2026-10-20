@@ -542,6 +542,25 @@ fn incompatible_color_easing_retains_base_owner_and_effect_sibling() {
 }
 
 #[test]
+fn grain_export_uses_final_output_without_preview_guides() {
+    for enabled in [true, false] {
+        let output = export(effect_input(json!([
+            {"id":9001,"enabled":enabled,"effect":{"type":"grain","amount":0.06,"size":1.2,"softness":0.4,"seed":3.0}},
+            {"id":9002,"effect":{"type":"gaussianBlur","blurriness":7.0}}
+        ])));
+        let effects = fresh_effects(&output);
+        assert_eq!(effects.len(), 2);
+        assert_eq!(effects[0].match_name, "VISINF Grain Implant");
+        assert_eq!(effects[0].enabled, enabled);
+        assert_eq!(value(&effects[0], "VISINF Grain Implant-0021"), [3.0]);
+        assert_eq!(value(&effects[0], "VISINF Grain Implant-0028"), [0.0]);
+        assert_eq!(value(&effects[0], "VISINF Grain Implant-0008"), [0.06]);
+        assert_eq!(value(&effects[0], "VISINF Grain Implant-0013"), [3.0]);
+        assert_eq!(effects[1].match_name, "ADBE Gaussian Blur 2");
+    }
+}
+
+#[test]
 fn grain_strength_amount_alias_and_conflicts_preserve_current_native_controls() {
     let entry = |name: &str, values: [f64; 2]| {
         json!({
@@ -722,7 +741,17 @@ fn grain_export_normalizes_unmapped_plugin_state_on_source_owner_canvas() {
         let (fresh_owner, fresh_values) = grain_values(&fresh);
         assert_eq!(fresh_owner, [320, 180], "fresh Grain owner canvas");
 
+        assert_eq!(fresh_values["VISINF Grain Implant-0021"], [3.0]);
+        assert_eq!(fresh_values["VISINF Grain Implant-0028"], [0.0]);
         for (name, fresh_value) in &fresh_values {
+            if matches!(
+                name.as_str(),
+                "VISINF Grain Implant-0021" | "VISINF Grain Implant-0028"
+            ) {
+                // Import omits native preview controls; FX Grain always covers
+                // the whole owner, so export cannot restore the source Preview.
+                continue;
+            }
             let source_value = source_values
                 .get(name)
                 .unwrap_or_else(|| panic!("{name}: missing from pinned native Grain source"));

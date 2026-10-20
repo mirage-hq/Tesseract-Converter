@@ -182,6 +182,8 @@ struct ImportHost {
     /// for a Corner Pin, a Mosaic or a Blur that repeats edge pixels, or why
     /// not ([`PICTURE_FRAME_RULE`]).
     own_frame: Result<(), String>,
+    /// Explicit native clamp bounds for Gaussian Blur on an unsized Group.
+    gaussian_blur_frame: Option<(f64, f64)>,
 }
 
 impl ImportHost {
@@ -225,6 +227,7 @@ impl ImportHost {
             ),
             staged: boundary == MaskBoundary::Staged,
             own_frame,
+            gaussian_blur_frame: None,
         }
     }
 
@@ -271,6 +274,7 @@ impl ClipToComposition {
             .find_map(|animation| match animation.property() {
                 PrAnimatedProperty::UniformScale => Some("Scale"),
                 PrAnimatedProperty::ScaleWidth => Some("Scale Width"),
+                PrAnimatedProperty::ScaleHeight => Some("Scale Height"),
                 PrAnimatedProperty::Rotation => Some("Rotation"),
                 // These move or fade the blurred frame without turning or
                 // scaling it, as on export (`of_layer`).
@@ -480,8 +484,7 @@ fn tint_tritone(tint: PrTint) -> LayerEffect {
 
 /// A Ramp as FX `gradientRamp`: the endpoints as frame UV, which equal the
 /// clip-frame fractions on a canvas-size host, the colours as channel shares,
-/// `blend` = 1 − Blend With Original ([`PrRamp::fx_blend`]) and the linear
-/// shape.
+/// `blend` = 1 − Blend With Original ([`PrRamp::fx_blend`]) and the saved shape.
 fn gradient_ramp(ramp: PrRamp) -> LayerEffect {
     let [start_r, start_g, start_b] = ramp.start_colour.fx().map(Some);
     let [end_r, end_g, end_b] = ramp.end_colour.fx().map(Some);
@@ -497,14 +500,35 @@ fn gradient_ramp(ramp: PrRamp) -> LayerEffect {
         end_g,
         end_b,
         blend: Some(PrRamp::fx_blend(ramp.blend)),
-        shape: Some(0.0),
+        shape: Some(if ramp.radial { 1.0 } else { 0.0 }),
     }
 }
 
-/// Retain a graphic's leading Ramps on its editable picture group. Its bounds
+/// A static linear Ramp preserves source alpha while mixing straight RGB.
+/// Gradient Overlay has that operation in local pixels, so Motion moves the
+/// gradient with the nested picture rather than leaving a canvas-UV ramp behind.
+fn nested_ramp_overlay(ramp: PrRamp, frame: (f64, f64)) -> Result<LayerEffect, String> {
+    let [start_r, start_g, start_b] = ramp.start_colour.fx();
+    let [end_r, end_g, end_b] = ramp.end_colour.fx();
+    serde_json::from_value(serde_json::json!({
+        "type": "gradientOverlay", "enabled": true,
+        "opacity": PrRamp::fx_blend(ramp.blend),
+        "gradientType": "linear", "blendMode": "normal",
+        "start": [ramp.start[0] * frame.0, ramp.start[1] * frame.1],
+        "end": [ramp.end[0] * frame.0, ramp.end[1] * frame.1],
+        "stops": [
+            {"offset": 0.0, "color": [start_r, start_g, start_b, 1.0]},
+            {"offset": 1.0, "color": [end_r, end_g, end_b, 1.0]}
+        ]
+    }))
+    .map_err(|error| error.to_string())
+}
+
+/// Retain a graphic's leading effects on its editable picture group. Its bounds
 /// replace the native generator frame; coverage admission remains conservative.
-pub(super) fn import_graphic_ramps(
+pub(super) fn import_graphic_effects(
     graphic: &crate::schema::PrGraphic,
+    mapped_effects: &[PrEffect],
     layer_id: LayerId,
     ids: &mut EffectIdAllocator,
     omissions: &mut Vec<Omission>,
@@ -514,9 +538,6 @@ pub(super) fn import_graphic_ramps(
 ) {
     let mut effects = Vec::new();
     let mut tracks = Vec::new();
-    let Some(loss) = &graphic.effect_loss else {
-        return (effects, tracks);
-    };
     // Ramp bindings are saved frame fractions, colors and blend, independent
     // of the similarity fields used by Directional Blur.
     let host = ImportHost {
@@ -527,17 +548,33 @@ pub(super) fn import_graphic_ramps(
         off_canvas: None,
         staged: false,
         own_frame: Ok(()),
+        gaussian_blur_frame: None,
     };
     // Native graphic chains list the last applied component first.
-    for effect in loss.mapped_ramps.iter().rev() {
-        let PrEffectParams::Ramp(ramp) = effect.params else {
-            continue;
+    for effect in mapped_effects.iter().rev() {
+        let (label, mapped) = match effect.params {
+            PrEffectParams::Ramp(ramp) => ("Ramp", Ok(gradient_ramp(ramp))),
+            PrEffectParams::GaussianBlur(_) => ("Gaussian Blur", layer_effect(effect, &host)),
+            PrEffectParams::Tint(_) => ("Tint", layer_effect(effect, &host)),
+            _ => continue,
+        };
+        let mapped = match mapped {
+            Ok(mapped) => mapped,
+            Err(reason) => {
+                omit(
+                    omissions,
+                    OmissionScope::Feature,
+                    graphic.id().unwrap_or("graphic"),
+                    format!("graphic {label} replacement was not imported: {reason}"),
+                );
+                continue;
+            }
         };
         let id = ids.take();
         let record = EffectRecord::from_data(&EffectData::Identified {
             id,
             enabled: effect.enabled,
-            effect: EffectPayload::Known(gradient_ramp(ramp)),
+            effect: EffectPayload::Known(mapped),
             compositing_options: None,
             extensions: Default::default(),
         });
@@ -548,7 +585,7 @@ pub(super) fn import_graphic_ramps(
                     omissions,
                     OmissionScope::Feature,
                     graphic.id().unwrap_or("graphic"),
-                    format!("graphic Ramp replacement was not imported: {error}"),
+                    format!("graphic {label} replacement was not imported: {error}"),
                 );
                 continue;
             }
@@ -556,12 +593,28 @@ pub(super) fn import_graphic_ramps(
         for animation in &effect.animations {
             match param_tracks(animation, id, graphic.in_ticks, layer_id, &host) {
                 Ok(keys) => tracks.extend(keys),
-                Err(reason) => omit(omissions, OmissionScope::Feature, graphic.id().unwrap_or("graphic"),
-                    format!("graphic Ramp {} keys were omitted; retained its static control and other keys: {reason}", animation.param.label)),
+                Err(reason) => omit(
+                    omissions,
+                    OmissionScope::Feature,
+                    graphic.id().unwrap_or("graphic"),
+                    format!(
+                        "graphic {label} {} keys were omitted; retained its static control and other keys: {reason}",
+                        animation.param.label
+                    ),
+                ),
             }
         }
-        approximate(omissions, graphic.id().unwrap_or("graphic"),
-            "graphic Ramp retained as editable gradientRamp with saved endpoints, colors, blend and supported generator-clock keys; FX picture-group bounds replace the native generator frame, so gradient placement/falloff can differ. Native graphic-host alpha and matte luma remain unverified; dependent mask/provider coverage is not admitted");
+        approximate(
+            omissions,
+            graphic.id().unwrap_or("graphic"),
+            if label == "Ramp" {
+                "graphic Ramp retained as editable gradientRamp with saved endpoints, colors, blend and supported generator-clock keys; FX picture-group bounds replace the native generator frame, so gradient placement/falloff can differ. Native graphic-host alpha and matte luma remain unverified; dependent mask/provider coverage is not admitted"
+            } else if label == "Tint" {
+                "graphic Tint retained as editable tintTritone with saved black/white RGB, amount and supported generator-clock keys; existing FX luma/color interpolation and alpha behavior approximate Premiere. Native graphic-host alpha and matte luma remain unverified; dependent mask/provider coverage is not admitted"
+            } else {
+                "graphic Gaussian Blur retained as editable gaussianBlur with saved Blurriness, Repeat Edge Pixels and supported generator-clock keys; FX group/canvas bounds, blur kernel and visible radius cap can differ from Premiere. Native graphic-host alpha and matte luma remain unverified; dependent mask/provider coverage is not admitted"
+            },
+        );
     }
     (effects, tracks)
 }
@@ -742,15 +795,14 @@ pub(super) fn retains_coverage(
         .count();
     let retained = imported
         .iter()
-        .filter(|record| {
-            matches!(
-                record.data(),
-                EffectData::Identified {
-                    enabled: true,
-                    effect: EffectPayload::Known(LayerEffect::LumaKey { .. }),
-                    ..
-                } | EffectData::Legacy(EffectPayload::Known(LayerEffect::LumaKey { .. }))
-            )
+        .filter(|record| match record.data() {
+            EffectData::Identified {
+                enabled: true,
+                effect: EffectPayload::Known(effect),
+                ..
+            }
+            | EffectData::Legacy(EffectPayload::Known(effect)) => is_coverage_key(effect),
+            _ => false,
         })
         .count();
     if retained == expected {
@@ -767,7 +819,16 @@ pub(super) fn retains_coverage(
                     || "placement".to_owned(),
                     |master| format!("source {master}"),
                 );
-                omit(omissions, OmissionScope::Occurrence, clip.record(), format!("{} ({}) at {owner} stack position {position}: not all enabled keys survived effect/animation conversion on this host; coverage would change, so the occurrence is omitted", effect.spec().display_name, effect.spec().match_name));
+                omit(
+                    omissions,
+                    OmissionScope::Occurrence,
+                    clip.record(),
+                    format!(
+                        "{} ({}) at {owner} stack position {position}: not all enabled keys survived effect/animation conversion on this host; coverage would change, so the occurrence is omitted",
+                        effect.spec().display_name,
+                        effect.spec().match_name
+                    ),
+                );
             }
         }
     }
@@ -846,7 +907,12 @@ pub(super) fn import_effects(
                     | PrMediaKind::Still { .. }
                     | PrMediaKind::AfterEffectsComposition(_)
             ) {
-                omit(omissions, OmissionScope::Feature, clip.record(), "Invert Alpha requires an ordinary image/video occurrence; generator and numbered-image stacks retain their original picture without Alpha replacement");
+                omit(
+                    omissions,
+                    OmissionScope::Feature,
+                    clip.record(),
+                    "Invert Alpha requires an ordinary image/video occurrence; generator and numbered-image stacks retain their original picture without Alpha replacement",
+                );
             }
             continue;
         }
@@ -865,7 +931,15 @@ pub(super) fn import_effects(
             continue;
         }
         if position > carried && effect.requires_coverage() {
-            approximate(omissions, clip.record(), format!("{} ({}) at stack position {position}: retained on the picture before {after} to preserve coverage; native effect/mask order is approximated", effect.spec().display_name, effect.spec().match_name));
+            approximate(
+                omissions,
+                clip.record(),
+                format!(
+                    "{} ({}) at stack position {position}: retained on the picture before {after} to preserve coverage; native effect/mask order is approximated",
+                    effect.spec().display_name,
+                    effect.spec().match_name
+                ),
+            );
         } else if position > carried {
             let state = if effect.enabled { "" } else { "bypassed " };
             omit(
@@ -944,14 +1018,18 @@ pub(super) fn import_effects(
                             omissions,
                             OmissionScope::Feature,
                             clip.record(),
-                            format!("Posterize Time effect at stack position {position}: Frame Rate animation was not imported; FX frameRate is not animatable; the rate at the clip's source In was kept, not CurrentValue"),
+                            format!(
+                                "Posterize Time effect at stack position {position}: Frame Rate animation was not imported; FX frameRate is not animatable; the rate at the clip's source In was kept, not CurrentValue"
+                            ),
                         );
                     }
                     if effect.enabled {
                         approximate(
                             omissions,
                             clip.record(),
-                            format!("Posterize Time effect at stack position {position}: {POSTERIZE_TIME_CLOCK_APPROXIMATION}"),
+                            format!(
+                                "Posterize Time effect at stack position {position}: {POSTERIZE_TIME_CLOCK_APPROXIMATION}"
+                            ),
                         );
                     }
                 }
@@ -973,9 +1051,8 @@ pub(super) fn import_effects(
 }
 
 /// Occurrence effects on the identity picture Group below a nest's Motion.
-/// Group effect bounds are not the native canvas, so frame-dependent mappings
-/// retain their existing stage restrictions. Retimed keys keep static values;
-/// this does not extend the nest's picture or property clocks.
+/// Frame-dependent effects need explicit source bounds or a normalized stage.
+/// Retimed keys keep static values; this does not extend the nest's clocks.
 pub(super) fn import_nest_effects(
     nest: &crate::schema::PrNestOccurrence,
     layer_id: LayerId,
@@ -986,7 +1063,15 @@ pub(super) fn import_nest_effects(
     Vec<EffectRecord>,
     Vec<(PropertyTarget, PropertyKeyframeTrack)>,
 ) {
-    import_nest_effect_slice(nest, &nest.effects, layer_id, key_origin, ids, omissions)
+    import_nest_effect_slice(
+        nest,
+        &nest.effects,
+        layer_id,
+        key_origin,
+        false,
+        ids,
+        omissions,
+    )
 }
 
 /// The same nested-host mapping for one ordered stage of an affine stack.
@@ -995,19 +1080,37 @@ pub(super) fn import_nest_effect_slice(
     stage_effects: &[PrEffect],
     layer_id: LayerId,
     key_origin: i64,
+    normalized_pin_frame: bool,
     ids: &mut EffectIdAllocator,
     omissions: &mut Vec<Omission>,
 ) -> (
     Vec<EffectRecord>,
     Vec<(PropertyTarget, PropertyKeyframeTrack)>,
 ) {
+    // Affine and normalized pin stages have different local pixel frames.
+    let source_frame = (!normalized_pin_frame
+        && !nest.effects.iter().any(|effect| {
+            matches!(
+                effect.params,
+                PrEffectParams::Transform(_) | PrEffectParams::AdjustmentGeometry2(_)
+            )
+        }))
+    .then_some((
+        f64::from(nest.sequence.width),
+        f64::from(nest.sequence.height),
+    ));
     let host = ImportHost {
         similarity: Err(STAGED_DIRECTIONAL_BLUR_REASON.to_owned()),
         off_canvas: None,
         staged: true,
-        own_frame: Err(format!(
-            "a nested picture Group has no fixed native canvas bounds; {PICTURE_FRAME_RULE}"
-        )),
+        own_frame: if normalized_pin_frame {
+            Ok(())
+        } else {
+            Err(format!(
+                "a nested picture Group has no fixed native canvas bounds; {PICTURE_FRAME_RULE}"
+            ))
+        },
+        gaussian_blur_frame: source_frame,
     };
     let owner = nest.record();
     // Validated unit reverse has a separate, increasing occurrence-effect
@@ -1021,7 +1124,15 @@ pub(super) fn import_nest_effect_slice(
         } else {
             &effect.animations
         };
-        let imported = layer_effect(effect, &host).and_then(|mapped| {
+        let mapped = match (&effect.params, source_frame) {
+            (PrEffectParams::Ramp(ramp), Some(frame))
+                if !ramp.radial && effect.animations.is_empty() =>
+            {
+                nested_ramp_overlay(*ramp, frame)
+            }
+            _ => layer_effect(effect, &host),
+        };
+        let imported = mapped.and_then(|mapped| {
             effect_record(
                 effect, mapped, animations, key_origin, layer_id, &host, ids, &owner, omissions,
             )
@@ -1037,14 +1148,36 @@ pub(super) fn import_nest_effect_slice(
                         | PrEffectParams::ModernNoise { .. }
                         | PrEffectParams::AlphaGlow { .. }
                 ) {
-                    approximate(omissions, &owner, format!("{} effect at stack position {position}: editable picture-Group bounds replace the native nested canvas; spatial falloff, tiling or noise coverage may differ", effect.spec().display_name));
+                    approximate(
+                        omissions,
+                        &owner,
+                        format!(
+                            "{} effect at stack position {position}: editable picture-Group bounds replace the native nested canvas; spatial falloff, tiling or noise coverage may differ",
+                            effect.spec().display_name
+                        ),
+                    );
                 }
                 for animation in effect.animations.iter().filter(|_| retimed_keys) {
-                    omit(omissions, OmissionScope::Feature, &owner,
-                        format!("{} effect at stack position {position}: {} keys were not imported: keys on a retimed nested sequence occurrence are not converted; the static value was kept", effect.spec().display_name, animation.param.label));
+                    omit(
+                        omissions,
+                        OmissionScope::Feature,
+                        &owner,
+                        format!(
+                            "{} effect at stack position {position}: {} keys were not imported: keys on a retimed nested sequence occurrence are not converted; the static value was kept",
+                            effect.spec().display_name,
+                            animation.param.label
+                        ),
+                    );
                 }
                 if nest.playback_rate == -1.0 && !effect.animations.is_empty() {
-                    approximate(omissions, &owner, format!("{} effect at stack position {position}: reverse nested effect keys retained on the increasing occurrence clock, separate from decreasing descendant playback; native effect-clock fidelity is unmeasured", effect.spec().display_name));
+                    approximate(
+                        omissions,
+                        &owner,
+                        format!(
+                            "{} effect at stack position {position}: reverse nested effect keys retained on the increasing occurrence clock, separate from decreasing descendant playback; native effect-clock fidelity is unmeasured",
+                            effect.spec().display_name
+                        ),
+                    );
                 }
                 effects.push(record);
                 tracks.extend(keys);
@@ -1365,7 +1498,13 @@ fn effect_record(
     .map_err(|error| error.to_string())?;
     let mut tracks = Vec::new();
     for animation in animations {
-        match param_tracks(animation, id, source_in, layer_id, host) {
+        let imported = match (&effect.params, animation.param.id) {
+            (PrEffectParams::DropShadow { direction, .. }, 4) => {
+                shadow_distance_track(animation, *direction, id, source_in, layer_id)
+            }
+            _ => param_tracks(animation, id, source_in, layer_id, host),
+        };
+        match imported {
             Ok(imported) => tracks.extend(imported),
             Err(reason) if matches!(effect.params, PrEffectParams::AlphaGlow { .. }) => {
                 approximate(
@@ -1381,6 +1520,47 @@ fn effect_record(
         }
     }
     Ok((record, tracks))
+}
+
+fn shadow_offset(direction: f64, distance: f64) -> [f64; 2] {
+    let (sin, cos) = direction.to_radians().sin_cos();
+    [distance * sin, -distance * cos]
+}
+
+fn shadow_distance_track(
+    animation: &PrEffectParamAnimation,
+    direction: f64,
+    effect_id: EffectId,
+    source_in: i64,
+    layer_id: LayerId,
+) -> Result<Vec<(PropertyTarget, PropertyKeyframeTrack)>, String> {
+    let keys = animation
+        .keys
+        .scalar()
+        .ok_or("Drop Shadow Distance requires scalar keys")?;
+    let keys = keys
+        .iter()
+        .enumerate()
+        .map(|(index, key)| {
+            let millis = keyframes::layer_millis(key.source_ticks, source_in)
+                .map_err(|error| error.to_string())?;
+            Ok(PropertyKeyframe::new(
+                super::premiere_to_tesseract::keyframe_id(
+                    layer_id,
+                    &format!("effect-{}-offset", effect_id.value()),
+                    index,
+                ),
+                TimeOffset::from_millis(millis),
+                PropertyValue::Vector2(shadow_offset(direction, key.value)),
+                keyframes::fx_easing(key.easing),
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let track = PropertyKeyframeTrack::new(keys).map_err(|error| error.to_string())?;
+    Ok(vec![(
+        PropertyTarget::effect_param(effect_id, "offset"),
+        track,
+    )])
 }
 
 /// The FX keyframe tracks of one keyed parameter, one per FX parameter of its
@@ -1590,7 +1770,13 @@ pub(super) fn import_still_effects(
     };
     if let Some(reason) = reason {
         if clip.effects.iter().any(PrEffect::requires_coverage) {
-            approximate(omissions, clip.record(), format!("{reason}; retain the editable stack after the still mask to preserve Legacy Luma coverage, approximating native order"));
+            approximate(
+                omissions,
+                clip.record(),
+                format!(
+                    "{reason}; retain the editable stack after the still mask to preserve Legacy Luma coverage, approximating native order"
+                ),
+            );
         } else {
             omit_each_effect(clip, &reason, omissions);
             return (Vec::new(), Vec::new());
@@ -1614,12 +1800,23 @@ pub(super) fn import_still_effects(
 
 fn effect_approximation(params: &PrEffectParams) -> Option<&'static str> {
     match params {
+        PrEffectParams::Ramp(ramp) if ramp.radial => Some(PrRamp::RADIAL_APPROXIMATION),
         PrEffectParams::AlphaGlow { .. } => Some(ALPHA_GLOW_APPROXIMATION),
         PrEffectParams::LegacyLuma { .. } => Some(LEGACY_LUMA_KEY_MAPPING_REASON),
         PrEffectParams::Posterize(_) => Some(PrPosterize::QUANTIZER_APPROXIMATION),
         PrEffectParams::Sharpen(_) => Some(PrSharpen::KERNEL_APPROXIMATION),
         PrEffectParams::LensDistortion(_) => Some(LENS_APPROXIMATION),
         _ => None,
+    }
+}
+
+/// An imported key that keeps its clip's coverage: Luma Key, or the Ultra Key
+/// approximation shader.
+fn is_coverage_key(effect: &LayerEffect) -> bool {
+    match effect {
+        LayerEffect::LumaKey { .. } => true,
+        LayerEffect::CustomShader { name, .. } => name == super::ultra_key::SHADER_NAME,
+        _ => false,
     }
 }
 
@@ -1650,7 +1847,7 @@ fn layer_effect(effect: &PrEffect, host: &ImportHost) -> Result<LayerEffect, Str
             blurriness,
             repeat_edge_pixels,
         }) => {
-            if repeat_edge_pixels {
+            if repeat_edge_pixels && host.gaussian_blur_frame.is_none() {
                 host.own_frame.as_ref().map_err(String::clone)?;
             }
             Ok(LayerEffect::GaussianBlur {
@@ -1658,7 +1855,7 @@ fn layer_effect(effect: &PrEffect, host: &ImportHost) -> Result<LayerEffect, Str
                     .ok_or("Blurriness must be finite and nonnegative")?,
                 // FX reads an absent flag as unchecked; import keeps that canonical form.
                 repeat_edge_pixels: repeat_edge_pixels.then_some(true),
-                layer_size: None,
+                layer_size: host.gaussian_blur_frame.filter(|_| repeat_edge_pixels),
             })
         }
         PrEffectParams::FilmImpactBlur(PrFilmImpactBlur {
@@ -1777,6 +1974,7 @@ fn layer_effect(effect: &PrEffect, host: &ImportHost) -> Result<LayerEffect, Str
         })),
         // Black & White renders as Tint's defaults (E7). It has no parameters.
         PrEffectParams::BlackWhite => Ok(tint_tritone(PrTint::GRAYSCALE)),
+        PrEffectParams::UltraKey(key) => Ok(super::ultra_key::effect(key)),
         PrEffectParams::LegacyLuma { threshold, cutoff } => Ok(LayerEffect::LumaKey {
             threshold: Some(LEGACY_LUMA_THRESHOLD.fx_value(threshold)),
             softness: Some(fx_value(&LEGACY_LUMA_CUTOFF, cutoff, host)?),
@@ -1830,8 +2028,24 @@ fn layer_effect(effect: &PrEffect, host: &ImportHost) -> Result<LayerEffect, Str
             temperature: Some(0.0),
             tint: Some(-tint / 3.0),
         }),
+        PrEffectParams::DropShadow { color, opacity, direction, distance, softness } => {
+            let [red, green, blue] = color.fx();
+            Ok(LayerEffect::DropShadow(fx_schema::DropShadow {
+                enabled: true,
+                color: [red, green, blue, opacity / 255.0],
+                offset: shadow_offset(direction, distance),
+                blur_radius: NonNegativeProperty::new(softness * 0.5).ok_or("invalid Drop Shadow Softness")?,
+                spread_radius: NonNegativeProperty::new(0.0).ok_or("invalid shadow spread")?,
+                blend_mode: fx_schema::BlendMode::Normal,
+            }))
+        }
+        PrEffectParams::ProcAmpBrightness(brightness) => Ok(LayerEffect::Exposure {
+            exposure: Some(0.0),
+            offset: Some(brightness / 100.0),
+            gamma_correction: Some(1.0),
+        }),
         PrEffectParams::LumetriExposure(exposure) => Ok(LayerEffect::Exposure {
-            exposure: Some(exposure),
+            exposure: Some(crate::schema::LUMETRI_EXPOSURE.fx_value(exposure)),
             offset: Some(0.0),
             gamma_correction: Some(1.0),
         }),
@@ -1844,8 +2058,7 @@ fn layer_effect(effect: &PrEffect, host: &ImportHost) -> Result<LayerEffect, Str
             colorize_saturation: 0.0,
             colorize_lightness: 0.0,
         }),
-        // The reader keeps only aligned linear ramps; the host frame is the
-        // converter's rule.
+        // The reader bounds radial geometry separately; host admission is shared.
         PrEffectParams::Ramp(ramp) => {
             host.frame(STAGED_RAMP_REASON, FRAME_RULE)?;
             Ok(gradient_ramp(ramp))
@@ -2205,10 +2418,14 @@ pub(super) fn export_effects(
                     }
                 }
                 if let PrEffectParams::FindEdges(_) = effect.params {
-                    approximate(omissions, record, format!(
-                        "effects: Find Edges {name} converts approximately: {}; Blend With Original is written as 0 from the current FX effect, without replaying native controls",
-                        PrFindEdges::APPROXIMATION
-                    ));
+                    approximate(
+                        omissions,
+                        record,
+                        format!(
+                            "effects: Find Edges {name} converts approximately: {}; Blend With Original is written as 0 from the current FX effect, without replaying native controls",
+                            PrFindEdges::APPROXIMATION
+                        ),
+                    );
                 }
                 exported.push(effect);
             }
@@ -2345,14 +2562,24 @@ fn export_effect(
             center_y: Some(0.5),
         });
         let result = export_effect(None, enabled, &lens, dynamics, host, record, omissions)?;
-        approximate(omissions,record,format!("Fisheye approximated by current native Lens Curvature via horizontal quarter-frame inverse-sampler fit; polynomial coefficient {coefficient} limited to [-1,0]. Tangent projection, central magnification, circular aspect correction and edge-preserving support are not retained; native gain/fill/alpha remain uncalibrated"));
+        approximate(
+            omissions,
+            record,
+            format!(
+                "Fisheye approximated by current native Lens Curvature via horizontal quarter-frame inverse-sampler fit; polynomial coefficient {coefficient} limited to [-1,0]. Tangent projection, central magnification, circular aspect correction and edge-preserving support are not retained; native gain/fill/alpha remain uncalibrated"
+            ),
+        );
         if dynamics.entries().iter().any(|entry| {
             entry
                 .target
                 .effect_id()
                 .is_some_and(|effect| Some(effect) == id)
         }) {
-            approximate(omissions,record,"Fisheye animation flattened to current static controls; nonlinear projection fitting is not an affine key mapping");
+            approximate(
+                omissions,
+                record,
+                "Fisheye animation flattened to current static controls; nonlinear projection fitting is not an affine key mapping",
+            );
         }
         return Ok(result);
     }
@@ -2396,7 +2623,14 @@ fn export_effect(
             || style.range != 0.5
             || style.blend_mode != fx_schema::BlendMode::Normal
         {
-            approximate(omissions, record, format!("Alpha Glow replaces current OuterGlow spread={}, range={}, blend={:?} with the native single-color fading form; dilation, falloff and blend differences are not reproduced", style.spread, style.range, style.blend_mode));
+            approximate(
+                omissions,
+                record,
+                format!(
+                    "Alpha Glow replaces current OuterGlow spread={}, range={}, blend={:?} with the native single-color fading form; dilation, falloff and blend differences are not reproduced",
+                    style.spread, style.range, style.blend_mode
+                ),
+            );
         }
         let [r, g, b, a] = style.color;
         let color =
@@ -2431,7 +2665,13 @@ fn export_effect(
         let ([size], animations) = match converted {
             Ok(converted) => converted,
             Err(reason) => {
-                approximate(omissions, record, format!("Alpha Glow size animation flattened to current static size {static_size}: {reason}"));
+                approximate(
+                    omissions,
+                    record,
+                    format!(
+                        "Alpha Glow size animation flattened to current static size {static_size}: {reason}"
+                    ),
+                );
                 ([static_size], Vec::new())
             }
         };
@@ -2478,7 +2718,9 @@ fn export_effect(
                 host.layer,
                 ExportField::Effects,
                 record,
-                format!("Posterize Time {parameter} animation was not exported: FX frameRate is not animatable; the current static runtime rate was kept"),
+                format!(
+                    "Posterize Time {parameter} animation was not exported: FX frameRate is not animatable; the current static runtime rate was kept"
+                ),
             );
             continue;
         }
@@ -2506,7 +2748,9 @@ fn export_effect(
                 host.layer,
                 ExportField::Effects,
                 record,
-                format!("effect {parameter} animation was not exported: {reason}; static values were kept"),
+                format!(
+                    "effect {parameter} animation was not exported: {reason}; static values were kept"
+                ),
             );
             continue;
         }
@@ -2669,6 +2913,9 @@ fn export_effect(
         }
         return export_replicate(enabled, tile, &keyed, dynamics, host, record, omissions);
     }
+    if let EffectPayload::Known(LayerEffect::Halation { .. }) = payload {
+        return Err("Halation omitted: native-light soft highlight extraction and warm additive bloom have no verified faithful Premiere mapping".to_owned());
+    }
     if let EffectPayload::Known(LayerEffect::Sharpen { amount }) = payload {
         if host.still {
             return Err(STILL_SHARPEN_REASON.to_owned());
@@ -2801,7 +3048,9 @@ fn export_effect(
         let invert = invert.unwrap_or(0.0);
         // The existing shader reverses coverage only when invert > 0.5.
         if !(0.0..=0.5).contains(&invert) {
-            return Err(format!("Legacy Luma has no native invert control; current FX invert={invert} is unsupported"));
+            return Err(format!(
+                "Legacy Luma has no native invert control; current FX invert={invert} is unsupported"
+            ));
         }
         let ([threshold, cutoff], animations) = export_scalar_params(
             [&LEGACY_LUMA_THRESHOLD, &LEGACY_LUMA_CUTOFF],
@@ -2889,7 +3138,9 @@ fn export_effect(
             approximate(
                 omissions,
                 record,
-                format!("Posterize Time frameRate {rate} exports as its FX runtime rate {resolved} fps (default 8, range 1 to 60)"),
+                format!(
+                    "Posterize Time frameRate {rate} exports as its FX runtime rate {resolved} fps (default 8, range 1 to 60)"
+                ),
             );
         }
         if enabled {
@@ -2923,7 +3174,7 @@ fn export_effect(
         EffectPayload::Known(LayerEffect::Levels { .. } | LayerEffect::ShiftChannels { .. })
             if !enabled =>
         {
-            return Err("a disabled Levels has no verified Premiere bypass form".to_owned())
+            return Err("a disabled Levels has no verified Premiere bypass form".to_owned());
         }
         EffectPayload::Known(LayerEffect::ShiftChannels {
             take_red_from,
@@ -2948,7 +3199,7 @@ fn export_effect(
                         return Err(
                             "ShiftChannels cross-channel routing has no native Levels mapping"
                                 .to_owned(),
-                        )
+                        );
                     }
                 };
             }
@@ -3238,7 +3489,7 @@ fn export_tint(
         // A keyed colour's static value is its first key's (see `PrEffect`).
         *colour = match keys.first() {
             Some(first) => first.value,
-            None => native_colour(param, fx)?,
+            None => native_colour(param, fx, record, omissions)?,
         };
         if !keys.is_empty() {
             animations.push(PrEffectParamAnimation {
@@ -3376,7 +3627,7 @@ fn export_ramp(
         let keys = export_colour_keys(param, keyed, host.source_in, record, omissions)?;
         *colour = match keys.first() {
             Some(first) => first.value,
-            None => native_colour(param, fx)?,
+            None => native_colour(param, fx, record, omissions)?,
         };
         if !keys.is_empty() {
             animations.push(PrEffectParamAnimation {
@@ -3412,6 +3663,7 @@ fn export_ramp(
     let [start, end] = points;
     let [start_colour, end_colour] = native_colours;
     let ramp = PrRamp {
+        radial: false,
         start,
         start_colour,
         end,
@@ -3591,10 +3843,38 @@ fn export_tile_count_keys(
 }
 
 /// The 8-bit native colour of the FX channel values of the colour `param`,
-/// or why it has none: a channel outside 0 to 1 is never clamped.
-fn native_colour(param: &EffectParamSpec, rgb: [f64; 3]) -> Result<PrColour, String> {
-    PrColour::from_fx(rgb)
-        .ok_or_else(|| format!("{} {:?} has a channel outside 0 to 1", param.label, rgb))
+/// Extended authored channels are clipped with a contextual native-export loss.
+fn native_colour(
+    param: &EffectParamSpec,
+    rgb: [f64; 3],
+    record: &str,
+    omissions: &mut dyn OmissionSink,
+) -> Result<PrColour, String> {
+    if rgb
+        .iter()
+        .any(|channel| !channel.is_finite() || !(0.0..=64.0).contains(channel))
+    {
+        return Err(format!(
+            "{} {:?} has a channel outside finite extended-sRGB 0 to 64",
+            param.label, rgb
+        ));
+    }
+    if rgb.iter().any(|channel| *channel > 1.0) {
+        approximate(
+            omissions,
+            record,
+            format!(
+                "{}: extended-sRGB RGB {:?} was clamped to native 0..=1; HDR brightness and channel ratios are not retained",
+                param.label, rgb
+            ),
+        );
+    }
+    PrColour::from_fx(rgb.map(|channel| channel.min(1.0))).ok_or_else(|| {
+        format!(
+            "{} {:?} cannot be represented as native RGB",
+            param.label, rgb
+        )
+    })
 }
 
 /// The native colour keys of the colour `param` from its three FX channel
@@ -3679,7 +3959,7 @@ fn export_colour_keys(
             }
             Ok(PrColourKeyframe {
                 source_ticks: r.source_ticks,
-                value: native_colour(param, [r.value, g.value, b.value])
+                value: native_colour(param, [r.value, g.value, b.value], record, omissions)
                     .map_err(|reason| format!("{reason} at {millis} ms"))?,
                 easing: r.easing,
             })
@@ -3860,15 +4140,23 @@ fn export_param_keys(
     let mut losses = Vec::new();
     let keys = keys
         .into_iter()
-        .filter_map(
-            |key| match native_value(param, " key value", clip_value(key.value)) {
+        .filter_map(|key| {
+            match if matches!(param.binding, Some(EffectParamBinding::Colour { .. }))
+                && key.value.is_finite()
+                && (0.0..=64.0).contains(&key.value)
+            {
+                // Pair color keys before clipping; never drop one RGB channel.
+                Ok(key.value)
+            } else {
+                native_value(param, " key value", clip_value(key.value))
+            } {
                 Ok(value) => Some(PrScalarKeyframe { value, ..key }),
                 Err(reason) => {
                     losses.push(reason);
                     None
                 }
-            },
-        )
+            }
+        })
         .collect::<Vec<_>>();
     if keys.is_empty() {
         return Err(losses
@@ -4027,7 +4315,7 @@ fn export_affine(
             other => {
                 return Err(format!(
                     "the video has {other:?} keys, which a Transform has no parameter for"
-                ))
+                ));
             }
         }
     }

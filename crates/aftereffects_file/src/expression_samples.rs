@@ -71,6 +71,15 @@ pub enum PropertyIdentity {
         /// Native AE animator property match name.
         match_name: String,
     },
+    /// A numeric Range Selector field. Converter-evaluated only; rejected in Adobe sidecars.
+    TextSelector {
+        /// One-based enabled native Text Animator index.
+        animator: u32,
+        /// One-based enabled selector index within the animator.
+        selector: u32,
+        /// Native AE selector field match name.
+        match_name: String,
+    },
 }
 
 /// One segment of a root-anchored native Shape property path.
@@ -205,11 +214,25 @@ pub struct ExpressionSamples {
     /// Converter-evaluated Source Text strings; never part of Adobe sidecars.
     #[serde(skip)]
     pub(crate) texts: Vec<EvaluatedText>,
+    /// Converter-evaluated native Paths; not an Adobe capture-sidecar extension.
+    #[serde(skip)]
+    pub(crate) paths: Vec<EvaluatedPath>,
+}
+
+/// Typed Path observations in native API pixel units and composition-clock time.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct EvaluatedPath {
+    pub(crate) composition_id: u32,
+    pub(crate) layer_id: u32,
+    pub(crate) property: PropertyIdentity,
+    pub(crate) sample_times_seconds: Vec<f64>,
+    pub(crate) values: Vec<crate::properties::NativePathValue>,
 }
 
 /// Source Text strings evaluated by the converter at composition-clock times.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct EvaluatedText {
+    pub(crate) style_source: Option<[u32; 2]>,
     pub(crate) composition_id: u32,
     pub(crate) layer_id: u32,
     pub(crate) sample_times_seconds: Vec<f64>,
@@ -226,6 +249,7 @@ impl Default for ExpressionSamples {
             properties: Vec::new(),
             errors: Vec::new(),
             texts: Vec::new(),
+            paths: Vec::new(),
         }
     }
 }
@@ -418,6 +442,7 @@ fn validate_identity(
         property,
         PropertyIdentity::Mask { .. }
             | PropertyIdentity::TextAnimator { .. }
+            | PropertyIdentity::TextSelector { .. }
             | PropertyIdentity::SourceText {}
     ) {
         return Err(ExpressionSamplesError::ConverterOnlyIdentity { record });

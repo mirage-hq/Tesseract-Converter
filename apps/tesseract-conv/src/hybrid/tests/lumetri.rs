@@ -43,7 +43,10 @@ fn human_lumetri_import_and_edited_linked_export_keep_controls_and_saturation_ke
             .as_array_mut()
             .unwrap();
         assert_eq!(effects.len(), 6);
-        assert_eq!(effects[0]["effect"]["exposure"], 1.0);
+        // 1 stop divided by 2.2 (the Lumetri display-code approximation), as stored.
+        assert_eq!(effects[0]["effect"]["exposure"], 0.454545455);
+        assert_eq!(effects[0]["effect"]["offset"], 0.0);
+        assert_eq!(effects[0]["effect"]["gammaCorrection"], 1.0);
         assert_eq!(effects[1]["effect"]["contrast"], 25.0);
         assert_eq!(effects[2]["effect"]["saturation"], 30.0);
         if edited {
@@ -118,7 +121,7 @@ fn human_lumetri_import_and_edited_linked_export_keep_controls_and_saturation_ke
         let effects = &selected[0]["effects"];
         assert_eq!(
             effects[0]["effect"]["exposure"],
-            if edited { 2.0 } else { 1.0 }
+            if edited { 2.0 } else { 0.454545455 }
         );
         assert_eq!(
             effects[1]["effect"]["contrast"],

@@ -77,8 +77,8 @@ pub(crate) fn inspect_export_video_media(
             let (depth, colour, aspect) =
                 crate::media_metadata::inspect_export_h264(description, &stream.extradata)?;
             description.validate_display_dimensions(aspect)?;
-            if depth != 8 {
-                Some("H.264 must be progressive 8-bit 4:2:0 with matching dimensions".to_owned())
+            if depth != 8 && !(depth == 10 && colour.is_some_and(|c| c.codes() == (1, 1, 1))) {
+                Some("H.264 requires 8-bit or BT.709 10-bit native picture".to_owned())
             } else if colour.is_some_and(|colour| colour.codes().1 == 13) {
                 Some(
                     "sRGB video transfer has no established native Premiere source profile"
@@ -114,12 +114,24 @@ pub(crate) fn inspect_export_video_media(
     // Validate an unsupported codec's physical payload before returning a
     // local loss. A presentation edit must not hide malformed media.
     let format = if unsupported.is_none() {
-        Some(crate::video_format::validate_codec(
-            stream.codec_tag,
-            &stream.extradata,
-            description,
-            &mut metadata_reader,
-        )?)
+        Some(if description.entry == *b"avc1" {
+            let (bit_depth, colour, pixel_aspect) =
+                crate::media_metadata::inspect_export_h264(description, &stream.extradata)?;
+            crate::video_format::VideoFormat {
+                codec: crate::schema::VideoCodec::H264,
+                bit_depth,
+                colour: colour.filter(|colour| bit_depth == 10 || colour.passes_through()),
+                orientation: description.orientation,
+                pixel_aspect,
+            }
+        } else {
+            crate::video_format::validate_codec(
+                stream.codec_tag,
+                &stream.extradata,
+                description,
+                &mut metadata_reader,
+            )?
+        })
     } else {
         None
     };

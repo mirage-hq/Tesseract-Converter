@@ -155,6 +155,102 @@ pub(super) fn layers(controls: Vec<Control<'_>>) -> impl Iterator<Item = FxLayer
         .map(|control| FxLayer::Shape(control.layer))
 }
 
+/// Rigid vector transforms preserve arc length even when translation/rotation
+/// is keyed. Opacity stays on the paint wrapper and does not change arc length.
+/// Scale, skew and geometric expressions stay conservative.
+fn rigid_group(scope: &program::Scope<'_>) -> bool {
+    if !scope.enabled {
+        return false;
+    }
+    let Some(transform) = scope.transform else {
+        return true;
+    };
+    let Ok(leaves) = property_group(transform, "shape transform") else {
+        return false;
+    };
+    let mut warnings = Vec::new();
+    for (name, dimensions, identity) in [
+        ("ADBE Vector Anchor", 2, None),
+        ("ADBE Vector Position", 2, None),
+        ("ADBE Vector Rotation", 1, None),
+        ("ADBE Vector Scale", 2, Some(100.0)),
+        ("ADBE Vector Skew", 1, Some(0.0)),
+        ("ADBE Vector Skew Axis", 1, Some(0.0)),
+    ] {
+        let Some(numeric) = numeric_leaf(&leaves, name, &mut warnings) else {
+            if leaves.iter().any(|(candidate, _)| *candidate == name) {
+                return false;
+            }
+            continue;
+        };
+        let valid = |values: &[f64]| {
+            values.len() >= dimensions
+                && values[..dimensions].iter().all(|value| {
+                    value.is_finite() && identity.is_none_or(|expected| *value == expected)
+                })
+        };
+        if numeric.expression_enabled
+            || (identity.is_some() && (numeric.animated || !numeric.keyframes.is_empty()))
+            || (!numeric.values.is_empty() && !valid(&numeric.values))
+            || (numeric.animated && numeric.keyframes.is_empty())
+            || numeric.keyframes.iter().any(|key| !valid(&key.values))
+        {
+            return false;
+        }
+    }
+    warnings.is_empty()
+}
+
+/// Simultaneous Trim treats each contour independently, so it can cross
+/// rigid scopes even when other paths consume the same operation. Individual
+/// Trim instead requires a single source path to preserve its length domain.
+pub(super) fn ancestor_trim(
+    program: &Program<'_>,
+    geometry: &[GeometryId],
+    owner: ScopeId,
+    modifier: &Modifier<'_>,
+    controls: &[Control<'_>],
+) -> bool {
+    if modifier.operation.name != "ADBE Vector Filter - Trim" || geometry.is_empty() {
+        return false;
+    }
+    if !geometry.iter().all(|id| {
+        matches!(
+            program.geometry[id.0].kind,
+            program::GeometryKind::Source(_)
+        ) && program.geometry[id.0].owner == owner
+    }) {
+        return false;
+    }
+    let Some(trim) = controls
+        .iter()
+        .find(|control| same(&control.native, modifier))
+        .and_then(|control| control.layer.shape.trim)
+    else {
+        return false;
+    };
+    if trim.mode == ShapeTrimMode::Individually
+        && (geometry.len() != 1
+            || program.geometry.iter().enumerate().any(|(index, node)| {
+                index != geometry[0].0 && node.modifiers.iter().any(|other| same(other, modifier))
+            }))
+    {
+        return false;
+    }
+    let mut scope = owner;
+    while scope != modifier.owner {
+        let current = &program.scopes[scope.0];
+        if !rigid_group(current) {
+            return false;
+        }
+        let Some(parent) = current.parent else {
+            return false;
+        };
+        scope = parent;
+    }
+    true
+}
+
 pub(super) fn apply(
     collector: &mut Collector<'_>,
     program: &Program<'_>,
@@ -182,7 +278,9 @@ pub(super) fn apply(
             "ADBE Vector Filter - Trim" => 3,
             _ => 0,
         };
-        if modifier.owner != owner || rank == 0 || rank <= previous {
+        let scope_matches =
+            modifier.owner == owner || ancestor_trim(program, geometry, owner, modifier, controls);
+        if !scope_matches || rank == 0 || rank <= previous {
             collector.warnings.push(format!("{} cannot preserve its scope/repeated operation/order in the fixed FX modifier pipeline; omitted from this paint", modifier.operation.name));
             continue;
         }

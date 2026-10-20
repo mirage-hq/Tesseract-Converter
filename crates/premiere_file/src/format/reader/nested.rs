@@ -6,14 +6,16 @@
 //! reflects the saved window about OriginalDuration, never the current end.
 //! Forward placements use one constant speed that their
 //! saved input window confirms by the media rule ([`source_span_matches`]: the
-//! speed is source time over placement time, whatever the inner frame rate),
+//! speed is source time over placement time, whatever the inner frame rate).
+//! When no speed or source curve was saved, a discrepant positive trim uses a
+//! diagnosed constant-rate approximation instead of losing the whole picture,
 //! optionally with a bounded forward source curve on a top-level placement,
-//! intrinsic Motion (static or keyed, without a Track Matte Key), Opacity
+//! intrinsic Motion (static pivots and Scale may move a Track Matte Key), Opacity
 //! (static, or keyed unless the nest is retimed), default or standalone static
 //! zero-feather Crop, any Blend Mode, and bounded occurrence effects under the
 //! [nested occurrence effect rules](../../../README.md#nested-occurrence-effects).
-//! Any canvas and frame rate are admitted, though a Track Matte Key only on the
-//! outer canvas. The ordinary sequence reader reads its inner timeline, at most
+//! Any canvas and frame rate are admitted; source-frame matte staging requires
+//! unit-forward matching clocks. The ordinary sequence reader reads its inner timeline, at most
 //! [`MAX_NEST_DEPTH`] levels deep.
 //! Repeated placements share their media records and reuse one read of
 //! their inner sequence per nesting depth that remains below them, so a
@@ -155,6 +157,11 @@ pub(super) enum NestedVideo {
     Media(Box<crate::schema::PrVideoOccurrence>),
 }
 
+enum ReadFailure {
+    EmptyNativeSequence(String),
+    Other(String),
+}
+
 /// Recursion state for one top-level sequence read.
 pub(super) struct Nesting<'a> {
     /// Timelines on a nesting cycle in the project topology.
@@ -168,7 +175,7 @@ pub(super) struct Nesting<'a> {
     /// reuses it, whatever the track order. A failure keeps its reason. A read
     /// that met a cycle is kept too: its closing placement is already omitted
     /// and reported.
-    finished: BTreeMap<ReadKey, std::result::Result<InnerRead, String>>,
+    finished: BTreeMap<ReadKey, std::result::Result<InnerRead, ReadFailure>>,
 }
 
 impl<'a> Nesting<'a> {
@@ -228,12 +235,24 @@ impl<'a> Nesting<'a> {
             );
             self.depth = level - 1;
             self.open.pop();
-            let read = read.map_err(reason).map(Self::keep);
+            let read = read
+                .map_err(|error| match error {
+                    BuildError::EmptyNativeSequence(sequence) => {
+                        ReadFailure::EmptyNativeSequence(sequence)
+                    }
+                    other => ReadFailure::Other(reason(other)),
+                })
+                .map(Self::keep);
             self.finished.insert(key.clone(), read);
         }
         match self.finished.get_mut(&key).expect("each read is cached") {
             Ok(read) => Ok((key, read)),
-            Err(reason) => Err(unsupported(format!("nested sequence {guid}: {reason}"))),
+            Err(ReadFailure::EmptyNativeSequence(sequence)) => {
+                Err(BuildError::EmptyNativeSequence(sequence.clone()))
+            }
+            Err(ReadFailure::Other(reason)) => {
+                Err(unsupported(format!("nested sequence {guid}: {reason}")))
+            }
         }
     }
 
@@ -295,7 +314,7 @@ pub(super) fn read_nest(
     nesting: &mut Nesting<'_>,
     omissions: &mut Vec<Omission>,
 ) -> Result<NestedVideo> {
-    let placement = read_placement(
+    let mut placement = read_placement(
         graph,
         &item,
         parent,
@@ -362,8 +381,8 @@ pub(super) fn read_nest(
         })?;
         let split = effects::split_chain(graph, chain_components(chain)?, &chain.identity)?;
         ensure!(
-            !split.has_active_nest_corner_pin(),
-            "{identity}: active Corner Pin on a nested sequence occurrence is not converted: the picture Group has no fixed native canvas bounds; occurrence omitted to preserve coverage"
+            !split.has_active_nest_corner_pin() || split.is_isolated_nest_corner_pin(),
+            "{identity}: active Corner Pin on a nested sequence occurrence requires one isolated standard effect; occurrence omitted to preserve coverage"
         );
         let owner = effects::EffectOwner {
             occurrence: identity,
@@ -375,18 +394,30 @@ pub(super) fn read_nest(
             // The canvas is read later; no point-frame equality is assumed.
             source_is_canvas: false,
             adjustment: false,
+            solid_crop: false,
         };
         if split.has_active_nest_transform() {
-            let effects = split
-                .read_nest_transform(graph, &owner, &mut occurrence_effect_omissions)
+            let (effects, above_mask) = split
+                .read_nest_transform(
+                    graph,
+                    &owner,
+                    !placement.crop.is_default() || placement.linear_wipe.is_some(),
+                    &mut occurrence_effect_omissions,
+                )
                 .map_err(|error| unsupported(format!("{identity}: {}", effects::reason(error))))?;
-            (effects, 0, true)
+            (effects, above_mask, true)
         } else {
             let (effects, above_mask) = split.read_effects(
                 graph,
                 &owner,
                 placement.linear_wipe.is_some(),
                 &mut occurrence_effect_omissions,
+            );
+            ensure!(
+                !split.has_active_nest_corner_pin() || effects.iter().any(|effect| {
+                    effect.enabled && matches!(effect.params, crate::schema::PrEffectParams::CornerPin(_))
+                }),
+                "{identity}: active nested Corner Pin controls or keys could not be retained; occurrence omitted to preserve coverage"
             );
             // The existing picture stage carries supported effects and keys;
             // the outer owner retains its independent mask/matte coverage.
@@ -418,6 +449,36 @@ pub(super) fn read_nest(
         "{identity}: Scale to Frame Size on a nested sequence occurrence is not converted"
     );
     let clip = &placement.clip.identity;
+    // A stale OutPoint is not a speed control; absent speed keeps unit playback.
+    if placement.playback_rate == 1.0
+        && placement.time_remap.is_none()
+        && placement.clip.value.clip.as_ref().is_some_and(|native| {
+            native.playback_speed.is_none() && native.time_remapping.is_none()
+        })
+        && placement.end > placement.start
+        && placement.source_out > placement.source_in
+        && !source_span_matches(
+            placement.end - placement.start,
+            placement.source_out - placement.source_in,
+            placement.playback_rate,
+        )
+    {
+        let saved_out = placement.source_out;
+        placement.source_out = placement
+            .source_in
+            .checked_add(placement.end - placement.start)
+            .ok_or_else(|| {
+                unsupported(format!("{clip}: unit-playback source endpoint overflows"))
+            })?;
+        crate::approximate(
+            omissions,
+            clip,
+            format!(
+                "missing PlaybackSpeed keeps default unit playback despite contradictory nested OutPoint {saved_out}; source In {} and placement duration {} determine Out {}; saved trim endpoint replaced",
+                placement.source_in, placement.end - placement.start, placement.source_out,
+            ),
+        );
+    }
     let edits = occurrence_edits(ClipEdits {
         linear_wipe: placement.linear_wipe.as_ref(),
         animations: &placement.animations,
@@ -429,15 +490,44 @@ pub(super) fn read_nest(
         playback_rate: placement.playback_rate,
         time_remap: placement.time_remap.as_ref(),
     });
-    // A Track Matte Key keys the nest's canvas-sized picture, a blend mode
-    // blends it and its Opacity, static or keyed, fades it, which its group
-    // carries; Opacity scales the keyed picture's alpha in either order. So
-    // is its Motion, static or keyed, as a clip's is its layer's, though not
-    // beside a Track Matte Key, whose order against it no nest case
-    // measures. A standalone static Crop clips its own canvas before Motion;
-    // feather, Motion Crop and Crop beside a Track Matte Key remain excluded.
+    // Static pivots and Scale move picture and matte under the same Group.
+    // Different source/parent canvases need source-frame staging.
+    // Centred Position keys with zero spatial handles cannot move the matte.
+    let neutral_position_keys = placement
+        .animations
+        .iter()
+        .all(|animation| match animation {
+            PrPropertyAnimation::Opacity(_) => true,
+            PrPropertyAnimation::Position(keys) => keys.iter().all(|key| {
+                key.value == [0.5, 0.5]
+                    && key
+                        .spatial_in_tangent
+                        .is_none_or(|tangent| tangent == [0.0, 0.0])
+                    && key
+                        .spatial_out_tangent
+                        .is_none_or(|tangent| tangent == [0.0, 0.0])
+            }),
+            _ => false,
+        });
+    let static_pivot_scale = placement.transform.rotation == 0.0
+        && placement.playback_rate == 1.0
+        && placement.time_remap.is_none()
+        && placement.animations.iter().all(|animation| {
+            matches!(
+                animation,
+                PrPropertyAnimation::Opacity(_)
+                    | PrPropertyAnimation::UniformScale(_)
+                    | PrPropertyAnimation::ScaleWidth(_)
+                    | PrPropertyAnimation::ScaleHeight(_)
+            )
+        });
     let reason = edits.iter().find_map(|&edit| match edit {
+        OccurrenceEdit::MotionKeys
+        | OccurrenceEdit::Scale
+        | OccurrenceEdit::Position
+        | OccurrenceEdit::AnchorPoint if static_pivot_scale => None,
         OccurrenceEdit::TrackMatte | OccurrenceEdit::Opacity | OccurrenceEdit::OpacityKeys => None,
+        OccurrenceEdit::MotionKeys if neutral_position_keys => None,
         OccurrenceEdit::MotionKeys
         | OccurrenceEdit::Position
         | OccurrenceEdit::AnchorPoint
@@ -457,8 +547,8 @@ pub(super) fn read_nest(
             || placement.linear_wipe.is_some() || placement.track_matte.is_some()
             || placement.playback_rate != 1.0 || placement.time_remap.is_some()
             || placement.opacity_mask.as_ref().is_some_and(|mask|
-                mask.raster.is_some() || !mask.path_keys.is_empty()))
-            .then(|| format!("{identity}: nested Opacity mask requires a static vector outline, unit-forward playback and no other masks")),
+                mask.raster.is_some()))
+            .then(|| format!("{identity}: nested Opacity mask requires a vector outline, unit-forward playback and no other masks")),
         OccurrenceEdit::Crop => {
             let reason = if placement.crop_from_motion {
                 Some("Motion Crop")
@@ -484,7 +574,16 @@ pub(super) fn read_nest(
         return Err(unsupported(reason));
     }
     let source_duration = read_sequence_source(graph, placement.source_record, omissions)?;
-    let (key, read) = nesting.read(graph, guid, media, omissions, None)?;
+    let (key, read) = match nesting.read(graph, guid, media, omissions, None) {
+        Err(error @ BuildError::EmptyNativeSequence(_))
+            if !placement.enabled || !parent.track_output =>
+        {
+            return Err(unsupported(format!(
+                "{identity}: disabled keyed empty-input behavior remains unverified: {error}"
+            )));
+        }
+        result => result?,
+    };
     let id = item.identity;
     let nest = &mut read.nest;
     if transform_stage {
@@ -523,6 +622,23 @@ pub(super) fn read_nest(
                 old_envelope.is_none() || native.geometry2,
                 "{id}: differing-canvas keyed affine import requires native Geometry2; ordinary Transform point basis is unmeasured"
             );
+            if old_envelope.is_some()
+                && native.geometry2_masks.is_empty()
+                && crate::schema::nested_transform_static_canvas_approximation(
+                    nest.sequence.dimensions(),
+                    parent.dimensions,
+                    &placement.transform,
+                    placement.opacity,
+                    &placement.animations,
+                    effect,
+                )
+            {
+                crate::approximate(
+                    &mut occurrence_effect_omissions,
+                    &id,
+                    "static nonproportional nested Geometry2 retains editable content using source-canvas Anchor/Position axes before Motion; native point normalization, clipping and RGB/alpha fidelity are unmeasured",
+                );
+            }
         }
         ensure!(
             placement.playback_rate == 1.0
@@ -536,6 +652,29 @@ pub(super) fn read_nest(
             "{id}: nested Transform with Track Matte Key or Opacity mask is not converted"
         );
     }
+    let inner_end = nest.sequence.end_ticks();
+    if placement.source_out > inner_end
+        && placement.source_in < inner_end
+        && placement.playback_rate == 1.0
+        && placement.time_remap.is_none()
+        && placement.track_matte.is_none()
+        && placement.source_out.checked_sub(placement.source_in)
+            == placement.end.checked_sub(placement.start)
+    {
+        // Keep the available unit-forward picture instead of losing the whole
+        // nest. Equal trims preserve the source/key clock; no final frame is
+        // invented. Do not mutate the cached inner timeline or shorten a Track
+        // Matte consumer's coverage contract. Reverse/retimed windows retain
+        // their existing admission rules.
+        let tail = placement.source_out - inner_end;
+        placement.end -= tail;
+        placement.source_out = inner_end;
+        crate::approximate(
+            &mut occurrence_effect_omissions,
+            &id,
+            format!("nested source tail of {tail} ticks exceeds the inner timeline; unavailable picture tail omitted, equal source/timeline prefix retained without holding the final frame; native tail appearance is unverified"),
+        );
+    }
     (nest.start_ticks, nest.end_ticks) = (placement.start, placement.end);
     (nest.in_ticks, nest.out_ticks) = (placement.source_in, placement.source_out);
     nest.playback_rate = placement.playback_rate;
@@ -547,10 +686,8 @@ pub(super) fn read_nest(
     nest.linear_wipe = placement.linear_wipe;
     nest.opacity_mask = placement.opacity_mask;
     ensure!(
-        nest.opacity_mask.is_none()
-            || (nest.sequence.dimensions() == parent.dimensions
-                && nest.sequence.frame_rate == parent.frame_rate),
-        "{id}: nested Opacity mask requires equal canvases and matching clocks"
+        nest.opacity_mask.is_none() || nest.sequence.frame_rate == parent.frame_rate,
+        "{id}: nested Opacity mask requires matching clocks"
     );
     // Before a later first key Premiere shows that key's value, as AME renders
     // effect parameters. So a keyed property's static value is
@@ -584,6 +721,11 @@ pub(super) fn read_nest(
                     nest.transform.scale[0] = key.value;
                 }
             }
+            PrPropertyAnimation::ScaleHeight(keys) => {
+                if let Some(key) = keys.first() {
+                    nest.transform.scale[1] = key.value;
+                }
+            }
             PrPropertyAnimation::Opacity(keys) => {
                 if let Some(key) = keys.first() {
                     nest.opacity = key.value;
@@ -592,12 +734,12 @@ pub(super) fn read_nest(
         }
     }
     nest.validate(parent.frame_rate, media)?;
-    // Motion places a nest of another canvas, and Premiere keys the picture
-    // before it moves it, so its matte would move with its group; that
-    // order is unmeasured, as for a moved nest.
+    // A matte on another canvas needs an explicit source-frame owner.
     ensure!(
-        placement.track_matte.is_none() || nest.sequence.dimensions() == parent.dimensions,
-        "{id}: a Track Matte Key on a nested sequence occurrence of another canvas is not converted"
+        placement.track_matte.is_none()
+            || nest.sequence.dimensions() == parent.dimensions
+            || (static_pivot_scale && nest.effects.is_empty()),
+        "{id}: a Track Matte Key on a nested sequence occurrence of another canvas requires static pivots, Scale and no effects"
     );
     // The saved input window must agree with the speed even with a source curve.
     ensure!(

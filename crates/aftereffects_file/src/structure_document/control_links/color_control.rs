@@ -14,47 +14,81 @@ pub(super) fn resolve(
     property: &[Chunk],
     composition: &Composition,
     source_items: Option<&HashMap<u32, &ProjectItem>>,
+    consumer: Option<&Layer>,
 ) -> Result<[f64; 4], PropertyError> {
+    resolve_alias(property, composition, source_items, consumer, 32)
+}
+
+// Every hop must be a complete alias terminating at a static native color.
+// Bound recursion so cycles and adversarial chains retain the authored fallback.
+fn resolve_alias(
+    property: &[Chunk],
+    composition: &Composition,
+    source_items: Option<&HashMap<u32, &ProjectItem>>,
+    consumer: Option<&Layer>,
+    remaining: u8,
+) -> Result<[f64; 4], PropertyError> {
+    if remaining == 0 {
+        return Err(PropertyError::Layout(
+            "cyclic or overlong Color Control alias chain",
+        ));
+    }
     let mut text = super::expression(property)?;
-    let target_composition = if token(&mut text, "thisComp").is_some() {
-        composition
+    let (source, source_composition) = if text.trim_start().starts_with("effect") {
+        (
+            consumer.ok_or(PropertyError::Layout("Color Control consumer missing"))?,
+            composition,
+        )
+    } else if token(&mut text, "thisLayer").is_some() {
+        token(&mut text, ".").ok_or(PropertyError::Layout("invalid local Color Control access"))?;
+        (
+            consumer.ok_or(PropertyError::Layout("Color Control consumer missing"))?,
+            composition,
+        )
     } else {
-        token(&mut text, "comp")
+        let target_composition = if token(&mut text, "thisComp").is_some() {
+            composition
+        } else {
+            token(&mut text, "comp")
+                .and_then(|_| token(&mut text, "("))
+                .ok_or(PropertyError::Layout(
+                    "not a direct Color Control composition alias",
+                ))?;
+            let name = quoted(&mut text).ok_or(PropertyError::Layout(
+                "invalid Color Control composition name",
+            ))?;
+            token(&mut text, ")").ok_or(PropertyError::Layout(
+                "invalid Color Control composition access",
+            ))?;
+            let items =
+                source_items.ok_or(PropertyError::Layout("Color Control project scope missing"))?;
+            let mut matches = items.values().filter_map(|item| match &item.kind {
+                ItemKind::Composition(composition) if item.name == name => {
+                    Some(composition.as_ref())
+                }
+                _ => None,
+            });
+            let composition = matches
+                .next()
+                .ok_or(PropertyError::Layout("Color Control composition missing"))?;
+            if matches.next().is_some() {
+                return Err(PropertyError::Layout("ambiguous Color Control composition"));
+            }
+            composition
+        };
+        token(&mut text, ".")
+            .and_then(|_| token(&mut text, "layer"))
             .and_then(|_| token(&mut text, "("))
             .ok_or(PropertyError::Layout(
-                "not a direct Color Control composition alias",
+                "not a direct Color Control layer alias",
             ))?;
-        let name = quoted(&mut text).ok_or(PropertyError::Layout(
-            "invalid Color Control composition name",
-        ))?;
-        token(&mut text, ")").ok_or(PropertyError::Layout(
-            "invalid Color Control composition access",
-        ))?;
-        let items =
-            source_items.ok_or(PropertyError::Layout("Color Control project scope missing"))?;
-        let mut matches = items.values().filter_map(|item| match &item.kind {
-            ItemKind::Composition(composition) if item.name == name => Some(composition.as_ref()),
-            _ => None,
-        });
-        let composition = matches
-            .next()
-            .ok_or(PropertyError::Layout("Color Control composition missing"))?;
-        if matches.next().is_some() {
-            return Err(PropertyError::Layout("ambiguous Color Control composition"));
-        }
-        composition
+        let name =
+            quoted(&mut text).ok_or(PropertyError::Layout("invalid Color Control layer name"))?;
+        token(&mut text, ")")
+            .and_then(|_| token(&mut text, "."))
+            .ok_or(PropertyError::Layout("invalid Color Control access"))?;
+        (unique_layer(target_composition, name)?, target_composition)
     };
-    token(&mut text, ".")
-        .and_then(|_| token(&mut text, "layer"))
-        .and_then(|_| token(&mut text, "("))
-        .ok_or(PropertyError::Layout(
-            "not a direct Color Control layer alias",
-        ))?;
-    let name =
-        quoted(&mut text).ok_or(PropertyError::Layout("invalid Color Control layer name"))?;
-    token(&mut text, ")")
-        .and_then(|_| token(&mut text, "."))
-        .ok_or(PropertyError::Layout("invalid Color Control access"))?;
     token(&mut text, "effect")
         .and_then(|_| token(&mut text, "("))
         .ok_or(PropertyError::Layout("invalid Color Control effect access"))?;
@@ -77,7 +111,6 @@ pub(super) fn resolve(
     if token(&mut text, ")").is_none() || !finished(text) {
         return Err(PropertyError::Layout("not a complete Color Control alias"));
     }
-    let source = unique_layer(target_composition, name)?;
     let roots = properties::root_runs(&source.content)?;
     let parade = unique_run(&roots, "ADBE Effect Parade")?;
     let effects = properties::runs(properties::unique_list(parade, *b"tdgp")?)?;
@@ -138,19 +171,22 @@ pub(super) fn resolve(
         return Err(PropertyError::Layout("not a native color-controller alias"));
     };
     let numeric = properties::read_numeric(storage)?;
-    if numeric.animated
-        || !numeric.keyframes.is_empty()
-        || numeric.expression_enabled
-        || numeric.dimensions_separated
-    {
-        return Err(PropertyError::Layout(
-            "Color Control must be static and expression-free",
-        ));
+    if numeric.animated || !numeric.keyframes.is_empty() || numeric.dimensions_separated {
+        return Err(PropertyError::Layout("Color Control must be static"));
     }
     if numeric.value_kind != NumericValueKind::Color {
         return Err(PropertyError::Layout(
             "Color Control must have native color storage",
         ));
+    }
+    if numeric.expression_enabled {
+        return resolve_alias(
+            storage,
+            source_composition,
+            source_items,
+            Some(source),
+            remaining - 1,
+        );
     }
     let color: [f64; 4] = numeric
         .values

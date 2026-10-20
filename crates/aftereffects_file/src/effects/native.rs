@@ -2,6 +2,7 @@
 //! A project's EfdG contains definitions; a layer-side `sspc` repeats its `parT`.
 
 mod corner_pin;
+mod fill;
 mod hue_saturation;
 #[cfg(test)]
 mod hue_saturation_tests;
@@ -163,6 +164,9 @@ pub(crate) fn read_effects(content: &[Chunk], size: [f64; 2]) -> (Vec<DecodedEff
             }
         };
         let canonical = definitions::definition(match_name);
+        let sparse_slider = match_name == "ADBE Slider Control"
+            && declarations != Declarations::Unreadable
+            && local_definitions.is_empty();
         // Index every table once: untrusted plugins can declare thousands of
         // parameters, and per-name linear scans would make import quadratic.
         let mut declared_by_name: HashMap<&str, (&[Chunk], bool)> = HashMap::new();
@@ -192,6 +196,8 @@ pub(crate) fn read_effects(content: &[Chunk], size: [f64; 2]) -> (Vec<DecodedEff
             }))
             .chain(explicit.iter().map(|(name, _)| *name))
             .chain(super::toner::parameter_names(match_name).iter().copied())
+            .chain(fill::parameter_names(match_name).iter().copied())
+            .chain((match_name == "ADBE Slider Control").then_some("ADBE Slider Control-0001"))
         {
             if (packed_levels.is_some() && name == levels::HISTOGRAM)
                 || (packed_hue.is_some() && name == hue_saturation::CHANNEL_RANGE)
@@ -275,6 +281,11 @@ pub(crate) fn read_effects(content: &[Chunk], size: [f64; 2]) -> (Vec<DecodedEff
                 } else {
                     canonical_numeric(canonical, size)
                         .or_else(|| super::toner::default_parameter(match_name, name).map(Ok))
+                        .or_else(|| fill::default_parameter(match_name, name).map(Ok))
+                        .or_else(|| {
+                            (sparse_slider && name == "ADBE Slider Control-0001")
+                                .then(|| Ok(slider_default()))
+                        })
                         .unwrap_or(Err(PropertyError::Layout(
                             "effect parameter definition missing",
                         )))
@@ -323,11 +334,27 @@ pub(crate) fn read_effects(content: &[Chunk], size: [f64; 2]) -> (Vec<DecodedEff
     (effects, warnings)
 }
 
+fn slider_default() -> NumericProperty {
+    // AE omits an unchanged zero Slider even when its local parT is empty.
+    NumericProperty {
+        values: vec![0.0],
+        animated: false,
+        expression_enabled: false,
+        expression_present: false,
+        dimensions_separated: false,
+        keyframes: Vec::new(),
+        value_kind: NumericValueKind::Continuous,
+    }
+}
+
 /// Bounded plugin profiles reject a control with duplicate explicit records
 /// instead of silently using the first one. Each keeps its own diagnostic.
 fn duplicate_record_error(match_name: &str) -> Option<&'static str> {
     match match_name {
-        super::keylight::MATCH_NAME => Some("duplicate effect control record"),
+        super::keylight::MATCH_NAME | super::venetian_blinds::MATCH_NAME | "CC Tiler" => {
+            Some("duplicate effect control record")
+        }
+        "ADBE Slider Control" => Some("duplicate Slider control"),
         "CC Toner" => Some("duplicate Toner control"),
         "ADBE Invert" => Some("duplicate Invert control"),
         _ => None,
@@ -408,7 +435,10 @@ fn round_integer_values(numeric: &mut NumericProperty) {
 
 /// `pard` is a 148-byte native parameter declaration, not a `tdb4` leaf.
 /// Its value slots use plugin-specific storage; point defaults need layer size.
-fn default_numeric(definition: &[Chunk], size: [f64; 2]) -> Result<NumericProperty, PropertyError> {
+pub(crate) fn default_numeric(
+    definition: &[Chunk],
+    size: [f64; 2],
+) -> Result<NumericProperty, PropertyError> {
     let bytes = properties::data(definition, *b"pard")?;
     if bytes.len() != 148 {
         return Err(PropertyError::Layout("effect pard length"));

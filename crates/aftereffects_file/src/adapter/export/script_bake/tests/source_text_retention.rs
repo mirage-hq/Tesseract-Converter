@@ -89,7 +89,10 @@ fn native_export(
         .export_from_tesseract(
             &source,
             &output,
-            &AfterEffectsExportOptions { fps: 30.0 },
+            &AfterEffectsExportOptions {
+                fps: 30.0,
+                ..Default::default()
+            },
             ConversionMode::Write,
         )
         .unwrap();
@@ -124,7 +127,10 @@ fn nested_typewriter_retains_empty_base_successive_native_text_and_picture() {
     let before = original.to_json_value().unwrap();
     let prepared = prepare_with_progress(
         &original,
-        &AfterEffectsExportOptions { fps: 30.0 },
+        &AfterEffectsExportOptions {
+            fps: 30.0,
+            ..Default::default()
+        },
         Progress::default(),
     )
     .unwrap();

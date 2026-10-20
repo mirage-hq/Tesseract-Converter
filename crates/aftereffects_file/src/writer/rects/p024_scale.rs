@@ -252,7 +252,9 @@ fn p024_planar_video_scale_preserves_two_stage_source_ticks() {
             )
             .unwrap();
             let units: Vec<_> = data
-                .chunks_exact(48)
+                .as_chunks::<48>()
+                .0
+                .iter()
                 .map(|item| i32::from_be_bytes(item[..4].try_into().unwrap()))
                 .collect();
             assert_eq!(units, expected);
@@ -272,7 +274,9 @@ fn p024_planar_video_scale_preserves_two_stage_source_ticks() {
         let list = crate::properties::unique_list(chunks, *b"list").unwrap();
         let data = crate::properties::data(list, *b"ldat").unwrap();
         let actual: Vec<_> = data
-            .chunks_exact(128)
+            .as_chunks::<128>()
+            .0
+            .iter()
             .map(|item| i32::from_be_bytes(item[..4].try_into().unwrap()))
             .collect();
         assert_eq!(actual, expected);

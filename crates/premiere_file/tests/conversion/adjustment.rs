@@ -492,10 +492,8 @@ fn layer_rows(document: &Value) -> Vec<(String, String, i64, i64, Value)> {
 /// Scale 50, 4–8 s), V3 adjustments A Levels 0–3 s, B Gaussian Blur repeat
 /// edge 3–5 s, C the same without repeat edge 5–7 s, D Levels output white
 /// 180 with Opacity keys 100 → 20 at 7.5/8.75 s, then held, 7–9 s, F Crop
-/// Left 40 9–10 s, and V4 E Levels Gamma 1.6 1–2.5 s. Every adjustment but F
-/// converts; F is omitted by name (Premiere renders its cropped region black,
-/// so that second differs). The adjustments then export as five flagged
-/// placements of one flagged item and reimport unchanged.
+/// Left 40 9–10 s, and V4 E Levels Gamma 1.6 1–2.5 s. F masks the lower
+/// composite; all six adjustments retain their controls on reimport.
 #[cfg(feature = "ffmpeg-library")]
 #[test]
 fn native_adjustment_layers_import_over_their_lower_tracks_and_round_trip() {
@@ -510,13 +508,7 @@ fn native_adjustment_layers_import_over_their_lower_tracks_and_round_trip() {
         .filter(|omission| omission.scope == OmissionScope::Occurrence)
         .map(|omission| (omission.record.as_str(), omission.reason.as_str()))
         .collect();
-    assert_eq!(
-        occurrences,
-        [(
-            "VideoClipTrackItem:102",
-            "track 2, range 2286144000000..2540160000000 ticks: nondefault Crop on an adjustment layer is unsupported; occurrence omitted"
-        )]
-    );
+    assert!(occurrences.is_empty(), "{occurrences:?}");
     // The native metadata reports are the only other omissions: no clip, and
     // in particular neither S1 nor S2 under their ID-only master clip Node.
     assert!(
@@ -532,6 +524,68 @@ fn native_adjustment_layers_import_over_their_lower_tracks_and_round_trip() {
         .unwrap()
         .project_json()
         .unwrap();
+    // Inspect Crop coverage separately, then compare the other controls in
+    // their original flat order, independent of the new composite boundary.
+    let without_crop = |mut document: Value, first_easing: &str| {
+        let layers = document["composition"]["layers"].as_array_mut().unwrap();
+        let position = layers
+            .iter()
+            .position(|layer| layer["type"] == "Group" && layer["masks"].is_array())
+            .unwrap();
+        let group = layers.remove(position);
+        let guide_id = &group["masks"][0]["layer"];
+        let children = group["layers"].as_array().unwrap();
+        let crop = children
+            .iter()
+            .find(|layer| layer["type"] == "Adjustment")
+            .unwrap();
+        assert_eq!(
+            crate::test_support::layer_range(crop),
+            &json!({"start":9000,"duration":1000})
+        );
+        assert!(crop["effects"].as_array().is_none_or(Vec::is_empty));
+        let guide = children
+            .iter()
+            .find(|layer| &layer["id"] == guide_id)
+            .unwrap();
+        assert_eq!(guide["transform"]["anchorPoint"], json!([1920.0, 0.0]));
+        assert_eq!(guide["transform"]["position"], json!([1920.0, 0.0]));
+        let retained = children
+            .iter()
+            .filter(|layer| layer["id"] != crop["id"] && &layer["id"] != guide_id)
+            .cloned();
+        layers.splice(position..position, retained);
+        let entries = document["composition"]["dynamics"]["entries"]
+            .as_array_mut()
+            .unwrap();
+        let index = entries
+            .iter()
+            .position(|entry| &entry["target"]["layerId"] == guide_id)
+            .unwrap();
+        let track = entries.remove(index);
+        let keys: Vec<_> = track["animator"]["keyframes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|key| {
+                (
+                    key["layerTime"].as_i64().unwrap(),
+                    key["value"]["value"].as_f64().unwrap(),
+                    key["easing"]["type"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                (0, 100.0, first_easing),
+                (9000, 60.0, "hold"),
+                (10000, 100.0, "hold")
+            ]
+        );
+        document
+    };
+    let document = without_crop(document, "hold");
     // Effect ids run through the document, top layer first.
     let levels = |id: u32, black: f64, white: f64, gamma: f64, out_white: f64| json!([{"id": id, "enabled": true, "effect": {"type": "levels", "inputBlack": black, "inputWhite": white, "gamma": gamma, "outputBlack": 0.0, "outputWhite": out_white}}]);
     let adjustment = |index: u32, start: i64, duration: i64, effects: Value| {
@@ -553,7 +607,7 @@ fn native_adjustment_layers_import_over_their_lower_tracks_and_round_trip() {
         )
     };
     let expected = vec![
-        adjustment(8, 1000, 1500, levels(1, 0.0, 255.0, 1.6, 255.0)),
+        adjustment(9, 1000, 1500, levels(1, 0.0, 255.0, 1.6, 255.0)),
         adjustment(4, 0, 3000, levels(2, 40.0, 220.0, 1.0, 255.0)),
         adjustment(
             5,
@@ -634,12 +688,13 @@ fn native_adjustment_layers_import_over_their_lower_tracks_and_round_trip() {
     assert_eq!(
         xml.matches("<AdjustmentLayer>true</AdjustmentLayer>")
             .count(),
-        5
+        6
     );
+    let root = exported_root_sequence(&package.join("project.prproj"));
     premiere_to_tesseract(
         package.join("project.prproj"),
         dir.path().join("again"),
-        None,
+        Some(&root),
         false,
     )
     .unwrap();
@@ -647,8 +702,9 @@ fn native_adjustment_layers_import_over_their_lower_tracks_and_round_trip() {
         .unwrap()
         .project_json()
         .unwrap();
-    // Export packs the adjustments onto two tracks (A alone, E/B/C/D above
-    // it), which keeps every instant's stack order but renumbers the layers.
+    // Native reimport canonicalizes the first key's unused incoming easing.
+    let again = without_crop(again, "linear");
+    // Export preserves stack order but renumbers the layers.
     let settings = |rows: Vec<(String, String, i64, i64, Value)>| {
         let mut rows: Vec<_> = rows
             .into_iter()

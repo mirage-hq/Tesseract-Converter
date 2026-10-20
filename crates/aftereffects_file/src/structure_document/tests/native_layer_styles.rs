@@ -375,6 +375,114 @@ fn style_group_flags(layer: &crate::structure::Layer, style_name: &str) -> (u32,
     (flags(style_root), flags(blend), flags(style))
 }
 
+#[test]
+fn native_style_mute_bit_and_master_switch_survive_fresh_import() {
+    fn set_flags(chunks: &mut [crate::rifx::Chunk], name: &str, flags: u8) {
+        for index in 0..chunks.len().saturating_sub(1) {
+            if chunks[index].id() == *b"tdmn"
+                && chunks[index].data_payload().is_some_and(|bytes| {
+                    bytes.split(|byte| *byte == 0).next() == Some(name.as_bytes())
+                })
+            {
+                let group = chunks[index + 1].children_mut().expect("named group");
+                let toggle = group
+                    .iter_mut()
+                    .find(|chunk| chunk.id() == *b"tdsb")
+                    .unwrap();
+                *toggle = crate::rifx::Chunk::data(*b"tdsb", vec![0, 0, 0, flags]).unwrap();
+            }
+        }
+        for chunk in chunks {
+            if let Some(children) = chunk.children_mut() {
+                set_flags(children, name, flags);
+            }
+        }
+    }
+
+    for master in [1, 2, 3] {
+        for style in [1, 2, 3] {
+            let mut project = read_project(SOURCE).unwrap();
+            let crate::structure::ItemKind::Composition(comp) = &mut project
+                .items
+                .iter_mut()
+                .find(|item| item.id == 114)
+                .unwrap()
+                .kind
+            else {
+                panic!("Stroke composition");
+            };
+            let source = comp
+                .layers
+                .iter_mut()
+                .find(|layer| layer.record.id() == 127)
+                .unwrap();
+            set_flags(&mut source.content, "ADBE Layer Styles", master);
+            set_flags(&mut source.content, "frameFX/enabled", style);
+            assert_eq!(
+                style_group_flags(source, "frameFX/enabled"),
+                (master.into(), 1, style.into())
+            );
+
+            let imported = to_structural_fx_document(&project, Some(114)).unwrap();
+            let owner = as_group(&root(&imported).layers[0]);
+            assert!(
+                !owner.layers.is_empty(),
+                "editable source survives disabled styles"
+            );
+            assert_eq!(owner.effects.len(), 1);
+            let EffectData::Identified {
+                effect: EffectPayload::Known(LayerEffect::Stroke(stroke)),
+                ..
+            } = owner.effects[0].data()
+            else {
+                panic!("editable Stroke retained");
+            };
+            assert_eq!(
+                stroke.enabled(),
+                master == 1 && style == 1,
+                "master={master}, style={style}"
+            );
+            assert_close(stroke.width().value(), 8.0, "disabled style width");
+            assert_eq!(stroke.position(), LayerStrokePosition::Inside);
+            assert_values(
+                &stroke.color(),
+                &[0.10000000149011612, 0.5, 1.0, 0.9],
+                "disabled style color",
+            );
+        }
+    }
+}
+
+#[test]
+fn empty_bypassed_style_scaffolds_do_not_synthesize_default_overlays() {
+    use crate::rifx::Chunk;
+
+    fn named_group(name: &str, flags: u8, mut children: Vec<Chunk>) -> Vec<Chunk> {
+        let mut match_name = vec![0; 40];
+        match_name[..name.len()].copy_from_slice(name.as_bytes());
+        children.insert(0, Chunk::data(*b"tdsb", vec![0, 0, 0, flags]).unwrap());
+        vec![
+            Chunk::data(*b"tdmn", match_name).unwrap(),
+            Chunk::list(*b"tdgp", children),
+        ]
+    }
+
+    for flags in [1, 2, 3] {
+        let mut styles = named_group("solidFill/enabled", flags, Vec::new());
+        styles.extend(named_group("gradientFill/enabled", flags, Vec::new()));
+        let content = vec![Chunk::list(
+            *b"tdgp",
+            named_group("ADBE Layer Styles", 1, styles),
+        )];
+        let result = crate::layer_styles::read(&content, [320.0, 180.0]);
+        assert_eq!(
+            result.styles.len(),
+            if flags == 1 { 2 } else { 0 },
+            "flags={flags}: bypassed scaffolds must not cover editable source paint"
+        );
+    }
+}
+
 fn generated_outer_glow(enabled: bool) -> crate::export_document::ExportedDocument {
     let mut input: Value = serde_json::from_str(TEMPLATE).expect("FX template");
     input["composition"]["layers"][0]["effects"] = json!([{

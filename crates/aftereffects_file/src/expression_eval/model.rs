@@ -13,6 +13,23 @@ use crate::{
 };
 
 use super::syntax;
+mod markers;
+mod path;
+
+#[derive(Serialize)]
+pub(super) struct MarkerModel {
+    pub times: Vec<f64>,
+    pub names: Vec<String>,
+    pub names_error: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Serialize)]
+pub(super) struct PathKey {
+    pub time: f64,
+    pub value: properties::NativePathValue,
+    pub hold: bool,
+}
 
 #[derive(Serialize)]
 pub(super) struct Model {
@@ -45,6 +62,7 @@ pub(super) struct LayerModel {
     /// Separated Position dimension slots; `transform.position` composes them.
     pub separated_position: Option<Vec<usize>>,
     pub effects: Vec<Effect>,
+    pub effect_inventory_complete: bool,
     /// Source dimensions (`width`/`height`), visibility and parent layer ID.
     pub width: f64,
     pub height: f64,
@@ -58,6 +76,7 @@ pub(super) struct LayerModel {
     pub content: Vec<ShapeNode>,
     /// Source Text slot when it carries an enabled expression.
     pub source_text: Option<usize>,
+    pub markers: MarkerModel,
 }
 #[derive(Serialize)]
 pub(super) struct MaskModel {
@@ -78,6 +97,7 @@ pub(super) struct ShapeNode {
 }
 #[derive(Serialize)]
 pub(super) struct Effect {
+    pub enabled: bool,
     pub name: String,
     pub match_name: String,
     pub index: usize,
@@ -108,6 +128,19 @@ pub(super) struct Property {
     pub range: Option<[Option<f64>; 2]>,
     /// Pre-expression Source Text; `Some` makes this a string property.
     pub text: Option<String>,
+    /// Native first-run fill color; Source Text is not a full TextStyle runtime.
+    pub text_style: Option<[f64; 4]>,
+    pub text_keys: Vec<TextKey>,
+    /// Saved static glyph-cache union, never a fresh font measurement.
+    pub text_bounds: Option<[f64; 4]>,
+    pub path: Option<properties::NativePathValue>,
+    pub path_keys: Vec<PathKey>,
+}
+#[derive(Serialize)]
+pub(super) struct TextKey {
+    pub time: f64,
+    pub text: String,
+    pub fill_color: [f64; 4],
 }
 #[derive(Serialize)]
 pub(super) struct Key {
@@ -126,11 +159,22 @@ enum NumericContinuity {
 }
 
 impl Model {
+    #[cfg(test)]
     pub fn new(
         items: &HashMap<u32, &ProjectItem>,
         current_id: u32,
         current: &Composition,
         allow_foreign: bool,
+    ) -> Self {
+        Self::with_effect_definitions(items, current_id, current, allow_foreign, &[])
+    }
+
+    pub fn with_effect_definitions(
+        items: &HashMap<u32, &ProjectItem>,
+        current_id: u32,
+        current: &Composition,
+        allow_foreign: bool,
+        effect_definitions: &[Chunk],
     ) -> Self {
         let mut model = Self {
             comps: Vec::new(),
@@ -138,7 +182,7 @@ impl Model {
             allow_foreign,
         };
         let current_name = items.get(&current_id).map_or("", |item| item.name.as_str());
-        model.add_comp(current_id, current_name, current, items);
+        model.add_comp(current_id, current_name, current, items, effect_definitions);
         // Only foreign comp() expressions need a project-wide dependency snapshot.
         if !model.properties.iter().any(|p| {
             p.expression
@@ -162,7 +206,7 @@ impl Model {
             } else {
                 continue;
             };
-            model.add_comp(id, &item.name, comp, items);
+            model.add_comp(id, &item.name, comp, items, effect_definitions);
         }
         model
     }
@@ -172,6 +216,7 @@ impl Model {
         name: &str,
         comp: &Composition,
         items: &HashMap<u32, &ProjectItem>,
+        effect_definitions: &[Chunk],
     ) {
         let layers = comp
             .layers
@@ -186,8 +231,8 @@ impl Model {
                     index + 1,
                     layer,
                     size,
-                    layer.record.source_id() != 0 || layer.record.flags().null_layer,
                     [f64::from(comp.width), f64::from(comp.height)],
+                    effect_definitions,
                 )
             })
             .collect();
@@ -212,9 +257,11 @@ impl Model {
         index: usize,
         layer: &Layer,
         size: [f64; 2],
-        source_relative_anchor: bool,
         comp_size: [f64; 2],
+        effect_definitions: &[Chunk],
     ) -> LayerModel {
+        let source_relative_anchor =
+            layer.record.source_id() != 0 || layer.record.flags().null_layer;
         let mut transform = BTreeMap::new();
         let mut position_separated = false;
         if let Ok(root) = properties::root_runs(&layer.content)
@@ -320,6 +367,11 @@ impl Model {
                 notes: Vec::new(),
                 range: None,
                 text: None,
+                text_style: None,
+                text_keys: Vec::new(),
+                text_bounds: None,
+                path: None,
+                path_keys: Vec::new(),
             });
             transform.insert(alias.to_owned(), slot);
         }
@@ -355,31 +407,27 @@ impl Model {
                 }
             }
         }
-        let masks = self.add_mask_properties(comp_id, layer);
+        let masks = self.add_mask_properties(comp_id, layer, size);
         let source_text = self.add_source_text(comp_id, layer);
-        for (animator, leaves) in crate::structure_document::text::animator_property_leaves(layer) {
-            for (name, run) in leaves {
-                let leaf = properties::unique_list(run, *b"tdbs").ok();
-                let Some(numeric) = leaf.map(properties::read_numeric) else {
-                    continue;
-                };
-                if numeric.is_err() {
-                    continue;
-                }
-                self.push_property(
-                    comp_id,
-                    layer,
-                    PropertyIdentity::TextAnimator {
-                        animator,
-                        match_name: name.to_owned(),
-                    },
-                    numeric,
-                    NumericContinuity::Continuous,
-                    leaf,
-                );
+        for (identity, run) in crate::structure_document::text::expression_property_leaves(layer) {
+            let leaf = properties::unique_list(run, *b"tdbs").ok();
+            let Some(numeric) = leaf.map(properties::read_numeric) else {
+                continue;
+            };
+            if numeric.is_err() {
+                continue;
             }
+            self.push_property(
+                comp_id,
+                layer,
+                identity,
+                numeric,
+                NumericContinuity::Continuous,
+                leaf,
+            );
         }
-        let (decoded, _) = native::read_effects(&layer.content, size);
+        let (decoded, effect_warnings) = native::read_effects(&layer.content, size);
+        let decoded_count = decoded.len();
         let source_runs = properties::root_runs(&layer.content)
             .and_then(|root| {
                 unique_run(&root, "ADBE Effect Parade")
@@ -403,6 +451,21 @@ impl Model {
             };
             let explicit = properties::runs(body).unwrap_or_default();
             let declarations = properties::unique_list(plugin, *b"parT")
+                .and_then(|local| {
+                    if local.is_empty() {
+                        crate::essential::file_effect_declarations(
+                            effect_definitions,
+                            &effect.match_name,
+                        )
+                        .map_err(|_| {
+                            properties::PropertyError::Layout(
+                                "unresolved shared effect declarations",
+                            )
+                        })
+                    } else {
+                        Ok(local)
+                    }
+                })
                 .and_then(properties::runs)
                 .unwrap_or_default();
             let canonical = definitions::definition(&effect.match_name);
@@ -436,16 +499,24 @@ impl Model {
                     .or_else(|| canonical_parameter.map(|parameter| parameter.label.as_str()))
                     .unwrap_or(&parameter.match_name)
                     .to_owned();
-                // Admit native numerical selectors only when the match-name slot and
-                // the complete local declaration ordering agree. Sparse ordinary
-                // control profiles have independently pinned one-value slots.
+                // AE indices follow declaration order, not stable match-name suffixes.
                 let suffix: Option<u32> = parameter
                     .match_name
                     .rsplit_once('-')
                     .and_then(|(_, suffix)| suffix.parse().ok());
-                let local_index = declarations
+                let mut declared_indices = declarations
                     .iter()
-                    .position(|(name, _)| *name == parameter.match_name)
+                    .enumerate()
+                    .filter(|(_, (name, _))| *name == parameter.match_name)
+                    .map(|(index, _)| index);
+                let declared_index = declared_indices
+                    .next()
+                    .filter(|_| {
+                        declared_indices.next().is_none()
+                            && declarations.first().is_some_and(|(name, _)| {
+                                name.strip_prefix(&effect.match_name) == Some("-0000")
+                            })
+                    })
                     .and_then(|index| u32::try_from(index).ok());
                 let ordinary = matches!(
                     effect.match_name.as_str(),
@@ -455,7 +526,7 @@ impl Model {
                         | "ADBE Angle Control"
                         | "ADBE Checkbox Control"
                 );
-                let native_index = suffix.filter(|index| ordinary || local_index == Some(*index));
+                let native_index = declared_index.or_else(|| ordinary.then_some(suffix).flatten());
                 let identity = PropertyIdentity::Effect {
                     index: effect_index,
                     match_name: parameter.match_name.clone(),
@@ -480,12 +551,16 @@ impl Model {
                 });
             }
             effects.push(Effect {
+                enabled: effect.enabled && layer.record.flags().effects_active,
                 name,
                 match_name: effect.match_name,
                 index: effect.index,
                 parameters,
             });
         }
+        let effect_inventory_complete = source_runs.len() == decoded_count
+            && source_runs.len() == effects.len()
+            && (!source_runs.is_empty() || effect_warnings.is_empty());
         LayerModel {
             id: layer.record.id(),
             name: layer.name.to_string(),
@@ -506,6 +581,7 @@ impl Model {
             transform,
             separated_position,
             effects,
+            effect_inventory_complete,
             width: size[0],
             height: size[1],
             default_anchor,
@@ -514,22 +590,82 @@ impl Model {
             masks,
             content,
             source_text,
+            markers: markers::read(layer),
         }
     }
     /// The layer's Source Text with an enabled expression, as a string slot.
     fn add_source_text(&mut self, comp_id: u32, layer: &Layer) -> Option<usize> {
-        let (text, leaf) = crate::structure_document::text::source_text_expression_input(layer)?;
-        let expression = properties::data(leaf, *b"Utf8")
-            .map_err(|_| "Source Text expression source is missing".to_owned())
-            .and_then(|bytes| {
-                std::str::from_utf8(bytes).map_err(|_| "expression is not UTF-8".to_owned())
+        let snapshot = match crate::structure_document::text::source_text_snapshot(layer) {
+            Ok(Some(snapshot)) => snapshot,
+            Ok(None) => return None,
+            Err(error) => {
+                let slot = self.properties.len();
+                self.properties.push(Property {
+                    comp_id,
+                    layer_id: layer.record.id(),
+                    identity: PropertyIdentity::SourceText {},
+                    initial: Vec::new(),
+                    keys: Vec::new(),
+                    expression: None,
+                    error: Some(error.to_string()),
+                    expression_enabled: false,
+                    notes: Vec::new(),
+                    range: None,
+                    text: Some(String::new()),
+                    text_style: None,
+                    text_keys: Vec::new(),
+                    text_bounds: None,
+                    path: None,
+                    path_keys: Vec::new(),
+                });
+                return Some(slot);
+            }
+        };
+        let first = snapshot.documents.first()?;
+        let text = first.text.to_string();
+        let text_style = Some(first.fill_color);
+        let expression_enabled = snapshot.expression.is_some();
+        let expression = snapshot
+            .expression
+            .map(|leaf| {
+                properties::expression_data(leaf)
+                    .map_err(|_| "Source Text expression source is missing".to_owned())
+                    .and_then(|bytes| {
+                        std::str::from_utf8(bytes).map_err(|_| "expression is not UTF-8".to_owned())
+                    })
+                    .and_then(|code| syntax::compile_text(code).map_err(|error| error.to_string()))
             })
-            .and_then(|code| syntax::compile(code).map_err(|error| error.to_string()));
-        let slot = self.properties.len();
-        let (expression, error) = match expression {
-            Ok(code) => (Some(code), None),
+            .transpose();
+        let (expression, mut error) = match expression {
+            Ok(code) => (code, None),
             Err(error) => (None, Some(error)),
         };
+        let start = layer.record.start_time().unwrap_or(f64::NAN);
+        let stretch = layer.record.stretch().unwrap_or(f64::NAN);
+        let text_keys: Vec<_> = snapshot
+            .starts
+            .iter()
+            .zip(&snapshot.documents)
+            .map(|(time, document)| TextKey {
+                time: start + time * stretch,
+                text: document.text.to_string(),
+                fill_color: document.fill_color,
+            })
+            .collect();
+        if !text_keys.is_empty()
+            && (!start.is_finite()
+                || !stretch.is_finite()
+                || stretch <= 0.0
+                || text_keys.iter().any(|key| !key.time.is_finite()))
+        {
+            error = Some("Source Text dependency has an unsupported start/stretch clock".into());
+        }
+        let notes = if text_keys.is_empty() {
+            Vec::new()
+        } else {
+            vec!["Source Text dependency documents are evaluated as Holds; between-document style interpolation is approximated".into()]
+        };
+        let slot = self.properties.len();
         self.properties.push(Property {
             comp_id,
             layer_id: layer.record.id(),
@@ -538,15 +674,25 @@ impl Model {
             keys: Vec::new(),
             expression,
             error,
-            expression_enabled: true,
-            notes: Vec::new(),
+            expression_enabled,
+            notes,
             range: None,
             text: Some(text),
+            text_style,
+            text_keys,
+            text_bounds: snapshot.bounds,
+            path: None,
+            path_keys: Vec::new(),
         });
         Some(slot)
     }
     /// Feather, Opacity and Expansion of every Mask Atom, one-based as mask import.
-    fn add_mask_properties(&mut self, comp_id: u32, layer: &Layer) -> Vec<MaskModel> {
+    fn add_mask_properties(
+        &mut self,
+        comp_id: u32,
+        layer: &Layer,
+        size: [f64; 2],
+    ) -> Vec<MaskModel> {
         let mut masks = Vec::new();
         let Some(atoms) = properties::root_runs(&layer.content).ok().and_then(|root| {
             unique_run(&root, "ADBE Mask Parade")
@@ -578,6 +724,26 @@ impl Model {
                 properties: BTreeMap::new(),
             };
             for (name, run) in leaves {
+                if name == "ADBE Mask Shape" {
+                    let slot = self.push_path(
+                        comp_id,
+                        layer,
+                        PropertyIdentity::Mask {
+                            index,
+                            match_name: name.to_owned(),
+                        },
+                        run,
+                        if layer.record.layer_type() == 4 {
+                            [1.0, 1.0]
+                        } else {
+                            size
+                        },
+                        true,
+                    );
+                    mask.properties.insert("maskPath".to_owned(), slot);
+                    mask.properties.insert("path".to_owned(), slot);
+                    continue;
+                }
                 if !matches!(
                     name,
                     "ADBE Mask Feather" | "ADBE Mask Opacity" | "ADBE Mask Offset"
@@ -631,6 +797,24 @@ impl Model {
             return None;
         }
         let segment = path.last()?.clone();
+        if segment.match_name == "ADBE Vector Shape" {
+            let slot = self.push_path(
+                comp_id,
+                layer,
+                PropertyIdentity::Shape { path },
+                run,
+                [1.0, 1.0],
+                false,
+            );
+            return Some(ShapeNode {
+                name: display_name(run).unwrap_or("Path").to_owned(),
+                alias: Some("path".into()),
+                match_name: segment.match_name,
+                index: segment.index,
+                slot: Some(slot),
+                children: Vec::new(),
+            });
+        }
         if let Ok(leaf) = properties::unique_list(run, *b"tdbs")
             && let Ok(numeric) = properties::read_numeric(leaf)
         {
@@ -720,6 +904,11 @@ impl Model {
             notes: Vec::new(),
             range,
             text: None,
+            text_style: None,
+            text_keys: Vec::new(),
+            text_bounds: None,
+            path: None,
+            path_keys: Vec::new(),
         };
         match numeric {
             Err(error) => property.error = Some(error.to_string()),
@@ -788,7 +977,7 @@ impl Model {
                     let compiled = leaf
                         .ok_or("expression source is missing")
                         .and_then(|leaf| {
-                            properties::data(leaf, *b"Utf8")
+                            properties::expression_data(leaf)
                                 .map_err(|_| "expression source is missing")
                         })
                         .and_then(|bytes| {
@@ -896,6 +1085,13 @@ fn identity_name(identity: &PropertyIdentity) -> String {
             animator,
             match_name,
         } => format!("Text Animator {animator} {match_name}"),
+        PropertyIdentity::TextSelector {
+            animator,
+            selector,
+            match_name,
+        } => {
+            format!("Text Animator {animator} Selector {selector} {match_name}")
+        }
         PropertyIdentity::SourceText {} => "Source Text".to_owned(),
     }
 }

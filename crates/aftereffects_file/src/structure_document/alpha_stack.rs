@@ -81,7 +81,11 @@ impl Converter<'_> {
                 )
             } else if flags.preserve_transparency {
                 Some("Preserve Underlying Transparency source has backdrop-dependent alpha")
-            } else if !full_span(&native.record, context.comp.duration_secs) {
+            } else if native.record.blend_mode() != 19
+                && !full_span(&native.record, context.comp.duration_secs)
+            {
+                // Inverted alpha is identity outside the source's active clock;
+                // ordinary alpha would erase the lower stack there.
                 Some("partial-span operator requires unmasked intervals outside its active range")
             } else if layers[index..]
                 .iter()
@@ -275,6 +279,59 @@ mod tests {
             );
             result.document.to_json_vec().unwrap();
         }
+    }
+
+    #[test]
+    fn partial_silhouette_alpha_preserves_source_clock_and_lower_content() {
+        let result = synthetic_transfer(19, true);
+        let normal = synthetic_transfer(0, true);
+        let root = result.document.composition().layers()[0].data();
+        let normal_root = normal.document.composition().layers()[0].data();
+        let siblings = root.child_layers().unwrap();
+        let wrapper = siblings
+            .iter()
+            .find_map(|layer| match layer.data() {
+                FxLayer::Group(group) if group.description.contains("alpha stack") => Some(group),
+                _ => None,
+            })
+            .expect("partial Silhouette Alpha must consume paint instead of using Normal");
+        let matte = wrapper.track_matte.as_ref().unwrap();
+        assert_eq!(matte.mode, fx_schema::TrackMatteType::AlphaInverted);
+        assert_eq!(wrapper.transform.scale, [100.0, 100.0]);
+        assert_eq!(
+            wrapper.transform.position,
+            fx_schema::Position::xy(0.0, 0.0)
+        );
+        assert_eq!(wrapper.transform.anchor_point, [0.0, 0.0]);
+        assert_eq!(
+            wrapper.layers.len(),
+            normal_root.child_layers().unwrap().len()
+        );
+        for (actual, expected) in wrapper
+            .layers
+            .iter()
+            .zip(normal_root.child_layers().unwrap())
+        {
+            let mut expected = expected.data().clone();
+            reparent(&mut expected, wrapper.id);
+            assert_eq!(actual.data(), &expected);
+        }
+        assert!(wrapper.layers.iter().any(|layer| layer.id() == matte.layer));
+        assert_eq!(
+            result.document.composition().dynamics().entries(),
+            normal.document.composition().dynamics().entries()
+        );
+        assert!(result.diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("lowered to editable AlphaInverted")
+        }));
+        assert!(
+            !result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| { diagnostic.message.contains("partial-span operator") })
+        );
     }
 
     #[test]

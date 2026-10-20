@@ -27,11 +27,9 @@
 //! switches remain checked. Optional authoring fields and an unrecognized version
 //! are diagnosed without discarding the supported fill; active masks remain
 //! unsupported rather than expose their concealed content.
-//! No render measured the legacy form. By inference from the field names,
-//! a visible gray fill (equal channels, which no channel order changes) and a
-//! fill switched off convert; any other fill color, a color beyond 24 bits
-//! and an enabled stroke or shadow do not. Export writes the FlatBuffer of
-//! the current paint.
+//! Legacy fill/stroke colors use opaque 24-bit RGB. Stroke geometry retains
+//! its diagnosed centred-width approximation; enabled shadows and colors beyond
+//! 24 bits remain unsupported. Export writes the current paint's FlatBuffer.
 
 use super::text_payload::{color_table, framed, slot, Buffer, Table, TableOffset};
 use crate::error::{ensure, unsupported, BuildError, Result};
@@ -39,7 +37,7 @@ use crate::schema::{
     text::{
         validate_stroke_width, PrAppearance, PrFill, PrGradient, PrGradientKind,
         PrGradientOpacityStop, PrGradientStop, PrMaskSource, PrPathVertex, PrRgb, PrShapePath,
-        PrShapeStroke, DEFAULT_SHAPE_FILL, GRADIENT_Y_UNCONVERTED, SHAPE_SHADOW_ANGLE,
+        PrShapeStroke, StrokeJoin, DEFAULT_SHAPE_FILL, GRADIENT_Y_UNCONVERTED, SHAPE_SHADOW_ANGLE,
     },
     text_shadow::PrTextShadow,
 };
@@ -242,8 +240,10 @@ pub(crate) fn decode_path(payload: &[u8]) -> Result<PrShapePath> {
         .filter(|bytes| bytes.checked_add(PATH_HEADER_BYTES + 1) == Some(payload.len()))
         .ok_or_else(|| unsupported(format!("Path size does not match its {count} vertices")))?;
     let vertices = payload[PATH_HEADER_BYTES..PATH_HEADER_BYTES + vertex_bytes]
-        .chunks_exact(VERTEX_BYTES)
-        .map(decode_vertex)
+        .as_chunks::<VERTEX_BYTES>()
+        .0
+        .iter()
+        .map(|vertex| decode_vertex(vertex))
         .collect::<Result<Vec<_>>>()?;
     let closed = match payload[payload.len() - 1] {
         0 => false,
@@ -319,7 +319,7 @@ pub(crate) fn encode_vertex(vertex: &PrPathVertex, payload: &mut Vec<u8>) {
 ///
 /// # Errors
 /// Rejects malformed required data, unsupported active paint and mask forms,
-/// and an enabled stroke or shadow that lacks a required value.
+/// an incomplete mask-source stroke, and an enabled shadow missing a value.
 pub(crate) fn decode_appearance_with_notes(payload: &[u8]) -> Result<(PrAppearance, Vec<String>)> {
     use slots::*;
     if payload.get(8..10) == Some(LEGACY_JSON_START) {
@@ -405,31 +405,40 @@ pub(crate) fn decode_appearance_with_notes(payload: &[u8]) -> Result<(PrAppearan
     let stroke_color = table.table(STROKE_COLOR)?.map(color).transpose()?;
     let stroke_width = table.f32(STROKE_WIDTH)?;
     let stroke_position = table.u32(STROKE_POSITION)?;
-    let stroke = if switch(table, STROKE_ENABLED)? {
-        let (Some(color), Some(width)) = (stroke_color, stroke_width) else {
-            return Err(unsupported(
-                "an enabled shape stroke lacks its color or width",
-            ));
-        };
-        let side = match stroke_position.unwrap_or(CENTRED_STROKE) {
-            CENTRED_STROKE => None,
-            1 => Some("inside"),
-            2 => Some("outside"),
-            3 => Some("inside and outside"),
-            other => {
+    let stroke = match (switch(table, STROKE_ENABLED)?, stroke_color, stroke_width) {
+        (true, Some(color), Some(width)) => {
+            let side = match stroke_position.unwrap_or(CENTRED_STROKE) {
+                CENTRED_STROKE => None,
+                1 => Some("inside"),
+                2 => Some("outside"),
+                3 => Some("inside and outside"),
+                other => {
+                    return Err(unsupported(format!(
+                        "unknown shape stroke position {other}"
+                    )))
+                }
+            };
+            if let Some(side) = side {
                 return Err(unsupported(format!(
-                    "unknown shape stroke position {other}"
-                )))
-            }
-        };
-        if let Some(side) = side {
-            return Err(unsupported(format!(
                 "shape strokes {side} the outline are unsupported; only centred strokes convert"
             )));
+            }
+            Some(PrShapeStroke {
+                color,
+                width,
+                join: None,
+            })
         }
-        Some(PrShapeStroke { color, width })
-    } else {
-        None
+        (true, _, _) if mask_source.is_none() => {
+            notes.push("enabled shape stroke lacks its color or width; stroke omitted, supported fill retained".into());
+            None
+        }
+        (true, _, _) => {
+            return Err(unsupported(
+                "an enabled shape stroke lacks its color or width",
+            ))
+        }
+        (false, _, _) => None,
     };
     let shadow_color = table.table(SHADOW_COLOR)?.map(color).transpose()?;
     let [opacity, distance, size, blur] =
@@ -482,8 +491,8 @@ struct LegacyAppearance {
     extra: BTreeMap<String, serde_json::Value>,
 }
 
-/// Active paint and concealment switches remain typed. Inactive stroke and
-/// shadow values cannot affect the supported fill and need no admission checks.
+/// Active paint and concealment switches remain typed. Optional stroke values
+/// are decoded only when visible; unsupported stroke details cannot discard fill.
 #[derive(Deserialize)]
 struct LegacyStyle {
     #[serde(rename = "mFillColor")]
@@ -491,11 +500,11 @@ struct LegacyStyle {
     #[serde(rename = "mFillVisible")]
     fill_visible: bool,
     #[serde(rename = "mStrokeColor", default)]
-    _stroke_color: Option<serde_json::Value>,
+    stroke_color: Option<serde_json::Value>,
     #[serde(rename = "mStrokeVisible")]
     stroke_visible: bool,
     #[serde(rename = "mStrokeWidth", default)]
-    _stroke_width: Option<serde_json::Value>,
+    stroke_width: Option<serde_json::Value>,
     #[serde(rename = "mShadowAngle", default)]
     _shadow_angle: Option<serde_json::Value>,
     #[serde(rename = "mShadowBlur", default)]
@@ -544,11 +553,11 @@ where
     deserializer.deserialize_map(StyleObject)
 }
 
-/// Decode a legacy gray fill without interpreting optional authoring fields.
+/// Decode legacy paint without interpreting optional authoring fields.
 ///
 /// # Errors
-/// Rejects invalid required framing, UTF-16 or paint fields, active masks,
-/// unsupported active paint and a visible non-gray fill of unknown channel order.
+/// Rejects invalid required framing, UTF-16 or paint fields, active masks
+/// and unsupported active paint.
 fn decode_legacy_appearance(payload: &[u8]) -> Result<(PrAppearance, Vec<String>)> {
     let Some((frame, text)) = payload.split_first_chunk::<8>() else {
         return Err(unsupported(format!("truncated {LEGACY_APPEARANCE}")));
@@ -571,7 +580,9 @@ fn decode_legacy_appearance(payload: &[u8]) -> Result<(PrAppearance, Vec<String>
         text.len()
     );
     let json: String = char::decode_utf16(
-        text.chunks_exact(2)
+        text.as_chunks::<2>()
+            .0
+            .iter()
             .map(|unit| u16::from_le_bytes([unit[0], unit[1]])),
     )
     .collect::<std::result::Result<_, _>>()
@@ -604,27 +615,19 @@ fn decode_legacy_appearance(payload: &[u8]) -> Result<(PrAppearance, Vec<String>
     );
     let fill_color = legacy_color("mFillColor", style.fill_color)?;
     ensure!(
-        !style.stroke_visible,
-        "{LEGACY_APPEARANCE}: an enabled stroke is unsupported"
-    );
-    ensure!(
         !style.shadow_visible,
         "{LEGACY_APPEARANCE}: an enabled shadow is unsupported"
     );
-    let fill = if style.fill_visible {
-        let [red, green, blue] = fill_color;
-        ensure!(
-            red == green && green == blue,
-            "{LEGACY_APPEARANCE}: mFillColor {:#08x} is not gray; only a gray fill converts, since the channel order is unknown",
-            style.fill_color
-        );
-        Some(PrFill::Solid(PrRgb(fill_color)))
-    } else {
-        None
-    };
+    let fill = style
+        .fill_visible
+        .then_some(PrFill::Solid(PrRgb(fill_color)));
     let mut notes: Vec<_> = extra
         .keys()
         .chain(style.extra.keys())
+        .filter(|name| {
+            name.as_str() != "mLineJoinType"
+                || style.extra.get(*name).and_then(serde_json::Value::as_u64) != Some(1)
+        })
         .map(|name| {
             format!(
                 "optional Appearance legacy field {name} not converted; supported paint retained"
@@ -636,10 +639,26 @@ fn decode_legacy_appearance(payload: &[u8]) -> Result<(PrAppearance, Vec<String>
             "optional Appearance legacy version {version} not restored; supported paint retained"
         ));
     }
+    let stroke = if style.stroke_visible {
+        match legacy_stroke(&style) {
+            Ok(stroke) => {
+                notes.push("legacy Appearance stroke retained as a centred editable stroke with full width twice mStrokeWidth; native placement, cap/join and edge sampling remain unverified".into());
+                Some(stroke)
+            }
+            Err(error) => {
+                notes.push(format!(
+                    "legacy Appearance stroke omitted: {error}; supported fill retained"
+                ));
+                None
+            }
+        }
+    } else {
+        None
+    };
     Ok((
         PrAppearance {
             fill,
-            stroke: None,
+            stroke,
             shadow: None,
             mask_source: None,
         },
@@ -647,9 +666,39 @@ fn decode_legacy_appearance(payload: &[u8]) -> Result<(PrAppearance, Vec<String>
     ))
 }
 
-/// The three low bytes of the legacy JSON color `value` of the field `name`,
-/// in an order that is unknown. The saved colors fit 24 bits; a higher byte
-/// has no known meaning.
+/// Optional invalid paint loses only the stroke.
+fn legacy_stroke(style: &LegacyStyle) -> Result<PrShapeStroke> {
+    let color = style
+        .stroke_color
+        .as_ref()
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| unsupported("mStrokeColor must be a 24-bit integer"))?;
+    let color = legacy_color("mStrokeColor", color)?;
+    let width = style
+        .stroke_width
+        .as_ref()
+        .and_then(serde_json::Value::as_f64)
+        // Legacy stores the outward extent; FX uses the full centred stroke width.
+        .map(|extent| extent * 2.0)
+        .filter(|width| width.is_finite() && *width >= 0.0 && *width <= f64::from(f32::MAX))
+        .ok_or_else(|| {
+            unsupported("mStrokeWidth must be finite and nonnegative within f32 bounds")
+        })?;
+    Ok(PrShapeStroke {
+        color: PrRgb(color),
+        // Native shape paint and its existing width control use f32 precision.
+        width: width as f32,
+        join: (style
+            .extra
+            .get("mLineJoinType")
+            .and_then(serde_json::Value::as_u64)
+            == Some(1))
+        .then_some(StrokeJoin::Round),
+    })
+}
+
+/// Legacy Appearance packs opaque RGB as 0xRRGGBB; a higher byte has no known meaning.
 fn legacy_color(name: &str, value: u32) -> Result<[u8; 3]> {
     let [high, low @ ..] = value.to_be_bytes();
     ensure!(
@@ -930,6 +979,10 @@ fn appearance_fields(appearance: &PrAppearance) -> crate::format::Result<Vec<(us
         fields.push((FILL_ENABLED, Field::U8(0)));
     }
     if let Some(stroke) = appearance.stroke {
+        super::ensure_valid!(
+            stroke.join.is_none(),
+            "explicit legacy stroke join has no modern Appearance mapping"
+        );
         validate_stroke_width(stroke.width, "shape")?;
         fields.extend([
             (STROKE_COLOR, Field::Color(stroke.color.0)),

@@ -448,7 +448,7 @@ fn decode_document(
                 .table(run::STYLE)?
                 .ok_or_else(|| unsupported("text run has no style"))?,
             &fonts,
-            layout,
+            runless,
             &mut omitted,
         )?;
         match styled_runs.last_mut() {
@@ -476,7 +476,7 @@ fn decode_document(
         let default_table = default_run.table(run::STYLE)?;
         let mut default_notes = Vec::new();
         let default_style = default_table
-            .map(|table| run_style(table, &fonts, layout, &mut default_notes))
+            .map(|table| run_style(table, &fonts, runless, &mut default_notes))
             .transpose();
         let same_style = match default_style {
             Ok(Some(style)) => {
@@ -522,6 +522,7 @@ fn decode_document(
         font: style.font.to_owned(),
         size: style.size,
         fill: style.fill,
+        fill_spans: Vec::new(),
         stroke: style.stroke,
         shadow,
         all_caps: style.all_caps,
@@ -600,7 +601,7 @@ impl RunStyle<'_> {
 fn run_style<'a>(
     table: Table<'_>,
     fonts: &[&'a str],
-    layout: &str,
+    runless: RunlessDocument,
     omitted: &mut Vec<OmittedTextFeature>,
 ) -> Result<RunStyle<'a>> {
     use style::*;
@@ -636,16 +637,17 @@ fn run_style<'a>(
                 });
             }
         }
-        None if layout == document::GRAPHIC_LAYOUT => {
-            // Native OUTLINE keys omit this field. Preserve known styling,
-            // without treating the absent marker as the supported value 2.
+        None if matches!(runless, RunlessDocument::EmptyText) => {
+            // Graphic admission is independent of the document-marker profile;
+            // an absent run marker does not invalidate the known style.
             if !omitted.contains(&OmittedTextFeature::MissingRunMarker) {
                 omitted.push(OmittedTextFeature::MissingRunMarker);
             }
         }
         None => {
             return Err(unsupported(format!(
-                "text style lacks the {layout} run marker"
+                "text style lacks the {} run marker",
+                document::CAPTION_LAYOUT
             )))
         }
     }
@@ -762,6 +764,10 @@ pub(crate) fn encode_graphic(
     doc: &PrTextDocument,
     mask_source: Option<PrMaskSource>,
 ) -> crate::format::Result<Vec<u8>> {
+    crate::format::ensure_valid!(
+        doc.fill_spans.is_empty(),
+        "static fill spans require native style runs"
+    );
     validate_text_buffer_lengths(doc.text.len(), doc.font.len())?;
     let mut fbb = FlatBufferBuilder::with_capacity(512);
     let fill_color = doc

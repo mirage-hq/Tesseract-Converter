@@ -1760,7 +1760,7 @@ mod tests {
         .unwrap();
         fn collect(chunk: &Chunk, times: &mut Vec<i32>) {
             if chunk.id() == *b"ldat" {
-                for bytes in chunk.data_payload().unwrap().chunks_exact(48) {
+                for bytes in chunk.data_payload().unwrap().as_chunks::<48>().0.iter() {
                     times.push(i32::from_be_bytes(bytes[..4].try_into().unwrap()));
                 }
             }
