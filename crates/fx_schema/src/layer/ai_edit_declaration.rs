@@ -23,6 +23,10 @@ macro_rules! define_ai_edit_layer_schema {
             /// `LayerId` of the containing semantic container, or `null` at the root.
             #[serde(skip_serializing_if = "Option::is_none")]
             pub parent: Option<LayerId>,
+            /// Marks a root layer as a storyline clip: one of the main clips placed end
+            /// to end at the bottom of the timeline. Readers drop the flag on nested layers.
+            #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+            pub storyline: bool,
             /// Immediate-parent-local span during which this AI Edit segment is active.
             pub active_range: TimeRangeProperty,
             /// Required VideoStyleTemplate id.

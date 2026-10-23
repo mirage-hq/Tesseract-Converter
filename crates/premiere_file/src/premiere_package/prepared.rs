@@ -15,6 +15,7 @@ use super::{
     output_is_fresh,
 };
 use crate::{
+    approximate,
     convert::{
         active_asset_id, apply_empty_root_picture, apply_replacements, exported_video_layers,
         lower_document_with_hdr, no_native_content, video_data, AfterEffectsPicture, BakedDocument,
@@ -163,7 +164,23 @@ pub(super) fn prepare_with_progress<'a>(
     progress: fx_conv::Progress<'_>,
 ) -> Result<PreparedPremiereExport<'a>> {
     let mut collector = LossCollector::default();
-    let baked = crate::convert::bake_scripts_with_progress(document, &mut collector, progress)?;
+    // Premiere has no variables: every link exports the value it reads now.
+    let baked = if document.composition().defines_variables() {
+        approximate(
+            &mut collector,
+            "document variables",
+            "FX variables flattened: each linked value is exported as its current value; variable definitions and links are not exported",
+        );
+        let mut flattened = document.clone();
+        *flattened.composition_mut() = document
+            .composition()
+            .bake_variables()
+            .map_err(|error| unsupported(error.to_string()))?;
+        crate::convert::bake_scripts_with_progress(&flattened, &mut collector, progress)?
+            .into_owned()
+    } else {
+        crate::convert::bake_scripts_with_progress(document, &mut collector, progress)?
+    };
     progress.stage("inspecting Premiere media");
     let media = inspect_media(archive, baked.document())?;
     let mut natural_frames = BTreeSet::new();

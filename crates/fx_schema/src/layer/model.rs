@@ -1,7 +1,7 @@
 //! Canonical persisted layer root and shared payload records.
 use super::*;
 use crate::{
-    effect::EffectRecord, AssetId, ColorProperty, FxItemId, LayerId, NonNegativeProperty,
+    effect::EffectRecord, AssetId, ColorProperty, FxItemId, LayerId, Linkable, NonNegativeProperty,
     PercentageProperty, PositiveProperty, ScalarProperty, TimeRangeProperty, Vector2Property,
     Vector3Property,
 };
@@ -34,6 +34,29 @@ mod arc_str {
 
     pub fn serialize<S: Serializer>(value: &Arc<str>, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(value)
+    }
+}
+
+/// [`arc_str`] for a font family that may link to a `font` variable.
+mod linkable_arc_str {
+    use std::sync::Arc;
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use crate::{Linkable, VariableLink};
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Linkable<Arc<str>>, D::Error> {
+        Ok(match Linkable::<String>::deserialize(d)? {
+            Linkable::Value(value) => Linkable::Value(Arc::from(value)),
+            Linkable::Linked(name) => Linkable::Linked(name),
+        })
+    }
+
+    pub fn serialize<S: Serializer>(value: &Linkable<Arc<str>>, s: S) -> Result<S::Ok, S::Error> {
+        match value {
+            Linkable::Value(value) => s.serialize_str(value),
+            Linkable::Linked(name) => VariableLink::Linked(name.clone()).serialize(s),
+        }
     }
 }
 
@@ -118,6 +141,48 @@ impl LayerData {
             Self::AiEdit(layer) => Some(&layer.layers),
             Self::BooleanOperation(layer) => Some(&layer.layers),
             _ => None,
+        }
+    }
+
+    /// Variables this layer defines for itself and its descendants.
+    pub fn variables(&self) -> Option<&crate::Variables> {
+        match self {
+            Self::Group(layer) => Some(&layer.variables),
+            _ => None,
+        }
+    }
+
+    /// Visit each of this layer's own properties that can link.
+    pub fn for_each_own_link(&self, visit: &mut dyn FnMut(&dyn crate::LinkSlot)) {
+        match self {
+            Self::Text(layer) => layer.source_text.for_each_link(visit),
+            Self::Rect(layer) => layer.rect.for_each_link(visit),
+            Self::Shape(layer) => {
+                for fill in &layer.shape.fills {
+                    fill.paint.for_each_link(visit);
+                }
+                for stroke in &layer.shape.strokes {
+                    stroke.paint.for_each_link(visit);
+                }
+            }
+            Self::Group(layer) => {
+                for fill in &layer.fills {
+                    fill.paint.for_each_link(visit);
+                }
+            }
+            Self::BooleanOperation(layer) => {
+                for fill in &layer.fills {
+                    fill.paint.for_each_link(visit);
+                }
+                for stroke in &layer.strokes {
+                    stroke.paint.for_each_link(visit);
+                }
+            }
+            Self::Image(layer) => {
+                let ImageSource::Asset(source) = &layer.source;
+                visit(&source.asset_id);
+            }
+            _ => {}
         }
     }
 
@@ -281,8 +346,13 @@ fn video_source_from_wire(
     wire: MediaSourceWire,
     mode: ColorTransformReadMode,
 ) -> Result<VideoSource, serde_json::Error> {
+    let Linkable::Value(asset_id) = wire.asset_id else {
+        return Err(serde::de::Error::custom(
+            "a video source cannot link to a variable",
+        ));
+    };
     Ok(VideoSource {
-        asset_id: wire.asset_id,
+        asset_id,
         eye_contact: wire.eye_contact,
         audio_enhancement: wire.audio_enhancement,
         input_transform: parse_input_transform(wire.input_transform, mode)?,
@@ -583,10 +653,14 @@ impl<'de> Deserialize<'de> for RectShape {
             .fill_paint
             .as_ref()
             .is_some_and(|paint| !paint.has_valid_values())
-            || !crate::has_valid_extended_color(&shape.fill_color)
+            || shape
+                .fill_color
+                .value()
+                .is_some_and(|color| !crate::has_valid_extended_color(color))
             || shape
                 .stroke_color
                 .as_ref()
+                .and_then(crate::Linkable::value)
                 .is_some_and(|color| !crate::has_valid_extended_color(color))
         {
             return Err(serde::de::Error::custom(RECT_FILL_PAINT_WIRE_ERROR));
@@ -647,24 +721,58 @@ impl<'de> Deserialize<'de> for FontVariations {
     }
 }
 
+impl TextDocument {
+    /// Visit each property that can link, without changing it.
+    pub fn for_each_link(&self, visit: &mut dyn FnMut(&dyn crate::LinkSlot)) {
+        visit(&self.text);
+        visit(&self.font_family);
+        visit(&self.fill_color);
+        if let Some(color) = &self.stroke_color {
+            visit(color);
+        }
+        visit(&self.font_size);
+        visit(&self.stroke_width);
+        visit(&self.tracking);
+    }
+
+    /// Visit each property that can link.
+    pub fn for_each_link_slot(&mut self, visit: &mut dyn FnMut(&mut dyn crate::LinkSlot)) {
+        visit(&mut self.text);
+        visit(&mut self.font_family);
+        visit(&mut self.fill_color);
+        if let Some(color) = &mut self.stroke_color {
+            visit(color);
+        }
+        visit(&mut self.font_size);
+        visit(&mut self.stroke_width);
+        visit(&mut self.tracking);
+    }
+}
+
 /// AE Source Text document data / PAG TextDocument subset.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "project_types.d.ts")]
 pub struct TextDocument {
-    /// The source string rendered by the layer.
-    pub text: String,
-    /// Font family name (resolved against the bundled font index).
-    #[serde(with = "arc_str")]
-    #[ts(type = "string")]
-    pub font_family: Arc<str>,
+    /// The source string rendered by the layer, or a link to a `text` variable.
+    #[ts(type = "string | VariableLink")]
+    pub text: Linkable<String>,
+    /// Project font birth key constraining this layer's font source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_asset_id: Option<crate::AssetId>,
+    /// Font family name (resolved against the bundled font index), or a link
+    /// to a `font` variable.
+    #[serde(with = "linkable_arc_str")]
+    #[ts(type = "string | VariableLink")]
+    pub font_family: Linkable<Arc<str>>,
     /// Font style / weight name (e.g. `"Regular"`, `"Bold"`; default
     /// `"Regular"`).
     #[serde(with = "arc_str", default = "default_font_style")]
     #[ts(type = "string")]
     pub font_style: Arc<str>,
-    /// Font size in pixels.
-    pub font_size: PositiveProperty,
+    /// Font size in pixels, or a link to a `number` variable.
+    #[ts(type = "PositiveProperty | VariableLink")]
+    pub font_size: Linkable<PositiveProperty>,
     /// Optional variable-font axis coordinates. Axis values are graph-
     /// animatable through this collection's stable [`FxItemId`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -673,24 +781,30 @@ pub struct TextDocument {
     /// Whether the glyph fill is painted (default true).
     #[serde(default = "default_true")]
     pub apply_fill: bool,
-    /// Glyph fill: finite extended-sRGB RGB 0..64, coverage alpha 0..1.
-    #[serde(deserialize_with = "crate::deserialize_extended_color")]
-    pub fill_color: ColorProperty,
+    /// Glyph fill: finite extended-sRGB RGB 0..64, coverage alpha 0..1, or a
+    /// link to a `color` variable.
+    #[serde(deserialize_with = "crate::deserialize_linkable_extended_color")]
+    #[ts(type = "[number, number, number, number] | VariableLink")]
+    pub fill_color: Linkable<ColorProperty>,
     /// Whether the glyph stroke is painted (default false).
     #[serde(default)]
     pub apply_stroke: bool,
     /// Glyph stroke: extended-sRGB RGB 0..64, coverage alpha 0..1. This is the whole-string
     /// text stroke — distinct from the `stroke` layer-style entry (a
-    /// silhouette outline) and from Rect/Shape stroke properties.
+    /// silhouette outline) and from Rect/Shape stroke properties. May link to
+    /// a `color` variable.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(
         default,
-        deserialize_with = "crate::deserialize_optional_extended_color"
+        deserialize_with = "crate::deserialize_optional_linkable_extended_color"
     )]
-    pub stroke_color: Option<ColorProperty>,
-    /// Glyph stroke width in pixels (non-negative).
+    #[ts(type = "[number, number, number, number] | VariableLink | null")]
+    pub stroke_color: Option<Linkable<ColorProperty>>,
+    /// Glyph stroke width in pixels (non-negative), or a link to a `number`
+    /// variable.
     #[serde(default)]
-    pub stroke_width: NonNegativeProperty,
+    #[ts(type = "number | VariableLink")]
+    pub stroke_width: Linkable<NonNegativeProperty>,
     /// Paint the stroke above the fill when true (AE "Stroke Over Fill").
     #[serde(default)]
     pub stroke_over_fill: bool,
@@ -698,9 +812,11 @@ pub struct TextDocument {
     #[serde(default)]
     pub justification: Justification,
     /// AE character tracking amount in `1/1000 em` (signed; whole-string —
-    /// per-character tracking lives on text animators).
+    /// per-character tracking lives on text animators), or a link to a
+    /// `number` variable.
     #[serde(default)]
-    pub tracking: ScalarProperty,
+    #[ts(type = "number | VariableLink")]
+    pub tracking: Linkable<ScalarProperty>,
     /// Optional line height in pixels. `None` means auto-leading.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub leading: Option<PositiveProperty>,
@@ -711,7 +827,8 @@ pub struct TextDocument {
     /// `boxPosition`); `false` = point text placed at a baseline-like
     /// origin. Use box text for a known layout region that needs paragraph or
     /// vertical alignment. Use point text for free-standing intrinsic text.
-    /// Box text wraps inside the box; it does not clip or shrink overflow.
+    /// Box text wraps inside the box; it does not clip overflow, and shrinks
+    /// it only when `boxFit` is `"shrink"`.
     #[serde(default)]
     pub box_text: bool,
     /// Whether layer transform scale should resize box-text glyphs instead of
@@ -763,6 +880,11 @@ pub struct TextDocument {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub vertical_align: Option<VerticalAlign>,
+    /// How box text fits its box (see [`BoxFit`]); `"shrink"` scales the text
+    /// down until its lines fit. Kept off the wire when `"none"` so existing
+    /// documents re-serialize byte-identical. Ignored for point text.
+    #[serde(default, skip_serializing_if = "BoxFit::is_default")]
+    pub box_fit: BoxFit,
 }
 
 /// AE-style layer position. Wire shape is `[x, y]` for 2D layers or
@@ -1040,7 +1162,7 @@ impl ImageSource {
     #[must_use]
     pub fn from_asset(asset_id: AssetId, frame_rect: Option<PositiveRect>, fit: MediaFit) -> Self {
         Self::Asset(ImageAssetSource {
-            asset_id,
+            asset_id: asset_id.into(),
             input_transform: None,
             frame_rect,
             fit,

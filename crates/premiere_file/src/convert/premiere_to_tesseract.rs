@@ -3962,6 +3962,7 @@ fn import_video_clip(
                 description: String::new(),
                 metadata: None,
                 is_hidden: video_hidden,
+                storyline: false,
                 parent: video_parent,
                 start_time: None,
                 blend_mode: video_blend,
@@ -5365,6 +5366,10 @@ pub(super) fn map_animation_graph_error(source: AnimationGraphError) -> BuildErr
             "animator",
             "an asset-id property must use a constant string asset id so required resources stay enumerable",
         ),
+        AnimationGraphError::StaticFontProperty(_) => (
+            "property",
+            "font selection cannot be animated; edit sourceText.fontFamily / sourceText.fontStyle instead",
+        ),
         AnimationGraphError::ReadOnlyProperty(_) => {
             ("property", "is a read-only property and cannot be animated")
         }
@@ -5505,21 +5510,24 @@ pub(super) fn text_layer(
         [doc.font.as_str(), ""]
     };
     let source_text = TextDocument {
-        text: doc.text.clone(),
-        font_family: Arc::from(font_family),
+        font_asset_id: None,
+        text: doc.text.clone().into(),
+        font_family: font_family.into(),
         font_style: Arc::from(font_style),
         font_size: PositiveProperty::new(size)
-            .ok_or_else(|| unsupported("text size must be positive"))?,
+            .ok_or_else(|| unsupported("text size must be positive"))?
+            .into(),
         font_variations: None,
         apply_fill: doc.fill.is_some(),
-        fill_color: doc.fill.map_or([1.0; 4], rgba),
+        fill_color: doc.fill.map_or([1.0; 4], rgba).into(),
         apply_stroke: doc.stroke.is_some(),
-        stroke_color: doc.stroke.map(|stroke| rgba(stroke.color)),
+        stroke_color: doc.stroke.map(|stroke| rgba(stroke.color).into()),
         stroke_width: NonNegativeProperty::new(
             doc.stroke
                 .map_or(0.0, |stroke| STROKE_WIDTH_RATIO * f64::from(stroke.width)),
         )
-        .ok_or_else(|| unsupported("text stroke width must be nonnegative"))?,
+        .ok_or_else(|| unsupported("text stroke width must be nonnegative"))?
+        .into(),
         stroke_over_fill: false,
         justification: match doc.justification {
             PrJustification::Left => Justification::Left,
@@ -5527,7 +5535,7 @@ pub(super) fn text_layer(
             PrJustification::Center => Justification::Center,
             PrJustification::Justify => Justification::Justify,
         },
-        tracking: f64::from(doc.tracking),
+        tracking: f64::from(doc.tracking).into(),
         leading,
         baseline_shift: 0.0,
         box_text: box_size.is_some(),
@@ -5540,6 +5548,7 @@ pub(super) fn text_layer(
         underline: false,
         strikethrough: false,
         vertical_align,
+        box_fit: fx_schema::BoxFit::None,
     };
     let mut transform = object_transform(&text.transform, "text")?;
     if let Some(horizontal) = text.horizontal_scale {

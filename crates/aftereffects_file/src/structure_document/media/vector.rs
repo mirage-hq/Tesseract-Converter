@@ -55,7 +55,9 @@ pub(super) fn lower(
         let fills: Vec<_> = source
             .fill
             .map(|fill| ShapeFillStyle {
-                paint: ShapePaint::Solid { color: fill.color },
+                paint: ShapePaint::Solid {
+                    color: fill.color.into(),
+                },
                 fill_rule: if fill.even_odd {
                     ShapeFillRule::EvenOdd
                 } else {
@@ -86,7 +88,7 @@ pub(super) fn lower(
                 Some(ShapeStrokeStyle {
                     enabled: true,
                     paint: ShapePaint::Solid {
-                        color: stroke.color,
+                        color: stroke.color.into(),
                     },
                     width,
                     cap: match stroke.cap {

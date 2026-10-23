@@ -388,9 +388,31 @@ fn lower_document(
     if document.box_text && (document.box_size.is_none() || document.box_position.is_none()) {
         return Err("Box Text requires boxSize and boxPosition for native export");
     }
-    if document.apply_stroke && document.stroke_color.is_none() {
+    let stroke_color = document
+        .stroke_color
+        .as_ref()
+        .and_then(|color| color.value().copied());
+    if document.apply_stroke && stroke_color.is_none() {
         return Err("Enabled Text stroke has no color");
     }
+    let (
+        Some(text),
+        Some(font_family),
+        Some(&fill_color),
+        Some(font_size),
+        Some(stroke_width),
+        Some(tracking),
+    ) = (
+        document.text.value(),
+        document.font_family.value(),
+        document.fill_color.value(),
+        document.font_size.number(),
+        document.stroke_width.number(),
+        document.tracking.number(),
+    )
+    else {
+        return Err("Linked Text document values are not native-exportable");
+    };
     if document.font_variations.is_some() {
         diagnostics.push(
             "Variable-font axes have no established native Source Text writer grammar and were omitted"
@@ -413,29 +435,35 @@ fn lower_document(
         diagnostics
             .push("Box vertical alignment is not applicable to Point Text and was omitted".into());
     }
+    if document.box_text && document.box_fit == fx_schema::BoxFit::Shrink {
+        diagnostics.push(
+            "boxFit shrink has no AE Source Text field; the Box Text exports at its authored fontSize, so text that FX shrinks to fit overflows its box in AE"
+                .into(),
+        );
+    }
     let (font_postscript, approximated) =
-        postscript_name(document.font_family.as_ref(), document.font_style.as_ref())?;
+        postscript_name(font_family.as_ref(), document.font_style.as_ref())?;
     if diagnose_candidate && approximated {
         diagnostics.push(format!(
             "FX stores font family/style rather than AE's PostScript identity; authored deterministic candidate {font_postscript:?}, so host font resolution remains unverified"
         ));
     }
     Ok(DocumentState {
-        font_family: document.font_family.to_string(),
+        font_family: font_family.to_string(),
         font_style: document.font_style.to_string(),
         document: TextDocumentSpec {
-            text: document.text.clone(),
+            text: text.clone(),
             font_postscript,
             font_format: None,
-            font_size: document.font_size.value(),
+            font_size,
             apply_fill: document.apply_fill,
-            fill_color: document.fill_color,
+            fill_color,
             apply_stroke: document.apply_stroke,
-            stroke_color: document.stroke_color,
-            stroke_width: document.stroke_width.value(),
+            stroke_color,
+            stroke_width,
             stroke_over_fill: document.stroke_over_fill,
             justification: document.justification,
-            tracking: document.tracking,
+            tracking,
             leading: document.leading.map(|value| value.value()),
             baseline_shift: document.baseline_shift,
             box_size: document.box_text.then_some(document.box_size).flatten(),

@@ -574,7 +574,7 @@ mod tests {
             for layer in layers {
                 match layer.data() {
                     fx_schema::LayerData::Text(text) => {
-                        output.push(text.source_text.text.clone());
+                        output.extend(text.source_text.text.value().cloned());
                     }
                     fx_schema::LayerData::Group(group) => collect_text(&group.layers, output),
                     _ => {}

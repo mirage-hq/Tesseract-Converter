@@ -8,7 +8,7 @@ macro_rules! define_media_source_wire_schema {
         #[derive(Deserialize)]
         #[$strict]
         struct MediaSourceWire {
-            asset_id: AssetId,
+            asset_id: Linkable<AssetId>,
             #[serde(default)]
             eye_contact: Option<VideoSourceEyeContact>,
             #[serde(default)]
@@ -93,8 +93,10 @@ macro_rules! define_media_source_schema {
         #[serde(rename_all = "camelCase")]
         #[ts(export_to = "project_types.d.ts")]
         pub struct ImageAssetSource {
-            /// Captions asset identifier for the source image.
-            pub asset_id: AssetId,
+            /// Captions asset identifier for the source image, or a link to an
+            /// `image` variable.
+            #[ts(type = "string | VariableLink")]
+            pub asset_id: Linkable<AssetId>,
             /// Optional reader-only source conversion evaluated before ordinary effects.
             /// Unsupported future semantic payloads are retained as opaque no-ops.
             #[serde(default, skip_serializing_if = "Option::is_none")]

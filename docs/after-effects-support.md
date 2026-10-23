@@ -16,6 +16,9 @@ edits, plus external assets and used embedded fonts when needed. It does not pat
 or replay the original AEP. Export FPS defaults to 24; an explicit positive rate
 up to 240 is accepted. Keep the whole output package together.
 
+FX variables have no After Effects equivalent. Export writes each linked value
+as the value it reads now; variable definitions and links are not exported. An `[AE-EXPORT]` warning reports this flattening.
+
 `--check` performs conversion/validation without publishing the final package.
 Warnings can accompany success. Malformed input, unsafe graphs, invalid media,
 integrity failures and I/O errors can stop conversion rather than produce output.
@@ -90,6 +93,12 @@ faces use diagnosed Inter substitutions. It does not obtain or install fonts.
 Export can use verified embedded physical fonts for identity and bounds, and
 packages used files under `fonts/` with a manifest. Install licensed faces before
 opening/rendering in AE; packaging alone does not activate them.
+
+FX `boxFit: "shrink"` draws box text at the largest size, at most `fontSize`,
+whose lines fit the box. AE Source Text has no such field, so export writes the
+authored size with an `[AE-EXPORT]` diagnostic, and text that FX shrinks
+overflows its box in AE. Import always produces `"none"`. No test, Adobe open,
+readback or render proof covers this omission.
 
 Supported Stencil/Silhouette Alpha import can mask the accumulated lower stack.
 Partial spans, preserve-transparency dependencies, adjustment sources, luma modes

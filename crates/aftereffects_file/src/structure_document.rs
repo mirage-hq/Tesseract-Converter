@@ -3470,6 +3470,7 @@ fn group(
         id,
         name,
         description: String::new(),
+        variables: Default::default(),
         is_hidden: false,
         parent,
         blend_mode: Default::default(),

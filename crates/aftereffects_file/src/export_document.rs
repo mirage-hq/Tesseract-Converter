@@ -4290,8 +4290,10 @@ fn has_visual_descendant(
         return false;
     }
     let painted = rect.rect.fill_paint.as_ref().map_or_else(
-        || rect.rect.fill_color[3] > 0.0,
-        |paint| matches!(paint, ShapePaint::Solid { color } if color[3] > 0.0),
+        || rect.rect.fill_color.value().is_some_and(|color| color[3] > 0.0),
+        |paint| {
+            matches!(paint, ShapePaint::Solid { color } if color.value().is_some_and(|color| color[3] > 0.0))
+        },
     );
     if !painted {
         return false;
@@ -7481,9 +7483,11 @@ fn vector_rect(layer: &RectLayer, transform: &Transform) -> Result<VectorRectSpe
         return Err("Rectangle geometry/Transform exceeds native static value bounds");
     }
     let color = if rect.fill_enabled {
-        Some(rect.fill_color)
+        rect.fill_color.value().copied()
     } else {
         rect.stroke_color
+            .as_ref()
+            .and_then(|color| color.value().copied())
     };
     if color.is_none_or(|color| !fx_schema::has_valid_extended_color(&color)) {
         return Err("Rectangle paint requires finite extended-sRGB RGB and normalized alpha");
@@ -7497,7 +7501,7 @@ fn vector_rect(layer: &RectLayer, transform: &Transform) -> Result<VectorRectSpe
         size: rect.size,
         position: center,
         roundness: rect.roundness,
-        fill_color: rect.fill_enabled.then_some(rect.fill_color),
+        fill_color: color.filter(|_| rect.fill_enabled),
         stroke_color: rect.stroke_enabled.then_some(color.expect("checked color")),
         stroke_width: rect.stroke_width.value(),
         stroke_join: rect.stroke_join,
@@ -7521,7 +7525,7 @@ fn solid(layer: &RectLayer, transform: &Transform) -> Result<SolidLayerSpec, &'s
             .is_some_and(|mode| mode != Default::default())
         || rect.stroke_enabled
         || rect.roundness != 0.0
-        || rect.fill_color[3] != 1.0
+        || rect.fill_color.value().is_none_or(|color| color[3] != 1.0)
     {
         return Err(
             "Only opaque solid-fill Rect content is exportable; paint, stroke, roundness and fill-alpha controls are not baked",
@@ -7541,9 +7545,13 @@ fn solid(layer: &RectLayer, transform: &Transform) -> Result<SolidLayerSpec, &'s
     if layer.name.is_empty() || layer.name.len() > 255 || layer.name.contains('\0') {
         return Err("Native solid name must be 1..=255 UTF-8 bytes without NUL");
     }
-    if !fx_schema::has_valid_extended_color(&rect.fill_color) {
+    let Some(fill_color) = rect
+        .fill_color
+        .value()
+        .filter(|color| fx_schema::has_valid_extended_color(color))
+    else {
         return Err("Solid color lies outside the extended shape-paint range");
-    }
+    };
     let anchor = [
         transform.anchor_point[0] - rect.position[0],
         transform.anchor_point[1] - rect.position[1],
@@ -7557,9 +7565,9 @@ fn solid(layer: &RectLayer, transform: &Transform) -> Result<SolidLayerSpec, &'s
         height: dimension(rect.size[1])?,
         // Native source RGB uses f32; conversion introduces at most f32 rounding.
         color: [
-            rect.fill_color[0] as f32,
-            rect.fill_color[1] as f32,
-            rect.fill_color[2] as f32,
+            fill_color[0] as f32,
+            fill_color[1] as f32,
+            fill_color[2] as f32,
         ],
         transform: SolidTransform {
             anchor,

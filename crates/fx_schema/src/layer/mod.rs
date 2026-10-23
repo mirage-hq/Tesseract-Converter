@@ -35,8 +35,8 @@ pub use audio::{
 };
 pub use boolean::{BooleanOp, BooleanOperationLayer};
 pub use enums::{
-    BlendMode, FiniteVec2, Justification, MediaFit, MediaPlacement, PositiveVec2, TextPathAlign,
-    TrackMatteType, VerticalAlign,
+    BlendMode, BoxFit, FiniteVec2, Justification, MediaFit, MediaPlacement, PositiveVec2,
+    TextPathAlign, TrackMatteType, VerticalAlign,
 };
 pub use group::{
     AdjustmentLayer, GroupLayer, Playback, HIGH_COMPOSED_GROUP_PLAYBACK_RATE,

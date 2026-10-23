@@ -876,6 +876,8 @@ fn imported_image_asset_ids(group: &GroupLayer, output: &mut Vec<String>) {
                     .asset()
                     .expect("AE still image must remain asset-backed")
                     .asset_id
+                    .value()
+                    .unwrap()
                     .as_str()
                     .to_owned(),
             ),
@@ -1302,9 +1304,11 @@ fn native_export_edit_transform_controls_import_current_values_and_tracks() {
                 rect.rect
                     .stroke_color
                     .as_ref()
-                    .expect("authored Stroke color")[3]
+                    .expect("authored Stroke color")
+                    .value()
+                    .unwrap()[3]
             } else {
-                rect.rect.fill_color[3]
+                rect.rect.fill_color.value().unwrap()[3]
             };
             assert_eq!(
                 paint_alpha, expected_alpha,

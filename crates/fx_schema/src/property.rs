@@ -156,14 +156,11 @@ pub enum PropType {
     FillColor,
     /// Actual source text for text layers.
     TextContent,
-    /// Text layer font family (`Text.sourceText.fontFamily`). Finite-range
-    /// gated: only a constant `String` animator is allowed (a time-varying
-    /// JS animator is rejected at graph construction) so font resources can
-    /// be preloaded ahead of the first frame.
+    /// Static text layer font family (`Text.sourceText.fontFamily`).
+    /// Valid as an ambient dependency, but never as an animator target.
     FontFamily,
     /// Text layer font style / weight (`Text.sourceText.fontStyle`).
-    /// Finite-range gated like [`Self::FontFamily`]: constant `String`
-    /// animators only.
+    /// Valid as an ambient dependency, but never as an animator target.
     FontStyle,
     /// Text layer font size in pixels (`Text.sourceText.fontSize`).
     FontSize,
@@ -675,6 +672,18 @@ impl PropType {
             PropClass::DerivedSource { .. } | PropClass::ReadOnly => true,
             PropClass::Writable => false,
         }
+    }
+
+    /// Font selection is authored only in the static text document, never by an animator.
+    #[must_use]
+    pub fn is_static_font(self) -> bool {
+        matches!(self, Self::FontFamily | Self::FontStyle)
+    }
+
+    /// Dependencies whose values come from the model or host rather than a graph node.
+    #[must_use]
+    pub fn is_ambient_dependency(self) -> bool {
+        self.is_read_only() || self.is_static_font()
     }
 
     /// True for read-only *derived source* properties specifically: values

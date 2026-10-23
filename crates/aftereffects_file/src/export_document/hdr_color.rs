@@ -1,7 +1,7 @@
 //! Explicit generated-native colour bindings; never walks persisted/opaque FX JSON.
 
 use fx_conv::HdrColorBridge;
-use fx_schema::{LayerId, ShapePaint};
+use fx_schema::{LayerId, Linkable, ShapePaint};
 
 use super::{ExportDiagnostic, LayerSpec, VectorContent, VectorPaintSpec};
 use crate::{
@@ -98,7 +98,12 @@ fn paint(
     diagnostics: &mut Vec<ExportDiagnostic>,
 ) {
     match paint {
-        ShapePaint::Solid { color: value } => color(value, owner, bridge, diagnostics),
+        ShapePaint::Solid {
+            color: Linkable::Value(value),
+        } => color(value, owner, bridge, diagnostics),
+        ShapePaint::Solid {
+            color: Linkable::Linked(_),
+        } => {}
         ShapePaint::Gradient { stops, .. } => {
             for stop in stops {
                 color(&mut stop.color, owner, bridge, diagnostics);

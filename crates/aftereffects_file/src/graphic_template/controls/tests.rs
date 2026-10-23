@@ -716,7 +716,7 @@ fn capsule_picture_saved_child_text_uses_native_identity_not_layer_names() {
                 fx_schema::LayerData::Group(group) => text_count(&group.layers),
                 fx_schema::LayerData::Text(text) => {
                     assert_eq!(text.source_text.text, "Saved child 🦊");
-                    assert_eq!(text.source_text.font_size.value(), 48.0);
+                    assert_eq!(text.source_text.font_size.number(), Some(48.0));
                     1
                 }
                 _ => 0,

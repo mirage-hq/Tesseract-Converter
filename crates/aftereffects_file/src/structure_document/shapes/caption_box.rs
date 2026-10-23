@@ -216,7 +216,7 @@ pub(super) fn lower(
         for (paint, fill, stroke, blend_mode) in paints {
             let id = collector.allocate()?;
             let color = |paint: &ShapePaint| match paint {
-                ShapePaint::Solid { color } => Some(*color),
+                ShapePaint::Solid { color } => color.value().copied(),
                 _ => None,
             };
             let fill_color = fill
@@ -259,11 +259,11 @@ pub(super) fn lower(
                     position: [0.0, 0.0],
                     roundness: controls.roundness,
                     fill_enabled: fill.is_some(),
-                    fill_color,
+                    fill_color: fill_color.into(),
                     fill_paint: None,
                     fill_blend_mode: None,
                     stroke_enabled: stroke.is_some(),
-                    stroke_color,
+                    stroke_color: stroke_color.map(Into::into),
                     stroke_width: stroke
                         .as_ref()
                         .map_or(Default::default(), |stroke| stroke.width),

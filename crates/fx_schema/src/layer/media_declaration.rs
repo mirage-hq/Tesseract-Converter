@@ -21,6 +21,8 @@ macro_rules! define_wire_video_layer_schema {
                 metadata: Option<VideoLayerMetadata>,
                 #[serde(default)]
                 is_hidden: bool,
+                #[serde(default)]
+                storyline: bool,
                 parent: Option<LayerId>,
                 #[serde(default, deserialize_with = "deserialize_optional_time_secs")]
                 start_time: Option<Time>,
@@ -118,6 +120,10 @@ macro_rules! define_media_layer_schema {
             /// Whether this layer is excluded from all rendered output.
             #[serde(default, skip_serializing_if = "std::ops::Not::not")]
             pub is_hidden: bool,
+            /// Marks a root layer as a storyline clip: one of the main clips placed end
+            /// to end at the bottom of the timeline. Readers drop the flag on nested layers.
+            #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+            pub storyline: bool,
             /// `LayerId` of the containing Group layer, or `null` for a root
             /// layer — mirrors the layer's position in the tree.
             #[serde(skip_serializing_if = "Option::is_none")]
@@ -233,6 +239,10 @@ macro_rules! define_media_layer_schema {
             /// Whether this layer is excluded from all rendered output.
             #[serde(default, skip_serializing_if = "std::ops::Not::not")]
             pub is_hidden: bool,
+            /// Marks a root layer as a storyline clip: one of the main clips placed end
+            /// to end at the bottom of the timeline. Readers drop the flag on nested layers.
+            #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+            pub storyline: bool,
             /// `LayerId` of the containing group, or `None` for a root layer.
             #[serde(skip_serializing_if = "Option::is_none")]
             pub parent: Option<LayerId>,

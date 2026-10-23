@@ -622,8 +622,8 @@ impl Model {
             }
         };
         let first = snapshot.documents.first()?;
-        let text = first.text.to_string();
-        let text_style = Some(first.fill_color);
+        let text = first.text.value()?.clone();
+        let text_style = Some(*first.fill_color.value()?);
         let expression_enabled = snapshot.expression.is_some();
         let expression = snapshot
             .expression
@@ -646,12 +646,14 @@ impl Model {
             .starts
             .iter()
             .zip(&snapshot.documents)
-            .map(|(time, document)| TextKey {
-                time: start + time * stretch,
-                text: document.text.to_string(),
-                fill_color: document.fill_color,
+            .map(|(time, document)| {
+                Some(TextKey {
+                    time: start + time * stretch,
+                    text: document.text.value()?.clone(),
+                    fill_color: *document.fill_color.value()?,
+                })
             })
-            .collect();
+            .collect::<Option<_>>()?;
         if !text_keys.is_empty()
             && (!start.is_finite()
                 || !stretch.is_finite()

@@ -985,7 +985,7 @@ fn native_set_matte_red_import_keeps_public_editable_channel_projection() {
     for group in &all {
         for layer in &group.layers {
             if let FxLayer::Rect(rect) = layer.data() {
-                colors.push(rect.rect.fill_color);
+                colors.extend(rect.rect.fill_color.value().copied());
             }
         }
     }

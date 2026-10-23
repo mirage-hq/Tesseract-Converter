@@ -792,8 +792,8 @@ fn capsule_seek_only_large_archive_retains_native_editable_text() {
         }
     }
     assert_eq!(texts.len(), 1);
-    assert!(!texts[0].text.is_empty());
-    assert_eq!(texts[0].font_family.as_ref(), "ArialMT");
+    assert!(texts[0].text.value().is_some_and(|text| !text.is_empty()));
+    assert_eq!(texts[0].font_family, "ArialMT");
 }
 
 #[test]

@@ -150,7 +150,7 @@ fn static_stroke_color_alias_uses_same_color_control_resolver_as_fill() {
     assert_eq!(
         stroke.paint,
         ShapePaint::Solid {
-            color: [0.0, 0.0, 0.0, 1.0]
+            color: [0.0, 0.0, 0.0, 1.0].into()
         }
     );
     assert_eq!(stroke.width.value(), 12.0);
@@ -167,7 +167,7 @@ fn plain_stroke_color_retains_authored_style_without_alias_diagnostic() {
     assert_eq!(
         stroke.paint,
         ShapePaint::Solid {
-            color: [1.0, 0.0, 0.0, 1.0]
+            color: [1.0, 0.0, 0.0, 1.0].into()
         }
     );
     assert_eq!(stroke.width.value(), 12.0);
@@ -187,7 +187,7 @@ fn expression_backed_stroke_controller_is_not_misrepresented_as_static() {
     assert_eq!(
         stroke.paint,
         ShapePaint::Solid {
-            color: [1.0, 0.0, 0.0, 1.0]
+            color: [1.0, 0.0, 0.0, 1.0].into()
         }
     );
     assert!(

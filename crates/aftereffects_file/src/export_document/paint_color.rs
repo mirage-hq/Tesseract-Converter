@@ -115,7 +115,12 @@ fn clip_optional_colors(
 
 fn clip_paint(paint: &mut fx_schema::ShapePaint) -> bool {
     match paint {
-        fx_schema::ShapePaint::Solid { color } => clip_rgb(color),
+        fx_schema::ShapePaint::Solid {
+            color: fx_schema::Linkable::Value(color),
+        } => clip_rgb(color),
+        fx_schema::ShapePaint::Solid {
+            color: fx_schema::Linkable::Linked(_),
+        } => false,
         fx_schema::ShapePaint::Gradient { stops, .. } => {
             let mut clipped = false;
             for stop in stops {

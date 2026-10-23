@@ -425,13 +425,17 @@ fn gray_input(root: &LayerData, entries: &[AnimationGraphEntry], depth: usize) -
                         )
                 })
             }) && r.rect.fill_paint.is_none()
-                && (!r.rect.fill_enabled || gray(&r.rect.fill_color[..]))
+                && (!r.rect.fill_enabled || r.rect.fill_color.value().is_some_and(|c| gray(&c[..])))
                 && (!r.rect.stroke_enabled
-                    || r.rect.stroke_color.as_ref().is_some_and(|c| gray(&c[..])))
+                    || r.rect
+                        .stroke_color
+                        .as_ref()
+                        .and_then(|c| c.value())
+                        .is_some_and(|c| gray(&c[..])))
         }
         LayerData::Text(t) => {
             let text = &t.source_text;
-            (!text.apply_fill || gray(&text.fill_color[..])) && (!text.apply_stroke || text.stroke_color.as_ref().is_some_and(|c|gray(&c[..]))) && t.animators.iter().all(|a|a.fill_color.as_ref().is_none_or(|c|gray(&c[..])) && a.stroke_color.as_ref().is_none_or(|c|gray(&c[..])))
+            (!text.apply_fill || text.fill_color.value().is_some_and(|c|gray(&c[..]))) && (!text.apply_stroke || text.stroke_color.as_ref().and_then(|c|c.value()).is_some_and(|c|gray(&c[..]))) && t.animators.iter().all(|a|a.fill_color.as_ref().is_none_or(|c|gray(&c[..])) && a.stroke_color.as_ref().is_none_or(|c|gray(&c[..])))
                 && !entries.iter().any(|entry|entry.target.as_property().is_some_and(|p|p.layer_id()==t.id && matches!(p.property_type(),fx_schema::PropType::FillColor|fx_schema::PropType::StrokeColor)) || matches!(&entry.target,PropertyTarget::FxItemProperty(target) if t.animators.iter().any(|a|a.id==target.item_id()) && matches!(target.property_name(),"fillColor"|"strokeColor")))
         }
         LayerData::Audio(_) => true,
@@ -1059,7 +1063,7 @@ mod tests {
         let changed = match &mut data {
             LayerData::Group(g) => g.layers.iter_mut().any(color_text),
             LayerData::Text(t) => {
-                t.source_text.fill_color = [0.2, 0.5, 0.8, 1.];
+                t.source_text.fill_color = [0.2, 0.5, 0.8, 1.].into();
                 true
             }
             _ => false,

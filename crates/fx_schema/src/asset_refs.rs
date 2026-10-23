@@ -23,6 +23,8 @@ pub enum AssetKind {
     Pag,
     /// A 3D `.cube` asset referenced by an Input or Look Transform.
     Lut,
+    /// A project font birth key explicitly selected by a text layer.
+    Font,
 }
 
 /// One asset reference discovered during a composition walk.
@@ -75,18 +77,23 @@ impl FXComposition {
         let mut refs = Vec::new();
         collect_layer_asset_refs(self.layers(), &mut refs);
         collect_graph_asset_overrides(self, &mut refs);
+        refs.extend(self.variable_values().filter_map(|value| match value {
+            crate::VariableValue::Image(asset_id) => Some(AssetRef {
+                kind: AssetKind::Image,
+                asset_id: asset_id.as_str(),
+            }),
+            _ => None,
+        }));
         refs
     }
 
-    /// Returns every statically reachable text font reference. Static
-    /// text-layer font refs are unioned with any
-    /// constant `FontFamily` / `FontStyle` overrides from the animation graph
-    /// so resource preloading sees every reachable font pair.
+    /// Returns the static font selection of every text layer, plus each font
+    /// variable in every style those layers use.
     #[must_use]
     pub fn text_font_refs(&self) -> Vec<TextFontRef<'_>> {
         let mut refs = Vec::new();
         collect_text_font_refs(self.layers(), &mut refs);
-        collect_graph_font_overrides(self, &mut refs);
+        collect_font_variable_refs(self, &mut refs);
         refs
     }
 
@@ -99,7 +106,33 @@ impl FXComposition {
         let mut contents = Vec::new();
         collect_text_contents(self.layers(), &mut contents);
         collect_graph_text_overrides(self, &mut contents);
+        contents.extend(self.variable_values().filter_map(|value| match value {
+            crate::VariableValue::Text(text) => Some(text.as_str()),
+            _ => None,
+        }));
         contents
+    }
+
+    /// Every variable value the composition and its Groups define. Links
+    /// read one of these, so preloading them covers every linked property.
+    fn variable_values(&self) -> impl Iterator<Item = &crate::VariableValue> {
+        fn collect<'a>(layers: &'a [Layer], values: &mut Vec<&'a crate::VariableValue>) {
+            for layer in layers {
+                if let Some(variables) = layer.data().variables() {
+                    values.extend(variables.values().filter_map(crate::Linkable::value));
+                }
+                if let Some(children) = layer.child_layers() {
+                    collect(children, values);
+                }
+            }
+        }
+        let mut values: Vec<_> = self
+            .variables()
+            .values()
+            .filter_map(crate::Linkable::value)
+            .collect();
+        collect(self.layers(), &mut values);
+        values.into_iter()
     }
 }
 
@@ -161,11 +194,14 @@ fn collect_layer_asset_refs<'a>(layers: &'a [Layer], refs: &mut Vec<AssetRef<'a>
                 if let Some(input) = image.source.input_transform() {
                     collect_input_transform_asset_ref(&input.transform, refs);
                 }
+                // A linked source reads an image variable, collected below.
                 let crate::ImageSource::Asset(source) = &image.source;
-                refs.push(AssetRef {
-                    kind: AssetKind::Image,
-                    asset_id: source.asset_id.as_str(),
-                });
+                if let Some(asset_id) = source.asset_id.value() {
+                    refs.push(AssetRef {
+                        kind: AssetKind::Image,
+                        asset_id: asset_id.as_str(),
+                    });
+                }
             }
             LayerData::Audio(audio) => {
                 refs.push(AssetRef {
@@ -193,10 +229,13 @@ fn collect_layer_asset_refs<'a>(layers: &'a [Layer], refs: &mut Vec<AssetRef<'a>
                 collect_layer_asset_refs(&ai_edit.layers, refs);
             }
             LayerData::BooleanOperation(group) => collect_layer_asset_refs(&group.layers, refs),
-            LayerData::Text(_)
-            | LayerData::Rect(_)
-            | LayerData::Shape(_)
-            | LayerData::Adjustment(_) => {}
+            LayerData::Text(text) => {
+                refs.extend(text.source_text.font_asset_id.iter().map(|id| AssetRef {
+                    kind: AssetKind::Font,
+                    asset_id: id.as_str(),
+                }));
+            }
+            LayerData::Rect(_) | LayerData::Shape(_) | LayerData::Adjustment(_) => {}
         }
     }
 }
@@ -306,13 +345,6 @@ fn collect_graph_asset_overrides<'a>(composition: &'a FXComposition, refs: &mut 
     }
 }
 
-fn collect_graph_font_overrides<'a>(
-    composition: &'a FXComposition,
-    refs: &mut Vec<TextFontRef<'a>>,
-) {
-    collect_graph_font_overrides_for_layers(composition, composition.layers(), refs);
-}
-
 fn collect_graph_text_overrides<'a>(composition: &'a FXComposition, contents: &mut Vec<&'a str>) {
     collect_graph_text_overrides_for_layers(composition, composition.layers(), contents);
 }
@@ -339,54 +371,6 @@ fn collect_graph_text_overrides_for_layers<'a>(
             }
             LayerData::BooleanOperation(group) => {
                 collect_graph_text_overrides_for_layers(composition, &group.layers, contents);
-            }
-            LayerData::Media(_)
-            | LayerData::Video(_)
-            | LayerData::Image(_)
-            | LayerData::Rect(_)
-            | LayerData::Shape(_)
-            | LayerData::Audio(_)
-            | LayerData::Pag(_)
-            | LayerData::Adjustment(_) => {}
-        }
-    }
-}
-
-/// Walk concrete text layers rather than raw graph entries: a font override
-/// needs the layer's static counterpart when only family or style is overridden,
-/// so orphan font overrides cannot form a complete preload pair and are ignored.
-fn collect_graph_font_overrides_for_layers<'a>(
-    composition: &'a FXComposition,
-    layers: &'a [Layer],
-    refs: &mut Vec<TextFontRef<'a>>,
-) {
-    for layer in layers {
-        match layer.data() {
-            LayerData::Text(text) => {
-                let font_families =
-                    graph_string_overrides(composition, text.id, PropType::FontFamily);
-                let font_styles = graph_string_overrides(composition, text.id, PropType::FontStyle);
-                if font_families.is_none() && font_styles.is_none() {
-                    continue;
-                }
-                let font_families =
-                    font_families.unwrap_or_else(|| vec![text.source_text.font_family.as_ref()]);
-                let font_styles =
-                    font_styles.unwrap_or_else(|| vec![text.source_text.font_style.as_ref()]);
-                for &family in &font_families {
-                    for &style in &font_styles {
-                        refs.push(TextFontRef { family, style });
-                    }
-                }
-            }
-            LayerData::Group(group) => {
-                collect_graph_font_overrides_for_layers(composition, &group.layers, refs);
-            }
-            LayerData::AiEdit(ai_edit) => {
-                collect_graph_font_overrides_for_layers(composition, &ai_edit.layers, refs);
-            }
-            LayerData::BooleanOperation(group) => {
-                collect_graph_font_overrides_for_layers(composition, &group.layers, refs);
             }
             LayerData::Media(_)
             | LayerData::Video(_)
@@ -474,13 +458,49 @@ fn find_media_source_kind(layers: &[Layer], layer_id: LayerId) -> Option<MediaSo
     None
 }
 
+/// A font variable can reach any Text layer through a link, so preload each
+/// one in every style the composition's Text layers use.
+fn collect_font_variable_refs<'a>(composition: &'a FXComposition, refs: &mut Vec<TextFontRef<'a>>) {
+    let families: Vec<&str> = composition
+        .variable_values()
+        .filter_map(|value| match value {
+            crate::VariableValue::Font(family) => Some(family.as_str()),
+            _ => None,
+        })
+        .collect();
+    if families.is_empty() {
+        return;
+    }
+    let mut styles = std::collections::BTreeSet::new();
+    collect_text_styles(composition.layers(), &mut styles);
+    for family in families {
+        refs.extend(styles.iter().map(|&style| TextFontRef { family, style }));
+    }
+}
+
+fn collect_text_styles<'a>(layers: &'a [Layer], styles: &mut std::collections::BTreeSet<&'a str>) {
+    for layer in layers {
+        if let LayerData::Text(text) = layer.data() {
+            styles.insert(text.source_text.font_style.as_ref());
+        }
+        if let Some(children) = layer.child_layers() {
+            collect_text_styles(children, styles);
+        }
+    }
+}
+
 fn collect_text_font_refs<'a>(layers: &'a [Layer], refs: &mut Vec<TextFontRef<'a>>) {
     for layer in layers {
         match layer.data() {
-            LayerData::Text(text) => refs.push(TextFontRef {
-                family: text.source_text.font_family.as_ref(),
-                style: text.source_text.font_style.as_ref(),
-            }),
+            LayerData::Text(text) => {
+                // A linked family reads a font variable, collected separately.
+                if let Some(family) = text.source_text.font_family.value() {
+                    refs.push(TextFontRef {
+                        family,
+                        style: text.source_text.font_style.as_ref(),
+                    });
+                }
+            }
             LayerData::Group(group) => collect_text_font_refs(&group.layers, refs),
             LayerData::Pag(pag) => {
                 for item in &pag.items {
@@ -520,7 +540,9 @@ fn collect_text_font_refs<'a>(layers: &'a [Layer], refs: &mut Vec<TextFontRef<'a
 fn collect_text_contents<'a>(layers: &'a [Layer], contents: &mut Vec<&'a str>) {
     for layer in layers {
         match layer.data() {
-            LayerData::Text(text) => contents.push(&text.source_text.text),
+            LayerData::Text(text) => {
+                contents.extend(text.source_text.text.value().map(String::as_str))
+            }
             LayerData::Group(group) => collect_text_contents(&group.layers, contents),
             LayerData::Pag(pag) => {
                 for item in &pag.items {
@@ -940,7 +962,7 @@ mod tests {
     }
 
     #[test]
-    fn fx_text_font_refs_union_constant_font_overrides() {
+    fn fx_text_font_refs_use_migrated_static_selection() {
         let composition = fx_composition_from(json!({
             "id": "c",
             "name": "c",
@@ -974,14 +996,8 @@ mod tests {
         }));
         let refs = composition.text_font_refs();
         let pairs: Vec<(&str, &str)> = refs.iter().map(|r| (r.family, r.style)).collect();
-        assert!(
-            pairs.contains(&("Inter", "Regular")),
-            "static font pair must still surface"
-        );
-        assert!(
-            pairs.contains(&("Avenir Next", "Bold")),
-            "constant font overrides must surface so the font pair is preloaded"
-        );
+        assert_eq!(pairs, vec![("Avenir Next", "Bold")]);
+        assert!(composition.dynamics().entries().is_empty());
     }
 
     #[test]

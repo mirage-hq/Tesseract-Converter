@@ -915,7 +915,9 @@ impl Collector<'_> {
                 match self.static_color_alias(run, "ADBE Vector Stroke Color", control_context) {
                     Ok(Some(color)) => {
                         if let Some(stroke) = result.strokes.get_mut(stroke_index) {
-                            stroke.paint = ShapePaint::Solid { color };
+                            stroke.paint = ShapePaint::Solid {
+                                color: color.into(),
+                            };
                         }
                     }
                     Ok(None) => {}
@@ -943,7 +945,9 @@ impl Collector<'_> {
         if let Some(color) =
             self.static_color_alias(run, "ADBE Vector Fill Color", control_context)?
         {
-            fill.paint = ShapePaint::Solid { color };
+            fill.paint = ShapePaint::Solid {
+                color: color.into(),
+            };
         }
         Ok(fill)
     }
@@ -1678,7 +1682,8 @@ fn solid_fill(run: &[Chunk]) -> Result<ShapeFillStyle, String> {
                 color[1],
                 color[2],
                 color.get(3).copied().unwrap_or(1.0),
-            ],
+            ]
+            .into(),
         },
         fill_rule: if rule == 2.0 {
             ShapeFillRule::EvenOdd
@@ -1701,7 +1706,8 @@ fn solid_stroke(run: &[Chunk]) -> Result<ShapeStrokeStyle, String> {
                 color[1],
                 color[2],
                 color.get(3).copied().unwrap_or(1.0),
-            ],
+            ]
+            .into(),
         },
     )
 }

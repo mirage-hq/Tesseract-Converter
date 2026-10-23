@@ -573,7 +573,7 @@ fn compound_path_vector_program_keeps_trim_mode_and_single_scope() {
         }),
         VectorContent::Paint(VectorPaintSpec::Fill {
             paint: ShapePaint::Solid {
-                color: [0.25, 0.5, 0.75, 1.0],
+                color: [0.25, 0.5, 0.75, 1.0].into(),
             },
             fill_rule: ShapeFillRule::EvenOdd,
             blend_mode: BlendMode::Normal,
@@ -1120,7 +1120,7 @@ fn review_writer_fill_opacity_animation_is_encoded_on_native_fill() {
         ellipse_content(),
         VectorContent::Paint(VectorPaintSpec::Fill {
             paint: ShapePaint::Solid {
-                color: [0.25, 0.5, 0.75, 1.0],
+                color: [0.25, 0.5, 0.75, 1.0].into(),
             },
             fill_rule: ShapeFillRule::NonZeroWinding,
             blend_mode: BlendMode::Normal,
@@ -1195,7 +1195,7 @@ fn fill_without_opacity_animation_remains_static() {
         ellipse_content(),
         VectorContent::Paint(VectorPaintSpec::Fill {
             paint: ShapePaint::Solid {
-                color: [0.25, 0.5, 0.75, 1.0],
+                color: [0.25, 0.5, 0.75, 1.0].into(),
             },
             fill_rule: ShapeFillRule::NonZeroWinding,
             blend_mode: BlendMode::Normal,
@@ -1231,7 +1231,7 @@ fn fill_without_opacity_animation_remains_static() {
 fn solid_fill() -> VectorContent {
     VectorContent::Paint(VectorPaintSpec::Fill {
         paint: ShapePaint::Solid {
-            color: [0.2, 0.3, 0.4, 1.0],
+            color: [0.2, 0.3, 0.4, 1.0].into(),
         },
         fill_rule: ShapeFillRule::NonZeroWinding,
         blend_mode: BlendMode::Normal,
@@ -1267,7 +1267,7 @@ fn gradient_fill() -> VectorContent {
 fn solid_stroke() -> VectorContent {
     VectorContent::Paint(VectorPaintSpec::Stroke {
         paint: ShapePaint::Solid {
-            color: [1.0, 0.5, 0.0, 1.0],
+            color: [1.0, 0.5, 0.0, 1.0].into(),
         },
         blend_mode: BlendMode::Normal,
         opacity: 100.0,
@@ -1293,10 +1293,16 @@ fn static_solid_alpha_is_carried_by_each_native_paint_opacity() {
             let VectorContent::Paint(paint) = &mut content else {
                 unreachable!()
             };
-            let (ShapePaint::Solid { color }, paint_opacity) = (match paint {
+            let (
+                ShapePaint::Solid {
+                    color: Linkable::Value(color),
+                },
+                paint_opacity,
+            ) = (match paint {
                 VectorPaintSpec::Fill { paint, opacity, .. }
                 | VectorPaintSpec::Stroke { paint, opacity, .. } => (paint, opacity),
-            }) else {
+            })
+            else {
                 unreachable!()
             };
             color[3] = alpha;
@@ -1337,14 +1343,20 @@ fn static_solid_alpha_scales_paint_keys_without_changing_clock_or_easing() {
         let VectorContent::Paint(paint) = &mut content else {
             unreachable!()
         };
-        let (ShapePaint::Solid { color }, animations) = (match paint {
+        let (
+            ShapePaint::Solid {
+                color: Linkable::Value(color),
+            },
+            animations,
+        ) = (match paint {
             VectorPaintSpec::Fill {
                 paint, animations, ..
             }
             | VectorPaintSpec::Stroke {
                 paint, animations, ..
             } => (paint, animations),
-        }) else {
+        })
+        else {
             unreachable!()
         };
         color[3] = 0.27;
@@ -1385,7 +1397,9 @@ fn static_solid_alpha_retains_animated_color_and_gradient_controls() {
         unreachable!()
     };
     let VectorPaintSpec::Fill {
-        paint: ShapePaint::Solid { color },
+        paint: ShapePaint::Solid {
+            color: Linkable::Value(color),
+        },
         animations,
         ..
     } = &mut paint
@@ -1421,14 +1435,20 @@ fn static_solid_alpha_does_not_admit_invalid_paint_values() {
             let VectorContent::Paint(paint) = &mut content else {
                 unreachable!()
             };
-            let (ShapePaint::Solid { color }, animations) = (match paint {
+            let (
+                ShapePaint::Solid {
+                    color: Linkable::Value(color),
+                },
+                animations,
+            ) = (match paint {
                 VectorPaintSpec::Fill {
                     paint, animations, ..
                 }
                 | VectorPaintSpec::Stroke {
                     paint, animations, ..
                 } => (paint, animations),
-            }) else {
+            })
+            else {
                 unreachable!()
             };
             color[3] = invalid;
@@ -1612,7 +1632,7 @@ fn fresh_program_emits_ordered_gradient_paints_modifiers_and_nested_transform() 
             }),
             VectorContent::Paint(VectorPaintSpec::Stroke {
                 paint: ShapePaint::Solid {
-                    color: [0.0, 1.0, 0.0, 1.0],
+                    color: [0.0, 1.0, 0.0, 1.0].into(),
                 },
                 blend_mode: BlendMode::Normal,
                 opacity: 100.0,
@@ -2026,7 +2046,7 @@ fn fresh_program_rect_emits_owned_size_center_and_roundness_keys() {
         },
         VectorContent::Paint(VectorPaintSpec::Fill {
             paint: ShapePaint::Solid {
-                color: [0.25, 0.5, 0.75, 1.0],
+                color: [0.25, 0.5, 0.75, 1.0].into(),
             },
             fill_rule: ShapeFillRule::NonZeroWinding,
             blend_mode: BlendMode::Normal,

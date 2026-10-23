@@ -924,7 +924,7 @@ fn clone_variant_layer(
             image.id = occurrence_id;
             image.active_range = active;
             let ImageSource::Asset(asset) = &mut image.source;
-            asset.asset_id = selection.asset_id.clone();
+            asset.asset_id = selection.asset_id.clone().into();
         }
         LayerData::Video(video) => {
             video.id = occurrence_id;

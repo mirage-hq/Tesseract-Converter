@@ -178,6 +178,7 @@ pub fn validate_font_asset_properties(
         )));
     }
     let mut face_indices = BTreeSet::new();
+    let mut record_selection_names = BTreeSet::new();
     for face in &properties.faces {
         if !face_indices.insert(face.face_index) {
             return Err(invalid(format!("duplicate face index {}", face.face_index)));
@@ -272,13 +273,16 @@ pub fn validate_font_asset_properties(
                 )));
             }
             let lookup_name = name.to_lowercase();
-            if let Some(first_asset_id) = selection_names.insert(lookup_name, asset_id.clone()) {
+            if !record_selection_names.insert(lookup_name.clone()) {
                 return Err(FontRegistryValidationError::DuplicateFontSelectionName {
                     selection_name: name.clone(),
-                    first_asset_id,
+                    first_asset_id: asset_id.clone(),
                     duplicate_asset_id: asset_id.clone(),
                 });
             }
+            selection_names
+                .entry(lookup_name)
+                .or_insert_with(|| asset_id.clone());
         }
     }
     Ok(())
@@ -350,8 +354,16 @@ mod tests {
         let mut names = BTreeMap::new();
         validate_font_asset_properties(&first_id, &properties, &mut names, |_| false).unwrap();
 
+        validate_font_asset_properties(&second_id, &properties, &mut names, |_| false).unwrap();
+        let mut repeated = properties.clone();
+        let mut second_face = repeated.faces[0].clone();
+        second_face.face_index = 1;
+        second_face.family_name = "brand".to_owned();
+        second_face.style_name = "regular".to_owned();
+        second_face.selection_names = vec!["brand/regular".to_owned()];
+        repeated.faces.push(second_face);
         let duplicate =
-            validate_font_asset_properties(&second_id, &properties, &mut names, |_| false)
+            validate_font_asset_properties(&second_id, &repeated, &mut names, |_| false)
                 .unwrap_err();
         assert!(matches!(
             duplicate,

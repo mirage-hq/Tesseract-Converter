@@ -37,8 +37,8 @@ fn capsule_picture_native_precomps_keep_nested_editable_solids_without_guids() {
         layers
             .iter()
             .any(|layer| matches!(layer.data(), LayerData::Rect(rect)
-        if rect.rect.fill_color.iter().zip([0.9, 0.2, 0.1, 1.0])
-            .all(|(actual, expected)| (actual - expected).abs() < 1e-6)))
+        if rect.rect.fill_color.value().is_some_and(|color| color.iter().zip([0.9, 0.2, 0.1, 1.0])
+            .all(|(actual, expected)| (actual - expected).abs() < 1e-6))))
     );
     assert!(layers.iter().all(|layer| layer.id().value() >= 500));
     assert!(picture.next_id > 500);

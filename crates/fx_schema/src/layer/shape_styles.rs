@@ -3,7 +3,7 @@ use super::{
     model::{default_miter_limit, default_one},
     BlendMode,
 };
-use crate::{ColorProperty, NonNegativeProperty, ScalarProperty, Vector2Property};
+use crate::{ColorProperty, Linkable, NonNegativeProperty, ScalarProperty, Vector2Property};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -79,9 +79,11 @@ macro_rules! define_shape_styles_schema {
         pub enum ShapePaint {
             /// Solid RGBA paint.
             Solid {
-                /// Extended-sRGB RGB (0..64), coverage alpha (0..1).
-                #[serde(deserialize_with = "deserialize_extended_color")]
-                color: ColorProperty,
+                /// Extended-sRGB RGB (0..64), coverage alpha (0..1), or a link to a
+                /// `color` variable.
+                #[serde(deserialize_with = "deserialize_linkable_extended_color")]
+                #[ts(type = "[number, number, number, number] | VariableLink")]
+                color: Linkable<ColorProperty>,
             },
             /// Gradient paint.
             Gradient {
@@ -109,12 +111,33 @@ macro_rules! define_shape_styles_schema {
             Conic,
             $($historical)*
         }
-        fn deserialize_extended_color<'de, D>(deserializer: D) -> Result<ColorProperty, D::Error>
+        impl ShapePaint {
+            /// Visit a solid paint's color, which can link, without changing it.
+            pub fn for_each_link(&self, visit: &mut dyn FnMut(&dyn $crate::LinkSlot)) {
+                if let Self::Solid { color } = self {
+                    visit(color);
+                }
+            }
+
+            /// Visit a solid paint's color, which can link.
+            pub fn for_each_link_slot(
+                &mut self,
+                visit: &mut dyn FnMut(&mut dyn $crate::LinkSlot),
+            ) {
+                if let Self::Solid { color } = self {
+                    visit(color);
+                }
+            }
+        }
+
+        fn deserialize_linkable_extended_color<'de, D>(
+            deserializer: D,
+        ) -> Result<Linkable<ColorProperty>, D::Error>
         where
             D: serde::Deserializer<'de>,
         {
-            let color = ColorProperty::deserialize(deserializer)?;
-            if !$crate::has_valid_extended_color(&color) {
+            let color = Linkable::<ColorProperty>::deserialize(deserializer)?;
+            if color.value().is_some_and(|color| !$crate::has_valid_extended_color(color)) {
                 return Err(serde::de::Error::custom("solid paint requires finite RGB in 0..=64 and alpha in 0..=1"));
             }
             Ok(color)
@@ -133,7 +156,9 @@ impl ShapeFillStyle {
     #[must_use]
     pub fn solid(color: ColorProperty) -> Self {
         Self {
-            paint: ShapePaint::Solid { color },
+            paint: ShapePaint::Solid {
+                color: color.into(),
+            },
             fill_rule: ShapeFillRule::default(),
             blend_mode: BlendMode::default(),
             opacity: default_one(),
@@ -147,7 +172,9 @@ impl ShapeStrokeStyle {
     pub fn solid(color: ColorProperty, width: NonNegativeProperty) -> Self {
         Self {
             enabled: true,
-            paint: ShapePaint::Solid { color },
+            paint: ShapePaint::Solid {
+                color: color.into(),
+            },
             width,
             cap: ShapeLineCap::default(),
             join: ShapeLineJoin::default(),
@@ -217,7 +244,7 @@ impl ShapePaint {
     #[must_use]
     pub fn has_valid_values(&self) -> bool {
         match self {
-            Self::Solid { color } => crate::has_valid_extended_color(color),
+            Self::Solid { color } => color.value().is_none_or(crate::has_valid_extended_color),
             Self::Gradient {
                 start, end, stops, ..
             } => {

@@ -5938,6 +5938,7 @@ pub(super) fn text_object_with_hdr(
     if hdr.is_none()
         && std::iter::once(&source_text.fill_color)
             .chain(source_text.stroke_color.iter())
+            .filter_map(|color| color.value())
             .any(|color| color[..3].iter().any(|channel| *channel > 1.0))
     {
         approximate(omissions, record, "Extended-sRGB text RGB above 1 was clamped to native 0..=1; HDR brightness and channel ratios are not retained. Existing opaque-text restrictions are unchanged.");
@@ -5984,19 +5985,29 @@ pub(super) fn text_document_with_hdr(
             "text font variations, baseline shift, underline, strikethrough and stroke over fill are unsupported",
         ));
     }
-    let native_size = native_float(doc.font_size.value(), "font size")?;
+    let (Some(text), Some(&fill_color), Some(font_size), Some(stroke_width), Some(tracking)) = (
+        doc.text.value(),
+        doc.fill_color.value(),
+        doc.font_size.number(),
+        doc.stroke_width.number(),
+        doc.tracking.number(),
+    ) else {
+        return Err(unsupported("linked text document values are unsupported"));
+    };
+    let native_size = native_float(font_size, "font size")?;
     let fill = doc
         .apply_fill
-        .then(|| rgb_with_hdr(doc.fill_color, "text fill", hdr))
+        .then(|| rgb_with_hdr(fill_color, "text fill", hdr))
         .transpose()?;
-    let stroke = match (doc.apply_stroke, doc.stroke_color) {
+    let stroke_color = doc
+        .stroke_color
+        .as_ref()
+        .and_then(|color| color.value().copied());
+    let stroke = match (doc.apply_stroke, stroke_color) {
         // The FX renderer draws no stroke without a color.
         (true, Some(color)) => Some(PrTextStroke {
             color: rgb_with_hdr(color, "text stroke", hdr)?,
-            width: native_float(
-                doc.stroke_width.value() / STROKE_WIDTH_RATIO,
-                "stroke width",
-            )?,
+            width: native_float(stroke_width / STROKE_WIDTH_RATIO, "stroke width")?,
         }),
         _ => None,
     };
@@ -6019,6 +6030,11 @@ pub(super) fn text_document_with_hdr(
             if doc.box_first_baseline.is_some() {
                 return Err(unsupported(
                     "box text with an authored first baseline is unsupported",
+                ));
+            }
+            if doc.box_fit != fx_schema::BoxFit::None {
+                return Err(unsupported(
+                    "box text that shrinks to fit its box is unsupported",
                 ));
             }
             let vertical = match (doc.vertical_align, &doc.leading) {
@@ -6049,7 +6065,7 @@ pub(super) fn text_document_with_hdr(
     };
     Ok((
         PrTextDocument {
-            text: normalize_line_breaks(&doc.text),
+            text: normalize_line_breaks(text),
             font,
             size: native_size,
             fill,
@@ -6057,7 +6073,7 @@ pub(super) fn text_document_with_hdr(
             stroke,
             shadow: None,
             all_caps: doc.all_caps,
-            tracking: native_float(doc.tracking, "tracking")?,
+            tracking: native_float(tracking, "tracking")?,
             leading,
             justification: match doc.justification {
                 Justification::Left => PrJustification::Left,

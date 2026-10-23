@@ -476,6 +476,14 @@ fn prepare_with_project_writer(
 ) -> Result<StagedAfterEffectsExport, AepConversionError> {
     control.check_cancelled()?;
     let progress = control.progress;
+    // After Effects has no variables: every link exports the value it reads now.
+    let flattened_variables = document.composition().defines_variables();
+    let mut document = document.clone();
+    *document.composition_mut() = document
+        .composition()
+        .bake_variables()
+        .map_err(|error| crate::writer::AepWriteError::InvalidDocument(error.to_string()))?;
+    let document = &document;
     let baked = match &target.roots {
         Some(range) => {
             let layers = document.composition().layers().get(range.clone()).ok_or(
@@ -535,6 +543,12 @@ fn prepare_with_project_writer(
         && (prepared.preparation_withheld
             || (control.preserve_video_assets && !prepared.unsupported.is_empty()));
     let mut diagnostics = baked.diagnostics;
+    if flattened_variables {
+        diagnostics.push(ExportDiagnostic {
+            layer_id: None,
+            message: "FX variables flattened: each linked value is exported as its current value; variable definitions and links are not exported.".into(),
+        });
+    }
     for (asset_id, reason) in prepared.approximations {
         diagnostics.push(ExportDiagnostic {
             layer_id: None,

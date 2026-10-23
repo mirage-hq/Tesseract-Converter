@@ -257,6 +257,8 @@ fn still_image_keeps_its_native_parent_span_before_the_layer_start() {
             .asset()
             .expect("asset-backed still")
             .asset_id
+            .value()
+            .unwrap()
             .as_str(),
         "aep-local-item-13"
     );

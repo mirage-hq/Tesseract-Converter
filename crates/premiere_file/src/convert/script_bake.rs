@@ -112,6 +112,14 @@ impl BakedDocument<'_> {
         &self.document
     }
 
+    /// Owns the document, so the result outlives the view it was baked from.
+    pub(crate) fn into_owned(self) -> BakedDocument<'static> {
+        BakedDocument {
+            document: Cow::Owned(self.document.into_owned()),
+            baked: self.baked,
+        }
+    }
+
     /// Reports how many baked tracks the exported project writes, and then
     /// each one that it does not write, under its owner: the count comes
     /// first, so that the omission list's bound cannot drop it.

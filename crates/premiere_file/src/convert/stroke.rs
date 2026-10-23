@@ -81,7 +81,7 @@ pub(super) fn wrap(
         let rect_id = LayerId::new(*scope.next_index as u64 + 1);
         *scope.next_index += 1;
         let mut rect = super::black_shape(source.width, source.height);
-        rect.fill_color = [1.0, 1.0, 1.0, profile.opacity() / 100.0];
+        rect.fill_color = [1.0, 1.0, 1.0, profile.opacity() / 100.0].into();
         children.push(Layer::from_data(&LayerData::Rect(RectLayer {
             id: rect_id,
             name: "Premiere Stroke original-bounds border".into(),
@@ -106,7 +106,7 @@ pub(super) fn wrap(
         let mut rect = super::black_shape(source.width, source.height);
         rect.fill_enabled = false;
         rect.stroke_enabled = true;
-        rect.stroke_color = Some([1.0, 1.0, 1.0, profile.opacity() / 100.0]);
+        rect.stroke_color = Some([1.0, 1.0, 1.0, profile.opacity() / 100.0].into());
         rect.stroke_width = NonNegativeProperty::new(0.06 * transform.scale[0])
             .expect("positive finite Motion validated");
         children.push(Layer::from_data(&LayerData::Rect(RectLayer {

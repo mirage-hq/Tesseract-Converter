@@ -185,9 +185,9 @@ fn launch_hud_root_text_retention_preserves_source_structure_and_direct_text() {
             .into_iter()
             .find(|text| text.source_text.text == "1080P / 30 FPS")
             .unwrap();
-        assert_eq!(text.source_text.font_family.as_ref(), "Menlo");
+        assert_eq!(text.source_text.font_family, "Menlo");
         assert_eq!(text.source_text.font_style.as_ref(), "Regular");
-        assert_eq!(text.source_text.font_size.value(), 18.0);
+        assert_eq!(text.source_text.font_size.number(), Some(18.0));
         assert_eq!(text.source_text.box_size, Some([306.5, 46.8]));
         assert_eq!(text.source_text.box_position, Some([0.0, 0.0]));
         assert_eq!(
@@ -315,7 +315,7 @@ fn static_text_skew_retains_native_drawable_document_and_distinct_helpers() {
         assert_eq!(&anchor.numeric.as_ref().unwrap().values[..2], &[12.0, -7.0]);
         assert_eq!(text.transform.anchor_point, [0.0; 2]);
         assert_eq!(text.source_text.text, "n");
-        assert_eq!(text.source_text.stroke_width.value(), 3.0);
+        assert_eq!(text.source_text.stroke_width.number(), Some(3.0));
         assert_eq!(text.transform.scale, [100.0; 2]);
         assert_eq!(text.transform.rotation, 0.0);
         assert_eq!(text.transform.opacity.value(), 100.0);
@@ -533,7 +533,7 @@ fn fixed_text_skew_keeps_animated_placement_and_drawable_tracks_separate() {
     let texts = imported_texts(&native);
     assert_eq!(texts.len(), 1);
     assert_eq!(texts[0].source_text.text, "n");
-    assert_eq!(texts[0].source_text.stroke_width.value(), 3.0);
+    assert_eq!(texts[0].source_text.stroke_width.number(), Some(3.0));
     let anchor = drawable_properties
         .iter()
         .find(|property| property.match_name == "ADBE Anchor Point")
@@ -1181,12 +1181,15 @@ fn pr4442_fresh_point_and_box_cos_text_preserves_whole_document_fields() {
         .find(|text| text.name == "Fresh point")
         .unwrap();
     assert_eq!(point.source_text.text, "Point Ω\nSecond");
-    assert_eq!(point.source_text.font_family.as_ref(), "Inter");
+    assert_eq!(point.source_text.font_family, "Inter");
     assert_eq!(point.source_text.font_style.as_ref(), "Regular");
-    assert_eq!(point.source_text.font_size.value(), 42.0);
+    assert_eq!(point.source_text.font_size.number(), Some(42.0));
     assert_eq!(point.source_text.fill_color, [0.1, 0.2, 0.3, 0.9]);
-    assert_eq!(point.source_text.stroke_color, Some([0.8, 0.7, 0.6, 0.5]));
-    assert_eq!(point.source_text.stroke_width.value(), 3.0);
+    assert_eq!(
+        point.source_text.stroke_color,
+        Some([0.8, 0.7, 0.6, 0.5].into())
+    );
+    assert_eq!(point.source_text.stroke_width.number(), Some(3.0));
     assert!(point.source_text.stroke_over_fill);
     assert_eq!(point.source_text.tracking, 24.0);
     assert_eq!(point.source_text.leading.unwrap().value(), 54.0);
@@ -1381,7 +1384,7 @@ fn fresh_font_entry_uses_the_native_cool_type_dictionary_and_reimports_its_name(
         .iter()
         .map(|text| {
             (
-                text.source_text.font_family.as_ref(),
+                text.source_text.font_family.value().unwrap().as_ref(),
                 text.source_text.font_style.as_ref(),
             )
         })
@@ -1462,7 +1465,7 @@ fn whole_postscript_style_edits_retain_unverified_candidate_diagnostics() {
 }
 
 #[test]
-fn whole_postscript_empty_style_exports_edited_static_and_keyed_faces() {
+fn whole_postscript_empty_style_exports_static_and_migrated_first_faces() {
     for face in ["ExamplePS", "Example-BoldMT", "Neighbor-Semibold"] {
         let mut source = source_text("Edited face", false);
         source["fontFamily"] = json!(face);
@@ -1491,7 +1494,9 @@ fn whole_postscript_empty_style_exports_edited_static_and_keyed_faces() {
         let keyed = explicit_document(vec![text_layer(1, "Keyed face", source)], entries);
         let output = to_aep(&keyed).unwrap();
         assert!(occurrences(&output.bytes, &utf16_literal(face)) > 0);
-        assert!(occurrences(&output.bytes, &utf16_literal("EditedPS")) > 0);
+        // Legacy font animators fold to their first value at document load.
+        // Export must not resurrect the discarded time-varying face.
+        assert_eq!(occurrences(&output.bytes, &utf16_literal("EditedPS")), 0);
         assert!(
             !output
                 .diagnostics
@@ -1570,7 +1575,7 @@ fn font_identities(texts: &[TextLayer]) -> Vec<(&str, &str)> {
         .iter()
         .map(|text| {
             (
-                text.source_text.font_family.as_ref(),
+                text.source_text.font_family.value().unwrap().as_ref(),
                 text.source_text.font_style.as_ref(),
             )
         })

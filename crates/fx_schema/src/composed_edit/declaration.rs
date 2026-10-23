@@ -4,7 +4,15 @@
 #[doc(hidden)]
 #[macro_export]
 macro_rules! define_editable_composition_schema {
-    ($emit:ident, $defaults:meta, $motion_write:meta, $dynamics_write:meta, $segments_write:meta) => {
+    (
+        $emit:ident,
+        $defaults:meta,
+        $motion_write:meta,
+        $dynamics_write:meta,
+        $segments_write:meta,
+        $variables_write:meta,
+        $storyline_model_write:meta
+    ) => {
         $emit! {
             /// Editable FX composition state plus the animation graph that drives it.
             ///
@@ -17,6 +25,13 @@ macro_rules! define_editable_composition_schema {
                 id: CompositionId,
                 /// User-visible name for the composition.
                 name: String,
+                /// Typed values that layer properties and Group variables in this
+                /// composition can link to by name. This is the outermost
+                /// scope, so these variables hold values, never links.
+                #[ts(optional, type = "Record<string, VariableValue | VariableLink>")]
+                #[$defaults]
+                #[$variables_write]
+                variables: $crate::Variables,
                 /// AE composition-level standard motion-blur controls.
                 #[ts(optional = nullable)]
                 #[$defaults]
@@ -41,6 +56,12 @@ macro_rules! define_editable_composition_schema {
                 #[$defaults]
                 #[$segments_write]
                 segment_layer_ids: Vec<LayerId>,
+                /// Storyline model version that the root layers' `storyline` flags
+                /// follow. Omitted for compositions that declare no storyline model.
+                #[ts(optional = nullable)]
+                #[$defaults]
+                #[$storyline_model_write]
+                storyline_model: Option<u32>,
             }
             provenance {
                 #[serde(default, deserialize_with = "deserialize_optional_schema_version", skip_serializing_if = "Option::is_none")]

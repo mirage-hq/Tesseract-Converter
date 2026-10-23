@@ -514,6 +514,7 @@ fn convert_image_sequence(
                 source.id
             ),
             is_hidden: false,
+            storyline: false,
             parent: Some(occurrence.id),
             blend_mode: Default::default(),
             track_matte: None,
@@ -868,6 +869,7 @@ pub(super) fn convert_resolved(
                 name: occurrence.name.clone(),
                 description: format!("Editable AE still image from source item {}", source.id),
                 is_hidden: false,
+                storyline: false,
                 parent: Some(occurrence.id),
                 blend_mode: Default::default(),
                 track_matte: None,
@@ -906,6 +908,7 @@ pub(super) fn convert_resolved(
                 description: format!("Editable AE video from source item {}", source.id),
                 metadata: None,
                 is_hidden: false,
+                storyline: false,
                 parent: Some(occurrence.id),
                 start_time: Some(0.0),
                 blend_mode: Default::default(),

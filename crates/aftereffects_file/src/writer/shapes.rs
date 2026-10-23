@@ -9,7 +9,7 @@ mod tests;
 use std::borrow::Cow;
 
 use fx_schema::{
-    BlendMode,
+    BlendMode, Linkable,
     layer::{
         BooleanOp, ShapeEllipse, ShapeFillRule, ShapeGradientStop, ShapeGradientType, ShapeLineCap,
         ShapeLineJoin, ShapeOffsetPaths, ShapePaint, ShapePath, ShapePolyStar, ShapePolyStarType,
@@ -1015,6 +1015,9 @@ fn encode_paint(
             ];
             let name = match paint {
                 ShapePaint::Solid { color } => {
+                    let color = color
+                        .value()
+                        .ok_or(AepWriteError::Invalid("invalid native vector paint"))?;
                     let color_track = animations.color.as_ref().map(native_color_track);
                     entries.push((
                         "ADBE Vector Fill Color",
@@ -1077,6 +1080,9 @@ fn encode_paint(
             ];
             let name = match paint {
                 ShapePaint::Solid { color } => {
+                    let color = color
+                        .value()
+                        .ok_or(AepWriteError::Invalid("invalid native vector paint"))?;
                     let color_track = animations.color.as_ref().map(native_color_track);
                     entries.push((
                         "ADBE Vector Stroke Color",
@@ -1183,7 +1189,10 @@ fn native_static_alpha(paint: &VectorPaintSpec) -> Cow<'_, VectorPaintSpec> {
             paint, animations, ..
         } => (paint, animations),
     };
-    let ShapePaint::Solid { color } = source else {
+    let ShapePaint::Solid {
+        color: Linkable::Value(color),
+    } = source
+    else {
         return Cow::Borrowed(paint);
     };
     if color[3] == 1.0 || animations.color.is_some() {
@@ -1204,7 +1213,10 @@ fn native_static_alpha(paint: &VectorPaintSpec) -> Cow<'_, VectorPaintSpec> {
             ..
         } => (paint, opacity, animations),
     };
-    let ShapePaint::Solid { color } = source else {
+    let ShapePaint::Solid {
+        color: Linkable::Value(color),
+    } = source
+    else {
         unreachable!("cloned solid paint retains its kind");
     };
     let alpha = color[3];

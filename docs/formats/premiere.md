@@ -9,6 +9,9 @@ Both directions are partial. Import converts **one selected sequence** into one
 It does not restore hidden original native records, extra timelines or full
 application state. Static support does not imply keyed support or equivalent export.
 
+FX variables have no Premiere equivalent. Export writes each linked value as the
+value it reads now; variable definitions and links are not exported. A `document variables` approximation reports this flattening.
+
 ## Project selection and publication
 
 - Plain UTF-8 XML and gzip-compressed `.prproj` files use the same graph validation.
@@ -107,6 +110,9 @@ Supported static saved capsule bindings are not a full MOGRT/controller engine.
 - Font identity, availability and embedded bytes are different. Imported names do
   not obtain fonts; export needs a usable identity. Install licensed fonts in Adobe.
 - Box/point baselines, leading, stroke placement, shadows and glyph metrics can differ.
+- Box text that shrinks to fit (`boxFit: "shrink"`) has no Premiere equivalent.
+  Export omits the text layer with a diagnostic; a graphic capsule keeps the
+  authored size with a warning.
 - Supported caption cues and backgrounds are partial. Full track styling, language
   behavior, app metadata and unsupported presentation can be lost.
 

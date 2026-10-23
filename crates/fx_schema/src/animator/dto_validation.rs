@@ -32,6 +32,9 @@ fn ensure_enumerable_animator(
     // Read-only properties (derived sources and timeline facts) are valid as
     // *dependencies* only — they are seeded externally, never produced by a
     // graph node. Reject an animator that targets one before any range checks.
+    if property.property_type().is_static_font() {
+        return Err(AnimationGraphError::StaticFontProperty(target.clone()));
+    }
     if property.property_type().is_read_only() {
         return Err(AnimationGraphError::ReadOnlyProperty(target.clone()));
     }

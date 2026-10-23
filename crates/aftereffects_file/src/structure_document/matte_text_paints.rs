@@ -33,10 +33,16 @@ fn copy_text(
         || !text.masks.is_empty()
         || text.track_matte.is_some()
         || text.path_options.is_some()
-        || text.source_text.fill_color[3] != 1.
+        || text
+            .source_text
+            .fill_color
+            .value()
+            .is_none_or(|color| color[3] != 1.)
         || text
             .source_text
             .stroke_color
+            .as_ref()
+            .and_then(|color| color.value())
             .is_none_or(|color| color[3] != 1.)
         || text.animators.iter().any(|animator| {
             !animator.wiggly_selectors.is_empty()

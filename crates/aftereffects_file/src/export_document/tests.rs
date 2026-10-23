@@ -345,7 +345,7 @@ fn edited_isolated_native_rectangle_exports_as_fresh_shape_not_solid() {
     assert_eq!(mapped.rect.size, [120.0, 60.0]);
     assert_eq!(mapped.rect.roundness, 8.0);
     assert_eq!(mapped.transform.position, Position::TwoD([63.0, 26.0]));
-    assert_eq!(mapped.rect.stroke_color, Some([0.2, 0.3, 0.4, 1.0]));
+    assert_eq!(mapped.rect.stroke_color, Some([0.2, 0.3, 0.4, 1.0].into()));
 }
 
 #[test]

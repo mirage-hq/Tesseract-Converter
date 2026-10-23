@@ -6,10 +6,10 @@
 use std::collections::BTreeMap;
 
 use fx_schema::{
-    AiEditLayer, BlendMode, Dimensions, GroupLayer, Layer, LayerData, LayerId, NonNegativeProperty,
-    PercentageProperty, Position, PropType, PropertyValue, RectLayer, RectShape, ShapeContent,
-    ShapeFillStyle, ShapeHandleMirror, ShapeLayer, ShapeLineJoin, ShapePaint, ShapePath,
-    ShapePathCommand, TimeRangeProperty, Transform,
+    AiEditLayer, BlendMode, Dimensions, GroupLayer, Layer, LayerData, LayerId, Linkable,
+    NonNegativeProperty, PercentageProperty, Position, PropType, PropertyValue, RectLayer,
+    RectShape, ShapeContent, ShapeFillStyle, ShapeHandleMirror, ShapeLayer, ShapeLineJoin,
+    ShapePaint, ShapePath, ShapePathCommand, TimeRangeProperty, Transform,
 };
 
 use super::{ExportDiagnostic, effective_constant, hierarchy, media};
@@ -180,6 +180,7 @@ pub(super) fn normalize_ai_edit(
             id: ai_edit.id,
             name: ai_edit.name.clone(),
             description: String::new(),
+            variables: Default::default(),
             is_hidden: false,
             parent: ai_edit.parent,
             blend_mode: BlendMode::Normal,
@@ -327,7 +328,12 @@ fn background_fill(group: &GroupLayer, diagnostics: &mut Vec<ExportDiagnostic>) 
     let mut fill = fill.clone();
     let opacity = fill.opacity;
     match &mut fill.paint {
-        ShapePaint::Solid { color } => color[3] *= opacity,
+        ShapePaint::Solid {
+            color: Linkable::Value(color),
+        } => color[3] *= opacity,
+        ShapePaint::Solid {
+            color: Linkable::Linked(_),
+        } => return fill,
         ShapePaint::Gradient { stops, .. } => {
             for stop in stops {
                 stop.color[3] *= opacity;
@@ -347,8 +353,8 @@ fn rect_background(
     fill: ShapeFillStyle,
 ) -> Result<Layer, serde_json::Error> {
     let (fill_color, fill_paint) = match &fill.paint {
-        ShapePaint::Solid { color } => (*color, None),
-        paint => ([0.0; 4], Some(paint.clone())),
+        ShapePaint::Solid { color } => (color.clone(), None),
+        paint => ([0.0; 4].into(), Some(paint.clone())),
     };
     Layer::from_data(&LayerData::Rect(RectLayer {
         id,
@@ -565,7 +571,7 @@ mod tests {
         let mut group = empty_group();
         group.fills.push(ShapeFillStyle {
             paint: ShapePaint::Solid {
-                color: [0.2, 0.3, 0.4, 0.8],
+                color: [0.2, 0.3, 0.4, 0.8].into(),
             },
             fill_rule: Default::default(),
             blend_mode: BlendMode::Normal,
@@ -606,6 +612,7 @@ mod tests {
             id: LayerId::new(1),
             name: "group".into(),
             description: String::new(),
+            variables: Default::default(),
             is_hidden: false,
             parent: None,
             blend_mode: BlendMode::Normal,

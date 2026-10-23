@@ -128,6 +128,88 @@ fn modern_source_extensions_and_legacy_fit_are_retained() {
     assert!(Layer::from_data(&fx_schema::LayerData::Video(invalid)).is_err());
 }
 
+fn camera_input() -> Value {
+    json!({
+        "semanticVersion": 1,
+        "transform": {"type": "cameraInput", "inputEncoding": "camera:apple-log:v1"}
+    })
+}
+
+fn media_with_input_transform(kind: &str, input_transform: Value) -> Value {
+    let mut wire = json!({
+        "type": kind, "id": 1, "name": kind,
+        "transform": {"anchorPoint": [0, 0], "position": [0, 0], "scale": [100, 100], "rotation": 0, "opacity": 100},
+        "source": {"assetId": "source", "inputTransform": input_transform}
+    });
+    if kind == "Video" {
+        wire["playback"] = playback();
+        wire["sourceRange"] = json!({"start": 0, "duration": 1000});
+        wire["sourceIntrinsicDuration"] = json!(1000);
+    } else {
+        wire["activeRange"] = json!({"start": 0, "duration": 1000});
+    }
+    wire
+}
+
+fn supported_input_transform(layer: &Layer) -> Option<&fx_schema::InputColorTransform> {
+    let input = match layer.data() {
+        fx_schema::LayerData::Video(data) => data.source.input_transform(),
+        fx_schema::LayerData::Image(data) => data.source.input_transform(),
+        _ => panic!("media layer expected"),
+    };
+    input.map(|input| &input.transform)
+}
+
+#[test]
+fn persisted_camera_input_transform_is_typed_on_video_and_image_sources() {
+    let camera = fx_schema::InputColorTransform::CameraInput {
+        input_encoding: "camera:apple-log:v1".parse().unwrap(),
+    };
+    for kind in ["Video", "Image"] {
+        let wire = media_with_input_transform(kind, camera_input());
+        let layer: Layer = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(supported_input_transform(&layer), Some(&camera), "{kind}");
+        let reloaded: Layer =
+            serde_json::from_value(serde_json::to_value(&layer).unwrap()).unwrap();
+        assert_eq!(
+            supported_input_transform(&reloaded),
+            Some(&camera),
+            "{kind}"
+        );
+        assert_eq!(serde_json::to_value(reloaded).unwrap(), wire);
+
+        for transform in [
+            json!({"type": "cameraInput"}),
+            json!({"type": "cameraInput", "inputEncoding": "Apple Log"}),
+        ] {
+            let malformed = json!({"semanticVersion": 1, "transform": transform});
+            let wire = media_with_input_transform(kind, malformed);
+            assert!(serde_json::from_value::<Layer>(wire).is_err(), "{kind}");
+        }
+
+        let mut future = camera_input();
+        future["semanticVersion"] = json!(2);
+        future["futureField"] = json!({"keep": true});
+        let wire = media_with_input_transform(kind, future);
+        let layer: Layer = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(supported_input_transform(&layer), None, "{kind}");
+        assert_eq!(serde_json::to_value(layer).unwrap(), wire);
+    }
+}
+
+#[test]
+fn camera_input_is_not_a_supported_look_transform() {
+    let look = json!({
+        "type": "lookTransform", "semanticVersion": 1, "mix": 1,
+        "transform": {"type": "cameraInput", "inputEncoding": "camera:apple-log:v1"}
+    });
+    assert!(serde_json::from_value::<fx_schema::LayerEffect>(look.clone()).is_err());
+    let mut wire = media_with_input_transform("Image", camera_input());
+    wire["effects"] = json!([{"id": 7, "effect": look}]);
+    let layer: Layer = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(serde_json::to_value(layer).unwrap(), wire);
+}
+
 #[test]
 fn boolean_children_retain_static_and_graph_asset_references() {
     let mut child = media();

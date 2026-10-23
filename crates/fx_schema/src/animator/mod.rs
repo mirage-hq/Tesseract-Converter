@@ -75,6 +75,9 @@ pub enum AnimationGraphError {
     /// rejected at graph-construction time.
     #[error("property {0} is read-only and cannot be animated")]
     ReadOnlyProperty(PropertyTarget),
+    /// Font selection must be edited in the static text document.
+    #[error("property {0} cannot be animated; edit sourceText.fontFamily / sourceText.fontStyle instead")]
+    StaticFontProperty(PropertyTarget),
     /// A finite-range property ([`PropType::finite_range_value_kind`]) was
     /// given a constant whose value kind it cannot enumerate as a key — e.g. a
     /// numeric constant on an asset-id property, which needs a

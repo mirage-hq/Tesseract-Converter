@@ -161,7 +161,10 @@ fn inspect_media(
             (Some(video), _) => active_asset_id(&video.source).as_str(),
             (None, fx_schema::LayerData::Image(image)) => {
                 let fx_schema::ImageSource::Asset(source) = &image.source;
-                source.asset_id.as_str()
+                let Some(asset_id) = source.asset_id.value() else {
+                    continue;
+                };
+                asset_id.as_str()
             }
             (None, _) => continue,
         };

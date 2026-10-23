@@ -327,10 +327,10 @@ impl SavedGraphicText {
             ));
         }
         let (family, style) = crate::structure_document::text::split_font_identity(postscript_font);
-        self.document.text = text.replace("\r\n", "\n").replace('\r', "\n");
+        self.document.text = text.replace("\r\n", "\n").replace('\r', "\n").into();
         self.document.font_family = family.into();
         self.document.font_style = style.into();
-        self.document.font_size = size;
+        self.document.font_size = size.into();
         self.document.all_caps = all_caps;
         self.postscript_font = postscript_font.to_owned();
         Ok(())

@@ -60,7 +60,7 @@ pub(crate) fn request(layer: &Layer) -> Option<MediaRequest> {
     let (asset_id, kind, name) = match layer.data() {
         LayerData::Image(image) => {
             let ImageSource::Asset(source) = &image.source;
-            (&source.asset_id, FootageKind::Image, &image.name)
+            (source.asset_id.value()?, FootageKind::Image, &image.name)
         }
         LayerData::Video(video) => (&video.source.asset_id, FootageKind::Video, &video.name),
         LayerData::Audio(audio) => (&audio.source.asset_id, FootageKind::Audio, &audio.name),

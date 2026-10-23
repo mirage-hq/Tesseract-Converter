@@ -54,6 +54,7 @@ pub(super) fn image_layer(
         name,
         description: String::new(),
         is_hidden,
+        storyline: false,
         parent: None,
         blend_mode: BlendMode::Normal,
         track_matte: None,
@@ -140,7 +141,9 @@ pub(super) fn still_facts<'f>(
     source: &ImageAssetSource,
     media_facts: &'f BTreeMap<String, MediaFacts>,
 ) -> Result<std::result::Result<&'f ValidatedImage, String>> {
-    let asset_id = source.asset_id.as_str();
+    let Some(asset_id) = source.asset_id.value().map(AssetId::as_str) else {
+        return Err(unsupported("source.assetId links to a variable"));
+    };
     if asset_id.is_empty() {
         return Err(unsupported("source.assetId must be nonempty"));
     }
@@ -194,7 +197,9 @@ pub(super) fn export_image_layer(
 ) -> Result<Option<(PrVideoOccurrence, PrMedia)>> {
     let (width, height, frame_rate) = (context.width, context.height, context.frame_rate);
     let ImageSource::Asset(source) = &image.source;
-    let asset_id = source.asset_id.as_str();
+    let Some(asset_id) = source.asset_id.value().map(AssetId::as_str) else {
+        return Err(unsupported("source.assetId links to a variable"));
+    };
     let facts = match still_facts(source, context.media_facts)? {
         Ok(facts) => facts,
         Err(reason) => {

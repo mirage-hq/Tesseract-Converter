@@ -41,7 +41,7 @@ pub(in crate::convert) fn import_capsule(
         .map_err(|error| fail(crate::capsule::CapsuleError::Template(error.into())))?;
     fn meaningful(layer: &Layer) -> bool {
         match layer.data() {
-            LayerData::Text(text) => !text.source_text.text.is_empty(),
+            LayerData::Text(text) => text.source_text.text != "",
             LayerData::Shape(_)
             | LayerData::Rect(_)
             | LayerData::Image(_)

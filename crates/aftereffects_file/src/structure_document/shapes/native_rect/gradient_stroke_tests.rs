@@ -177,7 +177,7 @@ fn gradient_fill_and_solid_stroke_retain_parametric_rect_and_group_ownership() {
         assert_eq!(rect.rect.size, [100.0, 50.0]);
         assert!(rect.rect.fill_enabled && rect.rect.stroke_enabled);
         assert_eq!(rect.rect.stroke_width.value(), 4.0);
-        assert_eq!(rect.rect.stroke_color, Some([1.0; 4]));
+        assert_eq!(rect.rect.stroke_color, Some([1.0; 4].into()));
         assert_eq!(rect.transform.opacity.value(), 100.0);
         let Some(ShapePaint::Gradient {
             start, end, stops, ..

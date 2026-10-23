@@ -1158,6 +1158,75 @@
           },
           "title": "Segmentlayerids",
           "type": "array"
+        },
+        "storylineModel": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Storylinemodel"
+        },
+        "variables": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "color": "#/$defs/JBVariableValueColorModel",
+                        "font": "#/$defs/JBVariableValueFontModel",
+                        "image": "#/$defs/JBVariableValueImageModel",
+                        "number": "#/$defs/JBVariableValueNumberModel",
+                        "text": "#/$defs/JBVariableValueTextModel"
+                      },
+                      "propertyName": "type"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/JBVariableValueTextModel"
+                      },
+                      {
+                        "$ref": "#/$defs/JBVariableValueColorModel"
+                      },
+                      {
+                        "$ref": "#/$defs/JBVariableValueImageModel"
+                      },
+                      {
+                        "$ref": "#/$defs/JBVariableValueNumberModel"
+                      },
+                      {
+                        "$ref": "#/$defs/JBVariableValueFontModel"
+                      }
+                    ]
+                  },
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "linked": "#/$defs/JBVariableLinkLinkedModel"
+                      },
+                      "propertyName": "type"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/JBVariableLinkLinkedModel"
+                      }
+                    ]
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Variables"
         }
       },
       "required": [
@@ -1884,6 +1953,11 @@
           },
           "title": "Stickers",
           "type": "array"
+        },
+        "storyline": {
+          "default": false,
+          "title": "Storyline",
+          "type": "boolean"
         },
         "styleCleared": {
           "default": false,
@@ -6252,6 +6326,56 @@
           "default": "Group",
           "title": "Type",
           "type": "string"
+        },
+        "variables": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "color": "#/$defs/JBVariableValueColorModel",
+                    "font": "#/$defs/JBVariableValueFontModel",
+                    "image": "#/$defs/JBVariableValueImageModel",
+                    "number": "#/$defs/JBVariableValueNumberModel",
+                    "text": "#/$defs/JBVariableValueTextModel"
+                  },
+                  "propertyName": "type"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/JBVariableValueTextModel"
+                  },
+                  {
+                    "$ref": "#/$defs/JBVariableValueColorModel"
+                  },
+                  {
+                    "$ref": "#/$defs/JBVariableValueImageModel"
+                  },
+                  {
+                    "$ref": "#/$defs/JBVariableValueNumberModel"
+                  },
+                  {
+                    "$ref": "#/$defs/JBVariableValueFontModel"
+                  }
+                ]
+              },
+              {
+                "discriminator": {
+                  "mapping": {
+                    "linked": "#/$defs/JBVariableLinkLinkedModel"
+                  },
+                  "propertyName": "type"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/JBVariableLinkLinkedModel"
+                  }
+                ]
+              }
+            ]
+          },
+          "title": "Variables",
+          "type": "object"
         }
       },
       "required": [
@@ -6447,6 +6571,11 @@
         },
         "source": {
           "$ref": "#/$defs/JBImageAssetSourceModel"
+        },
+        "storyline": {
+          "default": false,
+          "title": "Storyline",
+          "type": "boolean"
         },
         "trackMatte": {
           "anyOf": [
@@ -7773,6 +7902,11 @@
         "sourceRange": {
           "$ref": "#/$defs/JBFXTimeRangePropertyModel"
         },
+        "storyline": {
+          "default": false,
+          "title": "Storyline",
+          "type": "boolean"
+        },
         "trackMatte": {
           "anyOf": [
             {
@@ -8742,24 +8876,41 @@
           "title": "Fillblendmode"
         },
         "fillColor": {
-          "maxItems": 4,
-          "minItems": 4,
-          "prefixItems": [
+          "anyOf": [
             {
-              "type": "number"
+              "maxItems": 4,
+              "minItems": 4,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
             },
             {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
+              "discriminator": {
+                "mapping": {
+                  "linked": "#/$defs/JBVariableLinkLinkedModel"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/JBVariableLinkLinkedModel"
+                }
+              ]
             }
           ],
-          "title": "Fillcolor",
-          "type": "array"
+          "title": "Fillcolor"
         },
         "fillEnabled": {
           "default": true,
@@ -8849,6 +9000,19 @@
                 }
               ],
               "type": "array"
+            },
+            {
+              "discriminator": {
+                "mapping": {
+                  "linked": "#/$defs/JBVariableLinkLinkedModel"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/JBVariableLinkLinkedModel"
+                }
+              ]
             },
             {
               "type": "null"
@@ -9186,24 +9350,41 @@
       "additionalProperties": false,
       "properties": {
         "color": {
-          "maxItems": 4,
-          "minItems": 4,
-          "prefixItems": [
+          "anyOf": [
             {
-              "type": "number"
+              "maxItems": 4,
+              "minItems": 4,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
             },
             {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
+              "discriminator": {
+                "mapping": {
+                  "linked": "#/$defs/JBVariableLinkLinkedModel"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/JBVariableLinkLinkedModel"
+                }
+              ]
             }
           ],
-          "title": "Color",
-          "type": "array"
+          "title": "Color"
         },
         "type": {
           "const": "solid",
@@ -9625,6 +9806,22 @@
           "default": null,
           "title": "Boxfirstbaseline"
         },
+        "boxFit": {
+          "anyOf": [
+            {
+              "enum": [
+                "none",
+                "shrink"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": "none",
+          "title": "Boxfit"
+        },
         "boxPosition": {
           "anyOf": [
             {
@@ -9675,28 +9872,74 @@
           "type": "boolean"
         },
         "fillColor": {
-          "maxItems": 4,
-          "minItems": 4,
-          "prefixItems": [
+          "anyOf": [
             {
-              "type": "number"
+              "maxItems": 4,
+              "minItems": 4,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
             },
             {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
+              "discriminator": {
+                "mapping": {
+                  "linked": "#/$defs/JBVariableLinkLinkedModel"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/JBVariableLinkLinkedModel"
+                }
+              ]
             }
           ],
-          "title": "Fillcolor",
-          "type": "array"
+          "title": "Fillcolor"
+        },
+        "fontAssetId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fontassetid"
         },
         "fontFamily": {
-          "title": "Fontfamily",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "discriminator": {
+                "mapping": {
+                  "linked": "#/$defs/JBVariableLinkLinkedModel"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/JBVariableLinkLinkedModel"
+                }
+              ]
+            }
+          ],
+          "title": "Fontfamily"
         },
         "fontSize": {
           "$ref": "#/$defs/JsonValue"
@@ -9776,6 +10019,19 @@
               "type": "array"
             },
             {
+              "discriminator": {
+                "mapping": {
+                  "linked": "#/$defs/JBVariableLinkLinkedModel"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/JBVariableLinkLinkedModel"
+                }
+              ]
+            },
+            {
               "type": "null"
             }
           ],
@@ -9788,16 +10044,68 @@
           "type": "boolean"
         },
         "strokeWidth": {
-          "$ref": "#/$defs/JsonValue"
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "discriminator": {
+                "mapping": {
+                  "linked": "#/$defs/JBVariableLinkLinkedModel"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/JBVariableLinkLinkedModel"
+                }
+              ]
+            }
+          ],
+          "title": "Strokewidth"
         },
         "text": {
-          "title": "Text",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "discriminator": {
+                "mapping": {
+                  "linked": "#/$defs/JBVariableLinkLinkedModel"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/JBVariableLinkLinkedModel"
+                }
+              ]
+            }
+          ],
+          "title": "Text"
         },
         "tracking": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "discriminator": {
+                "mapping": {
+                  "linked": "#/$defs/JBVariableLinkLinkedModel"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/JBVariableLinkLinkedModel"
+                }
+              ]
+            }
+          ],
           "default": 0.0,
-          "title": "Tracking",
-          "type": "number"
+          "title": "Tracking"
         },
         "underline": {
           "default": false,
@@ -10429,8 +10737,25 @@
       "additionalProperties": false,
       "properties": {
         "assetId": {
-          "title": "Assetid",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "discriminator": {
+                "mapping": {
+                  "linked": "#/$defs/JBVariableLinkLinkedModel"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/JBVariableLinkLinkedModel"
+                }
+              ]
+            }
+          ],
+          "title": "Assetid"
         },
         "contentOffset": {
           "default": [
@@ -13054,6 +13379,142 @@
         "after"
       ],
       "title": "JBTimeRemapPropertyModel",
+      "type": "object"
+    },
+    "JBVariableLinkLinkedModel": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "linked",
+          "default": "linked",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "JBVariableLinkLinkedModel",
+      "type": "object"
+    },
+    "JBVariableValueColorModel": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "color",
+          "default": "color",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "maxItems": 4,
+          "minItems": 4,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Value",
+          "type": "array"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "JBVariableValueColorModel",
+      "type": "object"
+    },
+    "JBVariableValueFontModel": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "font",
+          "default": "font",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "JBVariableValueFontModel",
+      "type": "object"
+    },
+    "JBVariableValueImageModel": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "image",
+          "default": "image",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "JBVariableValueImageModel",
+      "type": "object"
+    },
+    "JBVariableValueNumberModel": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "number",
+          "default": "number",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "JBVariableValueNumberModel",
+      "type": "object"
+    },
+    "JBVariableValueTextModel": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "text",
+          "default": "text",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "JBVariableValueTextModel",
       "type": "object"
     },
     "JBVideoLayerMetadataModel": {

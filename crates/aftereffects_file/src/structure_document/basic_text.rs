@@ -278,15 +278,17 @@ impl Generator {
             source_text: TextDocument {
                 // The packed face is authoritative PostScript identity, not
                 // family + display style. Empty style preserves that namespace.
-                text: self.text, font_family: Arc::from(self.font), font_style: Arc::from(""),
-                font_size: fx_schema::PositiveProperty::new(self.size).expect("recognized positive Size"),
+                font_asset_id: None,
+                text: self.text.into(), font_family: self.font.into(), font_style: Arc::from(""),
+                font_size: fx_schema::PositiveProperty::new(self.size).expect("recognized positive Size").into(),
                 font_variations: None, apply_fill: true,
-                fill_color: self.color,
+                fill_color: self.color.into(),
                 apply_stroke: false, stroke_color: None, stroke_width: Default::default(), stroke_over_fill: false,
                 justification: fx_schema::Justification::Center, tracking: Default::default(), leading: None,
                 baseline_shift: Default::default(), box_text: false, scale_box_text_with_transform: false,
                 box_size: None, box_position: None, box_first_baseline: None,
                 all_caps: false, underline: false, strikethrough: false, vertical_align: None,
+                box_fit: fx_schema::BoxFit::None,
             },
             animators: Vec::new(), path_options: None, anchor_options: Default::default(),
         })
@@ -389,7 +391,7 @@ mod tests {
             panic!("editable Text required")
         };
         assert_eq!(text.source_text.text, "Editable");
-        assert_eq!(&*text.source_text.font_family, "Arial-BoldMT");
+        assert_eq!(text.source_text.font_family, "Arial-BoldMT");
         assert_eq!(&*text.source_text.font_style, "");
         assert_eq!(
             text.source_text.fill_color,

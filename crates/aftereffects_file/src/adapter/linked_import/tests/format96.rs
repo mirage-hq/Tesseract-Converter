@@ -109,8 +109,8 @@ fn native_format96_guids_select_editable_composition_siblings() {
                 .iter()
                 .filter_map(|layer| match layer.data() {
                     LayerData::Text(text) => Some((
-                        text.source_text.text.as_str(),
-                        text.source_text.font_size.value(),
+                        text.source_text.text.value().unwrap().as_str(),
+                        text.source_text.font_size.number().unwrap(),
                     )),
                     _ => None,
                 })
